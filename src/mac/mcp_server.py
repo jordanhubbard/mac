@@ -171,18 +171,12 @@ class MacTools:
         selector: Any = state
         if not selector and not all_states:
             selector = ACTIVE_TASK_STATES
-        return _text(
-            _as_dicts(
-                self._plane.list_tasks(selector, project=project, limit=limit)
-            )
-        )
+        return _text(_as_dicts(self._plane.list_tasks(selector, project=project, limit=limit)))
 
     def mac_task_ready(
         self, project: Optional[str] = None, limit: Optional[int] = None, **_: Any
     ) -> JsonDict:
-        return _text(
-            _as_dicts(self._plane.ready_tasks(project=project, limit=limit))
-        )
+        return _text(_as_dicts(self._plane.ready_tasks(project=project, limit=limit)))
 
     def mac_task_create(
         self,
@@ -247,9 +241,7 @@ class MCPServer:
             params = message.get("params") or {}
             return self._ok(
                 message_id,
-                self.tools.call(
-                    str(params.get("name") or ""), params.get("arguments") or {}
-                ),
+                self.tools.call(str(params.get("name") or ""), params.get("arguments") or {}),
             )
         return {
             "jsonrpc": "2.0",

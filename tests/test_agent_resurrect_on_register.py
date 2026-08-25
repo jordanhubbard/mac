@@ -6,6 +6,7 @@ into self-service resurrection. An administrator can explicitly restore a
 recreated identity; that clears the tombstone and the *decommission* hold. An
 operator hold on a still-live agent is preserved.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,7 +20,9 @@ from mac.services import ControlPlane
 
 def _register(cp):
     m = cp.register_machine("host-worker-1")
-    return m.id, cp.register_agent(m.id, "worker-1", capabilities=["python"], agent_id="agent_worker_1")
+    return m.id, cp.register_agent(
+        m.id, "worker-1", capabilities=["python"], agent_id="agent_worker_1"
+    )
 
 
 def test_reregister_requires_explicit_resurrection_authority():
@@ -48,8 +51,8 @@ def test_reregister_requires_explicit_resurrection_authority():
     )
     assert again.id == a.id
     live = cp.get_agent(a.id)
-    assert live.deleted_at is None          # resurrected
-    assert not live.dispatch_hold           # decommission hold cleared
+    assert live.deleted_at is None  # resurrected
+    assert not live.dispatch_hold  # decommission hold cleared
     assert live.status == "idle"
 
 

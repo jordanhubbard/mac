@@ -92,9 +92,7 @@ def _shas(payload: Dict[str, Any]) -> List[str]:
 
 def _branches(payload: Dict[str, Any]) -> List[str]:
     return [
-        _text(payload.get(key))
-        for key in ("branch", "canonical_branch")
-        if _text(payload.get(key))
+        _text(payload.get(key)) for key in ("branch", "canonical_branch") if _text(payload.get(key))
     ]
 
 
@@ -218,9 +216,7 @@ def build_bus_task_context(
     return context
 
 
-def derive_signals(
-    entries: Sequence[Dict[str, Any]], focus: Dict[str, str]
-) -> Dict[str, Any]:
+def derive_signals(entries: Sequence[Dict[str, Any]], focus: Dict[str, str]) -> Dict[str, Any]:
     """The three questions this exists to answer, answered.
 
     Derived from the BOUNDED entries, not the full scan, so what the coding
@@ -389,7 +385,6 @@ def render_bus_context_section(context: Optional[Dict[str, Any]]) -> str:
             "- TRUNCATED: %s further relevant events were omitted to stay inside "
             "the %s-event bound. This context is incomplete; if the answer "
             "matters, query the hub (`mac admin agentbus broadcast read`) rather "
-            "than assuming these are all of them."
-            % (context.get("omitted"), context.get("bound"))
+            "than assuming these are all of them." % (context.get("omitted"), context.get("bound"))
         )
     return "\n".join(lines)

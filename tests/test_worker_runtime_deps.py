@@ -34,14 +34,14 @@ def _worker() -> RuntimeDepsMixin:
 @pytest.mark.parametrize(
     "spec,installed,expected",
     [
-        ("nemo-relay==0.3.0", {"nemo-relay": "0.3.0"}, True),   # exact match
+        ("nemo-relay==0.3.0", {"nemo-relay": "0.3.0"}, True),  # exact match
         ("nemo-relay==0.3.0", {"nemo-relay": "0.2.0"}, False),  # present but stale -> upgrade
-        ("nemo-relay==0.3.0", {}, False),                       # absent -> install
-        ("nemo-relay>=0.3.0", {"nemo-relay": "0.3.1"}, True),   # range satisfied
+        ("nemo-relay==0.3.0", {}, False),  # absent -> install
+        ("nemo-relay>=0.3.0", {"nemo-relay": "0.3.1"}, True),  # range satisfied
         ("nemo-relay>=0.3.0", {"nemo-relay": "0.2.9"}, False),  # range not met
-        ("requests", {"requests": "2.0"}, True),                # no pin -> presence is enough
-        ("requests", {}, False),                                # no pin, absent
-        ("Nemo_Relay==0.3.0", {"nemo-relay": "0.3.0"}, True),   # name normalization
+        ("requests", {"requests": "2.0"}, True),  # no pin -> presence is enough
+        ("requests", {}, False),  # no pin, absent
+        ("Nemo_Relay==0.3.0", {"nemo-relay": "0.3.0"}, True),  # name normalization
     ],
 )
 def test_pip_spec_satisfied(spec, installed, expected):
@@ -89,10 +89,13 @@ def test_ensure_pip_installs_when_absent():
 def test_reconcile_runtime_deps_uses_manifest():
     w = _worker()
     seen = {}
-    w.ensure_pip = lambda specs, **k: seen.update(specs=specs, reason=k.get("reason")) or {
-        "ok": True,
-        "skipped": "already satisfied",
-    }
+    w.ensure_pip = lambda specs, **k: (
+        seen.update(specs=specs, reason=k.get("reason"))
+        or {
+            "ok": True,
+            "skipped": "already satisfied",
+        }
+    )
     res = w.reconcile_runtime_deps()
     assert res.get("ok")
     assert seen["specs"] == list(REQUIRED_RUNTIME_PIP)

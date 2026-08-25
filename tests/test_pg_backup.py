@@ -6,6 +6,7 @@ owner-only artifacts (0600 in a 0700 dir), sha256 manifest, retention, the
 restore-to-scratch drill (schema + representative row counts), a loud failure
 path, and the invariant that a Postgres backup NEVER falls back to SQLite.
 """
+
 from __future__ import annotations
 
 import json
@@ -146,7 +147,10 @@ def test_prune_keeps_last_n(tmp_path):
     out = tmp_path / "b"
     for i in range(5):
         pg_backup.dump(
-            DSN, out, keep_last=3, verify=False,
+            DSN,
+            out,
+            keep_last=3,
+            verify=False,
             now=datetime(2026, 7, 28, 0, 0, i, tzinfo=timezone.utc),
             runner=FakePg(),
         )
@@ -171,17 +175,19 @@ def test_sync_hook_receives_env_and_failures_are_loud(tmp_path):
     out = tmp_path / "b"
     marker = tmp_path / "shipped.txt"
     pg_backup.dump(
-        DSN, out, verify=False, now=_now(), runner=FakePg(),
-        sync_cmd='printf "%s %s" "$MAC_PG_BACKUP_PATH" "$MAC_PG_BACKUP_SHA256" > '
-        + str(marker),
+        DSN,
+        out,
+        verify=False,
+        now=_now(),
+        runner=FakePg(),
+        sync_cmd='printf "%s %s" "$MAC_PG_BACKUP_PATH" "$MAC_PG_BACKUP_SHA256" > ' + str(marker),
     )
     shipped_path, shipped_sha = marker.read_text().split()
     assert shipped_path.endswith(".dump")
     assert len(shipped_sha) == 64
 
     with pytest.raises(pg_backup.PgBackupError, match="sync hook exited"):
-        pg_backup.dump(DSN, out, verify=False, now=_now(), runner=FakePg(),
-                       sync_cmd="exit 4")
+        pg_backup.dump(DSN, out, verify=False, now=_now(), runner=FakePg(), sync_cmd="exit 4")
 
 
 # --- local socket DSN ------------------------------------------------------

@@ -210,8 +210,7 @@ def test_interactive_prompt_selects_hub_without_changing_managed_auth() -> None:
     )
 
     assert prompts == [
-        "Target hub host or IP "
-        "[Enter keeps http://127.0.0.1:48789; direct port 8789]: "
+        "Target hub host or IP [Enter keeps http://127.0.0.1:48789; direct port 8789]: "
     ]
     assert selected == ide_launcher.IdeConnection(
         api_url="http://192.0.2.10:8789",
@@ -257,8 +256,7 @@ def test_prompt_default_seeds_hub_from_fleets_registry(tmp_path) -> None:
         input_fn=lambda prompt: prompts.append(prompt) or "",
     )
     assert prompts == [
-        "Target hub host or IP "
-        "[Enter keeps http://100.72.16.110:8789; direct port 8789]: "
+        "Target hub host or IP [Enter keeps http://100.72.16.110:8789; direct port 8789]: "
     ]
     assert selected == ide_launcher.IdeConnection(
         api_url="http://100.72.16.110:8789",
@@ -270,12 +268,8 @@ def test_prompt_default_seeds_hub_from_fleets_registry(tmp_path) -> None:
 
 
 def test_prompt_bare_host_uses_fleet_control_port(tmp_path) -> None:
-    fleets = _write_fleets(
-        tmp_path, hub_url="http://100.72.16.110:9443", control_port=9443
-    )
-    connection = ide_launcher.IdeConnection(
-        api_url="http://127.0.0.1:48789", hub_port=48789
-    )
+    fleets = _write_fleets(tmp_path, hub_url="http://100.72.16.110:9443", control_port=9443)
+    connection = ide_launcher.IdeConnection(api_url="http://127.0.0.1:48789", hub_port=48789)
 
     selected = ide_launcher.prompt_for_ide_connection(
         connection,
@@ -293,9 +287,7 @@ def test_prompt_falls_back_when_fleet_hub_url_missing(tmp_path) -> None:
         "version: 1\nfleets:\n  rocky:\n    default: true\n    control_port: 8789\n",
         encoding="utf-8",
     )
-    connection = ide_launcher.IdeConnection(
-        api_url="http://127.0.0.1:48789", hub_port=8789
-    )
+    connection = ide_launcher.IdeConnection(api_url="http://127.0.0.1:48789", hub_port=8789)
     prompts: list[str] = []
 
     selected = ide_launcher.prompt_for_ide_connection(
@@ -306,8 +298,7 @@ def test_prompt_falls_back_when_fleet_hub_url_missing(tmp_path) -> None:
     )
 
     assert prompts == [
-        "Target hub host or IP "
-        "[Enter keeps http://127.0.0.1:48789; direct port 8789]: "
+        "Target hub host or IP [Enter keeps http://127.0.0.1:48789; direct port 8789]: "
     ]
     assert selected is connection
 
@@ -332,9 +323,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
             connection,
             {**_NO_FLEETS, "IDE_API_URL": "http://explicit.example:8789"},
             interactive=True,
-            input_fn=lambda _prompt: (_ for _ in ()).throw(
-                AssertionError("unexpected prompt")
-            ),
+            input_fn=lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt")),
         )
         is connection
     )
@@ -343,9 +332,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
             connection,
             _NO_FLEETS,
             interactive=False,
-            input_fn=lambda _prompt: (_ for _ in ()).throw(
-                AssertionError("unexpected prompt")
-            ),
+            input_fn=lambda _prompt: (_ for _ in ()).throw(AssertionError("unexpected prompt")),
         )
         is connection
     )

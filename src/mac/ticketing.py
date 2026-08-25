@@ -73,7 +73,7 @@ class MetaTicket:
     priority: int = 0
     dependencies: List[str] = field(default_factory=list)
     labels: List[str] = field(default_factory=list)
-    source: str = "native"          # connector name that produced it
+    source: str = "native"  # connector name that produced it
     external_id: Optional[str] = None  # the id in the source system, if foreign
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -213,9 +213,15 @@ class NativeTicketingConnector(TicketingConnector):
                     id=str(fm.get("id") or path.stem),
                     title=str(fm.get("title") or path.stem),
                     state=str(fm.get("status") or "open"),
-                    priority=int(fm.get("priority") or 0) if str(fm.get("priority") or "").strip().isdigit() else 0,
+                    priority=int(fm.get("priority") or 0)
+                    if str(fm.get("priority") or "").strip().isdigit()
+                    else 0,
                     source=self.name,
-                    metadata={k: v for k, v in fm.items() if k not in {"id", "title", "status", "priority"}},
+                    metadata={
+                        k: v
+                        for k, v in fm.items()
+                        if k not in {"id", "title", "status", "priority"}
+                    },
                 )
             )
         return tickets

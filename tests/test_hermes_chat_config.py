@@ -170,7 +170,10 @@ def test_router_env_emits_wildcard_models_from_spec(tmp_path):
     )
     assert plan["status"] == "pass"
     ev = plan["env_values"]
-    assert ev["MAC_ROUTER_WILDCARD_MODELS"] == "azure/anthropic/claude-sonnet-4-6|azure/anthropic/claude-opus-4-6"
+    assert (
+        ev["MAC_ROUTER_WILDCARD_MODELS"]
+        == "azure/anthropic/claude-sonnet-4-6|azure/anthropic/claude-opus-4-6"
+    )
     assert ev["MAC_ROUTER_DEFAULT_MODEL"] == "azure/anthropic/claude-sonnet-4-6"
 
 

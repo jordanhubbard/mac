@@ -78,13 +78,9 @@ def _detail(arm: str, outcome_status: str) -> dict:
                             },
                         },
                         "independent_findings": (
-                            [{"summary": "independent defect"}]
-                            if arm == "blind"
-                            else []
+                            [{"summary": "independent defect"}] if arm == "blind" else []
                         ),
-                        "findings": [
-                            {"id": finding_id, "summary": "validated defect"}
-                        ],
+                        "findings": [{"id": finding_id, "summary": "validated defect"}],
                     }
                 },
             },
@@ -101,12 +97,8 @@ def _detail(arm: str, outcome_status: str) -> dict:
 
 
 def test_weighted_assignment_is_stable_and_records_propensity():
-    first = choose_weighted_arm(
-        "task_1", "exp_1", "v2", {"standard": 1, "blind": 3}
-    )
-    second = choose_weighted_arm(
-        "task_1", "exp_1", "v2", {"blind": 3, "standard": 1}
-    )
+    first = choose_weighted_arm("task_1", "exp_1", "v2", {"standard": 1, "blind": 3})
+    second = choose_weighted_arm("task_1", "exp_1", "v2", {"blind": 3, "standard": 1})
 
     assert first == second
     assert first[2] == {"blind": 0.75, "standard": 0.25}
@@ -241,9 +233,7 @@ def test_protocol_invalid_outcome_overrides_signed_compliance():
         observed_by="operator",
         detail={"summary": "executor evidence leaked into discovery metadata"},
     )
-    detail["task"]["metadata"] = append_outcome(
-        detail["task"]["metadata"], invalidation
-    )
+    detail["task"]["metadata"] = append_outcome(detail["task"]["metadata"], invalidation)
 
     observation = build_observation(detail)
     review_pass = observation["review_passes"][0]
@@ -284,9 +274,7 @@ def test_report_requires_completed_compliant_lifecycles_and_positive_separation(
     assert report["policy"]["score_margin"] == 2.0
 
     invalid = copy.deepcopy(blind)
-    invalid["review_passes"][0]["experiment_protocol"]["protocol"][
-        "protocol_compliant"
-    ] = False
+    invalid["review_passes"][0]["experiment_protocol"]["protocol"]["protocol_compliant"] = False
     invalid_report = build_report(
         "exp-review",
         [invalid, standard],
@@ -307,12 +295,15 @@ def test_control_plane_persists_immutable_assignment_and_delayed_outcome(monkeyp
         actor="operator",
     )
     assert assignment["arm"] == "standard"
-    assert cp.assign_review_experiment(
-        task.id,
-        experiment_id="exp-control",
-        arm="standard",
-        actor="operator",
-    ) == assignment
+    assert (
+        cp.assign_review_experiment(
+            task.id,
+            experiment_id="exp-control",
+            arm="standard",
+            actor="operator",
+        )
+        == assignment
+    )
     with pytest.raises(ValidationError, match="immutable"):
         cp.assign_review_experiment(
             task.id,

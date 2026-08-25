@@ -129,8 +129,7 @@ def validate_policy_parameters(parameters: Any) -> Dict[str, Any]:
     unknown = sorted(set(parameters) - set(POLICY_PARAMETER_TYPES))
     if unknown:
         raise ValidationError(
-            "scientific policy cannot change non-allowlisted field(s): %s"
-            % ", ".join(unknown)
+            "scientific policy cannot change non-allowlisted field(s): %s" % ", ".join(unknown)
         )
     normalized: Dict[str, Any] = {}
     for key, value in parameters.items():
@@ -138,9 +137,7 @@ def validate_policy_parameters(parameters: Any) -> Dict[str, Any]:
         if kind == "model":
             text = str(value or "").strip()
             if not text or len(text) > 256:
-                raise ValidationError(
-                    "%s must be a non-empty model id up to 256 characters" % key
-                )
+                raise ValidationError("%s must be a non-empty model id up to 256 characters" % key)
             normalized[key] = text
         elif kind == "strength":
             normalized[key] = _bounded_int(value, key, 1, 10)
@@ -199,9 +196,7 @@ def _route_detail(item: Any) -> Dict[str, Any]:
     return dict(detail) if isinstance(detail, Mapping) else value
 
 
-def _catalog_prices(
-    model_id: str, provider_hint: str = ""
-) -> Optional[Tuple[float, float, float]]:
+def _catalog_prices(model_id: str, provider_hint: str = "") -> Optional[Tuple[float, float, float]]:
     """Return input/output/cache-read prices in USD per million tokens."""
     try:
         from mac import models_catalog
@@ -242,9 +237,7 @@ def _catalog_prices(
             info = models_catalog.get_model_info(*key)
         except Exception:
             info = None
-        has_cost_data = (
-            getattr(info, "has_cost_data", None) if info is not None else None
-        )
+        has_cost_data = getattr(info, "has_cost_data", None) if info is not None else None
         if info is not None and callable(has_cost_data) and bool(has_cost_data()):
             return (
                 float(getattr(info, "cost_input", 0.0) or 0.0),
@@ -259,9 +252,7 @@ def estimate_route_cost(detail: Mapping[str, Any]) -> Tuple[float, bool]:
     if explicit > 0:
         return explicit, True
     usage = detail.get("usage") if isinstance(detail.get("usage"), Mapping) else {}
-    input_tokens = _numeric(
-        detail, "input_tokens", "usage.input_tokens", "usage.prompt_tokens"
-    )
+    input_tokens = _numeric(detail, "input_tokens", "usage.input_tokens", "usage.prompt_tokens")
     output_tokens = _numeric(
         detail, "output_tokens", "usage.output_tokens", "usage.completion_tokens"
     )
@@ -295,18 +286,12 @@ def derive_task_kpis(
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Project one task into canonical quality, cycle, time and cost KPIs."""
-    task = (
-        task_detail.get("task") if isinstance(task_detail.get("task"), Mapping) else {}
-    )
+    task = task_detail.get("task") if isinstance(task_detail.get("task"), Mapping) else {}
     metadata = task.get("metadata") if isinstance(task.get("metadata"), Mapping) else {}
     state = str(task.get("state") or "")
-    reviews = [
-        item for item in task_detail.get("reviews", []) if isinstance(item, Mapping)
-    ]
+    reviews = [item for item in task_detail.get("reviews", []) if isinstance(item, Mapping)]
     publications = [
-        item
-        for item in task_detail.get("publications", [])
-        if isinstance(item, Mapping)
+        item for item in task_detail.get("publications", []) if isinstance(item, Mapping)
     ]
     routes: List[Dict[str, Any]] = []
     seen: set[str] = set()
@@ -326,9 +311,7 @@ def derive_task_kpis(
         for item in routes
     )
     output_tokens = sum(
-        _numeric(
-            item, "output_tokens", "usage.output_tokens", "usage.completion_tokens"
-        )
+        _numeric(item, "output_tokens", "usage.output_tokens", "usage.completion_tokens")
         for item in routes
     )
     cached_tokens = sum(
@@ -352,13 +335,9 @@ def derive_task_kpis(
         for item in metadata.get("review_outcomes", [])
         if isinstance(item, Mapping) and str(item.get("status") or "") == "confirmed"
     ]
-    escaped = [
-        item for item in outcomes if str(item.get("kind") or "") == "escaped_defect"
-    ]
+    escaped = [item for item in outcomes if str(item.get("kind") or "") == "escaped_defect"]
     clean = [item for item in outcomes if str(item.get("kind") or "") == "clean_window"]
-    escaped_severity = sum(
-        float(item.get("severity_weight") or 0.0) for item in escaped
-    )
+    escaped_severity = sum(float(item.get("severity_weight") or 0.0) for item in escaped)
     terminal = state in TASK_TERMINAL_STATES
     accepted = state == "completed"
     completed_at = _parse_time(task.get("completed_at"))
@@ -368,14 +347,9 @@ def derive_task_kpis(
         and (clock - completed_at).total_seconds() >= max(0.0, outcome_horizon_seconds)
     )
     quality_validated = bool(
-        escaped
-        or clean
-        or (accepted and horizon_elapsed)
-        or state in {"failed", "cancelled"}
+        escaped or clean or (accepted and horizon_elapsed) or state in {"failed", "cancelled"}
     )
-    delayed_success = (
-        1.0 if accepted and not escaped and (bool(clean) or horizon_elapsed) else 0.0
-    )
+    delayed_success = 1.0 if accepted and not escaped and (bool(clean) or horizon_elapsed) else 0.0
     quality_source = (
         "escaped_defect"
         if escaped
@@ -389,9 +363,7 @@ def derive_task_kpis(
     )
     executor_attempts = int(task.get("attempt_count") or 0)
     review_attempts = len(reviews)
-    rejected_reviews = sum(
-        1 for item in reviews if str(item.get("status") or "") == "rejected"
-    )
+    rejected_reviews = sum(1 for item in reviews if str(item.get("status") or "") == "rejected")
     lead_time_ms = _elapsed_ms(task.get("created_at"), task.get("completed_at"))
     return {
         "schema": "mac.task_kpis.v1",
@@ -444,9 +416,7 @@ def _bootstrap_mean_difference(
     # Keep enough resamples to represent the requested tail probability.  The
     # cap bounds scheduler work for very conservative sequential corrections.
     iterations = max(int(iterations), min(100_000, int(math.ceil(20.0 / alpha))))
-    state = (
-        int.from_bytes(hashlib.sha256(seed.encode("utf-8")).digest()[:8], "big") or 1
-    )
+    state = int.from_bytes(hashlib.sha256(seed.encode("utf-8")).digest()[:8], "big") or 1
 
     def rand_index(size: int) -> int:
         nonlocal state
@@ -491,9 +461,7 @@ class ScientificOptimizerConfig:
         return {**asdict(self), "active": self.active}
 
     @classmethod
-    def from_env(
-        cls, environ: Optional[Mapping[str, str]] = None
-    ) -> "ScientificOptimizerConfig":
+    def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "ScientificOptimizerConfig":
         env = os.environ if environ is None else environ
         return cls(
             enabled=_truthy(env.get("MAC_SCIENTIFIC_OPTIMIZER_ENABLED")),
@@ -509,17 +477,11 @@ class ScientificOptimizerConfig:
                 0,
                 86400,
             ),
-            auto_propose=str(
-                env.get("MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE") or "1"
-            ).lower()
+            auto_propose=str(env.get("MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE") or "1").lower()
             not in {"0", "false", "no", "off"},
-            auto_promote=str(
-                env.get("MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROMOTE") or "1"
-            ).lower()
+            auto_promote=str(env.get("MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROMOTE") or "1").lower()
             not in {"0", "false", "no", "off"},
-            auto_improve=str(
-                env.get("MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE") or "1"
-            ).lower()
+            auto_improve=str(env.get("MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE") or "1").lower()
             not in {"0", "false", "no", "off"},
             min_baseline_tasks=_bounded_int(
                 env.get("MAC_SCIENTIFIC_OPTIMIZER_MIN_BASELINE_TASKS") or 10,
@@ -552,8 +514,7 @@ class ScientificOptimizerConfig:
                 365 * 86400,
             ),
             improvement_cooldown_seconds=_bounded_float(
-                env.get("MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS")
-                or 604800,
+                env.get("MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS") or 604800,
                 "MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS",
                 3600,
                 365 * 86400,
@@ -646,9 +607,7 @@ class ScientificOptimizerService:
         return self.get_policy(policy_id)
 
     def get_policy(self, policy_id: str) -> Dict[str, Any]:
-        row = self.store.query_one(
-            "SELECT * FROM scientific_policies WHERE id = ?", (policy_id,)
-        )
+        row = self.store.query_one("SELECT * FROM scientific_policies WHERE id = ?", (policy_id,))
         if row is None:
             raise NotFoundError("scientific policy not found: %s" % policy_id)
         return self._policy_from_row(row)
@@ -670,10 +629,7 @@ class ScientificOptimizerService:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY project, name, version"
-        return [
-            self._policy_from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
-        ]
+        return [self._policy_from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
     def active_policy(self, project: str) -> Optional[Dict[str, Any]]:
         row = self.store.query_one(
@@ -695,9 +651,7 @@ class ScientificOptimizerService:
             description="Observed fleet defaults before scientific optimization",
             created_by=actor,
         )
-        return self.promote_policy(
-            baseline["id"], actor=actor, reason="bootstrap baseline"
-        )
+        return self.promote_policy(baseline["id"], actor=actor, reason="bootstrap baseline")
 
     def promote_policy(
         self, policy_id: str, *, actor: str = "operator", reason: str = ""
@@ -769,14 +723,10 @@ class ScientificOptimizerService:
         project_name = str(project or "").strip()
         hypothesis_text = str(hypothesis or "").strip()
         if not experiment_name or not project_name or not hypothesis_text:
-            raise ValidationError(
-                "experiment name, project, and hypothesis are required"
-            )
+            raise ValidationError("experiment name, project, and hypothesis are required")
         if primary_metric not in METRIC_DIRECTIONS:
             raise ValidationError("unsupported primary metric: %s" % primary_metric)
-        metric_direction = (
-            str(direction or METRIC_DIRECTIONS[primary_metric]).strip().lower()
-        )
+        metric_direction = str(direction or METRIC_DIRECTIONS[primary_metric]).strip().lower()
         if metric_direction not in {"maximize", "minimize"}:
             raise ValidationError("direction must be maximize or minimize")
         control = self.get_policy(control_policy_id)
@@ -784,9 +734,7 @@ class ScientificOptimizerService:
         if control_policy_id == treatment_policy_id:
             raise ValidationError("control and treatment policies must differ")
         if control["project"] != project_name or treatment["project"] != project_name:
-            raise ValidationError(
-                "experiment policies must belong to the experiment project"
-            )
+            raise ValidationError("experiment policies must belong to the experiment project")
         minimum = _bounded_int(
             self.config.default_min_samples_per_arm
             if min_samples_per_arm is None
@@ -851,11 +799,7 @@ class ScientificOptimizerService:
                     horizon,
                     json_dumps(normalized_guardrails),
                     1
-                    if (
-                        self.config.auto_promote
-                        if auto_promote is None
-                        else bool(auto_promote)
-                    )
+                    if (self.config.auto_promote if auto_promote is None else bool(auto_promote))
                     else 0,
                     json_dumps(ensure_json_object(metadata)),
                     str(created_by or "human"),
@@ -899,14 +843,9 @@ class ScientificOptimizerService:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at, id"
-        return [
-            self._experiment_from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
-        ]
+        return [self._experiment_from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
-    def start_experiment(
-        self, experiment_id: str, *, actor: str = "operator"
-    ) -> Dict[str, Any]:
+    def start_experiment(self, experiment_id: str, *, actor: str = "operator") -> Dict[str, Any]:
         experiment = self.get_experiment(experiment_id)
         if experiment["state"] not in {"draft", "paused"}:
             raise ValidationError("experiment can only start from draft or paused")
@@ -918,9 +857,7 @@ class ScientificOptimizerService:
                 reason="experiment control baseline",
             )
         if active["id"] != experiment["control_policy_id"]:
-            raise ValidationError(
-                "experiment control policy must be the project's active policy"
-            )
+            raise ValidationError("experiment control policy must be the project's active policy")
         now = utcnow()
         try:
             with self.store.transaction() as conn:
@@ -952,9 +889,7 @@ class ScientificOptimizerService:
         experiment = self.get_experiment(experiment_id)
         if experiment["state"] not in {"running", "monitoring", "candidate"}:
             raise ValidationError("only active experiments can be paused")
-        self._set_experiment_state(
-            experiment_id, "paused", actor, reason, release_slot=True
-        )
+        self._set_experiment_state(experiment_id, "paused", actor, reason, release_slot=True)
         return self.get_experiment(experiment_id)
 
     def promote_experiment(
@@ -983,9 +918,7 @@ class ScientificOptimizerService:
             )
             decision = json_loads(row["decision"], {}) if row is not None else {}
         else:
-            raise ValidationError(
-                "experiment can only be promoted from running or candidate"
-            )
+            raise ValidationError("experiment can only be promoted from running or candidate")
         if decision.get("status") != "promote":
             raise ValidationError(
                 "experiment has no evidence-backed promote decision: %s"
@@ -1018,17 +951,11 @@ class ScientificOptimizerService:
             (project_name,),
         )
         experiment = (
-            self._experiment_from_row(experiment_row)
-            if experiment_row is not None
-            else None
+            self._experiment_from_row(experiment_row) if experiment_row is not None else None
         )
         if experiment is None:
             return self._apply_policy(original, active, None), None
-        origin = (
-            original.get("origin")
-            if isinstance(original.get("origin"), Mapping)
-            else {}
-        )
+        origin = original.get("origin") if isinstance(original.get("origin"), Mapping) else {}
         if str(origin.get("type") or "") in {
             "scientific_optimizer",
             "backlog_grooming",
@@ -1056,15 +983,11 @@ class ScientificOptimizerService:
         sample_probability = (
             1.0 if phase == "monitor" else float(experiment["exploration_fraction"])
         )
-        if (
-            _stable_point(experiment["id"], task_id, "sample", phase)
-            >= sample_probability
-        ):
+        if _stable_point(experiment["id"], task_id, "sample", phase) >= sample_probability:
             return self._apply_policy(original, active, None), None
         treatment_probability = 0.9 if phase == "monitor" else 0.5
         treatment_selected = (
-            _stable_point(experiment["id"], task_id, "arm", phase)
-            < treatment_probability
+            _stable_point(experiment["id"], task_id, "arm", phase) < treatment_probability
         )
         arm = "treatment" if treatment_selected else "control"
         policy = treatment if treatment_selected else control
@@ -1189,9 +1112,7 @@ class ScientificOptimizerService:
         observations: List[Dict[str, Any]] = []
         for row in rows:
             try:
-                observations.append(
-                    self.observe_task(experiment_id, str(row["task_id"]))
-                )
+                observations.append(self.observe_task(experiment_id, str(row["task_id"])))
             except Exception as exc:
                 self._observe(
                     "optimizer.observation.failed",
@@ -1226,8 +1147,7 @@ class ScientificOptimizerService:
             if metric != "cost_usd" or bool(item["metrics"].get("cost_known"))
         ]
         by_arm = {
-            arm: [item for item in usable if item["arm"] == arm]
-            for arm in ("control", "treatment")
+            arm: [item for item in usable if item["arm"] == arm] for arm in ("control", "treatment")
         }
         minimum = int(experiment["min_samples_per_arm"])
         maximum = int(experiment["max_samples_per_arm"])
@@ -1321,9 +1241,7 @@ class ScientificOptimizerService:
                     reason="maximum sample budget reached without superiority",
                 )
             else:
-                decision.update(
-                    status="collecting", reason="effect remains inconclusive"
-                )
+                decision.update(status="collecting", reason="effect remains inconclusive")
         self._record_decision(experiment, decision, actor)
         return decision
 
@@ -1375,10 +1293,7 @@ class ScientificOptimizerService:
                         decision["reason"],
                         release_slot=True,
                     )
-                elif (
-                    decision["status"] == "retain"
-                    and experiment["state"] == "monitoring"
-                ):
+                elif decision["status"] == "retain" and experiment["state"] == "monitoring":
                     self._set_experiment_state(
                         experiment["id"],
                         "completed",
@@ -1397,15 +1312,11 @@ class ScientificOptimizerService:
                     baseline: Optional[List[Dict[str, Any]]] = None
                     if not self._project_has_active_experiment(project):
                         baseline = self._project_baseline(project)
-                    proposal = self.propose_next_experiment(
-                        project, baseline=baseline
-                    )
+                    proposal = self.propose_next_experiment(project, baseline=baseline)
                     if proposal is not None:
                         proposals.append(proposal)
                     elif self.config.auto_improve:
-                        improvement = self.propose_improvement_task(
-                            project, baseline=baseline
-                        )
+                        improvement = self.propose_improvement_task(project, baseline=baseline)
                         if improvement is not None:
                             proposals.append(improvement)
             report = {
@@ -1433,10 +1344,13 @@ class ScientificOptimizerService:
             self._run_lock.release()
 
     def _project_has_active_experiment(self, project: str) -> bool:
-        return self.store.query_one(
-            "SELECT id FROM scientific_experiments WHERE project = ? AND state IN ('running', 'candidate', 'monitoring') LIMIT 1",
-            (project,),
-        ) is not None
+        return (
+            self.store.query_one(
+                "SELECT id FROM scientific_experiments WHERE project = ? AND state IN ('running', 'candidate', 'monitoring') LIMIT 1",
+                (project,),
+            )
+            is not None
+        )
 
     def propose_next_experiment(
         self,
@@ -1455,18 +1369,12 @@ class ScientificOptimizerService:
         treatment_params = dict(params)
         primary_metric = "cycles_to_accept"
         hypothesis = ""
-        costs_known = any(
-            item["cost_known"] and item["cost_usd"] > 0 for item in baseline
-        )
+        costs_known = any(item["cost_known"] and item["cost_usd"] > 0 for item in baseline)
         if float(params.get("model_strength") or 0) > 1 and costs_known:
             treatment_params["model_strength"] = int(params["model_strength"]) - 1
             primary_metric = "cost_usd"
             hypothesis = "One lower model-strength rung is quality-noninferior while reducing accepted-task cost."
-        elif (
-            "model_strength" not in params
-            and costs_known
-            and self._strength_ladder_ready()
-        ):
+        elif "model_strength" not in params and costs_known and self._strength_ladder_ready():
             # The control remains the observed fleet default.  Pinning rung 9
             # creates the first falsifiable step down without pretending we
             # know that the default is a particular named model.
@@ -1479,9 +1387,9 @@ class ScientificOptimizerService:
             )
             primary_metric = "total_tokens"
             hypothesis = "A smaller reviewer turn budget is quality-noninferior while reducing tokens per accepted task."
-        elif sum(item["cycles_to_accept"] for item in baseline) / len(
-            baseline
-        ) > 1.5 and not bool(params.get("plan_first")):
+        elif sum(item["cycles_to_accept"] for item in baseline) / len(baseline) > 1.5 and not bool(
+            params.get("plan_first")
+        ):
             treatment_params["plan_first"] = True
             primary_metric = "cycles_to_accept"
             hypothesis = "Planning repository tasks before execution is quality-noninferior while reducing rework cycles."
@@ -1534,8 +1442,7 @@ class ScientificOptimizerService:
         if len(baseline) < self.config.min_baseline_tasks:
             return None
         means = {
-            metric: sum(float(item.get(metric) or 0.0) for item in baseline)
-            / len(baseline)
+            metric: sum(float(item.get(metric) or 0.0) for item in baseline) / len(baseline)
             for metric in (
                 "cycles_to_accept",
                 "executor_attempts",
@@ -1554,9 +1461,7 @@ class ScientificOptimizerService:
             "AND state NOT IN ('completed', 'failed', 'cancelled') LIMIT 1",
             (project, title),
         )
-        if open_task is not None or self._improvement_in_cooldown(
-            project, hypothesis_key
-        ):
+        if open_task is not None or self._improvement_in_cooldown(project, hypothesis_key):
             return None
         baseline_ids = [str(item.get("task_id") or "") for item in baseline]
         description = (
@@ -1684,8 +1589,7 @@ class ScientificOptimizerService:
             "decisions": decisions,
             "events": events,
             "truncated": any(
-                len(items) >= bounded
-                for items in (assignments, observations, decisions, events)
+                len(items) >= bounded for items in (assignments, observations, decisions, events)
             ),
         }
 
@@ -1744,9 +1648,7 @@ class ScientificOptimizerService:
             try:
                 self.tick(trigger="scheduled")
             except Exception:
-                self._observe(
-                    "optimizer.tick.failed", "error", "scientific-optimizer", {}
-                )
+                self._observe("optimizer.tick.failed", "error", "scientific-optimizer", {})
             if self._stop.wait(max(1.0, self.config.interval_seconds)):
                 return
 
@@ -1756,9 +1658,7 @@ class ScientificOptimizerService:
         """Claim the singleton scheduler slot using portable transactional SQL."""
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
-        expires = (
-            now_dt + timedelta(seconds=max(30.0, self.config.interval_seconds))
-        ).isoformat()
+        expires = (now_dt + timedelta(seconds=max(30.0, self.config.interval_seconds))).isoformat()
         with self.store.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE scientific_optimizer_locks "
@@ -1825,40 +1725,24 @@ class ScientificOptimizerService:
             "ORDER BY COALESCE(completed_at, updated_at) DESC, id LIMIT ?",
             (project, sample_limit),
         )
-        cursor = tuple(
-            (str(row["id"]), str(row["updated_at"] or "")) for row in rows
-        )
+        cursor = tuple((str(row["id"]), str(row["updated_at"] or "")) for row in rows)
         cached = self._baseline_cache.get(project)
-        if (
-            cached is not None
-            and cached[0] == cursor
-            and time.monotonic() < cached[1]
-        ):
+        if cached is not None and cached[0] == cursor and time.monotonic() < cached[1]:
             return copy.deepcopy(cached[2])
         baseline: List[Dict[str, Any]] = []
         for row in rows:
             try:
                 task_id = str(row["id"])
                 detail = self._task_detail(task_id)
-                task = (
-                    detail.get("task")
-                    if isinstance(detail.get("task"), Mapping)
-                    else {}
-                )
-                metadata = (
-                    task.get("metadata")
-                    if isinstance(task.get("metadata"), Mapping)
-                    else {}
-                )
+                task = detail.get("task") if isinstance(detail.get("task"), Mapping) else {}
+                metadata = task.get("metadata") if isinstance(task.get("metadata"), Mapping) else {}
                 execution = (
                     metadata.get("execution_contract")
                     if isinstance(metadata.get("execution_contract"), Mapping)
                     else {}
                 )
                 origin = (
-                    metadata.get("origin")
-                    if isinstance(metadata.get("origin"), Mapping)
-                    else {}
+                    metadata.get("origin") if isinstance(metadata.get("origin"), Mapping) else {}
                 )
                 # Keep the Python guard as a compatibility check for stores
                 # whose JSON query implementation is less strict than
@@ -1866,8 +1750,7 @@ class ScientificOptimizerService:
                 if (
                     str(execution.get("type") or "") != "repository"
                     or bool(metadata.get("optimizer_exempt"))
-                    or str(origin.get("type") or "")
-                    in {"scientific_optimizer", "backlog_grooming"}
+                    or str(origin.get("type") or "") in {"scientific_optimizer", "backlog_grooming"}
                 ):
                     continue
                 baseline.append(
@@ -1902,9 +1785,7 @@ class ScientificOptimizerService:
             created = _parse_time(row["created_at"])
             if created is None:
                 continue
-            return (now - created).total_seconds() < float(
-                self.config.improvement_cooldown_seconds
-            )
+            return (now - created).total_seconds() < float(self.config.improvement_cooldown_seconds)
         return False
 
     @staticmethod
@@ -1997,9 +1878,7 @@ class ScientificOptimizerService:
             spec = dict(spec_raw) if isinstance(spec_raw, Mapping) else {}
             direction = str(spec.get("direction") or METRIC_DIRECTIONS[metric]).lower()
             if direction not in {"maximize", "minimize"}:
-                raise ValidationError(
-                    "guardrail direction must be maximize or minimize"
-                )
+                raise ValidationError("guardrail direction must be maximize or minimize")
             normalized[metric] = {
                 "direction": direction,
                 "margin": _bounded_float(
@@ -2019,12 +1898,8 @@ class ScientificOptimizerService:
         *,
         alpha: float,
     ) -> Dict[str, Any]:
-        control = [
-            float(item["metrics"].get(metric) or 0.0) for item in by_arm["control"]
-        ]
-        treatment = [
-            float(item["metrics"].get(metric) or 0.0) for item in by_arm["treatment"]
-        ]
+        control = [float(item["metrics"].get(metric) or 0.0) for item in by_arm["control"]]
+        treatment = [float(item["metrics"].get(metric) or 0.0) for item in by_arm["treatment"]]
         result = _bootstrap_mean_difference(
             control,
             treatment,
@@ -2113,9 +1988,7 @@ class ScientificOptimizerService:
             ).fetchone()
             if previous_row is not None:
                 previous = json_loads(previous_row["decision"], {})
-                if self._decision_fingerprint(previous) == self._decision_fingerprint(
-                    decision
-                ):
+                if self._decision_fingerprint(previous) == self._decision_fingerprint(decision):
                     return False
             conn.execute(
                 "INSERT INTO scientific_decisions (id, experiment_id, status, decision, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -2207,18 +2080,14 @@ class ScientificOptimizerService:
             ),
         )
 
-    def _observe(
-        self, name: str, level: str, subject_id: str, detail: Mapping[str, Any]
-    ) -> None:
+    def _observe(self, name: str, level: str, subject_id: str, detail: Mapping[str, Any]) -> None:
         try:
             self.observability.record_log(
                 name,
                 level=level,
                 layer="control_plane",
                 source="scientific-optimizer",
-                subject_type="service"
-                if subject_id == "scientific-optimizer"
-                else "experiment",
+                subject_type="service" if subject_id == "scientific-optimizer" else "experiment",
                 subject_id=subject_id,
                 detail=dict(detail),
             )

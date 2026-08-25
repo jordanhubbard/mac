@@ -163,9 +163,7 @@ def _write_inputs(tmp_path, coverage_doc, policy_doc):
 
 def test_main_pass_exit_zero(policy_mod, tmp_path, capsys):
     coverage_path, policy_path = _write_inputs(tmp_path, _coverage_doc(), _policy_doc())
-    code = policy_mod.main(
-        ["--coverage-json", str(coverage_path), "--policy", str(policy_path)]
-    )
+    code = policy_mod.main(["--coverage-json", str(coverage_path), "--policy", str(policy_path)])
     assert code == 0
     out = capsys.readouterr().out
     assert "coverage safety: statements 95/100" in out
@@ -175,9 +173,7 @@ def test_main_fail_exit_one(policy_mod, tmp_path, capsys):
     coverage_path, policy_path = _write_inputs(
         tmp_path, _coverage_doc(covered_lines=10), _policy_doc()
     )
-    code = policy_mod.main(
-        ["--coverage-json", str(coverage_path), "--policy", str(policy_path)]
-    )
+    code = policy_mod.main(["--coverage-json", str(coverage_path), "--policy", str(policy_path)])
     assert code == 1
     captured = capsys.readouterr()
     assert "statement coverage" in captured.err
@@ -212,9 +208,7 @@ def test_main_invalid_coverage_json_exit_two(policy_mod, tmp_path, capsys):
     _, policy_path = _write_inputs(tmp_path, _coverage_doc(), _policy_doc())
     coverage_path = tmp_path / "broken.json"
     coverage_path.write_text("{not json", encoding="utf-8")
-    code = policy_mod.main(
-        ["--coverage-json", str(coverage_path), "--policy", str(policy_path)]
-    )
+    code = policy_mod.main(["--coverage-json", str(coverage_path), "--policy", str(policy_path)])
     assert code == 2
     assert "invalid input" in capsys.readouterr().err
 
@@ -250,9 +244,7 @@ def test_diff_pass_when_changed_lines_covered(policy_mod):
 
 
 def test_diff_fail_when_changed_line_uncovered(policy_mod):
-    doc = _diff_coverage_doc(
-        {"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [12]}}
-    )
+    doc = _diff_coverage_doc({"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [12]}})
     result = policy_mod.evaluate_diff(doc, _diff_policy_doc(), {"src/mac/foo.py": {10, 12}})
     assert result["status"] == "fail"
     assert result["statements"]["percent"] == 50.0
@@ -278,9 +270,7 @@ def test_diff_no_changed_lines_passes(policy_mod):
 def test_diff_ignores_non_statement_changed_lines(policy_mod):
     # A changed line that is neither executed nor missing (blank/comment) is not
     # counted as relevant.
-    doc = _diff_coverage_doc(
-        {"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [11]}}
-    )
+    doc = _diff_coverage_doc({"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [11]}})
     result = policy_mod.evaluate_diff(doc, _diff_policy_doc(), {"src/mac/foo.py": {10, 99}})
     assert result["statements"]["relevant"] == 1
     assert result["status"] == "pass"
@@ -306,9 +296,7 @@ def test_main_diff_mode_with_changed_lines_file(policy_mod, tmp_path, capsys):
     coverage_path = tmp_path / "coverage.json"
     coverage_path.write_text(
         json.dumps(
-            _diff_coverage_doc(
-                {"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [11]}}
-            )
+            _diff_coverage_doc({"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [11]}})
         ),
         encoding="utf-8",
     )
@@ -323,10 +311,14 @@ def test_main_diff_mode_with_changed_lines_file(policy_mod, tmp_path, capsys):
     changed_path.write_text(json.dumps({"src/mac/foo.py": [10, 11]}), encoding="utf-8")
     code = policy_mod.main(
         [
-            "--coverage-json", str(coverage_path),
-            "--policy", str(policy_path),
-            "--mode", "diff",
-            "--changed-lines", str(changed_path),
+            "--coverage-json",
+            str(coverage_path),
+            "--policy",
+            str(policy_path),
+            "--mode",
+            "diff",
+            "--changed-lines",
+            str(changed_path),
         ]
     )
     assert code == 1  # line 11 uncovered -> 50% < 90%

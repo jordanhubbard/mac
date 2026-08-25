@@ -64,7 +64,9 @@ def test_claude_on_path_but_unauthed_is_skipped(tmp_path):
 def test_codex_via_auth_json(tmp_path):
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir()
-    (codex_dir / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "sk-codex"}), encoding="utf-8")
+    (codex_dir / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "sk-codex"}), encoding="utf-8"
+    )
     choice = resolve_coding_agent(env={}, home=tmp_path, which=_which("codex"))
     assert choice.agent == "codex"
     assert choice.auth_source == "~/.codex/auth.json"
@@ -90,7 +92,9 @@ def test_priority_claude_beats_codex_and_cursor(tmp_path):
     # All three installed + authed; claude must win.
     (tmp_path / ".claude.json").write_text(json.dumps({"primary_key": "k"}), encoding="utf-8")
     (tmp_path / ".codex").mkdir()
-    (tmp_path / ".codex" / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "k"}), encoding="utf-8")
+    (tmp_path / ".codex" / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "k"}), encoding="utf-8"
+    )
     (tmp_path / ".cursor").mkdir()
     choice = resolve_coding_agent(
         env={}, home=tmp_path, which=_which("claude", "codex", "cursor-agent")
@@ -104,9 +108,7 @@ def test_verification_falls_through_failed_claude_to_codex(tmp_path):
         env={"ANTHROPIC_API_KEY": "anthropic", "OPENAI_API_KEY": "openai"},
         home=tmp_path,
         which=_which("claude", "codex"),
-        accept=lambda candidate: (
-            seen.append(candidate.agent) or candidate.agent == "codex"
-        ),
+        accept=lambda candidate: seen.append(candidate.agent) or candidate.agent == "codex",
     )
 
     assert seen == ["claude", "codex"]
@@ -173,7 +175,9 @@ def test_verification_does_not_fall_through_explicit_agent_pin(tmp_path):
 def test_codex_chosen_when_claude_unauthed(tmp_path):
     # claude installed but unauthed; codex authed -> codex wins.
     (tmp_path / ".codex").mkdir()
-    (tmp_path / ".codex" / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "k"}), encoding="utf-8")
+    (tmp_path / ".codex" / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "k"}), encoding="utf-8"
+    )
     choice = resolve_coding_agent(env={}, home=tmp_path, which=_which("claude", "codex"))
     assert choice.agent == "codex"
 
@@ -305,7 +309,16 @@ def test_route_fingerprint_changes_with_protocol_or_endpoint(tmp_path):
         which=_which("codex"),
     )
 
-    assert len({responses.route_fingerprint(), chat.route_fingerprint(), other_endpoint.route_fingerprint()}) == 3
+    assert (
+        len(
+            {
+                responses.route_fingerprint(),
+                chat.route_fingerprint(),
+                other_endpoint.route_fingerprint(),
+            }
+        )
+        == 3
+    )
 
 
 def test_detect_all_requires_matching_route_verification(tmp_path):
@@ -496,7 +509,9 @@ def test_force_off_disables(tmp_path):
 def test_force_pins_to_codex_even_when_claude_available(tmp_path):
     (tmp_path / ".claude.json").write_text(json.dumps({"primary_key": "k"}), encoding="utf-8")
     (tmp_path / ".codex").mkdir()
-    (tmp_path / ".codex" / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "k"}), encoding="utf-8")
+    (tmp_path / ".codex" / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "k"}), encoding="utf-8"
+    )
     choice = resolve_coding_agent(
         env={"MAC_CODING_AGENT": "codex"}, home=tmp_path, which=_which("claude", "codex")
     )

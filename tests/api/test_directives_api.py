@@ -109,8 +109,7 @@ def test_directive_api_enforces_admin_lifecycle_and_agent_bound_ack(monkeypatch)
     )
     assert wrong_agent.status_code == 403
     ack = client.post(
-        "/agents/%s/directive-activations/%s/ack"
-        % (agent.id, activated.json()["id"]),
+        "/agents/%s/directive-activations/%s/ack" % (agent.id, activated.json()["id"]),
         headers=_headers("worker"),
         json={"digest": version["digest"]},
     )

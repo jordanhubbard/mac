@@ -17,6 +17,7 @@ The peer/directive prompt TEXT is ported verbatim from the gateway plugin's
 runPeerTurn — it is the sole guard on a one-shot autonomous turn (the five
 safety-floor hard-stops), so it must stay byte-identical across both surfaces.
 """
+
 from __future__ import annotations
 
 import json
@@ -106,7 +107,11 @@ class DirectableMixin:
                 level="warning",
                 detail={"stream_id": stream_id, "sender": sender},
             )
-            return {"status": "invalid", "summary": "malformed peer message", "stream_id": stream_id}
+            return {
+                "status": "invalid",
+                "summary": "malformed peer message",
+                "stream_id": stream_id,
+            }
 
         prompt = self._directable_peer_prompt(stream, message)
         reply_text, turn_outcome = self._directable_turn_outcome(
@@ -121,7 +126,8 @@ class DirectableMixin:
             turn_outcome=turn_outcome,
         )
         self._observe_log(
-            "worker.agentbus.peer.completed" if turn_outcome == TURN_COMPLETED
+            "worker.agentbus.peer.completed"
+            if turn_outcome == TURN_COMPLETED
             else "worker.agentbus.peer.turn_failed",
             level="info" if turn_outcome == TURN_COMPLETED else "warning",
             detail={
@@ -206,7 +212,8 @@ class DirectableMixin:
             turn_outcome=turn_outcome,
         )
         self._observe_log(
-            "worker.agentbus.directive.completed" if turn_outcome == TURN_COMPLETED
+            "worker.agentbus.directive.completed"
+            if turn_outcome == TURN_COMPLETED
             else "worker.agentbus.directive.turn_failed",
             level="info" if turn_outcome == TURN_COMPLETED else "warning",
             detail={
@@ -341,9 +348,10 @@ class DirectableMixin:
         # construction — the exact task_60be mis-delivery.
         active_task_id = self._active_task_id()
         if active_task_id != task_id:
-            reason = (
-                "agent %s is not the active executor for task %s (active=%s)"
-                % (self.agent_id, task_id, active_task_id or "none")
+            reason = "agent %s is not the active executor for task %s (active=%s)" % (
+                self.agent_id,
+                task_id,
+                active_task_id or "none",
             )
             self._publish_executor_ack(
                 stream,
@@ -598,8 +606,7 @@ class DirectableMixin:
             if result.returncode != 0 or not output:
                 stderr_summary = (result.stderr or "").strip()[:500]
                 text = (
-                    "Turn failed with returncode %d. %s"
-                    % (result.returncode, stderr_summary)
+                    "Turn failed with returncode %d. %s" % (result.returncode, stderr_summary)
                 ).strip()
                 return text, TURN_ERROR
             try:
@@ -660,9 +667,7 @@ class DirectableMixin:
                 "/agentbus/streams/%s/chunks?%s"
                 % (
                     quote(stream_id, safe=""),
-                    urlencode(
-                        {"agent_id": self.agent_id, "after_sequence": 0, "limit": 10}
-                    ),
+                    urlencode({"agent_id": self.agent_id, "after_sequence": 0, "limit": 10}),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - never crash the loop over a read.
@@ -678,9 +683,7 @@ class DirectableMixin:
                 return last["payload"]
         return None
 
-    def _directable_correlation_id(
-        self, stream: JsonDict, payload: Optional[JsonDict]
-    ) -> str:
+    def _directable_correlation_id(self, stream: JsonDict, payload: Optional[JsonDict]) -> str:
         if isinstance(payload, dict):
             candidate = payload.get("correlation_id")
             if candidate:

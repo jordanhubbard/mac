@@ -63,9 +63,7 @@ def test_curiosity_list_without_a_status_asks_for_everything(tmp_path, monkeypat
         seen["status"] = status
         return {"schema": "mac.curiosity_candidates.v1", "count": 0, "candidates": []}
 
-    monkeypatch.setattr(
-        "mac.services.ControlPlane.list_curiosity_candidates", _list
-    )
+    monkeypatch.setattr("mac.services.ControlPlane.list_curiosity_candidates", _list)
 
     rc, _out = _run(tmp_path, "admin", "curiosity", "list")
 
@@ -88,13 +86,12 @@ def test_curiosity_decision_carries_the_audit_trail(tmp_path, monkeypatch, decis
         )
         return {"schema": "mac.curiosity_decision.v1", "decision": verb}
 
-    monkeypatch.setattr(
-        "mac.services.ControlPlane.decide_curiosity_candidate", _decide
-    )
+    monkeypatch.setattr("mac.services.ControlPlane.decide_curiosity_candidate", _decide)
 
     rc, out = _run(
         tmp_path,
-        "admin", "curiosity",
+        "admin",
+        "curiosity",
         decision,
         "cur_abc",
         "--actor",
@@ -124,7 +121,8 @@ def test_a_decision_missing_an_audit_field_is_rejected_by_the_parser(tmp_path, o
     trail the quarantine design depends on.
     """
     args = [
-        "admin", "curiosity",
+        "admin",
+        "curiosity",
         "approve",
         "cur_abc",
         "--actor",

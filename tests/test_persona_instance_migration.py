@@ -10,7 +10,6 @@ legacy database, records an immutable receipt, and is idempotent.
 from __future__ import annotations
 
 
-
 from mac.identity_service import IdentityService
 from mac.models import HermesInstance, PersonaInstance
 from mac.test_support import (
@@ -110,5 +109,7 @@ def test_migration_renames_tables_and_columns(tmp_path):
         )
     finally:
         store.close()
+
+
 def test_hermes_instance_is_persona_instance_alias():
     assert HermesInstance is PersonaInstance

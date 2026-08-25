@@ -91,8 +91,10 @@ def test_policy_binaries_match_the_image_path(agent):
     policies = _policy().get("network_policies") or {}
     paths = [b["path"] for b in policies["%s_provider" % agent]["binaries"]]
     expected = "/usr/local/bin/%s" % SANDBOX_BINARY[agent]
-    assert expected in paths, (
-        "%s policy lists %s but the image installs %s" % (agent, paths, expected)
+    assert expected in paths, "%s policy lists %s but the image installs %s" % (
+        agent,
+        paths,
+        expected,
     )
 
 

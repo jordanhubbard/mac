@@ -121,8 +121,7 @@ def read_only_report_executor_resources():
         REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY: (
             read_only_report_repository_executor_attestation(
                 runtime_image_ref=(
-                    "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:"
-                    + "1" * 64
+                    "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64
                 ),
                 policy_sha256="sha256:" + "2" * 64,
                 openshell_bin_path="/approved/openshell",
@@ -362,7 +361,9 @@ def verified_deployment_metadata(cp=None, agent_id=None):
     return {"returncode": 0, "verification": manifest}
 
 
-def create_verified_rollout(cp, version="1.0", strategy="canary", tenant_id=None, channel="fleet", health_policy=None):
+def create_verified_rollout(
+    cp, version="1.0", strategy="canary", tenant_id=None, channel="fleet", health_policy=None
+):
     runtime = create_runtime(cp, "runtime-%s" % version)
     return cp.create_rollout(
         version,
@@ -549,7 +550,11 @@ def test_review_claim_is_idempotent_for_identical_evidence(cp):
     cp.dispatch_once()
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
-        task.id, "test", "artifact://pytest", "pytest passed", worker.id,
+        task.id,
+        "test",
+        "artifact://pytest",
+        "pytest passed",
+        worker.id,
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
@@ -561,7 +566,9 @@ def test_review_claim_is_idempotent_for_identical_evidence(cp):
     cp.claim_review(review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False)
     assert len(claim_rows()) == 1
     for _ in range(50):
-        result = cp.claim_review(review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False)
+        result = cp.claim_review(
+            review.id, reviewer.id, executor_evidence_id=evidence.id, sync_beads=False
+        )
         assert result.get("idempotent") is True
     assert len(claim_rows()) == 1  # 50 identical re-claims added no rows
 
@@ -714,7 +721,11 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, semantic_reviewer
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
-        task.id, "log", "artifact://worker-result", "tests passed", worker.id,
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
@@ -842,23 +853,15 @@ def test_default_review_publication_barrier_defers_without_false_failure(
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     events = cp.list_observability(limit=100)
     deferred_events = [
-        event
-        for event in events
-        if event.name == "workflow.default_review.publication_deferred"
+        event for event in events if event.name == "workflow.default_review.publication_deferred"
     ]
     assert len(deferred_events) == 1
-    assert not any(
-        event.name == "workflow.default_review.publish_failed" for event in events
-    )
+    assert not any(event.name == "workflow.default_review.publish_failed" for event in events)
     activity = (cp.get_task(task.id).metadata or {}).get("activity", [])
-    assert not any(
-        "Auto-publish" in str(item.get("summary") or "") for item in activity
-    )
+    assert not any("Auto-publish" in str(item.get("summary") or "") for item in activity)
 
 
-def test_runtime_source_publication_is_rejected_by_active_fleet_epoch(
-    cp, monkeypatch
-):
+def test_runtime_source_publication_is_rejected_by_active_fleet_epoch(cp, monkeypatch):
     from mac.models import PublicationDeferredError
 
     task = cp.create_task("Runtime mutation fence")
@@ -921,10 +924,12 @@ def _drive_task_to_approved(cp, *, task_metadata=None, files_changed=None):
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
-        task.id, "log", "artifact://worker-result", "tests passed", worker.id,
-        metadata=verified_repo_metadata(
-            cp, worker.id, files_changed=files_changed
-        ),
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id, files_changed=files_changed),
     )
     cp.submit_for_review(task.id, worker.id)
     cp.advance_default_review_workflow(task.id)  # assign reviewer
@@ -973,9 +978,7 @@ def test_conflict_creates_single_integration_task(cp, monkeypatch, semantic_revi
     monkeypatch.setattr(
         cp,
         "publish_task",
-        _merge_gate_conflict_raiser(
-            cp, task.id, evidence, conflicted_paths=["src/example.py"]
-        ),
+        _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
     )
     result = cp.advance_default_review_workflow(task.id)
 
@@ -992,7 +995,9 @@ def test_conflict_creates_single_integration_task(cp, monkeypatch, semantic_revi
     payload = (integration.metadata or {}).get("context_payload", {})
     assert payload.get("schema") == "mac.conflict_integration_payload.v1"
     assert payload["approved_task"]["task_id"] == task.id
-    assert payload["approved_task"]["reviewed_head_sha"] == "abcdef1234567890abcdef1234567890abcdef12"
+    assert (
+        payload["approved_task"]["reviewed_head_sha"] == "abcdef1234567890abcdef1234567890abcdef12"
+    )
     assert payload["canonical_baseline"]["main_sha"] == "b" * 40
     assert payload["conflicted_paths"] == ["src/example.py"]
     # The approved task is a non-terminal input authority, not a scheduler
@@ -1029,9 +1034,7 @@ def test_conflict_handoff_is_idempotent(cp, monkeypatch, semantic_reviewer_on):
     monkeypatch.setattr(
         cp,
         "publish_task",
-        _merge_gate_conflict_raiser(
-            cp, task.id, evidence, conflicted_paths=["src/example.py"]
-        ),
+        _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
     )
     first = cp.advance_default_review_workflow(task.id)
     second = cp.advance_default_review_workflow(task.id)
@@ -1043,23 +1046,22 @@ def test_conflict_handoff_is_idempotent(cp, monkeypatch, semantic_reviewer_on):
     integration_tasks = [
         t
         for t in cp.list_tasks(limit=100)
-        if (t.metadata or {}).get("conflict_integration", {}).get("approved_task_id")
-        == task.id
+        if (t.metadata or {}).get("conflict_integration", {}).get("approved_task_id") == task.id
     ]
     assert len(integration_tasks) == 1
 
 
 def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
-    cp, monkeypatch, semantic_reviewer_on,
+    cp,
+    monkeypatch,
+    semantic_reviewer_on,
 ):
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
 
     monkeypatch.setattr(
         cp,
         "publish_task",
-        _merge_gate_conflict_raiser(
-            cp, task.id, evidence, conflicted_paths=["src/example.py"]
-        ),
+        _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
     )
     first = cp.advance_default_review_workflow(task.id)
     current_id = first["integration_task_id"]
@@ -1096,7 +1098,9 @@ def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
 
 
 def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
-    cp, monkeypatch, semantic_reviewer_on,
+    cp,
+    monkeypatch,
+    semantic_reviewer_on,
 ):
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
 
@@ -1146,18 +1150,12 @@ def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
     assert lifecycle["replacement_task_id"] == current_id
 
 
-
-
-
-
 def test_record_log_suppresses_verbose_poll_names_by_default(cp):
     """mem-04: noisy poll-log names (worker.no_task, etc.) are dropped
     by default. The 1.83M-of-2.09M-row bloat on rocky was these six
     names firing per-poll regardless of state change."""
     # Default: suppressed → record_log returns None and no row lands.
-    result = cp.record_log(
-        "worker.no_task", level="debug", source="worker-1"
-    )
+    result = cp.record_log("worker.no_task", level="debug", source="worker-1")
     assert result is None
     assert cp.record_log("agentbus.chunks.read", source="agent-1") is None
     assert (
@@ -1341,7 +1339,9 @@ def test_default_review_workflow_caps_retractions(cp, monkeypatch):
     assert "workflow.default_review.exhausted" in names
 
 
-def test_default_review_retraction_cap_resets_on_new_evidence(cp, semantic_reviewer_on, monkeypatch):
+def test_default_review_retraction_cap_resets_on_new_evidence(
+    cp, semantic_reviewer_on, monkeypatch
+):
     """mem-12: the cap is scoped to retractions AFTER the latest evidence.
     Submitting fresh evidence implicitly resets the counter."""
     monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
@@ -1361,6 +1361,7 @@ def test_default_review_retraction_cap_resets_on_new_evidence(cp, semantic_revie
     )
     cp.submit_for_review(task.id, worker.id)
     from mac.models import ReviewStatus, new_id, utcnow
+
     old_now = "2026-05-29T00:00:00+00:00"
     for label in ("a", "b"):
         cp.store.execute(
@@ -1434,10 +1435,7 @@ def test_default_review_workflow_caps_verdict_wait(cp, semantic_reviewer_on, mon
     cp.advance_default_review_workflow(task.id)
     from mac.models import ReviewStatus
 
-    pending = [
-        r for r in cp.list_reviews(task.id)
-        if r.status == ReviewStatus.PENDING.value
-    ]
+    pending = [r for r in cp.list_reviews(task.id) if r.status == ReviewStatus.PENDING.value]
     assert pending, "expected a pending review after first advance"
     review = pending[0]
 
@@ -1461,7 +1459,9 @@ def test_default_review_workflow_caps_verdict_wait(cp, semantic_reviewer_on, mon
     assert "workflow.default_review.exhausted" in names
 
 
-def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(cp, semantic_reviewer_on):
+def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(
+    cp, semantic_reviewer_on
+):
     worker = register_agent(cp, "worker", ["python"])
     reviewer_a = register_agent(cp, "reviewer-a", ["review"])
     reviewer_b = register_agent(cp, "reviewer-b", ["review"])
@@ -1480,9 +1480,7 @@ def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(c
 
     cp.advance_default_review_workflow(task.id)
     pending = [
-        review
-        for review in cp.list_reviews(task.id)
-        if review.status == ReviewStatus.PENDING.value
+        review for review in cp.list_reviews(task.id) if review.status == ReviewStatus.PENDING.value
     ]
     assert len(pending) == 1
     assert pending[0].reviewer_agent_id == reviewer_a.id
@@ -1539,9 +1537,7 @@ def test_default_review_blocks_when_pinned_reviewer_fails_protocol(cp, semantic_
     cp.submit_for_review(task.id, worker.id)
     cp.advance_default_review_workflow(task.id)
     pending = next(
-        review
-        for review in cp.list_reviews(task.id)
-        if review.status == ReviewStatus.PENDING.value
+        review for review in cp.list_reviews(task.id) if review.status == ReviewStatus.PENDING.value
     )
     cp.add_evidence(
         task.id,
@@ -1669,15 +1665,15 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
 
 
 def test_report_ignores_git_publication_targets_and_publishes_evidence(
-    cp, monkeypatch, semantic_reviewer_on,
+    cp,
+    monkeypatch,
+    semantic_reviewer_on,
 ):
     from tests.conftest import submit_review_verdict
 
     monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://main")
     cp.create_project("report-project", metadata={"publication_target": "git://main"})
-    worker = register_agent(
-        cp, "report-worker", ["ops"], read_only_report_executor_resources()
-    )
+    worker = register_agent(cp, "report-worker", ["ops"], read_only_report_executor_resources())
     reviewer = register_agent(
         cp, "report-reviewer", ["review"], read_only_report_executor_resources()
     )
@@ -1698,12 +1694,12 @@ def test_report_ignores_git_publication_targets_and_publishes_evidence(
             },
             "execution_contract": {
                 "type": "repository",
-                    "repository_contract": {
-                        "schema": "mac.repository_contract.v1",
-                        "canonical_remote_url": "https://example.invalid/project.git",
-                        "default_branch": "main",
-                        "test": {"command": "true"},
-                    },
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "canonical_remote_url": "https://example.invalid/project.git",
+                    "default_branch": "main",
+                    "test": {"command": "true"},
+                },
             },
         },
     )
@@ -1798,7 +1794,9 @@ def test_default_review_workflow_falls_back_to_project_publication_target(cp, se
     assert publications[-1].target == "test://project-publish"
 
 
-def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp, semantic_reviewer_on):
+def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(
+    cp, semantic_reviewer_on
+):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["ops"])
@@ -1893,7 +1891,8 @@ def test_default_review_workflow_reuses_pending_verdict_nudge(cp, semantic_revie
 
 
 def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claims(
-    cp, semantic_reviewer_on,
+    cp,
+    semantic_reviewer_on,
     monkeypatch,
 ):
     monkeypatch.setenv("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "2")
@@ -1932,14 +1931,14 @@ def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claim
     review = cp.list_reviews(task.id)[0]
     assert review.status == ReviewStatus.RETRACTED.value
     assert review.reason == "reviewer_unable_to_produce_verdict_after_2_attempts"
-    assert not any(
-        event.event_type == "task.review_claimed" for event in cp.task_history(task.id)
-    )
+    assert not any(event.event_type == "task.review_claimed" for event in cp.task_history(task.id))
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.nudge_capped" in names
 
 
-def test_default_review_prefers_prior_owner_over_current_executor_fallback(cp, semantic_reviewer_on):
+def test_default_review_prefers_prior_owner_over_current_executor_fallback(
+    cp, semantic_reviewer_on
+):
     from tests.conftest import submit_review_verdict
 
     alpha = register_agent(cp, "alpha", ["python", "review"])
@@ -1964,7 +1963,9 @@ def test_default_review_prefers_prior_owner_over_current_executor_fallback(cp, s
 
     first_review = cp.advance_default_review_workflow(task.id)
     assert first_review["reviewer_agent_id"] == beta.id
-    submit_review_verdict(cp, task.id, beta.id, first_evidence.id, verdict="rejected", feedback="Rejected.")
+    submit_review_verdict(
+        cp, task.id, beta.id, first_evidence.id, verdict="rejected", feedback="Rejected."
+    )
     rejected = cp.advance_default_review_workflow(task.id)
     assert rejected["status"] == "review_not_approved"
     assert cp.get_task(task.id).state == TaskState.OPEN.value
@@ -2028,7 +2029,9 @@ def test_request_review_allows_latest_evidence_author_only_without_peer(cp, monk
     assert detail["reviewer_independence"] == "fallback"
 
 
-def test_default_review_workflow_uses_owner_when_no_peer_exists(cp, semantic_reviewer_on, monkeypatch):
+def test_default_review_workflow_uses_owner_when_no_peer_exists(
+    cp, semantic_reviewer_on, monkeypatch
+):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     worker = register_agent(cp, "worker", ["python", "review"])
     task = cp.create_task("Implement thing", required_capabilities=["python"])
@@ -2222,8 +2225,7 @@ def test_default_review_sweep_filters_tenant_before_limit(cp, monkeypatch):
         cp,
         "advance_default_review_workflow",
         lambda task_id, actor="default-review-workflow": (
-            seen.append(task_id)
-            or {"task_id": task_id, "status": "observed"}
+            seen.append(task_id) or {"task_id": task_id, "status": "observed"}
         ),
     )
 
@@ -2510,13 +2512,21 @@ def test_publication_revalidates_declared_required_changed_files(cp):
     ("evidence_type", "extra"),
     [
         ("test", {"checks": [{"name": "pytest", "returncode": 0}]}),
-        ("artifact", {"checks": [{"name": "build", "returncode": 0}], "artifacts": ["artifact://x"]}),
+        (
+            "artifact",
+            {"checks": [{"name": "build", "returncode": 0}], "artifacts": ["artifact://x"]},
+        ),
         ("deployment", {"checks": [{"name": "health", "returncode": 0}], "targets": ["rocky"]}),
         ("documentation", {"checks": [{"name": "docs", "returncode": 0}]}),
-        ("no_change", {"checks": [{"name": "inspection", "returncode": 0}], "reason": "already fixed"}),
+        (
+            "no_change",
+            {"checks": [{"name": "inspection", "returncode": 0}], "reason": "already fixed"},
+        ),
     ],
 )
-def test_submit_for_review_requires_pushed_repo_anchor_for_all_evidence_types(cp, evidence_type, extra):
+def test_submit_for_review_requires_pushed_repo_anchor_for_all_evidence_types(
+    cp, evidence_type, extra
+):
     worker = register_agent(cp, "worker", ["python"])
     task = cp.create_task("Missing repo anchor", required_capabilities=["python"])
     cp.claim_task(task.id, worker.id)
@@ -2800,7 +2810,13 @@ def test_default_review_workflow_retracts_same_reviewer_duplicate_pending(cp, se
         INSERT INTO reviews (id, task_id, reviewer_agent_id, status, reason, evidence_id, created_at, completed_at)
         VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)
         """,
-        ("review_duplicate_same_reviewer", task.id, reviewer.id, ReviewStatus.PENDING.value, utcnow()),
+        (
+            "review_duplicate_same_reviewer",
+            task.id,
+            reviewer.id,
+            ReviewStatus.PENDING.value,
+            utcnow(),
+        ),
     )
 
     result = cp.advance_default_review_workflow(task.id, actor="workflow-b")
@@ -2809,7 +2825,9 @@ def test_default_review_workflow_retracts_same_reviewer_duplicate_pending(cp, se
     reviews = {review.id: review for review in cp.list_reviews(task.id)}
     assert reviews[kept.id].status == ReviewStatus.PENDING.value
     assert reviews["review_duplicate_same_reviewer"].status == ReviewStatus.RETRACTED.value
-    assert reviews["review_duplicate_same_reviewer"].reason == "duplicate_pending_review_same_reviewer"
+    assert (
+        reviews["review_duplicate_same_reviewer"].reason == "duplicate_pending_review_same_reviewer"
+    )
     names = {event.name for event in cp.list_observability(limit=50)}
     assert "workflow.default_review.duplicate_pending_retracted" in names
 
@@ -2870,9 +2888,7 @@ def test_default_review_rejects_alias_evidence_taxonomy(cp):
     # Verify each alias is rejected one at a time.
     bad_status = verified_repo_metadata(cp, worker.id)
     bad_status["verification"]["status"] = "verified"
-    cp.add_evidence(
-        task.id, "log", "artifact://1", "x", worker.id, metadata=bad_status
-    )
+    cp.add_evidence(task.id, "log", "artifact://1", "x", worker.id, metadata=bad_status)
     with pytest.raises(ValidationError):
         cp.submit_for_review(task.id, worker.id)
     cp.store.execute(
@@ -3079,9 +3095,7 @@ def test_manual_reviewer_assignment_uses_full_eligibility_policy(cp):
     assert assigned.reviewer_agent_id == qualified.id
 
 
-def test_request_review_rolls_back_task_transition_when_review_write_fails(
-    cp, monkeypatch
-):
+def test_request_review_rolls_back_task_transition_when_review_write_fails(cp, monkeypatch):
     executor = register_agent(cp, "review-atomic-executor", ["python"])
     reviewer = register_agent(cp, "review-atomic-reviewer", ["review"])
     task = cp.create_task("atomic review request", required_capabilities=["python"])
@@ -3225,10 +3239,7 @@ def test_submit_review_compare_and_swap_rejects_stale_writer(cp, monkeypatch):
 
     assert cp.get_review(review.id).status == ReviewStatus.RETRACTED.value
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-    assert not any(
-        item.event_type == "task.review_completed"
-        for item in cp.task_history(task.id)
-    )
+    assert not any(item.event_type == "task.review_completed" for item in cp.task_history(task.id))
 
 
 def test_rejected_review_and_task_transition_roll_back_together(cp, monkeypatch):
@@ -3315,7 +3326,8 @@ def test_default_review_reassigns_stale_pending_reviewer(cp, semantic_reviewer_o
 
 
 def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
-    cp, semantic_reviewer_on,
+    cp,
+    semantic_reviewer_on,
     monkeypatch,
 ):
     worker = register_agent(cp, "worker", ["python"])
@@ -3417,11 +3429,14 @@ def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
         failure_class="authentication",
     )
     memory = cp.add_memory(**build_repository_access_memory_payload(cooldown_failure))
-    assert cp._default_reviewer_unavailable_reason_for_id(
-        task,
-        cooldown_reviewer.id,
-        executor_agent_id=worker.id,
-    ) == "reviewer_repository_access_authentication:github.com"
+    assert (
+        cp._default_reviewer_unavailable_reason_for_id(
+            task,
+            cooldown_reviewer.id,
+            executor_agent_id=worker.id,
+        )
+        == "reviewer_repository_access_authentication:github.com"
+    )
     cp.store.execute(
         "UPDATE memory_records SET created_at = ? WHERE id = ?",
         ("2020-01-01T00:00:00+00:00", memory.id),
@@ -3463,7 +3478,9 @@ def test_default_review_waits_when_only_reviewer_is_stale(cp, semantic_reviewer_
     assert cp.list_reviews(task.id) == []
 
 
-def test_default_reviewer_uses_same_persona_peer_only_as_fallback(cp, semantic_reviewer_on, monkeypatch):
+def test_default_reviewer_uses_same_persona_peer_only_as_fallback(
+    cp, semantic_reviewer_on, monkeypatch
+):
     """A different persona is preferred, but its absence cannot deadlock review."""
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     machine = cp.register_machine("h-collusion")
@@ -3487,10 +3504,16 @@ def test_default_reviewer_uses_same_persona_peer_only_as_fallback(cp, semantic_r
     ).id
 
     executor = cp.register_agent(
-        machine.id, "exec", capabilities=["python", "review"], hermes_instance_id=code_reviewer_soul_a
+        machine.id,
+        "exec",
+        capabilities=["python", "review"],
+        hermes_instance_id=code_reviewer_soul_a,
     )
     peer = cp.register_agent(
-        machine.id, "peer", capabilities=["python", "review"], hermes_instance_id=code_reviewer_soul_b
+        machine.id,
+        "peer",
+        capabilities=["python", "review"],
+        hermes_instance_id=code_reviewer_soul_b,
     )
     cp.roles.create_role(
         slug="code-reviewer",
@@ -3571,7 +3594,9 @@ def test_default_review_prefers_independent_peer_over_executor_fallback(
     assert json.loads(history["detail"])["reviewer_independence"] == "independent"
 
 
-def test_default_review_falls_back_to_executor_when_no_peer_exists(cp, semantic_reviewer_on, monkeypatch):
+def test_default_review_falls_back_to_executor_when_no_peer_exists(
+    cp, semantic_reviewer_on, monkeypatch
+):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(cp, "only-reviewer", ["python", "review"])
     task = cp.create_task(
@@ -3636,11 +3661,11 @@ def test_read_only_repository_report_never_falls_back_to_executor(cp, monkeypatc
             "execution_contract": {
                 "type": "repository",
                 "repository_contract": {
-                        "schema": "mac.repository_contract.v1",
-                        "project": "review-routing",
-                        "canonical_remote_url": "https://example.invalid/review-routing.git",
-                        "default_branch": "main",
-                        "test": {"command": "true"},
+                    "schema": "mac.repository_contract.v1",
+                    "project": "review-routing",
+                    "canonical_remote_url": "https://example.invalid/review-routing.git",
+                    "default_branch": "main",
+                    "test": {"command": "true"},
                 },
             },
         },
@@ -3680,7 +3705,9 @@ def test_read_only_repository_report_never_falls_back_to_executor(cp, monkeypatc
         cp.request_review(task.id, executor.id, actor="manual")
 
 
-def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypatch, semantic_reviewer_on):
+def test_read_only_repository_report_assigns_distinct_eligible_peer(
+    cp, monkeypatch, semantic_reviewer_on
+):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(
         cp,
@@ -3706,11 +3733,11 @@ def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypa
             "execution_contract": {
                 "type": "repository",
                 "repository_contract": {
-                        "schema": "mac.repository_contract.v1",
-                        "project": "review-routing",
-                        "canonical_remote_url": "https://example.invalid/review-routing.git",
-                        "default_branch": "main",
-                        "test": {"command": "true"},
+                    "schema": "mac.repository_contract.v1",
+                    "project": "review-routing",
+                    "canonical_remote_url": "https://example.invalid/review-routing.git",
+                    "default_branch": "main",
+                    "test": {"command": "true"},
                 },
             },
         },
@@ -3751,7 +3778,9 @@ def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypa
 
 
 def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
-    cp, monkeypatch, semantic_reviewer_on,
+    cp,
+    monkeypatch,
+    semantic_reviewer_on,
 ):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(cp, "dynamic-executor", ["python", "review"])
@@ -3781,9 +3810,7 @@ def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
     assert second["reviewer_agent_id"] == peer.id
     reviews = cp.list_reviews(task.id)
     pending = [review for review in reviews if review.status == ReviewStatus.PENDING.value]
-    retracted = [
-        review for review in reviews if review.status == ReviewStatus.RETRACTED.value
-    ]
+    retracted = [review for review in reviews if review.status == ReviewStatus.RETRACTED.value]
     assert [review.reviewer_agent_id for review in pending] == [peer.id]
     assert [review.reviewer_agent_id for review in retracted] == [executor.id]
 
@@ -3868,7 +3895,9 @@ def test_default_review_refuses_reviewer_from_different_tenant(cp, semantic_revi
     assert cp.list_reviews(task.id) == []
 
 
-def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(cp, semantic_reviewer_on):
+def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(
+    cp, semantic_reviewer_on
+):
     """mac: a headless K8s reviewer (no hermes_instance_id, so no persona
     tenant) must still be drafted for a tenant-scoped task when its
     machine's tenant policy permits that tenant. Persona-boundary
@@ -3906,7 +3935,9 @@ def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_ta
     assert len(cp.list_reviews(task.id)) == 1
 
 
-def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(cp, semantic_reviewer_on):
+def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(
+    cp, semantic_reviewer_on
+):
     """mac: the hardware-boundary tenancy gate must still fail closed.
     A headless reviewer whose machine's tenant policy does NOT permit
     the task's tenant must not be drafted — otherwise the fallback would
@@ -4002,20 +4033,22 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp, se
 
     cp.store.execute("UPDATE reviews SET status = ? WHERE task_id = ?", ("retracted", task.id))
     cp.store.execute("UPDATE publications SET status = ? WHERE task_id = ?", ("retracted", task.id))
-    cp.store.execute("UPDATE tasks SET state = ? WHERE id = ?", (TaskState.NEEDS_REVIEW.value, task.id))
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?", (TaskState.NEEDS_REVIEW.value, task.id)
+    )
     new_evidence = cp.add_evidence(
         task.id,
         "log",
         "artifact://new-result",
         "new verified result",
         worker.id,
-        metadata=verified_repo_metadata(cp, worker.id, head_sha="fedcba9876543210fedcba9876543210fedcba98"),
+        metadata=verified_repo_metadata(
+            cp, worker.id, head_sha="fedcba9876543210fedcba9876543210fedcba98"
+        ),
         _trusted_internal=True,
     )
     cp._transition_task_internal(task.id, TaskState.RUNNING.value, "test-retry")
-    cp._transition_task_internal(
-        task.id, TaskState.NEEDS_REVIEW.value, "test-retry"
-    )
+    cp._transition_task_internal(task.id, TaskState.NEEDS_REVIEW.value, "test-retry")
 
     waiting_again = cp.advance_default_review_workflow(task.id)
     assert waiting_again["status"] == "waiting_for_reviewer_verdict"
@@ -4024,11 +4057,15 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp, se
 
     assert second["status"] == "published"
     active_publications = [
-        item for item in cp.list_publications(task.id) if item.status == PublicationStatus.PUBLISHED.value
+        item
+        for item in cp.list_publications(task.id)
+        if item.status == PublicationStatus.PUBLISHED.value
     ]
     assert len(active_publications) == 1
     assert active_publications[0].evidence_id == new_evidence.id
-    approved = [item for item in cp.list_reviews(task.id) if item.status == ReviewStatus.APPROVED.value]
+    approved = [
+        item for item in cp.list_reviews(task.id) if item.status == ReviewStatus.APPROVED.value
+    ]
     assert len(approved) == 1
     # The approved review row links to the verdict, not the executor's
     # evidence — the verdict's evidence_id is what flowed into
@@ -4121,9 +4158,7 @@ def test_tick_marks_stale_agents_offline_and_requeues_work(cp):
     assert tick["assignments"] == []
 
     expiry = next(
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type == "task.lease_expired"
+        event for event in cp.task_history(task.id) if event.event_type == "task.lease_expired"
     )
     assert expiry.detail == {
         "lease_id": lease.id,
@@ -4161,9 +4196,7 @@ def test_repeated_stale_agent_reaps_do_not_exhaust_execution_attempts(cp):
         assert cp.get_lease(lease.id).status == LeaseStatus.EXPIRED.value
 
     expiries = [
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type == "task.lease_expired"
+        event for event in cp.task_history(task.id) if event.event_type == "task.lease_expired"
     ]
     assert len(expiries) == 2
     assert all(event.detail["attempt_refunded"] is True for event in expiries)
@@ -4182,9 +4215,15 @@ def test_dispatch_tick_uses_deterministic_priority_order_across_tenants(cp):
     tenant_b = cp.register_tenant("tenant-b")
     hermes_a = cp.register_hermes_instance(tenant_a.id, "rocky")
     hermes_b = cp.register_hermes_instance(tenant_b.id, "bullwinkle")
-    task_a1 = cp.create_interaction_task(hermes_a.id, "A1", priority=100, required_capabilities=["python"])
-    task_a2 = cp.create_interaction_task(hermes_a.id, "A2", priority=90, required_capabilities=["python"])
-    task_b = cp.create_interaction_task(hermes_b.id, "B1", priority=10, required_capabilities=["python"])
+    task_a1 = cp.create_interaction_task(
+        hermes_a.id, "A1", priority=100, required_capabilities=["python"]
+    )
+    task_a2 = cp.create_interaction_task(
+        hermes_a.id, "A2", priority=90, required_capabilities=["python"]
+    )
+    task_b = cp.create_interaction_task(
+        hermes_b.id, "B1", priority=10, required_capabilities=["python"]
+    )
     for index in range(3):
         register_agent(cp, "fair-%d" % index, ["python"])
 
@@ -4227,12 +4266,8 @@ def test_dispatch_round_robins_between_projects_within_tenant(cp):
 
 
 def test_dispatch_preserves_priority_order_within_project(cp):
-    low = cp.create_task(
-        "low", project="solo", priority=10, required_capabilities=["python"]
-    )
-    high = cp.create_task(
-        "high", project="solo", priority=100, required_capabilities=["python"]
-    )
+    low = cp.create_task("low", project="solo", priority=10, required_capabilities=["python"])
+    high = cp.create_task("high", project="solo", priority=100, required_capabilities=["python"])
 
     ordered = cp._dispatch_ordered_tasks()
 
@@ -4272,9 +4307,9 @@ def test_dispatch_due_hint_adds_bounded_priority_aging(cp):
         priority=0,
         required_capabilities=["python"],
         metadata={
-            "due_at": (
-                services.parse_time(now) - timedelta(hours=8)
-            ).isoformat(timespec="microseconds")
+            "due_at": (services.parse_time(now) - timedelta(hours=8)).isoformat(
+                timespec="microseconds"
+            )
         },
     )
     fresh = cp.create_task("fresh", priority=1, required_capabilities=["python"])
@@ -4425,12 +4460,8 @@ def test_claim_next_capabilities_filter_narrows_dispatch(cp):
     didn't declare the field, so pydantic dropped it.
     """
     worker = register_agent(cp, "worker", ["python", "review"])
-    python_task = cp.create_task(
-        "python-task", required_capabilities=["python"]
-    )
-    review_task = cp.create_task(
-        "review-task", required_capabilities=["review"]
-    )
+    python_task = cp.create_task("python-task", required_capabilities=["python"])
+    review_task = cp.create_task("review-task", required_capabilities=["review"])
 
     # Narrow to python only — review task must be skipped.
     claimed = cp.claim_next_for_agent(worker.id, capabilities=["python"])
@@ -4462,9 +4493,9 @@ def test_claim_next_prefers_high_priority_over_older_default_ready_task(cp):
         priority=1,
         required_capabilities=["python"],
     )
-    created_at = (
-        services.parse_time(services.utcnow()) - timedelta(hours=6)
-    ).isoformat(timespec="microseconds")
+    created_at = (services.parse_time(services.utcnow()) - timedelta(hours=6)).isoformat(
+        timespec="microseconds"
+    )
     cp.store.execute(
         "UPDATE tasks SET created_at = ? WHERE id = ?",
         (created_at, older_default.id),
@@ -4492,9 +4523,9 @@ def test_dispatch_uses_priority_without_age_reordering(cp):
         priority=1,
         required_capabilities=["python"],
     )
-    created_at = (
-        services.parse_time(services.utcnow()) - timedelta(days=2)
-    ).isoformat(timespec="microseconds")
+    created_at = (services.parse_time(services.utcnow()) - timedelta(days=2)).isoformat(
+        timespec="microseconds"
+    )
     cp.store.execute(
         "UPDATE tasks SET created_at = ? WHERE id = ?",
         (created_at, old_default.id),
@@ -4722,24 +4753,12 @@ def test_dispatch_ordered_tasks_breaks_priority_ties_by_created_at(cp):
     # dispatch oldest-first (FIFO), so re-prioritising or aging never silently
     # reorders same-priority peers.
     now = services.utcnow()
-    newer = cp.create_task(
-        "newer", priority=5, required_capabilities=["python"]
-    )
-    older = cp.create_task(
-        "older", priority=5, required_capabilities=["python"]
-    )
-    newer_at = (
-        services.parse_time(now) - timedelta(hours=1)
-    ).isoformat(timespec="microseconds")
-    older_at = (
-        services.parse_time(now) - timedelta(hours=3)
-    ).isoformat(timespec="microseconds")
-    cp.store.execute(
-        "UPDATE tasks SET created_at = ? WHERE id = ?", (newer_at, newer.id)
-    )
-    cp.store.execute(
-        "UPDATE tasks SET created_at = ? WHERE id = ?", (older_at, older.id)
-    )
+    newer = cp.create_task("newer", priority=5, required_capabilities=["python"])
+    older = cp.create_task("older", priority=5, required_capabilities=["python"])
+    newer_at = (services.parse_time(now) - timedelta(hours=1)).isoformat(timespec="microseconds")
+    older_at = (services.parse_time(now) - timedelta(hours=3)).isoformat(timespec="microseconds")
+    cp.store.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (newer_at, newer.id))
+    cp.store.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (older_at, older.id))
 
     ordered = cp._dispatch_ordered_tasks()
 
@@ -4750,13 +4769,9 @@ def test_dispatch_ordered_tasks_breaks_priority_ties_by_created_at(cp):
 def test_dispatch_task_sort_key_age_bonus_lifts_effective_priority(cp):
     now = services.utcnow()
     aged = cp.create_task("aged", priority=0, required_capabilities=["python"])
-    aged_created = (
-        services.parse_time(now) - timedelta(days=2)
-    ).isoformat(timespec="microseconds")
+    aged_created = (services.parse_time(now) - timedelta(days=2)).isoformat(timespec="microseconds")
     aged = dataclasses.replace(aged, created_at=aged_created)
-    fresh_high = cp.create_task(
-        "fresh-high", priority=1, required_capabilities=["python"]
-    )
+    fresh_high = cp.create_task("fresh-high", priority=1, required_capabilities=["python"])
 
     aged_key = cp._dispatch_task_sort_key(aged, now)
     fresh_key = cp._dispatch_task_sort_key(fresh_high, now)
@@ -4774,25 +4789,16 @@ def test_dispatch_priority_age_bonus_counts_whole_aging_steps(cp):
     fresh = dataclasses.replace(fresh, created_at=now)
     # Just under one aging period yields no bonus; exactly one period yields 1.
     almost = (
-        services.parse_time(now)
-        - timedelta(seconds=cp._DISPATCH_PRIORITY_AGING_SECONDS - 1)
+        services.parse_time(now) - timedelta(seconds=cp._DISPATCH_PRIORITY_AGING_SECONDS - 1)
     ).isoformat(timespec="microseconds")
     exactly_two = (
-        services.parse_time(now)
-        - timedelta(seconds=2 * cp._DISPATCH_PRIORITY_AGING_SECONDS)
+        services.parse_time(now) - timedelta(seconds=2 * cp._DISPATCH_PRIORITY_AGING_SECONDS)
     ).isoformat(timespec="microseconds")
 
     assert cp._dispatch_priority_age_bonus(fresh, now) == 0
+    assert cp._dispatch_priority_age_bonus(dataclasses.replace(fresh, created_at=almost), now) == 0
     assert (
-        cp._dispatch_priority_age_bonus(
-            dataclasses.replace(fresh, created_at=almost), now
-        )
-        == 0
-    )
-    assert (
-        cp._dispatch_priority_age_bonus(
-            dataclasses.replace(fresh, created_at=exactly_two), now
-        )
+        cp._dispatch_priority_age_bonus(dataclasses.replace(fresh, created_at=exactly_two), now)
         == 2
     )
 
@@ -4800,9 +4806,7 @@ def test_dispatch_priority_age_bonus_counts_whole_aging_steps(cp):
 def test_dispatch_priority_age_bonus_env_override_shrinks_step(cp, monkeypatch):
     now = services.utcnow()
     task = cp.create_task("aging", priority=0, required_capabilities=["python"])
-    created = (
-        services.parse_time(now) - timedelta(seconds=600)
-    ).isoformat(timespec="microseconds")
+    created = (services.parse_time(now) - timedelta(seconds=600)).isoformat(timespec="microseconds")
     task = dataclasses.replace(task, created_at=created)
 
     # A 60-second aging step turns 600 seconds of age into ten priority points.
@@ -4836,9 +4840,9 @@ def test_dispatch_candidate_tasks_unions_priority_and_oldest_windows(cp, monkeyp
     monkeypatch.setattr(cp, "_DISPATCH_TASK_WINDOW", 2, raising=False)
     now = services.utcnow()
     ancient = cp.create_task("ancient", priority=0, required_capabilities=["python"])
-    ancient_created = (
-        services.parse_time(now) - timedelta(days=30)
-    ).isoformat(timespec="microseconds")
+    ancient_created = (services.parse_time(now) - timedelta(days=30)).isoformat(
+        timespec="microseconds"
+    )
     cp.store.execute(
         "UPDATE tasks SET created_at = ? WHERE id = ?",
         (ancient_created, ancient.id),
@@ -4858,12 +4862,8 @@ def test_dispatch_candidate_tasks_unions_priority_and_oldest_windows(cp, monkeyp
 
 
 def test_dispatch_candidate_tasks_scopes_to_requested_project(cp):
-    keep = cp.create_task(
-        "keep", project="wanted", priority=5, required_capabilities=["python"]
-    )
-    cp.create_task(
-        "drop", project="other", priority=5, required_capabilities=["python"]
-    )
+    keep = cp.create_task("keep", project="wanted", priority=5, required_capabilities=["python"])
+    cp.create_task("drop", project="other", priority=5, required_capabilities=["python"])
 
     candidates = cp._dispatch_candidate_tasks(project="wanted")
 
@@ -4969,7 +4969,6 @@ def test_review_sweep_isolates_per_task_errors(cp, monkeypatch):
         limit=10,
     )
     assert errors
-
 
 
 def test_expired_lease_does_not_cooperatively_exclude(cp):
@@ -5140,9 +5139,7 @@ def test_reason_only_manual_repair_blocks_are_not_auto_unblocked(cp, reason):
         "dispatcher",
         {"reason": "dependencies satisfied"},
     )
-    cp._transition_task_internal(
-        child.id, TaskState.BLOCKED.value, "worker", {"reason": reason}
-    )
+    cp._transition_task_internal(child.id, TaskState.BLOCKED.value, "worker", {"reason": reason})
 
     tick = cp.tick()
 
@@ -5218,9 +5215,7 @@ def test_secrets_are_scoped_redacted_audited_and_not_stored_plaintext(cp):
 
 def test_rotate_secret_updates_value_in_place_and_audits(cp):
     deployer = register_agent(cp, "rotdep", ["deploy"])
-    secret = cp.create_secret(
-        "img-key", "old-value", {"capabilities": ["deploy"]}, "human"
-    )
+    secret = cp.create_secret("img-key", "old-value", {"capabilities": ["deploy"]}, "human")
     rotated = cp.rotate_secret("img-key", "new-value", "operator")
     assert rotated.id == secret.id  # same row — id + scopes preserved, not a new secret
     handle = cp.request_secret(secret.id, deployer.id, "use")
@@ -5263,7 +5258,9 @@ def test_runtime_boundary_pins_manifests_and_blocks_secret_values(cp):
     with pytest.raises(ValidationError):
         cp.create_runtime("latest", {"image": "python:latest"}, "human")
     with pytest.raises(ValidationError):
-        cp.create_runtime("leaky", {"image": "python:3.12@sha256:abc123", "env": {"TOKEN": "raw"}}, "human")
+        cp.create_runtime(
+            "leaky", {"image": "python:3.12@sha256:abc123", "env": {"TOKEN": "raw"}}, "human"
+        )
 
 
 def test_runtime_delta_lifecycle_validates_and_promotes_task_local_env(cp):
@@ -5434,13 +5431,9 @@ def _write_repository_contract(
         else "test: {}\n"
     )
     remote_block = (
-        "canonical_remote_url: %s\n" % canonical_remote_url
-        if canonical_remote_url
-        else ""
+        "canonical_remote_url: %s\n" % canonical_remote_url if canonical_remote_url else ""
     )
-    branch_block = (
-        "default_branch: %s\n" % default_branch if default_branch else ""
-    )
+    branch_block = "default_branch: %s\n" % default_branch if default_branch else ""
     (contract_dir / "project.yaml").write_text(
         (
             "schema: mac.repository_contract.v1\n"
@@ -5538,14 +5531,16 @@ def test_repository_contract_project_commands_do_not_gate_dispatch(cp):
             "commands": {
                 "schema": "mac.command_inventory.v1",
                 "available": ["git"],
-            }
+            },
         },
     )
     task = cp.create_task(
         "repo task",
         project="repo-beads-mac",
         required_capabilities=["git", "python"],
-        metadata=_repository_task_metadata(required_commands=("python3", "git", "gh", "pnpm", "java", "lein")),
+        metadata=_repository_task_metadata(
+            required_commands=("python3", "git", "gh", "pnpm", "java", "lein")
+        ),
     )
 
     assignment = cp.dispatch_once()
@@ -5693,7 +5688,9 @@ def test_repository_contract_project_commands_gate_unsandboxed_dispatch(cp):
         "repo task",
         project="repo-beads-mac",
         required_capabilities=["git", "python"],
-        metadata=_repository_task_metadata(required_commands=("python3", "git", "gh", "pnpm", "java", "lein")),
+        metadata=_repository_task_metadata(
+            required_commands=("python3", "git", "gh", "pnpm", "java", "lein")
+        ),
     )
 
     assert cp.dispatch_once() is None
@@ -5712,7 +5709,7 @@ def test_repository_contract_host_git_gap_does_not_gate_dispatch(cp):
             "commands": {
                 "schema": "mac.command_inventory.v1",
                 "available": ["python3", "gh", "pnpm", "java", "lein"],
-            }
+            },
         },
     )
     task = cp.create_task(
@@ -5738,9 +5735,7 @@ def test_beads_repository_registration_requires_runtime_contract(cp, tmp_path):
         cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
-def test_project_unregister_does_not_leave_disabled_repository_as_derived_project(
-    cp, tmp_path
-):
+def test_project_unregister_does_not_leave_disabled_repository_as_derived_project(cp, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_repository_contract(repo, project="retired-project")
@@ -5767,13 +5762,9 @@ def test_project_unregister_does_not_leave_disabled_repository_as_derived_projec
 
     summaries = cp.list_projects()
     assert all(summary["project"] != project.name for summary in summaries)
-    assert all(
-        summary["project"] != "repo-retired-project" for summary in summaries
-    )
+    assert all(summary["project"] != "repo-retired-project" for summary in summaries)
     assert cp.get_task(task.id).project is None
-    unassigned = next(
-        summary for summary in summaries if summary["project"] == "unassigned"
-    )
+    unassigned = next(summary for summary in summaries if summary["project"] == "unassigned")
     assert unassigned["task_count"] == 1
     registration = cp.get_project_repository("retired-repository")
     assert registration.enabled is False
@@ -5884,9 +5875,7 @@ def test_repository_registration_resolves_codegraph_from_mac_home(cp, tmp_path, 
     assert Path(marker.read_text(encoding="utf-8")) == repo
 
 
-def test_repository_registration_fails_when_codegraph_init_fails(
-    cp, tmp_path, monkeypatch
-):
+def test_repository_registration_fails_when_codegraph_init_fails(cp, tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(
@@ -5908,26 +5897,6 @@ def test_repository_registration_fails_when_codegraph_init_fails(
     assert registered.metadata["codegraph"]["reason"] == "codegraph_init_nonzero"
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_direct_task_for_registered_project_gets_repository_execution_contract(cp, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -5944,13 +5913,13 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
     assert task.metadata["execution_contract"]["quality"] == "strong"
     assert task.metadata["execution_contract"]["evidence_type"] == "repo_change"
     assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
-    assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+    assert (
+        task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+    )
 
 
 @pytest.mark.parametrize("route", ["push", "pull"])
-def test_large_repository_task_is_claimed_without_preclaim_scope_admission(
-    cp, tmp_path, route
-):
+def test_large_repository_task_is_claimed_without_preclaim_scope_admission(cp, tmp_path, route):
     repo = tmp_path / ("admission-%s" % route)
     repo.mkdir()
     _write_beads(repo, [])
@@ -5959,9 +5928,7 @@ def test_large_repository_task_is_claimed_without_preclaim_scope_admission(
     worker = register_agent(cp, "admission-%s" % route, ["python"])
     task = cp.create_task(
         "Split a broad subsystem into independently verifiable components",
-        description=" ".join(
-            ["Refactor each independent module and preserve its contract."] * 45
-        ),
+        description=" ".join(["Refactor each independent module and preserve its contract."] * 45),
         project="repo-beads-mac",
         required_capabilities=["python"],
     )
@@ -5980,24 +5947,17 @@ def test_large_repository_task_is_claimed_without_preclaim_scope_admission(
     assert "scope_estimate" not in prepared.metadata
     assert "plan_first" not in prepared.metadata
     assert "dispatch_admission" not in prepared.metadata
-    assert not any(
-        event.actor == "dispatcher.admission"
-        for event in cp.task_history(task.id)
-    )
+    assert not any(event.actor == "dispatcher.admission" for event in cp.task_history(task.id))
 
 
-def test_retired_dispatch_admission_never_mutates_candidates(
-    cp, tmp_path
-):
+def test_retired_dispatch_admission_never_mutates_candidates(cp, tmp_path):
     repo = tmp_path / "admission-rejections"
     repo.mkdir()
     _write_beads(repo, [])
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
     cp.create_project("repo-beads-mac", dispatch_paused=False)
     worker = register_agent(cp, "admission-rejections", ["python"])
-    description = " ".join(
-        ["Refactor each independent module and preserve its contract."] * 45
-    )
+    description = " ".join(["Refactor each independent module and preserve its contract."] * 45)
     held = cp.create_task(
         "Held large repository task",
         description=description,
@@ -6033,9 +5993,7 @@ def test_retired_dispatch_admission_never_mutates_candidates(
 
 
 @pytest.mark.parametrize("evidence_type", ["investigation", "plan_decomposed"])
-def test_registered_project_preserves_explicit_non_repository_outcome(
-    cp, tmp_path, evidence_type
-):
+def test_registered_project_preserves_explicit_non_repository_outcome(cp, tmp_path, evidence_type):
     repo = tmp_path / ("non-repository-%s" % evidence_type)
     repo.mkdir()
     _write_beads(repo, [])
@@ -6052,16 +6010,12 @@ def test_registered_project_preserves_explicit_non_repository_outcome(
     assert execution["repository_required"] is False
     assert execution["evidence_type"] == evidence_type
     assert execution["reason"] == "explicit_non_repository_outcome"
-    assert execution["repository_context"]["repository_id"] == (
-        cp.get_project_repository("mac").id
-    )
+    assert execution["repository_context"]["repository_id"] == (cp.get_project_repository("mac").id)
     assert "repository_contract" not in task.metadata.get("origin", {})
     assert "repository_path" not in task.metadata.get("origin", {})
 
 
-def test_registered_read_only_report_has_one_unambiguous_persisted_contract(
-    cp, tmp_path
-):
+def test_registered_read_only_report_has_one_unambiguous_persisted_contract(cp, tmp_path):
     repo = tmp_path / "report-repo"
     repo.mkdir()
     _write_repository_contract(
@@ -6093,14 +6047,13 @@ def test_registered_read_only_report_has_one_unambiguous_persisted_contract(
     persisted = cp.get_task(created.id)
 
     assert persisted.metadata["execution_contract"]["type"] == "repository"
-    assert persisted.metadata["execution_contract"]["repository_contract"] == (
-        cp.get_project_repository("mac").metadata["repository_contract"]
+    assert (
+        persisted.metadata["execution_contract"]["repository_contract"]
+        == (cp.get_project_repository("mac").metadata["repository_contract"])
     )
     assert "repository_contract" not in persisted.metadata["origin"]
     assert "repository_contract" not in {
-        key: value
-        for key, value in persisted.metadata.items()
-        if key != "execution_contract"
+        key: value for key, value in persisted.metadata.items() if key != "execution_contract"
     }
     assert "evidence_type" not in json.dumps(persisted.metadata, sort_keys=True)
     assert metadata_declares_read_only_report_repository(persisted.metadata)
@@ -6121,9 +6074,7 @@ def test_registered_read_only_report_has_one_unambiguous_persisted_contract(
         {"execution_contract": {"type": "repository", "evidence_type": "repo_change"}},
     ],
 )
-def test_read_only_report_rejects_explicit_evidence_type_overrides(
-    cp, tmp_path, contradiction
-):
+def test_read_only_report_rejects_explicit_evidence_type_overrides(cp, tmp_path, contradiction):
     repo = tmp_path / ("contradictory-report-%d" % len(cp.list_tasks()))
     repo.mkdir()
     _write_beads(repo, [])
@@ -6151,8 +6102,7 @@ def _complete_direct_read_only_report_metadata(*, remote=None, branch="main", co
     contract = {
         "schema": "mac.repository_contract.v1",
         "project": "direct-report",
-        "canonical_remote_url": remote
-        or "https://example.invalid/direct-report.git",
+        "canonical_remote_url": remote or "https://example.invalid/direct-report.git",
         "default_branch": branch,
         "test": {"command": command},
     }
@@ -6214,16 +6164,12 @@ def test_registered_read_only_report_rejects_explicit_contract_drift(cp, tmp_pat
             "default_branch .* is required",
         ),
         (
-            lambda metadata: metadata["execution_contract"]["repository_contract"].pop(
-                "test"
-            ),
+            lambda metadata: metadata["execution_contract"]["repository_contract"].pop("test"),
             "test.command is required",
         ),
     ],
 )
-def test_direct_read_only_report_requires_complete_current_contract(
-    cp, mutate, message
-):
+def test_direct_read_only_report_requires_complete_current_contract(cp, mutate, message):
     metadata = _complete_direct_read_only_report_metadata()
     mutate(metadata)
 
@@ -6235,32 +6181,22 @@ def test_direct_read_only_report_persists_only_current_execution_contract(cp):
     metadata = _complete_direct_read_only_report_metadata()
     contract = metadata["execution_contract"]["repository_contract"]
     contract["canonical_branch"] = contract.pop("default_branch")
-    metadata["origin"] = {
-        "repository_contract": dict(
-            contract
-        )
-    }
+    metadata["origin"] = {"repository_contract": dict(contract)}
 
     task = cp.create_task("Complete direct report", metadata=metadata)
 
-    assert task.metadata["execution_contract"]["schema"] == (
-        "mac.task_execution_contract.v1"
-    )
+    assert task.metadata["execution_contract"]["schema"] == ("mac.task_execution_contract.v1")
     assert task.metadata["origin"]["repository_url"] == (
         "https://example.invalid/direct-report.git"
     )
     assert task.metadata["origin"]["default_branch"] == "main"
     assert "repository_contract" not in task.metadata["origin"]
     assert "repository_contract" not in {
-        key: value
-        for key, value in task.metadata.items()
-        if key != "execution_contract"
+        key: value for key, value in task.metadata.items() if key != "execution_contract"
     }
 
 
-def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contract(
-    cp, tmp_path
-):
+def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contract(cp, tmp_path):
     repo = tmp_path / "report-update"
     repo.mkdir()
     remote = "https://example.invalid/repo-beads-mac.git"
@@ -6284,9 +6220,7 @@ def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contrac
     )
     changed = json.loads(json.dumps(task.metadata))
     changed["notes"] = "preserved"
-    changed["execution_contract"]["repository_contract"]["test"]["command"] = (
-        "false"
-    )
+    changed["execution_contract"]["repository_contract"]["test"]["command"] = "false"
 
     with pytest.raises(
         ValidationError, match="contradicts the current registered repository contract"
@@ -6322,9 +6256,7 @@ def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contrac
     assert repaired.id in {item.id for item in cp.ready_tasks()}
 
 
-def test_read_only_report_child_uses_current_contract_and_invalid_batch_is_atomic(
-    cp, tmp_path
-):
+def test_read_only_report_child_uses_current_contract_and_invalid_batch_is_atomic(cp, tmp_path):
     repo = tmp_path / "report-child"
     repo.mkdir()
     _write_repository_contract(
@@ -6347,8 +6279,9 @@ def test_read_only_report_child_uses_current_contract_and_invalid_batch_is_atomi
         [{"title": "Inspect repository", "metadata": report_metadata}],
     )
     child = cp.get_task(result["children"][0]["id"])
-    assert child.metadata["execution_contract"]["repository_contract"] == (
-        cp.get_project_repository("mac").metadata["repository_contract"]
+    assert (
+        child.metadata["execution_contract"]["repository_contract"]
+        == (cp.get_project_repository("mac").metadata["repository_contract"])
     )
     assert "repository_contract" not in child.metadata["origin"]
     assert "evidence_type" not in json.dumps(child.metadata, sort_keys=True)
@@ -6365,9 +6298,7 @@ def test_read_only_report_child_uses_current_contract_and_invalid_batch_is_atomi
     assert after.metadata == before.metadata
 
 
-def test_read_only_report_create_idempotency_preserves_one_normalized_identity(
-    cp, tmp_path
-):
+def test_read_only_report_create_idempotency_preserves_one_normalized_identity(cp, tmp_path):
     repo = tmp_path / "report-idempotency"
     repo.mkdir()
     _write_repository_contract(
@@ -6401,9 +6332,7 @@ def test_read_only_report_create_idempotency_preserves_one_normalized_identity(
 
     assert retry.id == first.id
     assert retry.metadata == first.metadata
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
-    )["n"] == 1
+    assert cp.store.query_one("SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,))["n"] == 1
 
 
 def test_legacy_read_only_report_contract_is_a_repair_observation_not_dispatch_gate(cp):
@@ -6455,17 +6384,13 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
     )
 
     before = json.loads(
-        cp.store.query_one(
-            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
-        )["metadata"]
+        cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))["metadata"]
     )
 
     released = cp.release_task(task.id, actor="operator")
 
     after = json.loads(
-        cp.store.query_one(
-            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
-        )["metadata"]
+        cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))["metadata"]
     )
 
     assert released.metadata.get("no_dispatch") is None
@@ -6482,20 +6407,14 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
 def test_release_is_noop_when_not_held(cp):
     task = cp.create_task("Not held")
     before = json.loads(
-        cp.store.query_one(
-            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
-        )["metadata"]
+        cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))["metadata"]
     )
     released = cp.release_task(task.id, actor="operator")
     after = json.loads(
-        cp.store.query_one(
-            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
-        )["metadata"]
+        cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))["metadata"]
     )
     assert released.id == task.id
     assert after == before
-
-
 
 
 def test_task_create_idempotency_key_binds_one_identity_and_exact_intent(cp):
@@ -6513,9 +6432,7 @@ def test_task_create_idempotency_key_binds_one_identity_and_exact_intent(cp):
     )
 
     assert retry.id == first.id
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
-    )["n"] == 1
+    assert cp.store.query_one("SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,))["n"] == 1
     binding = cp.store.query_one(
         "SELECT * FROM task_create_idempotency WHERE task_id = ?", (first.id,)
     )
@@ -6540,8 +6457,6 @@ def test_task_create_idempotency_key_binds_one_identity_and_exact_intent(cp):
     assert other_scope.id != first.id
 
 
-
-
 def test_shallow_repository_execution_contract_gets_registered_project_contract(cp, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -6561,7 +6476,9 @@ def test_shallow_repository_execution_contract_gets_registered_project_contract(
     assert contract["evidence_type"] == "repo_change"
     assert contract["repository_contract"]["project"] == "repo-beads-mac"
     assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
-    assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+    assert (
+        task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+    )
 
 
 def test_native_repository_task_does_not_emit_repo_beads_workflow(cp, tmp_path):
@@ -6590,7 +6507,8 @@ def test_native_repository_task_does_not_emit_repo_beads_workflow(cp, tmp_path):
     )
     acc2 = task_shallow.metadata.get("acc_metadata", {})
     assert "repo_beads_workflow" not in acc2, (
-        "Native shallow-contract tasks must not carry repo_beads_workflow; got acc_metadata=%r" % acc2
+        "Native shallow-contract tasks must not carry repo_beads_workflow; got acc_metadata=%r"
+        % acc2
     )
 
 
@@ -6659,24 +6577,6 @@ def _seed_bare_beads_repo(tmp_path, issue_id="mac-old"):
     _git(["push", "-u", "origin", "main"], cwd=seed)
     _git(["clone", str(origin), str(clone)])
     return origin, seed, clone
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_hub_heartbeat_advances_default_review_workflow(cp, semantic_reviewer_on, monkeypatch):
@@ -6839,7 +6739,9 @@ def test_task_notifier_delivers_task_progress_to_configured_slack_home_channel(c
         "task.claimed",
         "task.running",
     }
-    assert all(message.payload["target"]["platform_binding_id"] == binding.id for message in messages)
+    assert all(
+        message.payload["target"]["platform_binding_id"] == binding.id for message in messages
+    )
 
 
 def test_task_claim_records_history_and_outbox_in_same_transaction(cp):
@@ -6892,24 +6794,6 @@ def test_outbox_drains_in_enqueue_order_with_identical_created_at(cp):
 
     pending = cp.list_task_transition_outbox(task_id=task.id)
     assert [item.event_type for item in pending] == expected
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_concurrent_claim_picks_exactly_one_winner(cp):
@@ -7181,16 +7065,11 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     assert published[0].detail["final_sha"] == final_head
     publication_commands = published[0].detail["commands"]
     contract_gate = next(
-        item
-        for item in publication_commands
-        if item["name"] == "publication_contract_gate"
+        item for item in publication_commands if item["name"] == "publication_contract_gate"
     )
     assert contract_gate["passed"] is True
     assert contract_gate["test_command"] == "make full-publication-suite"
-    assert any(
-        item["name"] == "verify_projected_tree"
-        for item in publication_commands
-    )
+    assert any(item["name"] == "verify_projected_tree" for item in publication_commands)
     proofs = [
         item.metadata["verification"]["canonical_integration"]
         for item in cp.list_evidence(task.id)
@@ -7211,8 +7090,7 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     ci_schedules = [
         event
         for event in cp.list_observability(limit=100)
-        if event.name == "cicd.followup.scheduled"
-        and event.subject_id == task.id
+        if event.name == "cicd.followup.scheduled" and event.subject_id == task.id
     ]
     assert len(ci_schedules) == 1
     assert ci_schedules[0].detail["schema"] == "mac.cicd_followup_schedule.v1"
@@ -7389,13 +7267,9 @@ def _publishable_task_and_evidence(
 
 
 def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
-    source, remote, task_head, git = _setup_publishable_repo(
-        tmp_path, name="contract-fail"
-    )
+    source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="contract-fail")
     main_before = git(source, "rev-parse", "main")
-    task, evidence, reviewer = _publishable_task_and_evidence(
-        cp, source, task_head
-    )
+    task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
     calls = []
 
     def fail_gate(remote_url, branch, projected_sha, command):
@@ -7406,29 +7280,19 @@ def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
     cp._hub_verify_runner = fail_gate
     # The gate is scoped now, so it is no longer "full"; what this test is
     # about is that a FAILING gate does not push main.
-    with pytest.raises(
-        ValidationError, match="contract gate failed on the projected"
-    ):
-        cp.publish_task(
-            task.id, "git://main", reviewer.id, evidence_id=evidence.id
-        )
+    with pytest.raises(ValidationError, match="contract gate failed on the projected"):
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert len(calls) == 1
     assert calls[0][1] == "mac-projected-publication"
     assert calls[0][3] == "true"
-    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (
-        main_before
-    )
+    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (main_before)
     assert git(source, "rev-parse", "main") == main_before
 
 
 def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
-    source, remote, task_head, git = _setup_publishable_repo(
-        tmp_path, name="diverged-checkout"
-    )
-    task, evidence, reviewer = _publishable_task_and_evidence(
-        cp, source, task_head
-    )
+    source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="diverged-checkout")
+    task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
 
     # Reproduce the live failure: the hub checkout's main is both ahead of and
     # behind origin/main.  Publisher state must come exclusively from the
@@ -7452,9 +7316,7 @@ def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
     remote_head = git(peer, "rev-parse", "HEAD")
     git(peer, "push", "origin", "main")
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     assert git(source, "rev-parse", "HEAD") == local_head
@@ -7474,12 +7336,8 @@ def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
 
 
 def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monkeypatch):
-    source, remote, task_head, git = _setup_publishable_repo(
-        tmp_path, name="moving-main"
-    )
-    task, evidence, reviewer = _publishable_task_and_evidence(
-        cp, source, task_head
-    )
+    source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="moving-main")
+    task, evidence, reviewer = _publishable_task_and_evidence(cp, source, task_head)
     peer = tmp_path / "moving-peer"
     subprocess.run(
         ["git", "clone", "--branch", "main", str(remote), str(peer)],
@@ -7495,9 +7353,10 @@ def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monk
 
     def move_main_before_first_push(repo_path, args, timeout=20, env=None):
         nonlocal pushes, concurrent_head
-        if args and args[0] == "push" and any(
-            str(arg).startswith("--force-with-lease=refs/heads/main:")
-            for arg in args
+        if (
+            args
+            and args[0] == "push"
+            and any(str(arg).startswith("--force-with-lease=refs/heads/main:") for arg in args)
         ):
             pushes += 1
             if pushes == 1:
@@ -7509,9 +7368,7 @@ def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monk
         return original_git_output(repo_path, args, timeout=timeout)
 
     monkeypatch.setattr(cp, "_git_output", move_main_before_first_push)
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     assert pushes == 2
@@ -7522,9 +7379,7 @@ def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monk
 
 
 def test_git_publication_uses_authoritative_non_main_branch(cp, tmp_path):
-    source, remote, task_head, git = _setup_publishable_repo(
-        tmp_path, name="release-branch"
-    )
+    source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="release-branch")
     main_head = git(source, "rev-parse", "main")
     git(source, "branch", "release", main_head)
     git(source, "push", "origin", "release")
@@ -7535,17 +7390,11 @@ def test_git_publication_uses_authoritative_non_main_branch(cp, tmp_path):
         default_branch="release",
     )
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
-    assert git(source, "ls-remote", str(remote), "refs/heads/release").split()[0] == (
-        task_head
-    )
-    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (
-        main_head
-    )
+    assert git(source, "ls-remote", str(remote), "refs/heads/release").split()[0] == (task_head)
+    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (main_head)
     proofs = [
         item.metadata["verification"]["canonical_integration"]
         for item in cp.list_evidence(task.id)
@@ -7706,7 +7555,10 @@ def test_review_verdict_requires_executor_changed_files_for_codegraph(cp, semant
 
     assert result["status"] == "waiting_for_reviewer_verdict"
     assert result["review_id"] == review.id
-    assert any("repo.files_changed does not match executor evidence" in problem for problem in result["problems"])
+    assert any(
+        "repo.files_changed does not match executor evidence" in problem
+        for problem in result["problems"]
+    )
     assert cp.list_publications(task.id) == []
 
 
@@ -7794,7 +7646,9 @@ def test_rejected_review_verdict_blocks_exhausted_task(cp, semantic_reviewer_on)
     cp.submit_for_review(task.id, worker.id)
     first = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="No more attempts.")
+    submit_review_verdict(
+        cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="No more attempts."
+    )
 
     result = cp.advance_default_review_workflow(task.id)
 
@@ -7829,7 +7683,9 @@ def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp, semantic
     )
     cp.submit_for_review(task.id, worker.id)
     first = cp.advance_default_review_workflow(task.id)
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="Stale.")
+    submit_review_verdict(
+        cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="Stale."
+    )
     rejected = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "waiting_for_reviewer_verdict"
     assert rejected["status"] == "review_not_approved"
@@ -7874,7 +7730,9 @@ def test_publication_requires_verifiable_review_verdict_not_plain_approval(cp):
     # mac-5u1f: passing the executor's own evidence as the verdict is now
     # refused at submit_review time, not at publish time.
     with pytest.raises(ValidationError, match="review_verdict"):
-        cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=evidence.id)
+        cp.submit_review(
+            review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=evidence.id
+        )
 
 
 def test_publication_policy_requires_publication_evidence_with_hash(cp):
@@ -7919,7 +7777,9 @@ def test_publication_policy_requires_publication_evidence_with_hash(cp):
         # (64 chars), not a short opaque string.
         checksum="sha256:" + ("ab" * 32),
     )
-    publication = cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=pub_evidence.id)
+    publication = cp.publish_task(
+        task.id, "test://publish", reviewer.id, evidence_id=pub_evidence.id
+    )
 
     assert publication.content_hash == "sha256:" + ("ab" * 32)
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
@@ -8061,6 +7921,7 @@ def test_notifier_dedupes_on_notification_id_in_payload(cp):
     # Build a fake OperatorNotification with the same id and call the
     # private delivery path directly.
     from mac.models import OperatorNotification
+
     notif = OperatorNotification(
         id=notification_id,
         event_type="task.test",
@@ -8410,27 +8271,17 @@ def test_cross_llm_review_helper_contracts():
     assert manifest_llm_model({"opencode_model": "model-c"}) == "model-c"
     assert manifest_llm_model({"gateway_model": "model-d"}) == "model-d"
     assert manifest_llm_model(None) == ""
-    assert manifest_llm_family(
-        {"llm_model": "inference-hub/anthropic/claude-sonnet"}
-    ) == "claude"
+    assert manifest_llm_family({"llm_model": "inference-hub/anthropic/claude-sonnet"}) == "claude"
     assert manifest_llm_family({"llm_family": "custom-lineage"}) == "custom-lineage"
-    assert manifest_llm_provider(
-        {"llm_model": "inference-hub/openai/gpt-5"}
-    ) == "openai"
-    assert manifest_llm_provider(
-        {"llm_provider": "private-provider"}
-    ) == "private-provider"
-    assert review_diversity_requirements(
-        {"metadata": {"review": {"risk_level": "high"}}}
-    ) == {
+    assert manifest_llm_provider({"llm_model": "inference-hub/openai/gpt-5"}) == "openai"
+    assert manifest_llm_provider({"llm_provider": "private-provider"}) == "private-provider"
+    assert review_diversity_requirements({"metadata": {"review": {"risk_level": "high"}}}) == {
         "high_risk": True,
         "different_model_family": True,
         "different_provider": True,
     }
 
-    assert manifest_requires_cross_llm_review(
-        {"executor": "mac-task-executor-opencode-build"}
-    )
+    assert manifest_requires_cross_llm_review({"executor": "mac-task-executor-opencode-build"})
     assert manifest_requires_cross_llm_review({"agent_generated": True})
     assert manifest_requires_cross_llm_review({"requires_cross_llm_review": True})
     assert not manifest_requires_cross_llm_review(
@@ -8451,10 +8302,13 @@ def test_cross_llm_review_helper_contracts():
         {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
         {"llm_model": " model x "},
     ) == ["reviewer LLM must differ from executor LLM (both Model X)"]
-    assert cross_llm_review_problems(
-        {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
-        {"llm_model": "Model Y"},
-    ) == []
+    assert (
+        cross_llm_review_problems(
+            {"executor": "mac-task-executor-opencode-build", "llm_model": "Model X"},
+            {"llm_model": "Model Y"},
+        )
+        == []
+    )
     high_risk = {
         "high_risk": True,
         "different_model_family": True,
@@ -8470,14 +8324,17 @@ def test_cross_llm_review_helper_contracts():
     )
     assert any("family must differ" in problem for problem in same_lineage)
     assert any("provider must differ" in problem for problem in same_lineage)
-    assert cross_llm_review_problems(
-        {
-            "executor": "mac-task-executor-opencode-build",
-            "llm_model": "inference-hub/anthropic/claude-sonnet",
-        },
-        {"llm_model": "inference-hub/openai/gpt-5"},
-        requirements=high_risk,
-    ) == []
+    assert (
+        cross_llm_review_problems(
+            {
+                "executor": "mac-task-executor-opencode-build",
+                "llm_model": "inference-hub/anthropic/claude-sonnet",
+            },
+            {"llm_model": "inference-hub/openai/gpt-5"},
+            requirements=high_risk,
+        )
+        == []
+    )
     unknown_lineage = cross_llm_review_problems(
         {
             "executor": "mac-task-executor-opencode-build",
@@ -8539,9 +8396,7 @@ def test_heartbeat_verifies_running_digest_signature_when_supplied(cp):
     sig = sign_verification_manifest(
         agent_key, {"agent_id": agent.id, "running_digest": runtime.digest}
     )
-    out = cp.heartbeat_agent(
-        agent.id, running_digest=runtime.digest, running_digest_signature=sig
-    )
+    out = cp.heartbeat_agent(agent.id, running_digest=runtime.digest, running_digest_signature=sig)
     assert out.running_digest == runtime.digest
 
     # Now roll over to a second digest and submit a bad signature.
@@ -8598,12 +8453,17 @@ def test_attestation_rotation_tolerated_within_retained_key_history(cp):
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
-        task.id, "test", "artifact://t", "ok",
-        worker.id, metadata=verified_repo_metadata(cp, worker.id),
+        task.id,
+        "test",
+        "artifact://t",
+        "ok",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
     review = cp.request_review(task.id, reviewer.id)
     from tests.conftest import submit_review_verdict
+
     verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
 
     # A single rotation retains the previous key: the pre-rotation verdict
@@ -8611,13 +8471,15 @@ def test_attestation_rotation_tolerated_within_retained_key_history(cp):
     # signature/rotation problem — publication is no longer wedged.
     cp.rotate_agent_attestation_key(reviewer.id)
     _verdict, problems = cp._find_review_verdict_evidence(
-        task.id, reviewer.id,
+        task.id,
+        reviewer.id,
         executor_evidence_id=evidence.id,
         verdict_evidence_id=verdict_id,
         not_before=review.created_at,
     )
-    assert not any("rotated" in p or "does not verify" in p for p in problems), \
+    assert not any("rotated" in p or "does not verify" in p for p in problems), (
         "a single rotation must not invalidate a pre-rotation verdict; got: %s" % problems
+    )
 
     # A fleet release rotates every agent at once, so "survives exactly one
     # rotation" was not enough: two releases orphaned 66 in-flight reviews on
@@ -8625,26 +8487,30 @@ def test_attestation_rotation_tolerated_within_retained_key_history(cp):
     for _ in range(cp.ATTESTATION_KEY_HISTORY_LIMIT - 1):
         cp.rotate_agent_attestation_key(reviewer.id)
     _verdict2, problems2 = cp._find_review_verdict_evidence(
-        task.id, reviewer.id,
+        task.id,
+        reviewer.id,
         executor_evidence_id=evidence.id,
         verdict_evidence_id=verdict_id,
         not_before=review.created_at,
     )
-    assert not any("rotated" in p or "does not verify" in p for p in problems2), \
+    assert not any("rotated" in p or "does not verify" in p for p in problems2), (
         "retained key history must survive a fleet-wide re-key; got: %s" % problems2
+    )
 
     # Past the retention bound the key really is gone, and the clear
     # rotation error must still surface rather than a vague failure.
     for _ in range(3):
         cp.rotate_agent_attestation_key(reviewer.id)
     _verdict3, problems3 = cp._find_review_verdict_evidence(
-        task.id, reviewer.id,
+        task.id,
+        reviewer.id,
         executor_evidence_id=evidence.id,
         verdict_evidence_id=verdict_id,
         not_before=review.created_at,
     )
-    assert any("rotated" in p for p in problems3), \
+    assert any("rotated" in p for p in problems3), (
         "expected clear rotation error once history is exhausted, got: %s" % problems3
+    )
 
 
 def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
@@ -8657,7 +8523,7 @@ def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
     task = cp.create_task("t", required_capabilities=["python"])
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
-    meta = verified_repo_metadata(cp, worker.id)          # signed under key1
+    meta = verified_repo_metadata(cp, worker.id)  # signed under key1
     evidence = cp.add_evidence(task.id, "test", "artifact://t", "ok", worker.id, metadata=meta)
 
     # Baseline: valid before any rotation.
@@ -8665,14 +8531,16 @@ def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
 
     # A single rotation retains the previous key -> evidence still verifies.
     cp.rotate_agent_attestation_key(worker.id)
-    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, \
+    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, (
         "executor evidence must verify via the retained previous key after one rotation"
+    )
 
     # ...and so must a fleet-wide re-key, which rotates every agent at once.
     for _ in range(cp.ATTESTATION_KEY_HISTORY_LIMIT - 1):
         cp.rotate_agent_attestation_key(worker.id)
-    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, \
+    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, (
         "retained key history must keep bound executor evidence verifiable"
+    )
 
     # Past the retention bound the signature is genuinely unrecoverable.
     for _ in range(3):
@@ -8756,24 +8624,39 @@ def test_publication_content_hash_format_is_enforced(cp):
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     test_ev = cp.add_evidence(
-        task.id, "test", "artifact://x", "ok",
-        worker.id, metadata=verified_repo_metadata(cp, worker.id),
+        task.id,
+        "test",
+        "artifact://x",
+        "ok",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
     review = cp.request_review(task.id, reviewer.id)
     from tests.conftest import submit_review_verdict
+
     verdict_id = submit_review_verdict(cp, task.id, reviewer.id, test_ev.id)
     cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
 
     # Bad format → refused
     bad_ev = cp.add_evidence(
-        task.id, "publication", "p://x", "p", reviewer.id, checksum="not-a-hash",
+        task.id,
+        "publication",
+        "p://x",
+        "p",
+        reviewer.id,
+        checksum="not-a-hash",
     )
     with pytest.raises(ValidationError, match="checksum"):
         cp.publish_task(task.id, "p://x", reviewer.id, evidence_id=bad_ev.id)
 
     short_ev = cp.add_evidence(
-        task.id, "publication", "p://x", "p", reviewer.id, checksum="sha256:abc",
+        task.id,
+        "publication",
+        "p://x",
+        "p",
+        reviewer.id,
+        checksum="sha256:abc",
     )
     with pytest.raises(ValidationError, match="checksum"):
         cp.publish_task(task.id, "p://x", reviewer.id, evidence_id=short_ev.id)
@@ -8784,9 +8667,7 @@ def test_observability_record_truncates_oversized_detail(cp):
     must be replaced with a truncated marker so a chatty caller can't
     pump GB into the events table."""
     huge_detail = {"blob": "x" * (cp.observability.MAX_DETAIL_BYTES + 10)}
-    record = cp.observability.record_log(
-        "test.huge_detail", level="info", detail=huge_detail
-    )
+    record = cp.observability.record_log("test.huge_detail", level="info", detail=huge_detail)
     assert record.detail.get("_truncated") is True
     assert record.detail.get("_max_bytes") == cp.observability.MAX_DETAIL_BYTES
     # Original blob is gone — only the truncation marker remains.
@@ -8804,9 +8685,13 @@ def test_expire_leases_applies_default_grace_against_ntp_step(cp):
     _, lease = cp.claim_task(task.id, worker.id, lease_seconds=10)
     # Bring the lease just barely past expires_at (5s in the past).
     import datetime as _dt
-    past = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=5)).isoformat(timespec="microseconds")
+
+    past = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=5)).isoformat(
+        timespec="microseconds"
+    )
     cp.store.execute(
-        "UPDATE leases SET expires_at = ? WHERE id = ?", (past, lease.id),
+        "UPDATE leases SET expires_at = ? WHERE id = ?",
+        (past, lease.id),
     )
     # Default invocation (no explicit `now`) honors the 30s grace.
     recovered = cp.expire_leases()
@@ -8942,12 +8827,27 @@ def _recovery_two_node_workflow(cp, slug):
         workflow_type="bug",
         definition={
             "nodes": [
-                {"node_key": "investigate", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {
+                    "node_key": "investigate",
+                    "node_type": "task",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
                 {"node_key": "fix", "node_type": "task", "role_required": "dev", "max_attempts": 2},
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
-                {"from_node_key": "investigate", "to_node_key": "fix", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "investigate",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "investigate",
+                    "to_node_key": "fix",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -8985,9 +8885,7 @@ def test_workflow_advance_race_does_not_orphan_tasks(cp):
     def advance() -> None:
         try:
             start.wait(timeout=5)
-            cp.workflow_runtime._advance(
-                run, "a", "failure", run.current_task_id
-            )
+            cp.workflow_runtime._advance(run, "a", "failure", run.current_task_id)
         except Exception as exc:  # pragma: no cover - assertion below reports it
             errors.append(exc)
 
@@ -9054,10 +8952,13 @@ def test_workflow_task_linkage_and_created_history_commit_atomically(cp, monkeyp
     )
     assert linked["workflow_run_id"] == run_id
     assert linked["workflow_node_key"] == "build"
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM task_history WHERE task_id = ? AND event_type = ?",
-        (task_id, "task.created"),
-    )["n"] == 1
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM task_history WHERE task_id = ? AND event_type = ?",
+            (task_id, "task.created"),
+        )["n"]
+        == 1
+    )
 
 
 def test_workflow_reservation_loss_cancels_the_unadopted_task(cp, monkeypatch):
@@ -9077,9 +8978,7 @@ def test_workflow_reservation_loss_cancels_the_unadopted_task(cp, monkeypatch):
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", steal_reservation)
     with pytest.raises(TransitionError, match="reservation was lost"):
-        cp.workflow_runtime._advance(
-            run, "investigate", "success", run.current_task_id
-        )
+        cp.workflow_runtime._advance(run, "investigate", "success", run.current_task_id)
 
     assert cp.get_task(spawned["task"].id).state == TaskState.CANCELLED.value
 
@@ -9088,9 +8987,12 @@ def test_workflow_recovery_guard_and_validation_edges(cp, monkeypatch):
     _recovery_two_node_workflow(cp, "recovery-guards")
     run = cp.workflow_runtime.start_run("recovery-guards", started_by="ops")
 
-    assert cp.workflow_runtime._advance(
-        run, "investigate", "success", "task-from-another-node"
-    ).current_task_id == run.current_task_id
+    assert (
+        cp.workflow_runtime._advance(
+            run, "investigate", "success", "task-from-another-node"
+        ).current_task_id
+        == run.current_task_id
+    )
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "invalid")
     assert cp.workflow_runtime._reservation_is_stale(run) is False
     assert cp.workflow_runtime._plan_pre_decided(
@@ -9147,12 +9049,15 @@ def test_workflow_recovery_guard_and_validation_edges(cp, monkeypatch):
         "UPDATE workflow_runs SET state = ? WHERE id = ?",
         ("completed", run.id),
     )
-    assert cp.workflow_runtime._advance(
-        cp.workflow_runtime.get_run(run.id),
-        "investigate",
-        "success",
-        run.current_task_id,
-    ).state == "completed"
+    assert (
+        cp.workflow_runtime._advance(
+            cp.workflow_runtime.get_run(run.id),
+            "investigate",
+            "success",
+            run.current_task_id,
+        ).state
+        == "completed"
+    )
 
 
 def test_start_run_skips_missing_role_snapshot_then_fails_spawn(cp, monkeypatch):
@@ -9211,9 +9116,7 @@ def test_workflow_advance_reservation_blocks_staggered_caller(cp, monkeypatch):
     reserved = cp.workflow_runtime.get_run(run.id)
     assert reserved.current_node_key.startswith("__workflow_advancing__:")
 
-    observed = cp.workflow_runtime._advance(
-        reserved, "a", "success", run.current_task_id
-    )
+    observed = cp.workflow_runtime._advance(reserved, "a", "success", run.current_task_id)
     assert observed.current_node_key == reserved.current_node_key
     release.set()
     thread.join(timeout=10)
@@ -9271,11 +9174,13 @@ def test_workflow_tick_recovers_task_created_before_advancement_crash(cp, monkey
     )
     assert len(spawned) == 1
     assert spawned[0]["workflow_run_id"] == run.id
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM workflow_run_history "
-        "WHERE run_id = ? AND to_node_key = ?",
-        (run.id, "b"),
-    )["n"] == 0
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ? AND to_node_key = ?",
+            (run.id, "b"),
+        )["n"]
+        == 0
+    )
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
@@ -9366,10 +9271,7 @@ def test_workflow_tick_isolates_poison_run_and_recovers_later_run(cp, monkeypatc
 
 def test_workflow_tick_bounds_large_candidate_backlog(cp, monkeypatch):
     _recovery_two_node_workflow(cp, "tick-bounded")
-    runs = [
-        cp.workflow_runtime.start_run("tick-bounded", started_by="ops")
-        for _ in range(5)
-    ]
+    runs = [cp.workflow_runtime.start_run("tick-bounded", started_by="ops") for _ in range(5)]
     for index, run in enumerate(runs):
         cp.store.execute(
             "UPDATE tasks SET state = ? WHERE id = ?",
@@ -9560,10 +9462,13 @@ def test_expired_lease_sweep_pages_large_backlog(cp):
     assert first["has_more"] is True
     assert second["has_more"] is True
     assert third["has_more"] is False
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM leases WHERE status = ?",
-        (LeaseStatus.ACTIVE.value,),
-    )["n"] == 0
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM leases WHERE status = ?",
+            (LeaseStatus.ACTIVE.value,),
+        )["n"]
+        == 0
+    )
 
 
 def test_blocked_and_dead_letter_sweeps_are_bounded_and_cursor_driven(cp):
@@ -9573,8 +9478,7 @@ def test_blocked_and_dead_letter_sweeps_are_bounded_and_cursor_driven(cp):
         (TaskState.COMPLETED.value, dependency.id),
     )
     blocked = [
-        cp.create_task("blocked %d" % index, dependencies=[dependency.id])
-        for index in range(5)
+        cp.create_task("blocked %d" % index, dependencies=[dependency.id]) for index in range(5)
     ]
     first = cp._unblock_ready_tasks(limit=2)
     second = cp._unblock_ready_tasks(limit=2, cursor=first["next_cursor"])
@@ -9622,11 +9526,7 @@ def test_blocked_and_dead_letter_sweeps_are_bounded_and_cursor_driven(cp):
         limit=2,
         cursor=page_two["next_cursor"],
     )
-    seen = [
-        task.id
-        for page in (page_one, page_two, page_three)
-        for task in page["tasks"]
-    ]
+    seen = [task.id for page in (page_one, page_two, page_three) for task in page["tasks"]]
     assert seen == dead_ids
     assert page_one["has_more"] is True
     assert page_two["has_more"] is True
@@ -9656,8 +9556,7 @@ def test_tick_auto_reopens_blocked_attempt_after_backoff_and_records_audit(cp):
     assert reopened.attempt_count == 1
     assert [item["id"] for item in second["auto_reopened"]] == [task.id]
     auto_history = [
-        event for event in cp.task_history(task.id)
-        if event.event_type == "task.auto_reopened"
+        event for event in cp.task_history(task.id) if event.event_type == "task.auto_reopened"
     ]
     assert len(auto_history) == 1
     assert auto_history[0].detail["backoff_seconds"] == 60
@@ -9710,9 +9609,7 @@ def test_transient_retry_excludes_the_failed_worker_and_repeated_failure_stops(c
     assert failed.state == TaskState.FAILED.value
     assert [item["id"] for item in second["auto_retry_exhausted"]] == [task.id]
     terminal = [
-        event
-        for event in cp.task_history(task.id)
-        if event.to_state == TaskState.FAILED.value
+        event for event in cp.task_history(task.id) if event.to_state == TaskState.FAILED.value
     ][-1]
     assert terminal.detail["reason"] == "repeated_identical_attempt_failure"
 
@@ -9771,9 +9668,7 @@ def test_operator_reopen_starts_fresh_retry_generation(cp):
         (1, "2000-01-01T00:00:00+00:00", task.id),
     )
     cp.tick(limit=0)
-    assert cp.get_task(task.id).metadata["retry_excluded_agent_ids"] == [
-        "agent_first"
-    ]
+    assert cp.get_task(task.id).metadata["retry_excluded_agent_ids"] == ["agent_first"]
 
     cp._transition_task_internal(
         task.id,
@@ -9817,9 +9712,7 @@ def test_operator_reopen_starts_fresh_retry_generation(cp):
     assert retried.metadata["retry_excluded_agent_ids"] == ["agent_third"]
     assert [item["id"] for item in retry["auto_reopened"]] == [task.id]
     blocked_events = [
-        event
-        for event in cp.task_history(task.id)
-        if event.to_state == TaskState.BLOCKED.value
+        event for event in cp.task_history(task.id) if event.to_state == TaskState.BLOCKED.value
     ]
     assert [event.detail["retry_generation"] for event in blocked_events] == [
         0,
@@ -9874,9 +9767,10 @@ def test_shared_transport_failures_deduplicate_to_one_fleet_incident(cp):
     assert incident.project == "mac"
     assert incident.metadata["origin"]["type"] == "shared_environment_incident"
     assert len(incident.metadata["affected_task_ids"]) == 2
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM tasks WHERE id LIKE 'task_incident_%'"
-    )["n"] == 1
+    assert (
+        cp.store.query_one("SELECT COUNT(*) AS n FROM tasks WHERE id LIKE 'task_incident_%'")["n"]
+        == 1
+    )
 
 
 def test_deterministic_contract_failure_stops_without_waiting_or_repair_child(cp):
@@ -9930,8 +9824,7 @@ def test_tick_fails_exhausted_blocked_attempt_without_reopening(cp):
     assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
     assert task.id in {item["id"] for item in result["dead_letters"]}
     assert not [
-        event for event in cp.task_history(task.id)
-        if event.event_type == "task.auto_reopened"
+        event for event in cp.task_history(task.id) if event.event_type == "task.auto_reopened"
     ]
 
 
@@ -10055,9 +9948,7 @@ def test_tick_exhausted_environment_failure_repair_task_has_environment_prerequi
     exhausted_ids = [item["id"] for item in result["auto_retry_exhausted"]]
     assert task.id in exhausted_ids
     waiting_updates = [
-        event
-        for event in cp.task_history(task.id)
-        if event.to_state == TaskState.WAITING.value
+        event for event in cp.task_history(task.id) if event.to_state == TaskState.WAITING.value
     ]
     assert waiting_updates, "Expected at least one history event with to_state=waiting"
     waiting_states = {e.event_type for e in waiting_updates}
@@ -10123,9 +10014,7 @@ def test_tick_exhausted_repair_preserves_control_plane_publication_metadata(cp):
         subject_id=task.id,
         limit=100,
     )
-    assert not [
-        event for event in observations if event.name == "task.auto_retry.failed"
-    ]
+    assert not [event for event in observations if event.name == "task.auto_retry.failed"]
 
 
 def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):
@@ -10153,13 +10042,10 @@ def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):
     assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
     assert task.id not in {item["id"] for item in result["dead_letters"]}
     transition = [
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type == "task.transitioned"
+        event for event in cp.task_history(task.id) if event.event_type == "task.transitioned"
     ][-1]
     assert transition.to_state == TaskState.CANCELLED.value
     assert transition.detail["reason"] == "superseded"
-
 
 
 def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
@@ -10173,7 +10059,12 @@ def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "executor_failed", "manual_repair_required": True, "returncode": 1},
+        {
+            "error": "/usr/bin/python: command not found in the sandbox",
+            "reason": "executor_failed",
+            "manual_repair_required": True,
+            "returncode": 1,
+        },
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -10195,7 +10086,6 @@ def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
     assert task.id in exhausted_ids
 
 
-
 def test_tick_exhausted_worker_exception_creates_environment_repair_task(cp):
     task = cp.create_task(
         "exhausted worker_exception attempt",
@@ -10207,7 +10097,11 @@ def test_tick_exhausted_worker_exception_creates_environment_repair_task(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception", "failure": "worker_exception"},
+        {
+            "error": "/usr/bin/python: command not found in the sandbox",
+            "reason": "worker_exception",
+            "failure": "worker_exception",
+        },
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -10240,7 +10134,10 @@ def test_tick_exhausted_environment_failure_resets_attempt_count_to_zero(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception"},
+        {
+            "error": "/usr/bin/python: command not found in the sandbox",
+            "reason": "worker_exception",
+        },
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -10276,14 +10173,13 @@ def test_tick_exhausted_environment_failure_transition_detail_and_metadata(cp):
 
     waiting = cp.get_task(task.id)
     assert waiting.state == TaskState.WAITING.value
-    assert "contract_repair_status" not in waiting.metadata, "contract_repair_status must not be set for environment failures"
+    assert "contract_repair_status" not in waiting.metadata, (
+        "contract_repair_status must not be set for environment failures"
+    )
     assert waiting.metadata.get("failure_class") == "environment"
     assert waiting.metadata.get("environment_repair_task_id"), "repair task id should be set"
     history = cp.task_history(task.id)
-    waiting_events = [
-        e for e in history
-        if e.to_state == TaskState.WAITING.value
-    ]
+    waiting_events = [e for e in history if e.to_state == TaskState.WAITING.value]
     assert waiting_events, "Expected a history event transitioning to waiting"
 
 
@@ -10298,7 +10194,10 @@ def test_tick_exhausted_environment_repair_task_title_and_description(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception"},
+        {
+            "error": "/usr/bin/python: command not found in the sandbox",
+            "reason": "worker_exception",
+        },
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -10312,7 +10211,9 @@ def test_tick_exhausted_environment_repair_task_title_and_description(cp):
     repair = cp.get_task(repair_id)
     assert "my important task needing repair" in repair.title
     assert task.id in repair.description
-    assert "environment" in repair.description.lower() or "prerequisite" in repair.description.lower()
+    assert (
+        "environment" in repair.description.lower() or "prerequisite" in repair.description.lower()
+    )
 
 
 def test_tick_exhausted_environment_repair_task_idempotent(cp):
@@ -10326,7 +10227,10 @@ def test_tick_exhausted_environment_repair_task_idempotent(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception"},
+        {
+            "error": "/usr/bin/python: command not found in the sandbox",
+            "reason": "worker_exception",
+        },
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -10430,8 +10334,7 @@ def test_repeated_no_telemetry_lease_expiry_does_not_create_repair_task(cp):
     assert failed.dependencies == []
     assert "environment_repair_task_id" not in failed.metadata
     expiry = [
-        event for event in cp.task_history(task.id)
-        if event.event_type == "task.lease_expired"
+        event for event in cp.task_history(task.id) if event.event_type == "task.lease_expired"
     ][-1]
     assert expiry.detail["reason"] == "environment_failure_without_actionable_evidence"
     assert expiry.detail["manual_repair_required"] is True
@@ -10449,7 +10352,11 @@ def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception", "failure": "worker_exception"},
+        {
+            "error": "/usr/bin/python: command not found in the sandbox",
+            "reason": "worker_exception",
+            "failure": "worker_exception",
+        },
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -10464,7 +10371,9 @@ def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(
     assert "contract_repair_status" not in waiting.metadata, (
         "contract_repair_status must not be set on environment failure path"
     )
-    assert waiting.metadata.get("environment_repair_task_id"), "environment_repair_task_id must be set"
+    assert waiting.metadata.get("environment_repair_task_id"), (
+        "environment_repair_task_id must be set"
+    )
     assert "contract_repair_task_id" not in waiting.metadata
 
 
@@ -10497,8 +10406,7 @@ def test_tick_fails_non_retryable_blocked_attempt_diagnoses(cp, diagnosis):
     assert cp.get_task(task.id).state == TaskState.FAILED.value
     assert result["auto_reopened"] == []
     assert not [
-        event for event in cp.task_history(task.id)
-        if event.event_type == "task.auto_reopened"
+        event for event in cp.task_history(task.id) if event.event_type == "task.auto_reopened"
     ]
 
 
@@ -10525,9 +10433,7 @@ def test_workflow_tick_skips_active_reservations_and_incomplete_rows(cp, monkeyp
 
     definition = dict(run.definition_snapshot)
     definition["nodes"] = [
-        {**node, "timeout_minutes": 1}
-        if node.get("node_key") == "investigate"
-        else node
+        {**node, "timeout_minutes": 1} if node.get("node_key") == "investigate" else node
         for node in definition["nodes"]
     ]
     cp.store.execute(
@@ -10580,12 +10486,32 @@ def test_start_run_stages_predecision_history_until_spawn_recovers(cp, monkeypat
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1},
-                {"node_key": "build", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+                {
+                    "node_key": "review",
+                    "node_type": "approval",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
+                {
+                    "node_key": "build",
+                    "node_type": "task",
+                    "role_required": "dev",
+                    "max_attempts": 1,
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
-                {"from_node_key": "review", "to_node_key": "build", "condition": "approved", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "review",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "review",
+                    "to_node_key": "build",
+                    "condition": "approved",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -10610,10 +10536,13 @@ def test_start_run_stages_predecision_history_until_spawn_recovers(cp, monkeypat
         ("recover-predecision-start",),
     )
     assert row["current_node_key"].startswith("__workflow_advancing__:")
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
-        (row["id"],),
-    )["n"] == 0
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+            (row["id"],),
+        )["n"]
+        == 0
+    )
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
@@ -10627,8 +10556,7 @@ def test_start_run_stages_predecision_history_until_spawn_recovers(cp, monkeypat
     final = cp.workflow_runtime.get_run(row["id"])
     assert final.current_node_key == "build"
     history = cp.store.query_all(
-        "SELECT to_node_key, condition FROM workflow_run_history "
-        "WHERE run_id = ? ORDER BY seq",
+        "SELECT to_node_key, condition FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
         (row["id"],),
     )
     assert [(item["to_node_key"], item["condition"]) for item in history] == [
@@ -10636,10 +10564,13 @@ def test_start_run_stages_predecision_history_until_spawn_recovers(cp, monkeypat
         ("build", "approved"),
     ]
     cp.workflow_runtime.tick()
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
-        (row["id"],),
-    )["n"] == 2
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+            (row["id"],),
+        )["n"]
+        == 2
+    )
 
 
 def test_start_run_predecision_chain_can_complete_without_spawning(cp):
@@ -10651,11 +10582,26 @@ def test_start_run_predecision_chain_can_complete_without_spawning(cp):
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1},
+                {
+                    "node_key": "review",
+                    "node_type": "approval",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
-                {"from_node_key": "review", "to_node_key": "", "condition": "approved", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "review",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "review",
+                    "to_node_key": "",
+                    "condition": "approved",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -10670,13 +10616,15 @@ def test_start_run_predecision_chain_can_complete_without_spawning(cp):
     assert run.state == "completed"
     assert run.current_node_key is None
     assert run.current_task_id is None
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM tasks WHERE workflow_run_id = ?",
-        (run.id,),
-    )["n"] == 0
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM tasks WHERE workflow_run_id = ?",
+            (run.id,),
+        )["n"]
+        == 0
+    )
     history = cp.store.query_all(
-        "SELECT to_node_key, condition FROM workflow_run_history "
-        "WHERE run_id = ? ORDER BY seq",
+        "SELECT to_node_key, condition FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
         (run.id,),
     )
     assert [(item["to_node_key"], item["condition"]) for item in history] == [
@@ -10695,14 +10643,44 @@ def test_midrun_predecision_history_commits_only_with_recovered_spawn(cp, monkey
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "prepare", "node_type": "task", "role_required": "qa", "max_attempts": 1},
-                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1},
-                {"node_key": "build", "node_type": "task", "role_required": "dev", "max_attempts": 1},
+                {
+                    "node_key": "prepare",
+                    "node_type": "task",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
+                {
+                    "node_key": "review",
+                    "node_type": "approval",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
+                {
+                    "node_key": "build",
+                    "node_type": "task",
+                    "role_required": "dev",
+                    "max_attempts": 1,
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "prepare", "condition": "success", "priority": 100},
-                {"from_node_key": "prepare", "to_node_key": "review", "condition": "success", "priority": 100},
-                {"from_node_key": "review", "to_node_key": "build", "condition": "approved", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "prepare",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "prepare",
+                    "to_node_key": "review",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "review",
+                    "to_node_key": "build",
+                    "condition": "approved",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -10723,13 +10701,14 @@ def test_midrun_predecision_history_commits_only_with_recovered_spawn(cp, monkey
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", crash_before_spawn)
     with pytest.raises(SystemExit, match="process terminated"):
-        cp.workflow_runtime._advance(
-            run, "prepare", "success", run.current_task_id
-        )
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
-        (run.id,),
-    )["n"] == 1
+        cp.workflow_runtime._advance(run, "prepare", "success", run.current_task_id)
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+            (run.id,),
+        )["n"]
+        == 1
+    )
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", original_spawn)
     monkeypatch.setenv("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "0")
@@ -10747,12 +10726,13 @@ def test_midrun_predecision_history_commits_only_with_recovered_spawn(cp, monkey
     )
     assert [row["condition"] for row in rows] == ["success", "approved", "success"]
     cp.tick(limit=0)
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
-        (run.id,),
-    )["n"] == 3
-
-
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS n FROM workflow_run_history WHERE run_id = ?",
+            (run.id,),
+        )["n"]
+        == 3
+    )
 
 
 def test_strip_control_chars_keeps_normal_text(cp):
@@ -10764,8 +10744,6 @@ def test_strip_control_chars_keeps_normal_text(cp):
     assert "\x1b" not in cp._strip_control_chars("foo\x1b[31m red \x1b[0m bar")
     # NUL and other ctrl stripped
     assert cp._strip_control_chars("a\x00b\x07c") == "abc"
-
-
 
 
 def test_failed_to_open_requeue_resets_attempt_count(cp):
@@ -10986,7 +10964,6 @@ def test_expire_leases_does_not_clobber_a_reclaimed_task(cp):
     assert refreshed.lease_id == lease_b.id
 
 
-
 def test_expire_leases_exhausted_task_stamps_failure_class(cp):
     """mac-9be4b64: when a lease expires and the task has exhausted its retry
     budget, the terminal FAILED transition must stamp failure_class on the task
@@ -11016,9 +10993,7 @@ def test_expire_leases_exhausted_task_stamps_failure_class(cp):
     assert "failure_class" in failed.metadata, (
         "failure_class must be stamped on metadata when lease expires with exhausted budget"
     )
-    expiry_event = next(
-        e for e in cp.task_history(task.id) if e.event_type == "task.lease_expired"
-    )
+    expiry_event = next(e for e in cp.task_history(task.id) if e.event_type == "task.lease_expired")
     assert "failure_class" in expiry_event.detail, (
         "failure_class must appear in the task.lease_expired history event detail"
     )
@@ -11086,7 +11061,14 @@ def test_unique_active_lease_per_task_enforced_at_db_layer(cp):
         cp.store.execute(
             "INSERT INTO leases (id, task_id, agent_id, expires_at, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, 'active', ?, ?)",
-            ("lease_evil", task.id, worker_b.id, "2099-01-01T00:00:00+00:00", "2024-01-01", "2024-01-01"),
+            (
+                "lease_evil",
+                task.id,
+                worker_b.id,
+                "2099-01-01T00:00:00+00:00",
+                "2024-01-01",
+                "2024-01-01",
+            ),
         )
 
 
@@ -11171,9 +11153,7 @@ def test_register_tenant_preserves_metadata_on_reregister(cp):
 def test_untrusted_machine_agent_cannot_request_secret(cp):
     untrusted_machine = cp.register_machine("untrusted-host", trusted=False)
     agent = cp.register_agent(untrusted_machine.id, "shady", capabilities=["deploy"])
-    secret = cp.create_secret(
-        "deploy-token", "value-xyz", {"capabilities": ["deploy"]}, "human"
-    )
+    secret = cp.create_secret("deploy-token", "value-xyz", {"capabilities": ["deploy"]}, "human")
     with pytest.raises(AuthorizationError):
         cp.request_secret(secret.id, agent.id, "deploy")
 
@@ -11181,9 +11161,7 @@ def test_untrusted_machine_agent_cannot_request_secret(cp):
 def test_secret_handle_is_single_use_and_agent_bound(cp):
     deployer = register_agent(cp, "deployer", ["deploy"])
     other = register_agent(cp, "other", ["deploy"])
-    secret = cp.create_secret(
-        "deploy-token", "value-xyz", {"capabilities": ["deploy"]}, "human"
-    )
+    secret = cp.create_secret("deploy-token", "value-xyz", {"capabilities": ["deploy"]}, "human")
     handle = cp.request_secret(secret.id, deployer.id, "deploy")
     # Wrong agent cannot redeem.
     with pytest.raises(AuthorizationError):
@@ -11197,9 +11175,7 @@ def test_secret_handle_is_single_use_and_agent_bound(cp):
 
 def test_secret_handle_expires(cp):
     deployer = register_agent(cp, "deployer", ["deploy"])
-    secret = cp.create_secret(
-        "deploy-token", "value-xyz", {"capabilities": ["deploy"]}, "human"
-    )
+    secret = cp.create_secret("deploy-token", "value-xyz", {"capabilities": ["deploy"]}, "human")
     handle = cp.request_secret(secret.id, deployer.id, "deploy", ttl_seconds=1)
     cp.store.execute(
         "UPDATE secret_access_audit SET expires_at = '1970-01-01T00:00:00+00:00' WHERE id = ?",
@@ -11210,9 +11186,7 @@ def test_secret_handle_expires(cp):
 
 
 def test_rotate_secret_writes_audit_row(cp):
-    secret = cp.create_secret(
-        "deploy-token", "v1", {"capabilities": ["deploy"]}, "human"
-    )
+    secret = cp.create_secret("deploy-token", "v1", {"capabilities": ["deploy"]}, "human")
     cp.rotate_secret(secret.id, "v2", "human-operator")
     audits = cp.list_secret_audits(secret.id)
     rotations = [a for a in audits if a.result == "rotated"]
@@ -11266,7 +11240,10 @@ def test_rollout_install_requires_runtime_and_verified_artifact(cp):
         "human",
     )
     assert verified.artifact_hash == "sha256:abc123"
-    assert cp.advance_rollout(rollout.id, "start_canary", "human").status == RolloutStatus.CANARYING.value
+    assert (
+        cp.advance_rollout(rollout.id, "start_canary", "human").status
+        == RolloutStatus.CANARYING.value
+    )
 
 
 def test_rollout_health_gate_blocks_promotion_and_failed_health_rescues(cp):
@@ -11549,7 +11526,9 @@ def test_eval_set_baseline_change_writes_event(cp):
     events = cp.list_eval_set_events(eval_set.id)
     types = [event["event_type"] for event in events]
     assert "eval_set.created" in types
-    baseline_events = [event for event in events if event["event_type"] == "eval_set.baseline_changed"]
+    baseline_events = [
+        event for event in events if event["event_type"] == "eval_set.baseline_changed"
+    ]
     assert len(baseline_events) == 1
     assert baseline_events[0]["actor"] == "release-manager"
     assert baseline_events[0]["detail"]["previous_baseline_score"] == pytest.approx(0.80)
@@ -11589,7 +11568,8 @@ def test_evaluate_rollout_health_failing_twice_does_not_duplicate_rescue(cp):
         "monitor",
     )
     rescue_tasks = [
-        task for task in cp.list_tasks()
+        task
+        for task in cp.list_tasks()
         if task.metadata.get("rollout_id") == rollout.id and task.metadata.get("rescue")
     ]
     assert len(rescue_tasks) == 1
@@ -11612,9 +11592,7 @@ def test_tenant_only_secret_scope_grants_access_to_matching_machine(cp):
         labels={"tenant_policy": {"mode": "private", "tenant_ids": [tenant.id]}},
     )
     agent = cp.register_agent(machine.id, "scoped-agent", capabilities=["any"])
-    secret = cp.create_secret(
-        "tenant-only", "abc", {"tenant_id": tenant.id}, "human"
-    )
+    secret = cp.create_secret("tenant-only", "abc", {"tenant_id": tenant.id}, "human")
     handle = cp.request_secret(secret.id, agent.id, "deploy")
     assert handle.granted is True
     revealed = cp.reveal_secret(secret.id, handle.audit_id, agent.id)
@@ -11718,9 +11696,7 @@ def test_events_view_unifies_all_audit_surfaces(cp, monkeypatch):
     assert any("FROM action_events" in query for query in queries)
     action_event = next(event for event in events if event["id"] == action.event_id)
     assert action_event["detail"]["attributes"] == {"suite": "contract"}
-    command_event = next(
-        event for event in events if event["event_type"] == "command.completed"
-    )
+    command_event = next(event for event in events if event["event_type"] == "command.completed")
     assert command_event["detail"]["argv0"] == "python"
     project_events = cp.list_events(subject_type="project", subject_id=project.id)
     assert {event["event_type"] for event in project_events} >= {
@@ -12179,9 +12155,7 @@ def test_events_task_detail_includes_from_to_states(cp):
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     task_events = cp.list_events(subject_type="task", subject_id=task.id)
-    transitions = [
-        event for event in task_events if event["event_type"] == "task.transitioned"
-    ]
+    transitions = [event for event in task_events if event["event_type"] == "task.transitioned"]
     assert transitions
     # Most recent transition is to RUNNING.
     latest = transitions[0]
@@ -12189,9 +12163,7 @@ def test_events_task_detail_includes_from_to_states(cp):
     assert latest["detail"].get("from_state") == "claimed"
 
 
-def test_agentbus_streams_carry_typed_content(
-    cp, monkeypatch
-):
+def test_agentbus_streams_carry_typed_content(cp, monkeypatch):
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     sender = register_agent(cp, "sender", ["python"])
     recipient = register_agent(cp, "recipient", ["python"])
@@ -12467,7 +12439,10 @@ def test_agentbus_artifact_publish_crud_records_and_broadcasts(cp, monkeypatch):
     assert created["artifact"]["uri"] == "http://hub.example:8790/artifacts/reports/one.txt"
     assert created["artifact"]["metadata"]["publish_dir"] == "/srv/mac-artifacts"
     assert created["artifact"]["metadata"]["publish_path"] == "reports/one.txt"
-    assert created["artifact"]["metadata"]["public_url"] == "http://hub.example:8790/artifacts/reports/one.txt"
+    assert (
+        created["artifact"]["metadata"]["public_url"]
+        == "http://hub.example:8790/artifacts/reports/one.txt"
+    )
     assert created["count"] == 1
 
     chunks = cp.read_agentbus_chunks(recipient.id, created["streams"][0]["id"])
@@ -12485,7 +12460,10 @@ def test_agentbus_artifact_publish_crud_records_and_broadcasts(cp, monkeypatch):
     assert updated["artifact"]["id"] == created["artifact"]["id"]
     assert updated["artifact"]["uri"] == "http://hub.example:8790/artifacts/reports/two.txt"
     assert updated["artifact"]["metadata"]["publish_path"] == "reports/two.txt"
-    assert updated["artifact"]["metadata"]["public_url"] == "http://hub.example:8790/artifacts/reports/two.txt"
+    assert (
+        updated["artifact"]["metadata"]["public_url"]
+        == "http://hub.example:8790/artifacts/reports/two.txt"
+    )
 
     listed = cp.publish_agentbus_artifact(sender.id, operation="list")
     assert [item["digest"] for item in listed["artifacts"]] == ["sha256:publish1"]
@@ -12510,9 +12488,7 @@ def test_agentbus_enforces_recipient_chunk_size_and_stream_id_shape(cp):
     with pytest.raises(ValidationError):
         cp.open_agentbus_stream(sender.id, recipient_agent_id=recipient.id, stream_id="bad id")
     with pytest.raises(ValidationError):
-        cp.open_agentbus_stream(
-            sender.id, recipient_agent_id=recipient.id, stream_id="x" * 200
-        )
+        cp.open_agentbus_stream(sender.id, recipient_agent_id=recipient.id, stream_id="x" * 200)
     with pytest.raises(ValidationError):
         cp.open_agentbus_stream(sender.id, recipient_agent_id=recipient.id, stream_id="../etc")
 
@@ -12658,7 +12634,11 @@ def test_verdict_value_unknown_fails_closed(cp):
 
 
 def test_review_verdict_validator_rejected_requires_feedback():
-    from mac.evidence_validators import EvidenceValidationContext, ReviewVerdictValidator, VerificationManifest
+    from mac.evidence_validators import (
+        EvidenceValidationContext,
+        ReviewVerdictValidator,
+        VerificationManifest,
+    )
 
     manifest = VerificationManifest.parse(
         {
@@ -12679,7 +12659,11 @@ def test_review_verdict_validator_rejected_requires_feedback():
 
 
 def test_review_verdict_validator_rejected_accepts_feedback():
-    from mac.evidence_validators import EvidenceValidationContext, ReviewVerdictValidator, VerificationManifest
+    from mac.evidence_validators import (
+        EvidenceValidationContext,
+        ReviewVerdictValidator,
+        VerificationManifest,
+    )
 
     manifest = VerificationManifest.parse(
         {
@@ -12740,7 +12724,9 @@ def test_find_review_verdict_rejected_requires_digest(cp):
         _trusted_internal=True,
     )
 
-    found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
+    found, problems = cp._find_review_verdict_evidence(
+        task.id, reviewer.id, executor_evidence_id=evidence.id
+    )
 
     assert found is None
     assert any("worktree_digest" in problem for problem in problems)
@@ -12775,7 +12761,9 @@ def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
         _trusted_internal=True,
     )
 
-    found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
+    found, problems = cp._find_review_verdict_evidence(
+        task.id, reviewer.id, executor_evidence_id=evidence.id
+    )
 
     assert found is not None
     assert found.id == verdict.id
@@ -12868,11 +12856,16 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
         verdict="rejected",
         feedback="Fix layout overflow on the task cards.",
     )
-    cp.submit_review(first_review.id, ReviewStatus.REJECTED.value, reviewer.id, evidence_id=rejected_verdict)
+    cp.submit_review(
+        first_review.id, ReviewStatus.REJECTED.value, reviewer.id, evidence_id=rejected_verdict
+    )
 
     reopened = cp.get_task(task.id)
     assert reopened.state == "open"
-    assert reopened.metadata["review_feedback"]["latest"]["feedback"] == "Fix layout overflow on the task cards."
+    assert (
+        reopened.metadata["review_feedback"]["latest"]["feedback"]
+        == "Fix layout overflow on the task cards."
+    )
 
     # Second attempt: executor addresses feedback, reviewer approves
     _, second_lease = cp.claim_task(task.id, executor.id)
@@ -12889,9 +12882,13 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
     cp.submit_for_review(task.id, executor.id, lease_id=second_lease.id)
     second_review = cp.request_review(task.id, reviewer.id)
     approved_verdict = submit_review_verdict(cp, task.id, reviewer.id, second_evidence.id)
-    cp.submit_review(second_review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=approved_verdict)
+    cp.submit_review(
+        second_review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=approved_verdict
+    )
 
-    publication = cp.publish_task(task.id, "gitea://merge-request", reviewer.id, evidence_id=second_evidence.id)
+    publication = cp.publish_task(
+        task.id, "gitea://merge-request", reviewer.id, evidence_id=second_evidence.id
+    )
     completed = cp.get_task(task.id)
 
     assert publication.target == "gitea://merge-request"
@@ -12918,9 +12915,7 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
     )
     cp.submit_for_review(task.id, executor.id, lease_id=first_lease.id)
     first_review = cp.request_review(task.id, reviewer.id)
-    first_verdict = submit_review_verdict(
-        cp, task.id, reviewer.id, first_evidence.id
-    )
+    first_verdict = submit_review_verdict(cp, task.id, reviewer.id, first_evidence.id)
     cp.submit_review(
         first_review.id,
         ReviewStatus.APPROVED.value,
@@ -12963,7 +12958,9 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
     with pytest.raises(ValidationError, match="completion requires approved review"):
         cp._transition_task_internal(task.id, TaskState.COMPLETED.value, "operator")
 
-    assert cp.get_task(task.id).metadata["review_target"]["executor_evidence_id"] == second_evidence.id
+    assert (
+        cp.get_task(task.id).metadata["review_target"]["executor_evidence_id"] == second_evidence.id
+    )
     assert cp.get_review(second_review.id).status == ReviewStatus.PENDING.value
 
 
@@ -13052,21 +13049,22 @@ def test_decomposed_children_use_distinct_agents_and_feed_integrator(cp, tmp_pat
     assert integration_task.state == TaskState.OPEN.value
     coordination = integration_task.metadata["coordination"]
     assert coordination["phase"] == "integration"
-    output_ids = {
-        item["executor_evidence_id"] for item in coordination["child_outputs"]
-    }
+    output_ids = {item["executor_evidence_id"] for item in coordination["child_outputs"]}
     assert output_ids == {first_evidence.id, second_evidence.id}
     assert cp._cooperative_review_integration_problems(integration_task, {})
-    assert cp._cooperative_review_integration_problems(
-        integration_task,
-        {
-            "integration": {
-                "status": "pass",
-                "required_child_evidence_ids": sorted(output_ids),
-                "verified_child_evidence_ids": sorted(output_ids),
-            }
-        },
-    ) == []
+    assert (
+        cp._cooperative_review_integration_problems(
+            integration_task,
+            {
+                "integration": {
+                    "status": "pass",
+                    "required_child_evidence_ids": sorted(output_ids),
+                    "verified_child_evidence_ids": sorted(output_ids),
+                }
+            },
+        )
+        == []
+    )
     assert not cp._agent_available_for(planner, integration_task)
     assert not cp._agent_available_for(child_one_agent, integration_task)
     assert not cp._agent_available_for(child_two_agent, integration_task)
@@ -13317,7 +13315,9 @@ def test_agent_installed_packages_footprint_persists_and_survives_register(cp):
     get_agent, and survives re-registration (the register UPSERT must not clobber
     it). This is the persistent 'default footprint' deploys re-hydrate."""
     machine = cp.register_machine("gpu-host", resources={"cpu": 4})
-    agent = cp.register_agent(machine.id, "gpu-worker", capabilities=["python"], agent_id="agent_gpu1")
+    agent = cp.register_agent(
+        machine.id, "gpu-worker", capabilities=["python"], agent_id="agent_gpu1"
+    )
     fp = {
         "pip": [{"name": "diffusers", "spec": "diffusers==0.31", "installed_at": "t"}],
         "npm": [{"name": "left-pad", "spec": "left-pad@1.0", "installed_at": "t"}],
@@ -13327,10 +13327,14 @@ def test_agent_installed_packages_footprint_persists_and_survives_register(cp):
     assert updated.installed_packages == fp
     assert cp.get_agent(agent.id).installed_packages["pip"][0]["name"] == "diffusers"
     # re-register the SAME agent with new capabilities -> footprint preserved.
-    again = cp.register_agent(machine.id, "gpu-worker", capabilities=["python", "gpu"], agent_id="agent_gpu1")
+    again = cp.register_agent(
+        machine.id, "gpu-worker", capabilities=["python", "gpu"], agent_id="agent_gpu1"
+    )
     assert again.id == agent.id
     assert cp.get_agent(agent.id).installed_packages == fp
     assert "gpu" in cp.get_agent(agent.id).capabilities
+
+
 def test_reopen_task_requeues_terminal_task_and_resets_attempts(cp):
     """Recovery: a failed task (e.g. flap-killed) can be reopened back to OPEN,
     clearing the owner/lease and resetting attempt_count so the requeue is not
@@ -13419,9 +13423,7 @@ def test_force_complete_normalizes_unambiguous_task_prefix(cp):
         {"reason": "stranded"},
     )
 
-    completed = cp.force_complete_task(
-        task.id[:13], "operator", reason="verified canonical commit"
-    )
+    completed = cp.force_complete_task(task.id[:13], "operator", reason="verified canonical commit")
 
     assert completed.id == task.id
     assert completed.state == TaskState.COMPLETED.value
@@ -13498,6 +13500,7 @@ def test_repository_completion_requires_durable_canonical_integration(cp, monkey
 # mac-kg8y: Rollout promotion / rollback must atomically deploy to environment
 # ---------------------------------------------------------------------------
 
+
 def _create_linked_rollout(cp, version="10.0", artifact_hash="sha256:aabbccdd"):
     """Create a rollout with a linked deploy environment and a pre-registered artifact."""
     runtime = create_runtime(cp, "runtime-linked-%s" % version)
@@ -13547,7 +13550,9 @@ def test_rollout_promotion_records_deployed_event(cp):
 
     events = cp.list_rollout_events(rollout.id)
     event_types = [e["event_type"] for e in events]
-    assert "rollout.deployed" in event_types, "expected rollout.deployed event, got: %s" % event_types
+    assert "rollout.deployed" in event_types, (
+        "expected rollout.deployed event, got: %s" % event_types
+    )
     deployed_evt = next(e for e in events if e["event_type"] == "rollout.deployed")
     assert deployed_evt["detail"]["artifact_id"] == artifact.id
     assert deployed_evt["detail"]["deploy_environment_id"] == env.id
@@ -13574,9 +13579,7 @@ def test_rollout_rollback_redeploys_prior_artifact(cp):
     artifact_v2 = cp.register_artifact(
         "image", "sha256:rollback02", "artifact://mac/13.0-v2", "human"
     )
-    cp.verify_rollout_artifact(
-        rollout.id, artifact_v2.uri, artifact_v2.digest, "human"
-    )
+    cp.verify_rollout_artifact(rollout.id, artifact_v2.uri, artifact_v2.digest, "human")
     cp.advance_rollout(rollout.id, "start_canary", "human")
     cp.evaluate_rollout_health(rollout.id, {"runtime": "healthy"}, "monitor")
     cp.advance_rollout(rollout.id, "promote", "human")
@@ -13587,8 +13590,9 @@ def test_rollout_rollback_redeploys_prior_artifact(cp):
 
     active = cp.current_deployment(env.id)
     assert active is not None
-    assert active.artifact_id == artifact_v1.id, (
-        "expected prior artifact %s, got %s" % (artifact_v1.id, active.artifact_id)
+    assert active.artifact_id == artifact_v1.id, "expected prior artifact %s, got %s" % (
+        artifact_v1.id,
+        active.artifact_id,
     )
 
 
@@ -13653,7 +13657,9 @@ def test_rollout_rescue_from_promoted_redeploys_prior_artifact(cp):
     cp.advance_rollout(rollout.id, "promote", "human")
 
     # At this point env serves artifact_v2. Rescue should revert to artifact_v1.
-    rescued, rescue_task = cp.rescue_rollout(rollout.id, "ops-bot", "service degraded after promote")
+    rescued, rescue_task = cp.rescue_rollout(
+        rollout.id, "ops-bot", "service degraded after promote"
+    )
     assert rescued.status == RolloutStatus.RESCUING.value
 
     active = cp.current_deployment(env.id)
@@ -13708,7 +13714,9 @@ def _setup_hubverify_task(cp, runner, *, experiment=False):
         required_capabilities=["python"],
         metadata={
             "publication_target": "test://publish",
-            "origin": {"repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}},
+            "origin": {
+                "repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}
+            },
         },
     )
     if experiment:
@@ -13721,7 +13729,11 @@ def _setup_hubverify_task(cp, runner, *, experiment=False):
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
-        task.id, "log", "artifact://worker-result", "tests passed", worker.id,
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
@@ -13730,9 +13742,7 @@ def _setup_hubverify_task(cp, runner, *, experiment=False):
 
 
 def test_hub_verify_prefers_canonical_contract_remote_over_redacted_evidence(cp):
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda *args: (0, "ok")
-    )
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, lambda *args: (0, "ok"))
     evidence.metadata["verification"]["repo"]["remote_url"] = (
         "https://x-access-token:<redacted>@github.com/wrong/repo.git"
     )
@@ -13744,9 +13754,7 @@ def test_hub_verify_prefers_canonical_contract_remote_over_redacted_evidence(cp)
 
 
 def test_hub_verify_uses_sanity_scope_and_fails_closed_for_unsafe_paths(cp):
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda *args: (0, "ok")
-    )
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, lambda *args: (0, "ok"))
     info = cp._hub_verify_repo_info(task, evidence)
     assert info is not None
 
@@ -13763,7 +13771,8 @@ def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     seen = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda remote, branch, head, cmd: (seen.append((remote, branch, head)) or (0, "all passed")),
+        cp,
+        lambda remote, branch, head, cmd: seen.append((remote, branch, head)) or (0, "all passed"),
     )
     # Hub verify runs as soon as a review is pending: create review -> run the
     # contract test on the hub -> signed verdict -> publish, within one or two
@@ -13791,7 +13800,7 @@ def test_periodic_review_sweep_defers_blocking_hub_verification(cp, monkeypatch)
     runner_calls = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
         cp,
-        lambda *args: (runner_calls.append(args) or (0, "all passed")),
+        lambda *args: runner_calls.append(args) or (0, "all passed"),
     )
     nudged = []
     cp._nudge_review_workflow = nudged.append
@@ -13811,7 +13820,8 @@ def test_periodic_review_sweep_defers_blocking_hub_verification(cp, monkeypatch)
 def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda remote, branch, head, cmd: (1, "3 failed, 2 passed"),
+        cp,
+        lambda remote, branch, head, cmd: (1, "3 failed, 2 passed"),
     )
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
@@ -13828,7 +13838,8 @@ def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, semantic_reviewer_on,
     monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
     called = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda *a: called.append(a) or (0, "ok"),
+        cp,
+        lambda *a: called.append(a) or (0, "ok"),
     )
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
@@ -13837,9 +13848,7 @@ def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, semantic_reviewer_on,
     assert result["status"] == "waiting_for_reviewer_verdict"
 
 
-def test_review_experiment_uses_hub_verify_when_semantic_reviewer_removed(
-    cp, monkeypatch
-):
+def test_review_experiment_uses_hub_verify_when_semantic_reviewer_removed(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
     called = []
@@ -13854,13 +13863,9 @@ def test_review_experiment_uses_hub_verify_when_semantic_reviewer_removed(
 
     assert called
     assert result["status"] in {"published", "waiting_for_hub_verify", "already_published"}
-    observations = cp.list_observability(
-        subject_type="task", subject_id=task.id, limit=100
-    )
+    observations = cp.list_observability(subject_type="task", subject_id=task.id, limit=100)
     skipped = [
-        item
-        for item in observations
-        if item.name == "workflow.default_review.hub_verify_skipped"
+        item for item in observations if item.name == "workflow.default_review.hub_verify_skipped"
     ]
     assert not skipped
 
@@ -13880,13 +13885,9 @@ def test_review_experiment_can_opt_in_to_semantic_reviewer(cp, monkeypatch):
 
     assert called == []
     assert result["status"] == "waiting_for_reviewer_verdict"
-    observations = cp.list_observability(
-        subject_type="task", subject_id=task.id, limit=100
-    )
+    observations = cp.list_observability(subject_type="task", subject_id=task.id, limit=100)
     skipped = [
-        item
-        for item in observations
-        if item.name == "workflow.default_review.hub_verify_skipped"
+        item for item in observations if item.name == "workflow.default_review.hub_verify_skipped"
     ]
     assert skipped
     assert skipped[-1].detail["reason"] == "experiment_requires_semantic_reviewer"
@@ -13896,7 +13897,8 @@ def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     calls = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda *a: calls.append(a) or (0, "ok"),
+        cp,
+        lambda *a: calls.append(a) or (0, "ok"),
     )
     review = cp.request_review(task.id, reviewer.id)
     # A verify already running for this review: the next call is a no-op and
@@ -13911,7 +13913,8 @@ def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     calls = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda *a: calls.append(a) or (0, "ok"),
+        cp,
+        lambda *a: calls.append(a) or (0, "ok"),
     )
     review = cp.request_review(task.id, reviewer.id)
 
@@ -13927,15 +13930,11 @@ def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):
         evidence_id=first.id,
     )
     cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=evidence.id)
-    after_completion = cp._run_hub_review_verification(
-        task, review, evidence, "test"
-    )
+    after_completion = cp._run_hub_review_verification(task, review, evidence, "test")
 
     assert after_completion is not None and after_completion.id == first.id
     assert len(calls) == 1
-    hub_verified = [
-        item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")
-    ]
+    hub_verified = [item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")]
     assert [item.id for item in hub_verified] == [first.id]
 
 
@@ -13973,12 +13972,8 @@ def test_hub_verify_does_not_rerun_for_invalid_deterministic_verdict(cp, monkeyp
         },
     )
 
-    first = cp._run_hub_review_verification(
-        task, review, executor_evidence, "test"
-    )
-    second = cp._run_hub_review_verification(
-        task, review, executor_evidence, "test"
-    )
+    first = cp._run_hub_review_verification(task, review, executor_evidence, "test")
+    second = cp._run_hub_review_verification(task, review, executor_evidence, "test")
 
     assert first is None
     assert second is None
@@ -13992,12 +13987,9 @@ def test_hub_verify_does_not_rerun_for_invalid_deterministic_verdict(cp, monkeyp
         if item.uri == cp._hub_review_verification_uri(review.id, head_sha)
     ]
     assert [item.id for item in hub_verdicts] == [invalid.id]
-    observations = cp.list_observability(
-        subject_type="task", subject_id=task.id, limit=100
-    )
+    observations = cp.list_observability(subject_type="task", subject_id=task.id, limit=100)
     assert any(
-        item.name == "workflow.default_review.hub_verify_invalid_existing"
-        for item in observations
+        item.name == "workflow.default_review.hub_verify_invalid_existing" for item in observations
     )
 
 
@@ -14016,9 +14008,7 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     def fake_run(argv, **kwargs):
         captured.append(list(argv))
         if "rev-parse" in argv and "HEAD" in argv:
-            return _subprocess.CompletedProcess(
-                argv, 0, stdout=("a" * 40) + "\n", stderr=""
-            )
+            return _subprocess.CompletedProcess(argv, 0, stdout=("a" * 40) + "\n", stderr="")
         return _subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
@@ -14032,11 +14022,7 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     inner = create[create.index("-c") + 1]
     from mac.openshell_runtime import SANDBOX_BASE_PATH
 
-    env_values = [
-        create[index + 1]
-        for index, value in enumerate(create[:-1])
-        if value == "--env"
-    ]
+    env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "PATH=%s" % SANDBOX_BASE_PATH in env_values
     assert inner.startswith("export PATH=%s; hash -r" % SANDBOX_BASE_PATH)
     # The repo travels as ONE tar file (OpenShell directory upload drops .git)
@@ -14066,7 +14052,8 @@ def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypat
         raise RuntimeError("sandbox unavailable")
 
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, always_raises,
+        cp,
+        always_raises,
     )
     # First tick: review assigned, hub verify throws, blocking guard fires.
     result = cp.advance_default_review_workflow(task.id)
@@ -14094,7 +14081,9 @@ def test_hub_verify_blocking_guard_does_not_fire_for_experiments(cp, monkeypatch
         raise RuntimeError("sandbox unavailable")
 
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, always_raises, experiment=True,
+        cp,
+        always_raises,
+        experiment=True,
     )
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_hub_verify"
@@ -14185,7 +14174,11 @@ def test_evidence_tests_are_hub_verify_deferred_detects_deferred(cp):
             "tests": tests,
         }
         return cp.add_evidence(
-            task.id, "log", "artifact://test", "t", worker.id,
+            task.id,
+            "log",
+            "artifact://test",
+            "t",
+            worker.id,
             metadata={"returncode": 0, "verification": manifest},
         )
 
@@ -14194,10 +14187,12 @@ def test_evidence_tests_are_hub_verify_deferred_detects_deferred(cp):
     assert _CP._evidence_tests_are_hub_verify_deferred(ev) is True
 
     # One passing alongside deferred → False (executor already ran tests).
-    ev2 = _make_evidence([
-        {"status": "deferred", "command": "cmd"},
-        {"status": "pass", "command": "cmd"},
-    ])
+    ev2 = _make_evidence(
+        [
+            {"status": "deferred", "command": "cmd"},
+            {"status": "pass", "command": "cmd"},
+        ]
+    )
     assert _CP._evidence_tests_are_hub_verify_deferred(ev2) is False
 
     # No deferred items → False.
@@ -14220,9 +14215,7 @@ def test_hub_verify_repo_info_accepts_deferred_test_evidence(cp):
         required_capabilities=["python"],
         metadata={
             "origin": {
-                "repository_contract": {
-                    "canonical_remote_url": "git@github.com:org/repo.git"
-                }
+                "repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}
             }
         },
     )
@@ -14243,13 +14236,16 @@ def test_hub_verify_repo_info_accepts_deferred_test_evidence(cp):
     }
     manifest = _sign(cp, worker.id, manifest)
     evidence = cp.add_evidence(
-        task.id, "log", "artifact://result", "deferred", worker.id,
+        task.id,
+        "log",
+        "artifact://result",
+        "deferred",
+        worker.id,
         metadata={"returncode": 0, "verification": manifest},
     )
     info = cp._hub_verify_repo_info(task, evidence)
     assert info is not None, (
-        "_hub_verify_repo_info must accept evidence with deferred test items "
-        "when repo.pushed=True"
+        "_hub_verify_repo_info must accept evidence with deferred test items when repo.pushed=True"
     )
     assert info["branch"] == "task/deferred-branch"
     assert info["head_sha"] == "b" * 40
@@ -14300,7 +14296,11 @@ def test_assess_evidence_accepts_deferred_test_with_hub_verify_enabled(cp, monke
     }
     manifest = _sign(cp, worker.id, manifest)
     evidence = cp.add_evidence(
-        task.id, "log", "artifact://result", "deferred", worker.id,
+        task.id,
+        "log",
+        "artifact://result",
+        "deferred",
+        worker.id,
         metadata={"returncode": 0, "verification": manifest},
     )
 
@@ -14329,7 +14329,8 @@ def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):
 
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp, lambda remote, branch, head, cmd: (0, "all passed"),
+        cp,
+        lambda remote, branch, head, cmd: (0, "all passed"),
     )
     # _setup_hubverify_task already called submit_for_review BEFORE the
     # advancer existed; enable it and nudge as submit_for_review now does.
@@ -14394,11 +14395,10 @@ def test_tick_injects_plan_first_on_timeout_blocked_attempt(cp, timeout_reason):
     result = cp.tick(limit=0)
 
     reopened = cp.get_task(task.id)
-    assert reopened.state == TaskState.OPEN.value, (
-        "task should be reopened after timeout backoff"
-    )
+    assert reopened.state == TaskState.OPEN.value, "task should be reopened after timeout backoff"
     assert [item["id"] for item in result["auto_reopened"]] == [task.id]
     from mac.models import ensure_json_object
+
     meta = ensure_json_object(reopened.metadata)
     assert meta.get("plan_first") is True, (
         "metadata.plan_first must be True after a timeout-triggered retry"
@@ -14409,9 +14409,9 @@ def test_tick_injects_plan_first_on_timeout_blocked_attempt(cp, timeout_reason):
         subject_id=task.id,
         limit=50,
     )
-    assert any(
-        event.name == "task.timeout_requeued_as_plan" for event in observations
-    ), "task.timeout_requeued_as_plan observability event not emitted"
+    assert any(event.name == "task.timeout_requeued_as_plan" for event in observations), (
+        "task.timeout_requeued_as_plan observability event not emitted"
+    )
     # Regular auto_reopened event must also be present
     assert any(event.name == "task.auto_reopened" for event in observations)
 
@@ -14441,24 +14441,22 @@ def test_tick_retries_non_timeout_executor_failure_without_plan_first(cp):
 
     stopped = cp.get_task(task.id)
     assert stopped.state == TaskState.OPEN.value, (
-        "budget remains (attempt 1 of %s); the attempt must be retried"
-        % stopped.max_attempts
+        "budget remains (attempt 1 of %s); the attempt must be retried" % stopped.max_attempts
     )
     assert stopped.dependencies == []
     assert "environment_repair_task_id" not in stopped.metadata
     from mac.models import ensure_json_object
+
     meta = ensure_json_object(stopped.metadata)
-    assert not meta.get("plan_first"), (
-        "plan_first must NOT be set for non-timeout block reasons"
-    )
+    assert not meta.get("plan_first"), "plan_first must NOT be set for non-timeout block reasons"
     observations = cp.list_observability(
         subject_type="task",
         subject_id=task.id,
         limit=50,
     )
-    assert not any(
-        event.name == "task.timeout_requeued_as_plan" for event in observations
-    ), "timeout_requeued_as_plan must not be emitted for non-timeout failures"
+    assert not any(event.name == "task.timeout_requeued_as_plan" for event in observations), (
+        "timeout_requeued_as_plan must not be emitted for non-timeout failures"
+    )
 
 
 def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
@@ -14490,9 +14488,9 @@ def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
         subject_id=task.id,
         limit=50,
     )
-    assert not any(
-        event.name == "task.timeout_requeued_as_plan" for event in observations
-    ), "timeout_requeued_as_plan must not be re-emitted when plan_first was already set"
+    assert not any(event.name == "task.timeout_requeued_as_plan" for event in observations), (
+        "timeout_requeued_as_plan must not be re-emitted when plan_first was already set"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -14556,16 +14554,18 @@ def _setup_deferred_hubverify_task(cp, runner):
         metadata={
             "publication_target": "test://publish",
             "origin": {
-                "repository_contract": {
-                    "canonical_remote_url": "git@github.com:org/repo.git"
-                }
+                "repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}
             },
         },
     )
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
-        task.id, "log", "artifact://worker-result", "tests deferred to hub", worker.id,
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests deferred to hub",
+        worker.id,
         metadata=_deferred_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
@@ -14585,7 +14585,7 @@ def test_hub_verify_deferred_executor_evidence_approves_and_publishes(cp, monkey
     seen = []
     worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
         cp,
-        lambda remote, branch, head, cmd: (seen.append((remote, branch)) or (0, "all passed")),
+        lambda remote, branch, head, cmd: seen.append((remote, branch)) or (0, "all passed"),
     )
 
     # The deferred evidence must be accepted by the assessment layer.
@@ -14682,6 +14682,8 @@ def test_hub_verify_deferred_merge_blocked_while_pending_unblocks_on_approved(cp
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     final_reviews = cp.list_reviews(task.id)
     assert final_reviews[0].status == ReviewStatus.APPROVED.value
+
+
 # ---------------------------------------------------------------------------
 # Hardware persistence and mirroring tests
 # ---------------------------------------------------------------------------
@@ -14961,9 +14963,21 @@ def _stash_stdout_artifact(cp, task_id, evidence_id, text):
         "content_uri, truncated, metadata, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            new_id("eva"), evidence_id, task_id, "stdout.txt", "stdout",
-            "file:///tmp/stdout.txt", "text/plain", "base64", len(text),
-            "sha256:test", payload, "", 0, json_dumps({}), utcnow(),
+            new_id("eva"),
+            evidence_id,
+            task_id,
+            "stdout.txt",
+            "stdout",
+            "file:///tmp/stdout.txt",
+            "text/plain",
+            "base64",
+            len(text),
+            "sha256:test",
+            payload,
+            "",
+            0,
+            json_dumps({}),
+            utcnow(),
         ),
     )
 
@@ -14982,13 +14996,17 @@ def test_attempt_failure_output_recovers_from_evidence_artifacts(cp):
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(task.id, "log", "artifact://t", "run", worker.id)
     _stash_stdout_artifact(
-        cp, task.id, evidence.id,
+        cp,
+        task.id,
+        evidence.id,
         "collecting ...\nE   assert 1 == 2\nFAILED tests/test_x.py::test_y\n",
     )
     # A blocked transition that omits every output field, as the
     # verification_contract_failed and executor_timeout paths did.
     cp._transition_task_internal(
-        task.id, "blocked", worker.id,
+        task.id,
+        "blocked",
+        worker.id,
         {"reason": "verification_contract_failed", "problems": ["contract failed"]},
     )
     task = cp.get_task(task.id)
@@ -15008,7 +15026,10 @@ def test_attempt_failure_output_reports_absence_when_no_artifact_exists(cp):
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     cp._transition_task_internal(
-        task.id, "blocked", worker.id, {"reason": "verification_contract_failed"},
+        task.id,
+        "blocked",
+        worker.id,
+        {"reason": "verification_contract_failed"},
     )
     task = cp.get_task(task.id)
 
@@ -15028,12 +15049,17 @@ def test_transition_diagnosis_embeds_recovered_output(cp):
     _stash_stdout_artifact(cp, task.id, evidence.id, "Traceback\nRuntimeError: boom\n")
 
     cp._transition_task_internal(
-        task.id, "blocked", worker.id,
+        task.id,
+        "blocked",
+        worker.id,
         {"reason": "executor_timeout", "evidence_id": evidence.id},
     )
 
-    events = [e for e in cp.task_history(task.id, limit=50)
-              if ensure_json_object(e.detail).get("diagnosis")]
+    events = [
+        e
+        for e in cp.task_history(task.id, limit=50)
+        if ensure_json_object(e.detail).get("diagnosis")
+    ]
     assert events, "expected a diagnosis record on the transition"
     diagnosis = ensure_json_object(ensure_json_object(events[-1].detail)["diagnosis"])
     assert "RuntimeError: boom" in (diagnosis.get("output_tail") or ""), diagnosis
@@ -15124,8 +15150,12 @@ def test_reopen_clears_a_stale_dependency_resolution_record(cp):
     task = cp.create_task("t", required_capabilities=["python"])
     cp.update_task(
         task.id,
-        metadata={"dependency_resolution": {"schema": "mac.dependency_resolution.v1",
-                                            "status": "unsatisfied"}},
+        metadata={
+            "dependency_resolution": {
+                "schema": "mac.dependency_resolution.v1",
+                "status": "unsatisfied",
+            }
+        },
         actor="operator",
     )
     cp._transition_task_internal(task.id, "failed", "operator", {"reason": "boom"})
@@ -15156,6 +15186,7 @@ def test_tick_runs_the_stranding_detector(cp, monkeypatch):
 
 def test_tick_survives_a_failing_stranding_detector(cp, monkeypatch):
     """Diagnostics must never be able to stop lease maintenance or dispatch."""
+
     def _boom(**_kwargs):
         raise RuntimeError("detector exploded")
 
@@ -15188,9 +15219,7 @@ def test_in_transaction_cancel_still_reconciles_its_dependents(cp):
     cp.drain_task_transition_outbox(task_id=dep.id, limit=20)
 
     resolved = cp.get_task(downstream.id)
-    record = ensure_json_object(
-        ensure_json_object(resolved.metadata).get("dependency_resolution")
-    )
+    record = ensure_json_object(ensure_json_object(resolved.metadata).get("dependency_resolution"))
     assert resolved.state == "blocked", (
         "dependent must be supervised, not left waiting; got %s" % resolved.state
     )
@@ -15204,9 +15233,7 @@ def test_dependency_reconcile_outbox_row_is_idempotent(cp):
         "downstream", required_capabilities=["python"], dependencies=[dep.id]
     )
     with cp.store.transaction() as conn:
-        cp._transition_task_in_transaction(
-            conn, dep.id, "failed", "workflow", {"reason": "boom"}
-        )
+        cp._transition_task_in_transaction(conn, dep.id, "failed", "workflow", {"reason": "boom"})
     cp.drain_task_transition_outbox(task_id=dep.id, limit=20)
     first = cp.get_task(downstream.id).state
 
@@ -15250,8 +15277,15 @@ def test_pausing_fleet_maintenance_stops_self_work_dispatching(cp):
     cp.store.execute(
         "INSERT INTO projects (id, name, description, metadata, status, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("proj_product", "mac", "", "{}", "active", "2026-01-01T00:00:00+00:00",
-         "2026-01-01T00:00:00+00:00"),
+        (
+            "proj_product",
+            "mac",
+            "",
+            "{}",
+            "active",
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
+        ),
     )
     product = cp.create_task("real product work", project="mac", required_capabilities=["python"])
     self_work = cp.create_task("adjudicate agent state", required_capabilities=["python"])

@@ -55,9 +55,7 @@ def test_expansion_is_off_by_default(base_policy, monkeypatch):
     assert resolved == str(base_policy)
 
 
-def test_enabled_expansion_widens_egress_for_a_trusted_registry(
-    base_policy, monkeypatch
-):
+def test_enabled_expansion_widens_egress_for_a_trusted_registry(base_policy, monkeypatch):
     yaml = pytest.importorskip("yaml")
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
     resolved = te._resolve_task_openshell_policy(_task(derived=["registry.npmjs.org"]))
@@ -90,15 +88,11 @@ def test_read_only_report_tasks_never_expand(base_policy, monkeypatch):
     per-task policy would invalidate that attestation."""
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
     task = _task(derived=["registry.npmjs.org"])
-    monkeypatch.setattr(
-        te, "metadata_declares_read_only_report_repository", lambda _meta: True
-    )
+    monkeypatch.setattr(te, "metadata_declares_read_only_report_repository", lambda _meta: True)
     assert te._resolve_task_openshell_policy(task) == str(base_policy)
 
 
-def test_declared_hosts_must_come_from_top_level_task_metadata(
-    base_policy, monkeypatch
-):
+def test_declared_hosts_must_come_from_top_level_task_metadata(base_policy, monkeypatch):
     """`metadata.runtime` is worker-written, so a declared list smuggled under it
     carries only repo trust and must be classified as derived (and refused)."""
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
@@ -114,24 +108,18 @@ def test_declared_hosts_must_come_from_top_level_task_metadata(
     assert te._resolve_task_openshell_policy(smuggled) == str(base_policy)
 
     # The same host declared at the top level IS granted.
-    allowed = te._resolve_task_openshell_policy(
-        _task(declared=["opensky-network.org"])
-    )
+    allowed = te._resolve_task_openshell_policy(_task(declared=["opensky-network.org"]))
     assert allowed != str(base_policy)
     assert "opensky-network.org" in Path(allowed).read_text(encoding="utf-8")
 
 
 def test_no_contract_leaves_the_base_policy_untouched(base_policy, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
-    assert te._resolve_task_openshell_policy({"id": "t", "metadata": {}}) == str(
-        base_policy
-    )
+    assert te._resolve_task_openshell_policy({"id": "t", "metadata": {}}) == str(base_policy)
     assert te._resolve_task_openshell_policy(None) == str(base_policy)
 
 
-def test_unreadable_base_policy_falls_back_rather_than_aborting(
-    tmp_path, monkeypatch
-):
+def test_unreadable_base_policy_falls_back_rather_than_aborting(tmp_path, monkeypatch):
     """A task that cannot widen its egress should fail the way it did before the
     feature existed (a denied fetch), not lose the run."""
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
@@ -139,9 +127,7 @@ def test_unreadable_base_policy_falls_back_rather_than_aborting(
     # No network_policies mapping: expand_policy_text refuses this policy.
     policy.write_text("version: 1\n", encoding="utf-8")
     monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(policy))
-    assert te._resolve_task_openshell_policy(
-        _task(derived=["registry.npmjs.org"])
-    ) == str(policy)
+    assert te._resolve_task_openshell_policy(_task(derived=["registry.npmjs.org"])) == str(policy)
 
 
 def test_create_argv_uses_the_expanded_policy(base_policy, monkeypatch):
@@ -187,9 +173,7 @@ def test_create_argv_without_a_task_keeps_the_base_policy(base_policy, monkeypat
     assert argv[argv.index("--policy") + 1] == str(base_policy)
 
 
-def test_rendered_policies_do_not_accumulate_for_a_long_lived_worker(
-    base_policy, monkeypatch
-):
+def test_rendered_policies_do_not_accumulate_for_a_long_lived_worker(base_policy, monkeypatch):
     """The worker is a run loop, so one leaked temp policy per task would grow
     unbounded for the life of the process."""
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
@@ -215,12 +199,8 @@ def test_decision_is_audited(base_policy, monkeypatch):
     this feature must never become."""
     monkeypatch.setenv("MAC_OPENSHELL_TASK_EGRESS", "1")
     events = []
-    monkeypatch.setattr(
-        te, "emit_telemetry", lambda name, **kw: events.append((name, kw))
-    )
-    te._resolve_task_openshell_policy(
-        _task(derived=["registry.npmjs.org", "evil.example"])
-    )
+    monkeypatch.setattr(te, "emit_telemetry", lambda name, **kw: events.append((name, kw)))
+    te._resolve_task_openshell_policy(_task(derived=["registry.npmjs.org", "evil.example"]))
     assert [name for name, _ in events] == ["sandbox_egress_decision"]
     payload = events[0][1]
     assert payload["granted_count"] == 1

@@ -56,15 +56,14 @@ def _verification_env(monkeypatch, workspace, steps=None, **env):
 
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(
-        executor_sandbox, "_sandbox_repository_verification_shell", capture
-    )
+    monkeypatch.setattr(executor_sandbox, "_sandbox_repository_verification_shell", capture)
     monkeypatch.setattr(
         executor_sandbox, "_repository_contract_test_command", lambda task: "run.sh"
     )
     monkeypatch.setattr(executor_sandbox, "task_is_repo_coupled", lambda task: True)
     monkeypatch.setattr(
-        executor_sandbox, "metadata_declares_read_only_report_repository",
+        executor_sandbox,
+        "metadata_declares_read_only_report_repository",
         lambda metadata: False,
     )
     monkeypatch.setattr(
@@ -73,7 +72,8 @@ def _verification_env(monkeypatch, workspace, steps=None, **env):
         lambda ws, sub: {"MAC_REPO_TEST_COMMAND": "run.sh"},
     )
     monkeypatch.setattr(
-        executor_sandbox, "_sandbox_run_repository_verification_exec",
+        executor_sandbox,
+        "_sandbox_run_repository_verification_exec",
         lambda *a, **k: executor_sandbox._SandboxRepositoryVerificationResult(True),
     )
     executor_sandbox._sandbox_run_repository_verification(
@@ -84,18 +84,14 @@ def _verification_env(monkeypatch, workspace, steps=None, **env):
 
 def test_the_configured_timeout_reaches_the_sandbox(monkeypatch, workspace):
     """The live failure: the host said 5400, the sandbox enforced 1800."""
-    env = _verification_env(
-        monkeypatch, workspace, MAC_WORKER_REPOSITORY_TEST_TIMEOUT="5400"
-    )
+    env = _verification_env(monkeypatch, workspace, MAC_WORKER_REPOSITORY_TEST_TIMEOUT="5400")
 
     assert env.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") == "5400"
 
 
 def test_the_bootstrap_timeout_reaches_it_too(monkeypatch, workspace):
     """Dependency setup has its own deadline and the same delivery problem."""
-    env = _verification_env(
-        monkeypatch, workspace, MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT="2400"
-    )
+    env = _verification_env(monkeypatch, workspace, MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT="2400")
 
     assert env.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT") == "2400"
 

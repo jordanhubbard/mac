@@ -146,37 +146,27 @@ class TestProtocolFailureCompound:
     """Compound strings produced by _review_attempt_protocol_failure()."""
 
     def test_review_executor_nonzero_is_infrastructure(self) -> None:
-        result = classify_review_failure(
-            "reviewer_protocol_failure:review_executor_nonzero"
-        )
+        result = classify_review_failure("reviewer_protocol_failure:review_executor_nonzero")
         assert result.is_infrastructure is True
         assert result.failure_class == "review_executor_nonzero"
 
     def test_semantic_verdict_invalid_compound_is_semantic(self) -> None:
-        result = classify_review_failure(
-            "reviewer_protocol_failure:semantic_verdict_invalid"
-        )
+        result = classify_review_failure("reviewer_protocol_failure:semantic_verdict_invalid")
         assert result.is_infrastructure is False
         assert result.failure_class == "semantic_verdict_invalid"
 
     def test_blind_protocol_noncompliant_compound_is_semantic(self) -> None:
-        result = classify_review_failure(
-            "reviewer_protocol_failure:blind_protocol_noncompliant"
-        )
+        result = classify_review_failure("reviewer_protocol_failure:blind_protocol_noncompliant")
         assert result.is_infrastructure is False
         assert result.failure_class == "blind_protocol_noncompliant"
 
     def test_unknown_sub_reason_is_infrastructure(self) -> None:
         """Unknown protocol-failure sub-reason falls back to infrastructure."""
-        result = classify_review_failure(
-            "reviewer_protocol_failure:some_unknown_harness_crash"
-        )
+        result = classify_review_failure("reviewer_protocol_failure:some_unknown_harness_crash")
         assert result.is_infrastructure is True
 
     def test_prefix_case_insensitive(self) -> None:
-        result = classify_review_failure(
-            "REVIEWER_PROTOCOL_FAILURE:review_executor_nonzero"
-        )
+        result = classify_review_failure("REVIEWER_PROTOCOL_FAILURE:review_executor_nonzero")
         assert result.is_infrastructure is True
 
 
@@ -370,9 +360,7 @@ class TestTaxonomyContract:
     ]
 
     @pytest.mark.parametrize("reason,expected_class", INFRASTRUCTURE_CASES)
-    def test_infrastructure_class_mapping(
-        self, reason: str, expected_class: str
-    ) -> None:
+    def test_infrastructure_class_mapping(self, reason: str, expected_class: str) -> None:
         result = classify_review_failure(reason)
         assert result.is_infrastructure is True, (
             "Expected infrastructure for reason=%r but got is_infrastructure=False" % reason
@@ -383,9 +371,7 @@ class TestTaxonomyContract:
         )
 
     @pytest.mark.parametrize("reason,expected_class", SEMANTIC_CASES)
-    def test_semantic_class_mapping(
-        self, reason: str, expected_class: str
-    ) -> None:
+    def test_semantic_class_mapping(self, reason: str, expected_class: str) -> None:
         result = classify_review_failure(reason)
         assert result.is_infrastructure is False, (
             "Expected semantic for reason=%r but got is_infrastructure=True" % reason

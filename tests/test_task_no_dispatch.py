@@ -42,16 +42,14 @@ def test_ready_excludes_held_includes_normal(cp):
     held = _held(cp)
     normal = _normal(cp)
     ready_ids = {t.id for t in cp.ready_tasks()}
-    assert normal.id in ready_ids       # default task is claimable
-    assert held.id not in ready_ids     # staged task is hidden from the ready queue
+    assert normal.id in ready_ids  # default task is claimable
+    assert held.id not in ready_ids  # staged task is hidden from the ready queue
 
 
 def test_project_summary_does_not_report_held_task_as_ready(cp):
     held = _held(cp)
     normal = _normal(cp)
-    [summary] = cp._hermes_project_contexts(
-        cp.list_tasks(), [], [], [], []
-    )
+    [summary] = cp._hermes_project_contexts(cp.list_tasks(), [], [], [], [])
     assert summary["ready_count"] == 1
     assert summary["held_count"] == 1
     assert [task["id"] for task in summary["frontier_tasks"]] == [normal.id]
@@ -83,9 +81,7 @@ def test_held_task_suppresses_pair_gates_until_release(cp):
     cp.release_task(held.id)
     released = cp.explain_task_dispatch(held.id)
     assert released["task_ready"] is True
-    assert released["candidates"][0]["reasons"][0]["code"] == (
-        "agent_capabilities_missing"
-    )
+    assert released["candidates"][0]["reasons"][0]["code"] == ("agent_capabilities_missing")
 
 
 def test_dispatch_once_does_not_claim_held_task(cp):

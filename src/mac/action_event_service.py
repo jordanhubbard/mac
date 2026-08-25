@@ -380,11 +380,19 @@ class ActionEventService:
         counts: Counter[str] = Counter()
         for event in reversed(events):
             ns = self._unix_nano(event.timestamp)
-            trace_basis = event.session_id or event.task_id or event.sandbox_id or event.agent_id or event.event_id
+            trace_basis = (
+                event.session_id
+                or event.task_id
+                or event.sandbox_id
+                or event.agent_id
+                or event.event_id
+            )
             span = {
                 "traceId": _stable_hex(trace_basis, 32),
                 "spanId": _stable_hex(event.event_id, 16),
-                "parentSpanId": _stable_hex(event.parent_event_id, 16) if event.parent_event_id else "",
+                "parentSpanId": _stable_hex(event.parent_event_id, 16)
+                if event.parent_event_id
+                else "",
                 "name": "%s.%s" % (event.action_type, event.action_name),
                 "startTimeUnixNano": ns,
                 "endTimeUnixNano": ns,
@@ -407,8 +415,7 @@ class ActionEventService:
             counts["outcome:%s" % event.outcome] += 1
             counts["severity:%s" % event.severity] += 1
         metrics = [
-            {"name": key, "value": value, "unit": "1"}
-            for key, value in sorted(counts.items())
+            {"name": key, "value": value, "unit": "1"} for key, value in sorted(counts.items())
         ]
         return {
             "schema": "mac.action_events.otlp_export.v1",
@@ -537,11 +544,7 @@ class ActionEventService:
             "command_id": event.command_id,
             "redaction_state": event.redaction_state,
         }
-        return [
-            {"key": key, "value": value}
-            for key, value in attrs.items()
-            if value is not None
-        ]
+        return [{"key": key, "value": value} for key, value in attrs.items() if value is not None]
 
     def _unix_nano(self, value: str) -> int:
         try:

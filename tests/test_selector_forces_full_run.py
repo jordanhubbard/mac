@@ -53,8 +53,7 @@ def _policy() -> dict:
 def test_each_selector_file_forces_a_full_run(path):
     assert path in _policy()["global_full_paths"], (
         "%s decides which tests CI runs, but changing it does not force a full "
-        "run -- so the changed selector chooses the scope that verifies itself"
-        % path
+        "run -- so the changed selector chooses the scope that verifies itself" % path
     )
 
 
@@ -75,9 +74,7 @@ def test_each_selector_file_exists(path):
 def _selector():
     name = "mac_select_sanity_tests_globalcheck"
     sys.modules.pop(name, None)
-    spec = importlib.util.spec_from_file_location(
-        name, ROOT / "scripts" / "select-sanity-tests.py"
-    )
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / "select-sanity-tests.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module

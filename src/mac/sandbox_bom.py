@@ -315,15 +315,11 @@ def bom_gaps(bom: Mapping[str, Any], image_text: str) -> Dict[str, List[str]]:
     ledger kept missing.
     """
     installed = installed_packages(image_text)
-    body = "\n".join(
-        line for line in image_text.splitlines() if not line.strip().startswith("#")
-    )
+    body = "\n".join(line for line in image_text.splitlines() if not line.strip().startswith("#"))
     missing_packages = [
         package for package in bom.get("packages") or [] if package not in installed
     ]
-    missing_commands = [
-        command for command in bom.get("commands") or [] if command not in body
-    ]
+    missing_commands = [command for command in bom.get("commands") or [] if command not in body]
     return {
         "missing_packages": missing_packages,
         "missing_commands": missing_commands,

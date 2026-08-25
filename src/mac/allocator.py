@@ -284,9 +284,7 @@ class AllocationAgent:
         # mid-upgrade. The unsatisfiable-requirements diagnostic reports the
         # silent ones separately.
         runtime = resources.get("openclaw_runtime")
-        confinement = (
-            runtime.get("confinement") if isinstance(runtime, Mapping) else None
-        )
+        confinement = runtime.get("confinement") if isinstance(runtime, Mapping) else None
         proven = bool(
             isinstance(confinement, Mapping)
             and str(confinement.get("provider") or "").strip()
@@ -298,9 +296,7 @@ class AllocationAgent:
         return cls(
             id=str(value("id")),
             online=bool(online),
-            operator_persona=bool(
-                resources.get("operator_persona") or resources.get("virtual")
-            ),
+            operator_persona=bool(resources.get("operator_persona") or resources.get("virtual")),
             execution_boundary_verified=execution_boundary_verified,
             healthy=health == "healthy" or advisory_ready,
             dispatch_held=bool(value("dispatch_hold", False)),
@@ -314,17 +310,13 @@ class AllocationAgent:
                 if authorized_tenants is None
                 else frozenset(str(item) for item in authorized_tenants)
             ),
-            denied_tenants=frozenset(
-                str(item) for item in (denied_tenants or ())
-            ),
+            denied_tenants=frozenset(str(item) for item in (denied_tenants or ())),
             preferred_projects=preferred_projects,
             dispatch_policy=policy,
             # Read off the record rather than defaulted here: an agent whose
             # row predates these columns reads as shared/unowned, which is the
             # behaviour the fleet had before ownership existed.
-            owner_human_id=(
-                str(value("owner_human_id") or "").strip() or None
-            ),
+            owner_human_id=(str(value("owner_human_id") or "").strip() or None),
             visibility=str(value("visibility", "shared") or "shared").strip().lower(),
         )
 
@@ -546,16 +538,8 @@ class AllocationRoundResult:
         without serializing task payloads or the full compatibility matrix.
         """
 
-        projects_by_task = {
-            decision.task_id: decision.project for decision in self.decisions
-        }
-        projects = sorted(
-            {
-                project
-                for project in projects_by_task.values()
-                if project is not None
-            }
-        )
+        projects_by_task = {decision.task_id: decision.project for decision in self.decisions}
+        projects = sorted({project for project in projects_by_task.values() if project is not None})
         assignments = []
         for item in self.assignments:
             lease_id = item.assignment.get("lease_id")
@@ -587,9 +571,7 @@ class AllocationRoundResult:
                 }
                 for task_id in self.ready_task_ids
             ],
-            "free_agents": [
-                {"agent_id": agent_id} for agent_id in self.available_agent_ids
-            ],
+            "free_agents": [{"agent_id": agent_id} for agent_id in self.available_agent_ids],
             "assignments": assignments,
             "unmatched_tasks": [
                 {
@@ -946,11 +928,7 @@ def evaluate_pair(
         # `review` is exactly what the review verifier exists for. What it must
         # not do is claim undeclared work, which is how both stand-ins came to
         # hold implementation tasks they never started.
-        if (
-            task.requires_execution
-            and agent.operator_persona
-            and not task.required_capabilities
-        ):
+        if task.requires_execution and agent.operator_persona and not task.required_capabilities:
             reasons.append(AGENT_OPERATOR_PERSONA)
         if not agent.bound_role_eligible:
             reasons.append(AGENT_ROLE_INELIGIBLE)
@@ -1103,9 +1081,7 @@ class AuthoritativeAllocator:
             if any(base_pairs[(task.id, agent.id)].allowed for agent in agent_list):
                 continue
             unbarred = replace(task, excluded_agent_ids=frozenset())
-            recovered = [
-                agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed
-            ]
+            recovered = [agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed]
             if not recovered:
                 continue
             task_list[index] = unbarred
@@ -1125,18 +1101,10 @@ class AuthoritativeAllocator:
 
         def candidate_slots(task: AllocationTask) -> list[tuple[str, int]]:
             ranked_agents = sorted(
-                (
-                    agent
-                    for agent in agent_list
-                    if base_pairs[(task.id, agent.id)].allowed
-                ),
+                (agent for agent in agent_list if base_pairs[(task.id, agent.id)].allowed),
                 key=lambda agent: self._agent_sort_key(task, agent, {}),
             )
-            return [
-                (agent.id, slot)
-                for agent in ranked_agents
-                for slot in range(agent.free_slots)
-            ]
+            return [(agent.id, slot) for agent in ranked_agents for slot in range(agent.free_slots)]
 
         def augment(
             task_id: str,
@@ -1190,16 +1158,13 @@ class AuthoritativeAllocator:
                 )
                 continue
             if task.id in round_limited or task.id in capacity_deferred:
-                has_recovered_slot = (
-                    len(assignments) < limit
-                    and any(
-                        evaluate_pair(
-                            task,
-                            agent,
-                            reserved_slots=reserved_slots.get(agent.id, 0),
-                        ).allowed
-                        for agent in agent_list
-                    )
+                has_recovered_slot = len(assignments) < limit and any(
+                    evaluate_pair(
+                        task,
+                        agent,
+                        reserved_slots=reserved_slots.get(agent.id, 0),
+                    ).allowed
+                    for agent in agent_list
                 )
                 if not has_recovered_slot:
                     decisions.append(

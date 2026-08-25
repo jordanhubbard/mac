@@ -17,15 +17,15 @@ def _add(cp, record_type, *, age_days, content="x", subject_type="project", subj
 
 def test_decay_dry_run_reports_but_deletes_nothing():
     cp = ControlPlane.in_memory()
-    _add(cp, "session_log", age_days=200)            # stale + transient → forgettable
+    _add(cp, "session_log", age_days=200)  # stale + transient → forgettable
     _add(cp, "deployment_learning:demo", age_days=200)  # curated → protected
-    _add(cp, "beads_memory:k", age_days=200)         # curated → protected
-    _add(cp, "session_log", age_days=10)             # recent → kept
+    _add(cp, "beads_memory:k", age_days=200)  # curated → protected
+    _add(cp, "session_log", age_days=10)  # recent → kept
 
     report = cp.decay_memory(ttl_days=90, dry_run=True)
     assert report["dry_run"] is True
-    assert report["forgettable"] == 1            # only the stale session_log
-    assert report["deleted"] == 0                # dry-run deletes nothing
+    assert report["forgettable"] == 1  # only the stale session_log
+    assert report["deleted"] == 0  # dry-run deletes nothing
     assert "session_log" in report["by_type"]
     # nothing actually removed
     assert len(cp.search_memory(subject_type="project", subject_id="demo")) == 4
@@ -47,7 +47,13 @@ def test_decay_protects_curated_even_when_ancient():
     cp = ControlPlane.in_memory()
     _add(cp, "deployment_learning:demo", age_days=9999)
     _add(cp, "fleet_learning:repository_access", age_days=9999)
-    _add(cp, "dream:knowledge_snippet", age_days=9999, subject_type="dream", subject_id="project:demo")
+    _add(
+        cp,
+        "dream:knowledge_snippet",
+        age_days=9999,
+        subject_type="dream",
+        subject_id="project:demo",
+    )
     _add(cp, "project", age_days=9999)
     report = cp.decay_memory(ttl_days=1, dry_run=False)
     assert report["forgettable"] == 0 and report["deleted"] == 0

@@ -7,6 +7,7 @@ gate's own fail-fast preflight reported it stale and refused to run a single
 test -- and regenerating "to fix it" committed churn that then failed CI on
 3.11. That cost time three times in one session.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -41,12 +42,7 @@ def test_the_usage_tail_is_joined_onto_the_choices_line():
         "\n"
         "positional arguments:"
     )
-    modern = (
-        "usage: mac task [-h]\n"
-        "                {create,list,show} ...\n"
-        "\n"
-        "positional arguments:"
-    )
+    modern = "usage: mac task [-h]\n                {create,list,show} ...\n\npositional arguments:"
     assert generator._normalize_usage(legacy) == modern
     # Idempotent: already-canonical text is unchanged.
     assert generator._normalize_usage(modern) == modern

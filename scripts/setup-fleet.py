@@ -138,7 +138,9 @@ def atomic_write(path: Path, content: str, mode: int) -> None:
 def backup_existing(path: Path) -> Path | None:
     if not path.exists():
         return None
-    backup = path.with_name("%s.backup-%s" % (path.name, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())))
+    backup = path.with_name(
+        "%s.backup-%s" % (path.name, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+    )
     shutil.copy2(path, backup)
     return backup
 
@@ -316,8 +318,13 @@ def list_samples() -> int:
 def init_from_sample(name: str, fleet: str, *, force: bool, specs_dir: Path) -> int:
     src = SAMPLES_DIR / ("%s.fleet.yaml" % name)
     if not src.is_file():
-        available = ", ".join(p.name[: -len(".fleet.yaml")] for p in _available_samples()) or "(none)"
-        print("No sample named %r under %s. Available: %s" % (name, SAMPLES_DIR, available), file=sys.stderr)
+        available = (
+            ", ".join(p.name[: -len(".fleet.yaml")] for p in _available_samples()) or "(none)"
+        )
+        print(
+            "No sample named %r under %s. Available: %s" % (name, SAMPLES_DIR, available),
+            file=sys.stderr,
+        )
         return 2
     fleet_name = (fleet or name).strip()
     dest = specs_dir.expanduser() / ("%s.fleet.yaml" % fleet_name)
@@ -346,7 +353,9 @@ _KNOWN_PROVIDERS: Dict[str, tuple] = {
 }
 
 
-def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
+def _setup_hub(
+    args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool
+) -> int:
     fleet_name = prompt("Fleet name", default="my-fleet")
     hub_name = prompt("Hub node name", required=True)
 
@@ -370,10 +379,14 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         default=default_hub_url,
         required=True,
     )
-    supervisor = prompt("Default supervisor", default="auto", choices=["auto", "systemd", "launchd", "supervisord"])
+    supervisor = prompt(
+        "Default supervisor", default="auto", choices=["auto", "systemd", "launchd", "supervisord"]
+    )
     home_channel = prompt("Slack home channel name without # (blank to skip)", default="")
     hub_model = prompt("Hub Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
-    hub_worker_mode = prompt("Hub worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
+    hub_worker_mode = prompt(
+        "Hub worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"]
+    )
     hub_claim_only_canary_tasks = prompt_bool(
         "Claim only canary-marked tasks on the hub worker?", default=False
     )
@@ -386,8 +399,12 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         default=qdrant_url_from_hub(hub_url, qdrant_port),
         required=True,
     )
-    qdrant_bind_addr = prompt("Hub Qdrant bind address override (blank for Tailscale/loopback auto)", default="")
-    qdrant_data_dir = prompt("Qdrant data directory override (blank for default /var/lib/<fleet>/qdrant)", default="")
+    qdrant_bind_addr = prompt(
+        "Hub Qdrant bind address override (blank for Tailscale/loopback auto)", default=""
+    )
+    qdrant_data_dir = prompt(
+        "Qdrant data directory override (blank for default /var/lib/<fleet>/qdrant)", default=""
+    )
     firecrawl_port = 3002
     firecrawl_url = qdrant_url_from_hub(hub_url, firecrawl_port)
     webdav_enabled = prompt_bool("Enable hub public artifact WebDAV server?", default=False)
@@ -420,7 +437,9 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     print("")
     print("Fleet mesh networking connects agents across networks without manual VPN config.")
     print("Tailscale is the default. Headscale is advanced and must be configured explicitly.")
-    network_provider = prompt("Fleet network provider", default="tailscale", choices=["tailscale", "headscale", "none"])
+    network_provider = prompt(
+        "Fleet network provider", default="tailscale", choices=["tailscale", "headscale", "none"]
+    )
     network_install = "auto"
     network_hostname_prefix = ""
     tailscale_auth_key = ""
@@ -436,7 +455,9 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     headscale_ip_prefix = "100.64.0.0/10"
 
     if network_provider == "tailscale":
-        tailscale_auth_key = prompt("Tailscale auth key (blank to skip automatic mesh join)", default="")
+        tailscale_auth_key = prompt(
+            "Tailscale auth key (blank to skip automatic mesh join)", default=""
+        )
         if tailscale_auth_key:
             network_hostname_prefix = prompt(
                 "Tailscale hostname prefix for fleet agents (blank for none)",
@@ -444,7 +465,8 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             )
             ts_hub_name = "%s%s" % (network_hostname_prefix, hub_name)
             if prompt_bool(
-                "Set hub URL to Tailscale MagicDNS name http://%s:%d?" % (ts_hub_name, control_port),
+                "Set hub URL to Tailscale MagicDNS name http://%s:%d?"
+                % (ts_hub_name, control_port),
                 default=True,
             ):
                 hub_url = "http://%s:%d" % (ts_hub_name, control_port)
@@ -456,7 +478,9 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                     qdrant_url = "http://%s:%d" % (ts_hub_name, qdrant_port)
     elif network_provider == "headscale":
         print("Headscale requires a reachable login server and an enrollment key source.")
-        headscale_mode = prompt("Headscale mode", default="external", choices=["external", "managed-hub"])
+        headscale_mode = prompt(
+            "Headscale mode", default="external", choices=["external", "managed-hub"]
+        )
         headscale_manage = headscale_mode == "managed-hub"
         headscale_login_server = prompt("Headscale login server URL", required=True)
         headscale_health_url = prompt(
@@ -487,15 +511,20 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                     "Headscale preauth key value for ~/.mac/.env (blank to provide at deploy time)",
                     default="",
                 )
-        headscale_dns = prompt("Headscale DNS assumption", default="magicdns", choices=["magicdns", "none"])
-        headscale_ip_prefix = prompt("Headscale IP prefix (CGNAT range for fleet mesh)", default="100.64.0.0/10")
+        headscale_dns = prompt(
+            "Headscale DNS assumption", default="magicdns", choices=["magicdns", "none"]
+        )
+        headscale_ip_prefix = prompt(
+            "Headscale IP prefix (CGNAT range for fleet mesh)", default="100.64.0.0/10"
+        )
         network_hostname_prefix = prompt(
             "Tailscale hostname prefix for fleet agents (blank for none)",
             default="",
         )
         hs_host = "%s%s" % (network_hostname_prefix, hub_name)
         if headscale_dns == "magicdns" and prompt_bool(
-            "Set hub URL to Headscale MagicDNS name http://%s.mac.internal:%d?" % (hs_host, control_port),
+            "Set hub URL to Headscale MagicDNS name http://%s.mac.internal:%d?"
+            % (hs_host, control_port),
             default=False,
         ):
             hub_url = "http://%s.mac.internal:%d" % (hs_host, control_port)
@@ -544,7 +573,11 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             return 2
         os_kind = prompt("Agent OS", default="linux", choices=["linux", "darwin"])
         model = prompt("Agent Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
-        agent_supervisor = prompt("Agent supervisor", default=supervisor, choices=["auto", "systemd", "launchd", "supervisord"])
+        agent_supervisor = prompt(
+            "Agent supervisor",
+            default=supervisor,
+            choices=["auto", "systemd", "launchd", "supervisord"],
+        )
         mode = prompt("Agent worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
         claim_only_canary_tasks = prompt_bool(
             "Claim only canary-marked tasks on this agent?", default=False
@@ -703,23 +736,35 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             ("video", ""),
         ):
             try:
-                key = input("  %s-gen API key (build.nvidia.com nvapi-… ; blank to skip): " % modality).strip()
+                key = input(
+                    "  %s-gen API key (build.nvidia.com nvapi-… ; blank to skip): " % modality
+                ).strip()
             except EOFError:
                 break
             if not key:
                 continue
-            url = input("  %s-gen upstream URL [%s]: " % (modality, default_url or "(required)")).strip() or default_url
+            url = (
+                input(
+                    "  %s-gen upstream URL [%s]: " % (modality, default_url or "(required)")
+                ).strip()
+                or default_url
+            )
             if not url:
                 print("  Skipped %s — no URL." % modality)
                 continue
             env_values["NVIDIA_%s_API_KEY" % modality.upper()] = key
             env_values["MAC_DEPLOY_ROUTER_%s_UPSTREAM" % modality.upper()] = url
-            print("  Wired %s-gen → %s (key escrowed as secret:nvidia-%s on the hub)." % (modality, url, modality))
+            print(
+                "  Wired %s-gen → %s (key escrowed as secret:nvidia-%s on the hub)."
+                % (modality, url, modality)
+            )
     if prompt_bool("Generate MAC_SECRET_KEY in %s?" % env_file, default=True):
         env_values["MAC_SECRET_KEY"] = secrets.token_urlsafe(48)
     if prompt_bool("Generate MAC_API_TOKEN in %s?" % env_file, default=True):
         env_values["MAC_API_TOKEN"] = secrets.token_urlsafe(32)
-    hub_token = prompt("Existing hub token for spoke deploys (blank to read it from hub during deploy)", default="")
+    hub_token = prompt(
+        "Existing hub token for spoke deploys (blank to read it from hub during deploy)", default=""
+    )
     if hub_token:
         env_values["MAC_DEPLOY_HUB_TOKEN"] = hub_token
     if tailscale_auth_key:
@@ -748,7 +793,9 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     )
 
 
-def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool) -> int:
+def _setup_worker(
+    args: argparse.Namespace, fleets_config: Path, env_file: Path, running_locally: bool
+) -> int:
     registry = load_fleet_registry(fleets_config)
     fleets = registry.get("fleets") or {}
 
@@ -771,7 +818,11 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
         control_port_str = prompt("Hub control plane port", default="8789")
         control_port = int(control_port_str) if control_port_str.isdigit() else 8789
         hub_url = prompt("Hub URL (how to reach the control plane)", required=True)
-        supervisor = prompt("Default supervisor", default="auto", choices=["auto", "systemd", "launchd", "supervisord"])
+        supervisor = prompt(
+            "Default supervisor",
+            default="auto",
+            choices=["auto", "systemd", "launchd", "supervisord"],
+        )
         defaults = {}
 
     print("")
@@ -822,10 +873,14 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
         agents = list(existing_fleet.get("agents") or [])
         existing_names = [a.get("name") for a in agents if isinstance(a, dict)]
         if agent_name in existing_names:
-            if not prompt_bool("Agent '%s' already exists in fleet. Overwrite?" % agent_name, default=False):
+            if not prompt_bool(
+                "Agent '%s' already exists in fleet. Overwrite?" % agent_name, default=False
+            ):
                 print("Aborted.")
                 return 2
-            agents = [a for a in agents if not (isinstance(a, dict) and a.get("name") == agent_name)]
+            agents = [
+                a for a in agents if not (isinstance(a, dict) and a.get("name") == agent_name)
+            ]
         agents.append(new_agent)
         fleet_config = dict(existing_fleet)
         fleet_config["agents"] = agents
@@ -841,7 +896,11 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
             "shared_services_manager_agent": hub_name,
             "defaults": {
                 "supervisor": supervisor,
-                "hermes": {"slack_home_channel_name": "", "gateway_provider": "custom", "gateway_base_url": ""},
+                "hermes": {
+                    "slack_home_channel_name": "",
+                    "gateway_provider": "custom",
+                    "gateway_base_url": "",
+                },
                 "worker": {
                     "mode": "heartbeat",
                     "capabilities": _default_worker_capabilities(),
@@ -905,7 +964,9 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
 
 
 def main(argv: List[str]) -> int:
-    parser = argparse.ArgumentParser(description="Interactive first-run mac admin fleet setup wizard.")
+    parser = argparse.ArgumentParser(
+        description="Interactive first-run mac admin fleet setup wizard."
+    )
     parser.add_argument(
         "--fleets-config",
         default=str(Path.home() / ".mac" / "fleets.yaml"),
@@ -916,10 +977,18 @@ def main(argv: List[str]) -> int:
         default=str(Path.home() / ".mac" / ".env"),
         help="Path to write caller-machine deploy env/secrets.",
     )
-    parser.add_argument("--force", action="store_true", help="Overwrite existing files after backing them up.")
-    parser.add_argument("--dry-run", action="store_true", help="Print generated files without writing them.")
-    parser.add_argument("--deploy-plan-file", default="", help="Write a setup deployment plan JSON file.")
-    parser.add_argument("--spec", help="Declarative mac.fleet_setup.v1 YAML/JSON spec for non-interactive setup.")
+    parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing files after backing them up."
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print generated files without writing them."
+    )
+    parser.add_argument(
+        "--deploy-plan-file", default="", help="Write a setup deployment plan JSON file."
+    )
+    parser.add_argument(
+        "--spec", help="Declarative mac.fleet_setup.v1 YAML/JSON spec for non-interactive setup."
+    )
     parser.add_argument(
         "--list-samples",
         action="store_true",
@@ -954,8 +1023,12 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--target", help="Hub SSH target for --new-hub, optionally user@host:port.")
     parser.add_argument("--ssh-port", type=int, help="SSH port for --new-hub target.")
     parser.add_argument("--fleet-name", default="my-fleet", help="Fleet name for --new-hub.")
-    parser.add_argument("--hub-os", default="linux", choices=["linux", "darwin"], help="Hub OS for --new-hub.")
-    parser.add_argument("--control-port", type=int, default=8789, help="Hub control plane port for --new-hub.")
+    parser.add_argument(
+        "--hub-os", default="linux", choices=["linux", "darwin"], help="Hub OS for --new-hub."
+    )
+    parser.add_argument(
+        "--control-port", type=int, default=8789, help="Hub control plane port for --new-hub."
+    )
     parser.add_argument("--hub-url", default="", help="Hub URL agents should use for --new-hub.")
     parser.add_argument("--home-channel", default="", help="Slack home channel for --new-hub.")
     parser.add_argument("--hub-model", default="", help="Hub Hermes model selector for --new-hub.")
@@ -971,15 +1044,37 @@ def main(argv: List[str]) -> int:
         choices=["tailscale", "headscale", "none"],
         help="Fleet mesh provider for --new-hub.",
     )
-    parser.add_argument("--headscale-login-server", default="", help="Headscale login server for --new-hub.")
-    parser.add_argument("--headscale-preauth-key", default="", help="Headscale preauth key to place in env file.")
-    parser.add_argument("--webdav", action="store_true", help="Enable hub public artifact WebDAV server for --new-hub.")
-    parser.add_argument("--webdav-port", type=int, default=80, help="WebDAV backend artifact port for --new-hub.")
-    parser.add_argument("--webdav-dns-name", default="", help="Public DNS name for WebDAV/HTTPS artifacts for --new-hub.")
+    parser.add_argument(
+        "--headscale-login-server", default="", help="Headscale login server for --new-hub."
+    )
+    parser.add_argument(
+        "--headscale-preauth-key", default="", help="Headscale preauth key to place in env file."
+    )
+    parser.add_argument(
+        "--webdav",
+        action="store_true",
+        help="Enable hub public artifact WebDAV server for --new-hub.",
+    )
+    parser.add_argument(
+        "--webdav-port", type=int, default=80, help="WebDAV backend artifact port for --new-hub."
+    )
+    parser.add_argument(
+        "--webdav-dns-name",
+        default="",
+        help="Public DNS name for WebDAV/HTTPS artifacts for --new-hub.",
+    )
     parser.add_argument("--webdav-url", default="", help="Public WebDAV read URL for --new-hub.")
-    parser.add_argument("--webdav-bind-addr", default="0.0.0.0", help="WebDAV bind address for --new-hub.")
-    parser.add_argument("--webdav-root", default="", help="Hub/shared artifact publish directory for --new-hub.")
-    parser.add_argument("--webdav-public-path", default="/artifacts/", help="WebDAV public path prefix for --new-hub.")
+    parser.add_argument(
+        "--webdav-bind-addr", default="0.0.0.0", help="WebDAV bind address for --new-hub."
+    )
+    parser.add_argument(
+        "--webdav-root", default="", help="Hub/shared artifact publish directory for --new-hub."
+    )
+    parser.add_argument(
+        "--webdav-public-path",
+        default="/artifacts/",
+        help="WebDAV public path prefix for --new-hub.",
+    )
     args = parser.parse_args(argv)
 
     if args.list_samples:
@@ -1013,7 +1108,10 @@ def main(argv: List[str]) -> int:
             return 0 if plan.get("status") != "fail" else 1
         if plan.get("status") == "fail":
             print(json.dumps(redacted, indent=2, sort_keys=True), file=sys.stderr)
-            print("setup spec is not deployable; fix failed checks before writing config", file=sys.stderr)
+            print(
+                "setup spec is not deployable; fix failed checks before writing config",
+                file=sys.stderr,
+            )
             return 2
         if (
             not args.force
@@ -1044,7 +1142,9 @@ def main(argv: List[str]) -> int:
         return 2
     if not args.force and not noninteractive:
         for path in (fleets_config, env_file):
-            if path.exists() and not prompt_bool("Overwrite %s after making a backup?" % path, default=False):
+            if path.exists() and not prompt_bool(
+                "Overwrite %s after making a backup?" % path, default=False
+            ):
                 print("Aborted before writing %s" % path)
                 return 2
 
@@ -1079,9 +1179,7 @@ def main(argv: List[str]) -> int:
             print("--webdav requires --webdav-dns-name", file=sys.stderr)
             return 2
         webdav_url = args.webdav_url.strip() or (
-            webdav_url_from_dns(webdav_dns_name, webdav_public_path)
-            if args.webdav
-            else ""
+            webdav_url_from_dns(webdav_dns_name, webdav_public_path) if args.webdav else ""
         )
         headscale_login_server = args.headscale_login_server.strip()
         if args.network_provider == "headscale" and not headscale_login_server:
@@ -1146,7 +1244,9 @@ def main(argv: List[str]) -> int:
                     "headscale": {
                         "manage": False,
                         "login_server": headscale_login_server,
-                        "health_url": "%s/health" % headscale_login_server.rstrip("/") if headscale_login_server else "",
+                        "health_url": "%s/health" % headscale_login_server.rstrip("/")
+                        if headscale_login_server
+                        else "",
                         "preauth_key_source": "env",
                         "preauth_key_env": headscale_preauth_key_env,
                         "port": 8080,

@@ -25,6 +25,7 @@ Deliberately a pure function over evidence, with no I/O: it is the shape ADR
 0022 asks for, and it means the classifier can be tested directly against real
 failure text rather than only through a live task.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -78,8 +79,10 @@ def classify_contract_failure(
 
     # Ordered most-upstream first. Each cause describes a task that stopped at
     # a different point, so the first match is the earliest stopping point.
-    if "plan_decomposed" in text or "no code was changed" in text or (
-        "decompos" in text and "children" in text
+    if (
+        "plan_decomposed" in text
+        or "no code was changed" in text
+        or ("decompos" in text and "children" in text)
     ):
         return ContractFailure(
             cause=ContractFailureCause.PLANNED_INSTEAD_OF_IMPLEMENTING,
@@ -115,7 +118,12 @@ def classify_contract_failure(
                 "behalf. Do not widen the sandbox's credentials."
             ),
         )
-    if "push_rejected" in text or "rejected" in text and "push" in text or "non-fast-forward" in text:
+    if (
+        "push_rejected" in text
+        or "rejected" in text
+        and "push" in text
+        or "non-fast-forward" in text
+    ):
         return ContractFailure(
             cause=ContractFailureCause.PUSH_REJECTED,
             problem="The branch was pushed and the remote refused it (%s)." % detail,

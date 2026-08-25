@@ -164,21 +164,25 @@ class TestRetentionPolicy:
 
     def test_unknown_record_class_raises(self):
         from mac.models import ValidationError
+
         with pytest.raises(ValidationError, match="unknown retention record_class"):
             RetentionPolicy("no_such_table")
 
     def test_negative_max_age_raises(self):
         from mac.models import ValidationError
+
         with pytest.raises(ValidationError, match="max_age_seconds"):
             RetentionPolicy("observability_events", enabled=True, max_age_seconds=-1)
 
     def test_negative_max_rows_raises(self):
         from mac.models import ValidationError
+
         with pytest.raises(ValidationError, match="max_rows"):
             RetentionPolicy("observability_events", enabled=True, max_rows=-5)
 
     def test_zero_batch_size_raises(self):
         from mac.models import ValidationError
+
         with pytest.raises(ValidationError, match="batch_size"):
             RetentionPolicy("observability_events", enabled=True, batch_size=0)
 
@@ -212,6 +216,7 @@ class TestRetentionStats:
 
     def test_stats_unknown_class_raises(self, retention):
         from mac.models import ValidationError
+
         with pytest.raises(ValidationError, match="unknown retention record_class"):
             retention.stats("no_such_table")
 
@@ -441,9 +446,10 @@ class TestLivePruneMaxRows:
         pol = RetentionPolicy("observability_events", enabled=True, max_rows=3)
         report = retention.prune("observability_events", override_policy=pol)
         assert report.deleted_rows == 7
-        remaining = [r["id"] for r in store.query_all(
-            "SELECT id FROM observability_events ORDER BY created_at DESC"
-        )]
+        remaining = [
+            r["id"]
+            for r in store.query_all("SELECT id FROM observability_events ORDER BY created_at DESC")
+        ]
         # The 3 newest should survive
         assert ids[7] in remaining
         assert ids[8] in remaining
@@ -488,6 +494,7 @@ class TestHardExclusions:
     def test_terminal_task_obs_not_excluded(self, store, cp):
         """Observability events tied to a completed task ARE eligible."""
         from mac.models import TaskState
+
         task = cp.create_task("terminal task for exclusion test")
         # Transition to failed (a terminal state) without requiring agent lifecycle
         cp._transition_task_internal(
@@ -536,7 +543,9 @@ class TestHardExclusions:
         )
         report = cp.retention.prune("action_events", override_policy=pol)
         assert report.excluded_rows == 1
-        rows = store.query_all("SELECT event_id FROM action_events WHERE event_id = ?", (evt.event_id,))
+        rows = store.query_all(
+            "SELECT event_id FROM action_events WHERE event_id = ?", (evt.event_id,)
+        )
         assert len(rows) == 1
 
     def test_no_task_action_event_not_excluded(self, store, retention):
@@ -656,6 +665,7 @@ class TestActionEventAttributeCap:
         """The action-event attribute cap must equal the observability detail
         cap so both tables stay bounded at the same threshold."""
         from mac.observability_service import ObservabilityService
+
         assert ACTION_EVENT_MAX_ATTRIBUTES_BYTES == ObservabilityService.MAX_DETAIL_BYTES
 
 
@@ -738,9 +748,7 @@ class _BacklogStore:
         available = self.backlog if " WHERE " in sql else self.total_rows
         n = max(0, min(limit, available - offset))
         self.step1_fetched.append(n)
-        return [
-            {"pk_val": "row%07d" % i} for i in range(offset, offset + n)
-        ]
+        return [{"pk_val": "row%07d" % i} for i in range(offset, offset + n)]
 
     def transaction(self):  # pragma: no cover - these tests are all dry runs
         raise AssertionError("dry run must not delete")
@@ -868,8 +876,7 @@ class TestCandidateWindowIsBoundedInSql:
             "2000-row window" % store.step1_fetched
         )
         assert report.batch_capped is True, (
-            "the backlog beyond the window must still be reported, or the tick "
-            "loop stops draining"
+            "the backlog beyond the window must still be reported, or the tick loop stops draining"
         )
         assert store.counts, "batch_capped must come from a COUNT(*), not from len()"
 
@@ -935,18 +942,14 @@ class TestCandidateWindowIsBoundedInSql:
     def test_max_rows_below_limit_fetches_nothing(self):
         store = _BacklogStore(backlog=0, total_rows=10)
         service = RetentionService(store)
-        service.set_policy(
-            RetentionPolicy("observability_events", enabled=True, max_rows=1_000)
-        )
+        service.set_policy(RetentionPolicy("observability_events", enabled=True, max_rows=1_000))
         report = service.dry_run("observability_events", actor="test")
 
         assert store.step1_fetched == [], "nothing is over the limit; read nothing"
         assert report.eligible_rows == 0
         assert "no_candidates" in report.exclusion_reasons
 
-    def test_max_rows_prunes_oldest_excess_in_batches_against_a_real_store(
-        self, store, retention
-    ):
+    def test_max_rows_prunes_oldest_excess_in_batches_against_a_real_store(self, store, retention):
         """End-to-end on PostgreSQL: keep the newest, drain the oldest."""
         ids = []
         for i in range(10):
@@ -961,9 +964,7 @@ class TestCandidateWindowIsBoundedInSql:
             )
             ids.append(obs_id)
 
-        pol = RetentionPolicy(
-            "observability_events", enabled=True, max_rows=3, batch_size=4
-        )
+        pol = RetentionPolicy("observability_events", enabled=True, max_rows=3, batch_size=4)
         first = retention.prune("observability_events", override_policy=pol)
         assert first.deleted_rows == 4
         assert first.batch_capped is True, "7 excess > 4 window: more remains"
@@ -974,8 +975,6 @@ class TestCandidateWindowIsBoundedInSql:
 
         remaining = [
             r["id"]
-            for r in store.query_all(
-                "SELECT id FROM observability_events ORDER BY created_at ASC"
-            )
+            for r in store.query_all("SELECT id FROM observability_events ORDER BY created_at ASC")
         ]
         assert remaining == ids[7:], "the 3 newest survive, the 7 oldest went"

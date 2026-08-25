@@ -55,7 +55,13 @@ def test_native_connector_imports_frontmatter(tmp_path):
     tickets = ticketing.NativeTicketingConnector().import_tickets(tmp_path)
     assert len(tickets) == 1
     t = tickets[0]
-    assert (t.id, t.title, t.state, t.priority, t.source) == ("mac-7", "Hello", "closed", 2, "native")
+    assert (t.id, t.title, t.state, t.priority, t.source) == (
+        "mac-7",
+        "Hello",
+        "closed",
+        2,
+        "native",
+    )
 
 
 def test_beads_connector_is_import_only_not_writeback():
@@ -69,10 +75,13 @@ def test_beads_connector_is_import_only_not_writeback():
 
 
 def test_beads_connector_imports_meta_tickets(tmp_path):
-    _beads_repo(tmp_path, [
-        {"id": "b-1", "title": "Fix X", "status": "open", "description": "d"},
-        {"id": "b-2", "summary": "Ship Y", "status": "closed"},
-    ])
+    _beads_repo(
+        tmp_path,
+        [
+            {"id": "b-1", "title": "Fix X", "status": "open", "description": "d"},
+            {"id": "b-2", "summary": "Ship Y", "status": "closed"},
+        ],
+    )
     tickets = ticketing.BeadsImportConnector().import_tickets(tmp_path)
     assert {t.id for t in tickets} == {"b-1", "b-2"}
     assert all(t.source == "beads" and t.external_id for t in tickets)

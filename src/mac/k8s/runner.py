@@ -38,9 +38,7 @@ DEFAULT_JOB_POLL_INTERVAL_SECONDS = 5
 
 DEFAULT_OPENCODE_CONFIGMAP_NAME = "mac-opencode-config"
 
-READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = (
-    "read_only_report_requires_openshell_isolation"
-)
+READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = "read_only_report_requires_openshell_isolation"
 
 
 def _optional_int_env(name: str) -> Optional[int]:
@@ -103,9 +101,7 @@ class RunnerConfig:
     role_agent_ids: Dict[str, str] = field(default_factory=dict)
     role_executors: Dict[str, str] = field(default_factory=dict)
     capability_role_aliases: Dict[str, str] = field(default_factory=dict)
-    role_attestation_key_secrets: Dict[str, Dict[str, str]] = field(
-        default_factory=dict
-    )
+    role_attestation_key_secrets: Dict[str, Dict[str, str]] = field(default_factory=dict)
     # Exact agent identity -> per-agent Secret created by
     # mac.worker_credentials. Absence means legacy compatibility mode.
     agent_token_secrets: Dict[str, str] = field(default_factory=dict)
@@ -124,12 +120,8 @@ class RunnerConfig:
             mac_url=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL", ""),
             agent_id=os.environ.get("MAC_AGENT_ID", "mac-k8s-runner"),
             namespace=os.environ.get("MAC_RUNNER_NAMESPACE", "mac"),
-            service_account=os.environ.get(
-                "MAC_RUNNER_TASK_SERVICE_ACCOUNT", "mac-task-runner"
-            ),
-            default_image=os.environ.get(
-                "MAC_RUNNER_DEFAULT_IMAGE", DEFAULT_TASK_IMAGE
-            ),
+            service_account=os.environ.get("MAC_RUNNER_TASK_SERVICE_ACCOUNT", "mac-task-runner"),
+            default_image=os.environ.get("MAC_RUNNER_DEFAULT_IMAGE", DEFAULT_TASK_IMAGE),
             secret_name_for_token=os.environ.get(
                 "MAC_RUNNER_TASK_TOKEN_SECRET_NAME", unified_secret or "mac-api-config"
             ),
@@ -142,18 +134,14 @@ class RunnerConfig:
             secret_key_for_secret_key=os.environ.get(
                 "MAC_RUNNER_TASK_SECRET_KEY_SECRET_KEY", "MAC_SECRET_KEY"
             ),
-            poll_interval_seconds=float(
-                os.environ.get("MAC_RUNNER_POLL_INTERVAL_SECONDS", "5")
-            ),
+            poll_interval_seconds=float(os.environ.get("MAC_RUNNER_POLL_INTERVAL_SECONDS", "5")),
             active_deadline_seconds=int(
                 os.environ.get(
                     "MAC_RUNNER_ACTIVE_DEADLINE_SECONDS",
                     str(DEFAULT_ACTIVE_DEADLINE_SECONDS),
                 )
             ),
-            executor_timeout_seconds=_optional_int_env(
-                "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS"
-            ),
+            executor_timeout_seconds=_optional_int_env("MAC_TASK_EXECUTOR_TIMEOUT_SECONDS"),
             ttl_seconds_after_finished=int(
                 os.environ.get(
                     "MAC_RUNNER_TTL_SECONDS_AFTER_FINISHED",
@@ -192,10 +180,12 @@ class RunnerConfig:
             ),
         )
 
+
 def _job_name_for(task_id: str, lease_id: str) -> str:
     short_lease = lease_id.split("-")[-1][:12]
     raw = "mac-task-%s-%s" % (task_id, short_lease)
     return _sanitize_dns_label(raw)
+
 
 def _sanitize_dns_label(value: str) -> str:
     out = []
@@ -209,6 +199,7 @@ def _sanitize_dns_label(value: str) -> str:
         label = "x" + label[1:]
     return label
 
+
 def _resolve_task_role(task: JsonDict, cfg: RunnerConfig) -> Optional[str]:
     meta = task.get("metadata") or {}
     if isinstance(meta, dict) and meta.get("required_role"):
@@ -221,26 +212,25 @@ def _resolve_task_role(task: JsonDict, cfg: RunnerConfig) -> Optional[str]:
                 return str(role)
     return None
 
+
 def _resolve_agent_id_for_role(role: Optional[str], cfg: RunnerConfig) -> str:
     if role and role in cfg.role_agent_ids:
         return cfg.role_agent_ids[role]
     return cfg.agent_id
 
 
-def _resolve_execution_agent_id(
-    task: JsonDict, role: Optional[str], cfg: RunnerConfig
-) -> str:
+def _resolve_execution_agent_id(task: JsonDict, role: Optional[str], cfg: RunnerConfig) -> str:
     """Resolve the executing identity, honouring dispatcher-to-role delegation."""
 
     del task
     return _resolve_agent_id_for_role(role, cfg)
 
-def _resolve_executor_for_role(
-    role: Optional[str], cfg: RunnerConfig
-) -> Optional[str]:
+
+def _resolve_executor_for_role(role: Optional[str], cfg: RunnerConfig) -> Optional[str]:
     if role and role in cfg.role_executors:
         return cfg.role_executors[role]
     return None
+
 
 def _resolve_attestation_key_secret_for_role(
     role: Optional[str], cfg: RunnerConfig
@@ -251,6 +241,7 @@ def _resolve_attestation_key_secret_for_role(
     if not spec:
         return None
     return {"name": spec["name"], "key": spec["key"]}
+
 
 def _resolve_task_image(task: JsonDict, cfg: RunnerConfig) -> str:
     meta = task.get("metadata") or {}
@@ -265,6 +256,7 @@ def _resolve_task_image(task: JsonDict, cfg: RunnerConfig) -> str:
         return cfg.role_images[role]
     return cfg.default_image
 
+
 def _resolve_active_deadline(task: JsonDict, cfg: RunnerConfig) -> int:
     meta = task.get("metadata") or {}
     k8s = meta.get("k8s") or {}
@@ -274,6 +266,7 @@ def _resolve_active_deadline(task: JsonDict, cfg: RunnerConfig) -> int:
         except (TypeError, ValueError):
             pass
     return cfg.active_deadline_seconds
+
 
 _OPTIONAL_SECRET_ENV_KEYS = (
     "INFERENCE_HUB_API_KEY",
@@ -324,9 +317,7 @@ def _build_executor_container_env(
             env.append(
                 {
                     "name": key,
-                    "valueFrom": {
-                        "secretKeyRef": {"name": bound_secret, "key": key}
-                    },
+                    "valueFrom": {"secretKeyRef": {"name": bound_secret, "key": key}},
                 }
             )
         env.append({"name": "MAC_WORKER_IDENTITY_MODE", "value": "bound"})
@@ -400,9 +391,7 @@ def _build_executor_pod_template(
         container_volume_mounts.append(
             {"name": "opencode-config", "mountPath": "/etc/opencode", "readOnly": True}
         )
-        pod_volumes.append(
-            {"name": "opencode-config", "configMap": {"name": opencode_cm}}
-        )
+        pod_volumes.append({"name": "opencode-config", "configMap": {"name": opencode_cm}})
     return {
         "metadata": {"labels": template_labels},
         "spec": {
@@ -524,15 +513,18 @@ def build_job_spec(
         },
     }
 
+
 class MacApiProtocol(Protocol):
     def post(self, path: str, body: JsonDict) -> JsonDict: ...
     def get(self, path: str) -> JsonDict: ...
+
 
 class K8sJobsProtocol(Protocol):
     def create(self, namespace: str, manifest: JsonDict) -> JsonDict: ...
     def list_active(self, namespace: str, label_selector: str) -> List[JsonDict]: ...
     def delete(self, namespace: str, name: str) -> None: ...
     def read(self, namespace: str, name: str) -> JsonDict: ...
+
 
 def _job_is_terminal(job: Optional[JsonDict]) -> bool:
     if job is None:
@@ -549,6 +541,7 @@ def _job_is_terminal(job: Optional[JsonDict]) -> bool:
     except (TypeError, ValueError):
         failed = 0
     return succeeded >= 1 or failed >= 1
+
 
 def _lease_renewal_loop(
     mac: MacApiProtocol,
@@ -597,6 +590,7 @@ def _lease_renewal_loop(
         if stop_event.wait(poll_interval):
             return
 
+
 def _start_lease_renewal_thread(
     mac: MacApiProtocol,
     k8s: K8sJobsProtocol,
@@ -629,9 +623,8 @@ def _start_lease_renewal_thread(
     thread.start()
     return thread
 
-def check_dispatcher_capabilities(
-    cfg: RunnerConfig, mac: MacApiProtocol
-) -> List[str]:
+
+def check_dispatcher_capabilities(cfg: RunnerConfig, mac: MacApiProtocol) -> List[str]:
     """Return the union of role agent capabilities missing from the dispatcher."""
     if not cfg.role_agent_ids:
         return []
@@ -640,8 +633,7 @@ def check_dispatcher_capabilities(
         dispatcher = mac.get("/agents/%s" % cfg.agent_id)
     except Exception as exc:  # noqa: BLE001
         log.warning(
-            "dispatcher capability probe: failed to fetch dispatcher %s: %s; "
-            "skipping check",
+            "dispatcher capability probe: failed to fetch dispatcher %s: %s; skipping check",
             cfg.agent_id,
             exc,
         )
@@ -654,9 +646,7 @@ def check_dispatcher_capabilities(
             type(dispatcher).__name__,
         )
         return []
-    dispatcher_caps = {
-        str(c) for c in (dispatcher.get("capabilities") or [])
-    }
+    dispatcher_caps = {str(c) for c in (dispatcher.get("capabilities") or [])}
 
     # Collect capabilities that belong exclusively to reviewer agents.
     # The dispatcher intentionally does NOT carry `review` (and any other
@@ -704,6 +694,7 @@ def check_dispatcher_capabilities(
     missing = sorted((union_role_caps - reviewer_only_caps) - dispatcher_caps)
     return missing
 
+
 def claim_and_launch_one(
     mac: MacApiProtocol,
     k8s: K8sJobsProtocol,
@@ -714,9 +705,7 @@ def claim_and_launch_one(
     if cfg.capability_filter:
         payload["capabilities"] = cfg.capability_filter
     try:
-        assignment = mac.post(
-            "/agents/%s/claim-next" % cfg.agent_id, payload
-        )
+        assignment = mac.post("/agents/%s/claim-next" % cfg.agent_id, payload)
     except Exception as exc:  # noqa: BLE001
         log.warning("claim-next failed: %s", exc)
         return None
@@ -751,8 +740,7 @@ def claim_and_launch_one(
             )
         except Exception as exc:  # noqa: BLE001
             log.error(
-                "failed to block unsafe K8s read-only report claim "
-                "task=%s lease=%s: %s",
+                "failed to block unsafe K8s read-only report claim task=%s lease=%s: %s",
                 task.get("id"),
                 lease.get("id"),
                 exc,
@@ -871,9 +859,8 @@ def claim_and_launch_one(
         "image": manifest["spec"]["template"]["spec"]["containers"][0]["image"],
     }
 
-def _resolve_role_for_reviewer_agent(
-    reviewer_agent_id: str, cfg: RunnerConfig
-) -> Optional[str]:
+
+def _resolve_role_for_reviewer_agent(reviewer_agent_id: str, cfg: RunnerConfig) -> Optional[str]:
     for role, agent_id in cfg.reviewer_agent_ids.items():
         if agent_id == reviewer_agent_id:
             return role
@@ -1035,7 +1022,9 @@ def claim_and_launch_review_one(
             if not review_id or not task_id or not executor_evidence_id:
                 log.warning(
                     "review-dispatch: nudge missing fields review=%s task=%s evid=%s",
-                    review_id, task_id, executor_evidence_id,
+                    review_id,
+                    task_id,
+                    executor_evidence_id,
                 )
                 continue
             # A delivered nudge is untrusted and may have been queued before a
@@ -1053,18 +1042,17 @@ def claim_and_launch_review_one(
                     exc,
                 )
                 continue
-            if not isinstance(canonical_task, dict) or str(
-                canonical_task.get("id") or ""
-            ).strip() != task_id:
+            if (
+                not isinstance(canonical_task, dict)
+                or str(canonical_task.get("id") or "").strip() != task_id
+            ):
                 log.warning(
                     "review-dispatch: canonical task mismatch task=%s review=%s",
                     task_id,
                     review_id,
                 )
                 continue
-            if metadata_declares_read_only_report_repository(
-                canonical_task.get("metadata")
-            ):
+            if metadata_declares_read_only_report_repository(canonical_task.get("metadata")):
                 log.warning(
                     "review-dispatch: refusing read-only repository report "
                     "task=%s review=%s boundary=kubernetes_job required=openshell",
@@ -1084,7 +1072,9 @@ def claim_and_launch_review_one(
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "review-dispatch: claim_review failed review=%s reviewer=%s: %s",
-                    review_id, reviewer_agent_id, exc,
+                    review_id,
+                    reviewer_agent_id,
+                    exc,
                 )
                 continue
             if isinstance(claim, dict) and claim.get("status") != "claimed":
@@ -1107,12 +1097,16 @@ def claim_and_launch_review_one(
             except Exception as exc:  # noqa: BLE001
                 log.error(
                     "review-dispatch: k8s Job create failed review=%s: %s",
-                    review_id, exc,
+                    review_id,
+                    exc,
                 )
                 continue
             log.info(
                 "review-dispatch: launched review=%s task=%s reviewer=%s role=%s job=%s",
-                review_id, task_id, reviewer_agent_id, role,
+                review_id,
+                task_id,
+                reviewer_agent_id,
+                role,
                 manifest["metadata"]["name"],
             )
             return {

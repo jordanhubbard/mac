@@ -3,6 +3,7 @@
 The deploy consumes NUL-delimited argv from :mod:`mac.fleet_ssh`, so per-agent
 ports, jumps, identities, and host-key policy work without ambient ssh config.
 """
+
 from __future__ import annotations
 
 import sys
@@ -17,17 +18,29 @@ def test_fleet_setup_persists_ssh_jump_into_defaults():
     from mac.fleet_setup import build_setup_plan
 
     spec = {
-        "schema": "mac.fleet_setup.v1", "fleet_name": "jordanh-gke", "hub": "jordanh-hub",
-        "hub_url": "http://jordanh-hub:8789", "supervisor": "supervisord",
+        "schema": "mac.fleet_setup.v1",
+        "fleet_name": "jordanh-gke",
+        "hub": "jordanh-hub",
+        "hub_url": "http://jordanh-hub:8789",
+        "supervisor": "supervisord",
         "ssh_jump": "horde@bastion.horde-gke.nvidia.com:2222",
         "ssh_strict_host_key_checking": False,
         "identity_file": "~/.ssh/gke-operator",
         "ssh_known_hosts_file": "~/.ssh/gke-known-hosts",
         "router": {"backend": "inproc", "providers": [{"id": "nvidia"}]},
-        "agents": [{"name": "jordanh-hub", "target": "horde@jordanh-hub", "os": "linux", "supervisor": "supervisord"}],
+        "agents": [
+            {
+                "name": "jordanh-hub",
+                "target": "horde@jordanh-hub",
+                "os": "linux",
+                "supervisor": "supervisord",
+            }
+        ],
         "deploy_agents": ["jordanh-hub"],
     }
-    plan = build_setup_plan(spec, root=ROOT, fleets_config=Path("/tmp/_x.yaml"), env_file=Path("/tmp/_x.env"))
+    plan = build_setup_plan(
+        spec, root=ROOT, fleets_config=Path("/tmp/_x.yaml"), env_file=Path("/tmp/_x.env")
+    )
     d = plan["fleet_config"]["defaults"]
     assert plan["errors"] == []
     assert d["ssh_jump"] == "horde@bastion.horde-gke.nvidia.com:2222"
@@ -41,11 +54,17 @@ def test_default_setup_keeps_strict_on_and_jump_empty():
     from mac.fleet_setup import build_setup_plan
 
     spec = {
-        "schema": "mac.fleet_setup.v1", "fleet_name": "f", "hub": "h", "hub_url": "http://h:8789",
+        "schema": "mac.fleet_setup.v1",
+        "fleet_name": "f",
+        "hub": "h",
+        "hub_url": "http://h:8789",
         "router": {"backend": "inproc", "providers": [{"id": "nvidia"}]},
-        "agents": [{"name": "h", "target": "u@h", "os": "linux"}], "deploy_agents": ["h"],
+        "agents": [{"name": "h", "target": "u@h", "os": "linux"}],
+        "deploy_agents": ["h"],
     }
-    d = build_setup_plan(spec, root=ROOT, fleets_config=Path("/tmp/_y.yaml"), env_file=Path("/tmp/_y.env"))["fleet_config"]["defaults"]
+    d = build_setup_plan(
+        spec, root=ROOT, fleets_config=Path("/tmp/_y.yaml"), env_file=Path("/tmp/_y.env")
+    )["fleet_config"]["defaults"]
     assert d["ssh_jump"] == "" and d["ssh_strict_host_key_checking"] is True
 
 

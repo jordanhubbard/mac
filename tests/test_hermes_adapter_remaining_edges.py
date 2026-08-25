@@ -42,9 +42,7 @@ def test_description_put_url_error_and_web_client_edges(
     monkeypatch.setattr(
         hermes_adapter.urllib.request,
         "urlopen",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            urllib.error.URLError("offline")
-        ),
+        lambda *_a, **_k: (_ for _ in ()).throw(urllib.error.URLError("offline")),
     )
     with pytest.raises(hermes_adapter.MacApiError, match="offline"):
         hermes_adapter.MacApiClient("http://mac").get("/resource")
@@ -122,9 +120,7 @@ def test_reply_and_memory_writeback_error_edges(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_sanitizers_and_json_argument_edges() -> None:
-    assert hermes_adapter._sanitize_command_argv(["x" * 513]) == [
-        "<truncated:chars=513>"
-    ]
+    assert hermes_adapter._sanitize_command_argv(["x" * 513]) == ["<truncated:chars=513>"]
     assert hermes_adapter._csv(None) == []
     assert hermes_adapter._json_arg(None, {"default": True}) == {"default": True}
     with pytest.raises(hermes_adapter.MacApiError, match="array"):
@@ -135,9 +131,7 @@ def test_register_and_task_command_handlers(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     with pytest.raises(hermes_adapter.MacApiError, match="platform"):
-        hermes_adapter._cmd_register(
-            SimpleNamespace(binding=["invalid"])
-        )
+        hermes_adapter._cmd_register(SimpleNamespace(binding=["invalid"]))
 
     class Adapter:
         def register_identity(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -212,9 +206,7 @@ def test_remaining_command_wrappers(monkeypatch: pytest.MonkeyPatch, capsys) -> 
         )
     )
     hermes_adapter._cmd_reply(SimpleNamespace(task_id="task"))
-    hermes_adapter._cmd_writeback(
-        SimpleNamespace(hermes_instance_id="instance", task_id="task")
-    )
+    hermes_adapter._cmd_writeback(SimpleNamespace(hermes_instance_id="instance", task_id="task"))
     assert "brief:instance" in capsys.readouterr().out
 
 

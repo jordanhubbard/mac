@@ -14,6 +14,7 @@ readiness facts that the API/dispatcher consume:
 * the flip to enforced mode refuses unless every active worker has proved the
   installed principal plus compatible source, runtime, and capability state.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -140,9 +141,7 @@ def ensure_fleet_source_runtime(
             (runtime_name,),
         ).fetchone()
         if row is None:
-            raise WorkerCredentialError(
-                "fleet source runtime registration did not become visible"
-            )
+            raise WorkerCredentialError("fleet source runtime registration did not become visible")
         stored_manifest = json_loads(_row_value(row, "manifest", "{}"), {})
         stored_digest = str(_row_value(row, "digest", ""))
         if stored_manifest != manifest or stored_digest != runtime_digest:
@@ -249,9 +248,7 @@ def _record_from_row(row: Any, *, include_hash: bool = False) -> Dict[str, Any]:
     return record
 
 
-def _worker_records(
-    records: Iterable[Mapping[str, Any]], agent_id: str
-) -> List[Dict[str, Any]]:
+def _worker_records(records: Iterable[Mapping[str, Any]], agent_id: str) -> List[Dict[str, Any]]:
     result = [
         dict(value)
         for value in records
@@ -331,8 +328,7 @@ class WorkerCredentialLifecycle:
         """Fence ordinary credential changes while a cutover owns the agent."""
 
         reservation = conn.execute(
-            "SELECT epoch_id FROM fleet_release_epoch_agents "
-            "WHERE agent_id = ? AND open_state = 1",
+            "SELECT epoch_id FROM fleet_release_epoch_agents WHERE agent_id = ? AND open_state = 1",
             (agent_id,),
         ).fetchone()
         if expected_epoch_id is None:
@@ -368,13 +364,8 @@ class WorkerCredentialLifecycle:
             )
         if receipt.get("schema") != INSTALL_RECEIPT_SCHEMA:
             raise WorkerCredentialError("activation requires a worker install receipt")
-        if (
-            receipt.get("agent_id") != exact_agent
-            or receipt.get("principal_id") != principal_id
-        ):
-            raise WorkerCredentialError(
-                "install receipt does not match the requested principal"
-            )
+        if receipt.get("agent_id") != exact_agent or receipt.get("principal_id") != principal_id:
+            raise WorkerCredentialError("install receipt does not match the requested principal")
         verification = receipt.get("destination_verification")
         expected_verification_keys = {
             "schema",
@@ -393,14 +384,10 @@ class WorkerCredentialLifecycle:
             or verification.get("schema") != DESTINATION_VERIFICATION_SCHEMA
             or not verification.get("verified")
         ):
-            raise WorkerCredentialError(
-                "activation requires verified destination readback"
-            )
+            raise WorkerCredentialError("activation requires verified destination readback")
         destination = str(receipt.get("destination") or "")
         if not destination or verification.get("destination") != destination:
-            raise WorkerCredentialError(
-                "destination verification does not match install receipt"
-            )
+            raise WorkerCredentialError("destination verification does not match install receipt")
         return verification, destination
 
     def validate_activation_in_transaction(
@@ -426,8 +413,7 @@ class WorkerCredentialLifecycle:
             exact_agent, principal_id, receipt
         )
         agent_lock = conn.execute(
-            "UPDATE agents SET updated_at = updated_at "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
             (exact_agent,),
         )
         if agent_lock.rowcount != 1:
@@ -445,23 +431,20 @@ class WorkerCredentialLifecycle:
             "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
         ).fetchone()
         record = _record_from_row(row, include_hash=True)
-        if (
-            record.get("agent_id") != exact_agent
-            or record.get("principal_kind") != "worker"
-        ):
-            raise WorkerCredentialError(
-                "principal is not bound to the requested agent"
-            )
-        allowed_states = {"pending_install"} if require_pending else {
-            "pending_install",
-            "active",
-        }
+        if record.get("agent_id") != exact_agent or record.get("principal_kind") != "worker":
+            raise WorkerCredentialError("principal is not bound to the requested agent")
+        allowed_states = (
+            {"pending_install"}
+            if require_pending
+            else {
+                "pending_install",
+                "active",
+            }
+        )
         if record.get("state") not in allowed_states or not _not_expired(record):
             raise WorkerCredentialError("worker principal is revoked or expired")
         if receipt.get("token_fingerprint") != record.get("token_fingerprint"):
-            raise WorkerCredentialError(
-                "install receipt fingerprint does not match issuance"
-            )
+            raise WorkerCredentialError("install receipt fingerprint does not match issuance")
         expected_destination = bool(
             (
                 record.get("environment") == "vm"
@@ -479,9 +462,7 @@ class WorkerCredentialLifecycle:
             raise WorkerCredentialError(
                 "install receipt destination does not match credential environment"
             )
-        if receipt.get("worker_credential_version") != record.get(
-            "credential_version"
-        ):
+        if receipt.get("worker_credential_version") != record.get("credential_version"):
             raise WorkerCredentialError(
                 "install receipt credential version does not match issuance"
             )
@@ -496,14 +477,10 @@ class WorkerCredentialLifecycle:
                     "destination verification does not match install receipt"
                 )
 
-        agent_row = conn.execute(
-            "SELECT * FROM agents WHERE id = ?", (exact_agent,)
-        ).fetchone()
+        agent_row = conn.execute("SELECT * FROM agents WHERE id = ?", (exact_agent,)).fetchone()
         readiness = _credential_readiness(agent_row, record)
         if not readiness["credential_bound"]:
-            raise WorkerCredentialError(
-                "activation requires live authenticated heartbeat proof"
-            )
+            raise WorkerCredentialError("activation requires live authenticated heartbeat proof")
         if record.get("package_capable") and not readiness["ready"]:
             raise WorkerCredentialError(
                 "activation requires compatible source, runtime, and capability proof"
@@ -546,21 +523,14 @@ class WorkerCredentialLifecycle:
         if row is None:
             raise WorkerCredentialError("worker principal does not exist")
         record = _record_from_row(row)
-        if (
-            record.get("agent_id") != exact_agent
-            or record.get("principal_kind") != "worker"
-        ):
-            raise WorkerCredentialError(
-                "principal is not bound to the requested agent"
-            )
+        if record.get("agent_id") != exact_agent or record.get("principal_kind") != "worker":
+            raise WorkerCredentialError("principal is not bound to the requested agent")
         if record.get("state") != "pending_install" or not _not_expired(record):
             raise WorkerCredentialError("worker principal is revoked or expired")
 
         readiness = _credential_readiness(agent_row, record)
         if not readiness["credential_bound"]:
-            raise WorkerCredentialError(
-                "activation requires live authenticated heartbeat proof"
-            )
+            raise WorkerCredentialError("activation requires live authenticated heartbeat proof")
         if record.get("package_capable") and not readiness["ready"]:
             raise WorkerCredentialError(
                 "activation requires compatible source, runtime, and capability proof"
@@ -584,8 +554,7 @@ class WorkerCredentialLifecycle:
 
         exact_agent = _validate_agent_id(agent_id)
         locked = conn.execute(
-            "UPDATE agents SET updated_at = updated_at "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
             (exact_agent,),
         )
         if locked.rowcount != 1:
@@ -604,13 +573,9 @@ class WorkerCredentialLifecycle:
         ).fetchone()
         record = _record_from_row(row, include_hash=True)
         if record.get("agent_id") != exact_agent:
-            raise WorkerCredentialError(
-                "principal is not bound to the requested agent"
-            )
+            raise WorkerCredentialError("principal is not bound to the requested agent")
         if record.get("state") != "pending_install" or not _not_expired(record):
-            raise WorkerCredentialError(
-                "fleet release requires an unexpired pending principal"
-            )
+            raise WorkerCredentialError("fleet release requires an unexpired pending principal")
         return record
 
     def discard_pending_in_transaction(
@@ -635,15 +600,12 @@ class WorkerCredentialLifecycle:
         if not exact_epoch:
             raise WorkerCredentialError("fleet release epoch id is required")
         agent_lock = conn.execute(
-            "UPDATE agents SET updated_at = updated_at "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
             (exact_agent,),
         )
         if agent_lock.rowcount != 1:
             raise WorkerCredentialError("worker agent does not exist")
-        self._assert_release_epoch_reservation(
-            conn, exact_agent, expected_epoch_id=exact_epoch
-        )
+        self._assert_release_epoch_reservation(conn, exact_agent, expected_epoch_id=exact_epoch)
         participant = conn.execute(
             "SELECT principal_id FROM fleet_release_epoch_agents "
             "WHERE epoch_id = ? AND agent_id = ? AND open_state = 1",
@@ -668,9 +630,7 @@ class WorkerCredentialLifecycle:
             or record.get("principal_kind") != "worker"
             or record.get("state") != "pending_install"
         ):
-            raise WorkerCredentialError(
-                "epoch-owned worker principal is no longer pending"
-            )
+            raise WorkerCredentialError("epoch-owned worker principal is no longer pending")
         now = _timestamp()
         discarded = conn.execute(
             "UPDATE worker_credentials SET state = ?, revoked_at = ?, "
@@ -679,9 +639,7 @@ class WorkerCredentialLifecycle:
             ("revoked", now, now, principal_id, exact_agent),
         )
         if discarded.rowcount != 1:
-            raise WorkerCredentialError(
-                "epoch-owned worker principal could not be discarded"
-            )
+            raise WorkerCredentialError("epoch-owned worker principal could not be discarded")
         record["state"] = "revoked"
         record["revoked_at"] = now
         self._event(
@@ -771,9 +729,7 @@ class WorkerCredentialLifecycle:
             raise WorkerCredentialError("worker environment must be vm or k8s")
         ttl_seconds = int(expires_in)
         if ttl_seconds < 60:
-            raise WorkerCredentialError(
-                "worker credential expires-in must be at least 60 seconds"
-            )
+            raise WorkerCredentialError("worker credential expires-in must be at least 60 seconds")
         source = str(expected_source_commit or "").strip()
         runtime = str(expected_runtime_digest or "").strip()
         capabilities = sorted(
@@ -798,14 +754,11 @@ class WorkerCredentialLifecycle:
         expires_at = _timestamp(now + timedelta(seconds=ttl_seconds))
         with self.store.transaction() as conn:
             agent_lock = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (exact_agent,),
             )
             if agent_lock.rowcount != 1:
-                raise WorkerCredentialError(
-                    "worker credential requires a registered agent"
-                )
+                raise WorkerCredentialError("worker credential requires a registered agent")
             self._assert_release_epoch_reservation(conn, exact_agent)
             version_row = conn.execute(
                 "SELECT COALESCE(MAX(credential_version), 0) AS version "
@@ -883,8 +836,7 @@ class WorkerCredentialLifecycle:
         revoked: List[Dict[str, Any]] = []
         with self.store.transaction() as conn:
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (exact_agent,),
             )
             if locked.rowcount != 1:
@@ -930,8 +882,7 @@ class WorkerCredentialLifecycle:
         discarded: List[Dict[str, Any]] = []
         with self.store.transaction() as conn:
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (exact_agent,),
             )
             if locked.rowcount != 1:
@@ -1026,11 +977,7 @@ class WorkerCredentialPrincipalProvider:
             except ClientPrincipalError:
                 continue
             token_hash = str(record.get("token_hash") or "")
-            if (
-                expires_at is None
-                or expires_at <= instant
-                or not token_hash.startswith("sha256:")
-            ):
+            if expires_at is None or expires_at <= instant or not token_hash.startswith("sha256:"):
                 continue
             result[token_hash] = {
                 "scopes": list(record.get("scopes") or []),
@@ -1091,12 +1038,12 @@ def _validated_manifest(
     if environment not in {"vm", "k8s"}:
         raise WorkerCredentialError("credential manifest has an invalid environment")
     if expected_environment and environment != expected_environment:
-        raise WorkerCredentialError(
-            "credential manifest is bound to a different environment"
-        )
+        raise WorkerCredentialError("credential manifest is bound to a different environment")
     credential = manifest.get("credential")
     token = str(credential.get("token") or "") if isinstance(credential, Mapping) else ""
-    if not token.startswith("mac_worker_") or _fingerprint(token) != manifest.get("token_fingerprint"):
+    if not token.startswith("mac_worker_") or _fingerprint(token) != manifest.get(
+        "token_fingerprint"
+    ):
         raise WorkerCredentialError("credential manifest token integrity check failed")
     principal_id = str(manifest.get("principal_id") or "")
     if not principal_id:
@@ -1132,9 +1079,7 @@ def install_vm_manifest(
 ) -> Dict[str, Any]:
     """Atomically install one worker token in a mode-0600 VM env file."""
 
-    agent_id, token = _validated_manifest(
-        manifest, expected_agent_id, expected_environment="vm"
-    )
+    agent_id, token = _validated_manifest(manifest, expected_agent_id, expected_environment="vm")
     from mac.deploy_env import read_env_file, render_env
 
     path = Path(env_path).expanduser()
@@ -1208,9 +1153,7 @@ def build_kubernetes_secret(
     expected_agent_id: str = "",
 ) -> Dict[str, Any]:
     """Build a Kubernetes Secret manifest from a worker install manifest."""
-    agent_id, token = _validated_manifest(
-        manifest, expected_agent_id, expected_environment="k8s"
-    )
+    agent_id, token = _validated_manifest(manifest, expected_agent_id, expected_environment="k8s")
     secret_name = name or kubernetes_secret_name(agent_id)
     return {
         "apiVersion": "v1",
@@ -1272,9 +1215,7 @@ def apply_kubernetes_secret(
         text=True,
     )
     if getattr(readback, "returncode", 1) != 0:
-        raise WorkerCredentialError(
-            "kubectl failed to verify the worker credential Secret"
-        )
+        raise WorkerCredentialError("kubectl failed to verify the worker credential Secret")
     try:
         observed = json.loads(str(getattr(readback, "stdout", "") or ""))
         encoded = observed.get("data") if isinstance(observed, Mapping) else None
@@ -1286,9 +1227,7 @@ def apply_kubernetes_secret(
             for key, value in encoded.items()
         }
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise WorkerCredentialError(
-            "worker credential Secret readback was invalid"
-        ) from exc
+        raise WorkerCredentialError("worker credential Secret readback was invalid") from exc
     if any(decoded.get(key) != value for key, value in expected_values.items()):
         raise WorkerCredentialError("worker credential Secret readback did not match")
     destination = "k8s_secret:%s/%s" % (namespace, secret_name)
@@ -1454,10 +1393,7 @@ def _credential_readiness(agent: Any, credential: Mapping[str, Any]) -> Dict[str
     )
     authentication_matches = bool(
         authenticated.get("schema") == AUTHENTICATED_PROOF_SCHEMA
-        and all(
-            authenticated.get(key) == value
-            for key, value in identity_fields.items()
-        )
+        and all(authenticated.get(key) == value for key, value in identity_fields.items())
     )
     credential_bound = proof_matches and authentication_matches
 
@@ -1473,20 +1409,14 @@ def _credential_readiness(agent: Any, credential: Mapping[str, Any]) -> Dict[str
         expected_runtime
         and str(_agent_value(agent, "running_digest", "") or "") == expected_runtime
     )
-    required_caps = {
-        str(value) for value in credential.get("required_capabilities") or []
-    }
-    actual_caps = {
-        str(value) for value in _json_list(_agent_value(agent, "capabilities", []))
-    }
+    required_caps = {str(value) for value in credential.get("required_capabilities") or []}
+    actual_caps = {str(value) for value in _json_list(_agent_value(agent, "capabilities", []))}
     capability_ready = bool(
         credential.get("package_capable")
         and PACKAGE_CAPABILITY in required_caps
         and required_caps.issubset(actual_caps)
     )
-    ready = bool(
-        credential_bound and source_ready and runtime_ready and capability_ready
-    )
+    ready = bool(credential_bound and source_ready and runtime_ready and capability_ready)
     blockers = []
     if not credential_bound:
         blockers.append("authenticated_credential_not_observed")
@@ -1596,10 +1526,7 @@ def _inventory_facts(inventory: Mapping[str, Any]) -> Dict[str, Any]:
 def _live_inventory(store: Store, mode: str) -> Dict[str, Any]:
     rows = store.query_all("SELECT * FROM agents WHERE deleted_at IS NULL")
     agents = [
-        {key: row[key] for key in row.keys()}
-        if hasattr(row, "keys")
-        else dict(row)
-        for row in rows
+        {key: row[key] for key in row.keys()} if hasattr(row, "keys") else dict(row) for row in rows
     ]
     records = WorkerCredentialLifecycle(store).records()
     return build_readiness_inventory(agents, records, mode=mode)
@@ -1608,14 +1535,9 @@ def _live_inventory(store: Store, mode: str) -> Dict[str, Any]:
 def live_inventory_in_transaction(conn: Any, mode: str) -> Dict[str, Any]:
     """Build the rollout inventory from one caller-owned DB snapshot."""
 
-    rows = conn.execute(
-        "SELECT * FROM agents WHERE deleted_at IS NULL"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM agents WHERE deleted_at IS NULL").fetchall()
     agents = [
-        {key: row[key] for key in row.keys()}
-        if hasattr(row, "keys")
-        else dict(row)
-        for row in rows
+        {key: row[key] for key in row.keys()} if hasattr(row, "keys") else dict(row) for row in rows
     ]
     credential_rows = conn.execute(
         "SELECT * FROM worker_credentials ORDER BY agent_id, credential_version"
@@ -1634,21 +1556,16 @@ def write_policy_state_in_transaction(
     """Validate and write fleet identity policy in an existing transaction."""
 
     if mode not in POLICY_MODES:
-        raise WorkerCredentialError(
-            "worker credential mode must be compatibility or enforced"
-        )
+        raise WorkerCredentialError("worker credential mode must be compatibility or enforced")
     inventory = live_inventory_in_transaction(conn, mode)
-    if reviewed_inventory is not None and _inventory_facts(
-        reviewed_inventory
-    ) != _inventory_facts(inventory):
+    if reviewed_inventory is not None and _inventory_facts(reviewed_inventory) != _inventory_facts(
+        inventory
+    ):
         raise WorkerCredentialError(
             "worker credential readiness inventory is stale or does not match hub authority"
         )
     if mode == MODE_ENFORCED:
-        if (
-            reviewed_inventory is None
-            or reviewed_inventory.get("schema") != INVENTORY_SCHEMA
-        ):
+        if reviewed_inventory is None or reviewed_inventory.get("schema") != INVENTORY_SCHEMA:
             raise WorkerCredentialError("enforcement requires a readiness inventory")
         if (
             not inventory.get("all_ready")
@@ -1664,14 +1581,11 @@ def write_policy_state_in_transaction(
         "updated_by": str(actor or "operator"),
         "inventory_digest": inventory_digest(inventory),
         "ready_agent_ids": [
-            str(item["agent_id"])
-            for item in inventory.get("workers") or []
-            if item.get("ready")
+            str(item["agent_id"]) for item in inventory.get("workers") or [] if item.get("ready")
         ],
     }
     row = conn.execute(
-        "SELECT revision FROM worker_credential_policy_state "
-        "WHERE singleton_key = ?",
+        "SELECT revision FROM worker_credential_policy_state WHERE singleton_key = ?",
         ("fleet",),
     ).fetchone()
     revision = int(row["revision"] or 0) + 1 if row is not None else 1
@@ -1716,15 +1630,10 @@ def write_policy_state(
                 actor=actor,
             )
     if mode not in POLICY_MODES:
-        raise WorkerCredentialError(
-            "worker credential mode must be compatibility or enforced"
-        )
+        raise WorkerCredentialError("worker credential mode must be compatibility or enforced")
     reviewed_inventory = inventory
     if mode == MODE_ENFORCED:
-        if (
-            reviewed_inventory is None
-            or reviewed_inventory.get("schema") != INVENTORY_SCHEMA
-        ):
+        if reviewed_inventory is None or reviewed_inventory.get("schema") != INVENTORY_SCHEMA:
             raise WorkerCredentialError("enforcement requires a readiness inventory")
         if (
             not reviewed_inventory.get("all_ready")
@@ -1738,9 +1647,7 @@ def write_policy_state(
         "mode": mode,
         "updated_at": _timestamp(),
         "updated_by": str(actor or "operator"),
-        "inventory_digest": (
-            inventory_digest(reviewed_inventory) if reviewed_inventory else None
-        ),
+        "inventory_digest": (inventory_digest(reviewed_inventory) if reviewed_inventory else None),
         "ready_agent_ids": (
             [
                 str(item["agent_id"])
@@ -1756,9 +1663,7 @@ def write_policy_state(
         # the rollout CLI use the shared control-plane store.
         _atomic_json(Path(path).expanduser(), payload)
     else:
-        raise WorkerCredentialError(
-            "worker credential policy requires shared store authority"
-        )
+        raise WorkerCredentialError("worker credential policy requires shared store authority")
     return payload
 
 
@@ -1786,9 +1691,7 @@ def read_policy_state(
             raise WorkerCredentialError("worker credential policy has an invalid mode")
         return payload
     if path is None:
-        raise WorkerCredentialError(
-            "worker credential policy requires shared store authority"
-        )
+        raise WorkerCredentialError("worker credential policy requires shared store authority")
     policy_path = Path(path).expanduser()
     if not policy_path.exists():
         return {"schema": POLICY_SCHEMA, "mode": MODE_COMPATIBILITY}
@@ -1869,8 +1772,7 @@ def package_worker_readiness(
     return _package_worker_readiness_from_rows(
         store.query_one("SELECT * FROM agents WHERE id = ?", (exact_agent,)),
         store.query_all(
-            "SELECT * FROM worker_credentials WHERE agent_id = ? "
-            "ORDER BY credential_version DESC",
+            "SELECT * FROM worker_credentials WHERE agent_id = ? ORDER BY credential_version DESC",
             (exact_agent,),
         ),
         store.query_one(
@@ -1982,7 +1884,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     inventory = sub.add_parser("inventory")
     inventory.add_argument("--agents", required=True, help="hub /agents JSON file or -")
-    inventory.add_argument("--mode", choices=tuple(sorted(POLICY_MODES)), default=MODE_COMPATIBILITY)
+    inventory.add_argument(
+        "--mode", choices=tuple(sorted(POLICY_MODES)), default=MODE_COMPATIBILITY
+    )
     inventory.add_argument("--output")
 
     mode = sub.add_parser("set-mode")
@@ -2077,13 +1981,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "activate":
             manifest_path = Path(args.manifest).expanduser()
             manifest = _read_json(str(manifest_path))
-            manifest_agent, _token = _validated_manifest(
-                manifest, expected_agent_id=args.agent_id
-            )
-            if (
-                manifest_agent != args.agent_id
-                or manifest.get("principal_id") != args.principal_id
-            ):
+            manifest_agent, _token = _validated_manifest(manifest, expected_agent_id=args.agent_id)
+            if manifest_agent != args.agent_id or manifest.get("principal_id") != args.principal_id:
                 raise WorkerCredentialError(
                     "activation manifest does not match requested principal"
                 )
@@ -2129,8 +2028,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return 0
         if args.command == "inventory":
-            agents_value = json.load(sys.stdin) if args.agents == "-" else json.loads(
-                Path(args.agents).expanduser().read_text(encoding="utf-8")
+            agents_value = (
+                json.load(sys.stdin)
+                if args.agents == "-"
+                else json.loads(Path(args.agents).expanduser().read_text(encoding="utf-8"))
             )
             if not isinstance(agents_value, list):
                 raise WorkerCredentialError("agents input must be a JSON list")
@@ -2145,9 +2046,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0 if result["all_ready"] else 2
         if args.command == "set-mode":
             if args.inventory and args.review_live:
-                raise WorkerCredentialError(
-                    "set-mode accepts either --inventory or --review-live"
-                )
+                raise WorkerCredentialError("set-mode accepts either --inventory or --review-live")
             if args.review_live and args.policy_file:
                 raise WorkerCredentialError(
                     "--review-live requires shared database policy authority"

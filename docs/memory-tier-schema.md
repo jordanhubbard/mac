@@ -65,26 +65,35 @@ Stored on every vector point. Typed as `MacVectorPayload` in
 
 ```python
 {
-  "schema":          "mac.memory.v1",       # required, always this exact string
-  "tier":            "medium" | "long",     # which collection this point belongs to
-  "subject_type":    "task_summary" | "evidence_digest" | "conversation_thread" | "nap_summary" | "dream",
-  "subject_id":      "task_xxx" | "ev_xxx" | "thread_xxx" | "mem_xxx",
-  "memory_id":       "mem_xxx",             # FK to memory_records in SQLite
-  "task_id":         "task_xxx" | None,     # set when the memory relates to a task
-  "project":         "<project name>" | None,
-  "agent_id":        "agent_xxx" | None,    # who produced the underlying artifact
-  "tenant_id":       "tenant_xxx" | None,   # for multi-tenant filtering
-  "evidence_type":   "<type>" | None,       # mirrored from evidence_validators when applicable
-  "record_type":     "nap_summary" | "dream:<kind>" | "...",
-  "dream_kind":      "decision_rule" | "failure_pattern" | "knowledge_snippet" | "tool_pattern" | "routing_signal" | None,
-  "dream_scope":     "agent" | "project" | "fleet" | None,
-  "dream_confidence": "low" | "medium" | "high" | None,
-  "dream_confidence_score": 0.0-1.0 | None,
-  "created_at":      "<ISO 8601>",          # original artifact time, NOT embedding time
-  "embedded_at":     "<ISO 8601>",          # when this vector was written
-  "embedding_model": "<model name + version>",
-  "tags":            ["..."],               # short labels for filtering
-  "summary":         "<= 2000 chars",       # human-readable text that was embedded
+    "schema": "mac.memory.v1",  # required, always this exact string
+    "tier": "medium" | "long",  # which collection this point belongs to
+    "subject_type": "task_summary"
+    | "evidence_digest"
+    | "conversation_thread"
+    | "nap_summary"
+    | "dream",
+    "subject_id": "task_xxx" | "ev_xxx" | "thread_xxx" | "mem_xxx",
+    "memory_id": "mem_xxx",  # FK to memory_records in SQLite
+    "task_id": "task_xxx" | None,  # set when the memory relates to a task
+    "project": "<project name>" | None,
+    "agent_id": "agent_xxx" | None,  # who produced the underlying artifact
+    "tenant_id": "tenant_xxx" | None,  # for multi-tenant filtering
+    "evidence_type": "<type>" | None,  # mirrored from evidence_validators when applicable
+    "record_type": "nap_summary" | "dream:<kind>" | "...",
+    "dream_kind": "decision_rule"
+    | "failure_pattern"
+    | "knowledge_snippet"
+    | "tool_pattern"
+    | "routing_signal"
+    | None,
+    "dream_scope": "agent" | "project" | "fleet" | None,
+    "dream_confidence": "low" | "medium" | "high" | None,
+    "dream_confidence_score": 0.0 - 1.0 | None,
+    "created_at": "<ISO 8601>",  # original artifact time, NOT embedding time
+    "embedded_at": "<ISO 8601>",  # when this vector was written
+    "embedding_model": "<model name + version>",
+    "tags": ["..."],  # short labels for filtering
+    "summary": "<= 2000 chars",  # human-readable text that was embedded
 }
 ```
 

@@ -34,9 +34,7 @@ def _function(name: str, next_name: str) -> str:
     source = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     return (
         f"{name}() {{"
-        + source.split(f"{name}() {{", 1)[1].split(
-            f"\n}}\n\n{next_name}() {{", 1
-        )[0]
+        + source.split(f"{name}() {{", 1)[1].split(f"\n}}\n\n{next_name}() {{", 1)[0]
         + "\n}"
     )
 
@@ -175,9 +173,7 @@ def test_armed_phase2_reuses_only_an_exact_private_rollback_snapshot(
     backup.chmod(0o600)
     intent.write_text("{}\n", encoding="utf-8")
     intent.chmod(0o600)
-    verify = _function(
-        "verify_armed_rollback_file_snapshot", "snapshot_rollback_file"
-    )
+    verify = _function("verify_armed_rollback_file_snapshot", "snapshot_rollback_file")
     snapshot = _function("snapshot_rollback_file", "track_auxiliary_rollback_artifact")
     command = f"""set -euo pipefail
 PY=${{TEST_PY:?}}
@@ -294,9 +290,7 @@ def test_apply_phase_loads_prior_state_from_the_sealed_rollback_intent(
     }
     intent_path.write_text(json.dumps(intent) + "\n", encoding="utf-8")
     intent_path.chmod(0o600)
-    validator = _function(
-        "verify_existing_phase2_sealed_state", "arm_phase2_rollback"
-    )
+    validator = _function("verify_existing_phase2_sealed_state", "arm_phase2_rollback")
     command = f"""set -euo pipefail
 PY=${{TEST_PY:?}}
 MAC_HOME=${{TEST_MAC_HOME:?}}
@@ -333,9 +327,7 @@ verify_existing_phase2_sealed_state
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == hashlib.sha256(intent_path.read_bytes()).hexdigest()
 
-    verifier = _function(
-        "verify_phase2_rollback_intent", "write_phase2_rollback_intent"
-    )
+    verifier = _function("verify_phase2_rollback_intent", "write_phase2_rollback_intent")
     verify_command = f"""set -euo pipefail
 PY=${{TEST_PY:?}}
 MAC_HOME=${{TEST_MAC_HOME:?}}
@@ -349,7 +341,7 @@ DEPLOY_GENERATION={GENERATION}
 DEPLOY_REV={REVISION}
 DEPLOY_TS={deploy_ts}
 ROLLBACK_PRIOR_GENERATION=recaptured-wrong-generation
-ROLLBACK_PRIOR_REVISION={'c' * 40}
+ROLLBACK_PRIOR_REVISION={"c" * 40}
 SUPERVISOR_KIND=launchd
 ROLLBACK_ACTIVE_GATEWAY=none
 ROLLBACK_AGENT_PRIOR_STATE=inactive
@@ -388,9 +380,7 @@ verify_phase2_rollback_intent sealed-replay
     )
 
     assert verified.returncode == 0, verified.stderr
-    assert verified.stdout.strip() == hashlib.sha256(
-        intent_path.read_bytes()
-    ).hexdigest()
+    assert verified.stdout.strip() == hashlib.sha256(intent_path.read_bytes()).hexdigest()
 
     tampered_intent = dict(intent)
     tampered_intent["artifacts"] = dict(intent["artifacts"])

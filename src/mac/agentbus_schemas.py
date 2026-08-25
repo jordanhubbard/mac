@@ -260,9 +260,7 @@ def validate_payload(payload: Any) -> Tuple[Optional[str], List[str]]:
             problems.append("missing required field: %s" % field)
     for field, expected in spec.get("fields", {}).items():
         if field in payload and not _type_matches(payload[field], expected):
-            problems.append(
-                "field %s has wrong type %s" % (field, type(payload[field]).__name__)
-            )
+            problems.append("field %s has wrong type %s" % (field, type(payload[field]).__name__))
     return declared, problems
 
 

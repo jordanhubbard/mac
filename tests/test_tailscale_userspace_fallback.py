@@ -17,6 +17,7 @@ no /dev/net/tun, no NET_ADMIN):
 - Both supervisor branches that own a daemon invocation apply those flags,
   and the resolved mode is recorded in mac.env.
 """
+
 from __future__ import annotations
 
 import re
@@ -45,6 +46,7 @@ def _run_bash(snippet: str) -> subprocess.CompletedProcess:
 # TUN probe
 # ---------------------------------------------------------------------------
 
+
 def _probe_snippet(
     *,
     tun_present: bool,
@@ -60,9 +62,7 @@ def _probe_snippet(
     because it is a character device on every supported platform and needs no
     privileges to conjure, unlike ``mknod``.
     """
-    probe = _extract("tun_device_available").replace(
-        "/dev/net/tun", '"$TUN_DEVICE_PATH"'
-    )
+    probe = _extract("tun_device_available").replace("/dev/net/tun", '"$TUN_DEVICE_PATH"')
     return r"""
 set -u
 FAKE_BIN="$(mktemp -d)"
@@ -113,13 +113,13 @@ def test_tun_probe_only_consults_dev_net_tun_on_linux() -> None:
 # Mode resolution
 # ---------------------------------------------------------------------------
 
+
 def _mode_snippet(pin: str, *, tun_present: bool, modprobe_body: str = "exit 1") -> str:
     resolve = _extract("detect_networking_mode")
     return _probe_snippet(
         tun_present=tun_present,
         modprobe_body=modprobe_body,
-        tail="MAC_DEPLOY_TAILSCALE_NETWORKING=%s\n%s\ndetect_networking_mode"
-        % (pin, resolve),
+        tail="MAC_DEPLOY_TAILSCALE_NETWORKING=%s\n%s\ndetect_networking_mode" % (pin, resolve),
     )
 
 
@@ -183,9 +183,10 @@ def test_networking_mode_defaults_to_auto() -> None:
 # Daemon flags
 # ---------------------------------------------------------------------------
 
+
 def _flags(func: str, mode: str, *, port: str = "1055") -> subprocess.CompletedProcess:
     return _run_bash(
-        'TAILSCALE_NETWORKING_MODE=%s\nMAC_DEPLOY_TAILSCALE_PROXY_PORT=%s\n%s\n%s'
+        "TAILSCALE_NETWORKING_MODE=%s\nMAC_DEPLOY_TAILSCALE_PROXY_PORT=%s\n%s\n%s"
         % (mode, port, _extract(func), func)
     )
 
@@ -235,6 +236,7 @@ def test_kernel_up_flags_are_unchanged() -> None:
 # Wiring: both daemon-owning branches and the join
 # ---------------------------------------------------------------------------
 
+
 def test_supervisord_conf_applies_the_networking_flags() -> None:
     command_line = next(
         line for line in SCRIPT.splitlines() if line.startswith("command=/usr/sbin/tailscaled")
@@ -247,7 +249,7 @@ def test_supervisord_conf_applies_the_networking_flags() -> None:
 
 def test_systemd_userspace_branch_writes_flags_and_restarts() -> None:
     """/etc/default/tailscaled is the packaged unit's supported flag hook."""
-    assert 'sudo -n tee /etc/default/tailscaled' in SCRIPT
+    assert "sudo -n tee /etc/default/tailscaled" in SCRIPT
     assert 'FLAGS="$(tailscaled_networking_args)"' in SCRIPT
     assert "sudo -n systemctl restart tailscaled" in SCRIPT
     # The kernel path must still use plain `start`, unchanged from before.

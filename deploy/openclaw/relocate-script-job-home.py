@@ -79,9 +79,7 @@ def script_jobs_dir() -> Path:
 
 
 def script_jobs_scripts_dir() -> Path:
-    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (
-        script_jobs_dir() / "scripts"
-    )
+    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (script_jobs_dir() / "scripts")
 
 
 def legacy_gateway_scripts_dir() -> Path:
@@ -121,9 +119,7 @@ def _relative_symlink_ok(source: Path, destination: Path) -> bool:
 # --------------------------------------------------------------------------- #
 # Operation: relocate the scripts home                                          #
 # --------------------------------------------------------------------------- #
-def relocate_scripts(
-    source: Path, destination: Path, *, apply: bool = False
-) -> dict:
+def relocate_scripts(source: Path, destination: Path, *, apply: bool = False) -> dict:
     """Move ``source``/* to ``destination``, digest-verified and idempotent."""
     result: dict = {
         "operation": "scripts",
@@ -209,9 +205,7 @@ def relocate_scripts(
 # --------------------------------------------------------------------------- #
 # Operation: resolve the config.yaml backup pile                                #
 # --------------------------------------------------------------------------- #
-def archive_config_backups(
-    home: Path, archive_root: Path, *, apply: bool = False
-) -> dict:
+def archive_config_backups(home: Path, archive_root: Path, *, apply: bool = False) -> dict:
     """Keep ``config.yaml``; archive every ``config.yaml.*`` variant with a note."""
     live = home / CONFIG_NAME
     archive = archive_root / ("hermes-config-%s" % _stamp())
@@ -231,9 +225,7 @@ def archive_config_backups(
     variants = sorted(
         path
         for path in home.iterdir()
-        if path.is_file()
-        and not path.is_symlink()
-        and path.name.startswith(CONFIG_NAME + ".")
+        if path.is_file() and not path.is_symlink() and path.name.startswith(CONFIG_NAME + ".")
     )
     if not variants:
         result["status"] = "already-archived" if live.is_file() else "nothing-to-do"
@@ -256,9 +248,7 @@ def archive_config_backups(
                 "name": path.name,
                 "sha256": digest(path),
                 "bytes": path.stat().st_size,
-                "mtime_utc": time.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime)
-                ),
+                "mtime_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime)),
                 "identical_to_live": digest(path) == live_digest,
             }
         )
@@ -291,9 +281,7 @@ def archive_config_backups(
     return result
 
 
-def render_which_was_live(
-    home: Path, live: Path, live_digest: str, records: list
-) -> str:
+def render_which_was_live(home: Path, live: Path, live_digest: str, records: list) -> str:
     """The dated note that makes the archive self-explanatory a year from now."""
     lines = [
         "# Gateway config.yaml backup pile — resolved %s (UTC)" % _stamp(),
@@ -366,9 +354,7 @@ def main(argv: Optional[list] = None) -> int:
     if args.operation in ("scripts", "all"):
         results.append(
             relocate_scripts(
-                Path(args.source).expanduser()
-                if args.source
-                else legacy_gateway_scripts_dir(),
+                Path(args.source).expanduser() if args.source else legacy_gateway_scripts_dir(),
                 Path(args.destination).expanduser()
                 if args.destination
                 else script_jobs_scripts_dir(),
@@ -378,12 +364,8 @@ def main(argv: Optional[list] = None) -> int:
     if args.operation in ("config-backups", "all"):
         results.append(
             archive_config_backups(
-                Path(args.gateway_home).expanduser()
-                if args.gateway_home
-                else gateway_home(),
-                Path(args.archive_root).expanduser()
-                if args.archive_root
-                else backups_dir(),
+                Path(args.gateway_home).expanduser() if args.gateway_home else gateway_home(),
+                Path(args.archive_root).expanduser() if args.archive_root else backups_dir(),
                 apply=apply,
             )
         )

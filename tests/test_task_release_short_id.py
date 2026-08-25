@@ -70,9 +70,7 @@ def test_history_records_the_resolved_id(cp):
 
     cp.release_task(_short(task.id), actor="test")
 
-    rows = cp.store.query_all(
-        "SELECT task_id FROM task_history WHERE task_id = ?", (task.id,)
-    )
+    rows = cp.store.query_all("SELECT task_id FROM task_history WHERE task_id = ?", (task.id,))
     assert rows, "no history row was written against the real task id"
 
 

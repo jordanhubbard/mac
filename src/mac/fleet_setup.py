@@ -6,6 +6,7 @@ surviving a long prompt sequence. This module converts a compact
 ``mac.fleet_setup.v1`` spec into the existing ``~/.mac/fleets.yaml`` fleet
 registry shape plus the caller-side deploy env values.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -129,20 +130,21 @@ def build_setup_plan(
         host = _host_from_target(hub_target) if hub_target else hub_name
         hub_url = "http://%s:%d" % (host, control_port)
 
-    supervisor = _str(
-        spec.get("supervisor")
-        or defaults_block.get("supervisor")
-        or fleet_block.get("supervisor")
-    ) or "auto"
+    supervisor = (
+        _str(
+            spec.get("supervisor")
+            or defaults_block.get("supervisor")
+            or fleet_block.get("supervisor")
+        )
+        or "auto"
+    )
     if supervisor not in {"auto", "systemd", "launchd", "supervisord"}:
         errors.append("supervisor must be one of auto/systemd/launchd/supervisord")
 
     # Operator->node SSH route defaults. Persist every portable input rather
     # than relying on wildcard Host entries in the setup machine's ssh config.
     ssh_jump = _str(
-        spec.get("ssh_jump")
-        or defaults_block.get("ssh_jump")
-        or fleet_block.get("ssh_jump")
+        spec.get("ssh_jump") or defaults_block.get("ssh_jump") or fleet_block.get("ssh_jump")
     )
     ssh_strict = (
         defaults_block.get(
@@ -191,9 +193,7 @@ def build_setup_plan(
     # the ``openclaw:`` block, falling back to the legacy ``hermes:`` key so
     # existing fleet configs and registries keep loading (backward-compatible
     # READ only; new configs should use ``openclaw:``).
-    openclaw_defaults = _mapping(
-        defaults_block.get("openclaw") or defaults_block.get("hermes")
-    )
+    openclaw_defaults = _mapping(defaults_block.get("openclaw") or defaults_block.get("hermes"))
     worker_defaults = _mapping(defaults_block.get("worker"))
 
     # Persona/Slack runtime selector. ``hermes`` was removed from this
@@ -254,15 +254,21 @@ def build_setup_plan(
     secrets_block = _mapping(spec.get("secrets"))
     generate = _mapping(secrets_block.get("generate"))
     if generate.get("mac_secret_key", True) is not False:
-        env_values["MAC_SECRET_KEY"] = _str(secrets_block.get("mac_secret_key")) or secrets.token_urlsafe(48)
+        env_values["MAC_SECRET_KEY"] = _str(
+            secrets_block.get("mac_secret_key")
+        ) or secrets.token_urlsafe(48)
     if generate.get("mac_api_token", True) is not False:
-        env_values["MAC_API_TOKEN"] = _str(secrets_block.get("mac_api_token")) or secrets.token_urlsafe(32)
+        env_values["MAC_API_TOKEN"] = _str(
+            secrets_block.get("mac_api_token")
+        ) or secrets.token_urlsafe(32)
     hub_token = _str(secrets_block.get("hub_token") or spec.get("hub_token"))
     if hub_token:
         env_values["MAC_DEPLOY_HUB_TOKEN"] = hub_token
 
     if network["provider"] == "tailscale":
-        auth_key_env = str(network["tailscale"].get("auth_key_env") or "MAC_DEPLOY_TAILSCALE_AUTH_KEY")
+        auth_key_env = str(
+            network["tailscale"].get("auth_key_env") or "MAC_DEPLOY_TAILSCALE_AUTH_KEY"
+        )
         auth_key = _str(secrets_block.get(auth_key_env) or secrets_block.get("tailscale_auth_key"))
         if auth_key:
             env_values[auth_key_env] = auth_key
@@ -274,7 +280,9 @@ def build_setup_plan(
         elif auth_key_env not in required_env and spec.get("require_mesh_auth") is True:
             required_env.append(auth_key_env)
     elif network["provider"] == "headscale":
-        key_env = str(network["headscale"].get("preauth_key_env") or "MAC_DEPLOY_HEADSCALE_PREAUTHKEY")
+        key_env = str(
+            network["headscale"].get("preauth_key_env") or "MAC_DEPLOY_HEADSCALE_PREAUTHKEY"
+        )
         key_value = _str(secrets_block.get(key_env) or secrets_block.get("headscale_preauth_key"))
         if key_value:
             env_values[key_env] = key_value
@@ -309,7 +317,8 @@ def build_setup_plan(
             },
             "worker": {
                 "mode": _str(worker_defaults.get("mode")) or "heartbeat",
-                "capabilities": _list(worker_defaults.get("capabilities")) or default_worker_capabilities(),
+                "capabilities": _list(worker_defaults.get("capabilities"))
+                or default_worker_capabilities(),
                 "allowed_projects": _str(worker_defaults.get("allowed_projects")),
                 "required_metadata": _str(worker_defaults.get("required_metadata")),
                 "claim_only_canary_tasks": worker_defaults.get("claim_only_canary_tasks", False),
@@ -322,11 +331,9 @@ def build_setup_plan(
         "agents": agents,
     }
 
-    deploy_agents = [
-        _str(agent)
-        for agent in _list(spec.get("deploy_agents"))
-        if _str(agent)
-    ] or [hub_name]
+    deploy_agents = [_str(agent) for agent in _list(spec.get("deploy_agents")) if _str(agent)] or [
+        hub_name
+    ]
     deploy_command = "make deploy HUB=%s" % hub_name
     if deploy_agents:
         deploy_command += ' ARGS="%s"' % " ".join(deploy_agents)
@@ -362,16 +369,33 @@ def build_setup_plan(
     }
 
 
-def doctor_checks(plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]:
+def doctor_checks(
+    plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] = None
+) -> List[Dict[str, Any]]:
     """Run fleet setup doctor checks against a setup plan."""
     env_map = dict(os.environ if env is None else env)
     checks: List[Dict[str, Any]] = []
     errors = list(plan.get("errors") or [])
-    _check(checks, "spec.valid", "fail" if errors else "pass", "; ".join(errors) if errors else "spec parsed")
+    _check(
+        checks,
+        "spec.valid",
+        "fail" if errors else "pass",
+        "; ".join(errors) if errors else "spec parsed",
+    )
 
     fleet = _mapping(plan.get("fleet_config"))
-    _check(checks, "fleet.not_sample", "pass" if fleet.get("sample") is False else "fail", "sample must be false")
-    _check(checks, "hub.url", "pass" if _str(fleet.get("hub_url")) else "fail", _str(fleet.get("hub_url")) or "missing")
+    _check(
+        checks,
+        "fleet.not_sample",
+        "pass" if fleet.get("sample") is False else "fail",
+        "sample must be false",
+    )
+    _check(
+        checks,
+        "hub.url",
+        "pass" if _str(fleet.get("hub_url")) else "fail",
+        _str(fleet.get("hub_url")) or "missing",
+    )
 
     agents = list(fleet.get("agents") or [])
     hub = _str(fleet.get("hub_agent"))
@@ -386,15 +410,27 @@ def doctor_checks(plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] =
         checks,
         "agents.targets",
         "fail" if missing_targets else "pass",
-        "missing targets: %s" % ", ".join(missing_targets) if missing_targets else "%d target(s)" % len(agents),
+        "missing targets: %s" % ", ".join(missing_targets)
+        if missing_targets
+        else "%d target(s)" % len(agents),
     )
 
     defaults = _mapping(fleet.get("defaults"))
     network = _mapping(defaults.get("network"))
     provider = _str(network.get("provider")) or "none"
-    _check(checks, "network.provider", "pass" if provider in {"tailscale", "headscale", "none"} else "fail", provider)
+    _check(
+        checks,
+        "network.provider",
+        "pass" if provider in {"tailscale", "headscale", "none"} else "fail",
+        provider,
+    )
     qdrant = _mapping(defaults.get("qdrant"))
-    _check(checks, "qdrant.url", "pass" if _str(qdrant.get("url")) else "warn", _str(qdrant.get("url")) or "missing")
+    _check(
+        checks,
+        "qdrant.url",
+        "pass" if _str(qdrant.get("url")) else "warn",
+        _str(qdrant.get("url")) or "missing",
+    )
     firecrawl = _mapping(defaults.get("firecrawl"))
     _check(
         checks,
@@ -420,7 +456,12 @@ def doctor_checks(plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] =
 
     env_values = _mapping(plan.get("env_values"))
     router_providers = _str(env_values.get("MAC_ROUTER_PROVIDERS"))
-    _check(checks, "router.providers", "pass" if router_providers else "fail", router_providers or "missing")
+    _check(
+        checks,
+        "router.providers",
+        "pass" if router_providers else "fail",
+        router_providers or "missing",
+    )
     required = list(plan.get("required_env") or [])
     missing = [
         name
@@ -520,7 +561,9 @@ def _agent_configs(
                 or ("loop" if name == hub_name else "heartbeat"),
                 "claim_only_canary_tasks": worker.get(
                     "claim_only_canary_tasks",
-                    False if name == hub_name else worker_defaults.get("claim_only_canary_tasks", False),
+                    False
+                    if name == hub_name
+                    else worker_defaults.get("claim_only_canary_tasks", False),
                 ),
             },
         }
@@ -555,7 +598,9 @@ def _router_env(
         base_url = _str(item.get("base_url")) or provider.default_base_url
         priority = _optional_int(item.get("priority"))
         priority = index if priority is None else priority
-        secret = _str(item.get("secret") or item.get("secret_name")) or router_secret_name(provider_id)
+        secret = _str(item.get("secret") or item.get("secret_name")) or router_secret_name(
+            provider_id
+        )
         router_specs.append("%s=%s,%d,key=secret:%s" % (provider_id, base_url, priority, secret))
         if _str(item.get("key")):
             provider_env_values[key_env] = _str(item["key"])
@@ -595,10 +640,17 @@ def _router_env(
         elif _str(env.get(key_env)):
             provider_env_values[key_env] = _str(env[key_env])
     backend = _str(router.get("backend")) or "inproc"
-    return {"backend": backend, "providers": ";".join(router_specs)}, provider_env_values, required_env, warnings
+    return (
+        {"backend": backend, "providers": ";".join(router_specs)},
+        provider_env_values,
+        required_env,
+        warnings,
+    )
 
 
-def _network_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], errors: List[str]) -> Dict[str, Any]:
+def _network_config(
+    spec: Mapping[str, Any], defaults: Mapping[str, Any], errors: List[str]
+) -> Dict[str, Any]:
     network = {**_mapping(defaults.get("network")), **_mapping(spec.get("network"))}
     provider = _str(network.get("provider")) or "tailscale"
     if provider not in {"tailscale", "headscale", "none"}:
@@ -624,7 +676,8 @@ def _network_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], errors
                 else ""
             ),
             "preauth_key_source": _str(headscale.get("preauth_key_source")) or "env",
-            "preauth_key_env": _str(headscale.get("preauth_key_env")) or "MAC_DEPLOY_HEADSCALE_PREAUTHKEY",
+            "preauth_key_env": _str(headscale.get("preauth_key_env"))
+            or "MAC_DEPLOY_HEADSCALE_PREAUTHKEY",
             "port": _int(headscale.get("port"), 8080),
             "public_addr": _str(headscale.get("public_addr")),
             "dns": _str(headscale.get("dns")) or "magicdns",
@@ -633,7 +686,9 @@ def _network_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], errors
     }
 
 
-def _qdrant_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_url: str) -> Dict[str, Any]:
+def _qdrant_config(
+    spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_url: str
+) -> Dict[str, Any]:
     qdrant = {**_mapping(defaults.get("qdrant")), **_mapping(spec.get("qdrant"))}
     port = _int(qdrant.get("port"), DEFAULT_QDRANT_PORT)
     return {
@@ -648,7 +703,9 @@ def _qdrant_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_url
     }
 
 
-def _firecrawl_config(spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_url: str) -> Dict[str, Any]:
+def _firecrawl_config(
+    spec: Mapping[str, Any], defaults: Mapping[str, Any], hub_url: str
+) -> Dict[str, Any]:
     firecrawl = {**_mapping(defaults.get("firecrawl")), **_mapping(spec.get("firecrawl"))}
     port = _int(firecrawl.get("port"), DEFAULT_FIRECRAWL_PORT)
     return {
@@ -686,7 +743,9 @@ def _webdav_config(
     webdav = {**_mapping(defaults.get("webdav")), **_mapping(spec.get("webdav"))}
     enabled = webdav.get("enabled", False) is True
     port = _int(webdav.get("port"), DEFAULT_WEBDAV_PORT)
-    public_path = _normalize_public_path(_str(webdav.get("public_path")) or DEFAULT_WEBDAV_PUBLIC_PATH)
+    public_path = _normalize_public_path(
+        _str(webdav.get("public_path")) or DEFAULT_WEBDAV_PUBLIC_PATH
+    )
     dns_name = (
         _str(webdav.get("dns_name"))
         or _str(webdav.get("public_dns_name"))
@@ -806,9 +865,9 @@ def _looks_like_tailscale_auth_key(value: str) -> bool:
     if not candidate.startswith("tskey-"):
         return False
     # Reject the bare prefix / obvious placeholders with no secret material.
-    remainder = candidate[len("tskey-"):]
+    remainder = candidate[len("tskey-") :]
     if remainder.startswith("auth-"):
-        remainder = remainder[len("auth-"):]
+        remainder = remainder[len("auth-") :]
     return len(remainder) >= 8
 
 

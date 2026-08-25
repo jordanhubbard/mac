@@ -5,6 +5,7 @@ RetentionService is preserve-by-default; these tests pin the wiring that turns
 it on for the two disposable telemetry classes and drains them from the tick,
 while leaving the task ledger untouched.
 """
+
 from __future__ import annotations
 
 import os
@@ -67,9 +68,9 @@ def test_prune_tick_deletes_aged_observability_rows(cp):
         "UPDATE %s SET %s = ? WHERE name = 'retention.test.old_event'" % (table, ts),
         (old,),
     )
-    aged = cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM %s WHERE %s = ?" % (table, ts), (old,)
-    )["n"]
+    aged = cp.store.query_one("SELECT COUNT(*) AS n FROM %s WHERE %s = ?" % (table, ts), (old,))[
+        "n"
+    ]
     assert aged == 5
 
     summary = cp.retention_prune_tick()

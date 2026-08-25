@@ -6,6 +6,7 @@ de-personalized, per-CSP samples under deploy/fleet/samples/. This test
 codifies that principle so the jordanh-gke.fleet.yaml bleed-through (and any
 future per-user fleet) can't come back.
 """
+
 from __future__ import annotations
 
 import re
@@ -71,7 +72,9 @@ def test_samples_carry_no_operator_identity():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if IDENTITY.search(_strip_generic_ips(line)):
                 offenders.append("%s:%d: %s" % (path.relative_to(ROOT), lineno, line.strip()))
-    assert not offenders, "operator/per-fleet identity leaked into samples:\n" + "\n".join(offenders)
+    assert not offenders, "operator/per-fleet identity leaked into samples:\n" + "\n".join(
+        offenders
+    )
 
 
 def test_jordanh_gke_bleed_through_is_gone():

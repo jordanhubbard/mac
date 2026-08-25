@@ -165,18 +165,23 @@ def test_create_requires_a_title(server, plane):
 
 def test_a_hub_failure_is_reported_to_the_model_not_raised(server, plane):
     """A hub error is information the agent can act on, not a transport fault."""
+
     def boom(task_id):
         raise RuntimeError("task not found: task_zzz")
 
     plane.get_task = boom
-    result = _rpc(server, "tools/call", {"name": "mac_task_show", "arguments": {"task_id": "task_zzz"}})["result"]
+    result = _rpc(
+        server, "tools/call", {"name": "mac_task_show", "arguments": {"task_id": "task_zzz"}}
+    )["result"]
 
     assert result["isError"] is True
     assert "task not found" in result["content"][0]["text"]
 
 
 def test_an_unknown_tool_is_an_error_result_not_a_crash(server):
-    result = _rpc(server, "tools/call", {"name": "mac_delete_everything", "arguments": {}})["result"]
+    result = _rpc(server, "tools/call", {"name": "mac_delete_everything", "arguments": {}})[
+        "result"
+    ]
 
     assert result["isError"] is True
 
@@ -198,8 +203,7 @@ def test_the_tools_only_reach_the_hub_through_dispatch():
     for forbidden in ("urllib", "requests", "http.client", "HubClient("):
         assert forbidden not in source, (
             "%s speaks to the hub directly; every call must go through the "
-            "dispatch plane so tests/test_dispatch_route_contract.py covers it"
-            % forbidden
+            "dispatch plane so tests/test_dispatch_route_contract.py covers it" % forbidden
         )
 
 
@@ -238,7 +242,9 @@ def test_a_config_write_failure_does_not_stop_the_agent(monkeypatch):
     from mac import executor_sandbox
 
     monkeypatch.setattr(
-        executor_sandbox.tempfile, "mkdtemp", lambda **kw: (_ for _ in ()).throw(OSError("no space"))
+        executor_sandbox.tempfile,
+        "mkdtemp",
+        lambda **kw: (_ for _ in ()).throw(OSError("no space")),
     )
 
     assert executor_sandbox._write_mac_mcp_config(task_id="task_t") is None

@@ -55,6 +55,7 @@ def _private_bytes(path: Path, maximum: int, description: str) -> bytes:
         if os.read(descriptor, 1):
             raise FinalizeError(f"{description} grew while reading")
         after = os.fstat(descriptor)
+
         def identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
             return (
                 value.st_dev,
@@ -64,6 +65,7 @@ def _private_bytes(path: Path, maximum: int, description: str) -> bytes:
                 value.st_mtime_ns,
                 value.st_ctime_ns,
             )
+
         if identity(before) != identity(after):
             raise FinalizeError(f"{description} changed while reading")
         return bytes(raw)
@@ -97,9 +99,7 @@ def _atomic_create(path: Path, payload: dict[str, Any]) -> None:
     if path.parent.is_symlink():
         raise FinalizeError("finalize receipt directory must not be a symlink")
     os.chmod(path.parent, 0o700)
-    descriptor, temporary_raw = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=str(path.parent)
-    )
+    descriptor, temporary_raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     temporary = Path(temporary_raw)
     try:
         os.fchmod(descriptor, 0o600)
@@ -194,9 +194,7 @@ def finalize(
         return receipt
     payload = {
         **expected,
-        "finalized_at": dt.datetime.now(dt.timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "finalized_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     _atomic_create(output, payload)
     return _json(

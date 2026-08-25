@@ -131,13 +131,9 @@ class RepositoryRefReconcilerConfig:
     ) -> "RepositoryRefReconcilerConfig":
         env = os.environ if environ is None else environ
         errors: list[str] = []
-        mode = (
-            str(env.get("MAC_REPOSITORY_REF_RECONCILER_MODE") or "off").strip().lower()
-        )
+        mode = str(env.get("MAC_REPOSITORY_REF_RECONCILER_MODE") or "off").strip().lower()
         if mode not in RECONCILER_MODES:
-            errors.append(
-                "MAC_REPOSITORY_REF_RECONCILER_MODE must be off, audit, or prune"
-            )
+            errors.append("MAC_REPOSITORY_REF_RECONCILER_MODE must be off, audit, or prune")
             mode = "off"
         interval = _number(
             env,
@@ -166,16 +162,13 @@ class RepositoryRefReconcilerConfig:
             365.0,
             errors,
         )
-        remote = str(
-            env.get("MAC_REPOSITORY_REF_RECONCILER_REMOTE") or "origin"
-        ).strip()
+        remote = str(env.get("MAC_REPOSITORY_REF_RECONCILER_REMOTE") or "origin").strip()
         if not _REMOTE_NAME_RE.fullmatch(remote):
             errors.append("MAC_REPOSITORY_REF_RECONCILER_REMOTE is invalid")
             remote = "origin"
         base_ref = str(env.get("MAC_REPOSITORY_REF_RECONCILER_BASE_REF") or "").strip()
         if base_ref and (
-            base_ref.startswith("-")
-            or any(character.isspace() for character in base_ref)
+            base_ref.startswith("-") or any(character.isspace() for character in base_ref)
         ):
             errors.append("MAC_REPOSITORY_REF_RECONCILER_BASE_REF is invalid")
             base_ref = ""
@@ -290,9 +283,7 @@ class RepositoryRefReconciler:
         results: list[Dict[str, Any]] = []
         try:
             try:
-                repositories = list(
-                    self.control_plane.list_project_repositories(enabled=True)
-                )
+                repositories = list(self.control_plane.list_project_repositories(enabled=True))
             except Exception as exc:  # noqa: BLE001 - report and retry on the next tick.
                 report = self._report(
                     run_id,
@@ -373,9 +364,7 @@ class RepositoryRefReconciler:
             else dict(repository)
         )
         identity = self._repository_identity(data)
-        metadata = (
-            data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
-        )
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
         policy = (
             metadata.get("repository_ref_hygiene")
             if isinstance(metadata.get("repository_ref_hygiene"), dict)
@@ -437,8 +426,7 @@ class RepositoryRefReconciler:
                 "artifact",
                 "urn:mac:repository-ref-cleanup:%s:%s:%s:%s"
                 % (item.task_id, item.lease_id, item.sha, action),
-                "managed repository ref cleanup %s for %s at %s"
-                % (action, item.branch, item.sha),
+                "managed repository ref cleanup %s for %s at %s" % (action, item.branch, item.sha),
                 actor,
                 metadata=metadata,
                 _trusted_internal=True,
@@ -454,9 +442,7 @@ class RepositoryRefReconciler:
         result: Dict[str, Any] = {
             **identity,
             "status": (
-                "warning"
-                if (pr_warning or audit_warning or timed_out_task_ids)
-                else "completed"
+                "warning" if (pr_warning or audit_warning or timed_out_task_ids) else "completed"
             ),
             "mode": mode,
             "base_ref": base_ref,
@@ -466,9 +452,7 @@ class RepositoryRefReconciler:
             "deleted_count": len(cleanup.get("deleted") or []),
             "canonical_remote_verified": bool(canonical_remote),
         }
-        combined_warning = "; ".join(
-            part for part in (pr_warning, audit_warning) if part
-        )
+        combined_warning = "; ".join(part for part in (pr_warning, audit_warning) if part)
         if combined_warning:
             result["warning"] = combined_warning
         if timed_out_task_ids:
@@ -506,12 +490,8 @@ class RepositoryRefReconciler:
             "repository_count": len(results),
             "failed_count": failed,
             "warning_count": warnings,
-            "eligible_count": sum(
-                int(result.get("eligible_count") or 0) for result in results
-            ),
-            "deleted_count": sum(
-                int(result.get("deleted_count") or 0) for result in results
-            ),
+            "eligible_count": sum(int(result.get("eligible_count") or 0) for result in results),
+            "deleted_count": sum(int(result.get("deleted_count") or 0) for result in results),
             "repositories": results,
         }
         if error:
@@ -555,9 +535,7 @@ class RepositoryRefReconciler:
                 report,
             )
         except Exception:  # noqa: BLE001 - never fail a run on a cursor write.
-            _log.warning(
-                "failed to persist repository ref reconciler cursor", exc_info=True
-            )
+            _log.warning("failed to persist repository ref reconciler cursor", exc_info=True)
 
     def _finish(self, report: Dict[str, Any]) -> None:
         with self._state_lock:
@@ -565,8 +543,7 @@ class RepositoryRefReconciler:
         self._persist_last_report(report)
         level = (
             "warning"
-            if report.get("status")
-            in {"failed", "partial_failure", "completed_with_warnings"}
+            if report.get("status") in {"failed", "partial_failure", "completed_with_warnings"}
             else "info"
         )
         self._observe("repository.ref.reconciler.run", level, report)
@@ -583,9 +560,7 @@ class RepositoryRefReconciler:
                 detail=detail,
             )
         except Exception:  # noqa: BLE001 - telemetry must not stop reconciliation.
-            _log.warning(
-                "could not record repository-ref reconciler telemetry", exc_info=True
-            )
+            _log.warning("could not record repository-ref reconciler telemetry", exc_info=True)
 
 
 __all__ = [

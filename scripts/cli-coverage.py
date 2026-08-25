@@ -24,9 +24,7 @@ def main() -> None:
         parent_children.setdefault(parent, []).append(name)
 
     # var = <parent>.add_parser("<name>") -- domain_name -> [var, ...]
-    var_pattern = re.compile(
-        r"(\w+)\s*=\s*(\w+)\.add_parser\(\s*[\"']([^\"']+)[\"']"
-    )
+    var_pattern = re.compile(r"(\w+)\s*=\s*(\w+)\.add_parser\(\s*[\"']([^\"']+)[\"']")
     domain_vars: dict[str, list[str]] = {}
     for var, parent, name in var_pattern.findall(cli_src):
         if parent == "sub":

@@ -50,6 +50,7 @@ create``). They have therefore been retargeted at the seam that exists.
 
 If you make any of these skip again, make it LOUD: name the reason.
 """
+
 from __future__ import annotations
 
 import os
@@ -76,7 +77,9 @@ def _docker_available() -> bool:
     try:
         r = subprocess.run(
             ["docker", "compose", "version"],
-            capture_output=True, timeout=10, check=False,
+            capture_output=True,
+            timeout=10,
+            check=False,
         )
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -92,8 +95,7 @@ def _skip_reason() -> str:
     if not DOCKERFILE_E2E.exists():
         return (
             "REPOSITORY DEFECT: %s does not exist, so the executor image cannot "
-            "be built. This is not an environment limitation -- fix the tree."
-            % DOCKERFILE_E2E
+            "be built. This is not an environment limitation -- fix the tree." % DOCKERFILE_E2E
         )
     if not _docker_available():
         return (
@@ -112,9 +114,7 @@ def _run_in_executor(env: dict, script: str) -> subprocess.CompletedProcess:
     for key, value in env.items():
         argv += ["-e", "%s=%s" % (key, value)]
     argv += ["executor", "python", "-c", textwrap.dedent(script)]
-    return subprocess.run(
-        argv, capture_output=True, text=True, timeout=900, check=False
-    )
+    return subprocess.run(argv, capture_output=True, text=True, timeout=900, check=False)
 
 
 @pytest.mark.container_contract
@@ -171,7 +171,9 @@ class TestDockerE2E:
             """,
         )
         assert result.returncode == 0, "executor exited %s:\n%s\n%s" % (
-            result.returncode, result.stdout, result.stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
         )
         assert "SANDBOX_ON: OK" in result.stdout
 
@@ -192,7 +194,9 @@ class TestDockerE2E:
             """,
         )
         assert result.returncode == 0, "executor exited %s:\n%s\n%s" % (
-            result.returncode, result.stdout, result.stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
         )
         assert "SANDBOX_OFF_FALLBACK: OK" in result.stdout
 
@@ -221,6 +225,8 @@ class TestDockerE2E:
             """,
         )
         assert result.returncode == 0, "executor exited %s:\n%s\n%s" % (
-            result.returncode, result.stdout, result.stderr,
+            result.returncode,
+            result.stdout,
+            result.stderr,
         )
         assert "OCSF_FLOW: OK" in result.stdout

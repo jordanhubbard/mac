@@ -11,6 +11,7 @@ Coverage targets:
 - disabled-secret rejection
 - untrusted-machine rejection
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -40,9 +41,7 @@ def cp():
 def _machine(cp, hostname="host-1", *, trusted=True, labels=None):
     m = cp.register_machine(hostname, labels=labels or {})
     if not trusted:
-        cp.store.execute(
-            "UPDATE machines SET trusted = 0 WHERE id = ?", (m.id,)
-        )
+        cp.store.execute("UPDATE machines SET trusted = 0 WHERE id = ?", (m.id,))
         m = replace(m, trusted=False)
     return m
 
@@ -51,8 +50,7 @@ def _agent(cp, machine_id, name="worker-1", capabilities=None):
     return cp.register_agent(machine_id, name, capabilities=capabilities or [])
 
 
-def _secret(cp, name="slack-token", value="***",
-            scopes=None, created_by="hub"):
+def _secret(cp, name="slack-token", value="***", scopes=None, created_by="hub"):
     if scopes is None:
         # Default: use a sentinel agent scope so the scopes dict is truthy.
         # Tests that need a real agent scope should pass scopes explicitly.
@@ -123,9 +121,7 @@ def test_create_secret_requires_scopes(cp):
 def test_to_dict_redacts_value(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "secret-x", "PLAINTEXT", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("secret-x", "PLAINTEXT", {"agents": [agent.id]}, "hub")
     d = s.to_dict()
     assert d["value"] == "***REDACTED***"
     assert "PLAINTEXT" not in str(d)
@@ -151,9 +147,7 @@ def test_list_secrets_no_plaintext_in_to_dict(cp):
 def test_request_and_reveal_secret_happy_path(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id, name="worker-1")
-    s = cp.secrets.create_secret(
-        "slack-token", "xoxb-real", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("slack-token", "xoxb-real", {"agents": [agent.id]}, "hub")
     handle = cp.secrets.request_secret(s.id, agent.id, purpose="ci-deploy")
     assert handle.granted is True
     assert handle.secret_id == s.id
@@ -166,9 +160,7 @@ def test_reveal_secret_single_use(cp):
     """The same handle cannot be redeemed twice."""
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "once-token", "once-value", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("once-token", "once-value", {"agents": [agent.id]}, "hub")
     handle = cp.secrets.request_secret(s.id, agent.id, purpose="read")
     cp.secrets.reveal_secret(s.id, handle.audit_id, agent.id)
     with pytest.raises(AuthorizationError):
@@ -180,9 +172,7 @@ def test_reveal_secret_wrong_agent_rejected(cp):
     machine = _machine(cp)
     agent1 = _agent(cp, machine.id, name="worker-1")
     agent2 = _agent(cp, machine.id, name="worker-2")
-    s = cp.secrets.create_secret(
-        "agent-secret", "secret-val", {"agents": [agent1.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("agent-secret", "secret-val", {"agents": [agent1.id]}, "hub")
     handle = cp.secrets.request_secret(s.id, agent1.id, purpose="read")
     with pytest.raises(AuthorizationError):
         cp.secrets.reveal_secret(s.id, handle.audit_id, agent2.id)
@@ -197,9 +187,7 @@ def test_scope_allows_by_agent_id(cp):
     machine = _machine(cp)
     allowed = _agent(cp, machine.id, name="worker-1")
     denied = _agent(cp, machine.id, name="worker-2")
-    s = cp.secrets.create_secret(
-        "scoped-key", "val", {"agents": [allowed.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("scoped-key", "val", {"agents": [allowed.id]}, "hub")
     # allowed agent gets a handle
     h = cp.secrets.request_secret(s.id, allowed.id, purpose="read")
     assert h.granted is True
@@ -212,9 +200,7 @@ def test_scope_allows_by_capability(cp):
     machine = _machine(cp)
     deployer = _agent(cp, machine.id, name="worker-1", capabilities=["deploy"])
     reader = _agent(cp, machine.id, name="worker-2", capabilities=["read"])
-    s = cp.secrets.create_secret(
-        "deploy-cred", "cred", {"capabilities": ["deploy"]}, "hub"
-    )
+    s = cp.secrets.create_secret("deploy-cred", "cred", {"capabilities": ["deploy"]}, "hub")
     h = cp.secrets.request_secret(s.id, deployer.id, purpose="deploy")
     assert h.granted is True
     with pytest.raises(AuthorizationError):
@@ -225,9 +211,7 @@ def test_capability_mismatch_rejected(cp):
     """Agent with wrong capability cannot access a capability-gated secret."""
     machine = _machine(cp)
     agent = _agent(cp, machine.id, capabilities=["read"])
-    s = cp.secrets.create_secret(
-        "admin-cred", "admin-secret", {"capabilities": ["admin"]}, "hub"
-    )
+    s = cp.secrets.create_secret("admin-cred", "admin-secret", {"capabilities": ["admin"]}, "hub")
     with pytest.raises(AuthorizationError):
         cp.secrets.request_secret(s.id, agent.id, purpose="admin-op")
 
@@ -306,9 +290,7 @@ def test_untrusted_machine_cannot_access_secret(cp):
     machine = cp.register_machine("untrusted-host")
     cp.store.execute("UPDATE machines SET trusted = 0 WHERE id = ?", (machine.id,))
     agent = _agent(cp, machine.id, name="worker-1")
-    s = cp.secrets.create_secret(
-        "guarded-secret", "guarded-val", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("guarded-secret", "guarded-val", {"agents": [agent.id]}, "hub")
     with pytest.raises(AuthorizationError):
         cp.secrets.request_secret(s.id, agent.id, purpose="read")
 
@@ -321,9 +303,7 @@ def test_untrusted_machine_cannot_access_secret(cp):
 def test_audit_trail_records_granted_access(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "audit-key", "audit-val", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("audit-key", "audit-val", {"agents": [agent.id]}, "hub")
     cp.secrets.request_secret(s.id, agent.id, purpose="ci-run")
     audits = cp.secrets.list_audits(s.id)
     assert len(audits) == 1
@@ -339,9 +319,7 @@ def test_audit_trail_records_denied_access(cp):
     machine = _machine(cp)
     allowed = _agent(cp, machine.id, name="worker-1")
     denied_agent = _agent(cp, machine.id, name="worker-2")
-    s = cp.secrets.create_secret(
-        "restricted-key", "val", {"agents": [allowed.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("restricted-key", "val", {"agents": [allowed.id]}, "hub")
     with pytest.raises(AuthorizationError):
         cp.secrets.request_secret(s.id, denied_agent.id, purpose="read")
     audits = cp.secrets.list_audits(s.id)
@@ -353,9 +331,7 @@ def test_audit_trail_records_denied_access(cp):
 def test_audit_trail_records_reveal(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "revealed-key", "val", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("revealed-key", "val", {"agents": [agent.id]}, "hub")
     handle = cp.secrets.request_secret(s.id, agent.id, purpose="reveal-test")
     cp.secrets.reveal_secret(s.id, handle.audit_id, agent.id)
     audits = cp.secrets.list_audits(s.id)
@@ -366,9 +342,7 @@ def test_audit_trail_records_reveal(cp):
 def test_audit_trail_records_rotation(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "rotate-key", "old-value", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("rotate-key", "old-value", {"agents": [agent.id]}, "hub")
     cp.secrets.rotate_secret(s.id, "new-value", actor="hub")
     audits = cp.secrets.list_audits(s.id)
     rotate_audits = [a for a in audits if a.result == SecretAuditResult.ROTATED.value]
@@ -397,9 +371,7 @@ def test_list_audits_no_filter_returns_all(cp):
 def test_rotate_secret_updates_ciphertext(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "rotating-key", "old-value", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("rotating-key", "old-value", {"agents": [agent.id]}, "hub")
     h1 = cp.secrets.request_secret(s.id, agent.id, purpose="before-rotate")
     old_plain = cp.secrets.reveal_secret(s.id, h1.audit_id, agent.id)
     assert old_plain == "old-value"
@@ -435,9 +407,7 @@ def test_rotate_secret_by_name(cp):
 def test_disabled_secret_cannot_be_requested(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "disabled-key", "val", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("disabled-key", "val", {"agents": [agent.id]}, "hub")
     cp.store.execute("UPDATE secrets SET enabled = 0 WHERE id = ?", (s.id,))
     with pytest.raises(AuthorizationError):
         cp.secrets.request_secret(s.id, agent.id, purpose="read")
@@ -470,9 +440,7 @@ def test_delete_secret_not_found_raises(cp):
 def test_resolve_secret_value_happy_path(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    cp.secrets.create_secret(
-        "provider-key", "provider-secret", {"agents": [agent.id]}, "hub"
-    )
+    cp.secrets.create_secret("provider-key", "provider-secret", {"agents": [agent.id]}, "hub")
     val = cp.secrets.resolve_secret_value("provider-key")
     assert val == "provider-secret"
 
@@ -485,9 +453,7 @@ def test_resolve_secret_value_missing_returns_none(cp):
 def test_resolve_secret_value_disabled_returns_none(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "disabled-provider-key", "pval", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("disabled-provider-key", "pval", {"agents": [agent.id]}, "hub")
     cp.store.execute("UPDATE secrets SET enabled = 0 WHERE id = ?", (s.id,))
     assert cp.secrets.resolve_secret_value("disabled-provider-key") is None
 
@@ -495,9 +461,7 @@ def test_resolve_secret_value_disabled_returns_none(cp):
 def test_resolve_secret_value_emits_audit(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "audited-key", "aval", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("audited-key", "aval", {"agents": [agent.id]}, "hub")
     cp.secrets.resolve_secret_value("audited-key")
     audits = cp.secrets.list_audits(s.id)
     assert len(audits) == 1
@@ -512,9 +476,7 @@ def test_resolve_secret_value_emits_audit(cp):
 def test_secret_handle_to_dict_is_safe(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    s = cp.secrets.create_secret(
-        "handle-key", "handle-val", {"agents": [agent.id]}, "hub"
-    )
+    s = cp.secrets.create_secret("handle-key", "handle-val", {"agents": [agent.id]}, "hub")
     handle = cp.secrets.request_secret(s.id, agent.id, purpose="read")
     d = handle.to_dict()
     assert "handle-val" not in str(d)
@@ -543,9 +505,7 @@ def test_secret_ciphertext_differs_from_plaintext(cp):
     plaintext = "value-that-must-not-be-stored-verbatim"
     secret = _secret(cp, name="encrypted-secret", value=plaintext)
 
-    row = cp.store.query_one(
-        "SELECT ciphertext FROM secrets WHERE id = ?", (secret.id,)
-    )
+    row = cp.store.query_one("SELECT ciphertext FROM secrets WHERE id = ?", (secret.id,))
 
     assert row is not None
     assert plaintext not in row["ciphertext"]
@@ -554,9 +514,7 @@ def test_secret_ciphertext_differs_from_plaintext(cp):
 def test_secret_handle_has_canonical_uri(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    secret = cp.secrets.create_secret(
-        "uri-secret", "value", {"agents": [agent.id]}, "hub"
-    )
+    secret = cp.secrets.create_secret("uri-secret", "value", {"agents": [agent.id]}, "hub")
 
     handle = cp.secrets.request_secret(secret.id, agent.id, purpose="read")
 
@@ -574,9 +532,7 @@ def test_request_unknown_secret_raises(cp):
 def test_reveal_rejects_wrong_secret_and_unknown_audit(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    secret = cp.secrets.create_secret(
-        "bound-handle", "value", {"agents": [agent.id]}, "hub"
-    )
+    secret = cp.secrets.create_secret("bound-handle", "value", {"agents": [agent.id]}, "hub")
     handle = cp.secrets.request_secret(secret.id, agent.id, purpose="read")
 
     with pytest.raises(AuthorizationError):
@@ -600,14 +556,10 @@ def test_reveal_rejects_secret_disabled_after_handle_issued(cp):
 
 def test_rotate_secret_changes_stored_ciphertext(cp):
     secret = _secret(cp, name="ciphertext-rotation", value="before")
-    before = cp.store.query_one(
-        "SELECT ciphertext FROM secrets WHERE id = ?", (secret.id,)
-    )
+    before = cp.store.query_one("SELECT ciphertext FROM secrets WHERE id = ?", (secret.id,))
 
     cp.secrets.rotate_secret(secret.id, "after", actor="hub")
-    after = cp.store.query_one(
-        "SELECT ciphertext FROM secrets WHERE id = ?", (secret.id,)
-    )
+    after = cp.store.query_one("SELECT ciphertext FROM secrets WHERE id = ?", (secret.id,))
 
     assert before is not None
     assert after is not None
@@ -617,30 +569,26 @@ def test_rotate_secret_changes_stored_ciphertext(cp):
 def test_delete_secret_by_name_cascades_audits(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    secret = cp.secrets.create_secret(
-        "delete-by-name", "value", {"agents": [agent.id]}, "hub"
-    )
+    secret = cp.secrets.create_secret("delete-by-name", "value", {"agents": [agent.id]}, "hub")
     cp.secrets.request_secret(secret.id, agent.id, purpose="read")
-    assert cp.store.query_one(
-        "SELECT id FROM secret_access_audit WHERE secret_id = ?", (secret.id,)
-    ) is not None
+    assert (
+        cp.store.query_one("SELECT id FROM secret_access_audit WHERE secret_id = ?", (secret.id,))
+        is not None
+    )
 
     cp.secrets.delete_secret(secret.name, actor="hub")
 
-    assert cp.store.query_one(
-        "SELECT id FROM secret_access_audit WHERE secret_id = ?", (secret.id,)
-    ) is None
+    assert (
+        cp.store.query_one("SELECT id FROM secret_access_audit WHERE secret_id = ?", (secret.id,))
+        is None
+    )
 
 
 def test_list_audits_filters_by_secret(cp):
     machine = _machine(cp)
     agent = _agent(cp, machine.id)
-    first = cp.secrets.create_secret(
-        "first-audit-secret", "value", {"agents": [agent.id]}, "hub"
-    )
-    second = cp.secrets.create_secret(
-        "second-audit-secret", "value", {"agents": [agent.id]}, "hub"
-    )
+    first = cp.secrets.create_secret("first-audit-secret", "value", {"agents": [agent.id]}, "hub")
+    second = cp.secrets.create_secret("second-audit-secret", "value", {"agents": [agent.id]}, "hub")
     cp.secrets.request_secret(first.id, agent.id, purpose="first")
     cp.secrets.request_secret(second.id, agent.id, purpose="second")
 
@@ -653,9 +601,7 @@ def test_list_audits_filters_by_secret(cp):
 def test_record_access_directly(cp):
     secret = _secret(cp, name="direct-audit")
 
-    audit = cp.secrets.record_access(
-        secret.id, "agent_system", "internal-use", "granted"
-    )
+    audit = cp.secrets.record_access(secret.id, "agent_system", "internal-use", "granted")
 
     assert audit.id.startswith("audit_")
     assert audit.secret_id == secret.id
@@ -691,12 +637,8 @@ def test_agent_and_capability_scopes_use_either_match(cp):
         "hub",
     )
 
-    assert cp.secrets.request_secret(
-        secret.id, named_agent.id, purpose="named"
-    ).granted
-    assert cp.secrets.request_secret(
-        secret.id, capable_agent.id, purpose="capable"
-    ).granted
+    assert cp.secrets.request_secret(secret.id, named_agent.id, purpose="named").granted
+    assert cp.secrets.request_secret(secret.id, capable_agent.id, purpose="capable").granted
     with pytest.raises(AuthorizationError):
         cp.secrets.request_secret(secret.id, denied_agent.id, purpose="denied")
 

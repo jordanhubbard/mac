@@ -106,8 +106,7 @@ class RolesService:
         level_value = (level or "").strip().lower()
         if level_value not in ROLE_LEVELS:
             raise ValidationError(
-                "unsupported role level: %s (allowed: %s)"
-                % (level, ", ".join(sorted(ROLE_LEVELS)))
+                "unsupported role level: %s (allowed: %s)" % (level, ", ".join(sorted(ROLE_LEVELS)))
             )
         if tenant_id is not None:
             self._get_tenant(tenant_id)
@@ -131,7 +130,9 @@ class RolesService:
         now = utcnow()
         specialties_list = [str(s).strip() for s in (specialties or []) if str(s).strip()]
         default_caps_list = [str(c).strip() for c in (default_capabilities or []) if str(c).strip()]
-        required_caps_list = [str(c).strip() for c in (required_capabilities or []) if str(c).strip()]
+        required_caps_list = [
+            str(c).strip() for c in (required_capabilities or []) if str(c).strip()
+        ]
         hw = self._validate_hardware_requirements(hardware_requirements or {})
         self.store.execute(
             """
@@ -213,9 +214,7 @@ class RolesService:
         back to the global row (``tenant_id IS NULL``) so tenant-specific
         overrides naturally shadow defaults.
         """
-        row = self.store.query_one(
-            "SELECT * FROM agent_roles WHERE id = ?", (role_id_or_slug,)
-        )
+        row = self.store.query_one("SELECT * FROM agent_roles WHERE id = ?", (role_id_or_slug,))
         if row is None and tenant_id is not None:
             row = self.store.query_one(
                 "SELECT * FROM agent_roles WHERE slug = ? AND tenant_id = ?",
@@ -359,7 +358,14 @@ class RolesService:
                 INSERT INTO agent_lifecycle_events (id, agent_id, event_type, actor, detail, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (new_id("alce"), agent.id, "agent.role_unassigned", "human", json_dumps(detail), now),
+                (
+                    new_id("alce"),
+                    agent.id,
+                    "agent.role_unassigned",
+                    "human",
+                    json_dumps(detail),
+                    now,
+                ),
             )
             self.observability.insert_observation(
                 conn,
@@ -407,7 +413,9 @@ class RolesService:
             persona = self._get_persona(instance.persona_id)
         except NotFoundError:
             return []
-        explicit = persona.metadata.get("role_slugs") if isinstance(persona.metadata, dict) else None
+        explicit = (
+            persona.metadata.get("role_slugs") if isinstance(persona.metadata, dict) else None
+        )
         if isinstance(explicit, list) and explicit:
             return [str(s).strip().lower() for s in explicit if str(s).strip()]
         # Default: derive from persona name (loom seed convention).
@@ -422,9 +430,7 @@ class RolesService:
 
     # Hardware matcher --------------------------------------------------
 
-    def validate_hardware(
-        self, role: AgentRole, machine: Machine
-    ) -> Tuple[bool, List[str]]:
+    def validate_hardware(self, role: AgentRole, machine: Machine) -> Tuple[bool, List[str]]:
         """Pure-function check: does ``machine.hardware`` satisfy
         ``role.hardware_requirements``? Returns ``(ok, reasons)``."""
         return machine_hardware_satisfies(role.hardware_requirements, machine.hardware)
@@ -517,9 +523,7 @@ class RolesService:
                     )
             elif key == "accelerators":
                 if not isinstance(value, list):
-                    raise ValidationError(
-                        "hardware_requirements.accelerators must be a list"
-                    )
+                    raise ValidationError("hardware_requirements.accelerators must be a list")
         return raw
 
     # Row hydration -----------------------------------------------------
@@ -549,6 +553,7 @@ class RolesService:
 # Module-level pure function so dispatch (services.py) can call without
 # instantiating RolesService. Kept here so the hardware-shape contract
 # lives in one place.
+
 
 def machine_hardware_satisfies(
     requirements: JsonDict, hardware: JsonDict

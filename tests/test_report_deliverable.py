@@ -6,6 +6,7 @@ investigation / triage / answer tasks (and system-smoke tasks) run without
 faking a code change, while the code-substance gate is untouched for real
 code tasks.
 """
+
 from __future__ import annotations
 
 import json
@@ -129,7 +130,9 @@ def test_report_task_uses_operator_result_fallback(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     task = _repo_task(deliverable="report")
-    result = type("R", (), {"returncode": 0, "stdout": "Investigated: config is correct.\n", "stderr": ""})()
+    result = type(
+        "R", (), {"returncode": 0, "stdout": "Investigated: config is correct.\n", "stderr": ""}
+    )()
     te.write_fallback_evidence_manifest(ws, task, result, None)
     import json
 
@@ -204,9 +207,9 @@ def test_project_report_keeps_operator_result_contract(tmp_path):
     cp = ControlPlane.in_memory()
     _register_repo(cp, tmp_path)
 
-    contract = cp._normalize_task_execution_contract(
-        {"deliverable": "report"}, "proj", []
-    )["execution_contract"]
+    contract = cp._normalize_task_execution_contract({"deliverable": "report"}, "proj", [])[
+        "execution_contract"
+    ]
 
     assert contract["type"] == "operator_directive"
     assert contract["evidence_type"] == "operator_result"
@@ -225,9 +228,7 @@ def test_project_code_task_still_repo_change(tmp_path):
     _register_repo(cp, tmp_path)
 
     for md in ({}, {"execution_contract": {"type": "repository"}}):
-        contract = cp._normalize_task_execution_contract(md, "proj", [])[
-            "execution_contract"
-        ]
+        contract = cp._normalize_task_execution_contract(md, "proj", [])["execution_contract"]
         assert contract["type"] == "repository"
         assert contract["evidence_type"] == "repo_change"
 
@@ -484,9 +485,7 @@ def test_dirty_registered_checkout_is_ignored_for_read_only_canonical_clone(tmp_
     }
     source_remote_before = _git(source, "remote", "get-url", "origin")
     source_status_before = _git(source, "status", "--porcelain")
-    source_refs_before = _git(
-        source, "for-each-ref", "--format=%(refname) %(objectname)"
-    )
+    source_refs_before = _git(source, "for-each-ref", "--format=%(refname) %(objectname)")
     source_git_bytes_before = _directory_bytes(source / ".git")
     worker = _worker(tmp_path)
 
@@ -504,14 +503,14 @@ def test_dirty_registered_checkout_is_ignored_for_read_only_canonical_clone(tmp_
     assert (Path(worktree) / "README.md").read_text(encoding="utf-8") == "current repository\n"
     assert _git(source, "remote", "get-url", "origin") == source_remote_before
     assert _git(source, "status", "--porcelain") == source_status_before
-    assert (
-        _git(source, "for-each-ref", "--format=%(refname) %(objectname)")
-        == source_refs_before
-    )
+    assert _git(source, "for-each-ref", "--format=%(refname) %(objectname)") == source_refs_before
     assert _directory_bytes(source / ".git") == source_git_bytes_before
-    assert json.loads((task_dir / "task.json").read_text())["task"]["metadata"][
-        "runtime"
-    ]["repository_contract"] == contract
+    assert (
+        json.loads((task_dir / "task.json").read_text())["task"]["metadata"]["runtime"][
+            "repository_contract"
+        ]
+        == contract
+    )
 
 
 def test_ordinary_report_still_prepares_no_repository(tmp_path):
@@ -531,9 +530,7 @@ def test_ordinary_report_still_prepares_no_repository(tmp_path):
     assert "runtime" not in task["metadata"]
 
 
-def test_dirty_read_only_report_never_invokes_commit_push_or_finalizer(
-    tmp_path, monkeypatch
-):
+def test_dirty_read_only_report_never_invokes_commit_push_or_finalizer(tmp_path, monkeypatch):
     repo = tmp_path / "inspection"
     _git(tmp_path, "init", "-b", "main", str(repo))
     _git(repo, "config", "user.email", "mac-tests@example.invalid")
@@ -763,20 +760,14 @@ def test_read_only_report_missing_current_test_replaces_spoofed_agent_tests(
         "checks": [{"command": "true", "status": "pass", "returncode": 0}],
     }
 
-    attached, problems = wk._attach_trusted_read_only_report_test(
-        spoofed, tmp_path, task
-    )
+    attached, problems = wk._attach_trusted_read_only_report_test(spoofed, tmp_path, task)
 
     assert attached["tests"] == []
     assert attached["checks"] == []
-    assert problems == [
-        "read-only repository report current contract lacks test.command"
-    ]
+    assert problems == ["read-only repository report current contract lacks test.command"]
 
 
-def test_executor_clean_read_only_report_skips_git_finalizer(
-    tmp_path, monkeypatch
-):
+def test_executor_clean_read_only_report_skips_git_finalizer(tmp_path, monkeypatch):
     repo = tmp_path / "inspection"
     _git(tmp_path, "init", "-b", "main", str(repo))
     _git(repo, "config", "user.email", "mac-tests@example.invalid")
@@ -819,12 +810,8 @@ def test_executor_clean_read_only_report_skips_git_finalizer(
     agent_result = subprocess.CompletedProcess(
         ["agent"], 0, "Substantive inspection findings.\n", ""
     )
-    agent_result.mac_read_only_git_control_digest = (
-        te._read_only_git_control_digest(repo)
-    )
-    monkeypatch.setattr(
-        te, "_invoke_agent", lambda *_args, **_kwargs: agent_result
-    )
+    agent_result.mac_read_only_git_control_digest = te._read_only_git_control_digest(repo)
+    monkeypatch.setattr(te, "_invoke_agent", lambda *_args, **_kwargs: agent_result)
     monkeypatch.setattr(
         te,
         "finalize_with_new_file_recovery",
@@ -851,9 +838,7 @@ def test_executor_clean_read_only_report_skips_git_finalizer(
     assert manifest["status"] == "complete"
 
 
-def test_read_only_verification_failure_overwrites_complete_model_manifest(
-    tmp_path, monkeypatch
-):
+def test_read_only_verification_failure_overwrites_complete_model_manifest(tmp_path, monkeypatch):
     task = _repo_task(deliverable="report")
     task["metadata"]["report_repository_access"] = _read_only_access()
     task_file = tmp_path / "task.json"
@@ -872,9 +857,7 @@ def test_read_only_verification_failure_overwrites_complete_model_manifest(
             ),
             encoding="utf-8",
         )
-        result = subprocess.CompletedProcess(
-            ["agent"], 67, "model output", "verification failed"
-        )
+        result = subprocess.CompletedProcess(["agent"], 67, "model output", "verification failed")
         result.mac_read_only_verification_failure = True
         return result
 
@@ -883,9 +866,7 @@ def test_read_only_verification_failure_overwrites_complete_model_manifest(
     monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda _task: None)
     monkeypatch.setattr(te, "is_planning_phase", lambda _task: False)
     monkeypatch.setattr(te, "_invoke_agent", failed_verification)
-    monkeypatch.setattr(
-        te, "_read_only_report_repository_violation", lambda *_args: ""
-    )
+    monkeypatch.setattr(te, "_read_only_report_repository_violation", lambda *_args: "")
     monkeypatch.setattr(
         te,
         "maybe_auto_decompose",
@@ -957,9 +938,7 @@ def test_read_only_report_replaces_spoofed_test_with_host_verification(
             }
         ],
     }
-    (task_dir / "mac-evidence.json").write_text(
-        json.dumps(spoof), encoding="utf-8"
-    )
+    (task_dir / "mac-evidence.json").write_text(json.dumps(spoof), encoding="utf-8")
     (task_dir / "mac-sandbox-verification.json").write_text(
         json.dumps(
             {
@@ -981,9 +960,7 @@ def test_read_only_report_replaces_spoofed_test_with_host_verification(
         stdout="substantive analysis",
         metadata={"verification": spoof},
     )
-    assert worker._write_missing_repository_evidence_manifest(
-        task["id"], task_dir, execution
-    )
+    assert worker._write_missing_repository_evidence_manifest(task["id"], task_dir, execution)
     metadata = worker._execution_metadata(task_dir, execution)
     manifest = metadata["verification"]
 
@@ -993,9 +970,7 @@ def test_read_only_report_replaces_spoofed_test_with_host_verification(
     assert manifest["tests"][0]["execution_environment"] == "openshell_sandbox"
     assert manifest["checks"] == manifest["tests"]
     assert "spoofed model test" not in json.dumps(manifest)
-    assert worker._execution_submission_problems(
-        task_dir, {"metadata": metadata}
-    ) == []
+    assert worker._execution_submission_problems(task_dir, {"metadata": metadata}) == []
 
     (task_dir / "mac-sandbox-verification.json").unlink()
     missing_metadata = worker._execution_metadata(task_dir, execution)
@@ -1073,9 +1048,7 @@ def test_reviewer_gets_second_exact_base_credential_free_clone(tmp_path):
         },
     }
     worker = _worker(tmp_path)
-    executor_dir = worker._prepare_task_workspace(
-        task, {"id": "lease-executor-clone"}
-    )
+    executor_dir = worker._prepare_task_workspace(task, {"id": "lease-executor-clone"})
     executor_context = task["metadata"]["runtime"]
     executor_manifest = {
         "schema": "mac.worker_evidence.v1",
@@ -1083,9 +1056,7 @@ def test_reviewer_gets_second_exact_base_credential_free_clone(tmp_path):
         "evidence_type": "operator_result",
         "summary": "analysis complete",
         "result": "findings",
-        "repository_access": wk._read_only_repository_access_evidence(
-            executor_context
-        ),
+        "repository_access": wk._read_only_repository_access_evidence(executor_context),
     }
     task_detail = {
         "task": task,
@@ -1110,14 +1081,13 @@ def test_reviewer_gets_second_exact_base_credential_free_clone(tmp_path):
 
     assert review_repo != Path(executor_context["repository_worktree"])
     assert review_context["checkout_policy"] == "review_read_only_clone"
-    assert _git(review_repo, "rev-parse", "HEAD") == executor_context[
-        "repository_base_sha"
-    ]
+    assert _git(review_repo, "rev-parse", "HEAD") == executor_context["repository_base_sha"]
     assert _git(review_repo, "for-each-ref") == ""
     assert _git(review_repo, "remote") == ""
-    assert read_only_repository_content_digest(review_repo) == executor_context[
-        "repository_content_digest"
-    ]
+    assert (
+        read_only_repository_content_digest(review_repo)
+        == executor_context["repository_content_digest"]
+    )
     assert review_task["metadata"]["origin"].get("repository_path") is None
     assert str(executor_dir) not in json.dumps(review_task)
 

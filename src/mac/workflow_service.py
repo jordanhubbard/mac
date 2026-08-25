@@ -99,8 +99,15 @@ def _normalize_questions(raw: List[JsonDict]) -> List[JsonDict]:
             question["binds_to_param"] = str(item["binds_to_param"]).strip()
         # Preserve any extra annotation fields the caller added.
         for key, value in item.items():
-            if key in {"id", "text", "prompt", "question", "required",
-                      "binds_to_node", "binds_to_param"}:
+            if key in {
+                "id",
+                "text",
+                "prompt",
+                "question",
+                "required",
+                "binds_to_node",
+                "binds_to_param",
+            }:
                 continue
             question[key] = value
         out.append(question)
@@ -147,10 +154,7 @@ def _validate_answers(
     at compile time).
     """
     answer_ids = set(answers or {})
-    missing = [
-        q for q in questions
-        if q.get("required") and q["id"] not in answer_ids
-    ]
+    missing = [q for q in questions if q.get("required") and q["id"] not in answer_ids]
     if missing:
         labels = ", ".join("%s (%s)" % (q["id"], q.get("text") or "?") for q in missing)
         raise ValidationError(
@@ -159,13 +163,10 @@ def _validate_answers(
     if node_keys is not None:
         valid = set(node_keys)
         bad_bindings = [
-            q for q in questions
-            if q.get("binds_to_node") and q["binds_to_node"] not in valid
+            q for q in questions if q.get("binds_to_node") and q["binds_to_node"] not in valid
         ]
         if bad_bindings:
-            labels = ", ".join(
-                "%s -> %s" % (q["id"], q.get("binds_to_node")) for q in bad_bindings
-            )
+            labels = ", ".join("%s -> %s" % (q["id"], q.get("binds_to_node")) for q in bad_bindings)
             raise ValidationError(
                 "workflow draft questions reference unknown node_keys: %s" % labels
             )
@@ -212,7 +213,9 @@ def _apply_question_bindings(
             )
     if instructions_blocks:
         existing = str(node.get("instructions") or "").rstrip()
-        node["instructions"] = (existing + "\n\n" if existing else "") + "\n\n".join(instructions_blocks)
+        node["instructions"] = (existing + "\n\n" if existing else "") + "\n\n".join(
+            instructions_blocks
+        )
     metadata["answers"] = answers_bucket
     node["metadata"] = metadata
     return node
@@ -377,9 +380,7 @@ class WorkflowService:
         version: Optional[int] = None,
     ) -> Workflow:
         # By id first (UUID-shaped). Fallback to slug+tenant.
-        row = self.store.query_one(
-            "SELECT * FROM workflows WHERE id = ?", (workflow_id_or_slug,)
-        )
+        row = self.store.query_one("SELECT * FROM workflows WHERE id = ?", (workflow_id_or_slug,))
         if row is None:
             clauses = ["slug = ?"]
             params: List[Any] = [workflow_id_or_slug]
@@ -522,9 +523,7 @@ class WorkflowService:
             # Migrate answers against the *new* question set if the caller
             # is updating both, otherwise the existing draft's questions.
             effective_questions = (
-                patch.get("questions")
-                if "questions" in patch
-                else list(draft.questions)
+                patch.get("questions") if "questions" in patch else list(draft.questions)
             )
             patch["answers"] = _migrate_answers_to_ids(
                 effective_questions,
@@ -599,7 +598,9 @@ class WorkflowService:
         input: Optional[Dict[str, Any]] = None,
     ) -> JsonDict:
         workflow = self.get_workflow(workflow_id_or_slug, tenant_id=tenant_id)
-        preview = self.preview_definition(workflow.definition, tenant_id=workflow.tenant_id, input=input)
+        preview = self.preview_definition(
+            workflow.definition, tenant_id=workflow.tenant_id, input=input
+        )
         preview["workflow_id"] = workflow.id
         preview["workflow_version"] = workflow.version
         preview["snapshot_sha256"] = self._definition_fingerprint(workflow.definition)

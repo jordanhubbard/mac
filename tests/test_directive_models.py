@@ -40,9 +40,7 @@ def _document(**patch):
                 "repository_id": {"fact": "repository.id"},
                 "primary_target": {"template": "${primary_target}"},
             },
-            "effects": {
-                "exclusive": [{"template": "repository:${repository.id}:build-system"}]
-            },
+            "effects": {"exclusive": [{"template": "repository:${repository.id}:build-system"}]},
         },
     }
     raw.update(patch)
@@ -261,9 +259,7 @@ def test_missing_fact_does_not_match_comparison_and_exists_can_test_absence() ->
         ),
     ],
 )
-def test_document_schema_rejects_every_unbounded_or_malformed_surface(
-    mutate, message
-) -> None:
+def test_document_schema_rejects_every_unbounded_or_malformed_surface(mutate, message) -> None:
     with pytest.raises(ValidationError, match=message):
         parse_directive_document(mutate(_document()))
 
@@ -272,7 +268,10 @@ def test_document_schema_rejects_every_unbounded_or_malformed_surface(
     ("expression", "expected"),
     [
         ({"all": [{"eq": [{"literal": 1}, {"literal": 1}]}]}, True),
-        ({"any": [{"eq": [{"literal": 1}, {"literal": 2}]}, {"exists": {"fact": "fleet.name"}}]}, True),
+        (
+            {"any": [{"eq": [{"literal": 1}, {"literal": 2}]}, {"exists": {"fact": "fleet.name"}}]},
+            True,
+        ),
         ({"not": {"eq": [{"literal": "a"}, {"literal": "b"}]}}, True),
         ({"ne": [{"literal": 1}, {"literal": 2}]}, True),
         ({"in": [{"literal": "a"}, {"literal": ["a", "b"]}]}, True),
@@ -313,12 +312,7 @@ def test_condition_runtime_enforces_size_and_depth_bounds() -> None:
     with pytest.raises(ValidationError, match="deeply nested"):
         evaluate_condition(too_deep, {})
 
-    too_large = {
-        "all": [
-            {"eq": [{"literal": index}, {"literal": index}]}
-            for index in range(257)
-        ]
-    }
+    too_large = {"all": [{"eq": [{"literal": index}, {"literal": index}]} for index in range(257)]}
     with pytest.raises(ValidationError, match="too large"):
         evaluate_condition(too_large, {})
 
@@ -340,9 +334,7 @@ def test_condition_runtime_enforces_size_and_depth_bounds() -> None:
         ({"exists": [{"fact": "fleet.name"}]}, "marked fact or literal"),
     ],
 )
-def test_document_condition_validator_covers_every_grammar_boundary(
-    condition, message
-) -> None:
+def test_document_condition_validator_covers_every_grammar_boundary(condition, message) -> None:
     if message is None:
         assert parse_directive_document(_document(when=condition)).when == condition
         return
@@ -427,8 +419,12 @@ def test_marked_rendering_covers_fact_var_template_collections_and_failures() ->
     }
     variables = {"target": "//:all", "options": {"fast": True}}
     assert render_marked_value(None, facts=facts, variables=variables) is None
-    assert render_marked_value({"fact": "repository.id"}, facts=facts, variables=variables) == "repo"
-    assert render_marked_value({"var": "options"}, facts=facts, variables=variables) == {"fast": True}
+    assert (
+        render_marked_value({"fact": "repository.id"}, facts=facts, variables=variables) == "repo"
+    )
+    assert render_marked_value({"var": "options"}, facts=facts, variables=variables) == {
+        "fast": True
+    }
     assert render_marked_value(
         [
             {"template": "${target}:${repository.metadata.labels}"},
@@ -478,9 +474,12 @@ def test_overlap_analysis_handles_unconditional_reversed_and_malformed_forms() -
     assert condition_overlap({"all": direct_eq}, direct_eq) == "unknown"
     assert condition_overlap({"eq": "bad"}, direct_eq) == "unknown"
     assert condition_overlap({"eq": [{"literal": 1}, {"literal": 2}]}, direct_eq) == "unknown"
-    assert condition_overlap({"eq": [{"fact": "repository.id"}, {"fact": "repository.name"}]}, direct_eq) == "unknown"
+    assert (
+        condition_overlap(
+            {"eq": [{"fact": "repository.id"}, {"fact": "repository.name"}]}, direct_eq
+        )
+        == "unknown"
+    )
     assert condition_overlap([], direct_eq) == "unknown"
     with pytest.raises(ValidationError, match="unsupported directive fact root"):
-        render_marked_value(
-            {"fact": "unknown.value"}, facts={}, variables={}
-        )
+        render_marked_value({"fact": "unknown.value"}, facts={}, variables={})

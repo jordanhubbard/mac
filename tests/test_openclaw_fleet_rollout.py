@@ -245,9 +245,7 @@ def test_execute_simulate_health_fn_not_called() -> None:
         health_called.append(step.node_id)
         return True
 
-    result = execute_staged_rollout(
-        plan, deploy_fn=_always_ok, health_fn=health_fn, simulate=True
-    )
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok, health_fn=health_fn, simulate=True)
     assert result.ok
     assert health_called == [], "health_fn must not be called in simulate mode"
 
@@ -312,9 +310,7 @@ def test_execute_skipped_steps_have_status_skipped() -> None:
 
 def test_execute_canary_health_failure_halts_and_skips_promote() -> None:
     plan = build_staged_rollout_plan("v1", _targets("c1", "p1", "p2"), canary_count=1)
-    result = execute_staged_rollout(
-        plan, deploy_fn=_always_ok, health_fn=_always_fail
-    )
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok, health_fn=_always_fail)
     assert "c1" in result.failed
     assert set(result.skipped) == {"p1", "p2"}
     assert result.succeeded == []

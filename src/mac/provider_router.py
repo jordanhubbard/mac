@@ -36,8 +36,8 @@ __all__ = ["BreakerState", "Provider", "ProviderRouter", "AllProvidersDownError"
 
 
 class BreakerState(str, Enum):
-    CLOSED = "closed"      # healthy; route freely
-    OPEN = "open"          # tripped; skip until cooldown elapses
+    CLOSED = "closed"  # healthy; route freely
+    OPEN = "open"  # tripped; skip until cooldown elapses
     HALF_OPEN = "half_open"  # cooldown elapsed; allow limited probes to recover
 
 
@@ -49,10 +49,10 @@ class AllProvidersDownError(RuntimeError):
 class Provider:
     name: str
     base_url: str
-    priority: int = 0                 # lower is preferred
+    priority: int = 0  # lower is preferred
     models: Tuple[str, ...] = ("*",)  # which model ids it serves; "*" = any
     enabled: bool = True
-    api_key_env: str = ""             # env var holding this provider's bearer key
+    api_key_env: str = ""  # env var holding this provider's bearer key
 
 
 @dataclass
@@ -256,12 +256,18 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
         api_key_env = ""
         for f in fields[1:]:
             if f.startswith("models="):
-                models = tuple(m for m in f[len("models="):].split("|") if m) or ("*",)
+                models = tuple(m for m in f[len("models=") :].split("|") if m) or ("*",)
             elif f.startswith("key="):
-                api_key_env = f[len("key="):].strip()
+                api_key_env = f[len("key=") :].strip()
             elif f.isdigit():
                 priority = int(f)
         providers.append(
-            Provider(name=name.strip(), base_url=base_url, priority=priority, models=models, api_key_env=api_key_env)
+            Provider(
+                name=name.strip(),
+                base_url=base_url,
+                priority=priority,
+                models=models,
+                api_key_env=api_key_env,
+            )
         )
     return providers

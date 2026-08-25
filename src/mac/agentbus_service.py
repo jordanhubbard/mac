@@ -109,15 +109,12 @@ class AgentBusService:
         participants: Optional[List[str]] = None
         if participant_agent_ids:
             members = [
-                str(item).strip()
-                for item in participant_agent_ids
-                if str(item or "").strip()
+                str(item).strip() for item in participant_agent_ids if str(item or "").strip()
             ]
             ordered = list(dict.fromkeys([sender_agent_id, *members]))
             if len(ordered) < 2:
                 raise ValidationError(
-                    "agentbus group stream requires at least one participant "
-                    "besides the sender"
+                    "agentbus group stream requires at least one participant besides the sender"
                 )
             if len(ordered) > 32:
                 raise ValidationError("agentbus group stream capped at 32 participants")
@@ -205,8 +202,7 @@ class AgentBusService:
         declared_schema, problems = validate_payload(payload)
         if problems:
             raise ValidationError(
-                "agentbus payload violates %s: %s"
-                % (declared_schema, "; ".join(problems))
+                "agentbus payload violates %s: %s" % (declared_schema, "; ".join(problems))
             )
         if declared_schema and not is_registered(declared_schema):
             self.observability.record_log(
@@ -236,9 +232,7 @@ class AgentBusService:
             if group_members:
                 # Group thread: any member may append (task_588b67fd).
                 if sender_agent_id not in group_members:
-                    raise AuthorizationError(
-                        "only group participants can append chunks"
-                    )
+                    raise AuthorizationError("only group participants can append chunks")
             elif stream_row["sender_agent_id"] != sender_agent_id:
                 raise AuthorizationError("only the stream sender can append chunks")
             if stream_row["status"] != AgentBusStreamStatus.OPEN.value:
@@ -289,9 +283,7 @@ class AgentBusService:
             if finalized_stream.recipient_agent_id and is_control_stream(
                 finalized_stream.topic, finalized_stream.content_type
             ):
-                self._stamp_control_stream_published(
-                    finalized_stream.recipient_agent_id
-                )
+                self._stamp_control_stream_published(finalized_stream.recipient_agent_id)
         self.observability.record_log(
             "agentbus.chunk.appended",
             layer="agentbus",
@@ -374,10 +366,7 @@ class AgentBusService:
             self._require_agent(agent_id)
             # Membership in a group stream is stored as a JSON array; the
             # quoted-id LIKE is exact because agent ids contain no quotes.
-            clauses.append(
-                "(sender_agent_id = ? OR recipient_agent_id = ? "
-                "OR participants LIKE ?)"
-            )
+            clauses.append("(sender_agent_id = ? OR recipient_agent_id = ? OR participants LIKE ?)")
             params.extend([agent_id, agent_id, '%"' + agent_id + '"%'])
         if status is not None:
             status_value = _state_value(status)
@@ -418,9 +407,8 @@ class AgentBusService:
         record_observation: bool = True,
     ) -> List[AgentBusChunk]:
         stream = self.assert_authorized(agent_id, stream_id)
-        if (
-            stream.recipient_agent_id == agent_id
-            and is_control_stream(stream.topic, stream.content_type)
+        if stream.recipient_agent_id == agent_id and is_control_stream(
+            stream.topic, stream.content_type
         ):
             self._stamp_control_stream_consumed(agent_id)
         rows = self.store.query_all(
@@ -561,9 +549,7 @@ class AgentBusService:
         except (TypeError, ValueError) as exc:
             raise ValidationError("agentbus payload must be JSON serializable") from exc
         if len(serialized.encode("utf-8")) > AGENTBUS_MAX_CHUNK_BYTES:
-            raise ValidationError(
-                "agentbus chunk exceeds %d-byte limit" % AGENTBUS_MAX_CHUNK_BYTES
-            )
+            raise ValidationError("agentbus chunk exceeds %d-byte limit" % AGENTBUS_MAX_CHUNK_BYTES)
         return serialized
 
     # Consumer cursors (task_0d50e190): hub-durable read positions so a
@@ -730,9 +716,7 @@ class AgentBusService:
         created_at = getattr(chunk, "created_at", None)
         chunk_id = getattr(chunk, "id", None)
         if not created_at or not chunk_id:
-            raise ValidationError(
-                "agentbus inbox cursor requires a chunk with created_at and id"
-            )
+            raise ValidationError("agentbus inbox cursor requires a chunk with created_at and id")
         return "%s%s%s" % (created_at, cls.INBOX_CURSOR_SEPARATOR, chunk_id)
 
     def read_inbox(
@@ -802,9 +786,7 @@ class AgentBusService:
         # it would match an agent id that is a substring of another. Confirm
         # the addressing exactly.
         return [
-            chunk
-            for chunk in chunks
-            if self._stream_addresses_agent(agent_id, chunk.stream_id)
+            chunk for chunk in chunks if self._stream_addresses_agent(agent_id, chunk.stream_id)
         ]
 
     # Non-blocking inbox consumption (task_7faf8e56).
@@ -862,9 +844,7 @@ class AgentBusService:
         time".
         """
         self._require_agent(agent_id)
-        cursor = (
-            self.durable_inbox_cursor(agent_id) if after_cursor is None else str(after_cursor)
-        )
+        cursor = self.durable_inbox_cursor(agent_id) if after_cursor is None else str(after_cursor)
         cap = max(1, min(int(limit or self.PENDING_INBOX_COUNT_CAP), self.PENDING_INBOX_COUNT_CAP))
         chunks = self.read_inbox(agent_id, cursor, limit=cap)
         return {
@@ -905,9 +885,7 @@ class AgentBusService:
         wants to look before it can promise to act.
         """
         self._require_agent(agent_id)
-        cursor = (
-            self.durable_inbox_cursor(agent_id) if after_cursor is None else str(after_cursor)
-        )
+        cursor = self.durable_inbox_cursor(agent_id) if after_cursor is None else str(after_cursor)
         chunks = self.read_inbox(agent_id, cursor, limit=limit)
         messages: List[JsonDict] = []
         next_cursor = cursor

@@ -1,4 +1,5 @@
 """Unit tests for the authoritative fleet target-of-record manifest."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -74,9 +75,7 @@ def test_openclaw_requires_both_fields():
 
 
 def test_openclaw_revision_accepts_commit_hash():
-    track = ft.OpenClawTrack.from_dict(
-        {"version": "2026.6.11", "revision": "deadbeef"}
-    )
+    track = ft.OpenClawTrack.from_dict({"version": "2026.6.11", "revision": "deadbeef"})
     assert track.revision == "deadbeef"
 
 

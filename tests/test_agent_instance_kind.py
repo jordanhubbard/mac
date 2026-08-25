@@ -43,11 +43,7 @@ def test_agent_instance_kind_is_validated_and_exposed_in_fleet_snapshot() -> Non
         instance_kind="fungible",
     )
 
-    member = next(
-        item
-        for item in cp.fleet_snapshot()["members"]
-        if item["agent_id"] == agent.id
-    )
+    member = next(item for item in cp.fleet_snapshot()["members"] if item["agent_id"] == agent.id)
     assert member["instance_kind"] == "fungible"
 
     assert cp.update_agent(agent.id, instance_kind="static").instance_kind == "static"

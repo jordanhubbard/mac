@@ -40,7 +40,19 @@ from typing import Callable, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "mac.sanity_selection.v1"
 CODE_EXTS = {".py", ".js", ".ts", ".tsx"}
-DOC_SUFFIXES = {".md", ".rst", ".txt", ".adoc", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".webp"}
+DOC_SUFFIXES = {
+    ".md",
+    ".rst",
+    ".txt",
+    ".adoc",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".pdf",
+    ".webp",
+}
 DEFAULT_POLICY = ROOT / "test-policy.toml"
 DEFAULT_MAP = ROOT / "src" / "mac" / "data" / "test_impact_map.json"
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -57,12 +69,8 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_machine_onboard.py",
         "tests/test_reviewed_openshell_cli.py",
     ),
-    "deploy/fleet-node-machine-onboard.py": (
-        "tests/test_fleet_node_machine_onboard.py",
-    ),
-    "deploy/fleet-node-phase1-quiesce.sh": (
-        "tests/test_fleet_node_phase1_quiesce.py",
-    ),
+    "deploy/fleet-node-machine-onboard.py": ("tests/test_fleet_node_machine_onboard.py",),
+    "deploy/fleet-node-phase1-quiesce.sh": ("tests/test_fleet_node_phase1_quiesce.py",),
     "deploy/fleet-node-install.sh": (
         # Guards that this script stays the WRITER of the startup self-test and
         # never becomes another reader of the dispatch-readiness rule; it scans
@@ -119,12 +127,8 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         # that decide whether a worker may adopt them.
         # writes: a change to how the markers are produced must run the tests
     ),
-    "deploy/fleet-node-rollback-supervisor.py": (
-        "tests/test_fleet_node_rollback_supervisor.py",
-    ),
-    "deploy/fleet-node-substrate-adopt.py": (
-        "tests/test_fleet_node_substrate_adopt.py",
-    ),
+    "deploy/fleet-node-rollback-supervisor.py": ("tests/test_fleet_node_rollback_supervisor.py",),
+    "deploy/fleet-node-substrate-adopt.py": ("tests/test_fleet_node_substrate_adopt.py",),
     "docs/env-config-reference.md": ("tests/test_env_config.py",),
     "scripts/generate-env-config-registry.py": ("tests/test_env_config.py",),
     # The documentation site's nav. It is a .yml, so it was "opaque" and forced
@@ -224,8 +228,11 @@ def _resolvable(nodeids: Iterable[str], repo_root: Path) -> tuple[list[str], lis
         names = cache.get(path)
         if names is None:
             try:
-                names = set(re.findall(r"^\s*(?:async\s+)?def (test_\w+)",
-                                       target.read_text(encoding="utf-8"), re.M))
+                names = set(
+                    re.findall(
+                        r"^\s*(?:async\s+)?def (test_\w+)", target.read_text(encoding="utf-8"), re.M
+                    )
+                )
             except OSError:
                 names = set()
             cache[path] = names
@@ -367,7 +374,14 @@ def touched_scope_names(
 
 
 def _full(reason: str, changed: list[str], **extra: object) -> dict[str, object]:
-    return {"schema": SCHEMA, "mode": "full", "reason": reason, "changed_files": changed, "tests": [], **extra}
+    return {
+        "schema": SCHEMA,
+        "mode": "full",
+        "reason": reason,
+        "changed_files": changed,
+        "tests": [],
+        **extra,
+    }
 
 
 def resolve(
@@ -416,9 +430,7 @@ def resolve(
             missing_contract_tests=missing_contract_tests,
         )
 
-    test_changes = _existing(
-        (path for path in changed if _is_test_file(path)), repo_root
-    )
+    test_changes = _existing((path for path in changed if _is_test_file(path)), repo_root)
     source_changes = [path for path in changed if _is_source_code(path)]
     opaque = [
         path
@@ -555,8 +567,7 @@ def resolve(
     if not resolvable:
         # Everything the map pointed at is gone: fall back rather than run
         # nothing and call it a pass.
-        return _full("impact_map_entries_all_stale", changed,
-                     stale_tests=sorted(unresolvable))
+        return _full("impact_map_entries_all_stale", changed, stale_tests=sorted(unresolvable))
     # Where the selection came from, not just how big it is.
     #
     # "focused, 11 tests" reads like the map narrowed the work. It did -- but
@@ -615,11 +626,7 @@ def _nothing_is_committed_on_top(base: str | None, repo_root: Path) -> bool:
         return False
     head = _git(["rev-parse", "--verify", "HEAD^{commit}"], repo_root)
     resolved = _resolve_sha(base, repo_root)
-    return (
-        head.returncode == 0
-        and resolved is not None
-        and head.stdout.strip() == resolved
-    )
+    return head.returncode == 0 and resolved is not None and head.stdout.strip() == resolved
 
 
 def git_changed_files(base: str | None, repo_root: Path) -> list[str]:
@@ -634,16 +641,10 @@ def git_changed_files(base: str | None, repo_root: Path) -> list[str]:
         # leaves it untracked and `git diff` alone would not see it.
         worktree = _git(["diff", "--name-only", base], repo_root)
         if worktree.returncode == 0:
-            changed |= {
-                line.strip() for line in worktree.stdout.splitlines() if line.strip()
-            }
-        untracked = _git(
-            ["ls-files", "--others", "--exclude-standard"], repo_root
-        )
+            changed |= {line.strip() for line in worktree.stdout.splitlines() if line.strip()}
+        untracked = _git(["ls-files", "--others", "--exclude-standard"], repo_root)
         if untracked.returncode == 0:
-            changed |= {
-                line.strip() for line in untracked.stdout.splitlines() if line.strip()
-            }
+            changed |= {line.strip() for line in untracked.stdout.splitlines() if line.strip()}
     return sorted(changed)
 
 
@@ -662,9 +663,7 @@ def changed_base_lines(
         # so a commit-range diff reports no lines and every changed file
         # falls back to whole-file charging.
         rng = base
-    result = _git(
-        ["diff", "-U0", "--no-color", "--no-ext-diff", rng], repo_root
-    )
+    result = _git(["diff", "-U0", "--no-color", "--no-ext-diff", rng], repo_root)
     if result.returncode != 0:
         return {}, {}
     lines: dict[str, set[int]] = {}
@@ -673,7 +672,9 @@ def changed_base_lines(
     for row in result.stdout.splitlines():
         if row.startswith("+++ "):
             target = row[4:].strip()
-            current = None if target == "/dev/null" else target[2:] if target.startswith("b/") else target
+            current = (
+                None if target == "/dev/null" else target[2:] if target.startswith("b/") else target
+            )
             continue
         if current is None:
             continue
@@ -735,10 +736,7 @@ def load_map(map_path: Path) -> dict | None:
 
 def _is_ancestor(ancestor: str, descendant: str, repo_root: Path) -> bool:
     """True iff ``ancestor`` is a first-parent/merge ancestor of ``descendant``."""
-    return (
-        _git(["merge-base", "--is-ancestor", ancestor, descendant], repo_root).returncode
-        == 0
-    )
+    return _git(["merge-base", "--is-ancestor", ancestor, descendant], repo_root).returncode == 0
 
 
 def _changed_between(older: str, newer: str, repo_root: Path) -> set[str] | None:
@@ -801,9 +799,7 @@ def select_from_git(
         base_lines,
         addition_points=addition_points,
         selection_base=base,
-        fresh_map_files=_fresh_map_files(
-            impact_map, _resolve_sha(base, repo_root), repo_root
-        ),
+        fresh_map_files=_fresh_map_files(impact_map, _resolve_sha(base, repo_root), repo_root),
         policy=policy,
         impact_map=impact_map,
         codegraph_tests=cg_tests,

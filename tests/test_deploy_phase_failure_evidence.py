@@ -65,9 +65,33 @@ def _stable_id_stub() -> str:
     # Deterministic, dependency-free stand-in for stable_worker_agent_id.
     return (
         "stable_worker_agent_id() {\n"
-        '  printf '"'"'agent_%s\\n'"'"' '
-        '"$(printf '"'"'%s'"'"' "$1" | tr '"'"'A-Z'"'"' '"'"'a-z'"'"' '
-        '| tr -c '"'"'a-z0-9_.-'"'"' '"'"'_'"'"')"\n'
+        "  printf "
+        "'"
+        "agent_%s\\n"
+        "'"
+        " "
+        '"$(printf '
+        "'"
+        "%s"
+        "'"
+        ' "$1" | tr '
+        "'"
+        "A-Z"
+        "'"
+        " "
+        "'"
+        "a-z"
+        "'"
+        " "
+        "| tr -c "
+        "'"
+        "a-z0-9_.-"
+        "'"
+        " "
+        "'"
+        "_"
+        "'"
+        ')"\n'
         "}\n"
     )
 
@@ -82,8 +106,7 @@ def _preamble(evidence_dir: Path, tmpdir_local: Path) -> str:
             f"COHORT_EPOCH_ID={shlex.quote(COHORT_EPOCH)}",
             f"TMPDIR_LOCAL={shlex.quote(str(tmpdir_local))}",
             "NODE_PARALLELISM=2",
-            "BOUNDED_PHASE_FAILURE_EVIDENCE_DIR="
-            + shlex.quote(str(evidence_dir)),
+            "BOUNDED_PHASE_FAILURE_EVIDENCE_DIR=" + shlex.quote(str(evidence_dir)),
             'BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS=""',
             _stable_id_stub(),
         ]
@@ -120,9 +143,7 @@ def test_failed_bounded_phase_persists_sanitized_owner_only_artifact(tmp_path):
         + shlex.quote(str(log))
         + "\n"
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     artifact = Path(result.stdout.strip())
     assert artifact.is_file()
@@ -153,9 +174,7 @@ def test_failed_bounded_phase_persists_sanitized_owner_only_artifact(tmp_path):
         assert secret not in artifact.read_text(encoding="utf-8")
     assert "<redacted>" in sanitized
     # The digest binds the sanitized body.
-    assert payload["sanitized_sha256"] == hashlib.sha256(
-        sanitized.encode("utf-8")
-    ).hexdigest()
+    assert payload["sanitized_sha256"] == hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
 
 
 def test_cleanup_removes_secret_staging_but_artifact_survives(tmp_path):
@@ -179,11 +198,13 @@ def test_cleanup_removes_secret_staging_but_artifact_survives(tmp_path):
         + ')"\n'
         # Emulate the cleanup EXIT trap wiping the entire temp directory.
         + 'rm -rf "$TMPDIR_LOCAL"\n'
-        + 'printf '"'"'%s\\n'"'"' "$artifact"\n'
+        + "printf "
+        "'"
+        "%s\\n"
+        "'"
+        ' "$artifact"\n'
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     artifact = Path(result.stdout.strip())
 
@@ -229,22 +250,25 @@ def test_reporting_loop_surfaces_durable_path_in_controller_output(tmp_path):
         + "\n"
         + "rc=$?\n"
         + "set -e\n"
-        + 'printf '"'"'RC=%s\\n'"'"' "$rc"\n'
-        + 'printf '"'"'PATHS=%b'"'"' "$BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS"\n'
+        + "printf "
+        "'"
+        "RC=%s\\n"
+        "'"
+        ' "$rc"\n' + "printf "
+        "'"
+        "PATHS=%b"
+        "'"
+        ' "$BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS"\n'
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
     assert "RC=1" in result.stdout, result.stderr + result.stdout
     # Controller stderr names the durable artifact for the failed phase.
     assert "failure_evidence=" in result.stderr
     assert "failure_evidence=unavailable" not in result.stderr
     # The collected path is surfaced for recovery evidence.
-    paths = [
-        line for line in result.stdout.splitlines() if line.startswith("PATHS=")
-    ]
+    paths = [line for line in result.stdout.splitlines() if line.startswith("PATHS=")]
     assert paths, result.stdout
-    reported = paths[0][len("PATHS="):]
+    reported = paths[0][len("PATHS=") :]
     artifact = Path(reported.strip())
     assert artifact.is_file()
     assert stat.S_IMODE(artifact.stat().st_mode) == 0o600
@@ -262,15 +286,12 @@ def test_recovery_summary_emits_collected_failure_evidence_paths(tmp_path):
     snippet = "\n".join(
         [
             "set -u",
-            "BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS="
-            + shlex.quote(str(fake_artifact) + "\\n"),
+            "BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS=" + shlex.quote(str(fake_artifact) + "\\n"),
             _emitter_source(),
             "emit_bounded_phase_failure_evidence_recovery_summary",
         ]
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     assert "recovery references durable bounded-phase failure evidence" in result.stdout
     assert f"failure_evidence={fake_artifact}" in result.stdout
@@ -278,9 +299,7 @@ def test_recovery_summary_emits_collected_failure_evidence_paths(tmp_path):
 
 def test_cleanup_trap_never_removes_the_durable_evidence_directory():
     source = DEPLOY.read_text(encoding="utf-8")
-    cleanup = source.split("cleanup_local_deployment() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    cleanup = source.split("cleanup_local_deployment() {", 1)[1].split("\n}\n", 1)[0]
     # The EXIT trap wipes SSH control + TMPDIR_LOCAL only, never the durable
     # failure-evidence directory.
     assert 'rm -rf "$SSH_CONTROL_DIR" "$TMPDIR_LOCAL"' in cleanup

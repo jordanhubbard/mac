@@ -81,7 +81,7 @@ def build_adjudication_description(agent_name: str, task_ref: str) -> str:
         "deferring is always acceptable; wrongly approved memory is not.\n"
         "3. Record each decision with the full audit trail:\n"
         "   `mac admin curiosity approve <id> --actor %(actor)s --reason "
-        "\"<specific reason>\" --approval-id %(task)s`\n"
+        '"<specific reason>" --approval-id %(task)s`\n'
         "   (or `mac admin curiosity reject` with the same flags).\n"
         "4. Summarize the outcomes (approved / rejected / deferred counts and "
         "one-line reasons) in mac-evidence.json.\n\n"
@@ -125,18 +125,33 @@ class CuriosityReviewerConfig:
         env = os.environ if environ is None else environ
         errors: List[str] = []
         enabled = str(env.get("MAC_CURIOSITY_REVIEW_ENABLED") or "").strip().lower() in {
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
             return bounded_env_number(env, name, default, low, high, errors=errors)
 
-        interval = _num("MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS,
-                        MIN_INTERVAL_SECONDS, 7 * 24 * 60 * 60.0)
-        initial_delay = _num("MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS",
-                             DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0)
-        cooldown = _num("MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS", DEFAULT_COOLDOWN_SECONDS,
-                        MIN_INTERVAL_SECONDS, 30 * 24 * 60 * 60.0)
+        interval = _num(
+            "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS",
+            DEFAULT_INTERVAL_SECONDS,
+            MIN_INTERVAL_SECONDS,
+            7 * 24 * 60 * 60.0,
+        )
+        initial_delay = _num(
+            "MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS",
+            DEFAULT_INITIAL_DELAY_SECONDS,
+            0.0,
+            60 * 60.0,
+        )
+        cooldown = _num(
+            "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS",
+            DEFAULT_COOLDOWN_SECONDS,
+            MIN_INTERVAL_SECONDS,
+            30 * 24 * 60 * 60.0,
+        )
         project = str(env.get("MAC_CURIOSITY_REVIEW_PROJECT") or "").strip() or DEFAULT_PROJECT
         own = str(env.get("MAC_AGENT_ID") or "").strip()
         servable = frozenset({own}) if own else frozenset()
@@ -168,16 +183,17 @@ class CuriosityReviewer:
     def start(self) -> bool:
         if not self.config.active:
             if self.config.configuration_error:
-                self._observe("curiosity.review.configuration_invalid", "warning",
-                              {"error": self.config.configuration_error})
+                self._observe(
+                    "curiosity.review.configuration_invalid",
+                    "warning",
+                    {"error": self.config.configuration_error},
+                )
             return False
         with self._state_lock:
             if self._thread is not None and self._thread.is_alive():
                 return False
             self._stop_event.clear()
-            thread = threading.Thread(
-                target=self._loop, name="mac-curiosity-reviewer", daemon=True
-            )
+            thread = threading.Thread(target=self._loop, name="mac-curiosity-reviewer", daemon=True)
             self._thread = thread
             thread.start()
         self._observe("curiosity.review.started", "info", {"config": self.config.to_dict()})
@@ -219,18 +235,29 @@ class CuriosityReviewer:
 
     # -- core ---------------------------------------------------------------
 
-    def run_once(self, *, actor: str = "curiosity-reviewer", trigger: str = "operator") -> Dict[str, Any]:
+    def run_once(
+        self, *, actor: str = "curiosity-reviewer", trigger: str = "operator"
+    ) -> Dict[str, Any]:
         if not self._run_lock.acquire(blocking=False):
-            return {"schema": CURIOSITY_REVIEWER_SCHEMA, "status": "busy",
-                    "trigger": trigger, "agents": []}
+            return {
+                "schema": CURIOSITY_REVIEWER_SCHEMA,
+                "status": "busy",
+                "trigger": trigger,
+                "agents": [],
+            }
         results: List[Dict[str, Any]] = []
         run_id = "curev_%s" % uuid.uuid4().hex
         try:
             open_for, latest_for = self._adjudication_snapshot()
             for agent in self._openclaw_agents():
-                results.append(self._review_agent(
-                    agent, actor=actor, open_for=open_for, latest_for=latest_for,
-                ))
+                results.append(
+                    self._review_agent(
+                        agent,
+                        actor=actor,
+                        open_for=open_for,
+                        latest_for=latest_for,
+                    )
+                )
         finally:
             self._run_lock.release()
         report = {
@@ -292,8 +319,9 @@ class CuriosityReviewer:
                 latest_for[target] = ts
         return open_for, latest_for
 
-    def _review_agent(self, agent: Any, *, actor: str,
-                      open_for: Dict[str, bool], latest_for: Dict[str, datetime]) -> Dict[str, Any]:
+    def _review_agent(
+        self, agent: Any, *, actor: str, open_for: Dict[str, bool], latest_for: Dict[str, datetime]
+    ) -> Dict[str, Any]:
         agent_id = str(getattr(agent, "id", "") or "")
         agent_name = str(getattr(agent, "name", "") or agent_id)
         result: Dict[str, Any] = {"agent_id": agent_id, "filed": False}
@@ -323,7 +351,9 @@ class CuriosityReviewer:
             age = (_utcnow() - last).total_seconds()
             if age < self.config.cooldown_seconds:
                 result["skipped_reason"] = "adjudicated %.0fs ago (< %.0fs)" % (
-                    age, self.config.cooldown_seconds)
+                    age,
+                    self.config.cooldown_seconds,
+                )
                 return result
         try:
             task = self._create_adjudication_task(agent_id, agent_name, actor)

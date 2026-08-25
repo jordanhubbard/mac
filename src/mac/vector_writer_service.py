@@ -28,6 +28,7 @@ Design notes:
   control plane calls ``embed_memory`` synchronously (from the CLI,
   from a new HTTP route, or from the nap consolidator in mem-08).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -137,7 +138,9 @@ def tokenhub_embedding_fn(
         payload = json.loads(raw) if raw else {}
         items = payload.get("data") or []
         if not items or not isinstance(items[0], dict) or "embedding" not in items[0]:
-            raise ValidationError("tokenhub embeddings response missing data[0].embedding: %s" % str(payload)[:300])
+            raise ValidationError(
+                "tokenhub embeddings response missing data[0].embedding: %s" % str(payload)[:300]
+            )
         vector = items[0]["embedding"]
         if not isinstance(vector, list) or not all(isinstance(x, (int, float)) for x in vector):
             raise ValidationError("tokenhub embeddings returned non-numeric vector")
@@ -182,7 +185,9 @@ def tokenhub_embedding_batch_fn(
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise ValidationError("tokenhub embeddings HTTP %s %s: %s" % (exc.code, exc.reason, detail[:400]))
+            raise ValidationError(
+                "tokenhub embeddings HTTP %s %s: %s" % (exc.code, exc.reason, detail[:400])
+            )
         except urllib.error.URLError as exc:
             raise ValidationError("tokenhub embeddings unreachable at %s: %s" % (url, exc.reason))
         payload = json.loads(raw) if raw else {}
@@ -233,19 +238,13 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
             "unknown MAC_MEMORY_EMBED_BACKEND: %s (use auto|tokenhub|hash)" % backend
         )
     base_url = (
-        os.environ.get("MAC_MEMORY_EMBED_BASE_URL")
-        or os.environ.get("OPENAI_BASE_URL")
-        or ""
+        os.environ.get("MAC_MEMORY_EMBED_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or ""
     ).strip()
     api_key = (
-        os.environ.get("MAC_MEMORY_EMBED_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or ""
+        os.environ.get("MAC_MEMORY_EMBED_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     ).strip()
     model = (os.environ.get("MAC_MEMORY_EMBED_MODEL") or "").strip()
-    input_type = (
-        os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage"
-    ).strip()
+    input_type = (os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage").strip()
     dimensions_raw = os.environ.get("MAC_MEMORY_EMBED_DIM", "").strip()
     dimensions = int(dimensions_raw) if dimensions_raw.isdigit() else None
     if not (base_url and api_key and model):
@@ -258,7 +257,10 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
         # auto: nothing (or not enough) configured -> safe hash fallback.
         return None
     return tokenhub_embedding_fn(
-        base_url=base_url, api_key=api_key, model=model, input_type=input_type,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        input_type=input_type,
         dimensions=dimensions,
     )
 
@@ -284,18 +286,12 @@ class VectorWriterService:
         self._collection_dims: Dict[str, Optional[int]] = {}
         self._collection_embed_overrides: Dict[str, tuple[str, int, EmbedFn]] = {}
         self._env_base_url = (
-            os.environ.get("MAC_MEMORY_EMBED_BASE_URL")
-            or os.environ.get("OPENAI_BASE_URL")
-            or ""
+            os.environ.get("MAC_MEMORY_EMBED_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or ""
         ).strip()
         self._env_api_key = (
-            os.environ.get("MAC_MEMORY_EMBED_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or ""
+            os.environ.get("MAC_MEMORY_EMBED_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
         ).strip()
-        self._env_input_type = (
-            os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage"
-        ).strip()
+        self._env_input_type = (os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage").strip()
         # Embed function resolution order:
         # 1) explicit embed_fn arg (tests, custom backends)
         # 2) env-configured backend (auto_env=True, default)
@@ -316,23 +312,19 @@ class VectorWriterService:
             self._embedding_dim = int(embedding_dim) if embedding_dim is not None else None
             self._dim_locked = embedding_dim is not None
             self._embedding_model = embedding_model or (
-                os.environ.get("MAC_MEMORY_EMBED_MODEL")
-                or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
+                os.environ.get("MAC_MEMORY_EMBED_MODEL") or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
             )
             self._hash_fallback = False
         else:
             self._embedding_dim = int(
-                embedding_dim if embedding_dim is not None
-                else MAC_MEMORY_DEFAULT_EMBEDDING_DIM
+                embedding_dim if embedding_dim is not None else MAC_MEMORY_DEFAULT_EMBEDDING_DIM
             )
             self._dim_locked = True
             self._embedding_model = embedding_model or MAC_MEMORY_DEFAULT_EMBEDDING_MODEL
             self._embed_fn = lambda text: _hash_embedding(text, self._embedding_dim)
             self._hash_fallback = True
         self._allow_collection_model_fallback = (
-            embed_fn is None
-            and auto_env
-            and bool(self._env_base_url and self._env_api_key)
+            embed_fn is None and auto_env and bool(self._env_base_url and self._env_api_key)
         )
         # `transport` is the same hook shape as mac.http_client.HubClient
         # uses for tests: (method, url, body, token) -> response dict.
@@ -351,8 +343,7 @@ class VectorWriterService:
             return
         if len(vector) != self._embedding_dim:
             raise ValidationError(
-                "embed_fn returned %d dims; expected %d"
-                % (len(vector), self._embedding_dim)
+                "embed_fn returned %d dims; expected %d" % (len(vector), self._embedding_dim)
             )
 
     def _embed_for_collection(self, text: str, collection: str) -> tuple[List[float], str, int]:
@@ -495,7 +486,9 @@ class VectorWriterService:
         if tier not in MAC_MEMORY_COLLECTIONS:
             raise ValidationError("unknown memory tier: %s" % tier)
         collection = MAC_MEMORY_COLLECTIONS[tier]
-        vector, embedding_model, embedding_dim = self._embed_for_collection(record.content, collection)
+        vector, embedding_model, embedding_dim = self._embed_for_collection(
+            record.content, collection
+        )
         payload = self._build_payload(record, tier=tier, embedding_model=embedding_model)
         point_id = self._point_id_for(record.id)
         self._upsert_point(collection, point_id, vector, payload.to_dict())
@@ -509,9 +502,7 @@ class VectorWriterService:
         # point in Qdrant now carries the new model and a ledger still
         # naming the old one is a provenance lie — precisely what made
         # the two-embedding-space audit a manual job.
-        existing = self._memory.list_vector_refs(
-            memory_id=record.id, collection=collection
-        )
+        existing = self._memory.list_vector_refs(memory_id=record.id, collection=collection)
         metadata = {"tier": tier, "embedding_dim": embedding_dim}
         for ref in existing:
             if ref.point_id != point_id:
@@ -525,9 +516,7 @@ class VectorWriterService:
             update = getattr(self._memory, "update_vector_ref", None)
             if update is None:
                 return ref
-            return update(
-                ref.id, embedding_model=embedding_model, metadata=metadata
-            )
+            return update(ref.id, embedding_model=embedding_model, metadata=metadata)
         return self._memory.record_vector_ref(
             memory_id=record.id,
             vector_db=_VECTOR_DB_LABEL,
@@ -581,9 +570,7 @@ class VectorWriterService:
         """
         written = 0
         for kind, text in (("prompt", prompt), ("response", response)):
-            for index, chunk in enumerate(
-                self._chunks(text, self.TRANSCRIPT_CHUNK_CHARS)
-            ):
+            for index, chunk in enumerate(self._chunks(text, self.TRANSCRIPT_CHUNK_CHARS)):
                 vector, embedding_model, _dim = self._embed_for_collection(
                     chunk, self.TRANSCRIPT_COLLECTION
                 )
@@ -700,9 +687,7 @@ class VectorWriterService:
             body["score_threshold"] = float(score_threshold)
         must_clauses: List[Dict[str, Any]] = []
         if strict_embedding_space and query_model:
-            must_clauses.append(
-                {"key": "embedding_model", "match": {"value": query_model}}
-            )
+            must_clauses.append({"key": "embedding_model", "match": {"value": query_model}})
         if project:
             must_clauses.append({"key": "project", "match": {"value": project}})
         if tenant_id:
@@ -713,7 +698,10 @@ class VectorWriterService:
             body["filter"] = filter_payload
             # If callers supply both, must clauses get folded in.
             if must_clauses:
-                body["filter"] = {**filter_payload, "must": (filter_payload.get("must") or []) + must_clauses}
+                body["filter"] = {
+                    **filter_payload,
+                    "must": (filter_payload.get("must") or []) + must_clauses,
+                }
         elif must_clauses:
             body["filter"] = {"must": must_clauses}
         response = self._transport(
@@ -772,9 +760,7 @@ class VectorWriterService:
             "target_model": target_model,
             "scanned": len(points),
             "embedding_models": dict(models),
-            "mismatched": sum(
-                count for model, count in models.items() if model != target_model
-            ),
+            "mismatched": sum(count for model, count in models.items() if model != target_model),
         }
 
     def reconcile_embedding_spaces(
@@ -810,9 +796,7 @@ class VectorWriterService:
         points = self._scan_points(collection, scan_limit=scan_limit)
 
         mismatched = [
-            point
-            for point in points
-            if str(point.get("embedding_model") or "") != target_model
+            point for point in points if str(point.get("embedding_model") or "") != target_model
         ]
         reembedded: List[str] = []
         orphaned: List[str] = []
@@ -870,9 +854,7 @@ class VectorWriterService:
         name, is what lands on new points.
         """
 
-        _vector, model, _dim = self._embed_for_collection(
-            "mac embedding-space probe", collection
-        )
+        _vector, model, _dim = self._embed_for_collection("mac embedding-space probe", collection)
         return model
 
     def _scan_points(
@@ -902,8 +884,7 @@ class VectorWriterService:
                 body["offset"] = offset
             response = self._transport(
                 "POST",
-                "%s/collections/%s/points/scroll"
-                % (self._qdrant_url, quote(collection, safe="")),
+                "%s/collections/%s/points/scroll" % (self._qdrant_url, quote(collection, safe="")),
                 body,
                 None,
             )
@@ -971,9 +952,17 @@ class VectorWriterService:
                     dream_confidence_score = float(raw_score)
                 except (TypeError, ValueError):
                     dream_confidence_score = None
-            project = str(content_payload.get("project") or retrieval.get("project") or project or "") or None
-            tenant_id = str(content_payload.get("tenant_id") or retrieval.get("tenant_id") or "") or None
-            agent_id = str(content_payload.get("agent_id") or retrieval.get("agent_id") or agent_id or "") or None
+            project = (
+                str(content_payload.get("project") or retrieval.get("project") or project or "")
+                or None
+            )
+            tenant_id = (
+                str(content_payload.get("tenant_id") or retrieval.get("tenant_id") or "") or None
+            )
+            agent_id = (
+                str(content_payload.get("agent_id") or retrieval.get("agent_id") or agent_id or "")
+                or None
+            )
             summary = str(content_payload.get("summary") or summary)[:2000]
             tags.extend(
                 tag
@@ -1037,8 +1026,7 @@ class VectorWriterService:
         }
         self._transport(
             "PUT",
-            "%s/collections/%s/points?wait=true"
-            % (self._qdrant_url, quote(collection, safe="")),
+            "%s/collections/%s/points?wait=true" % (self._qdrant_url, quote(collection, safe="")),
             body,
             None,
         )
@@ -1067,7 +1055,5 @@ class VectorWriterService:
                 % (method, url, exc.code, exc.reason, detail[:300])
             )
         except urllib.error.URLError as exc:
-            raise ValidationError(
-                "qdrant %s %s unreachable: %s" % (method, url, exc.reason)
-            )
+            raise ValidationError("qdrant %s %s unreachable: %s" % (method, url, exc.reason))
         return json.loads(raw) if raw else None

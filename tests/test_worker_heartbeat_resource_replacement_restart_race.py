@@ -138,9 +138,7 @@ def test_heartbeat_after_get_failure_cannot_erase_last_complete_snapshot(tmp_pat
     worker._heartbeat()
 
     after = dict(cp.get_agent(agent_id).resources)
-    assert after == before, (
-        "heartbeat after a failed resource GET erased the complete hub snapshot"
-    )
+    assert after == before, "heartbeat after a failed resource GET erased the complete hub snapshot"
 
 
 def test_heartbeat_with_successful_get_still_refreshes_resources(tmp_path: Path):

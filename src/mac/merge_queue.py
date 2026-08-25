@@ -160,7 +160,9 @@ def validate_projected_merge(
     if not base_sha:
         return MergeGateVerdict(False, "", topic_sha, error="cannot resolve base ref %r" % base_ref)
     if not topic_sha:
-        return MergeGateVerdict(False, base_sha, "", error="cannot resolve topic ref %r" % topic_ref)
+        return MergeGateVerdict(
+            False, base_sha, "", error="cannot resolve topic ref %r" % topic_ref
+        )
     if base_sha == topic_sha:
         # Nothing to integrate; trivially clean.
         tree_sha = _rev_parse_object(run, "%s^{tree}" % base_sha)
@@ -171,9 +173,7 @@ def validate_projected_merge(
                 topic_sha,
                 error="cannot resolve projected tree for %s" % base_sha,
             )
-        return MergeGateVerdict(
-            True, base_sha, topic_sha, merged_tree_sha=tree_sha
-        )
+        return MergeGateVerdict(True, base_sha, topic_sha, merged_tree_sha=tree_sha)
 
     proc = run(["merge-tree", "--write-tree", "--name-only", base_sha, topic_sha])
     if proc.returncode == 0:
@@ -185,9 +185,7 @@ def validate_projected_merge(
                 topic_sha,
                 error="git merge-tree returned no projected tree",
             )
-        return MergeGateVerdict(
-            True, base_sha, topic_sha, merged_tree_sha=lines[0]
-        )
+        return MergeGateVerdict(True, base_sha, topic_sha, merged_tree_sha=lines[0])
     if proc.returncode == 1:
         # Conflicts. Output is: <merged-tree-oid>\n\n<conflicted path>\n...
         lines = [line for line in proc.stdout.splitlines() if line.strip()]
@@ -202,7 +200,6 @@ def validate_projected_merge(
         error="git merge-tree failed (rc=%d): %s"
         % (proc.returncode, (proc.stderr or proc.stdout).strip()[:300]),
     )
-
 
 
 def _failure_excerpt(exc: BaseException, *, head: int = 220, tail: int = 320) -> str:
@@ -299,12 +296,12 @@ def validate_projected_merge_contract(
                     % ((clone.stderr or clone.stdout) or "non-zero exit").strip()[:500],
                 )
             run = _default_git_runner(str(checkout))
-            base_contains_topic = run(
-                ["merge-base", "--is-ancestor", gate.topic_sha, gate.base_sha]
-            ).returncode == 0
-            topic_contains_base = run(
-                ["merge-base", "--is-ancestor", gate.base_sha, gate.topic_sha]
-            ).returncode == 0
+            base_contains_topic = (
+                run(["merge-base", "--is-ancestor", gate.topic_sha, gate.base_sha]).returncode == 0
+            )
+            topic_contains_base = (
+                run(["merge-base", "--is-ancestor", gate.base_sha, gate.topic_sha]).returncode == 0
+            )
             if base_contains_topic:
                 projected_sha = gate.base_sha
             elif topic_contains_base:
@@ -341,8 +338,7 @@ def validate_projected_merge_contract(
                     projected_sha=projected_sha,
                     error="could not check out projected merge: %s"
                     % (
-                        (checkout_result.stderr or checkout_result.stdout)
-                        or "non-zero exit"
+                        (checkout_result.stderr or checkout_result.stdout) or "non-zero exit"
                     ).strip()[:500],
                 )
             actual_tree = _rev_parse_object(run, "HEAD^{tree}")
@@ -352,9 +348,7 @@ def validate_projected_merge_contract(
                     projected_sha=projected_sha,
                     error="projected checkout tree does not match merge-tree result",
                 )
-            returncode, output = test_runner(
-                str(checkout), branch, projected_sha, command
-            )
+            returncode, output = test_runner(str(checkout), branch, projected_sha, command)
             rc = int(returncode)
             tail = str(output or "")
             if rc != 0:
@@ -372,9 +366,7 @@ def validate_projected_merge_contract(
                 output_tail=tail,
             )
     except Exception as exc:  # noqa: BLE001 - publication gate must fail closed.
-        return verdict(
-            False, error="projected contract gate failed: %s" % _failure_excerpt(exc)
-        )
+        return verdict(False, error="projected contract gate failed: %s" % _failure_excerpt(exc))
 
 
 __all__ = [

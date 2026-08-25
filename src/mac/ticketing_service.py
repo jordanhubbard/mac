@@ -51,8 +51,7 @@ class TicketingCoordinator:
                     "prompt": (
                         "Repo %s has a '%s' ticket source but no local .tickets "
                         "compatibility mirror. Import it one-way into the MAC "
-                        "task ledger?"
-                        % (repo_path, detection.conversion_from)
+                        "task ledger?" % (repo_path, detection.conversion_from)
                     ),
                 },
             )

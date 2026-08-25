@@ -167,9 +167,7 @@ def test_launchd_stop_is_bounded_and_fails_closed(
     calls = tmp_path / mode / "calls"
     assert calls.exists() is bootout_expected
     if bootout_expected:
-        assert calls.read_text(encoding="utf-8") == (
-            "bootout gui/501/com.mac.certifier\n"
-        )
+        assert calls.read_text(encoding="utf-8") == ("bootout gui/501/com.mac.certifier\n")
     if mode == "inspect-error":
         assert "exit 113" in result.stderr
         assert "synthetic launchctl transport failure" in result.stderr
@@ -184,23 +182,15 @@ def test_install_and_remove_share_proved_launchd_retirement() -> None:
     assert "start_new_session=True" in lifecycle
     assert "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS" in lifecycle
 
-    remove = script.split('if [ "$REMOVE" = "1" ]; then', 1)[1].split(
-        '[[ "$TARGET" =~', 1
-    )[0]
-    stop = remove.index(
-        'mac_launchd_stop_job_if_present "$domain/$LABEL" "$LABEL"'
-    )
+    remove = script.split('if [ "$REMOVE" = "1" ]; then', 1)[1].split('[[ "$TARGET" =~', 1)[0]
+    stop = remove.index('mac_launchd_stop_job_if_present "$domain/$LABEL" "$LABEL"')
     unlink = remove.index('rm -f "$plist"')
     reported = remove.index('echo "removed $LABEL"')
     assert stop < unlink < reported
 
     install = script.split('chmod 600 "$tmp_plist"', 1)[1]
-    stop = install.index(
-        'mac_launchd_stop_job_if_present "$domain/$LABEL" "$LABEL"'
-    )
-    replace = install.index(
-        'mac_launchd_transaction_replace "$tmp_plist" "$plist"'
-    )
+    stop = install.index('mac_launchd_stop_job_if_present "$domain/$LABEL" "$LABEL"')
+    replace = install.index('mac_launchd_transaction_replace "$tmp_plist" "$plist"')
     bootstrap = install.index(
         'mac_launchd_bootstrap_job "$domain" "$plist" "$domain/$LABEL" "$LABEL"'
     )
@@ -269,14 +259,14 @@ exit 70
 
 
 def test_linux_gateway_firewall_allows_only_exact_openshell_bridge() -> None:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "chain=MAC_OPENSH_GW" in bootstrap
-    assert '-i lo -j RETURN' in bootstrap
+    assert "-i lo -j RETURN" in bootstrap
     assert '-i "$bridge_iface" -j RETURN' in bootstrap
-    assert '-i docker0 -j RETURN' not in bootstrap
+    assert "-i docker0 -j RETURN" not in bootstrap
     assert "-i 'br+' -j RETURN" not in bootstrap
     assert 'network_name="openshell-docker"' in bootstrap
     assert 'bridge_iface="br-${network_id:0:12}"' in bootstrap

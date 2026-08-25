@@ -6,6 +6,7 @@ problems stayed benched beside 80 open tasks — and fixing two of three changed
 nothing observable, which is the worst outcome available, because the work
 looked done.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -33,6 +34,7 @@ def _self_test(status, agent_id="agent_x", blocking=None):
 
 # --- the rule ---------------------------------------------------------------
 
+
 @pytest.mark.parametrize("status", ["passed", "degraded"])
 def test_a_clearing_self_test_releases_a_degraded_agent(status):
     """`passed` is the case that was rejected. It is strictly safer than
@@ -47,9 +49,7 @@ def test_healthy_needs_no_self_test():
     assert advisory_health_dispatch_ready("healthy", {}, agent_id="agent_x")
 
 
-@pytest.mark.parametrize(
-    "health", ["failed", "unknown", "", None, "DEGRADED_LOOKING_BUT_NOT"]
-)
+@pytest.mark.parametrize("health", ["failed", "unknown", "", None, "DEGRADED_LOOKING_BUT_NOT"])
 def test_any_other_health_value_is_refused(health):
     assert not advisory_health_dispatch_ready(
         health, {"startup_self_test": _self_test("passed")}, agent_id="agent_x"
@@ -79,12 +79,11 @@ def test_a_stale_schema_does_not_clear():
 
 
 def test_a_failed_self_test_does_not_clear():
-    assert not startup_self_test_clears_dispatch(
-        _self_test("failed"), agent_id="agent_x"
-    )
+    assert not startup_self_test_clears_dispatch(_self_test("failed"), agent_id="agent_x")
 
 
 # --- there is only one of it -------------------------------------------------
+
 
 def test_neither_module_reimplements_the_rule():
     """The drift guard.
@@ -108,8 +107,7 @@ def test_neither_module_reimplements_the_rule():
             "mac.agent_health.advisory_health_dispatch_ready instead" % module.__name__
         )
         assert '"mac.agent_startup_self_test.v1"' not in src, (
-            "%s hardcodes the self-test schema; import SELF_TEST_SCHEMA"
-            % module.__name__
+            "%s hardcodes the self-test schema; import SELF_TEST_SCHEMA" % module.__name__
         )
 
 
@@ -139,15 +137,12 @@ def test_no_shell_or_deploy_script_reimplements_the_rule():
         if '"schema") == "mac.agent_startup_self_test.v1"' in text:
             offenders.append("%s compares the self-test schema inline" % path.name)
     assert not offenders, (
-        "call mac.agent_health.advisory_health_dispatch_ready instead: %s"
-        % "; ".join(offenders)
+        "call mac.agent_health.advisory_health_dispatch_ready instead: %s" % "; ".join(offenders)
     )
 
 
 def test_the_deploy_script_delegates_rather_than_reimplementing():
-    deploy = (
-        Path(__file__).resolve().parents[1] / "deploy" / "deploy-mac-fleet.sh"
-    )
+    deploy = Path(__file__).resolve().parents[1] / "deploy" / "deploy-mac-fleet.sh"
     text = deploy.read_text(encoding="utf-8", errors="replace")
     assert "advisory_health_dispatch_ready" in text, (
         "release_health_ready must delegate to the shared predicate"
@@ -177,6 +172,4 @@ def test_the_allocator_and_the_control_plane_agree_on_the_same_agent():
     )
 
     assert snapshot.healthy is True
-    assert advisory_health_dispatch_ready(
-        "degraded", resources, agent_id="agent_n"
-    ) is True
+    assert advisory_health_dispatch_ready("degraded", resources, agent_id="agent_n") is True

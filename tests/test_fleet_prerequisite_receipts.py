@@ -63,9 +63,7 @@ def ready_receipt(participant: str, *, observed: float = 1000.0) -> dict:
             {
                 "name": "ready",
                 "kind": "path",
-                "evidence_sha256": hashlib.sha256(
-                    (participant + " evidence").encode()
-                ).hexdigest(),
+                "evidence_sha256": hashlib.sha256((participant + " evidence").encode()).hexdigest(),
             }
         ],
     }
@@ -84,8 +82,7 @@ def expectations() -> dict:
         "agent_id": AGENT,
         "node_identity_sha256": IDENTITY,
         "contracts": {
-            receipt["participant"]: receipt["contract_sha256"]
-            for receipt in complete_receipts()
+            receipt["participant"]: receipt["contract_sha256"] for receipt in complete_receipts()
         },
     }
 
@@ -108,9 +105,7 @@ def test_path_verifier_seals_only_secret_free_digests(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("change", ["mode", "digest", "symlink"])
-def test_path_verifier_rejects_drift_and_indirection(
-    tmp_path: Path, change: str
-) -> None:
+def test_path_verifier_rejects_drift_and_indirection(tmp_path: Path, change: str) -> None:
     tool = tmp_path / "tool"
     tool.write_text("content", encoding="utf-8")
     tool.chmod(0o700)
@@ -155,9 +150,7 @@ def test_path_verifier_preserves_setgid_directory_mode(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("file_type", ["file", "executable"])
-def test_path_verifier_rejects_privileged_regular_file_mode(
-    tmp_path: Path, file_type: str
-) -> None:
+def test_path_verifier_rejects_privileged_regular_file_mode(tmp_path: Path, file_type: str) -> None:
     tool = tmp_path / "tool"
     tool.write_text("content", encoding="utf-8")
     contract = path_contract(tool)
@@ -299,9 +292,7 @@ def test_tcp_adapter_accepts_explicit_managed_mesh_scope(host: str) -> None:
         ("127.0.0.1", "internet"),
     ],
 )
-def test_tcp_adapter_rejects_hosts_outside_declared_scope(
-    host: str, scope: str
-) -> None:
+def test_tcp_adapter_rejects_hosts_outside_declared_scope(host: str, scope: str) -> None:
     contract = {
         "schema": receipts.CONTRACT_SCHEMA,
         "participant": "qdrant",

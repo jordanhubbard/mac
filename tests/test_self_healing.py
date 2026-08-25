@@ -108,13 +108,9 @@ def test_starvation_finding_for_old_open_task(cp, monkeypatch):
     assert key in findings
     assert task.id in findings[key]["detail"]["sample_task_ids"]
     # Deliberately staged (no_dispatch) tasks are not starvation.
-    staged = cp.create_task(
-        "staged work", project="staging", metadata={"no_dispatch": True}
-    )
+    staged = cp.create_task("staged work", project="staging", metadata={"no_dispatch": True})
     report2 = _sentinel(cp).run_once()
-    assert "task_starvation:staging" not in [
-        f["fingerprint"] for f in report2["findings"]
-    ]
+    assert "task_starvation:staging" not in [f["fingerprint"] for f in report2["findings"]]
 
 
 def test_daemon_heartbeat_finding_only_for_enabled_silent_daemons(cp):
@@ -124,9 +120,7 @@ def test_daemon_heartbeat_finding_only_for_enabled_silent_daemons(cp):
     # A fresh heartbeat clears it.
     cp.record_log("nap.tick.run", detail={"status": "ok"})
     report2 = _sentinel(cp, environ=env).run_once()
-    assert "daemon_silent:nap.tick.run" not in [
-        f["fingerprint"] for f in report2["findings"]
-    ]
+    assert "daemon_silent:nap.tick.run" not in [f["fingerprint"] for f in report2["findings"]]
     # Disabled daemons are never findings.
     report3 = _sentinel(cp, environ={}).run_once()
     assert not [f for f in report3["findings"] if f["kind"] == "daemon_silent"]
@@ -136,14 +130,10 @@ def test_read_path_silence_pins_task_to_openclaw_agent(cp):
     agent = _register_agent(
         cp,
         name="gatewayed",
-        resources={
-            "chat_gateway": {"implementation": "openclaw", "verified": True}
-        },
+        resources={"chat_gateway": {"implementation": "openclaw", "verified": True}},
     )
     report = _sentinel(cp).run_once()
-    assert "read_path_silence:continuity" in [
-        f["fingerprint"] for f in report["findings"]
-    ]
+    assert "read_path_silence:continuity" in [f["fingerprint"] for f in report["findings"]]
     filed = _self_heal_tasks(cp, "read_path_silence:continuity")
     assert len(filed) == 1
     assert filed[0].metadata.get("target_agent_id") == agent.id
@@ -156,9 +146,7 @@ def test_read_path_silence_pins_task_to_openclaw_agent(cp):
     )
     # Complete the filed task so only the invariant (not dedupe) decides.
     report2 = _sentinel(cp).run_once()
-    assert "read_path_silence:continuity" not in [
-        f["fingerprint"] for f in report2["findings"]
-    ]
+    assert "read_path_silence:continuity" not in [f["fingerprint"] for f in report2["findings"]]
 
 
 def test_stuck_quarantine_finding_ignores_operator_holds(cp, monkeypatch):
@@ -222,10 +210,7 @@ def test_exhausted_attempts_escalate_to_operator_notification(cp):
     assert report["escalated_count"] == 1
     # No second task was filed once autonomy was exhausted.
     assert len(_self_heal_tasks(cp, "nap_liveness")) == 1
-    notes = [
-        n for n in cp.list_notifications()
-        if n.event_type == "self_heal.escalated"
-    ]
+    notes = [n for n in cp.list_notifications() if n.event_type == "self_heal.escalated"]
     assert len(notes) == 1
 
 
@@ -281,14 +266,16 @@ def test_pin_divergence_flags_heartbeating_agent_with_stale_trail(cp, monkeypatc
     from datetime import timedelta
 
     now = sh._utcnow()
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": fresh.id,
-             "created_at": (now - timedelta(hours=4)).isoformat()},
-            {"source": laggard.id,
-             "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": fresh.id, "created_at": (now - timedelta(hours=4)).isoformat()},
+                {"source": laggard.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     fingerprints = [f["fingerprint"] for f in report["findings"]]
     assert ("fleet_pin_divergence:%s" % laggard.id) in fingerprints
@@ -306,15 +293,18 @@ def test_pin_divergence_waits_out_a_recent_sweep(cp, monkeypatch):
     now = sh._utcnow()
     # b just applied a sweep minutes ago; a hasn't consumed it yet — that's
     # in-flight propagation, not divergence.
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": b.id, "created_at": (now - timedelta(minutes=5)).isoformat()},
-            {"source": a.id, "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": b.id, "created_at": (now - timedelta(minutes=5)).isoformat()},
+                {"source": a.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     assert not [f for f in report["findings"] if f["kind"] == "fleet_pin_divergence"]
-
 
 
 def test_pin_divergence_flags_agent_with_no_trail_at_all(cp, monkeypatch):
@@ -329,12 +319,15 @@ def test_pin_divergence_flags_agent_with_no_trail_at_all(cp, monkeypatch):
 
     now = sh._utcnow()
     # Only 'known' has events; 'ghost' never appears in any status stream.
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": known.id,
-             "created_at": (now - timedelta(days=14)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": known.id, "created_at": (now - timedelta(days=14)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     findings = {f["fingerprint"]: f for f in report["findings"]}
     fp = "fleet_pin_divergence:%s" % ghost.id
@@ -356,12 +349,15 @@ def test_pin_divergence_skips_held_agents(cp, monkeypatch):
     cp.heartbeat_agent(anchor.id)
 
     now = sh._utcnow()
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": anchor.id,
-             "created_at": (now - timedelta(days=14)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": anchor.id, "created_at": (now - timedelta(days=14)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     fingerprints = [f["fingerprint"] for f in report["findings"]]
     assert ("fleet_pin_divergence:%s" % held.id) not in fingerprints
@@ -379,16 +375,18 @@ def test_pin_divergence_uses_max_across_all_statuses(cp, monkeypatch):
     # 'updated' event is three weeks stale, but 'skipped' event is recent
     # (yesterday). The merged max puts agent 'a' within the divergence
     # window, so it should NOT be flagged.
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": a.id,
-             "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-        "worker.agentbus.repo_update.skipped": [
-            {"source": a.id,
-             "created_at": (now - timedelta(hours=23)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": a.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+            "worker.agentbus.repo_update.skipped": [
+                {"source": a.id, "created_at": (now - timedelta(hours=23)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     assert not [f for f in report["findings"] if f["kind"] == "fleet_pin_divergence"]
 
@@ -405,14 +403,16 @@ def test_pin_divergence_files_one_deduped_task_per_agent(cp, monkeypatch):
     cp.heartbeat_agent(anchor.id)
 
     now = sh._utcnow()
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": anchor.id,
-             "created_at": (now - timedelta(days=14)).isoformat()},
-            {"source": laggard.id,
-             "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": anchor.id, "created_at": (now - timedelta(days=14)).isoformat()},
+                {"source": laggard.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+        },
+    )
 
     sentinel = _sentinel(cp)
     sentinel.run_once()
@@ -423,7 +423,6 @@ def test_pin_divergence_files_one_deduped_task_per_agent(cp, monkeypatch):
     sentinel.run_once()
     filed_after_second = _self_heal_tasks(cp, fp)
     assert len(filed_after_second) == 1
-
 
 
 def test_pin_divergence_flags_agent_with_no_update_trail(cp, monkeypatch):
@@ -439,12 +438,15 @@ def test_pin_divergence_flags_agent_with_no_update_trail(cp, monkeypatch):
 
     now = sh._utcnow()
     # Only 'known' has any repo-update events; 'absent' never appears.
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": known.id,
-             "created_at": (now - timedelta(days=10)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": known.id, "created_at": (now - timedelta(days=10)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     findings = {f["fingerprint"]: f for f in report["findings"]}
     fp = "fleet_pin_divergence:%s" % absent.id
@@ -467,14 +469,16 @@ def test_pin_divergence_skips_held_agent(cp, monkeypatch):
     cp.heartbeat_agent(anchor.id)
 
     now = sh._utcnow()
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": anchor.id,
-             "created_at": (now - timedelta(days=14)).isoformat()},
-            {"source": held.id,
-             "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": anchor.id, "created_at": (now - timedelta(days=14)).isoformat()},
+                {"source": held.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     fingerprints = [f["fingerprint"] for f in report["findings"]]
     assert ("fleet_pin_divergence:%s" % held.id) not in fingerprints
@@ -499,14 +503,16 @@ def test_pin_divergence_ignores_silent_agent(cp, monkeypatch):
     monkeypatch.setattr(sh, "_utcnow", lambda: real_now + timedelta(hours=2))
     now = real_now + timedelta(hours=2)
 
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": anchor.id,
-             "created_at": (now - timedelta(days=14)).isoformat()},
-            {"source": silent.id,
-             "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": anchor.id, "created_at": (now - timedelta(days=14)).isoformat()},
+                {"source": silent.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+        },
+    )
     report = _sentinel(cp).run_once()
     fingerprints = [f["fingerprint"] for f in report["findings"]]
     assert ("fleet_pin_divergence:%s" % silent.id) not in fingerprints
@@ -524,14 +530,16 @@ def test_pin_divergence_dedupes_self_heal_task(cp, monkeypatch):
     cp.heartbeat_agent(anchor.id)
 
     now = sh._utcnow()
-    _stub_events(monkeypatch, cp, {
-        "worker.agentbus.repo_update.updated": [
-            {"source": anchor.id,
-             "created_at": (now - timedelta(days=14)).isoformat()},
-            {"source": laggard.id,
-             "created_at": (now - timedelta(days=21)).isoformat()},
-        ],
-    })
+    _stub_events(
+        monkeypatch,
+        cp,
+        {
+            "worker.agentbus.repo_update.updated": [
+                {"source": anchor.id, "created_at": (now - timedelta(days=14)).isoformat()},
+                {"source": laggard.id, "created_at": (now - timedelta(days=21)).isoformat()},
+            ],
+        },
+    )
 
     sentinel = _sentinel(cp)
     fp = "fleet_pin_divergence:%s" % laggard.id
@@ -547,6 +555,7 @@ def test_pin_divergence_dedupes_self_heal_task(cp, monkeypatch):
     sentinel.run_once()
     after_third = _self_heal_tasks(cp, fp)
     assert len(after_third) == 1
+
 
 # ── agent unhealthy ──────────────────────────────────────────────────────────
 
@@ -592,10 +601,7 @@ def test_standing_exhausted_finding_escalates_once_not_per_cycle(cp):
     assert [f["action"] for f in second["findings"] if f["kind"] == "nap_liveness"] == [
         "escalated_previously"
     ]
-    notes = [
-        n for n in cp.list_notifications()
-        if n.event_type == "self_heal.escalated"
-    ]
+    notes = [n for n in cp.list_notifications() if n.event_type == "self_heal.escalated"]
     assert len(notes) == 1
 
 

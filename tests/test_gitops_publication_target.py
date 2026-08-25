@@ -68,12 +68,12 @@ def test_guarded_push_uses_checked_canonical_target_and_cleans_ref(tmp_path: Pat
     assert result.files_changed == ("feature.py",)
     assert target.lock_path.name == "mac_prepare_worktree.lock"
     assert target.task_head_sha == result.head_sha
-    assert _git(
-        tmp_path, "ls-remote", str(canonical), "refs/heads/task/change"
-    ).stdout.strip().startswith(result.head_sha)
-    assert _git(
-        tmp_path, "ls-remote", str(origin), "refs/heads/task/change"
-    ).stdout.strip() == ""
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change")
+        .stdout.strip()
+        .startswith(result.head_sha)
+    )
+    assert _git(tmp_path, "ls-remote", str(origin), "refs/heads/task/change").stdout.strip() == ""
     assert _git(work, "for-each-ref", "refs/mac/publication").stdout.strip() == ""
 
 
@@ -102,9 +102,9 @@ def test_guarded_push_blocks_head_that_omits_new_canonical_tip(tmp_path: Path) -
     assert result.ok is False
     assert result.remote_verified is False
     assert "not an ancestor" in result.error
-    assert _git(
-        tmp_path, "ls-remote", str(canonical), "refs/heads/task/change"
-    ).stdout.strip() == ""
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change").stdout.strip() == ""
+    )
     assert _git(work, "for-each-ref", "refs/mac/publication").stdout.strip() == ""
 
 
@@ -122,17 +122,13 @@ def test_freshness_check_requires_prepared_base_context(tmp_path: Path) -> None:
         )
 
 
-def test_temporary_ref_cleanup_failure_blocks_push(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_temporary_ref_cleanup_failure_blocks_push(tmp_path: Path, monkeypatch) -> None:
     _origin, canonical, work, base = _fixture(tmp_path)
     real_run_git = gitops._run_git
 
     def fail_cleanup(worktree: Path, args: list[str]):
         if args[:2] == ["update-ref", "-d"]:
-            return subprocess.CompletedProcess(
-                ["git", *args], 1, "", "simulated cleanup failure"
-            )
+            return subprocess.CompletedProcess(["git", *args], 1, "", "simulated cleanup failure")
         return real_run_git(worktree, args)
 
     monkeypatch.setattr(gitops, "_run_git", fail_cleanup)
@@ -149,9 +145,9 @@ def test_temporary_ref_cleanup_failure_blocks_push(
 
     assert result.ok is False
     assert "could not clean isolated canonical fetch ref" in result.error
-    assert _git(
-        tmp_path, "ls-remote", str(canonical), "refs/heads/task/change"
-    ).stdout.strip() == ""
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change").stdout.strip() == ""
+    )
 
 
 def test_publication_lock_failure_blocks_push(tmp_path: Path, monkeypatch) -> None:
@@ -175,14 +171,12 @@ def test_publication_lock_failure_blocks_push(tmp_path: Path, monkeypatch) -> No
 
     assert result.ok is False
     assert "could not acquire publication lock" in result.error
-    assert _git(
-        tmp_path, "ls-remote", str(canonical), "refs/heads/task/change"
-    ).stdout.strip() == ""
+    assert (
+        _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/change").stdout.strip() == ""
+    )
 
 
-def test_target_is_immutable_unique_and_secret_free(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_target_is_immutable_unique_and_secret_free(tmp_path: Path, monkeypatch) -> None:
     _origin, _canonical, work, base = _fixture(tmp_path)
     monkeypatch.setenv("GH_TOKEN", "publication-secret")
     first = resolve_canonical_publication_target(

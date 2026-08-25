@@ -167,9 +167,7 @@ class DirectiveService:
         self._require_enabled()
         target_type_value, target_id_value = self._validate_target(target_type, target_id)
         key_value = self._required_path(key, "directive binding key")
-        binding_words = set(
-            key_value.lower().replace("-", "_").replace(".", "_").split("_")
-        )
+        binding_words = set(key_value.lower().replace("-", "_").replace(".", "_").split("_"))
         if binding_words & {
             "token",
             "secret",
@@ -233,7 +231,9 @@ class DirectiveService:
                 ),
             )
         return self._binding_dict(
-            self.store.query_one("SELECT * FROM fleet_directive_bindings WHERE id = ?", (binding_id,))
+            self.store.query_one(
+                "SELECT * FROM fleet_directive_bindings WHERE id = ?", (binding_id,)
+            )
         )
 
     def list_bindings(
@@ -295,10 +295,14 @@ class DirectiveService:
                 expires,
             ),
         )
-        return self._waiver_dict(self.store.query_one("SELECT * FROM fleet_directive_waivers WHERE id = ?", (waiver_id,)))
+        return self._waiver_dict(
+            self.store.query_one("SELECT * FROM fleet_directive_waivers WHERE id = ?", (waiver_id,))
+        )
 
     def revoke_waiver(self, waiver_id: str, *, actor: str, reason: str) -> JsonDict:
-        row = self.store.query_one("SELECT * FROM fleet_directive_waivers WHERE id = ?", (waiver_id,))
+        row = self.store.query_one(
+            "SELECT * FROM fleet_directive_waivers WHERE id = ?", (waiver_id,)
+        )
         if row is None:
             raise NotFoundError("directive waiver not found: %s" % waiver_id)
         if row["revoked_at"]:
@@ -313,7 +317,9 @@ class DirectiveService:
                 waiver_id,
             ),
         )
-        return self._waiver_dict(self.store.query_one("SELECT * FROM fleet_directive_waivers WHERE id = ?", (waiver_id,)))
+        return self._waiver_dict(
+            self.store.query_one("SELECT * FROM fleet_directive_waivers WHERE id = ?", (waiver_id,))
+        )
 
     def list_waivers(self, directive_id_or_name: Optional[str] = None) -> List[JsonDict]:
         params: Tuple[Any, ...] = ()
@@ -360,7 +366,9 @@ class DirectiveService:
                 if overlap != "disjoint":
                     blockers.append(
                         {
-                            "code": "policy_conflict" if overlap == "overlap" else "policy_overlap_unproven",
+                            "code": "policy_conflict"
+                            if overlap == "overlap"
+                            else "policy_overlap_unproven",
                             "key": key,
                             "other_directive_id": active["directive_id"],
                             "other_version": active["version"],
@@ -394,9 +402,7 @@ class DirectiveService:
         for repository in repositories:
             facts = self._facts_for_repository(repository)
             bindings = self._binding_layers(repository)
-            waived = self._matching_waiver(
-                str(directive["id"]), version_value, repository
-            )
+            waived = self._matching_waiver(str(directive["id"]), version_value, repository)
             try:
                 evaluation = evaluate_directive(document, facts=facts, bindings=bindings)
                 entry = {
@@ -550,7 +556,9 @@ class DirectiveService:
             ("approved", actor, now, directive["id"], int(version)),
         )
         return self._approval_dict(
-            self.store.query_one("SELECT * FROM fleet_directive_approvals WHERE id = ?", (approval_id,))
+            self.store.query_one(
+                "SELECT * FROM fleet_directive_approvals WHERE id = ?", (approval_id,)
+            )
         )
 
     def activate(
@@ -584,7 +592,9 @@ class DirectiveService:
             fresh["context_digest"] != approval["context_digest"]
             or fresh["policy_digest"] != approval["policy_digest"]
         ):
-            raise ValidationError("directive context changed after approval; re-approve the fresh check")
+            raise ValidationError(
+                "directive context changed after approval; re-approve the fresh check"
+            )
         agent_rows = self.store.query_all(
             "SELECT id, resources FROM agents WHERE deleted_at IS NULL AND status != ? ORDER BY id",
             ("offline",),
@@ -592,7 +602,9 @@ class DirectiveService:
         cohort = [
             str(row["id"])
             for row in agent_rows
-            if not bool(ensure_json_object(json_loads(row["resources"], {})).get("operator_persona"))
+            if not bool(
+                ensure_json_object(json_loads(row["resources"], {})).get("operator_persona")
+            )
         ]
         epoch_row = self.store.query_one(
             "SELECT COALESCE(MAX(epoch), 0) AS epoch FROM fleet_directive_activations"
@@ -640,7 +652,9 @@ class DirectiveService:
                 (state, actor, now, directive["id"]),
             )
         activation = self._activation_dict(
-            self.store.query_one("SELECT * FROM fleet_directive_activations WHERE id = ?", (activation_id,))
+            self.store.query_one(
+                "SELECT * FROM fleet_directive_activations WHERE id = ?", (activation_id,)
+            )
         )
         notice = {
             "schema": DIRECTIVE_ACTIVATION_SCHEMA,
@@ -661,7 +675,9 @@ class DirectiveService:
         if not cohort:
             self._finalize_activation(activation_id)
             activation = self._activation_dict(
-                self.store.query_one("SELECT * FROM fleet_directive_activations WHERE id = ?", (activation_id,))
+                self.store.query_one(
+                    "SELECT * FROM fleet_directive_activations WHERE id = ?", (activation_id,)
+                )
             )
         return activation
 
@@ -676,9 +692,7 @@ class DirectiveService:
             raise ValidationError("directive activation is not acknowledgeable")
         if str(activation_row["directive_digest"]) != str(digest):
             raise ValidationError("directive acknowledgement digest mismatch")
-        agent = self.store.query_one(
-            "SELECT id, deleted_at FROM agents WHERE id = ?", (agent_id,)
-        )
+        agent = self.store.query_one("SELECT id, deleted_at FROM agents WHERE id = ?", (agent_id,))
         if agent is None or agent["deleted_at"]:
             raise ValidationError("directive acknowledgement requires a live agent")
         existing = self.store.query_one(
@@ -702,7 +716,9 @@ class DirectiveService:
             if cohort <= acknowledged:
                 finalized = self._finalize_activation(activation_id)
         activation = self._activation_dict(
-            self.store.query_one("SELECT * FROM fleet_directive_activations WHERE id = ?", (activation_id,))
+            self.store.query_one(
+                "SELECT * FROM fleet_directive_activations WHERE id = ?", (activation_id,)
+            )
         )
         activation["acknowledged_by"] = agent_id
         activation["finalized"] = finalized
@@ -735,7 +751,9 @@ class DirectiveService:
                 (actor_value, now, directive["id"]),
             )
         result = self._activation_dict(
-            self.store.query_one("SELECT * FROM fleet_directive_activations WHERE id = ?", (activation["id"],))
+            self.store.query_one(
+                "SELECT * FROM fleet_directive_activations WHERE id = ?", (activation["id"],)
+            )
         )
         return result
 
@@ -759,8 +777,16 @@ class DirectiveService:
                 "pending_activations": [],
             }
         repository = self._resolve_repository(repository_id=repository_id, project=project)
-        facts = self._facts_for_repository(repository) if repository is not None else self._fleet_facts(agent_id)
-        bindings = self._binding_layers(repository) if repository is not None else self._fleet_binding_layers()
+        facts = (
+            self._facts_for_repository(repository)
+            if repository is not None
+            else self._fleet_facts(agent_id)
+        )
+        bindings = (
+            self._binding_layers(repository)
+            if repository is not None
+            else self._fleet_binding_layers()
+        )
         policy: JsonDict = {}
         applied: List[JsonDict] = []
         max_epoch = 0
@@ -776,7 +802,9 @@ class DirectiveService:
             "WHERE d.id = ? AND d.state = 'active'",
             (SYSTEM_DIRECTIVE_ID,),
         )
-        sources: List[Mapping[str, Any]] = ([system_row] if system_row is not None else []) + list(rows)
+        sources: List[Mapping[str, Any]] = ([system_row] if system_row is not None else []) + list(
+            rows
+        )
         for row in sources:
             document = parse_directive_document(json_loads(row["document"], {}))
             evaluation = evaluate_directive(document, facts=facts, bindings=bindings)
@@ -792,7 +820,14 @@ class DirectiveService:
                 if key in policy and policy[key] != value:
                     raise ValidationError("active directives conflict on policy key %s" % key)
                 policy[key] = value
-            max_epoch = max(max_epoch, int(row.get("epoch", 0) if isinstance(row, dict) else (row["epoch"] if "epoch" in row.keys() else 0)))
+            max_epoch = max(
+                max_epoch,
+                int(
+                    row.get("epoch", 0)
+                    if isinstance(row, dict)
+                    else (row["epoch"] if "epoch" in row.keys() else 0)
+                ),
+            )
             applied.append(
                 {
                     "directive_id": row["directive_id"],
@@ -1032,7 +1067,13 @@ class DirectiveService:
             return
         try:
             workflow = self.workflow_resolver(str(macro["workflow"]), int(macro["version"]))
-            if not bool(getattr(workflow, "enabled", workflow.get("enabled", False) if isinstance(workflow, Mapping) else False)):
+            if not bool(
+                getattr(
+                    workflow,
+                    "enabled",
+                    workflow.get("enabled", False) if isinstance(workflow, Mapping) else False,
+                )
+            ):
                 raise ValidationError("workflow is disabled")
         except Exception as exc:
             blockers.append(
@@ -1059,9 +1100,7 @@ class DirectiveService:
             evaluation = evaluate_directive(active_document, facts=facts, bindings=bindings)
             if not evaluation.matched or evaluation.blocked or evaluation.macro is None:
                 continue
-            reasons = effect_conflicts(
-                left, self._effects(evaluation.macro.get("effects") or {})
-            )
+            reasons = effect_conflicts(left, self._effects(evaluation.macro.get("effects") or {}))
             if reasons:
                 blockers.append(
                     {
@@ -1075,16 +1114,24 @@ class DirectiveService:
     # Context helpers --------------------------------------------------
 
     def _facts_for_repository(self, repository: Mapping[str, Any]) -> JsonDict:
-        metadata = ensure_json_object(json_loads(repository["metadata"], {}) if isinstance(repository.get("metadata"), str) else repository.get("metadata"))
+        metadata = ensure_json_object(
+            json_loads(repository["metadata"], {})
+            if isinstance(repository.get("metadata"), str)
+            else repository.get("metadata")
+        )
         project_row = self.store.query_one(
             "SELECT * FROM projects WHERE name = ? OR id = ? ORDER BY name = ? DESC LIMIT 1",
             (repository["project"], repository["project"], repository["project"]),
         )
-        project_metadata = ensure_json_object(json_loads(project_row["metadata"], {}) if project_row is not None else {})
+        project_metadata = ensure_json_object(
+            json_loads(project_row["metadata"], {}) if project_row is not None else {}
+        )
         return {
             "fleet": {"name": "mac"},
             "project": {
-                "id": str(project_row["id"]) if project_row is not None else str(repository["project"]),
+                "id": str(project_row["id"])
+                if project_row is not None
+                else str(repository["project"]),
                 "name": str(repository["project"]),
                 "metadata": project_metadata,
             },
@@ -1249,7 +1296,9 @@ class DirectiveService:
                 (project,),
             )
             if len(rows) > 1:
-                raise ValidationError("project has multiple repositories; repository_id is required")
+                raise ValidationError(
+                    "project has multiple repositories; repository_id is required"
+                )
             return dict(rows[0]) if rows else None
         return None
 
@@ -1317,9 +1366,7 @@ class DirectiveService:
             "SELECT * FROM fleet_directives WHERE id = ?", (SYSTEM_DIRECTIVE_ID,)
         )
         if existing is not None:
-            current = self._version_row(
-                SYSTEM_DIRECTIVE_ID, int(existing["current_version"])
-            )
+            current = self._version_row(SYSTEM_DIRECTIVE_ID, int(existing["current_version"]))
             if str(current["digest"]) == document.digest:
                 return
             version = int(existing["current_version"]) + 1
@@ -1371,7 +1418,9 @@ class DirectiveService:
                 )
                 self._insert_version(conn, SYSTEM_DIRECTIVE_ID, 1, document, "system", now)
         except Exception:
-            if not self.store.query_one("SELECT id FROM fleet_directives WHERE id = ?", (SYSTEM_DIRECTIVE_ID,)):
+            if not self.store.query_one(
+                "SELECT id FROM fleet_directives WHERE id = ?", (SYSTEM_DIRECTIVE_ID,)
+            ):
                 raise
 
     def _directive_dict(self, row: Mapping[str, Any]) -> JsonDict:
@@ -1521,7 +1570,9 @@ class DirectiveService:
                 (target_id_value, target_id_value),
             )
         if row is None:
-            raise NotFoundError("directive %s target not found: %s" % (target_type_value, target_id_value))
+            raise NotFoundError(
+                "directive %s target not found: %s" % (target_type_value, target_id_value)
+            )
         return target_type_value, str(row["id"])
 
     @staticmethod
@@ -1537,8 +1588,7 @@ class DirectiveService:
     def _symbolic_effects(raw: Mapping[str, Any]) -> DeclaredEffects:
         def values(kind: str) -> Tuple[str, ...]:
             return tuple(
-                item if isinstance(item, str) else json_dumps(item)
-                for item in raw.get(kind, [])
+                item if isinstance(item, str) else json_dumps(item) for item in raw.get(kind, [])
             )
 
         return DeclaredEffects(
@@ -1564,7 +1614,10 @@ class DirectiveService:
     @staticmethod
     def _required_path(value: Any, label: str) -> str:
         text = DirectiveService._required_text(value, label)
-        if any(not segment or not segment.replace("_", "a").replace("-", "a").isalnum() for segment in text.split(".")):
+        if any(
+            not segment or not segment.replace("_", "a").replace("-", "a").isalnum()
+            for segment in text.split(".")
+        ):
             raise ValidationError("%s is invalid" % label)
         return text
 

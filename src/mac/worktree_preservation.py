@@ -286,9 +286,10 @@ def decide_source_worktree_preservation(
         reason = "resolved source changed but no linked worktrees to preserve"
         preserve = False
     else:
-        reason = (
-            "resolved source changed from %s to %s with %d linked worktree(s) to preserve"
-            % (prior, resolved_norm, len(linked))
+        reason = "resolved source changed from %s to %s with %d linked worktree(s) to preserve" % (
+            prior,
+            resolved_norm,
+            len(linked),
         )
         preserve = True
 

@@ -29,8 +29,14 @@ from mac.allocator import (
 )
 
 
-def _task(task_id="task_1", *, mode=EXECUTION_MODE_ASYNC, target=None, priority=1,
-          created_at="2026-08-08T00:00:00+00:00"):
+def _task(
+    task_id="task_1",
+    *,
+    mode=EXECUTION_MODE_ASYNC,
+    target=None,
+    priority=1,
+    created_at="2026-08-08T00:00:00+00:00",
+):
     return AllocationTask(
         id=task_id,
         priority=priority,
@@ -136,9 +142,7 @@ def test_a_running_barrier_stops_new_async_work_and_says_so():
     """Distinguished from draining on purpose: "waiting for this worker to
     finish" and "this worker is being updated right now" are different answers
     to an operator asking why nothing is dispatching."""
-    evaluation = evaluate_pair(
-        _task("task_2"), _agent(active=1, head="task_1", running=True)
-    )
+    evaluation = evaluate_pair(_task("task_2"), _agent(active=1, head="task_1", running=True))
 
     assert "%s:running" % AGENT_SYNC_BARRIER in evaluation.agent_rejections
 
@@ -156,8 +160,11 @@ def test_two_barriers_run_oldest_first_even_when_the_younger_outranks_it():
     """FIFO, not priority. A barrier that reorders under priority is not a
     barrier: the update that was supposed to run last would run first."""
     younger_but_urgent = _task(
-        "task_2", mode=EXECUTION_MODE_SYNC, target="agent_1",
-        priority=99, created_at="2026-08-08T12:00:00+00:00",
+        "task_2",
+        mode=EXECUTION_MODE_SYNC,
+        target="agent_1",
+        priority=99,
+        created_at="2026-08-08T12:00:00+00:00",
     )
     agent = _agent(active=0, head="task_1")  # task_1 is older
 
@@ -170,9 +177,7 @@ def test_two_barriers_run_oldest_first_even_when_the_younger_outranks_it():
 def test_the_oldest_barrier_is_the_one_that_runs():
     agent = _agent(active=0, head="task_1")
 
-    assert evaluate_pair(
-        _task("task_1", mode=EXECUTION_MODE_SYNC, target="agent_1"), agent
-    ).allowed
+    assert evaluate_pair(_task("task_1", mode=EXECUTION_MODE_SYNC, target="agent_1"), agent).allowed
 
 
 # --------------------------------------------------------------------------
@@ -189,9 +194,7 @@ def test_a_barrier_on_one_agent_does_not_quiesce_another():
 
 
 def test_a_barrier_targeted_elsewhere_is_not_placeable_here():
-    evaluation = evaluate_pair(
-        _task(mode=EXECUTION_MODE_SYNC, target="agent_2"), _agent("agent_1")
-    )
+    evaluation = evaluate_pair(_task(mode=EXECUTION_MODE_SYNC, target="agent_2"), _agent("agent_1"))
 
     assert not evaluation.allowed
 
@@ -202,7 +205,7 @@ def test_a_barrier_targeted_elsewhere_is_not_placeable_here():
 
 
 def test_an_untargeted_barrier_is_refused():
-    """"Wait for all tasks to complete" is ambiguous between one worker and the
+    """ "Wait for all tasks to complete" is ambiguous between one worker and the
     fleet, and the fleet reading is a global stop-the-world. Refuse rather than
     let whichever code path runs first decide."""
     evaluation = evaluate_task(_task(mode=EXECUTION_MODE_SYNC))

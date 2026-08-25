@@ -54,8 +54,7 @@ def test_the_timeout_can_cover_the_work_it_gates():
     source = inspect.getsource(services.ControlPlane._hub_verify_run_contract_test)
 
     assert '"2400"' in source, (
-        "MAC_HUB_VERIFY_TIMEOUT's default must cover a scoped gate plus its "
-        "setup; 1200s did not"
+        "MAC_HUB_VERIFY_TIMEOUT's default must cover a scoped gate plus its setup; 1200s did not"
     )
 
 

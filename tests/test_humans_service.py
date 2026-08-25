@@ -93,9 +93,7 @@ def test_delete_human_removes_from_list(cp: ControlPlane) -> None:
 
 
 @pytest.mark.parametrize("username", ["", "-invalid", "has spaces"])
-def test_empty_or_invalid_username_raises_validation_error(
-    cp: ControlPlane, username: str
-) -> None:
+def test_empty_or_invalid_username_raises_validation_error(cp: ControlPlane, username: str) -> None:
     with pytest.raises(ValidationError):
         cp.register_human(username)
 

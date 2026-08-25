@@ -45,7 +45,8 @@ def _usage_error(tmp_path, *args):
 def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
     rc, control = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "policy",
         "create",
         "baseline",
@@ -56,7 +57,8 @@ def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
     assert rc == 0
     rc, active = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "policy",
         "promote",
         control["id"],
@@ -68,7 +70,8 @@ def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
 
     rc, treatment = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "policy",
         "create",
         "plan-first",
@@ -79,7 +82,8 @@ def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
     assert rc == 0
     rc, experiment = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "experiment",
         "create",
         "reduce-rework",
@@ -99,7 +103,8 @@ def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
     assert rc == 0
     rc, running = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "experiment",
         "start",
         experiment["id"],
@@ -109,7 +114,8 @@ def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
 
     rc, analysis = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "experiment",
         "analyze",
         experiment["id"],
@@ -118,7 +124,8 @@ def test_optimizer_cli_policy_and_experiment_lifecycle(tmp_path):
     assert analysis["status"] == "collecting"
     rc, evidence = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "experiment",
         "evidence",
         experiment["id"],
@@ -153,7 +160,8 @@ def test_optimizer_cli_tick_rejects_unknown_options(tmp_path):
 def test_optimizer_cli_policy_reports_invalid_parameters(tmp_path):
     rc, payload, err = _run_raw(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "policy",
         "create",
         "bad-params",
@@ -170,7 +178,8 @@ def test_optimizer_cli_policy_reports_invalid_parameters(tmp_path):
 def test_optimizer_cli_experiment_requires_distinct_policies(tmp_path):
     rc, policy = _run(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "policy",
         "create",
         "baseline",
@@ -182,7 +191,8 @@ def test_optimizer_cli_experiment_requires_distinct_policies(tmp_path):
 
     rc, payload, err = _run_raw(
         tmp_path,
-        "admin", "optimizer",
+        "admin",
+        "optimizer",
         "experiment",
         "create",
         "bad-experiment",

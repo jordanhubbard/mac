@@ -95,9 +95,7 @@ def test_the_heartbeat_is_not_the_only_publisher():
     heartbeat that will. If the heartbeat hook is ever disabled -- it has its
     own switch, MAC_REVIEW_TICK_ON_HEARTBEAT -- publication must not stop with
     it."""
-    heartbeat = inspect.getsource(
-        services.ControlPlane._maybe_advance_reviews_on_heartbeat
-    )
+    heartbeat = inspect.getsource(services.ControlPlane._maybe_advance_reviews_on_heartbeat)
 
     assert "MAC_REVIEW_TICK_ON_HEARTBEAT" in heartbeat
     # The tick must be able to publish independently of that switch.

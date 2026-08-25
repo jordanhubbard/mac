@@ -3,6 +3,7 @@
 The command mutates live task state in bulk, so the default must report
 rather than act.
 """
+
 from __future__ import annotations
 
 import io

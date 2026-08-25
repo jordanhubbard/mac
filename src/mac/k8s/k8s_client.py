@@ -14,8 +14,7 @@ try:
     from kubernetes.client.rest import ApiException
 except ImportError as exc:  # pragma: no cover - exercised by env probe
     raise ImportError(
-        "k8s_client requires the kubernetes package. "
-        "Install via 'pip install \"mac[k8s]\"'."
+        "k8s_client requires the kubernetes package. Install via 'pip install \"mac[k8s]\"'."
     ) from exc
 
 JsonDict = Dict[str, Any]
@@ -36,16 +35,12 @@ class K8sJobsClient:
         self._batch = k8s_client.BatchV1Api()
 
     def create(self, namespace: str, manifest: JsonDict) -> JsonDict:
-        result = self._batch.create_namespaced_job(
-            namespace=namespace, body=manifest
-        )
+        result = self._batch.create_namespaced_job(namespace=namespace, body=manifest)
         # Return a slim dict matching the protocol's contract.
         return _to_dict(result)
 
     def list_active(self, namespace: str, label_selector: str) -> List[JsonDict]:
-        result = self._batch.list_namespaced_job(
-            namespace=namespace, label_selector=label_selector
-        )
+        result = self._batch.list_namespaced_job(namespace=namespace, label_selector=label_selector)
         out: List[JsonDict] = []
         for item in result.items:
             j = _to_dict(item)
@@ -74,9 +69,7 @@ class K8sJobsClient:
 
     def read(self, namespace: str, name: str) -> JsonDict:
         try:
-            result = self._batch.read_namespaced_job(
-                name=name, namespace=namespace
-            )
+            result = self._batch.read_namespaced_job(name=name, namespace=namespace)
         except ApiException as exc:
             if exc.status == 404:
                 return {}
@@ -92,9 +85,7 @@ class K8sDeploymentsClient:
 
     def get_deployment(self, namespace: str, name: str) -> Optional[JsonDict]:
         try:
-            result = self._apps.read_namespaced_deployment(
-                name=name, namespace=namespace
-            )
+            result = self._apps.read_namespaced_deployment(name=name, namespace=namespace)
         except ApiException as exc:
             if exc.status == 404:
                 return None
@@ -103,9 +94,7 @@ class K8sDeploymentsClient:
 
     def scale_deployment(self, namespace: str, name: str, replicas: int) -> None:
         body = {"spec": {"replicas": int(replicas)}}
-        self._apps.patch_namespaced_deployment_scale(
-            name=name, namespace=namespace, body=body
-        )
+        self._apps.patch_namespaced_deployment_scale(name=name, namespace=namespace, body=body)
 
 
 def _to_dict(obj: Any) -> JsonDict:

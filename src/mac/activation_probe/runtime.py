@@ -102,15 +102,11 @@ class ForwardHookActivationExtractor:
 
         missing = sorted(set(self.layers) - set(captured))
         if missing:
-            raise RuntimeError(
-                "model forward did not emit configured layers: %s" % missing
-            )
+            raise RuntimeError("model forward did not emit configured layers: %s" % missing)
         return ActivationBatch(layers=captured)
 
 
-def resolve_modules(
-    model: Any, dotted_paths: Iterable[str]
-) -> Dict[str, HookableModule]:
+def resolve_modules(model: Any, dotted_paths: Iterable[str]) -> Dict[str, HookableModule]:
     """Resolve dotted attribute/index paths without depending on transformers."""
     resolved: Dict[str, HookableModule] = {}
     for path in dotted_paths:

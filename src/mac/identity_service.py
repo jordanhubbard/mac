@@ -281,9 +281,7 @@ class IdentityService:
         return self.get_persona_instance(hid)
 
     def get_persona_instance(self, instance_id: str) -> PersonaInstance:
-        row = self.store.query_one(
-            "SELECT * FROM persona_instances WHERE id = ?", (instance_id,)
-        )
+        row = self.store.query_one("SELECT * FROM persona_instances WHERE id = ?", (instance_id,))
         if row is None:
             raise NotFoundError("persona instance not found: %s" % instance_id)
         return self._persona_instance_from_row(row)
@@ -295,9 +293,7 @@ class IdentityService:
                 (tenant_id,),
             )
         else:
-            rows = self.store.query_all(
-                "SELECT * FROM persona_instances ORDER BY tenant_id, name"
-            )
+            rows = self.store.query_all("SELECT * FROM persona_instances ORDER BY tenant_id, name")
         return [self._persona_instance_from_row(row) for row in rows]
 
     # Backward-compatible aliases for the pre-persona method names. Higher
@@ -309,9 +305,7 @@ class IdentityService:
     def get_hermes_instance(self, instance_id: str) -> PersonaInstance:
         return self.get_persona_instance(instance_id)
 
-    def list_hermes_instances(
-        self, tenant_id: Optional[str] = None
-    ) -> List[PersonaInstance]:
+    def list_hermes_instances(self, tenant_id: Optional[str] = None) -> List[PersonaInstance]:
         return self.list_persona_instances(tenant_id)
 
     # Platform bindings ------------------------------------------------
@@ -377,9 +371,7 @@ class IdentityService:
         return self.get_platform_binding(bid)
 
     def get_platform_binding(self, binding_id: str) -> PlatformBinding:
-        row = self.store.query_one(
-            "SELECT * FROM platform_bindings WHERE id = ?", (binding_id,)
-        )
+        row = self.store.query_one("SELECT * FROM platform_bindings WHERE id = ?", (binding_id,))
         if row is None:
             raise NotFoundError("platform binding not found: %s" % binding_id)
         return self._platform_binding_from_row(row)

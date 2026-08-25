@@ -99,7 +99,9 @@ def test_debug_terminal_open_rejects_invalid_requests(
     instance = _instance(tmp_path)
     instance.debug_terminal_enabled = enabled
     published = []
-    monkeypatch.setattr(instance, "_publish_debug_terminal_output", lambda *a, **k: published.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_publish_debug_terminal_output", lambda *a, **k: published.append((a, k))
+    )
 
     result = instance._execute_debug_terminal_open(payload, "stream")
 
@@ -123,9 +125,13 @@ def test_debug_terminal_open_spawn_failure_closes_descriptors(monkeypatch, tmp_p
     published = []
     monkeypatch.setattr(worker.pty, "openpty", lambda: (100, 101))
     monkeypatch.setattr(instance, "_set_debug_terminal_size", lambda *_a: None)
-    monkeypatch.setattr(worker.subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(OSError("boom")))
+    monkeypatch.setattr(
+        worker.subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(OSError("boom"))
+    )
     monkeypatch.setattr(worker.os, "close", closed.append)
-    monkeypatch.setattr(instance, "_publish_debug_terminal_output", lambda *a, **k: published.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_publish_debug_terminal_output", lambda *a, **k: published.append((a, k))
+    )
 
     result = instance._execute_debug_terminal_open(_terminal_request(), "stream")
 
@@ -144,9 +150,13 @@ def test_debug_terminal_open_success_normalizes_shell_cwd_and_bounds(monkeypatch
     monkeypatch.setattr(worker.pty, "openpty", lambda: (100, 101))
     monkeypatch.setattr(instance, "_set_debug_terminal_size", lambda *a: sizes.append(a))
     monkeypatch.setattr(worker.subprocess, "Popen", lambda *_a, **_k: process)
-    monkeypatch.setattr(worker.os, "set_blocking", lambda *_a: (_ for _ in ()).throw(OSError("unsupported")))
+    monkeypatch.setattr(
+        worker.os, "set_blocking", lambda *_a: (_ for _ in ()).throw(OSError("unsupported"))
+    )
     monkeypatch.setattr(worker.os, "close", closed.append)
-    monkeypatch.setattr(instance, "_append_debug_terminal_output", lambda *a, **k: output.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_append_debug_terminal_output", lambda *a, **k: output.append((a, k))
+    )
 
     result = instance._execute_debug_terminal_open(
         _terminal_request(shell="relative", cwd=str(tmp_path), rows=1, cols=999, ttl_seconds="bad"),
@@ -180,9 +190,13 @@ def test_debug_terminal_drain_output_boundaries(monkeypatch, tmp_path) -> None:
     instance = _instance(tmp_path)
     session = _session(_Process())
     emitted = []
-    monkeypatch.setattr(instance, "_append_debug_terminal_output", lambda *a, **k: emitted.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_append_debug_terminal_output", lambda *a, **k: emitted.append((a, k))
+    )
 
-    monkeypatch.setattr(worker.select, "select", lambda *_a: (_ for _ in ()).throw(ValueError("bad fd")))
+    monkeypatch.setattr(
+        worker.select, "select", lambda *_a: (_ for _ in ()).throw(ValueError("bad fd"))
+    )
     instance._drain_debug_terminal_output(session)
     monkeypatch.setattr(worker.select, "select", lambda *_a: ([], [], []))
     instance._drain_debug_terminal_output(session)
@@ -217,8 +231,12 @@ def test_debug_terminal_input_filters_resizes_writes_and_closes(monkeypatch, tmp
     closed = []
     monkeypatch.setattr(instance, "_set_debug_terminal_size", lambda *a: sizes.append(a))
     monkeypatch.setattr(worker.os, "write", lambda *_a: (_ for _ in ()).throw(OSError("full")))
-    monkeypatch.setattr(instance, "_append_debug_terminal_output", lambda *a, **k: emitted.append((a, k)))
-    monkeypatch.setattr(instance, "_close_debug_terminal_session", lambda *a, **k: closed.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_append_debug_terminal_output", lambda *a, **k: emitted.append((a, k))
+    )
+    monkeypatch.setattr(
+        instance, "_close_debug_terminal_session", lambda *a, **k: closed.append((a, k))
+    )
 
     instance._apply_debug_terminal_input(session)
 
@@ -235,7 +253,9 @@ def test_debug_terminal_poll_exit_expiry_and_failure(monkeypatch, tmp_path) -> N
     close_calls = []
     monkeypatch.setattr(instance, "_drain_debug_terminal_output", lambda *_a: None)
     monkeypatch.setattr(instance, "_apply_debug_terminal_input", lambda *_a: None)
-    monkeypatch.setattr(instance, "_close_debug_terminal_session", lambda *a, **k: close_calls.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_close_debug_terminal_session", lambda *a, **k: close_calls.append((a, k))
+    )
 
     closed = _session(_Process())
     closed.closed = True
@@ -250,7 +270,11 @@ def test_debug_terminal_poll_exit_expiry_and_failure(monkeypatch, tmp_path) -> N
 
     failing = _session(_Process())
     instance._debug_terminal_sessions["session"] = failing
-    monkeypatch.setattr(instance, "_poll_debug_terminal_session", lambda *_a: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        instance,
+        "_poll_debug_terminal_session",
+        lambda *_a: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
     instance._poll_debug_terminal_sessions()
     assert close_calls[-1][1]["event"] == "error"
 
@@ -261,13 +285,17 @@ def test_debug_terminal_close_termination_fallbacks(monkeypatch, tmp_path) -> No
     session = _session(process)
     instance._debug_terminal_sessions["session"] = session
     output = []
-    monkeypatch.setattr(instance, "_append_debug_terminal_output", lambda *a, **k: output.append((a, k)))
+    monkeypatch.setattr(
+        instance, "_append_debug_terminal_output", lambda *a, **k: output.append((a, k))
+    )
     monkeypatch.setattr(worker.os, "close", lambda *_a: (_ for _ in ()).throw(OSError("closed")))
     instance._close_debug_terminal_session(session, event="closed", message="bye", terminate=True)
     assert process.terminated and process.killed
     assert "session" not in instance._debug_terminal_sessions
     assert output[-1][1]["close"] is True
-    instance._close_debug_terminal_session(session, event="again", message="ignored", terminate=True)
+    instance._close_debug_terminal_session(
+        session, event="again", message="ignored", terminate=True
+    )
 
     process = _Process(fail_wait=True, fail_kill=True)
     session = _session(process)
@@ -309,7 +337,10 @@ def test_repo_update_rejects_invalid_requests(tmp_path, payload, status, summary
 
 def test_repo_update_missing_and_git_validation_paths(monkeypatch, tmp_path) -> None:
     missing = worker.MacWorker(
-        _Client(), "agent", tmp_path / "workspace", lambda *_a: worker.WorkerExecution(0, "ok"),
+        _Client(),
+        "agent",
+        tmp_path / "workspace",
+        lambda *_a: worker.WorkerExecution(0, "ok"),
         self_update_repo=tmp_path / "missing",
     )
     assert missing._execute_repo_update({}, "s")["status"] == "skipped"
@@ -331,9 +362,7 @@ def test_repo_update_pull_failure_current_and_updated(monkeypatch, tmp_path) -> 
     instance = _instance(tmp_path)
     old = "a" * 40
     new = "b" * 40
-    results = iter([
-        _cp(stdout="true"), _cp(), _cp(stdout=old), _cp(1, "pull out", "pull err")
-    ])
+    results = iter([_cp(stdout="true"), _cp(), _cp(stdout=old), _cp(1, "pull out", "pull err")])
     monkeypatch.setattr(worker, "_run_git", lambda *_a, **_k: next(results))
     result = instance._execute_repo_update({"branch": "main"}, "s")
     assert result["status"] == "error" and result["before_sha"] == old
@@ -344,7 +373,9 @@ def test_repo_update_pull_failure_current_and_updated(monkeypatch, tmp_path) -> 
 
     results = iter([_cp(stdout="true"), _cp(), _cp(stdout=old), _cp(stdout="ok"), _cp(stdout=new)])
     monkeypatch.setattr(worker, "_run_git", lambda *_a, **_k: next(results))
-    monkeypatch.setattr(instance, "_maybe_rebuild_openshell_image_after_update", lambda *_a: {"status": "rebuilt"})
+    monkeypatch.setattr(
+        instance, "_maybe_rebuild_openshell_image_after_update", lambda *_a: {"status": "rebuilt"}
+    )
     result = instance._execute_repo_update(
         {"restart": True, "restart_services": ["one.service", "one.service"]}, "s"
     )
@@ -408,9 +439,7 @@ def test_repo_update_rejects_exact_source_before_managed_runtime_diverges(
     runtime_ref = tmp_path / "runtime-image-ref"
     source_marker = tmp_path / "image-source-sha"
     blocker = tmp_path / "dispatch-blocked.json"
-    runtime_ref.write_text(
-        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "c" * 64 + "\n"
-    )
+    runtime_ref.write_text("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "c" * 64 + "\n")
     source_marker.write_text(old + "\n")
     monkeypatch.setenv("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(runtime_ref))
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(source_marker))
@@ -433,9 +462,7 @@ def test_repo_update_rejects_exact_source_before_managed_runtime_diverges(
         return next(results)
 
     monkeypatch.setattr(worker, "_run_git", run)
-    result = instance._execute_repo_update(
-        {"branch": "main", "target_sha": target}, "stream"
-    )
+    result = instance._execute_repo_update({"branch": "main", "target_sha": target}, "stream")
     assert result["status"] == "error"
     assert "rejected before checkout" in result["summary"]
     assert result["after_sha"] == old
@@ -443,9 +470,7 @@ def test_repo_update_rejects_exact_source_before_managed_runtime_diverges(
     assert not blocker.exists(), "a safe preflight rejection must not drain the worker"
 
 
-def test_repo_update_rolls_back_nonexact_managed_runtime_mismatch(
-    monkeypatch, tmp_path
-) -> None:
+def test_repo_update_rolls_back_nonexact_managed_runtime_mismatch(monkeypatch, tmp_path) -> None:
     instance = _instance(tmp_path)
     old = "a" * 40
     target = "b" * 40
@@ -480,9 +505,7 @@ def test_repo_update_dispatch_blocker_is_persistent(monkeypatch, tmp_path) -> No
     instance = _instance(tmp_path)
     blocker = tmp_path / "dispatch-blocked.json"
     monkeypatch.setenv("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE", str(blocker))
-    instance._write_repo_update_dispatch_blocker(
-        {"reason": "rollback failed", "fatal": True}
-    )
+    instance._write_repo_update_dispatch_blocker({"reason": "rollback failed", "fatal": True})
     assert blocker.stat().st_mode & 0o777 == 0o600
     loaded = instance._local_repo_update_dispatch_blocker()
     assert loaded is not None
@@ -523,12 +546,13 @@ def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b") is None
     marker.unlink()
     monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: None)
-    assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "drift"
+    assert (
+        instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"]
+        == "drift"
+    )
 
 
-def test_digest_managed_openshell_image_never_rebuilds_locally(
-    monkeypatch, tmp_path
-) -> None:
+def test_digest_managed_openshell_image_never_rebuilds_locally(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(worker.sys, "platform", "linux")
     instance = _instance(tmp_path)
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
@@ -542,22 +566,19 @@ def test_digest_managed_openshell_image_never_rebuilds_locally(
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(source_marker))
     monkeypatch.setenv("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(managed_marker))
 
-    result = instance._maybe_rebuild_openshell_image_after_update(
-        tmp_path, "old-sha", "new-sha"
-    )
+    result = instance._maybe_rebuild_openshell_image_after_update(tmp_path, "old-sha", "new-sha")
     assert result == {
         "status": "managed_image_stale",
-        "runtime_image_ref": (
-            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
-        ),
+        "runtime_image_ref": ("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64),
         "marked_sha": "old-sha",
         "after_sha": "new-sha",
     }
 
     managed_marker.write_text("mutable:latest\n")
-    assert instance._maybe_rebuild_openshell_image_after_update(
-        tmp_path, "old-sha", "new-sha"
-    ) == {"status": "managed_image_invalid", "marker": str(managed_marker)}
+    assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "old-sha", "new-sha") == {
+        "status": "managed_image_invalid",
+        "marker": str(managed_marker),
+    }
 
 
 def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> None:
@@ -572,9 +593,16 @@ def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> 
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_TAG", "custom:tag")
     monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(tmp_path / "image-source-sha"))
     monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/docker")
-    monkeypatch.setattr(worker.shutil, "which", lambda name: None if name == "podman" else "/docker")
-    monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("daemon down")))
-    assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "failed"
+    monkeypatch.setattr(
+        worker.shutil, "which", lambda name: None if name == "podman" else "/docker"
+    )
+    monkeypatch.setattr(
+        worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("daemon down"))
+    )
+    assert (
+        instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"]
+        == "failed"
+    )
 
     monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: _cp(2, stderr="build failed"))
     result = instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")
@@ -582,7 +610,8 @@ def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> 
 
     monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: _cp())
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b") == {
-        "status": "rebuilt", "tag": "custom:tag"
+        "status": "rebuilt",
+        "tag": "custom:tag",
     }
 
     calls = []
@@ -610,11 +639,19 @@ def test_openshell_image_podman_mirror_success_and_failure(monkeypatch, tmp_path
     pipe = SimpleNamespace(close=lambda: calls.append(("close", {})))
     save = SimpleNamespace(stdout=pipe, wait=lambda **_k: calls.append(("wait", {})))
     monkeypatch.setattr(worker.subprocess, "Popen", lambda *_a, **_k: save)
-    assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "rebuilt"
+    assert (
+        instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"]
+        == "rebuilt"
+    )
     assert any(call[0] == "close" for call in calls)
 
-    monkeypatch.setattr(worker.subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(OSError("save failed")))
-    assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "rebuilt"
+    monkeypatch.setattr(
+        worker.subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(OSError("save failed"))
+    )
+    assert (
+        instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"]
+        == "rebuilt"
+    )
 
 
 def test_resolve_openshell_docker_bin_supports_launchd_paths(monkeypatch, tmp_path) -> None:
@@ -626,7 +663,9 @@ def test_resolve_openshell_docker_bin_supports_launchd_paths(monkeypatch, tmp_pa
     assert worker._resolve_openshell_docker_bin() == str(configured)
 
     monkeypatch.delenv("MAC_OPENSHELL_DOCKER_BIN")
-    monkeypatch.setattr(worker.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+    monkeypatch.setattr(
+        worker.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None
+    )
     assert worker._resolve_openshell_docker_bin() == "/usr/bin/docker"
 
 
@@ -634,18 +673,28 @@ def test_repo_update_service_restart_results(monkeypatch, tmp_path) -> None:
     instance = _instance(tmp_path)
     assert instance._run_repo_update_service_restarts({}) is None
     assert instance._run_repo_update_service_restarts({"service_restart_requested": True}) is None
-    monkeypatch.setattr(worker, "_restart_systemd_service", lambda service: {"service": service, "status": "restarted"})
-    result = instance._run_repo_update_service_restarts({
-        "service_restart_requested": True,
-        "restart_services": ["one.service"],
-        "stream_id": "s",
-    })
+    monkeypatch.setattr(
+        worker,
+        "_restart_systemd_service",
+        lambda service: {"service": service, "status": "restarted"},
+    )
+    result = instance._run_repo_update_service_restarts(
+        {
+            "service_restart_requested": True,
+            "restart_services": ["one.service"],
+            "stream_id": "s",
+        }
+    )
     assert result["status"] == "service_restarted"
-    monkeypatch.setattr(worker, "_restart_systemd_service", lambda service: {"service": service, "status": "error"})
-    result = instance._run_repo_update_service_restarts({
-        "service_restart_requested": True,
-        "restart_services": ["one.service"],
-    })
+    monkeypatch.setattr(
+        worker, "_restart_systemd_service", lambda service: {"service": service, "status": "error"}
+    )
+    result = instance._run_repo_update_service_restarts(
+        {
+            "service_restart_requested": True,
+            "restart_services": ["one.service"],
+        }
+    )
     assert result["status"] == "service_restart_error"
 
 
@@ -682,7 +731,8 @@ def test_managed_image_adopts_the_published_digest_for_the_target_revision(
     monkeypatch.setattr(worker, "_published_runtime_image_ref", lambda sha: _ADOPT_DIGEST)
     monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/usr/bin/docker")
     monkeypatch.setattr(
-        worker.subprocess, "run",
+        worker.subprocess,
+        "run",
         lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
     )
 
@@ -711,16 +761,15 @@ def test_managed_image_stays_stale_when_nothing_is_published(monkeypatch, tmp_pa
     assert source_marker.read_text().strip() == _ADOPT_SHA_OLD
 
 
-def test_managed_image_does_not_move_markers_when_the_pull_fails(
-    monkeypatch, tmp_path
-) -> None:
+def test_managed_image_does_not_move_markers_when_the_pull_fails(monkeypatch, tmp_path) -> None:
     """A node must never claim a revision whose runtime it could not fetch."""
     instance = _instance(tmp_path)
     source_marker, managed_marker = _managed_markers(monkeypatch, tmp_path)
     monkeypatch.setattr(worker, "_published_runtime_image_ref", lambda sha: _ADOPT_DIGEST)
     monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/usr/bin/docker")
     monkeypatch.setattr(
-        worker.subprocess, "run",
+        worker.subprocess,
+        "run",
         lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="denied"),
     )
 
@@ -746,9 +795,7 @@ def test_managed_image_adoption_can_be_disabled(monkeypatch, tmp_path) -> None:
     assert result["status"] == "managed_image_stale"
 
 
-def test_published_runtime_ref_only_accepts_repository_owned_digests(
-    monkeypatch, tmp_path
-) -> None:
+def test_published_runtime_ref_only_accepts_repository_owned_digests(monkeypatch, tmp_path) -> None:
     """A mutable tag or a foreign registry must never be adopted."""
     monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/usr/bin/docker")
 
@@ -757,14 +804,16 @@ def test_published_runtime_ref_only_accepts_repository_owned_digests(
 
     # Registry returns something without a digest -> no adoption.
     monkeypatch.setattr(
-        worker.subprocess, "run",
+        worker.subprocess,
+        "run",
         lambda *a, **k: SimpleNamespace(returncode=0, stdout="latest", stderr=""),
     )
     assert worker._published_runtime_image_ref(_ADOPT_SHA_NEW) is None
 
     # A real digest resolves to the repository-owned immutable reference.
     monkeypatch.setattr(
-        worker.subprocess, "run",
+        worker.subprocess,
+        "run",
         lambda *a, **k: SimpleNamespace(returncode=0, stdout="sha256:" + "e" * 64, stderr=""),
     )
     assert worker._published_runtime_image_ref(_ADOPT_SHA_NEW) == (

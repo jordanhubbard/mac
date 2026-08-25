@@ -28,10 +28,7 @@ def test_non_v1_paths_unchanged():
     # gateway hosts plus the binaries permitted to reach them.
     assert _required_scope("GET", "/agents/agent_1/openshell/policy") == "agent"
     assert (
-        _required_scope(
-            "POST", "/agents/agent_1/directive-activations/activation_1/ack"
-        )
-        == "agent"
+        _required_scope("POST", "/agents/agent_1/directive-activations/activation_1/ack") == "agent"
     )
     assert _required_scope("GET", "/optimizer/status") == "read"
     assert _required_scope("POST", "/optimizer/tick") == "admin"

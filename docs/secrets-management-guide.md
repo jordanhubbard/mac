@@ -41,7 +41,7 @@ secret = cp.secrets.create_secret(
     scopes={"agents": ["agent_<worker-1-id>"]},
     created_by="hub",
 )
-print(secret.id)   # e.g. secret_abc123
+print(secret.id)  # e.g. secret_abc123
 ```
 
 The plaintext is encrypted immediately; `SecretRecord.to_dict()` always
@@ -93,7 +93,7 @@ handle = cp.secrets.request_secret(
     secret_id_or_name="deploy-credential",
     accessor_agent_id="agent_<worker-1-id>",
     purpose="ci-deploy",
-    ttl_seconds=300,   # handle expires in 5 minutes
+    ttl_seconds=300,  # handle expires in 5 minutes
 )
 # handle.granted == True  →  proceed to reveal
 # handle.granted == False →  AuthorizationError was raised before this line
@@ -308,9 +308,7 @@ handle = cp.secrets.request_secret(
 )
 
 # 3. Agent reveals and uses the token
-token = cp.secrets.reveal_secret(
-    handle.secret_id, handle.audit_id, "agent_<messaging-agent-id>"
-)
+token = cp.secrets.reveal_secret(handle.secret_id, handle.audit_id, "agent_<messaging-agent-id>")
 # use token to call Slack API ...
 ```
 
@@ -332,9 +330,7 @@ handle = cp.secrets.request_secret(
     purpose="image-push",
     ttl_seconds=120,
 )
-cred = cp.secrets.reveal_secret(
-    handle.secret_id, handle.audit_id, "agent_<worker-1-id>"
-)
+cred = cp.secrets.reveal_secret(handle.secret_id, handle.audit_id, "agent_<worker-1-id>")
 # run docker push with cred ...
 
 # 3. Rotate after a security event

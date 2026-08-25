@@ -81,9 +81,7 @@ def test_config_from_env_out_of_range_flags_error():
 def test_policy_defaults_disabled_when_absent():
     assert ProjectIngestPolicy.from_metadata({}).enabled is False
     assert ProjectIngestPolicy.from_metadata(None).enabled is False
-    assert ProjectIngestPolicy.from_metadata(
-        {"github_issue_ingest": "nonsense"}
-    ).enabled is False
+    assert ProjectIngestPolicy.from_metadata({"github_issue_ingest": "nonsense"}).enabled is False
 
 
 def test_policy_parses_fields():
@@ -141,8 +139,18 @@ class FakeControlPlane:
     def list_tasks(self):
         return list(self._tasks)
 
-    def create_task(self, title, *, description="", project=None, priority=0,
-                    required_capabilities=None, metadata=None, actor="human", **_):
+    def create_task(
+        self,
+        title,
+        *,
+        description="",
+        project=None,
+        priority=0,
+        required_capabilities=None,
+        metadata=None,
+        actor="human",
+        **_,
+    ):
         self._counter += 1
         task = FakeTask(
             id="task_%d" % self._counter,
@@ -157,15 +165,11 @@ class FakeControlPlane:
         for task in self._tasks:
             if task.id == task_id:
                 task.state = target_state
-        self.transitions.append(
-            {"task_id": task_id, "state": target_state, "detail": detail}
-        )
+        self.transitions.append({"task_id": task_id, "state": target_state, "detail": detail})
         return None
 
     def close_task(self, task_id, target_state, actor, detail=None, **kwargs):
-        return self.transition_task(
-            task_id, target_state, actor, detail=detail, **kwargs
-        )
+        return self.transition_task(task_id, target_state, actor, detail=detail, **kwargs)
 
     def record_log(self, *args, **kwargs):
         self.logs.append({"args": args, "kwargs": kwargs})
@@ -275,8 +279,12 @@ def test_backpressure_caps_open_tasks():
 
 
 def test_per_repo_fetch_error_isolated():
-    cp = FakeControlPlane([_opted_in_project(name="a", url="https://github.com/o/a"),
-                           _opted_in_project(name="b", url="https://github.com/o/b")])
+    cp = FakeControlPlane(
+        [
+            _opted_in_project(name="a", url="https://github.com/o/a"),
+            _opted_in_project(name="b", url="https://github.com/o/b"),
+        ]
+    )
 
     def fetcher(owner, repo, *, token, labels, state, limit):
         if repo == "a":
@@ -284,7 +292,9 @@ def test_per_repo_fetch_error_isolated():
         return [_issue(1)]
 
     ing = GitHubIssueIngestor(
-        cp, GitHubIngestConfig(enabled=True), issue_fetcher=fetcher,
+        cp,
+        GitHubIngestConfig(enabled=True),
+        issue_fetcher=fetcher,
         token_provider=lambda: "tok",
     )
     report = ing.run_once()
@@ -297,19 +307,29 @@ def test_per_repo_fetch_error_isolated():
 def test_auto_cancel_closed_cancels_open_tasks_only():
     # Two existing github-issue tasks; only #1 is still open on GitHub.
     open_task = FakeTask(
-        id="task_open", project="mac", title="one", state="open",
+        id="task_open",
+        project="mac",
+        title="one",
+        state="open",
         metadata={"origin": {"type": "github_issue", "key": "github:o/r#1"}},
     )
     running_task = FakeTask(
-        id="task_running", project="mac", title="two", state="running",
+        id="task_running",
+        project="mac",
+        title="two",
+        state="running",
         metadata={"origin": {"type": "github_issue", "key": "github:o/r#2"}},
     )
     stale_open = FakeTask(
-        id="task_stale", project="mac", title="three", state="open",
+        id="task_stale",
+        project="mac",
+        title="three",
+        state="open",
         metadata={"origin": {"type": "github_issue", "key": "github:o/r#3"}},
     )
-    cp = FakeControlPlane([_opted_in_project(auto_cancel_closed=True)],
-                          tasks=[open_task, running_task, stale_open])
+    cp = FakeControlPlane(
+        [_opted_in_project(auto_cancel_closed=True)], tasks=[open_task, running_task, stale_open]
+    )
     ing = _ingestor(cp, {("o", "r"): [_issue(1)]})  # only #1 open now
     report = ing.run_once()
     # #3 open task -> cancelled; #2 running -> left alone; #1 still open -> kept

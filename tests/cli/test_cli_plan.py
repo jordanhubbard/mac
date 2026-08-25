@@ -78,9 +78,7 @@ def _make_synthetic_codegraph_db(repo_dir: Path) -> None:
         """
     )
     for fname in ("leaf_a.py", "leaf_b.py", "middle.py", "core.py"):
-        cur.execute(
-            "INSERT INTO files VALUES (?, 'abc', 'python', 100, 0, 0, 1)", (fname,)
-        )
+        cur.execute("INSERT INTO files VALUES (?, 'abc', 'python', 100, 0, 0, 1)", (fname,))
         cur.execute(
             "INSERT INTO nodes VALUES (?, 'file', ?, ?, ?, 'python', 1, 1, 0, 0)",
             ("file:" + fname, fname, fname, fname),
@@ -126,7 +124,8 @@ def test_cli_plan_order_leaf_first(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "admin", "plan",
+        "admin",
+        "plan",
         "order",
         "leaf_a.py",
         "leaf_b.py",
@@ -153,7 +152,8 @@ def test_cli_plan_order_core_first(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "admin", "plan",
+        "admin",
+        "plan",
         "order",
         "leaf_a.py",
         "leaf_b.py",
@@ -178,7 +178,8 @@ def test_cli_plan_order_no_db_returns_unknown(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "admin", "plan",
+        "admin",
+        "plan",
         "order",
         "a.py",
         "b.py",

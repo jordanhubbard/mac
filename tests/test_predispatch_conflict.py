@@ -24,7 +24,9 @@ from mac.predispatch_conflict import (
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
 
 
@@ -114,9 +116,7 @@ def test_conflict_with_in_flight_ref_is_predicted(repo: Path):
     _branch_commit(repo, "topic", "f.txt", "line1-TOPIC\nline2\nline3\n")
     _branch_commit(repo, "other", "f.txt", "line1-OTHER\nline2\nline3\n")
 
-    verdict = check_predispatch_conflict(
-        str(repo), "main", "topic", in_flight_refs=["other"]
-    )
+    verdict = check_predispatch_conflict(str(repo), "main", "topic", in_flight_refs=["other"])
 
     assert verdict.would_conflict is True
     assert verdict.conflicting_ref == "other"
@@ -128,9 +128,7 @@ def test_in_flight_ref_touching_other_files_is_clean(repo: Path):
     _branch_commit(repo, "topic", "f.txt", "line1-TOPIC\nline2\nline3\n")
     _branch_commit(repo, "other", "unrelated.txt", "unrelated\n")
 
-    verdict = check_predispatch_conflict(
-        str(repo), "main", "topic", in_flight_refs=["other"]
-    )
+    verdict = check_predispatch_conflict(str(repo), "main", "topic", in_flight_refs=["other"])
 
     assert verdict.would_conflict is False
     assert verdict.conflicting_ref == ""
@@ -145,9 +143,7 @@ def test_base_conflict_reported_before_in_flight_refs(repo: Path):
     _git(repo, "commit", "-qm", "main advances")
     _branch_commit(repo, "other", "unrelated.txt", "unrelated\n")
 
-    verdict = check_predispatch_conflict(
-        str(repo), "main", "topic", in_flight_refs=["other"]
-    )
+    verdict = check_predispatch_conflict(str(repo), "main", "topic", in_flight_refs=["other"])
 
     assert verdict.would_conflict is True
     assert verdict.conflicting_ref == ""
@@ -170,9 +166,7 @@ def test_bad_ref_is_advisory_fail_open(repo: Path):
 def test_bad_ref_can_fail_closed(repo: Path):
     # advisory=False turns an unresolvable ref into a predicted conflict,
     # mirroring the land-time gate.
-    verdict = check_predispatch_conflict(
-        str(repo), "main", "does-not-exist", advisory=False
-    )
+    verdict = check_predispatch_conflict(str(repo), "main", "does-not-exist", advisory=False)
 
     assert verdict.advisory is False
     assert verdict.would_conflict is True
@@ -182,9 +176,7 @@ def test_bad_ref_can_fail_closed(repo: Path):
 def test_bad_in_flight_ref_fail_open_reports_ref(repo: Path):
     _branch_commit(repo, "topic", "new_file.txt", "brand new\n")
 
-    verdict = check_predispatch_conflict(
-        str(repo), "main", "topic", in_flight_refs=["ghost"]
-    )
+    verdict = check_predispatch_conflict(str(repo), "main", "topic", in_flight_refs=["ghost"])
 
     assert verdict.would_conflict is False  # advisory fail-open
     assert verdict.conflicting_ref == "ghost"

@@ -112,8 +112,7 @@ def test_soul_survives_hermes_process_loss():
     # Pre-restart task is still attached to the same instance.
     pre_tasks = client.get("/tasks", params={"tenant_id": pre_tenant_id}).json()
     assert any(
-        task["metadata"]["origin"]["hermes_instance_id"] == pre_instance_id
-        for task in pre_tasks
+        task["metadata"]["origin"]["hermes_instance_id"] == pre_instance_id for task in pre_tasks
     )
 
     # New conversations bind to the same persona via the same platform binding.

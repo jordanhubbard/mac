@@ -561,9 +561,7 @@ def test_bound_agent_cannot_mutate_unowned_nonactive_tasks_or_evidence(
     attacker = _register_agent(cp, "nonactive-attacker", capacity=2)
     open_task = cp.create_task("unowned open")
     review_task = cp.create_task("unowned review")
-    _claimed, lease = cp.claim_task(
-        review_task.id, executor.id, sync_beads=False
-    )
+    _claimed, lease = cp.claim_task(review_task.id, executor.id, sync_beads=False)
     cp.start_task(
         review_task.id,
         executor.id,
@@ -1092,9 +1090,7 @@ def test_concurrent_expiry_sweepers_finalize_one_repair_and_history(
         (task.id,),
     )
     expiry_history = [
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type == "task.lease_expired"
+        event for event in cp.task_history(task.id) if event.event_type == "task.lease_expired"
     ]
     assert [row["id"] for row in repair_rows] == [repair_id]
     assert len(expiry_history) == 1
@@ -1181,22 +1177,27 @@ def test_expiry_repair_finalization_recovers_without_duplicate_or_early_reset(
     assert waiting.state == TaskState.WAITING.value
     assert waiting.attempt_count == 0
     assert waiting.dependencies == [repair_rows[0]["id"]]
-    assert len(
-        cp.store.query_all(
-            "SELECT id FROM tasks WHERE json_extract(metadata, '$.origin.parent_task_id') = ?",
-            (task.id,),
+    assert (
+        len(
+            cp.store.query_all(
+                "SELECT id FROM tasks WHERE json_extract(metadata, '$.origin.parent_task_id') = ?",
+                (task.id,),
+            )
         )
-    ) == 1
-    assert len(
-        [
-            event
-            for event in cp.task_history(task.id)
-            if event.event_type == "task.lease_expired"
-        ]
-    ) == 1
+        == 1
+    )
+    assert (
+        len(
+            [
+                event
+                for event in cp.task_history(task.id)
+                if event.event_type == "task.lease_expired"
+            ]
+        )
+        == 1
+    )
     decision = cp.store.query_one(
-        "SELECT expiry_finalization_decision, expiry_finalized_at "
-        "FROM leases WHERE id = ?",
+        "SELECT expiry_finalization_decision, expiry_finalized_at FROM leases WHERE id = ?",
         (lease.id,),
     )
     assert decision["expiry_finalization_decision"]

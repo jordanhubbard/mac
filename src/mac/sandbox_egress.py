@@ -213,9 +213,7 @@ def classify_egress_hosts(
     allowlist was what authorized it.
     """
     allowlist = (
-        frozenset(trusted_registries)
-        if trusted_registries is not None
-        else TRUSTED_REGISTRY_HOSTS
+        frozenset(trusted_registries) if trusted_registries is not None else TRUSTED_REGISTRY_HOSTS
     )
     grants: Dict[str, EgressGrant] = {}
     rejections: List[EgressRejection] = []
@@ -317,9 +315,7 @@ def expand_policy_text(
     policy establishes.  With an empty decision the base text is returned byte
     for byte.
     """
-    block = render_egress_block(
-        decision, binaries=binaries, block_name=block_name
-    )
+    block = render_egress_block(decision, binaries=binaries, block_name=block_name)
     if not block:
         return base_policy_text
 

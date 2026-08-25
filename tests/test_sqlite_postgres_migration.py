@@ -87,7 +87,7 @@ def test_canonical_values_match_cross_backend_representations():
         "timestamp with time zone",
     )
     assert _canonical_value(None, "text") == b"n"
-    assert _canonical_value('not-json', "jsonb") == b'j"not-json"'
+    assert _canonical_value("not-json", "jsonb") == b'j"not-json"'
     assert _canonical_value("not-a-time", "timestamp") == b"tnot-a-time"
     assert _canonical_value(True, "integer") == b"i1"
     assert _canonical_value(17, "integer") == b"i17"
@@ -169,9 +169,7 @@ def test_row_queries_and_copy_adaptation():
         {"id": "integer", "enabled": "boolean", "note": "text"},
     )
     assert 'ORDER BY "id"' in _row_query("flags", plan.columns, plan.primary_key)
-    assert 'ORDER BY "id", "enabled", "note"' in _row_query(
-        "flags", plan.columns, ()
-    )
+    assert 'ORDER BY "id", "enabled", "note"' in _row_query("flags", plan.columns, ())
     text_plan = TablePlan(
         "schema_migration_receipts",
         ("version", "detail"),
@@ -282,10 +280,7 @@ def test_destination_digest_uses_binary_order_for_text_keys():
     count, _ = _destination_table_digest(target, plan)
 
     assert count == 2
-    assert (
-        'ORDER BY "version" COLLATE "C"'
-        in target.cursor_instance.query.as_string()
-    )
+    assert 'ORDER BY "version" COLLATE "C"' in target.cursor_instance.query.as_string()
 
 
 class _CopySink:

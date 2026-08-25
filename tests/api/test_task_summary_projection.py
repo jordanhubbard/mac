@@ -3,6 +3,7 @@
 The list-view projection returns only lightweight fields so that
 ``mac task list`` downloads a few KB instead of the full task ledger.
 """
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient

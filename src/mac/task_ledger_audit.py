@@ -38,9 +38,7 @@ _GENERIC_FAILURE_REASONS = frozenset(
         "review_verdict_wait_cap_hit",
     }
 )
-_ACTIVE_STATES = frozenset(
-    {"open", "claimed", "running", "needs_review", "reviewing"}
-)
+_ACTIVE_STATES = frozenset({"open", "claimed", "running", "needs_review", "reviewing"})
 _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
 
 
@@ -185,9 +183,7 @@ def _history_audit(task: Mapping[str, Any], history: Sequence[Mapping[str, Any]]
     if cursor is None:
         problems.append("history has no state-bearing event")
     elif cursor != claimed_state:
-        problems.append(
-            "history ends in %s but task claims %s" % (cursor, claimed_state)
-        )
+        problems.append("history ends in %s but task claims %s" % (cursor, claimed_state))
 
     # A later state->same-state annotation must not erase the reason that
     # actually put the task into its current state.  Walk backwards to the
@@ -247,9 +243,7 @@ def _repo_claim(
         "remote_ref": _text(repo.get("remote_ref")) or None,
         "pushed": _bool(repo.get("pushed")),
         "dirty": repo.get("dirty"),
-        "files_changed": [
-            _text(item) for item in (repo.get("files_changed") or []) if _text(item)
-        ],
+        "files_changed": [_text(item) for item in (repo.get("files_changed") or []) if _text(item)],
         "source": source,
         "evidence_id": evidence_id or None,
         "publication_evidence": bool(published),
@@ -319,9 +313,7 @@ def _publication_resolution(
     approved review chain for legacy rows).
     """
 
-    active = [
-        item for item in publications if _text(item.get("status")).lower() == "published"
-    ]
+    active = [item for item in publications if _text(item.get("status")).lower() == "published"]
     base: Dict[str, Any] = {
         "status": "not_published",
         "publication_id": None,
@@ -376,8 +368,7 @@ def _publication_resolution(
         targeted = [
             chain
             for chain in chains
-            if target_evidence_id
-            and _text(chain.get("executor_evidence_id")) == target_evidence_id
+            if target_evidence_id and _text(chain.get("executor_evidence_id")) == target_evidence_id
         ]
         if targeted:
             selected = targeted[-1]
@@ -406,12 +397,8 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
     evidence = _items(detail.get("evidence"))
     reviews = _items(detail.get("reviews"))
     publications = _items(detail.get("publications"))
-    evidence_by_id = {
-        _text(item.get("id")): item for item in evidence if _text(item.get("id"))
-    }
-    publication_resolution = _publication_resolution(
-        detail, evidence_by_id, reviews, publications
-    )
+    evidence_by_id = {_text(item.get("id")): item for item in evidence if _text(item.get("id"))}
+    publication_resolution = _publication_resolution(detail, evidence_by_id, reviews, publications)
     published_evidence_ids = {
         _text(item.get("evidence_id"))
         for item in publications
@@ -495,9 +482,7 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
             passed = _passing(check)
             checks_passed += int(passed is True)
             checks_failed += int(passed is False)
-        verdict = _text(
-            verification.get("verdict") or verification.get("semantic_verdict")
-        ).lower()
+        verdict = _text(verification.get("verdict") or verification.get("semantic_verdict")).lower()
         approved_verdicts += int(verdict in {"approved", "approve", "pass", "passed"})
         rejected_verdicts += int(verdict in {"rejected", "reject", "failed", "fail"})
         add_claim(
@@ -520,8 +505,7 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
                 "branch": _text(latest_claim.get("repository_branch")) or None,
                 "remote_ref": _text(latest_claim.get("repository_remote_ref")) or None,
                 "pushed": any(
-                    _text(check.get("name")) == "guarded git push"
-                    and _passing(check) is True
+                    _text(check.get("name")) == "guarded git push" and _passing(check) is True
                     for check in _items(latest_claim.get("checks"))
                 ),
                 "dirty": None,
@@ -536,18 +520,14 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    authoritative_evidence_id = _text(
-        publication_resolution.get("executor_evidence_id")
-    )
+    authoritative_evidence_id = _text(publication_resolution.get("executor_evidence_id"))
     for claim in repo_claims:
         claim["authoritative"] = bool(
             authoritative_evidence_id
             and _text(claim.get("evidence_id")) == authoritative_evidence_id
             and _text(claim.get("source")) == "evidence.verification.repo"
         )
-        claim["superseded"] = bool(
-            authoritative_evidence_id and not claim["authoritative"]
-        )
+        claim["superseded"] = bool(authoritative_evidence_id and not claim["authoritative"])
 
     return {
         "count": len(evidence),
@@ -563,11 +543,7 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
             sorted(Counter(_text(item.get("status")) or "unknown" for item in reviews).items())
         ),
         "publication_statuses": dict(
-            sorted(
-                Counter(
-                    _text(item.get("status")) or "unknown" for item in publications
-                ).items()
-            )
+            sorted(Counter(_text(item.get("status")) or "unknown" for item in publications).items())
         ),
         "published_evidence_ids": sorted(published_evidence_ids),
         "publication_resolution": publication_resolution,
@@ -739,31 +715,27 @@ def _git_claim_status(
         result["attribution_status"] = "accepted_publication_evidence"
     else:
         base_sha = _text(claim.get("base_sha"))
-        claimed_files = {
-            _text(item) for item in (claim.get("files_changed") or []) if _text(item)
-        }
+        claimed_files = {_text(item) for item in (claim.get("files_changed") or []) if _text(item)}
         if (
             _SHA_RE.fullmatch(base_sha)
             and base_sha != sha
             and claimed_files
-            and _run_git(path, ["cat-file", "-e", "%s^{commit}" % base_sha], timeout, cache).returncode
+            and _run_git(
+                path, ["cat-file", "-e", "%s^{commit}" % base_sha], timeout, cache
+            ).returncode
             == 0
         ):
             changed = _run_git(
                 path, ["diff", "--name-only", "%s..%s" % (base_sha, sha)], timeout, cache
             )
-            actual_files = {
-                _text(item) for item in changed.stdout.splitlines() if _text(item)
-            }
+            actual_files = {_text(item) for item in changed.stdout.splitlines() if _text(item)}
             if changed.returncode == 0 and claimed_files.issubset(actual_files):
                 result["attribution_status"] = "manifest_diff_matches_claimed_files"
     ancestor = _run_git(path, ["merge-base", "--is-ancestor", sha, tip], timeout, cache)
     if ancestor.returncode == 0:
         result["ancestor_of_canonical"] = True
         result["integration_status"] = (
-            "ancestor"
-            if result["attribution_status"] != "none"
-            else "ancestor_unattributed"
+            "ancestor" if result["attribution_status"] != "none" else "ancestor_unattributed"
         )
         return result
 
@@ -788,7 +760,10 @@ def _git_claim_status(
 
 
 def _canonical_task_commit_claim(
-    snapshot: Mapping[str, Any], task_id: str, task_title: str, timeout: int,
+    snapshot: Mapping[str, Any],
+    task_id: str,
+    task_title: str,
+    timeout: int,
     cache: Optional[Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Find a task-attributed commit that is already on the canonical ref.
@@ -828,7 +803,8 @@ def _canonical_task_commit_claim(
                 "-n",
                 "1",
             ],
-            timeout, cache,
+            timeout,
+            cache,
         )
         line = _text(result.stdout).splitlines()
         if result.returncode != 0 or not line:
@@ -932,8 +908,7 @@ def _dependency_audit(
 
     return {
         "count": len(dependencies),
-        "all_completed": bool(dependencies)
-        and all(item["state"] == "completed" for item in rows),
+        "all_completed": bool(dependencies) and all(item["state"] == "completed" for item in rows),
         "incomplete_count": sum(item["state"] != "completed" for item in rows),
         "terminal_blocker_count": len(terminal_blockers),
         "terminal_blockers": terminal_blockers,
@@ -1061,19 +1036,15 @@ def _assessment(
     metadata = _mapping(task.get("metadata"))
     lifecycle = _mapping(metadata.get("repository_ref_lifecycle"))
     effective_reason = entry_reason or _text(lifecycle.get("reason"))
-    disposition = _text(
-        lifecycle.get("disposition") or entry_detail.get("disposition")
-    ).lower()
+    disposition = _text(lifecycle.get("disposition") or entry_detail.get("disposition")).lower()
     adjudication_dispositions = {
-        _text(item.get("disposition"))
-        for item in _items(evidence.get("adjudications"))
+        _text(item.get("disposition")) for item in _items(evidence.get("adjudications"))
     }
     operational_completion_verified = (
         "completed_operationally_verified" in adjudication_dispositions
     )
     cancellation_confirmed = bool(
-        adjudication_dispositions
-        & {"cancellation_confirmed", "cancellation_confirmed_decomposed"}
+        adjudication_dispositions & {"cancellation_confirmed", "cancellation_confirmed_decomposed"}
     )
 
     if state == "completed":
@@ -1113,7 +1084,11 @@ def _assessment(
                 action = "none"
             else:
                 findings.append("cancelled_replacement_not_verified_complete")
-                verdict = "contradiction" if replacement.get("state") in {"failed", "missing"} else "needs_review"
+                verdict = (
+                    "contradiction"
+                    if replacement.get("state") in {"failed", "missing"}
+                    else "needs_review"
+                )
                 action = "reopen_or_repair_replacement_chain"
         elif replacement_verified:
             pass
@@ -1123,7 +1098,10 @@ def _assessment(
             action = "reconcile_cancelled_task_as_completed"
         elif disposition in {"not_applicable"} or metadata.get("experiment_purpose"):
             pass
-        elif any(token in (task.get("title") or "").lower() for token in ("probe", "canary", "loop proof")):
+        elif any(
+            token in (task.get("title") or "").lower()
+            for token in ("probe", "canary", "loop proof")
+        ):
             pass
         elif any(
             token in effective_reason.lower()
@@ -1262,7 +1240,11 @@ def _assessment(
         findings.append("task_awaiting_human_input")
     elif state in _ACTIVE_STATES:
         leased_until = _parse_time(task.get("leased_until"))
-        if state in {"claimed", "running"} and leased_until and leased_until <= datetime.now(timezone.utc):
+        if (
+            state in {"claimed", "running"}
+            and leased_until
+            and leased_until <= datetime.now(timezone.utc)
+        ):
             findings.append("active_task_lease_expired")
             verdict = "contradiction"
             action = "release_or_reopen_stale_lease"
@@ -1381,7 +1363,10 @@ def build_task_ledger_audit(
             verified_claims.append(checked)
         if selected_snapshot is not None and verify_git:
             attributed = _canonical_task_commit_claim(
-                selected_snapshot, task_id, _text(task.get("title")), git_timeout_seconds,
+                selected_snapshot,
+                task_id,
+                _text(task.get("title")),
+                git_timeout_seconds,
                 git_command_cache,
             )
             if attributed is not None and not any(
@@ -1410,12 +1395,10 @@ def build_task_ledger_audit(
                             "task_id_prefix_in_commit_message",
                             "task_title_in_commit_message",
                         },
-                        _text(item.get("attribution_status"))
-                        != "accepted_publication_evidence",
+                        _text(item.get("attribution_status")) != "accepted_publication_evidence",
                     ),
                 )
-                if _text(claim.get("integration_status"))
-                in {"ancestor", "patch_equivalent"}
+                if _text(claim.get("integration_status")) in {"ancestor", "patch_equivalent"}
             ),
             None,
         )
@@ -1452,9 +1435,7 @@ def build_task_ledger_audit(
                 )
                 else "not_verified"
             ),
-            "proof_sha": _text(integration_claim.get("head_sha"))
-            if integration_claim
-            else None,
+            "proof_sha": _text(integration_claim.get("head_sha")) if integration_claim else None,
             "claims": verified_claims,
         }
         dependencies = _dependency_audit(task, tasks_by_id)
@@ -1465,8 +1446,7 @@ def build_task_ledger_audit(
                 "project": _text(task.get("project")) or None,
                 "state": _text(task.get("state")),
                 "created_at": _text(task.get("created_at")) or None,
-                "updated_at": _text(task.get("updated_at") or task.get("last_updated_at"))
-                or None,
+                "updated_at": _text(task.get("updated_at") or task.get("last_updated_at")) or None,
                 "task": task,
                 "history": history,
                 "dependencies": dependencies,
@@ -1481,9 +1461,7 @@ def build_task_ledger_audit(
     # Two passes allow a cancellation/failed task to rely on a completed
     # replacement's independently computed code proof.
     for row in rows:
-        row["assessment"] = _assessment(
-            row, raw_histories.get(_text(row.get("task_id")), []), {}
-        )
+        row["assessment"] = _assessment(row, raw_histories.get(_text(row.get("task_id")), []), {})
     for row in rows:
         replacement = _replacement_audit(
             _mapping(row.get("task")), _mapping(row.get("history")), rows_by_id
@@ -1518,16 +1496,14 @@ def build_task_ledger_audit(
         != (
             _text(end_by_id[task_id].get("state")),
             _text(
-                end_by_id[task_id].get("updated_at")
-                or end_by_id[task_id].get("last_updated_at")
+                end_by_id[task_id].get("updated_at") or end_by_id[task_id].get("last_updated_at")
             ),
         )
     )
     verdict_counts = dict(
         sorted(
             Counter(
-                _text(_mapping(row.get("assessment")).get("verdict")) or "unknown"
-                for row in rows
+                _text(_mapping(row.get("assessment")).get("verdict")) or "unknown" for row in rows
             ).items()
         )
     )
@@ -1547,7 +1523,10 @@ def build_task_ledger_audit(
             "task_set_digest": _task_set_digest(tasks),
             "detail_error_count": len(detail_errors or []),
             "detail_errors": [dict(item) for item in (detail_errors or [])],
-            "pagination": dict(pagination or {"offset": 0, "limit": None, "returned": len(rows), "total": len(tasks)}),
+            "pagination": dict(
+                pagination
+                or {"offset": 0, "limit": None, "returned": len(rows), "total": len(tasks)}
+            ),
             "changed_during_run": bool(added or removed or changed),
             "added_task_ids": added,
             "removed_task_ids": removed,

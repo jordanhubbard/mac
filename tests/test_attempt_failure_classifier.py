@@ -326,16 +326,21 @@ def test_a_worker_with_no_execution_boundary_is_an_environment_failure_and_retri
         "MAC_ALLOW_UNSANDBOXED_YOLO is disabled."
     )
     detail = _executor_failure_transition_detail(
-        WorkerExecution(returncode=1, summary="executor failed", stdout="", stderr=refusal, metadata={}),
+        WorkerExecution(
+            returncode=1, summary="executor failed", stdout="", stderr=refusal, metadata={}
+        ),
         evidence_id="ev_boundary",
     )
 
     assert detail["failure"] == "executor_execution_boundary_unavailable"
     assert detail["manual_repair_required"] is False
     assert _blocked_attempt_retry_kind(detail) == "transient"
-    assert classify_attempt_failure(
-        [{"event_type": "task.transitioned", "detail": detail}]
-    ).failure_class == "environment"
+    assert (
+        classify_attempt_failure(
+            [{"event_type": "task.transitioned", "detail": detail}]
+        ).failure_class
+        == "environment"
+    )
 
 
 def test_an_agents_own_test_failure_is_still_work_and_still_stops():
@@ -362,9 +367,12 @@ def test_an_agents_own_test_failure_is_still_work_and_still_stops():
     assert detail.get("failure") is None
     assert detail["manual_repair_required"] is True
     assert _blocked_attempt_retry_kind(detail) == "non_retryable"
-    assert classify_attempt_failure(
-        [{"event_type": "task.transitioned", "detail": detail}]
-    ).failure_class == "work"
+    assert (
+        classify_attempt_failure(
+            [{"event_type": "task.transitioned", "detail": detail}]
+        ).failure_class
+        == "work"
+    )
 
 
 def test_plan_decomposed_contract_text_is_not_a_scope_marker():
@@ -374,9 +382,7 @@ def test_plan_decomposed_contract_text_is_not_a_scope_marker():
                 "event_type": "task.transitioned",
                 "detail": {
                     "reason": "verification_contract_failed",
-                    "problems": [
-                        "plan_decomposed evidence requires a non-empty children list"
-                    ],
+                    "problems": ["plan_decomposed evidence requires a non-empty children list"],
                 },
             }
         ]

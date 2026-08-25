@@ -53,7 +53,7 @@ def test_dsn() -> str:
     raise TestPostgresUnavailable(
         "%s is unset, so there is no database to run against.\n"
         "Start one and export the DSN:\n"
-        "    eval \"$(scripts/start-test-postgres.sh)\"\n"
+        '    eval "$(scripts/start-test-postgres.sh)"\n'
         "or point at any existing server:\n"
         "    export %s=postgresql://user@127.0.0.1:5432/mac_test"
         % (DEFAULT_TEST_DSN_ENV, DEFAULT_TEST_DSN_ENV)
@@ -199,9 +199,7 @@ def drop_store(store) -> None:
 # Tables the packaged DDL leaves populated: the migration ledgers. A reset must
 # preserve them, because "just initialized" includes their rows -- wiping them
 # would make the next test look like a database whose migrations never ran.
-_RESET_PRESERVED_TABLES = frozenset(
-    {"task_dependency_migrations", "telemetry_data_migrations"}
-)
+_RESET_PRESERVED_TABLES = frozenset({"task_dependency_migrations", "telemetry_data_migrations"})
 
 
 def reset_store_data(store) -> bool:
@@ -265,11 +263,7 @@ def reset_store_data(store) -> bool:
                 cur.execute("SET session_replication_role = replica")
 
                 cur.execute(probe)
-                dirty = [
-                    row[0]
-                    for row in cur.fetchall()
-                    if row[0] not in _RESET_PRESERVED_TABLES
-                ]
+                dirty = [row[0] for row in cur.fetchall() if row[0] not in _RESET_PRESERVED_TABLES]
                 for name in dirty:
                     cur.execute('DELETE FROM "%s"' % name)
 
@@ -328,8 +322,7 @@ def table_names(store) -> set:
     return {
         row["table_name"]
         for row in store.query_all(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = current_schema()"
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
         )
     }
 

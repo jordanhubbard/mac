@@ -243,7 +243,10 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("communication", "communication channels and routing"),
             ("notifier", "outbound notification channels"),
             ("directive", "operator directives issued to agents"),
-            ("persona-instance", "bind a persona (SOUL.md) to an agent, and its context (alias: hermes)"),
+            (
+                "persona-instance",
+                "bind a persona (SOUL.md) to an agent, and its context (alias: hermes)",
+            ),
             ("binding", "Hermes platform bindings"),
             ("interaction", "durable work created from a conversation"),
             ("bridge", "external system bridges"),
@@ -390,10 +393,7 @@ def _make_help_handler(
     return handler
 
 
-
-def first_positional(
-    parser: argparse.ArgumentParser, argv: Sequence[str]
-) -> Optional[str]:
+def first_positional(parser: argparse.ArgumentParser, argv: Sequence[str]) -> Optional[str]:
     """The first token that names a command, skipping options and their values.
 
     ``--db <dsn>`` puts a bare-looking token in the stream that is data, not a
@@ -414,7 +414,9 @@ def first_positional(
     return None
 
 
-def leaf_help_request(parser: argparse.ArgumentParser, argv: Sequence[str]) -> Optional[argparse.ArgumentParser]:
+def leaf_help_request(
+    parser: argparse.ArgumentParser, argv: Sequence[str]
+) -> Optional[argparse.ArgumentParser]:
     """The parser whose help ``argv`` is asking for, when ``help`` names a leaf.
 
     ``install_help_verbs`` adds a ``help`` verb wherever there are subcommands,
@@ -475,6 +477,7 @@ def _option_value_count(parser: argparse.ArgumentParser, token: str) -> int:
         return 0
     return 1
 
+
 def install_help_verbs(parser: argparse.ArgumentParser, *, _depth: int = 0) -> None:
     """Add a ``help`` verb at every level that has subcommands.
 
@@ -488,9 +491,7 @@ def install_help_verbs(parser: argparse.ArgumentParser, *, _depth: int = 0) -> N
     if action is None:
         return
     if "help" not in action.choices:
-        help_parser = action.add_parser(
-            "help", help="show help for this command group"
-        )
+        help_parser = action.add_parser("help", help="show help for this command group")
         help_parser.add_argument(
             "help_topic",
             nargs="?",
@@ -504,9 +505,7 @@ def install_help_verbs(parser: argparse.ArgumentParser, *, _depth: int = 0) -> N
                 action="store_true",
                 help="list every command, not just the common ones",
             )
-        help_parser.set_defaults(
-            func=_make_help_handler(parser, action, is_top_level=_depth == 0)
-        )
+        help_parser.set_defaults(func=_make_help_handler(parser, action, is_top_level=_depth == 0))
     for _name, sub in _distinct_subcommands(action):
         install_help_verbs(sub, _depth=_depth + 1)
 
@@ -594,7 +593,11 @@ def _object_help_text(obj: ObjectSurface, action: argparse._SubParsersAction) ->
             continue
         text = _one_line_help(action, implementation) or _one_line_help(action, verb)
         if implementation != verb:
-            text = "%s (same as `%s`)" % (text, implementation) if text else "same as `%s`" % implementation
+            text = (
+                "%s (same as `%s`)" % (text, implementation)
+                if text
+                else "same as `%s`" % implementation
+            )
         crud_rows.append((verb, text))
         listed.add(implementation)
         listed.add(verb)
@@ -604,11 +607,7 @@ def _object_help_text(obj: ObjectSurface, action: argparse._SubParsersAction) ->
         lines.append("")
 
     for title, verbs in obj.groups:
-        rows = [
-            (verb, _one_line_help(action, verb))
-            for verb in verbs
-            if verb in action.choices
-        ]
+        rows = [(verb, _one_line_help(action, verb)) for verb in verbs if verb in action.choices]
         rows = [row for row in rows if row[0] not in listed]
         if not rows:
             continue
@@ -675,9 +674,7 @@ def _admin_help_text(action: argparse._SubParsersAction) -> str:
     remaining = sorted(present - listed - {"help"})
     if remaining:
         lines.append("Other:")
-        lines.extend(
-            _format_rows([(name, _one_line_help(action, name)) for name in remaining])
-        )
+        lines.extend(_format_rows([(name, _one_line_help(action, name)) for name in remaining]))
         lines.append("")
     lines.append("Run `mac admin help <command>` for the arguments one takes.")
     lines.append("These moved here from the top level; `mac <command>` now redirects.")
@@ -712,9 +709,7 @@ def install_object_help(parser: argparse.ArgumentParser) -> None:
         _install_grouped_help(sub_parser, _object_help_text(obj, sub_action))
 
 
-def _top_level_help_text(
-    action: argparse._SubParsersAction, *, show_all: bool = False
-) -> str:
+def _top_level_help_text(action: argparse._SubParsersAction, *, show_all: bool = False) -> str:
     lines = ["", "The objects mac models. Start here:", ""]
     rows = []
     for obj in FIRST_CLASS:
@@ -748,9 +743,7 @@ def _top_level_help_text(
         if "admin" in action.choices:
             lines.append("Everything else:")
             lines.extend(
-                _format_rows(
-                    [("admin", "fleet, runtime and control-plane administration")]
-                )
+                _format_rows([("admin", "fleet, runtime and control-plane administration")])
             )
             lines.append("")
         lines.append(
@@ -793,9 +786,7 @@ def _top_level_help_text(
     remaining = sorted(visible - listed)
     if remaining:
         lines.append("Other:")
-        lines.extend(
-            _format_rows([(name, _one_line_help(action, name)) for name in remaining])
-        )
+        lines.extend(_format_rows([(name, _one_line_help(action, name)) for name in remaining]))
         lines.append("")
 
     hidden = len(registered - visible)
@@ -879,9 +870,7 @@ def install_admin_group(parser: argparse.ArgumentParser) -> None:
         return
 
     moved = [
-        (name, sub)
-        for name, sub in _distinct_subcommands(action)
-        if name not in TOP_LEVEL_KEEP
+        (name, sub) for name, sub in _distinct_subcommands(action) if name not in TOP_LEVEL_KEEP
     ]
     if not moved:
         return
@@ -912,9 +901,7 @@ def install_admin_group(parser: argparse.ArgumentParser) -> None:
         if any(sub is moved_parser for _moved_name, moved_parser in moved):
             action._name_parser_map.pop(name, None)
     action.choices = action._name_parser_map
-    _MOVED_TO_ADMIN.update(
-        name for name, _sub in moved
-    )
+    _MOVED_TO_ADMIN.update(name for name, _sub in moved)
 
 
 def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -936,7 +923,6 @@ def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     install_admin_help(parser)
     install_top_level_help(parser)
     return parser
-
 
 
 # ---------------------------------------------------------------------------

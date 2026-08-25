@@ -79,10 +79,7 @@ def test_verification_contract_dispatches_all_evidence_types(monkeypatch) -> Non
         },
         "tests": [{"returncode": 0}],
     }
-    assert (
-        worker._worker_verification_contract_problems(local_no_change, "no_change")
-        == ["cg"]
-    )
+    assert worker._worker_verification_contract_problems(local_no_change, "no_change") == ["cg"]
     assert worker._worker_verification_contract_problems({}, "review_verdict") == ["cg"]
     assert worker._worker_verification_contract_problems({}, "unknown") == [
         "unsupported verification.evidence_type: unknown"
@@ -90,37 +87,56 @@ def test_verification_contract_dispatches_all_evidence_types(monkeypatch) -> Non
 
 
 def test_operator_result_verification_substance_paths() -> None:
-    assert worker._worker_verification_contract_problems(
-        {"artifacts": [{"uri": "x"}]}, "operator_result"
-    ) == []
-    assert worker._worker_verification_contract_problems(
-        {"findings": [{"summary": "x"}]}, "operator_result"
-    ) == []
-    assert "requires summary" in worker._worker_verification_contract_problems(
-        {}, "operator_result"
-    )[0]
-    assert "not substantive" in worker._worker_verification_contract_problems(
-        {"summary": "hello hello hello"}, "operator_result"
-    )[0]
-    assert worker._worker_verification_contract_problems(
-        {"summary": "Analyzed the rollout failures and documented three concrete fixes."},
-        "operator_result",
-    ) == []
-    assert worker._worker_verification_contract_problems(
-        {
-            "summary": "Established ground truth and documented the evidence gap.",
-            "findings": [{"status": "not_actionable"}],
-        },
-        "investigation",
-    ) == []
-    assert worker._worker_verification_contract_problems(
-        {
-            "children": [{"title": "Inspect"}, {"title": "Repair"}],
-            "ordering_rationale": "Inspect before repair.",
-            "coverage_claim": "Diagnosis and repair cover the parent scope.",
-        },
-        "plan_decomposed",
-    ) == []
+    assert (
+        worker._worker_verification_contract_problems(
+            {"artifacts": [{"uri": "x"}]}, "operator_result"
+        )
+        == []
+    )
+    assert (
+        worker._worker_verification_contract_problems(
+            {"findings": [{"summary": "x"}]}, "operator_result"
+        )
+        == []
+    )
+    assert (
+        "requires summary"
+        in worker._worker_verification_contract_problems({}, "operator_result")[0]
+    )
+    assert (
+        "not substantive"
+        in worker._worker_verification_contract_problems(
+            {"summary": "hello hello hello"}, "operator_result"
+        )[0]
+    )
+    assert (
+        worker._worker_verification_contract_problems(
+            {"summary": "Analyzed the rollout failures and documented three concrete fixes."},
+            "operator_result",
+        )
+        == []
+    )
+    assert (
+        worker._worker_verification_contract_problems(
+            {
+                "summary": "Established ground truth and documented the evidence gap.",
+                "findings": [{"status": "not_actionable"}],
+            },
+            "investigation",
+        )
+        == []
+    )
+    assert (
+        worker._worker_verification_contract_problems(
+            {
+                "children": [{"title": "Inspect"}, {"title": "Repair"}],
+                "ordering_rationale": "Inspect before repair.",
+                "coverage_claim": "Diagnosis and repair cover the parent scope.",
+            },
+            "plan_decomposed",
+        )
+        == []
+    )
 
 
 def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
@@ -167,9 +183,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
             return None
 
         def _prepare_task_workspace(self, task, lease):
-            (tmp_path / "task.json").write_text(
-                json.dumps({"task": task, "lease": lease})
-            )
+            (tmp_path / "task.json").write_text(json.dumps({"task": task, "lease": lease}))
             return tmp_path
 
         def _execute_with_lease_renewal(self, task, lease, task_dir):
@@ -178,9 +192,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
         def _assignment_is_current(self, task_id, lease_id):
             return True
 
-        def _record_execution(
-            self, task_id, task_dir, execution, *, lease_id, attempt_state=None
-        ):
+        def _record_execution(self, task_id, task_dir, execution, *, lease_id, attempt_state=None):
             return {
                 "id": "evidence-plan",
                 "metadata": {"verification": manifest},
@@ -196,9 +208,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
     assert result.task == {"id": "task-plan", "state": "waiting"}
     assert result.evidence["id"] == "evidence-plan"
     child_posts = [
-        (path, payload)
-        for path, payload in harness.client.posts
-        if path.endswith("/children")
+        (path, payload) for path, payload in harness.client.posts if path.endswith("/children")
     ]
     assert child_posts == [
         (
@@ -210,9 +220,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
             },
         )
     ]
-    assert not [
-        path for path, _payload in harness.client.posts if "submit-for-review" in path
-    ]
+    assert not [path for path, _payload in harness.client.posts if "submit-for-review" in path]
 
 
 def test_plan_policy_rejection_reports_verification_failure_not_environment(
@@ -271,9 +279,7 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
         def _assignment_is_current(self, task_id, lease_id):
             return True
 
-        def _record_execution(
-            self, task_id, task_dir, execution, *, lease_id, attempt_state=None
-        ):
+        def _record_execution(self, task_id, task_dir, execution, *, lease_id, attempt_state=None):
             return {"id": "evidence-plan", "metadata": {"verification": manifest}}
 
         def _execution_submission_problems(self, task_dir, evidence):
@@ -387,15 +393,14 @@ def test_task_iteration_override_separates_executor_and_reviewer_budgets() -> No
     metadata = {"max_iterations": 30, "review_max_iterations": "12"}
 
     assert worker._task_iteration_override({"metadata": metadata}) == 30
-    assert worker._task_iteration_override(
-        {"metadata": {**metadata, "review_context": {"review_id": "review_1"}}}
-    ) == 12
-    assert worker._task_iteration_override(
-        {"metadata": {"max_iterations": 0}}
-    ) is None
-    assert worker._task_iteration_override(
-        {"metadata": {"max_iterations": 501}}
-    ) is None
+    assert (
+        worker._task_iteration_override(
+            {"metadata": {**metadata, "review_context": {"review_id": "review_1"}}}
+        )
+        == 12
+    )
+    assert worker._task_iteration_override({"metadata": {"max_iterations": 0}}) is None
+    assert worker._task_iteration_override({"metadata": {"max_iterations": 501}}) is None
 
 
 def test_subprocess_executor_exports_task_iteration_budget(monkeypatch, tmp_path) -> None:
@@ -428,9 +433,7 @@ def test_subprocess_executor_exports_task_iteration_budget(monkeypatch, tmp_path
     assert captured["env"]["MAC_TASK_MAX_ITERATIONS"] == "12"
 
 
-def test_subprocess_executor_does_not_inherit_task_scoped_overrides(
-    monkeypatch, tmp_path
-) -> None:
+def test_subprocess_executor_does_not_inherit_task_scoped_overrides(monkeypatch, tmp_path) -> None:
     captured = {}
 
     class ImmediateProcess:
@@ -455,9 +458,7 @@ def test_subprocess_executor_does_not_inherit_task_scoped_overrides(
     monkeypatch.setattr(worker.subprocess, "Popen", ImmediateProcess)
     monkeypatch.setattr(worker, "_terminate_process_tree", lambda *_a, **_k: None)
 
-    worker.SubprocessExecutor(["executor"])(
-        {"id": "task_unpinned", "metadata": {}}, tmp_path
-    )
+    worker.SubprocessExecutor(["executor"])({"id": "task_unpinned", "metadata": {}}, tmp_path)
 
     assert "MAC_TASK_MODEL" not in captured["env"]
     assert "MAC_TASK_MAX_ITERATIONS" not in captured["env"]
@@ -468,7 +469,11 @@ def test_review_verdict_compares_executor_changed_files(monkeypatch, tmp_path) -
     (tmp_path / "executor-evidence.json").write_text(
         json.dumps({"verification": {"repo": {"files_changed": ["./src//a.py", "b.py"]}}})
     )
-    monkeypatch.setattr(worker, "codegraph_audit_manifest_problems", lambda manifest: [manifest["repo"]["files_changed"]])
+    monkeypatch.setattr(
+        worker,
+        "codegraph_audit_manifest_problems",
+        lambda manifest: [manifest["repo"]["files_changed"]],
+    )
     problems = worker._worker_review_verdict_executor_repo_problems(
         tmp_path, {"repo": {"files_changed": ["other.py"]}}
     )
@@ -504,22 +509,35 @@ def test_worker_repo_anchor_and_empty_change_exceptions(monkeypatch) -> None:
         {"repo": {"head_sha": "short", "dirty": True, "pushed": False}}
     )
     assert len(malformed) == 3
-    assert worker._worker_require_pushed_repo_anchor(
-        {"repo": {"head_sha": "a" * 40, "dirty": "0", "pr_url": "https://pr"}}
-    ) == []
+    assert (
+        worker._worker_require_pushed_repo_anchor(
+            {"repo": {"head_sha": "a" * 40, "dirty": "0", "pr_url": "https://pr"}}
+        )
+        == []
+    )
     assert worker._worker_allows_empty_repo_change_evidence({}, "documentation") is False
-    assert worker._worker_allows_empty_repo_change_evidence({"metadata": []}, "repo_change") is False
-    assert worker._worker_allows_empty_repo_change_evidence(
-        {"metadata": {"origin": {"type": "beads_source_remediation"}}}, "repo_change"
-    ) is True
-    assert worker._worker_allows_empty_repo_change_evidence(
-        {"metadata": {"remediation": {"type": "beads_source_refresh"}}}, "repo_change"
-    ) is True
+    assert (
+        worker._worker_allows_empty_repo_change_evidence({"metadata": []}, "repo_change") is False
+    )
+    assert (
+        worker._worker_allows_empty_repo_change_evidence(
+            {"metadata": {"origin": {"type": "beads_source_remediation"}}}, "repo_change"
+        )
+        is True
+    )
+    assert (
+        worker._worker_allows_empty_repo_change_evidence(
+            {"metadata": {"remediation": {"type": "beads_source_refresh"}}}, "repo_change"
+        )
+        is True
+    )
 
 
 def test_path_and_bound_normalizers() -> None:
     assert worker._normalize_restart_services(None) == []
-    assert worker._normalize_restart_services(["a.service", "", "a.service", "b-agent.service"]) == [
+    assert worker._normalize_restart_services(
+        ["a.service", "", "a.service", "b-agent.service"]
+    ) == [
         "a.service",
         "b-agent.service",
     ]
@@ -550,23 +568,29 @@ def test_repository_head_push_checks_remote_url_origin_and_branch(monkeypatch, t
         return _completed(1)
 
     monkeypatch.setattr(worker, "_run_git", run_git)
-    assert worker._repository_context_head_is_pushed(
-        tmp_path,
-        {"head_sha": head, "remote_url": "https://repo", "remote_ref": "refs/heads/task"},
-    ) is True
+    assert (
+        worker._repository_context_head_is_pushed(
+            tmp_path,
+            {"head_sha": head, "remote_url": "https://repo", "remote_ref": "refs/heads/task"},
+        )
+        is True
+    )
 
     monkeypatch.setattr(
         worker,
         "_run_git",
         lambda _repo, args: _completed(0, head + "\n") if args[0] == "rev-parse" else _completed(1),
     )
-    assert worker._repository_context_head_is_pushed(
-        tmp_path, {"head_sha": head, "remote_ref": "refs/heads/task"}
-    ) is True
+    assert (
+        worker._repository_context_head_is_pushed(
+            tmp_path, {"head_sha": head, "remote_ref": "refs/heads/task"}
+        )
+        is True
+    )
 
 
 def test_restart_systemd_service_result_matrix(monkeypatch) -> None:
-    assert worker._restart_systemd_service("../bad") ["status"] == "error"
+    assert worker._restart_systemd_service("../bad")["status"] == "error"
     assert worker._restart_systemd_service("mac-agent.service")["status"] == "skipped"
     monkeypatch.setattr(worker.shutil, "which", lambda _name: None)
     assert worker._restart_systemd_service("demo.service")["reason"] == "systemctl not found"
@@ -612,7 +636,11 @@ def test_restart_systemd_service_result_matrix(monkeypatch) -> None:
 def test_run_git_timeout_fallbacks(monkeypatch, tmp_path) -> None:
     calls = []
     monkeypatch.setenv("MAC_SELF_UPDATE_GIT_TIMEOUT", "bad")
-    monkeypatch.setattr(worker.subprocess, "run", lambda argv, **kwargs: calls.append((argv, kwargs)) or _completed())
+    monkeypatch.setattr(
+        worker.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)) or _completed(),
+    )
     worker._run_git(tmp_path, ["status"])
     worker._run_git_in(tmp_path, ["clone", "x"])
     assert calls[0][1]["timeout"] == 120.0
@@ -688,9 +716,7 @@ def test_sandbox_repository_verification_item_returns_deferred_when_hub_verify_a
     command = "scripts/run-contract-tests.sh"
     item = worker._sandbox_repository_verification_item(tmp_path, command, hub_verify=True)
     assert item is not None, "expected deferred sentinel, got None"
-    assert worker._is_hub_verify_deferred_item(item), (
-        "expected deferred sentinel, got: %s" % item
-    )
+    assert worker._is_hub_verify_deferred_item(item), "expected deferred sentinel, got: %s" % item
     assert item["command"] == command
 
 

@@ -230,9 +230,7 @@ def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnec
                 "MAC login profile %r has an invalid remote hub port" % selected_profile
             )
         if not api_url:
-            raise IdeLauncherError(
-                "MAC login profile %r has no API URL" % selected_profile
-            )
+            raise IdeLauncherError("MAC login profile %r has no API URL" % selected_profile)
         if not token:
             raise IdeLauncherError(
                 "MAC login profile %r has no stored credential" % selected_profile
@@ -269,9 +267,7 @@ def _validated_api_url(raw: str) -> str:
     value = raw.strip().rstrip("/")
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise IdeLauncherError(
-            "hub URL must include http:// or https:// and a hostname"
-        )
+        raise IdeLauncherError("hub URL must include http:// or https:// and a hostname")
     if parsed.username or parsed.password:
         raise IdeLauncherError("hub URL must not contain credentials")
     if parsed.query or parsed.fragment:
@@ -340,11 +336,7 @@ def _fleet_prompt_default(env: Mapping[str, str]) -> "tuple[str, int]":
         return ("", 0)
 
     explicit = _value(env, "MAC_FLEETS_CONFIG")
-    path = (
-        Path(explicit).expanduser()
-        if explicit
-        else mac_paths.fleets_config()
-    )
+    path = Path(explicit).expanduser() if explicit else mac_paths.fleets_config()
     if not path.is_file():
         return ("", 0)
     fleet = _value(env, "IDE_FLEET") or _value(env, "MAC_FLEET")
@@ -407,8 +399,7 @@ def prompt_for_ide_connection(
         try:
             entered = read(
                 "Target hub host or IP "
-                "[Enter keeps %s; direct port %d]: "
-                % (default.api_url, default.hub_port)
+                "[Enter keeps %s; direct port %d]: " % (default.api_url, default.hub_port)
             ).strip()
         except EOFError:
             return default
@@ -451,9 +442,7 @@ def build_vite_environment(
         child["MAC_IDE_PROXY_TOKEN"] = connection.token
         child["VITE_MAC_AUTH_MODE"] = "managed"
         child["VITE_MAC_AUTH_LABEL"] = (
-            "CLI profile %s" % connection.profile
-            if connection.profile
-            else "launcher credential"
+            "CLI profile %s" % connection.profile if connection.profile else "launcher credential"
         )
     else:
         child.pop("VITE_MAC_AUTH_MODE", None)
@@ -484,8 +473,7 @@ def run(env: Optional[Mapping[str, str]] = None) -> int:
 
     if connection.profile:
         print(
-            "IDE connection: MAC login profile %s via %s"
-            % (connection.profile, connection.api_url)
+            "IDE connection: MAC login profile %s via %s" % (connection.profile, connection.api_url)
         )
     else:
         print("IDE connection: %s" % connection.api_url)

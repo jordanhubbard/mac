@@ -40,9 +40,7 @@ FINISHED_STATES = frozenset({"completed", "failed", "cancelled"})
 STALLED_STATES = frozenset({"blocked", "needs_input"})
 
 #: Everything the wait actually watches: active, or able to become active.
-WAITABLE_STATES = frozenset(
-    {"open", "waiting", "claimed", "running", "needs_review", "reviewing"}
-)
+WAITABLE_STATES = frozenset({"open", "waiting", "claimed", "running", "needs_review", "reviewing"})
 
 #: Why a task left the wait set, kept apart because they mean different things
 #: to whoever is waiting.
@@ -162,7 +160,9 @@ class TaskWait:
             update["actor"] = record.get("actor")
         return update
 
-    def rescan(self, tasks: Iterable[Any], *, project: Optional[str] = None) -> List[Dict[str, Any]]:
+    def rescan(
+        self, tasks: Iterable[Any], *, project: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Reconcile against authoritative state.
 
         Events can be missed -- a hub restart, a dropped poll, a transition
@@ -178,9 +178,7 @@ class TaskWait:
                 continue
             if project is not None and str(record.get("project") or "") != project:
                 continue
-            update = self.observe(
-                str(record.get("id") or ""), str(record.get("state") or "")
-            )
+            update = self.observe(str(record.get("id") or ""), str(record.get("state") or ""))
             if update is not None:
                 update["source"] = "rescan"
                 updates.append(update)

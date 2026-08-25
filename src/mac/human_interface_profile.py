@@ -39,6 +39,7 @@ Design, inherited deliberately from
 * **Dry-run by default.** Porting mutates an agent's identity; the caller must
   ask for it explicitly.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -205,8 +206,7 @@ def layout_for(interface: str, home: Path) -> InterfaceLayout:
     if interface == OPENCLAW:
         return openclaw_layout(home)
     raise ProfilePortError(
-        "unknown human interface %r; expected one of %s"
-        % (interface, ", ".join(INTERFACES))
+        "unknown human interface %r; expected one of %s" % (interface, ", ".join(INTERFACES))
     )
 
 
@@ -331,8 +331,7 @@ class ProfilePort:
         target = str(target or "").strip().lower()
         if source == target:
             raise ProfilePortError(
-                "source and target are the same interface (%r); nothing to port"
-                % source
+                "source and target are the same interface (%r); nothing to port" % source
             )
         self.home = Path(home) if home is not None else Path.home()
         self.source = layout_for(source, self.home)
@@ -363,9 +362,7 @@ class ProfilePort:
 
     # -- identity ---------------------------------------------------------
 
-    def _port_identity_file(
-        self, name: str, report: PortReport, updates: Dict[str, str]
-    ) -> None:
+    def _port_identity_file(self, name: str, report: PortReport, updates: Dict[str, str]) -> None:
         source_path = self.source.identity_path(name)
         if source_path is None:
             return
@@ -435,11 +432,10 @@ class ProfilePort:
         env = self._merged_env(layout)
         tokens: Dict[str, Dict[str, str]] = {}
         for key, value in env.items():
-            for suffix, field_name in (("_BOT_TOKEN", "bot_token"),
-                                       ("_APP_TOKEN", "app_token")):
+            for suffix, field_name in (("_BOT_TOKEN", "bot_token"), ("_APP_TOKEN", "app_token")):
                 prefix = "MAC_OPENCLAW_SLACK_"
                 if key.startswith(prefix) and key.endswith(suffix):
-                    name = key[len(prefix):-len(suffix)]
+                    name = key[len(prefix) : -len(suffix)]
                     if not name or key == OPENCLAW_ACCOUNT_KEY:
                         continue
                     value = str(value or "").strip()
@@ -477,9 +473,7 @@ class ProfilePort:
         app = str(env.get("SLACK_APP_TOKEN") or "").strip()
         if not bot and not app:
             return {}
-        return self._finalise_accounts(
-            {"default": {"bot_token": bot, "app_token": app}}, report
-        )
+        return self._finalise_accounts({"default": {"bot_token": bot, "app_token": app}}, report)
 
     def _finalise_accounts(
         self, tokens: Dict[str, Dict[str, str]], report: PortReport
@@ -506,16 +500,12 @@ class ProfilePort:
             return self._read_openclaw_accounts(layout, report)
         return self._read_hermes_accounts(layout, report)
 
-    def _write_hermes_accounts(
-        self, accounts: Dict[str, SlackAccount]
-    ) -> None:
+    def _write_hermes_accounts(self, accounts: Dict[str, SlackAccount]) -> None:
         payload = [
             {"name": a.name, "bot_token": a.bot_token, "app_token": a.app_token}
             for a in accounts.values()
         ]
-        _atomic_write(
-            self.target.accounts_file, json.dumps(payload, indent=2) + "\n"
-        )
+        _atomic_write(self.target.accounts_file, json.dumps(payload, indent=2) + "\n")
 
     def _write_openclaw_accounts(
         self, accounts: Dict[str, SlackAccount], default: Optional[str]
@@ -567,8 +557,10 @@ class ProfilePort:
         else:
             default = None
             source_env = self._merged_env(self.source)
-            for candidate in (str(source_env.get(OPENCLAW_ACCOUNT_KEY) or "").strip(),
-                              next(iter(source_accounts), "")):
+            for candidate in (
+                str(source_env.get(OPENCLAW_ACCOUNT_KEY) or "").strip(),
+                next(iter(source_accounts), ""),
+            ):
                 if candidate:
                     default = candidate.lower()
                     break
@@ -598,9 +590,7 @@ class ProfilePort:
         return hasher.hexdigest()
 
     def run(self, *, dry_run: bool = True) -> Dict[str, Any]:
-        report = PortReport(
-            source=self.source.name, target=self.target.name, dry_run=bool(dry_run)
-        )
+        report = PortReport(source=self.source.name, target=self.target.name, dry_run=bool(dry_run))
         updates: Dict[str, str] = {}
         for name in IDENTITY_FILES:
             self._port_identity_file(name, report, updates)
@@ -632,9 +622,7 @@ def port_profile(
     state_file: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Port an agent profile between human interfaces. Dry-run by default."""
-    return ProfilePort(source, target, home=home, state_file=state_file).run(
-        dry_run=dry_run
-    )
+    return ProfilePort(source, target, home=home, state_file=state_file).run(dry_run=dry_run)
 
 
 #: Telegram is configured on both sides -- OPENCLAW_TELEGRAM_ACCOUNT_ID exists
@@ -879,8 +867,7 @@ def assert_switch_ported(
         ),
         "stale": "the last port into %s is older than the allowed window" % target,
         "unclean": (
-            "the last port into %s finished with conflicts that are still "
-            "unreconciled" % target
+            "the last port into %s finished with conflicts that are still unreconciled" % target
         ),
     }.get(str(reason), "the profile in %s cannot be shown to be current" % target)
     raise ProfilePortError(
@@ -896,18 +883,14 @@ def _other_interface(interface: str) -> str:
         return "openclaw"
     if interface == "openclaw":
         return "hermes"
-    raise ProfilePortError(
-        "unknown human interface %r (expected hermes or openclaw)" % interface
-    )
+    raise ProfilePortError("unknown human interface %r (expected hermes or openclaw)" % interface)
 
 
 def _completion_key(source: str, target: str) -> str:
     return "__port__:%s->%s" % (source, target)
 
 
-def _load_completion(
-    port: "ProfilePort", source: str, target: str
-) -> Optional[Dict[str, Any]]:
+def _load_completion(port: "ProfilePort", source: str, target: str) -> Optional[Dict[str, Any]]:
     raw = port._previous.get(_completion_key(source, target))
     if not raw:
         return None

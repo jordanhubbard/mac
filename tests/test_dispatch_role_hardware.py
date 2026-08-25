@@ -60,12 +60,8 @@ def test_agent_with_required_role_matches(cp):
         default_capabilities=["review"],
         required_capabilities=["review"],
     )
-    soul = bind_soul(
-        cp, persona_name="Reviewer Soul", allowed_role_slugs=["code-reviewer"]
-    )
-    agent = cp.register_agent(
-        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
-    )
+    soul = bind_soul(cp, persona_name="Reviewer Soul", allowed_role_slugs=["code-reviewer"])
+    agent = cp.register_agent(machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul)
     cp.roles.assign_role(agent.id, "code-reviewer")
     task = cp.create_task(
         "needs-reviewer",
@@ -92,9 +88,7 @@ def test_role_required_capabilities_stack_onto_task_set(cp):
     # is ineligible until sudo lands on its set too.
     machine = _machine(cp)
     soul = bind_soul(cp, persona_name="Ops Soul", allowed_role_slugs=["ops"])
-    agent = cp.register_agent(
-        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
-    )
+    agent = cp.register_agent(machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul)
     cp.roles.assign_role(agent.id, "ops")
     cp.create_task("py-task", required_capabilities=["python"])
     assert cp.dispatch_once(lease_seconds=300) is None
@@ -201,9 +195,7 @@ def test_agent_with_role_id_still_strict_when_role_matches(cp):
         level="ic",
         required_capabilities=["python"],
     )
-    soul = bind_soul(
-        cp, persona_name="Coder Soul", allowed_role_slugs=["python-coder"]
-    )
+    soul = bind_soul(cp, persona_name="Coder Soul", allowed_role_slugs=["python-coder"])
     machine = _machine(cp)
     agent = cp.register_agent(
         machine.id, "py-coder", capabilities=["python"], hermes_instance_id=soul
@@ -240,9 +232,7 @@ def test_agent_with_role_id_still_strict_when_role_mismatches(cp):
         level="ic",
         required_capabilities=["review"],
     )
-    soul = bind_soul(
-        cp, persona_name="Reviewer Soul", allowed_role_slugs=["python-reviewer"]
-    )
+    soul = bind_soul(cp, persona_name="Reviewer Soul", allowed_role_slugs=["python-reviewer"])
     machine = _machine(cp)
     # Agent has every capability the coder role would need, but is bound
     # to the reviewer role. Strict slug match must still reject it.
@@ -279,9 +269,7 @@ def test_dispatcher_rejected_if_capabilities_insufficient_for_role(cp):
         required_capabilities=["python"],
     )
     machine = _machine(cp)
-    dispatcher = cp.register_agent(
-        machine.id, "mac-runner", capabilities=["ops"]
-    )
+    dispatcher = cp.register_agent(machine.id, "mac-runner", capabilities=["ops"])
     assert dispatcher.role_id is None
     task = cp.create_task(
         "specialised",

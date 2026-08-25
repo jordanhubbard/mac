@@ -69,9 +69,7 @@ def _path_literals(node: ast.AST, assigns: dict) -> list:
 
 def _is_query_call(node: ast.AST) -> bool:
     return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_query"
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_query"
     )
 
 
@@ -106,8 +104,7 @@ def _dispatch_calls():
             kwargs = [kw.arg for kw in node.keywords if kw.arg]
             if found:
                 calls.extend(
-                    (HTTP_HELPERS[func.attr], path, node.lineno, tuple(kwargs))
-                    for path in found
+                    (HTTP_HELPERS[func.attr], path, node.lineno, tuple(kwargs)) for path in found
                 )
             else:
                 unresolved.append((func.attr, node.lineno))
@@ -171,9 +168,7 @@ def test_the_extractor_sees_the_whole_surface():
     """A floor, so a broken extractor cannot pass by finding nothing."""
     calls, _ = _dispatch_calls()
 
-    assert len(calls) > 200, "only %d calls extracted; expected the full surface" % len(
-        calls
-    )
+    assert len(calls) > 200, "only %d calls extracted; expected the full surface" % len(calls)
 
 
 # --------------------------------------------------------------------------

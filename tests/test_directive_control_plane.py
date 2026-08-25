@@ -77,8 +77,6 @@ def test_dispatch_gate_rejects_unacknowledged_policy_epoch(monkeypatch) -> None:
     assert eligible is False
     assert reason == "directive_policy_unacknowledged"
 
-    cp.acknowledge_directive_activation(
-        agent.id, activation["id"], digest=version["digest"]
-    )
+    cp.acknowledge_directive_activation(agent.id, activation["id"], digest=version["digest"])
     _eligible_after, reason_after = cp._agent_availability_for_task(agent, task)
     assert reason_after != "directive_policy_unacknowledged"

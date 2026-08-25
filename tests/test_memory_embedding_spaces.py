@@ -11,6 +11,7 @@ mixed collection degrades to *fewer* results rather than *wrong* ones. And
 ``reconcile_embedding_spaces`` re-embeds the stragglers so the collection
 goes back to holding one space.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -144,9 +145,7 @@ def _add(cp, content):
 # ---------------------------------------------------------------------------
 
 
-def test_recall_returns_only_the_query_s_own_embedding_space(
-    cp, nvidia_writer, azure_writer
-):
+def test_recall_returns_only_the_query_s_own_embedding_space(cp, nvidia_writer, azure_writer):
     """A hit from the other space is not a worse hit, it is a meaningless
     one — the score is a dot product between vectors that share nothing but
     a dimension count."""
@@ -173,9 +172,7 @@ def test_recall_can_be_asked_to_look_across_spaces(cp, nvidia_writer, azure_writ
     assert {h["memory_id"] for h in hits} == {mine.id, theirs.id}
 
 
-def test_recall_combines_the_space_filter_with_project_scoping(
-    cp, nvidia_writer, fake_qdrant
-):
+def test_recall_combines_the_space_filter_with_project_scoping(cp, nvidia_writer, fake_qdrant):
     """The new clause must not displace the existing server-side filters."""
     record = _add(cp, "something")
     nvidia_writer.embed_memory(record.id)
@@ -204,9 +201,7 @@ def test_report_names_both_spaces_without_writing(cp, nvidia_writer, azure_write
     assert report["mismatched"] == 1
 
 
-def test_reconcile_re_embeds_the_minority_space(
-    cp, nvidia_writer, azure_writer, fake_qdrant
-):
+def test_reconcile_re_embeds_the_minority_space(cp, nvidia_writer, azure_writer, fake_qdrant):
     keeper = _add(cp, "already in the majority space")
     straggler = _add(cp, "left behind by the model switch")
     nvidia_writer.embed_memory(keeper.id)
@@ -217,8 +212,7 @@ def test_reconcile_re_embeds_the_minority_space(
     assert report["mismatched"] == 1
     assert report["reembedded_memory_ids"] == [straggler.id]
     models = {
-        point["payload"]["embedding_model"]
-        for point in fake_qdrant.collections[MEDIUM].values()
+        point["payload"]["embedding_model"] for point in fake_qdrant.collections[MEDIUM].values()
     }
     assert models == {NVIDIA}
     # Same point id, replaced in place: no duplicate left behind.
@@ -233,9 +227,9 @@ def test_reconcile_restamps_the_provenance_ledger(cp, nvidia_writer, azure_write
     hand."""
     straggler = _add(cp, "left behind by the model switch")
     azure_writer.embed_memory(straggler.id)
-    assert [r.embedding_model for r in cp.memory.list_vector_refs(
-        memory_id=straggler.id
-    )] == [AZURE]
+    assert [r.embedding_model for r in cp.memory.list_vector_refs(memory_id=straggler.id)] == [
+        AZURE
+    ]
 
     nvidia_writer.reconcile_embedding_spaces()
 
@@ -252,15 +246,12 @@ def test_reconcile_dry_run_changes_nothing(cp, nvidia_writer, azure_writer, fake
     assert report["dry_run"] is True
     assert report["reembedded_memory_ids"] == [straggler.id]
     models = {
-        point["payload"]["embedding_model"]
-        for point in fake_qdrant.collections[MEDIUM].values()
+        point["payload"]["embedding_model"] for point in fake_qdrant.collections[MEDIUM].values()
     }
     assert models == {AZURE}
 
 
-def test_reconcile_reports_points_it_cannot_rebuild(
-    cp, nvidia_writer, azure_writer, fake_qdrant
-):
+def test_reconcile_reports_points_it_cannot_rebuild(cp, nvidia_writer, azure_writer, fake_qdrant):
     """A point with no ``memory_id`` has no source text to re-embed from.
     Deleting it is the operator's call, so it is reported rather than
     quietly skipped."""
@@ -297,9 +288,7 @@ def test_control_plane_reconcile_routes_to_the_writer(cp, nvidia_writer, azure_w
 def test_control_plane_report_only_makes_no_writes(cp, nvidia_writer, azure_writer):
     azure_writer.embed_memory(_add(cp, "left behind").id)
 
-    report = cp.reconcile_memory_embedding_spaces(
-        vector_writer=nvidia_writer, report_only=True
-    )
+    report = cp.reconcile_memory_embedding_spaces(vector_writer=nvidia_writer, report_only=True)
 
     assert report["mismatched"] == 1
     assert "reembedded" not in report

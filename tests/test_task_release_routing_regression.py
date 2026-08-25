@@ -44,9 +44,7 @@ def cp():
 
 
 def _persisted_metadata(cp, task_id):
-    row = cp.store.query_one(
-        "SELECT metadata FROM tasks WHERE id = ?", (task_id,)
-    )
+    row = cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task_id,))
     return json.loads(row["metadata"])
 
 

@@ -12,6 +12,7 @@ never creates one. Opt out per-call (`--no-ticket`) or globally via
 `MAC_NO_TICKET_MIRROR`. The MAC task ledger remains canonical; `.tickets/` is
 ignored local operational state in this repo.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,8 +31,7 @@ def render_ticket(task: Dict[str, Any], *, close_reason: Optional[str] = None) -
         "status": task.get("state") or "open",
         # mac task deps are a flat id list; the renderer wants typed dep dicts.
         "dependencies": [
-            {"type": "blocks", "depends_on_id": dep}
-            for dep in (task.get("dependencies") or [])
+            {"type": "blocks", "depends_on_id": dep} for dep in (task.get("dependencies") or [])
         ],
         "created_at": task.get("created_at") or "",
         "issue_type": metadata.get("type") or "task",

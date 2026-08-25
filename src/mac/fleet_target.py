@@ -77,9 +77,7 @@ class OpenClawTrack:
             version = data["version"]
             revision = data["revision"]
         except KeyError as exc:
-            raise FleetTargetError(
-                "openclaw track requires 'version' and 'revision'"
-            ) from exc
+            raise FleetTargetError("openclaw track requires 'version' and 'revision'") from exc
         version = _require_nonempty_str("openclaw.version", version)
         # A revision may be a numeric build id ("19") or a commit-hash carried by
         # a live host; both serialize as a string so no information is lost.
@@ -172,6 +170,7 @@ class FleetTargetManifest:
 # Validation helpers
 # ---------------------------------------------------------------------------
 
+
 def _require_nonempty_str(label: str, value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
         raise FleetTargetError("%s must be a non-empty string" % label)
@@ -181,9 +180,7 @@ def _require_nonempty_str(label: str, value: Any) -> str:
 def _require_commit(label: str, value: Any) -> str:
     text = _require_nonempty_str(label, value).lower()
     if not _COMMIT_RE.match(text):
-        raise FleetTargetError(
-            "%s must be a 7-40 char hex git commit, got %r" % (label, value)
-        )
+        raise FleetTargetError("%s must be a 7-40 char hex git commit, got %r" % (label, value))
     return text
 
 
@@ -195,6 +192,7 @@ def normalize_commit(value: Any, label: str = "source") -> str:
 # ---------------------------------------------------------------------------
 # Storage accessors
 # ---------------------------------------------------------------------------
+
 
 def _repo_root() -> Path:
     # src/mac/fleet_target.py -> src/mac -> src -> repo root

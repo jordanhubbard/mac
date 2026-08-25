@@ -43,7 +43,9 @@ def provenance_gate(
     """
 
     if not candidates:
-        return GateResult("provenance_coverage", True, "no candidates", 1.0, policy.min_provenance_coverage)
+        return GateResult(
+            "provenance_coverage", True, "no candidates", 1.0, policy.min_provenance_coverage
+        )
     known = snapshot.known_source_ids
     grounded = 0
     ungrounded: List[str] = []
@@ -55,7 +57,9 @@ def provenance_gate(
     coverage = grounded / len(candidates)
     passed = coverage >= policy.min_provenance_coverage
     detail = "all candidates grounded" if passed else "ungrounded: %s" % "; ".join(ungrounded[:3])
-    return GateResult("provenance_coverage", passed, detail, coverage, policy.min_provenance_coverage)
+    return GateResult(
+        "provenance_coverage", passed, detail, coverage, policy.min_provenance_coverage
+    )
 
 
 def contradiction_gate(
@@ -132,10 +136,12 @@ def retrieval_quality_gate(
                     "%.2f: %s ~ %s" % (score, left.statement[:35], right.statement[:35])
                 )
     passed = not duplicates
-    detail = "%d distinct memories" % len(candidates) if passed else "near-duplicates: %s" % "; ".join(duplicates[:3])
-    return GateResult(
-        "retrieval_quality", passed, detail, float(len(duplicates)), 0.0
+    detail = (
+        "%d distinct memories" % len(candidates)
+        if passed
+        else "near-duplicates: %s" % "; ".join(duplicates[:3])
     )
+    return GateResult("retrieval_quality", passed, detail, float(len(duplicates)), 0.0)
 
 
 def compression_gate(
@@ -153,9 +159,7 @@ def compression_gate(
     input_size = snapshot.input_size
     output_size = len(candidates)
     if input_size == 0:
-        return GateResult(
-            "compression", True, "empty input store", 0.0, policy.max_output_ratio
-        )
+        return GateResult("compression", True, "empty input store", 0.0, policy.max_output_ratio)
     ratio = output_size / input_size
     passed = ratio <= policy.max_output_ratio
     detail = "%d in -> %d out (%.0f%%)" % (input_size, output_size, ratio * 100)

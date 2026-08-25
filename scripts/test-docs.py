@@ -36,7 +36,9 @@ FORBIDDEN_ENV_MARKERS = (
 )
 FORBIDDEN_SCRIPT_PATTERNS = (
     re.compile(r"(?:^|\s)(?:rm\s+-rf|sudo\s+rm)(?:\s|$)"),
-    re.compile(r"https?://(?!127\.0\.0\.1(?::\d+)?(?:/|$)|localhost(?::\d+)?(?:/|$)|example\.invalid(?:/|$))"),
+    re.compile(
+        r"https?://(?!127\.0\.0\.1(?::\d+)?(?:/|$)|localhost(?::\d+)?(?:/|$)|example\.invalid(?:/|$))"
+    ),
     re.compile(r"(?:ghp_|github_pat_|sk-[A-Za-z0-9])"),
 )
 
@@ -137,9 +139,7 @@ def _shell_blocks(path: Path, body: str, body_start_line: int) -> tuple[ShellBlo
         marker_char, marker_length, language, start_line = opener
         if re.match(rf"^[ \t]{{0,3}}{re.escape(marker_char)}{{{marker_length},}}[ \t]*$", line):
             if language in SHELL_LANGUAGES:
-                blocks.append(
-                    ShellBlock(path, start_line, language, "\n".join(content) + "\n")
-                )
+                blocks.append(ShellBlock(path, start_line, language, "\n".join(content) + "\n"))
             opener = None
             content = []
             continue
@@ -361,7 +361,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.receipt:
             args.receipt.parent.mkdir(parents=True, exist_ok=True)
             args.receipt.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-        print(json.dumps({key: receipt[key] for key in ("schema", "status", "chapter_count", "shell_block_count")}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    key: receipt[key]
+                    for key in ("schema", "status", "chapter_count", "shell_block_count")
+                },
+                sort_keys=True,
+            )
+        )
         return 0
     except (DocumentationError, OSError, subprocess.TimeoutExpired, ValueError) as exc:
         print(f"documentation contract failed: {exc}", file=os.sys.stderr)

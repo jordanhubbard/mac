@@ -53,16 +53,12 @@ def test_qdrant_scroll_stops_when_page_is_empty(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         client,
         "_post",
-        lambda *_a, **_k: {
-            "result": {"points": [], "next_page_offset": "unexpected-next"}
-        },
+        lambda *_a, **_k: {"result": {"points": [], "next_page_offset": "unexpected-next"}},
     )
     assert list(client.scroll("empty")) == []
 
 
-def test_tickets_dir_git_cwd_and_error_fallbacks(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
+def test_tickets_dir_git_cwd_and_error_fallbacks(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     root = tmp_path / "root"
     (root / ".tickets").mkdir(parents=True)
     monkeypatch.setattr(

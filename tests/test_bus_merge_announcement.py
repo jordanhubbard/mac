@@ -45,9 +45,7 @@ def test_a_landed_merge_is_announced_with_its_tree(cp, tmp_path, monkeypatch):
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
     assert publication.status == "published"
 
     git(source, "fetch", "origin", "main")
@@ -68,9 +66,7 @@ def test_a_landed_merge_is_announced_with_its_tree(cp, tmp_path, monkeypatch):
     assert event["payload"]["head_sha"] == task_head
 
 
-def test_the_merge_is_spoken_as_the_hub_so_the_task_owner_hears_it(
-    cp, tmp_path, monkeypatch
-):
+def test_the_merge_is_spoken_as_the_hub_so_the_task_owner_hears_it(cp, tmp_path, monkeypatch):
     """The hub performed the merge; attributing it to the agent would both be
     a lie and make that agent skip its own "echo" — the one consumer that must
     not miss it."""
@@ -78,9 +74,7 @@ def test_the_merge_is_spoken_as_the_hub_so_the_task_owner_hears_it(
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
-    worker = [
-        agent for agent in cp.list_agents() if agent.name.startswith("worker")
-    ][0]
+    worker = [agent for agent in cp.list_agents() if agent.name.startswith("worker")][0]
 
     cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
@@ -89,9 +83,7 @@ def test_the_merge_is_spoken_as_the_hub_so_the_task_owner_hears_it(
     assert merged[0]["self_emitted"] is False
 
 
-def test_the_canonical_branch_advance_is_announced_separately(
-    cp, tmp_path, monkeypatch
-):
+def test_the_canonical_branch_advance_is_announced_separately(cp, tmp_path, monkeypatch):
     """A peer cares that the trunk moved even when the task is not its own."""
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")

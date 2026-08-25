@@ -218,17 +218,13 @@ def test_the_context_is_bounded_and_says_when_it_clipped(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_a_worker_that_hears_its_own_merge_does_not_open_a_second_pr(
-    tmp_path, monkeypatch
-):
+def test_a_worker_that_hears_its_own_merge_does_not_open_a_second_pr(tmp_path, monkeypatch):
     client = _Client([_merged(11)])
     instance = _worker(tmp_path, client)
     monkeypatch.setattr(
         worker,
         "agent_pull_request",
-        lambda *_a, **_k: pytest.fail(
-            "opened a duplicate pull request for already-merged work"
-        ),
+        lambda *_a, **_k: pytest.fail("opened a duplicate pull request for already-merged work"),
     )
 
     outcome = instance._open_task_pull_request(
@@ -244,9 +240,7 @@ def test_a_worker_that_hears_its_own_merge_does_not_open_a_second_pr(
     assert outcome["already_merged"]["tree_sha"] == "tree-abc"
 
 
-def test_a_merge_of_someone_elses_task_does_not_suppress_this_ones_pr(
-    tmp_path, monkeypatch
-):
+def test_a_merge_of_someone_elses_task_does_not_suppress_this_ones_pr(tmp_path, monkeypatch):
     """The guard must be about THIS task, or it becomes a way to lose work."""
     client = _Client([_merged(11, task_id="task_theirs")])
     instance = _worker(tmp_path, client)

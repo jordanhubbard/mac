@@ -66,9 +66,7 @@ def test_command_audit_and_footprint_reporting_are_best_effort(tmp_path) -> None
     instance._report_footprint({})
 
 
-def test_observation_delivery_failures_are_counted_and_rate_limited(
-    tmp_path, caplog
-) -> None:
+def test_observation_delivery_failures_are_counted_and_rate_limited(tmp_path, caplog) -> None:
     client = _Client()
     client.fail = True
     instance = _worker(tmp_path, client)
@@ -109,7 +107,9 @@ def test_pip_and_npm_inventory_parsing_and_failures(monkeypatch, tmp_path) -> No
         ),
     )
     assert instance._npm_installed(str(tmp_path)) == {"one", "@scope/pkg"}
-    monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad")))
+    monkeypatch.setattr(
+        worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad"))
+    )
     assert instance._pip_installed("python") == {}
     assert instance._npm_installed(str(tmp_path)) == set()
 
@@ -126,7 +126,9 @@ def test_run_install_success_failure_and_exception(monkeypatch, tmp_path) -> Non
     result = instance._run_install(["tool"], manager="pip", reason="test", specs=["one"])
     assert result["ok"] is False and result["returncode"] == 3
     assert audits[-1]["phase"] == "failed"
-    monkeypatch.setattr(worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("missing")))
+    monkeypatch.setattr(
+        worker.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("missing"))
+    )
     result = instance._run_install(["tool"], manager="pip", reason="test", specs=["one"])
     assert result == {"ok": False, "error": "missing", "specs": ["one"]}
 
@@ -136,7 +138,9 @@ def test_ensure_package_paths_and_footprint(monkeypatch, tmp_path) -> None:
     assert instance.ensure_pip(["--bad"]) == {"ok": True, "skipped": "no specs"}
     assert instance.ensure_npm(["--bad"]) == {"ok": True, "skipped": "no packages"}
     updates = []
-    monkeypatch.setattr(instance, "_update_footprint", lambda *args, **kwargs: updates.append((args, kwargs)))
+    monkeypatch.setattr(
+        instance, "_update_footprint", lambda *args, **kwargs: updates.append((args, kwargs))
+    )
     monkeypatch.setattr(instance, "_pip_installed", lambda _py: {"one": "1.0"})
     assert instance.ensure_pip(["one"])["skipped"] == "already satisfied"
     monkeypatch.setattr(instance, "_npm_installed", lambda _prefix: {"one"})
@@ -156,10 +160,14 @@ def test_reconcile_runtime_dependencies_best_effort(monkeypatch, tmp_path) -> No
     instance._reconcile_runtime_deps_best_effort()
     logs = []
     monkeypatch.setenv("MAC_AGENT_RECONCILE_RUNTIME_DEPS", "1")
-    monkeypatch.setattr(instance, "_observe_log", lambda *args, **kwargs: logs.append((args, kwargs)))
+    monkeypatch.setattr(
+        instance, "_observe_log", lambda *args, **kwargs: logs.append((args, kwargs))
+    )
     monkeypatch.setattr(instance, "reconcile_runtime_deps", lambda: {"ok": True, "skipped": "done"})
     instance._reconcile_runtime_deps_best_effort()
-    monkeypatch.setattr(instance, "reconcile_runtime_deps", lambda: (_ for _ in ()).throw(RuntimeError("bad")))
+    monkeypatch.setattr(
+        instance, "reconcile_runtime_deps", lambda: (_ for _ in ()).throw(RuntimeError("bad"))
+    )
     instance._reconcile_runtime_deps_best_effort()
     assert logs[0][0][0] == "worker.runtime_deps.reconciled"
     assert logs[-1][0][0] == "worker.runtime_deps.error"
@@ -234,29 +242,43 @@ def test_artifact_capture_limits_types_and_deduplication(monkeypatch, tmp_path) 
     )
     assert captured["size_bytes"] == 3
     assert captured["truncated"] is True
-    assert worker._capture_evidence_artifact(
-        tmp_path / "missing", name="x", artifact_type="x", max_bytes=1
-    ) is None
+    assert (
+        worker._capture_evidence_artifact(
+            tmp_path / "missing", name="x", artifact_type="x", max_bytes=1
+        )
+        is None
+    )
     artifacts = worker._durable_evidence_artifacts(tmp_path, source)
     assert len([item for item in artifacts if item["source_uri"] == source.resolve().as_uri()]) == 1
 
 
 def test_repository_origin_remote_and_changed_file_helpers(monkeypatch, tmp_path) -> None:
     assert worker._repository_task_origin({}) is None
-    assert worker._repository_task_origin(
-        {"metadata": {"origin": {"repository_url": "https://repo", "type": "direct_task"}}}
-    )["repository_url"] == "https://repo"
-    assert worker._repository_task_origin(
-        {
-            "metadata": {
-                "origin": {"repository_url": "https://repo", "type": "direct_task"},
-                "remediation": {"type": "beads_source_refresh"},
+    assert (
+        worker._repository_task_origin(
+            {"metadata": {"origin": {"repository_url": "https://repo", "type": "direct_task"}}}
+        )["repository_url"]
+        == "https://repo"
+    )
+    assert (
+        worker._repository_task_origin(
+            {
+                "metadata": {
+                    "origin": {"repository_url": "https://repo", "type": "direct_task"},
+                    "remediation": {"type": "beads_source_refresh"},
+                }
             }
-        }
-    ) is None
+        )
+        is None
+    )
     task = {"metadata": {"origin": {"repository_url": "https://origin"}}}
     assert worker._repository_publication_remote(task) == "https://origin"
-    assert worker._repository_publication_remote({}, {"repository_canonical_remote_url": "https://context"}) == "https://context"
+    assert (
+        worker._repository_publication_remote(
+            {}, {"repository_canonical_remote_url": "https://context"}
+        )
+        == "https://context"
+    )
     assert worker._repository_publication_remote({}) == ""
     assert worker._remote_branch_from_ref("refs/heads/main") == "main"
     assert worker._remote_branch_from_ref("refs/tags/v1") == ""
@@ -270,9 +292,7 @@ def test_repository_origin_remote_and_changed_file_helpers(monkeypatch, tmp_path
         ]
     )
     monkeypatch.setattr(worker, "_run_git", lambda *_a, **_k: next(results))
-    changed = worker._repository_context_changed_files(
-        tmp_path, {"repository_base_sha": "a" * 40}
-    )
+    changed = worker._repository_context_changed_files(tmp_path, {"repository_base_sha": "a" * 40})
     assert changed == ["a.py", "b.py", "c.py"]
 
 
@@ -280,7 +300,9 @@ def test_codegraph_audit_attachment_and_checks(monkeypatch, tmp_path) -> None:
     manifest = {"checks": [{"name": "codegraph_audit", "status": "old"}]}
     worker._append_codegraph_audit_check(manifest, {"status": "skipped"})
     assert manifest["checks"][0]["status"] == "old"
-    monkeypatch.setattr(worker, "codegraph_audit_check", lambda audit: {"name": "codegraph_audit", **audit})
+    monkeypatch.setattr(
+        worker, "codegraph_audit_check", lambda audit: {"name": "codegraph_audit", **audit}
+    )
     worker._append_codegraph_audit_check(manifest, {"status": "pass"})
     assert manifest["checks"] == [{"name": "codegraph_audit", "status": "pass"}]
     assert worker._attach_repository_codegraph_audit({}, {}) == {}
@@ -348,9 +370,9 @@ def test_truncate_process_text_keeps_the_failure_tail() -> None:
     text = ("x" * 10000) + "\nFAILED tests/test_thing.py::test_case - boom\n1 failed"
     out = _truncate_process_text(text, limit=4000)
     assert len(out) < 4200  # bounded (marker adds a few chars)
-    assert out.startswith("x")                      # head kept for context
-    assert "chars omitted" in out                   # explicit gap marker
-    assert "FAILED tests/test_thing.py" in out      # the diagnosis survives
+    assert out.startswith("x")  # head kept for context
+    assert "chars omitted" in out  # explicit gap marker
+    assert "FAILED tests/test_thing.py" in out  # the diagnosis survives
     assert out.endswith("1 failed")
     # Short output passes through untouched.
     assert _truncate_process_text("all good", limit=4000) == "all good"
@@ -411,7 +433,9 @@ def test_sandbox_verification_item_returns_none_when_no_hub_verify_missing_file(
     assert item is None
 
 
-def test_sandbox_verification_item_returns_real_result_when_file_present_hub_verify(tmp_path) -> None:
+def test_sandbox_verification_item_returns_real_result_when_file_present_hub_verify(
+    tmp_path,
+) -> None:
     """A present sandbox-verification file takes precedence over deferred mode."""
     path = tmp_path / "mac-sandbox-verification.json"
     path.write_text(
@@ -441,9 +465,7 @@ def test_prepush_problems_skips_test_gate_for_deferred_item() -> None:
         "files_changed": ["src/mac/worker.py"],
     }
     deferred = worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh")
-    problems = worker._repository_finalizer_prepush_problems(
-        task, repo, deferred, hub_verify=True
-    )
+    problems = worker._repository_finalizer_prepush_problems(task, repo, deferred, hub_verify=True)
     assert problems == []
 
 
@@ -456,9 +478,7 @@ def test_prepush_problems_enforces_other_checks_in_deferred_mode() -> None:
         "files_changed": [],
     }
     deferred = worker._hub_verify_deferred_test_item("cmd")
-    problems = worker._repository_finalizer_prepush_problems(
-        task, repo, deferred, hub_verify=True
-    )
+    problems = worker._repository_finalizer_prepush_problems(task, repo, deferred, hub_verify=True)
     assert any("head_sha" in p for p in problems)
     assert any("dirty" in p for p in problems)
     assert any("changed files" in p for p in problems)
@@ -475,9 +495,7 @@ def test_prepush_problems_fallback_option_a_fails_without_passing_test() -> None
         "files_changed": ["src/mac/worker.py"],
     }
     failing = {"name": "t", "returncode": 1, "status": "fail"}
-    problems = worker._repository_finalizer_prepush_problems(
-        task, repo, failing, hub_verify=False
-    )
+    problems = worker._repository_finalizer_prepush_problems(task, repo, failing, hub_verify=False)
     assert any("passing test" in p for p in problems)
 
 
@@ -490,9 +508,7 @@ def test_prepush_problems_fallback_option_a_passes_with_passing_test() -> None:
         "files_changed": ["src/mac/worker.py"],
     }
     passing = {"name": "t", "returncode": 0, "status": "pass"}
-    problems = worker._repository_finalizer_prepush_problems(
-        task, repo, passing, hub_verify=False
-    )
+    problems = worker._repository_finalizer_prepush_problems(task, repo, passing, hub_verify=False)
     assert problems == []
 
 

@@ -35,8 +35,7 @@ import pathlib
 import pytest
 
 SCHEMA = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "src" / "mac" / "data" / "postgres" / "schema.sql"
+    pathlib.Path(__file__).resolve().parents[1] / "src" / "mac" / "data" / "postgres" / "schema.sql"
 )
 
 # name -> size it occupied on the fleet hub when it was dropped
@@ -65,8 +64,7 @@ def test_a_dropped_index_is_not_recreated_by_the_schema(name):
         "%s was dropped from the fleet hub (%s reclaimed) because it had never "
         "been scanned. Putting it back in schema.sql recreates it on every "
         "initialize(). If it is genuinely needed now, say so here and delete "
-        "this entry -- do not add it back silently."
-        % (name, DROPPED_INDEXES[name])
+        "this entry -- do not add it back silently." % (name, DROPPED_INDEXES[name])
     )
 
 
@@ -77,11 +75,11 @@ def test_the_indexes_that_earn_their_keep_are_still_there():
 
     for name in (
         "idx_observability_events_subject_sequence",  # 33,820 scans
-        "idx_observability_events_name_created",      # 2,043 scans
-        "idx_observability_events_created",           # 2,937 scans
-        "idx_action_events_timestamp",                # 353 scans
-        "idx_action_events_task_timestamp",           # 993 scans
-        "idx_tasks_state_priority",                   # 13,692 scans
-        "idx_tasks_owner",                            # 575,667 scans
+        "idx_observability_events_name_created",  # 2,043 scans
+        "idx_observability_events_created",  # 2,937 scans
+        "idx_action_events_timestamp",  # 353 scans
+        "idx_action_events_task_timestamp",  # 993 scans
+        "idx_tasks_state_priority",  # 13,692 scans
+        "idx_tasks_owner",  # 575,667 scans
     ):
         assert name in schema, "%s is in active use and must not be dropped" % name

@@ -175,12 +175,8 @@ verify_daemon_resources_after_phase1_restore() {
     return block, writer
 
 
-def _install_production_interface_daemon_block(
-    tmp_path: Path, writer: Path
-) -> Path:
-    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+def _install_production_interface_daemon_block(tmp_path: Path, writer: Path) -> Path:
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start_marker = "# BEGIN MAC DAEMON RESOURCE QUIESCENCE"
     end_marker = "# END MAC DAEMON RESOURCE QUIESCENCE"
     start = source.index(start_marker)
@@ -214,9 +210,7 @@ def _base_case(tmp_path: Path, manager: str, *, os_kind: str = "linux") -> dict[
     mac_home.mkdir()
     (mac_home / "src" / "mac").mkdir(parents=True)
     (mac_home / "venv").mkdir()
-    (mac_home / "mac.env").write_text(
-        "MAC_STARTUP_CLEAR_HOLD=1\n", encoding="utf-8"
-    )
+    (mac_home / "mac.env").write_text("MAC_STARTUP_CLEAR_HOLD=1\n", encoding="utf-8")
     (mac_home / "mac.env").chmod(0o600)
     home.mkdir()
     user_runtime.mkdir()
@@ -287,17 +281,13 @@ def _run(env: dict[str, str], *, timeout: float = 180) -> subprocess.CompletedPr
     contract = Path(env["MAC_HOME"]) / (
         "phase1-cohort-restore-contract-%s.json" % env["DEPLOY_GENERATION"]
     )
-    env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = hashlib.sha256(
-        contract.read_bytes()
-    ).hexdigest()
+    env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = hashlib.sha256(contract.read_bytes()).hexdigest()
     Path(env["FAKE_PHASE1_EVENTS"]).write_text("", encoding="utf-8")
     return _run_action(env, "quiesce", timeout=timeout)
 
 
 def _receipt(env: dict[str, str]) -> dict:
-    path = Path(env["MAC_HOME"]) / (
-        "phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"]
-    )
+    path = Path(env["MAC_HOME"]) / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -485,18 +475,14 @@ def test_systemd_quiesces_all_runtime_services_before_daemon_gate(tmp_path: Path
         *expected,
         "mac-nemoclaw-gateway.service",
     }
-    assert {item["state"] for item in receipt["supervisor"]["resources"]} == {
-        "inactive"
-    }
+    assert {item["state"] for item in receipt["supervisor"]["resources"]} == {"inactive"}
     media = receipt["supervisor"]["media_resources"]
     assert {item["name"] for item in media} == {
         "mac-gen-server.service",
         "mac-gen-audio-server.service",
         "mac-gen-video-server.service",
     }
-    assert {
-        (item["prior_state"], item["state"]) for item in media
-    } == {("absent", "absent")}
+    assert {(item["prior_state"], item["state"]) for item in media} == {("absent", "absent")}
     assert len(receipt["daemon_resource_receipt"]["sha256"]) == 64
 
 
@@ -509,9 +495,7 @@ def test_identify_is_read_only_and_reports_rollback_capability(
         "MAC_WORKER_DEPLOY_GENERATION=prior-generation\n", encoding="utf-8"
     )
     (mac_home / "mac.env").chmod(0o600)
-    (mac_home / "deployed-source-revision").write_text(
-        "b" * 40 + "\n", encoding="utf-8"
-    )
+    (mac_home / "deployed-source-revision").write_text("b" * 40 + "\n", encoding="utf-8")
     (mac_home / "deployed-source-revision").chmod(0o600)
     codegraph_bundle = mac_home / "lib" / "codegraph" / "versions" / "v1.5.0"
     (codegraph_bundle / "bin").mkdir(parents=True)
@@ -521,9 +505,7 @@ def test_identify_is_read_only_and_reports_rollback_capability(
         "#!/bin/sh\nprintf '1.5.0\\n'\n",
     )
     _write_executable(codegraph_bundle / "node", "#!/bin/sh\nexit 0\n")
-    (mac_home / "bin" / "codegraph").symlink_to(
-        codegraph_bundle / "bin" / "codegraph"
-    )
+    (mac_home / "bin" / "codegraph").symlink_to(codegraph_bundle / "bin" / "codegraph")
     env["MAC_PHASE1_CODEGRAPH_VERSION"] = "v1.5.0"
     before = {
         path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
@@ -543,9 +525,7 @@ def test_identify_is_read_only_and_reports_rollback_capability(
     assert identity["current_revision"] == "b" * 40
     assert identity["artifacts"]["source"]["regular_directory"] is True
     assert identity["artifacts"]["venv"]["regular_directory"] is True
-    assert identity["prerequisites"]["codegraph"] == str(
-        codegraph_bundle / "bin" / "codegraph"
-    )
+    assert identity["prerequisites"]["codegraph"] == str(codegraph_bundle / "bin" / "codegraph")
     after = {
         path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
         for path in tmp_path.rglob("*")
@@ -589,39 +569,33 @@ def test_prepare_is_nonmutating_and_phase1_restore_is_digest_bound_and_idempoten
     ]
     assert retained_helper.stat().st_mode & 0o777 == 0o700
     assert retained_daemon.stat().st_mode & 0o777 == 0o600
-    assert hashlib.sha256(retained_helper.read_bytes()).hexdigest() == (
-        contract["restore_executable"]["sha256"]
+    assert (
+        hashlib.sha256(retained_helper.read_bytes()).hexdigest()
+        == (contract["restore_executable"]["sha256"])
     )
-    assert hashlib.sha256(retained_daemon.read_bytes()).hexdigest() == (
-        contract["daemon_function_block"]["sha256"]
+    assert (
+        hashlib.sha256(retained_daemon.read_bytes()).hexdigest()
+        == (contract["daemon_function_block"]["sha256"])
     )
     assert all(not path.exists() for path in state.iterdir())
-    assert (Path(env["MAC_HOME"]) / "mac.env").read_text() == (
-        "MAC_STARTUP_CLEAR_HOLD=1\n"
-    )
+    assert (Path(env["MAC_HOME"]) / "mac.env").read_text() == ("MAC_STARTUP_CLEAR_HOLD=1\n")
 
     digest = hashlib.sha256(contract_raw).hexdigest()
     env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = digest
-    (Path(env["MAC_HOME"]) / "mac.env").write_text(
-        "MAC_STARTUP_CLEAR_HOLD=0\n", encoding="utf-8"
-    )
+    (Path(env["MAC_HOME"]) / "mac.env").write_text("MAC_STARTUP_CLEAR_HOLD=0\n", encoding="utf-8")
     (Path(env["MAC_HOME"]) / "mac.env").chmod(0o600)
     hold.write_text('{"deployment":"successor"}\n', encoding="utf-8")
     hold.chmod(0o600)
     # Recovery is generation-local: neither quiesce nor restore may read a
     # newer or damaged copy of the originally uploaded daemon block.
-    Path(env["MAC_PHASE1_DAEMON_FUNCTIONS_FILE"]).write_text(
-        "exit 99\n", encoding="utf-8"
-    )
+    Path(env["MAC_PHASE1_DAEMON_FUNCTIONS_FILE"]).write_text("exit 99\n", encoding="utf-8")
 
     quiesced = _run_action(env, "quiesce")
     assert quiesced.returncode == 0, quiesced.stderr
     restored = _run_action(env, "restore-phase1")
 
     assert restored.returncode == 0, restored.stderr
-    assert (Path(env["MAC_HOME"]) / "mac.env").read_text() == (
-        "MAC_STARTUP_CLEAR_HOLD=1\n"
-    )
+    assert (Path(env["MAC_HOME"]) / "mac.env").read_text() == ("MAC_STARTUP_CLEAR_HOLD=1\n")
     assert hold.read_text(encoding="utf-8") == '{"prior":true}\n'
     assert all(not path.exists() for path in state.iterdir())
     receipt_path = Path(env["MAC_HOME"]) / (
@@ -663,18 +637,14 @@ def test_prepare_advertises_incomplete_new_node_and_quiesce_refuses_it(
     contract = json.loads(contract_raw)
     assert contract["rollback_capable"] is False
     assert "source and virtualenv" in contract["rollback_ineligible_reason"]
-    env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = hashlib.sha256(
-        contract_raw
-    ).hexdigest()
+    env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = hashlib.sha256(contract_raw).hexdigest()
 
     quiesced = _run_action(env, "quiesce")
 
     assert quiesced.returncode != 0
     assert "prepared restore contract belongs to another node generation" in quiesced.stderr
     assert all(not path.exists() for path in state.iterdir())
-    assert "systemd:" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(
-        encoding="utf-8"
-    )
+    assert "systemd:" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
 
 
 def test_quiesce_refuses_to_mutate_without_exact_prepared_contract_digest(
@@ -716,9 +686,7 @@ def test_restore_rejects_current_checkout_helper_before_mutation(
     mac_env.chmod(0o600)
     quiesced = _run_action(env, "quiesce")
     assert quiesced.returncode == 0, quiesced.stderr
-    stopped_before = {
-        path.name: path.read_bytes() for path in state.iterdir() if path.is_file()
-    }
+    stopped_before = {path.name: path.read_bytes() for path in state.iterdir() if path.is_file()}
 
     wrong_helper = subprocess.run(
         ["/bin/bash", str(SCRIPT), "restore"],
@@ -736,8 +704,7 @@ def test_restore_rejects_current_checkout_helper_before_mutation(
         path.name: path.read_bytes() for path in state.iterdir() if path.is_file()
     } == stopped_before
     assert not (
-        Path(env["MAC_HOME"])
-        / ("phase1-cohort-restore-%s.json" % env["DEPLOY_GENERATION"])
+        Path(env["MAC_HOME"]) / ("phase1-cohort-restore-%s.json" % env["DEPLOY_GENERATION"])
     ).exists()
 
     restored = _run_action(env, "restore")
@@ -763,9 +730,7 @@ def test_restore_rejects_tampered_retained_executable_before_mutation(
     ).hexdigest()
     quiesced = _run_action(env, "quiesce")
     assert quiesced.returncode == 0, quiesced.stderr
-    stopped_before = {
-        path.name: path.read_bytes() for path in state.iterdir() if path.is_file()
-    }
+    stopped_before = {path.name: path.read_bytes() for path in state.iterdir() if path.is_file()}
     retained = Path(contract["restore_executable"]["path"])
     retained.write_bytes(retained.read_bytes() + b"\n# post-prepare tamper\n")
     retained.chmod(0o700)
@@ -785,8 +750,7 @@ def test_restore_rejects_tampered_retained_executable_before_mutation(
         path.name: path.read_bytes() for path in state.iterdir() if path.is_file()
     } == stopped_before
     assert not (
-        Path(env["MAC_HOME"])
-        / ("phase1-cohort-restore-%s.json" % env["DEPLOY_GENERATION"])
+        Path(env["MAC_HOME"]) / ("phase1-cohort-restore-%s.json" % env["DEPLOY_GENERATION"])
     ).exists()
 
 
@@ -831,10 +795,7 @@ def test_systemd_restore_reconstructs_exact_enablement_intent(
         "phase1-cohort-restore-contract-%s.json" % env["DEPLOY_GENERATION"]
     )
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    initial = {
-        item["name"]: item["enabled_state"]
-        for item in contract["supervisor"]["resources"]
-    }
+    initial = {item["name"]: item["enabled_state"] for item in contract["supervisor"]["resources"]}
     assert initial == {
         "mac-agent.service": "disabled",
         "mac-hermes-gateway.service": "masked",
@@ -884,8 +845,7 @@ def test_launchd_restore_reconstructs_disable_overrides_for_active_and_absent_jo
     )
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     initial = {
-        item["target"]: item["disabled_override"]
-        for item in contract["supervisor"]["resources"]
+        item["target"]: item["disabled_override"] for item in contract["supervisor"]["resources"]
     }
     assert initial[f"gui/{uid}/com.mac.agent"] is True
     assert initial["system/com.mac.hermes-gateway"] is True
@@ -1041,7 +1001,9 @@ def test_systemd_inspection_error_fails_closed_without_raw_output(
     assert "systemd service inspection failed" in result.stderr
     assert "SUPER_SECRET" not in result.stderr
     assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
-    assert not (Path(env["MAC_HOME"]) / "phase1-cohort-quiescence-generation-rocky-001.json").exists()
+    assert not (
+        Path(env["MAC_HOME"]) / "phase1-cohort-quiescence-generation-rocky-001.json"
+    ).exists()
 
 
 def test_supervisor_subprocess_timeout_is_bounded(tmp_path: Path) -> None:
@@ -1064,9 +1026,7 @@ def test_supervisor_subprocess_timeout_is_bounded(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "command timed out" in result.stderr
     assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
-    child_pid = int(
-        Path(env["FAKE_TIMEOUT_CHILD_PID_FILE"]).read_text(encoding="utf-8")
-    )
+    child_pid = int(Path(env["FAKE_TIMEOUT_CHILD_PID_FILE"]).read_text(encoding="utf-8"))
     child_deadline = time.monotonic() + 15
     while time.monotonic() < child_deadline:
         try:
@@ -1097,12 +1057,9 @@ def test_supervisor_output_is_kernel_capped_while_command_runs(tmp_path: Path) -
     assert result.returncode != 0
     assert "supervisor output exceeded its bound" in result.stderr
     assert "SUPER_SECRET" not in result.stderr
-    assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(
-        encoding="utf-8"
-    )
+    assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
     assert not (
-        Path(env["MAC_HOME"])
-        / "phase1-cohort-quiescence-generation-rocky-001.json"
+        Path(env["MAC_HOME"]) / "phase1-cohort-quiescence-generation-rocky-001.json"
     ).exists()
 
 
@@ -1119,9 +1076,7 @@ def test_actual_production_daemon_block_entrypoint_uses_safe_log_interface(
         }
     )
     env["MAC_PHASE1_DAEMON_FUNCTIONS_FILE"] = str(
-        _install_production_interface_daemon_block(
-            tmp_path, Path(env["FAKE_DAEMON_WRITER"])
-        )
+        _install_production_interface_daemon_block(tmp_path, Path(env["FAKE_DAEMON_WRITER"]))
     )
     _install_systemctl(tmp_path / "bin")
 
@@ -1325,9 +1280,7 @@ def test_launchd_records_exact_prior_state_and_final_quiescence(
     assert resources[initially_absent] == ("absent", "absent")
     for target in expected_targets - {initially_absent}:
         expected_prior = (
-            "absent"
-            if target.startswith("system/") or "nemoclaw-gateway" in target
-            else "active"
+            "absent" if target.startswith("system/") or "nemoclaw-gateway" in target else "active"
         )
         assert resources[target] == (expected_prior, "absent")
 
@@ -1373,8 +1326,7 @@ def test_launchd_unavailable_disable_override_inspection_is_ineligible(
     assert "SUPER_SECRET" not in result.stderr
     assert Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8") == ""
     assert not (
-        Path(env["MAC_HOME"])
-        / f"phase1-cohort-restore-contract-{env['DEPLOY_GENERATION']}.json"
+        Path(env["MAC_HOME"]) / f"phase1-cohort-restore-contract-{env['DEPLOY_GENERATION']}.json"
     ).exists()
 
 
@@ -1473,13 +1425,10 @@ def test_supervisord_records_exact_prior_state_and_final_quiescence(
 
     assert result.returncode == 0, result.stderr
     system_manager = next(
-        item
-        for item in _receipt(env)["supervisor"]["managers"]
-        if item["scope"] == "system"
+        item for item in _receipt(env)["supervisor"]["managers"] if item["scope"] == "system"
     )
     resources = {
-        item["name"]: (item["prior_state"], item["state"])
-        for item in system_manager["resources"]
+        item["name"]: (item["prior_state"], item["state"]) for item in system_manager["resources"]
     }
     assert resources == {
         "mac-agent": ("RUNNING", "STOPPED"),
@@ -1523,9 +1472,7 @@ def test_supervisord_requires_the_canonical_system_manager(tmp_path: Path) -> No
 
     assert result.returncode != 0
     assert "system supervisord manager could not be inspected" in result.stderr
-    assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(
-        encoding="utf-8"
-    )
+    assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
 
 
 def test_one_usable_supervisord_manager_inspection_error_blocks_all(
@@ -1553,9 +1500,7 @@ def test_one_usable_supervisord_manager_inspection_error_blocks_all(
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd", "supervisord"])
-def test_active_nemo_gateway_fails_before_any_phase1_mutation(
-    tmp_path: Path, manager: str
-) -> None:
+def test_active_nemo_gateway_fails_before_any_phase1_mutation(tmp_path: Path, manager: str) -> None:
     os_kind = "darwin" if manager == "launchd" else "linux"
     env = _base_case(tmp_path, manager, os_kind=os_kind)
     env["FAKE_NEMO_ACTIVE"] = "1"
@@ -1582,8 +1527,7 @@ def test_active_nemo_gateway_fails_before_any_phase1_mutation(
     assert "active Nemo gateway cannot be restored" in result.stderr
     assert Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8") == ""
     assert not (
-        Path(env["MAC_HOME"])
-        / f"phase1-cohort-quiescence-{env['DEPLOY_GENERATION']}.json"
+        Path(env["MAC_HOME"]) / f"phase1-cohort-quiescence-{env['DEPLOY_GENERATION']}.json"
     ).exists()
 
 
@@ -1611,9 +1555,7 @@ def test_present_media_gen_service_is_journaled_quiesced_and_restored(
         "mac-gen-audio-server.service",
         "mac-gen-video-server.service",
     }
-    assert {(item["prior_state"], item["state"]) for item in media} == {
-        (media_state, "inactive")
-    }
+    assert {(item["prior_state"], item["state"]) for item in media} == {(media_state, "inactive")}
     assert {item["enabled_state"] for item in media} == {"enabled"}
     events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
     if media_state == "active":
@@ -1667,30 +1609,27 @@ def test_resume_media_blocks_when_active_service_health_is_unavailable(
     assert resumed.returncode != 0
     assert "did not pass its bounded health check" in resumed.stderr
     assert not (
-        Path(env["MAC_HOME"])
-        / f"phase1-supervisor-resume_media-{env['DEPLOY_GENERATION']}.json"
+        Path(env["MAC_HOME"]) / f"phase1-supervisor-resume_media-{env['DEPLOY_GENERATION']}.json"
     ).exists()
 
 
 def test_synchronized_node_install_reconciles_journaled_media_before_post_manifest() -> None:
-    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     main = source.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
     resume = main.index("reconcile_typed_media_services")
     post = main.index('write_deploy_manifest "post" "$MANIFEST_POST"')
     assert resume < post
-    lifecycle_gate = main[main.rfind("if ", 0, resume):resume]
+    lifecycle_gate = main[main.rfind("if ", 0, resume) : resume]
     assert '"$NODE_ACTION" = apply-phase2' in lifecycle_gate
     assert '"$NODE_ACTION" = legacy-one-shot' in lifecycle_gate
-    assert 'MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE' in lifecycle_gate
-    optional = main[:resume].rsplit(
-        'if [ "$NODE_ACTION" = legacy-one-shot ]; then', 1
-    )[1].split("\nfi\n", 1)[0]
+    assert "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE" in lifecycle_gate
+    optional = (
+        main[:resume]
+        .rsplit('if [ "$NODE_ACTION" = legacy-one-shot ]; then', 1)[1]
+        .split("\nfi\n", 1)[0]
+    )
     assert "deferring to the journaled phase-1 media lifecycle" in optional
-    reconcile = source.split("reconcile_typed_media_services() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    reconcile = source.split("reconcile_typed_media_services() {", 1)[1].split("\n}\n", 1)[0]
     assert "prepare_typed_media_plan" in reconcile
     assert "install_gpu_gen_server typed" in reconcile
     assert "resume_typed_media_services" in reconcile
@@ -1706,30 +1645,30 @@ def test_synchronized_node_install_reconciles_journaled_media_before_post_manife
 
 
 def test_synchronized_media_resume_fd_pins_and_authenticates_retained_helper() -> None:
-    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     body = source.split("resume_typed_media_services() {", 1)[1].split(
         "\n}\n\ninstall_gpu_gen_server() {", 1
     )[0]
     assert 'getattr(os, "O_NOFOLLOW", 0)' in body
-    assert 'metadata.st_nlink != 1' in body
-    assert 'stat.S_IMODE(metadata.st_mode) != 0o700' in body
-    assert 'hashlib.sha256(raw).hexdigest() != expected' in body
+    assert "metadata.st_nlink != 1" in body
+    assert "stat.S_IMODE(metadata.st_mode) != 0o700" in body
+    assert "hashlib.sha256(raw).hexdigest() != expected" in body
     assert 'MAC_PHASE1_HELPER_SOURCE="$helper"' in body
     assert '"/dev/fd/%d" % descriptor' in body
-    assert 'pass_fds=(descriptor,)' in body
+    assert "pass_fds=(descriptor,)" in body
 
 
 def test_synchronized_media_resume_passes_canonical_retained_helper_path(
     tmp_path: Path,
 ) -> None:
-    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    body = (
+        "resume_typed_media_services() {"
+        + source.split("resume_typed_media_services() {", 1)[1].split(
+            "\n}\n\ninstall_gpu_gen_server() {", 1
+        )[0]
+        + "\n}"
     )
-    body = "resume_typed_media_services() {" + source.split(
-        "resume_typed_media_services() {", 1
-    )[1].split("\n}\n\ninstall_gpu_gen_server() {", 1)[0] + "\n}"
     helper = tmp_path / "retained-phase1-helper"
     marker = tmp_path / "observed-helper"
     helper.write_text(
@@ -1766,9 +1705,7 @@ def test_synchronized_media_resume_passes_canonical_retained_helper_path(
         "DEPLOY_REV=" + "b" * 40 + "\n"
         "DEPLOY_GENERATION=generation\nSUPERVISOR_KIND=launchd\n"
         f"MAC_HOME={shlex.quote(str(tmp_path))}\n"
-        "log() { :; }\n"
-        + body
-        + "\nresume_typed_media_services\n",
+        "log() { :; }\n" + body + "\nresume_typed_media_services\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -1780,26 +1717,22 @@ def test_synchronized_media_resume_passes_canonical_retained_helper_path(
 
 
 def test_synchronized_media_reconciliation_never_mutates_unjournaled_gen_venv() -> None:
-    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     body = source.split("install_gpu_gen_server() {", 1)[1].split(
         "\n}\n\nreconcile_typed_media_services() {", 1
     )[0]
     venv = body.split("# Resolve the gen venv:", 1)[1].split(
         "# One wrapper + unit per configured modality", 1
     )[0]
-    typed = venv.split('if [ "$lifecycle_mode" = typed ]; then', 1)[1].split(
-        "\n  else\n", 1
-    )[0]
+    typed = venv.split('if [ "$lifecycle_mode" = typed ]; then', 1)[1].split("\n  else\n", 1)[0]
     assert "immutable prior gen venv" in typed
     assert "-m pip" not in typed
     assert "-m venv" not in typed
     assert 'if [ "$image_required" = 1 ] || [ "$video_required" = 1 ]; then' in typed
     assert 'if [ "$audio_required" = 1 ]; then' in typed
-    image_probe = typed.split(
-        'if [ "$image_required" = 1 ] || [ "$video_required" = 1 ]; then', 1
-    )[1].split('if [ "$audio_required" = 1 ]; then', 1)[0]
+    image_probe = typed.split('if [ "$image_required" = 1 ] || [ "$video_required" = 1 ]; then', 1)[
+        1
+    ].split('if [ "$audio_required" = 1 ]; then', 1)[0]
     audio_probe = typed.split('if [ "$audio_required" = 1 ]; then', 1)[1]
     assert "diffusers" in image_probe
     assert "PIL" in image_probe
@@ -1810,9 +1743,7 @@ def test_synchronized_media_reconciliation_never_mutates_unjournaled_gen_venv() 
 
 
 def test_media_readiness_manifest_uses_stable_private_descriptor_reads() -> None:
-    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     body = source.split("def media_runtime_readiness_summary", 1)[1].split(
         "\n\ndef gateway_readiness_summary", 1
     )[0]
@@ -1824,9 +1755,7 @@ def test_media_readiness_manifest_uses_stable_private_descriptor_reads() -> None
 
 
 def test_synchronized_openclaw_prepare_requires_exact_host_automation_journal() -> None:
-    node_source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    node_source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     prepare = node_source.split("prepare_openclaw_gateway() {", 1)[1].split(
         "\n}\n\nverify_openclaw_gateway() {", 1
     )[0]
@@ -1839,9 +1768,9 @@ def test_synchronized_openclaw_prepare_requires_exact_host_automation_journal() 
     assert "MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL=" in prepare
     assert "MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256=" in prepare
 
-    installer = (
-        ROOT / "deploy" / "openclaw" / "install-openclaw-gateway.sh"
-    ).read_text(encoding="utf-8")
+    installer = (ROOT / "deploy" / "openclaw" / "install-openclaw-gateway.sh").read_text(
+        encoding="utf-8"
+    )
     scheduling = installer.split("install_host_script_runner() {", 1)[1].split(
         "\n}\n\nprepare() {", 1
     )[0]
@@ -1863,24 +1792,13 @@ def test_openclaw_host_automation_is_journaled_quiesced_and_restored(
         state.mkdir()
         env["FAKE_SYSTEMD_STATE"] = str(state)
         _install_systemctl(tmp_path / "bin")
-        definition = (
-            home
-            / ".config"
-            / "systemd"
-            / "user"
-            / "mac-openclaw-script-memory-sync.timer"
-        )
+        definition = home / ".config" / "systemd" / "user" / "mac-openclaw-script-memory-sync.timer"
     else:
         state = tmp_path / "launchd-state"
         state.mkdir()
         env["FAKE_LAUNCHD_STATE"] = str(state)
         _install_launchctl(tmp_path / "bin")
-        definition = (
-            home
-            / "Library"
-            / "LaunchAgents"
-            / "com.mac.openclaw-script-memory-sync.plist"
-        )
+        definition = home / "Library" / "LaunchAgents" / "com.mac.openclaw-script-memory-sync.plist"
     definition.parent.mkdir(parents=True)
     definition.write_text("prior generation\n", encoding="utf-8")
     definition.chmod(0o600)
@@ -1919,9 +1837,7 @@ def test_openclaw_host_automation_is_journaled_quiesced_and_restored(
     if manager == "systemd":
         successor = definition.with_name("mac-openclaw-script-successor.timer")
     else:
-        successor = definition.with_name(
-            "com.mac.openclaw-script-successor.plist"
-        )
+        successor = definition.with_name("com.mac.openclaw-script-successor.plist")
     successor.write_text("successor only\n", encoding="utf-8")
     successor.chmod(0o600)
     restored = _run_action(env, "restore")
@@ -1944,11 +1860,7 @@ def test_systemd_timer_without_main_pid_is_valid_automation_state(
     env["FAKE_SYSTEMD_TIMER_OMITS_MAINPID"] = "1"
     _install_systemctl(tmp_path / "bin")
     definition = (
-        Path(env["HOME"])
-        / ".config"
-        / "systemd"
-        / "user"
-        / "mac-openclaw-script-memory-sync.timer"
+        Path(env["HOME"]) / ".config" / "systemd" / "user" / "mac-openclaw-script-memory-sync.timer"
     )
     definition.parent.mkdir(parents=True)
     definition.write_text("prior generation\n", encoding="utf-8")
@@ -1970,10 +1882,7 @@ def test_launchd_host_automation_inventory_does_not_serialize_complete_domain(
     env["FAKE_LAUNCHD_DOMAIN_OUTPUT_FLOOD"] = "1"
     _install_launchctl(tmp_path / "bin")
     definition = (
-        Path(env["HOME"])
-        / "Library"
-        / "LaunchAgents"
-        / "com.mac.openclaw-script-memory-sync.plist"
+        Path(env["HOME"]) / "Library" / "LaunchAgents" / "com.mac.openclaw-script-memory-sync.plist"
     )
     definition.parent.mkdir(parents=True)
     definition.write_text("prior generation\n", encoding="utf-8")
@@ -2028,11 +1937,7 @@ def test_host_automation_backup_tamper_blocks_restore_before_local_mutation(
     env["FAKE_HOST_AUTOMATION_LOADED"] = "1"
     _install_systemctl(tmp_path / "bin")
     definition = (
-        Path(env["HOME"])
-        / ".config"
-        / "systemd"
-        / "user"
-        / "mac-openclaw-script-memory-sync.timer"
+        Path(env["HOME"]) / ".config" / "systemd" / "user" / "mac-openclaw-script-memory-sync.timer"
     )
     definition.parent.mkdir(parents=True)
     definition.write_text("prior generation\n", encoding="utf-8")
@@ -2104,15 +2009,12 @@ def test_tampered_supervisor_transition_cannot_publish_phase1_receipt(
     assert result.returncode != 0
     assert "phase-1 quiescence failed" in result.stderr
     assert not (
-        Path(env["MAC_HOME"])
-        / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
+        Path(env["MAC_HOME"]) / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
     ).exists()
 
 
 @pytest.mark.parametrize("mode", ["wrong-generation", "raw-output"])
-def test_invalid_daemon_receipt_cannot_publish_phase1_receipt(
-    tmp_path: Path, mode: str
-) -> None:
+def test_invalid_daemon_receipt_cannot_publish_phase1_receipt(tmp_path: Path, mode: str) -> None:
     env = _base_case(tmp_path, "systemd")
     state = tmp_path / "systemd-state"
     state.mkdir()
@@ -2128,7 +2030,9 @@ def test_invalid_daemon_receipt_cannot_publish_phase1_receipt(
     result = _run(env)
 
     assert result.returncode != 0
-    assert not (Path(env["MAC_HOME"]) / "phase1-cohort-quiescence-generation-rocky-001.json").exists()
+    assert not (
+        Path(env["MAC_HOME"]) / "phase1-cohort-quiescence-generation-rocky-001.json"
+    ).exists()
 
 
 def test_daemon_function_block_must_not_be_a_symlink(tmp_path: Path) -> None:
@@ -2287,9 +2191,7 @@ def test_identify_refuses_from_scratch_label_for_node_with_prior_revision(
     (mac_home / "venv").rmdir()
     (mac_home / "src" / "mac").rmdir()
     (mac_home / "src").rmdir()
-    (mac_home / "deployed-source-revision").write_text(
-        "c" * 40 + "\n", encoding="utf-8"
-    )
+    (mac_home / "deployed-source-revision").write_text("c" * 40 + "\n", encoding="utf-8")
     (mac_home / "deployed-source-revision").chmod(0o600)
 
     result = _run_action(env, "identify")
@@ -2323,8 +2225,7 @@ def test_quiesce_refuses_world_writable_daemon_block_before_mutation(
     assert "systemd:" not in events
     assert "daemon" not in events
     assert not (
-        Path(env["MAC_HOME"])
-        / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
+        Path(env["MAC_HOME"]) / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
     ).exists()
 
 
@@ -2433,19 +2334,12 @@ def test_phase1_rejection_restores_stopped_mac_agent_and_leaves_stopped_services
         or "supervisor compensation failed" not in result.stderr
     )
     assert not (
-        Path(env["MAC_HOME"])
-        / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
+        Path(env["MAC_HOME"]) / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
     ).exists()
 
     events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8").splitlines()
-    stopped = {
-        line.split(":", 1)[1] for line in events if line.startswith("systemd:")
-    }
-    restored = {
-        line.split(":", 1)[1]
-        for line in events
-        if line.startswith("systemd-restore:")
-    }
+    stopped = {line.split(":", 1)[1] for line in events if line.startswith("systemd:")}
+    restored = {line.split(":", 1)[1] for line in events if line.startswith("systemd-restore:")}
     # The gate rejected the deployment.
     assert "daemon-reject" in events
 
@@ -2465,9 +2359,7 @@ def test_phase1_rejection_restores_stopped_mac_agent_and_leaves_stopped_services
     agent_state_file = Path(env["FAKE_SYSTEMD_STATE"]) / "mac-agent.service"
     assert not agent_state_file.exists(), "mac-agent must be running after compensation"
     # The service that was stopped before the attempt stays stopped.
-    openclaw_state_file = (
-        Path(env["FAKE_SYSTEMD_STATE"]) / "mac-openclaw-gateway.service"
-    )
+    openclaw_state_file = Path(env["FAKE_SYSTEMD_STATE"]) / "mac-openclaw-gateway.service"
     assert openclaw_state_file.exists(), "already-stopped gateway must remain stopped"
 
 
@@ -2476,18 +2368,14 @@ def test_phase1_rejection_compensation_is_idempotent(tmp_path: Path) -> None:
 
     first = _run(env)
     assert first.returncode != 0
-    first_state = sorted(
-        p.name for p in Path(env["FAKE_SYSTEMD_STATE"]).iterdir() if p.is_file()
-    )
+    first_state = sorted(p.name for p in Path(env["FAKE_SYSTEMD_STATE"]).iterdir() if p.is_file())
 
     # Re-running the rejected attempt (prepare + quiesce) reproduces the exact
     # same restored topology; the compensation does not accumulate drift.
     Path(env["FAKE_PHASE1_EVENTS"]).write_text("", encoding="utf-8")
     second = _run(env)
     assert second.returncode != 0
-    second_state = sorted(
-        p.name for p in Path(env["FAKE_SYSTEMD_STATE"]).iterdir() if p.is_file()
-    )
+    second_state = sorted(p.name for p in Path(env["FAKE_SYSTEMD_STATE"]).iterdir() if p.is_file())
 
     assert first_state == second_state
     # mac-agent stays running (absent state file) across repeated compensations.

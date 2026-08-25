@@ -8,6 +8,7 @@ Contains:
 These are imported back into worker.py; callers that import from mac.worker
 see no change.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -68,9 +69,7 @@ class RuntimeDepsMixin:
         # returns {} — silently erasing the record of what is installed in the
         # shared venv. atomic_write_text gives each writer a private temp name.
         path = self._footprint_path()
-        atomic_write_text(
-            path, json.dumps(footprint, indent=2, sort_keys=True), mode=0o600
-        )
+        atomic_write_text(path, json.dumps(footprint, indent=2, sort_keys=True), mode=0o600)
 
     def _report_footprint(self, footprint: JsonDict) -> None:
         try:
@@ -102,7 +101,10 @@ class RuntimeDepsMixin:
         try:
             out = subprocess.run(
                 [py, "-m", "pip", "list", "--format=json"],
-                capture_output=True, text=True, timeout=120, check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             ).stdout
             return {
                 str(p.get("name", "")).lower().replace("_", "-"): str(p.get("version", ""))
@@ -146,45 +148,78 @@ class RuntimeDepsMixin:
         try:
             out = subprocess.run(
                 ["npm", "ls", "--prefix", prefix, "--depth", "0", "--json"],
-                capture_output=True, text=True, timeout=120, check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             ).stdout
-            deps = (json.loads(out or "{}").get("dependencies") or {})
+            deps = json.loads(out or "{}").get("dependencies") or {}
             return {str(k).lower() for k in deps}
         except Exception:
             return set()
 
-    def _run_install(self, argv: List[str], *, manager: str, reason: str, specs: List[str]) -> JsonDict:
+    def _run_install(
+        self, argv: List[str], *, manager: str, reason: str, specs: List[str]
+    ) -> JsonDict:
         command_id = secrets.token_hex(8)
         cwd = str(self._mac_home())
         meta = {"self_install": True, "package_manager": manager, "reason": reason, "specs": specs}
         started = datetime.now(timezone.utc).isoformat()
-        self._record_command_audit({
-            "command_id": command_id, "phase": "started", "argv": argv,
-            "cwd": cwd, "started_at": started, "metadata": meta,
-        })
+        self._record_command_audit(
+            {
+                "command_id": command_id,
+                "phase": "started",
+                "argv": argv,
+                "cwd": cwd,
+                "started_at": started,
+                "metadata": meta,
+            }
+        )
         t0 = time.monotonic()
         try:
-            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=1800, check=False)
+            proc = subprocess.run(
+                argv, cwd=cwd, capture_output=True, text=True, timeout=1800, check=False
+            )
             rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
         except Exception as exc:  # noqa: BLE001 - install failures are reported, not raised.
-            self._record_command_audit({
-                "command_id": command_id, "phase": "failed", "argv": argv, "cwd": cwd,
-                "started_at": started, "completed_at": datetime.now(timezone.utc).isoformat(),
-                "returncode": -1, "metadata": {**meta, "error": str(exc)},
-            })
+            self._record_command_audit(
+                {
+                    "command_id": command_id,
+                    "phase": "failed",
+                    "argv": argv,
+                    "cwd": cwd,
+                    "started_at": started,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "returncode": -1,
+                    "metadata": {**meta, "error": str(exc)},
+                }
+            )
             return {"ok": False, "error": str(exc), "specs": specs}
         dur_ms = (time.monotonic() - t0) * 1000.0
-        self._record_command_audit({
-            "command_id": command_id, "phase": "completed" if rc == 0 else "failed",
-            "argv": argv, "cwd": cwd, "started_at": started,
-            "completed_at": datetime.now(timezone.utc).isoformat(), "duration_ms": dur_ms,
+        self._record_command_audit(
+            {
+                "command_id": command_id,
+                "phase": "completed" if rc == 0 else "failed",
+                "argv": argv,
+                "cwd": cwd,
+                "started_at": started,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "duration_ms": dur_ms,
+                "returncode": rc,
+                "stdout_sha256": hashlib.sha256(out.encode("utf-8")).hexdigest(),
+                "stderr_sha256": hashlib.sha256(err.encode("utf-8")).hexdigest(),
+                "stdout_bytes": len(out.encode("utf-8")),
+                "stderr_bytes": len(err.encode("utf-8")),
+                "metadata": meta,
+            }
+        )
+        return {
+            "ok": rc == 0,
             "returncode": rc,
-            "stdout_sha256": hashlib.sha256(out.encode("utf-8")).hexdigest(),
-            "stderr_sha256": hashlib.sha256(err.encode("utf-8")).hexdigest(),
-            "stdout_bytes": len(out.encode("utf-8")), "stderr_bytes": len(err.encode("utf-8")),
-            "metadata": meta,
-        })
-        return {"ok": rc == 0, "returncode": rc, "stdout": out[-4000:], "stderr": err[-4000:], "specs": specs}
+            "stdout": out[-4000:],
+            "stderr": err[-4000:],
+            "specs": specs,
+        }
 
     def _update_footprint(
         self, manager: str, specs: List[str], *, index_url: Optional[str] = None
@@ -266,8 +301,13 @@ class RuntimeDepsMixin:
         except Exception:  # noqa: BLE001 - telemetry must not break installs
             pass
 
-    def ensure_pip(self, specs: List[str], *, reason: str = "agent self-install",
-                   index_url: Optional[str] = None) -> JsonDict:
+    def ensure_pip(
+        self,
+        specs: List[str],
+        *,
+        reason: str = "agent self-install",
+        index_url: Optional[str] = None,
+    ) -> JsonDict:
         # reject flag-smuggling specs (e.g. "-rfile", "--upgrade"); only real pkgs.
         specs = [s.strip() for s in (specs or []) if s and not s.strip().startswith("-")]
         if not specs:
@@ -345,7 +385,12 @@ class RuntimeDepsMixin:
         falsey value to skip (e.g. air-gapped hosts that provision deps out of
         band).
         """
-        if os.environ.get("MAC_AGENT_RECONCILE_RUNTIME_DEPS", "1").strip().lower() in {"0", "false", "no", "off"}:
+        if os.environ.get("MAC_AGENT_RECONCILE_RUNTIME_DEPS", "1").strip().lower() in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }:
             return
         try:
             result = self.reconcile_runtime_deps()

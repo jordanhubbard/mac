@@ -77,9 +77,7 @@ def test_liveness_operations_refuse_tombstoned_agents(cp: ControlPlane) -> None:
     live = _agent(cp, "live")
     task = cp.create_task("leftover work")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
-    account = cp.configure_communication_account(
-        hive.id, "slack", config={"default": True}
-    )
+    account = cp.configure_communication_account(hive.id, "slack", config={"default": True})
     cp.delete_agent(dead.id, actor="test")
 
     with pytest.raises(ValidationError, match="decommissioned"):

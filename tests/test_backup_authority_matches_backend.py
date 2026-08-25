@@ -66,8 +66,8 @@ def test_the_postgres_path_is_the_only_one_that_can_run():
     "both off" half of the original failure, which deletion does NOT prevent.
     """
     for env in (
-        {"MAC_DATABASE_URL": PG_DSN},                       # Postgres authority
-        {"MAC_PG_BACKUP_URL": PG_DSN},                      # PG via the backup-specific var
+        {"MAC_DATABASE_URL": PG_DSN},  # Postgres authority
+        {"MAC_PG_BACKUP_URL": PG_DSN},  # PG via the backup-specific var
     ):
         assert PgBackupConfig.from_env(env).enabled is True, env
 
@@ -130,9 +130,7 @@ def test_the_newest_major_version_is_preferred(tmp_path, monkeypatch):
         d.mkdir(parents=True)
         _fake_pg_tree(d)
 
-    monkeypatch.setattr(
-        pg_backup, "_PG_BIN_SEARCH", (str(tmp_path / "postgresql@*" / "bin"),)
-    )
+    monkeypatch.setattr(pg_backup, "_PG_BIN_SEARCH", (str(tmp_path / "postgresql@*" / "bin"),))
 
     resolved = pg_backup.pg_binary("pg_dump", {"PATH": ""})
 
@@ -182,4 +180,6 @@ def test_an_injected_runner_does_not_require_the_binaries(monkeypatch):
         lambda *a, **k: pytest.fail("must not resolve a real binary for a fake runner"),
     )
 
-    assert pg_backup._binary_for("pg_dump", {"PATH": ""}, runner=lambda argv, env: None) == "pg_dump"
+    assert (
+        pg_backup._binary_for("pg_dump", {"PATH": ""}, runner=lambda argv, env: None) == "pg_dump"
+    )

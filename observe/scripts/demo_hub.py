@@ -112,8 +112,7 @@ def seed_transcripts(cp: ControlPlane) -> None:
             )
         # The attribution bug: empty on every historical row.
         cp.store.execute(
-            "UPDATE task_agent_transcripts SET coding_agent = '', model = NULL "
-            "WHERE task_id = ?",
+            "UPDATE task_agent_transcripts SET coding_agent = '', model = NULL WHERE task_id = ?",
             (row["id"],),
         )
         cp.store.execute(
@@ -121,7 +120,7 @@ def seed_transcripts(cp: ControlPlane) -> None:
             "cwd, task_id, started_at, duration_ms, returncode, stdout_bytes, "
             "stderr_bytes, metadata, created_at) VALUES "
             "(?, ?, 'agent_demo', 'completed', "
-            "'[\"openshell\",\"sandbox\",\"exec\"]', '/w', ?, ?, 812.0, 0, "
+            '\'["openshell","sandbox","exec"]\', \'/w\', ?, ?, 812.0, 0, '
             "4096, 0, '{}', ?)",
             (
                 new_id("audit"),

@@ -86,10 +86,7 @@ def _is_documentation(path: str) -> bool:
     return bool(
         path.startswith("docs/")
         or (len(value.parts) == 1 and value.suffix.lower() in DOC_SUFFIXES)
-        or (
-            path.startswith(".github/")
-            and value.suffix.lower() in {".md", ".rst", ".txt"}
-        )
+        or (path.startswith(".github/") and value.suffix.lower() in {".md", ".rst", ".txt"})
     )
 
 
@@ -200,9 +197,7 @@ def plan_selection(
     if len(changed) > MAX_CHANGED_FILES:
         raise SelectionError("candidate changed-file scope exceeds the certifier limit")
 
-    missing_invariants = [
-        item for item in INVARIANT_TESTS if not _regular_file(trusted_root, item)
-    ]
+    missing_invariants = [item for item in INVARIANT_TESTS if not _regular_file(trusted_root, item)]
     if missing_invariants:
         raise SelectionError("trusted invariant test inventory is incomplete")
 
@@ -239,9 +234,7 @@ def plan_selection(
         if candidates:
             mapped.update(candidates)
             continue
-        refined = _impact_map_tests(
-            source_path, impact_map, trusted_root, assembly_base_sha
-        )
+        refined = _impact_map_tests(source_path, impact_map, trusted_root, assembly_base_sha)
         if refined:
             mapped.update(refined)
         else:
@@ -306,9 +299,7 @@ def plan_selection(
         supplemental = _phase("skipped", "documentation_only")
         selection_mode = "documentation_fast_lane"
 
-    full_suite_count = sum(
-        phase["mode"] == "full" for phase in (authoritative, supplemental)
-    )
+    full_suite_count = sum(phase["mode"] == "full" for phase in (authoritative, supplemental))
     if full_suite_count > 1:
         raise SelectionError("selection attempted more than one full-suite phase")
     payload: dict[str, object] = {
@@ -356,9 +347,11 @@ def inspect_candidate(candidate_root: Path, assembly_base_sha: str) -> tuple[str
     candidate_root = candidate_root.resolve(strict=True)
     if not SHA_RE.fullmatch(assembly_base_sha):
         raise SelectionError("assembly base must be an exact lowercase Git SHA")
-    candidate_sha = _git(
-        candidate_root, ["rev-parse", "--verify", "HEAD^{commit}"]
-    ).decode("ascii", "strict").strip()
+    candidate_sha = (
+        _git(candidate_root, ["rev-parse", "--verify", "HEAD^{commit}"])
+        .decode("ascii", "strict")
+        .strip()
+    )
     if not SHA_RE.fullmatch(candidate_sha):
         raise SelectionError("candidate HEAD is not an exact lowercase Git SHA")
     _git(candidate_root, ["cat-file", "-e", assembly_base_sha + "^{commit}"])

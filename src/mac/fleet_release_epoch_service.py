@@ -111,9 +111,7 @@ def _canonical_json(value: Any) -> str:
 
 
 def _sha256_json(value: Any) -> str:
-    return (
-        "sha256:" + hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
-    )
+    return "sha256:" + hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def _sha256_text(value: Any) -> str:
@@ -268,9 +266,7 @@ class FleetReleaseEpochService:
             "epoch_id": str(row["epoch_id"]),
             "state": str(row["state"]),
             "prepared_at": str(row["prepared_at"]),
-            "proved_at": (
-                str(row["proved_at"]) if row["proved_at"] is not None else None
-            ),
+            "proved_at": (str(row["proved_at"]) if row["proved_at"] is not None else None),
         }
 
     def _ensure_hub_authority_identity(self) -> str:
@@ -283,8 +279,7 @@ class FleetReleaseEpochService:
                 (candidate, utcnow()),
             )
             row = conn.execute(
-                "SELECT authority_id FROM hub_authority_identity "
-                "WHERE singleton_key = 'hub'"
+                "SELECT authority_id FROM hub_authority_identity WHERE singleton_key = 'hub'"
             ).fetchone()
             if row is None:
                 raise TransitionError("hub authority identity was not persisted")
@@ -297,16 +292,11 @@ class FleetReleaseEpochService:
     def _marker_id(epoch_id: str) -> str:
         # Deliberately shares the legacy marker namespace. The same textual
         # epoch can never commit once through each protocol.
-        return (
-            "alce_epoch_%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
-        )
+        return "alce_epoch_%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
     def _epoch_hold_reason(epoch_id: str) -> str:
-        return (
-            "mac:fleet-release:%s"
-            % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
-        )
+        return "mac:fleet-release:%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
     def _policy_snapshot(conn: Any) -> Dict[str, Any]:
@@ -342,8 +332,7 @@ class FleetReleaseEpochService:
     @staticmethod
     def _active_claims(conn: Any, agent_id: str) -> List[str]:
         rows = conn.execute(
-            "SELECT id FROM service_claims WHERE agent_id = ? AND status = ? "
-            "ORDER BY id",
+            "SELECT id FROM service_claims WHERE agent_id = ? AND status = ? ORDER BY id",
             (agent_id, ServiceClaimStatus.ACTIVE.value),
         ).fetchall()
         return [str(row["id"]) for row in rows]
@@ -378,17 +367,12 @@ class FleetReleaseEpochService:
         if hmac.compare_digest(_sha256_json(projection), prior_sha256):
             return
         if str(participant["report_executor_action"]) == "preserve":
-            raise ValidationError(
-                "report executor authority changed after fleet release open"
-            )
+            raise ValidationError("report executor authority changed after fleet release open")
         approval = projection.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
-        if (
-            projection.get(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY) is not None
-            or not valid_read_only_report_repository_executor_approval(approval)
-        ):
-            raise ValidationError(
-                "report executor authority changed after fleet release open"
-            )
+        if projection.get(
+            REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY
+        ) is not None or not valid_read_only_report_repository_executor_approval(approval):
+            raise ValidationError("report executor authority changed after fleet release open")
         marker_arguments = {
             key: str(approval[key])
             for key in (
@@ -413,16 +397,12 @@ class FleetReleaseEpochService:
             read_only_report_repository_executor_resource(**marker_arguments)
         )
         if not hmac.compare_digest(_sha256_json(reconstructed), prior_sha256):
-            raise ValidationError(
-                "report executor authority changed after fleet release open"
-            )
+            raise ValidationError("report executor authority changed after fleet release open")
 
     @staticmethod
     def _expected_live_principals(participant: Any) -> List[str]:
         prior = list(json_loads(participant["prior_live_principal_ids"], []))
-        return sorted(
-            {str(value) for value in prior} | {str(participant["principal_id"])}
-        )
+        return sorted({str(value) for value in prior} | {str(participant["principal_id"])})
 
     @staticmethod
     def _has_active_work(conn: Any, agent_id: str, agent_row: Any) -> bool:
@@ -434,14 +414,11 @@ class FleetReleaseEpochService:
 
     def assert_agent_unreserved_in_transaction(self, conn: Any, agent_id: str) -> None:
         reservation = conn.execute(
-            "SELECT epoch_id FROM fleet_release_epoch_agents "
-            "WHERE agent_id = ? AND open_state = 1",
+            "SELECT epoch_id FROM fleet_release_epoch_agents WHERE agent_id = ? AND open_state = 1",
             (agent_id,),
         ).fetchone()
         if reservation is not None:
-            raise ValidationError(
-                "agent identity is reserved by an open fleet release epoch"
-            )
+            raise ValidationError("agent identity is reserved by an open fleet release epoch")
 
     def _normalize_open(
         self,
@@ -457,39 +434,29 @@ class FleetReleaseEpochService:
         if successor_hold_reason is not None:
             successor = _text(successor_hold_reason, "successor dispatch hold reason")
             if successor == epoch_hold_reason:
-                raise ValidationError(
-                    "successor hold must differ from epoch-owned hold"
-                )
+                raise ValidationError("successor hold must differ from epoch-owned hold")
         desired_mode: Optional[str] = None
         if desired_policy_mode is not None:
             desired_mode = str(desired_policy_mode or "").strip()
             if desired_mode not in POLICY_MODES:
-                raise ValidationError(
-                    "desired worker credential policy mode is invalid"
-                )
+                raise ValidationError("desired worker credential policy mode is invalid")
 
         result: List[Dict[str, Any]] = []
         seen: set[str] = set()
         try:
             iterator = iter(participants)
         except TypeError as exc:
-            raise ValidationError(
-                "fleet release participants must be iterable"
-            ) from exc
+            raise ValidationError("fleet release participants must be iterable") from exc
         for raw in iterator:
             if not isinstance(raw, Mapping):
                 raise ValidationError("fleet release participant is malformed")
             agent_id = _text(raw.get("agent_id"), "agent id")
             if agent_id in seen:
-                raise ValidationError(
-                    "duplicate agent in fleet release epoch: %s" % agent_id
-                )
+                raise ValidationError("duplicate agent in fleet release epoch: %s" % agent_id)
             seen.add(agent_id)
             expected_dispatch_hold = raw.get("expected_dispatch_hold")
             if not isinstance(expected_dispatch_hold, bool):
-                raise ValidationError(
-                    "expected dispatch hold must be an explicit boolean"
-                )
+                raise ValidationError("expected dispatch hold must be an explicit boolean")
             prior_reason_value = raw.get("expected_hold_reason")
             prior_hold_at_value = raw.get("expected_hold_at")
             if expected_dispatch_hold:
@@ -526,16 +493,12 @@ class FleetReleaseEpochService:
             candidate = raw.get("attestation_candidate")
             if candidate is not None:
                 if not isinstance(candidate, Mapping) or set(candidate) != {"key"}:
-                    raise ValidationError(
-                        "attestation candidate has unexpected or missing fields"
-                    )
+                    raise ValidationError("attestation candidate has unexpected or missing fields")
                 candidate_key = str(candidate.get("key") or "")
                 try:
                     candidate_key.encode("ascii")
                 except UnicodeEncodeError as exc:
-                    raise ValidationError(
-                        "attestation candidate key must be ASCII"
-                    ) from exc
+                    raise ValidationError("attestation candidate key must be ASCII") from exc
                 if (
                     len(candidate_key) < 32
                     or len(candidate_key) > 512
@@ -549,15 +512,11 @@ class FleetReleaseEpochService:
                 raise ValidationError("report executor action is invalid")
             report_attestation = raw.get("report_executor_attestation")
             if report_action == "approve":
-                if not valid_read_only_report_repository_executor_attestation(
-                    report_attestation
-                ):
+                if not valid_read_only_report_repository_executor_attestation(report_attestation):
                     raise ValidationError("report executor attestation is malformed")
                 report_attestation = json.loads(_canonical_json(report_attestation))
             elif report_attestation is not None:
-                raise ValidationError(
-                    "report executor attestation is accepted only for approval"
-                )
+                raise ValidationError("report executor attestation is accepted only for approval")
             result.append(
                 {
                     "agent_id": agent_id,
@@ -574,9 +533,7 @@ class FleetReleaseEpochService:
                 }
             )
         if not result:
-            raise ValidationError(
-                "fleet release epoch requires at least one participant"
-            )
+            raise ValidationError("fleet release epoch requires at least one participant")
         result.sort(key=lambda item: item["agent_id"])
         request = {
             "schema": EPOCH_IDENTITY_SCHEMA,
@@ -608,8 +565,7 @@ class FleetReleaseEpochService:
 
     def _lock_agent(self, conn: Any, agent_id: str) -> Any:
         locked = conn.execute(
-            "UPDATE agents SET updated_at = updated_at "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
             (agent_id,),
         )
         if locked.rowcount != 1:
@@ -624,8 +580,7 @@ class FleetReleaseEpochService:
         if item["expected_dispatch_hold"]:
             return bool(
                 agent_row["dispatch_hold"]
-                and str(agent_row["dispatch_hold_reason"] or "")
-                == item["expected_hold_reason"]
+                and str(agent_row["dispatch_hold_reason"] or "") == item["expected_hold_reason"]
                 and agent_row["dispatch_hold_at"] == item["expected_hold_at"]
             )
         return bool(
@@ -637,8 +592,7 @@ class FleetReleaseEpochService:
     def _receipt(self, conn: Any, epoch_row: Any) -> Dict[str, Any]:
         epoch = _row(epoch_row)
         participants = conn.execute(
-            "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-            "ORDER BY ordinal",
+            "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
             (epoch["epoch_id"],),
         ).fetchall()
         receipt: Dict[str, Any] = {
@@ -663,9 +617,7 @@ class FleetReleaseEpochService:
                     "principal_id": str(item["principal_id"]),
                     "principal_version": int(item["principal_version"]),
                     "principal_fingerprint": str(item["principal_fingerprint"]),
-                    "attestation_candidate_fingerprint": item[
-                        "attestation_candidate_fingerprint"
-                    ],
+                    "attestation_candidate_fingerprint": item["attestation_candidate_fingerprint"],
                     "report_executor_action": str(item["report_executor_action"]),
                 }
                 for item in participants
@@ -687,9 +639,7 @@ class FleetReleaseEpochService:
 
         epoch = _row(epoch_row)
         identity = ensure_json_object(json_loads(epoch.get("identity_payload"), {}))
-        policy_snapshot = ensure_json_object(
-            json_loads(epoch.get("policy_snapshot"), {})
-        )
+        policy_snapshot = ensure_json_object(json_loads(epoch.get("policy_snapshot"), {}))
         if (
             identity.get("schema") != EPOCH_IDENTITY_SCHEMA
             or identity.get("epoch_id") != epoch.get("epoch_id")
@@ -697,17 +647,14 @@ class FleetReleaseEpochService:
             or identity.get("request_sha256") != epoch.get("request_sha256")
             or identity.get("epoch_hold_reason")
             != self._epoch_hold_reason(str(epoch.get("epoch_id") or ""))
-            or identity.get("successor_hold_reason")
-            != epoch.get("successor_hold_reason")
-            or identity.get("desired_worker_credential_mode")
-            != epoch.get("desired_policy_mode")
+            or identity.get("successor_hold_reason") != epoch.get("successor_hold_reason")
+            or identity.get("desired_worker_credential_mode") != epoch.get("desired_policy_mode")
             or identity.get("policy_snapshot") != policy_snapshot
             or _sha256_json(identity) != epoch.get("identity_sha256")
         ):
             raise TransitionError("fleet release epoch identity storage is corrupt")
         participants = conn.execute(
-            "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-            "ORDER BY ordinal",
+            "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
             (epoch["epoch_id"],),
         ).fetchall()
         projected_agents: List[Dict[str, Any]] = []
@@ -724,9 +671,7 @@ class FleetReleaseEpochService:
                     "attestation_candidate_fingerprint": participant[
                         "attestation_candidate_fingerprint"
                     ],
-                    "report_executor_action": str(
-                        participant["report_executor_action"]
-                    ),
+                    "report_executor_action": str(participant["report_executor_action"]),
                     "report_executor_attestation": (
                         ensure_json_object(
                             json_loads(participant["report_executor_attestation"], {})
@@ -753,13 +698,9 @@ class FleetReleaseEpochService:
                 }
             )
         if identity.get("agents") != projected_agents:
-            raise TransitionError(
-                "fleet release epoch participant identity storage is corrupt"
-            )
+            raise TransitionError("fleet release epoch participant identity storage is corrupt")
 
-    def _stored_proof_matches(
-        self, epoch_row: Any, participants: Iterable[Any]
-    ) -> bool:
+    def _stored_proof_matches(self, epoch_row: Any, participants: Iterable[Any]) -> bool:
         epoch = _row(epoch_row)
         if epoch.get("state") == "open":
             return epoch.get("proof_sha256") is None
@@ -784,9 +725,7 @@ class FleetReleaseEpochService:
                 for participant in participants
             ],
         }
-        return hmac.compare_digest(
-            str(epoch.get("proof_sha256") or ""), _sha256_json(payload)
-        )
+        return hmac.compare_digest(str(epoch.get("proof_sha256") or ""), _sha256_json(payload))
 
     def _marker_matches(self, conn: Any, epoch_row: Any) -> bool:
         epoch = _row(epoch_row)
@@ -794,10 +733,7 @@ class FleetReleaseEpochService:
             "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
             (self._marker_id(str(epoch["epoch_id"])),),
         ).fetchone()
-        if (
-            marker is None
-            or marker["event_type"] != "agent.dispatch_hold_epoch_committed"
-        ):
+        if marker is None or marker["event_type"] != "agent.dispatch_hold_epoch_committed":
             return False
         detail = ensure_json_object(json_loads(marker["detail"], {}))
         return bool(
@@ -807,17 +743,13 @@ class FleetReleaseEpochService:
             and detail.get("proof_sha256") == epoch["proof_sha256"]
         )
 
-    def _replay_open_receipt(
-        self, conn: Any, existing: Any, request_sha256: str
-    ) -> Dict[str, Any]:
+    def _replay_open_receipt(self, conn: Any, existing: Any, request_sha256: str) -> Dict[str, Any]:
         if str(existing["request_sha256"]) != request_sha256:
             raise ValidationError(
                 "fleet release epoch id was already used with a different request"
             )
         self._assert_epoch_identity_integrity(conn, existing)
-        if existing["state"] == "committed" and not self._marker_matches(
-            conn, existing
-        ):
+        if existing["state"] == "committed" and not self._marker_matches(conn, existing):
             raise TransitionError("committed fleet release marker is incomplete")
         return self._receipt(conn, existing)
 
@@ -858,9 +790,7 @@ class FleetReleaseEpochService:
                 ).fetchone()
                 is not None
             ):
-                raise ValidationError(
-                    "fleet release epoch id was already used by a legacy release"
-                )
+                raise ValidationError("fleet release epoch id was already used by a legacy release")
 
             locked_rows: Dict[str, Any] = {}
             for item in normalized:
@@ -883,9 +813,7 @@ class FleetReleaseEpochService:
                 ).fetchone()
                 is not None
             ):
-                raise ValidationError(
-                    "fleet release epoch id was already used by a legacy release"
-                )
+                raise ValidationError("fleet release epoch id was already used by a legacy release")
             for item in normalized:
                 agent_id = str(item["agent_id"])
                 self.assert_agent_unreserved_in_transaction(conn, agent_id)
@@ -909,8 +837,7 @@ class FleetReleaseEpochService:
                 prior_claims = self._active_claims(conn, agent_id)
                 if item["expected_dispatch_hold"] and prior_claims:
                     raise ValidationError(
-                        "held agent unexpectedly owns active service claims: %s"
-                        % agent_id
+                        "held agent unexpectedly owns active service claims: %s" % agent_id
                     )
                 resources = ensure_json_object(json_loads(agent_row["resources"], {}))
                 live_principals = self._live_principals(conn, agent_id)
@@ -947,9 +874,7 @@ class FleetReleaseEpochService:
                         "prior_active_service_claim_ids": prior_claims,
                         "principal_version": staged_item["principal_version"],
                         "principal_fingerprint": staged_item["principal_fingerprint"],
-                        "prior_live_principal_ids": staged_item[
-                            "prior_live_principal_ids"
-                        ],
+                        "prior_live_principal_ids": staged_item["prior_live_principal_ids"],
                         "prior_attestation_ciphertext_sha256": staged_item[
                             "prior_attestation_ciphertext_sha256"
                         ],
@@ -1113,8 +1038,7 @@ class FleetReleaseEpochService:
         if participant["prior_dispatch_hold"]:
             return bool(
                 agent_row["dispatch_hold"]
-                and agent_row["dispatch_hold_reason"]
-                == participant["prior_hold_reason"]
+                and agent_row["dispatch_hold_reason"] == participant["prior_hold_reason"]
                 and agent_row["dispatch_hold_at"] == participant["prior_hold_at"]
             )
         return bool(
@@ -1131,8 +1055,7 @@ class FleetReleaseEpochService:
             agent_row["dispatch_hold"]
             and str(agent_row["dispatch_hold_reason"] or "").strip()
             and agent_row["dispatch_hold_at"]
-            and agent_row["dispatch_hold_reason"]
-            != participant["epoch_hold_reason"]
+            and agent_row["dispatch_hold_reason"] != participant["epoch_hold_reason"]
         )
 
     def _validate_node_readiness(
@@ -1140,9 +1063,7 @@ class FleetReleaseEpochService:
     ) -> Dict[str, Any]:
         agent_id = str(participant["agent_id"])
         if self._has_active_work(conn, agent_id, agent_row):
-            raise ValidationError(
-                "fleet release epoch found active work on %s" % agent_id
-            )
+            raise ValidationError("fleet release epoch found active work on %s" % agent_id)
         resources = ensure_json_object(json_loads(agent_row["resources"], {}))
         startup = resources.get("startup_self_test")
         # One definition (mac.agent_health). This was a full copy of the rule
@@ -1160,14 +1081,10 @@ class FleetReleaseEpochService:
             or parse_time(last_seen) <= parse_time(participant["baseline_seen"])
             or resources.get("deployment_generation") != participant["generation"]
         ):
-            raise ValidationError(
-                "fleet release epoch lost node readiness for %s" % agent_id
-            )
+            raise ValidationError("fleet release epoch lost node readiness for %s" % agent_id)
         return resources
 
-    def _candidate_key(
-        self, conn: Any, epoch_id: str, participant: Any
-    ) -> Optional[str]:
+    def _candidate_key(self, conn: Any, epoch_id: str, participant: Any) -> Optional[str]:
         fingerprint = participant["attestation_candidate_fingerprint"]
         if fingerprint is None:
             return None
@@ -1182,9 +1099,7 @@ class FleetReleaseEpochService:
         try:
             key = self.control_plane.secrets._decrypt(row["key_ciphertext"])
         except Exception as exc:  # noqa: BLE001 - corrupt secret must fail closed.
-            raise TransitionError(
-                "staged attestation candidate cannot be decrypted"
-            ) from exc
+            raise TransitionError("staged attestation candidate cannot be decrypted") from exc
         if _sha256_text(key) != fingerprint:
             raise TransitionError("staged attestation candidate digest differs")
         return key
@@ -1198,17 +1113,13 @@ class FleetReleaseEpochService:
     ) -> Optional[Dict[str, Any]]:
         if key is None:
             if proof is not None:
-                raise ValidationError(
-                    "attestation proof supplied without a staged candidate"
-                )
+                raise ValidationError("attestation proof supplied without a staged candidate")
             return None
         if not isinstance(proof, Mapping) or set(proof) != {
             "challenge",
             "signature",
         }:
-            raise ValidationError(
-                "attestation candidate proof has unexpected or missing fields"
-            )
+            raise ValidationError("attestation candidate proof has unexpected or missing fields")
         challenge = proof.get("challenge")
         expected_keys = {
             "schema",
@@ -1251,23 +1162,15 @@ class FleetReleaseEpochService:
     ) -> None:
         if participant["report_executor_action"] != "approve":
             if startup_timestamp is not None:
-                raise ValidationError(
-                    "report startup proof supplied without staged approval"
-                )
+                raise ValidationError("report startup proof supplied without staged approval")
             return
         timestamp = _text(startup_timestamp, "report executor startup timestamp")
-        attestation = ensure_json_object(
-            json_loads(participant["report_executor_attestation"], {})
-        )
+        attestation = ensure_json_object(json_loads(participant["report_executor_attestation"], {}))
         if resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY) != attestation:
-            raise ValidationError(
-                "report executor attestation differs from staged approval"
-            )
+            raise ValidationError("report executor attestation differs from staged approval")
         if resources.get(
             "openshell_required"
-        ) is not True and not report_repository_executor_attestation_is_host_install(
-            attestation
-        ):
+        ) is not True and not report_repository_executor_attestation_is_host_install(attestation):
             raise ValidationError("report executor requires OpenShell policy")
         if not self.control_plane._report_executor_startup_proof_matches(
             str(participant["agent_id"]),
@@ -1275,9 +1178,7 @@ class FleetReleaseEpochService:
             attestation,
             timestamp,
         ):
-            raise ValidationError(
-                "report executor startup proof does not match staged approval"
-            )
+            raise ValidationError("report executor startup proof does not match staged approval")
 
     def _proof_request_sha256(
         self,
@@ -1312,9 +1213,7 @@ class FleetReleaseEpochService:
                     "agent_id": agent_id,
                     "install_receipt_sha256": _sha256_json(receipt),
                     "attestation_proof_sha256": (
-                        _sha256_json(candidate_proof)
-                        if candidate_proof is not None
-                        else None
+                        _sha256_json(candidate_proof) if candidate_proof is not None else None
                     ),
                     "report_executor_startup_timestamp": startup,
                 }
@@ -1354,9 +1253,7 @@ class FleetReleaseEpochService:
                 "attestation_proof",
                 "report_executor_startup_timestamp",
             }:
-                raise ValidationError(
-                    "fleet release proof has unexpected or missing fields"
-                )
+                raise ValidationError("fleet release proof has unexpected or missing fields")
             proof_by_agent[agent_id] = proof
         actor_value = str(actor or "fleet-deploy")
         with self.store.transaction() as conn:
@@ -1369,20 +1266,15 @@ class FleetReleaseEpochService:
             if epoch["state"] == "aborted":
                 raise TransitionError("aborted fleet release epoch cannot be proved")
             participants = conn.execute(
-                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-                "ORDER BY ordinal",
+                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
                 (epoch_id,),
             ).fetchall()
             expected_ids = [str(item["agent_id"]) for item in participants]
             if sorted(proof_by_agent) != sorted(expected_ids):
-                raise ValidationError(
-                    "fleet release proof cohort does not match open cohort"
-                )
+                raise ValidationError("fleet release proof cohort does not match open cohort")
             if epoch["state"] in {"proved", "committed"}:
                 if not self._stored_proof_matches(epoch, participants):
-                    raise TransitionError(
-                        "fleet release epoch proof storage is corrupt"
-                    )
+                    raise TransitionError("fleet release epoch proof storage is corrupt")
                 proof_sha256 = self._proof_request_sha256(
                     str(epoch["epoch_id"]),
                     str(epoch["identity_sha256"]),
@@ -1390,15 +1282,9 @@ class FleetReleaseEpochService:
                     proof_by_agent,
                 )
                 if epoch["proof_sha256"] != proof_sha256:
-                    raise ValidationError(
-                        "fleet release epoch was proved with different evidence"
-                    )
-                if epoch["state"] == "committed" and not self._marker_matches(
-                    conn, epoch
-                ):
-                    raise TransitionError(
-                        "committed fleet release marker is incomplete"
-                    )
+                    raise ValidationError("fleet release epoch was proved with different evidence")
+                if epoch["state"] == "committed" and not self._marker_matches(conn, epoch):
+                    raise TransitionError("committed fleet release marker is incomplete")
                 return self._receipt(conn, epoch)
 
             normalized_proofs: List[Dict[str, Any]] = []
@@ -1407,9 +1293,7 @@ class FleetReleaseEpochService:
                 agent_id = str(participant["agent_id"])
                 agent_row = self._lock_agent(conn, agent_id)
                 if not self._epoch_hold_matches(agent_row, participant):
-                    raise ValidationError(
-                        "fleet release lost epoch-owned hold for %s" % agent_id
-                    )
+                    raise ValidationError("fleet release lost epoch-owned hold for %s" % agent_id)
                 resources = self._validate_node_readiness(conn, agent_row, participant)
                 self._validate_report_authority_projection(participant, resources)
                 proof = proof_by_agent[agent_id]
@@ -1443,9 +1327,7 @@ class FleetReleaseEpochService:
                     "agent_id": agent_id,
                     "install_receipt_sha256": _sha256_json(receipt_value),
                     "attestation_proof_sha256": (
-                        _sha256_json(candidate_proof)
-                        if candidate_proof is not None
-                        else None
+                        _sha256_json(candidate_proof) if candidate_proof is not None else None
                     ),
                     "report_executor_startup_timestamp": startup_value,
                 }
@@ -1517,9 +1399,7 @@ class FleetReleaseEpochService:
             ).fetchone()
             return self._receipt(conn, proved)
 
-    def pre_prove_readiness(
-        self, epoch_id: str, identity_sha256: str
-    ) -> Dict[str, Any]:
+    def pre_prove_readiness(self, epoch_id: str, identity_sha256: str) -> Dict[str, Any]:
         """Fail closed unless every pending cohort principal is prove-ready.
 
         This is an early diagnostic and timing gate only. It intentionally
@@ -1529,12 +1409,9 @@ class FleetReleaseEpochService:
         with self.store.transaction() as conn:
             epoch = self._load_exact(conn, epoch_id, identity_sha256)
             if epoch["state"] != "open":
-                raise TransitionError(
-                    "fleet release epoch is not open for pre-prove readiness"
-                )
+                raise TransitionError("fleet release epoch is not open for pre-prove readiness")
             participants = conn.execute(
-                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-                "ORDER BY ordinal",
+                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
                 (epoch_id,),
             ).fetchall()
             agents: List[Dict[str, Any]] = []
@@ -1547,21 +1424,15 @@ class FleetReleaseEpochService:
                 if agent_row is None:
                     raise NotFoundError("agent not found: %s" % agent_id)
                 if not self._epoch_hold_matches(agent_row, participant):
-                    raise ValidationError(
-                        "fleet release lost epoch-owned hold for %s" % agent_id
-                    )
-                resources = self._validate_node_readiness(
-                    conn, agent_row, participant
-                )
+                    raise ValidationError("fleet release lost epoch-owned hold for %s" % agent_id)
+                resources = self._validate_node_readiness(conn, agent_row, participant)
                 self._validate_report_authority_projection(participant, resources)
                 try:
-                    readiness = (
-                        self.credentials.validate_pending_readiness_in_transaction(
-                            conn,
-                            agent_id,
-                            str(participant["principal_id"]),
-                            expected_epoch_id=epoch_id,
-                        )
+                    readiness = self.credentials.validate_pending_readiness_in_transaction(
+                        conn,
+                        agent_id,
+                        str(participant["principal_id"]),
+                        expected_epoch_id=epoch_id,
                     )
                 except WorkerCredentialError as exc:
                     raise ValidationError(str(exc)) from exc
@@ -1587,23 +1458,15 @@ class FleetReleaseEpochService:
         agent_id = str(participant["agent_id"])
         agent_row = self._lock_agent(conn, agent_id)
         if not self._epoch_hold_matches(agent_row, participant):
-            raise ValidationError(
-                "fleet release lost epoch-owned hold for %s" % agent_id
-            )
+            raise ValidationError("fleet release lost epoch-owned hold for %s" % agent_id)
         resources = self._validate_node_readiness(conn, agent_row, participant)
-        if self._live_principals(conn, agent_id) != self._expected_live_principals(
-            participant
-        ):
-            raise ValidationError(
-                "worker principal set changed after fleet release open"
-            )
+        if self._live_principals(conn, agent_id) != self._expected_live_principals(participant):
+            raise ValidationError("worker principal set changed after fleet release open")
         if (
             _sha256_text(agent_row["attestation_key_ciphertext"])
             != participant["prior_attestation_ciphertext_sha256"]
         ):
-            raise ValidationError(
-                "attestation authority changed after fleet release open"
-            )
+            raise ValidationError("attestation authority changed after fleet release open")
         self._validate_report_authority_projection(participant, resources)
         receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
         if _sha256_json(receipt) != participant["install_receipt_sha256"]:
@@ -1630,9 +1493,7 @@ class FleetReleaseEpochService:
             and _sha256_json(candidate_proof) != participant["attestation_proof_sha256"]
         ):
             raise TransitionError("staged attestation proof is corrupt")
-        self._validate_candidate_proof(
-            epoch_id, participant, candidate_key, candidate_proof
-        )
+        self._validate_candidate_proof(epoch_id, participant, candidate_key, candidate_proof)
         self._validate_report_approval(
             participant,
             resources,
@@ -1681,13 +1542,9 @@ class FleetReleaseEpochService:
                 source_bundle_sha256=str(attestation["source_bundle_sha256"]),
             )
             resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
-            resources = self.control_plane._project_report_repository_executor_marker(
-                resources
-            )
+            resources = self.control_plane._project_report_repository_executor_marker(resources)
             if not agent_has_read_only_report_repository_executor(resources):
-                raise ValidationError(
-                    "report executor controller marker was not derived"
-                )
+                raise ValidationError("report executor controller marker was not derived")
             event = "agent.report_repository_executor.approved"
             detail = {
                 "agent_id": agent_id,
@@ -1700,9 +1557,7 @@ class FleetReleaseEpochService:
             "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
             (json_dumps(resources), now, agent_id),
         )
-        self.control_plane._record_agent_lifecycle_event(
-            conn, agent_id, event, actor, detail, now
-        )
+        self.control_plane._record_agent_lifecycle_event(conn, agent_id, event, actor, detail, now)
 
     def commit(
         self,
@@ -1723,17 +1578,12 @@ class FleetReleaseEpochService:
                 raise TransitionError("aborted fleet release epoch cannot commit")
             if epoch["state"] == "committed":
                 if not self._marker_matches(conn, epoch):
-                    raise TransitionError(
-                        "committed fleet release marker is incomplete"
-                    )
+                    raise TransitionError("committed fleet release marker is incomplete")
                 return self._receipt(conn, epoch)
             if epoch["state"] != "proved" or not epoch["proof_sha256"]:
-                raise TransitionError(
-                    "fleet release epoch requires exact full-cohort proof"
-                )
+                raise TransitionError("fleet release epoch requires exact full-cohort proof")
             participants = conn.execute(
-                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-                "ORDER BY ordinal",
+                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
                 (epoch_id,),
             ).fetchall()
             if not self._stored_proof_matches(epoch, participants):
@@ -1743,26 +1593,21 @@ class FleetReleaseEpochService:
             if epoch["desired_policy_mode"] is not None and self._policy_snapshot(
                 conn
             ) != ensure_json_object(json_loads(epoch["policy_snapshot"], {})):
-                raise ValidationError(
-                    "worker credential policy changed after fleet release open"
-                )
+                raise ValidationError("worker credential policy changed after fleet release open")
             validated: Dict[str, tuple[Dict[str, Any], Optional[str]]] = {}
             for participant in participants:
                 agent_id = str(participant["agent_id"])
                 if self._active_claims(conn, agent_id):
                     raise ValidationError(
-                        "fleet release commit found new active service claims for %s"
-                        % agent_id
+                        "fleet release commit found new active service claims for %s" % agent_id
                     )
-                validated[str(participant["agent_id"])] = (
-                    self._revalidate_proved_participant(conn, epoch_id, participant)
+                validated[str(participant["agent_id"])] = self._revalidate_proved_participant(
+                    conn, epoch_id, participant
                 )
             now = utcnow()
             for participant in participants:
                 agent_id = str(participant["agent_id"])
-                receipt = ensure_json_object(
-                    json_loads(participant["install_receipt"], {})
-                )
+                receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
                 try:
                     self.credentials.promote_in_transaction(
                         conn,
@@ -1837,9 +1682,7 @@ class FleetReleaseEpochService:
             )
             for participant in participants:
                 agent_id = str(participant["agent_id"])
-                current = conn.execute(
-                    "SELECT * FROM agents WHERE id = ?", (agent_id,)
-                ).fetchone()
+                current = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
                 if not self._epoch_hold_matches(current, participant):
                     raise ValidationError("fleet release lost epoch hold before commit")
                 if successor is None:
@@ -1877,9 +1720,7 @@ class FleetReleaseEpochService:
                 "hub_authority_id": self.hub_authority_id,
                 "identity_sha256": identity_sha256,
                 "proof_sha256": epoch["proof_sha256"],
-                "agent_ids": [
-                    str(participant["agent_id"]) for participant in participants
-                ],
+                "agent_ids": [str(participant["agent_id"]) for participant in participants],
                 "successor_hold_reason": successor,
                 "desired_worker_credential_mode": desired_policy,
             }
@@ -1903,8 +1744,7 @@ class FleetReleaseEpochService:
                 (epoch_id,),
             )
             conn.execute(
-                "UPDATE fleet_release_epoch_agents SET open_state = 0 "
-                "WHERE epoch_id = ?",
+                "UPDATE fleet_release_epoch_agents SET open_state = 0 WHERE epoch_id = ?",
                 (epoch_id,),
             )
             conn.execute(
@@ -1943,12 +1783,8 @@ class FleetReleaseEpochService:
                 raise TransitionError("committed fleet release epoch cannot abort")
             if epoch["state"] == "aborted":
                 if str(epoch["abort_reason"] or "") != reason_value:
-                    raise ValidationError(
-                        "fleet release epoch was aborted with a different reason"
-                    )
-                prior_disposition = str(
-                    epoch["abort_disposition"] or ABORT_DISPOSITION_AUTO
-                )
+                    raise ValidationError("fleet release epoch was aborted with a different reason")
+                prior_disposition = str(epoch["abort_disposition"] or ABORT_DISPOSITION_AUTO)
                 if (
                     disposition_value != ABORT_DISPOSITION_AUTO
                     and disposition_value != prior_disposition
@@ -1958,8 +1794,7 @@ class FleetReleaseEpochService:
                     )
                 return self._receipt(conn, epoch)
             participants = conn.execute(
-                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-                "ORDER BY ordinal",
+                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
                 (epoch_id,),
             ).fetchall()
             # A pending credential whose install receipt is recorded has already
@@ -1980,52 +1815,39 @@ class FleetReleaseEpochService:
                     "credentials for %s; choose an explicit recovery disposition "
                     "(retain_installed to keep the proven predecessor projection "
                     "authenticating, or discard_installed to force the "
-                    "destructive revoke)"
-                    % ", ".join(sorted(installed_agents))
+                    "destructive revoke)" % ", ".join(sorted(installed_agents))
                 )
             locked: Dict[str, Any] = {}
             preserve_superseding_hold: set[str] = set()
             for participant in participants:
                 agent_id = str(participant["agent_id"])
                 locked[agent_id] = self._lock_agent(conn, agent_id)
-                epoch_owned = self._epoch_hold_matches(
-                    locked[agent_id], participant
-                )
-                prior_restored = self._restored_prior_hold_matches(
-                    locked[agent_id], participant
-                )
+                epoch_owned = self._epoch_hold_matches(locked[agent_id], participant)
+                prior_restored = self._restored_prior_hold_matches(locked[agent_id], participant)
                 superseding_hold = (
                     not epoch_owned
                     and not prior_restored
-                    and self._superseding_hold_matches(
-                        locked[agent_id], participant
-                    )
+                    and self._superseding_hold_matches(locked[agent_id], participant)
                 )
                 if not (epoch_owned or prior_restored or superseding_hold):
                     raise ValidationError(
                         "fleet release abort lost epoch-owned hold and did not find "
-                        "the exact prior snapshot or a superseding safety hold for %s"
-                        % agent_id
+                        "the exact prior snapshot or a superseding safety hold for %s" % agent_id
                     )
                 if superseding_hold:
                     preserve_superseding_hold.add(agent_id)
                 if self._active_claims(conn, agent_id):
                     raise ValidationError(
-                        "fleet release abort found new active service claims for %s"
-                        % agent_id
+                        "fleet release abort found new active service claims for %s" % agent_id
                     )
             now = utcnow()
             for participant in participants:
                 agent_id = str(participant["agent_id"])
-                if self._live_principals(
-                    conn, agent_id
-                ) != self._expected_live_principals(participant):
-                    raise ValidationError(
-                        "worker principal set changed after fleet release open"
-                    )
-                prior_claims = list(
-                    json_loads(participant["prior_active_service_claim_ids"], [])
-                )
+                if self._live_principals(conn, agent_id) != self._expected_live_principals(
+                    participant
+                ):
+                    raise ValidationError("worker principal set changed after fleet release open")
+                prior_claims = list(json_loads(participant["prior_active_service_claim_ids"], []))
                 for claim_id in prior_claims:
                     restored = conn.execute(
                         "UPDATE service_claims SET status = ?, updated_at = ? "
@@ -2092,9 +1914,7 @@ class FleetReleaseEpochService:
                         "reason": reason_value,
                         "prior_dispatch_hold": bool(participant["prior_dispatch_hold"]),
                         "prior_hold_reason": participant["prior_hold_reason"],
-                        "preserved_superseding_hold": (
-                            agent_id in preserve_superseding_hold
-                        ),
+                        "preserved_superseding_hold": (agent_id in preserve_superseding_hold),
                         "preserved_hold_reason": (
                             locked[agent_id]["dispatch_hold_reason"]
                             if agent_id in preserve_superseding_hold
@@ -2110,8 +1930,7 @@ class FleetReleaseEpochService:
                 (epoch_id,),
             )
             conn.execute(
-                "UPDATE fleet_release_epoch_agents SET open_state = 0 "
-                "WHERE epoch_id = ?",
+                "UPDATE fleet_release_epoch_agents SET open_state = 0 WHERE epoch_id = ?",
                 (epoch_id,),
             )
             conn.execute(
@@ -2156,8 +1975,7 @@ class FleetReleaseEpochService:
                 "identity_sha256": digest,
             }
         participants = self.store.query_all(
-            "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
-            "ORDER BY ordinal",
+            "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
             (epoch,),
         )
         if not self._stored_proof_matches(row, participants):

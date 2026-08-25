@@ -178,8 +178,7 @@ def test_a_quiesced_agent_refuses_async_work_end_to_end(cp):
 
     assert not evaluation.allowed
     assert any(
-        reason.split(":", 1)[0] == AGENT_SYNC_BARRIER
-        for reason in evaluation.agent_rejections
+        reason.split(":", 1)[0] == AGENT_SYNC_BARRIER for reason in evaluation.agent_rejections
     )
 
 
@@ -198,7 +197,7 @@ def test_creating_an_untargeted_barrier_is_refused(cp):
 
 
 def test_the_refusal_names_the_ambiguity(cp):
-    """"Invalid task" would send someone to look at the title."""
+    """ "Invalid task" would send someone to look at the title."""
     with pytest.raises(ValidationError) as excinfo:
         cp.create_task("barrier", project="mac", metadata={"execution_mode": "sync"})
 
@@ -245,9 +244,9 @@ def test_the_bulk_barrier_map_matches_the_per_agent_scan(cp):
     bulk = lifecycle._sync_barrier_states()
 
     for agent in cp.list_agents():
-        assert bulk.get(agent.id, (None, False)) == lifecycle._sync_barrier_state(
+        assert bulk.get(agent.id, (None, False)) == lifecycle._sync_barrier_state(agent.id), (
             agent.id
-        ), agent.id
+        )
 
 
 def test_a_round_asks_the_task_table_once_not_once_per_agent(cp, monkeypatch):

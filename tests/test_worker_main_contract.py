@@ -83,7 +83,9 @@ def worker_main(monkeypatch):
     FakeWorker.loop_statuses = ["idle"]
     monkeypatch.setattr(worker, "MacApiClient", client_factory)
     monkeypatch.setattr(worker, "MacWorker", FakeWorker)
-    monkeypatch.setattr(worker, "SubprocessExecutor", lambda argv, timeout=None: {"argv": argv, "timeout": timeout})
+    monkeypatch.setattr(
+        worker, "SubprocessExecutor", lambda argv, timeout=None: {"argv": argv, "timeout": timeout}
+    )
     monkeypatch.delenv("MAC_ATTESTATION_KEY", raising=False)
     monkeypatch.delenv("MAC_TOKEN", raising=False)
     monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
@@ -100,10 +102,23 @@ def test_worker_main_requires_identity_and_executor(worker_main, capsys):
 
 
 def test_worker_main_resolves_fleet_token_and_heartbeat(worker_main, monkeypatch, capsys):
-    monkeypatch.setattr("mac.fleet_env.resolve_first", lambda names, fleet=None: "fleet-token" if fleet else None)
-    assert worker.main(
-        ["--fleet", "rocky", "--agent-id", "agent_test", "--heartbeat-only", "--running-digest", "sha256:test"]
-    ) == 0
+    monkeypatch.setattr(
+        "mac.fleet_env.resolve_first", lambda names, fleet=None: "fleet-token" if fleet else None
+    )
+    assert (
+        worker.main(
+            [
+                "--fleet",
+                "rocky",
+                "--agent-id",
+                "agent_test",
+                "--heartbeat-only",
+                "--running-digest",
+                "sha256:test",
+            ]
+        )
+        == 0
+    )
     assert worker_main[-1].token == "fleet-token"
     assert worker_main[-1].posts[-1][1]["running_digest"] == "sha256:test"
     assert json.loads(capsys.readouterr().out)["status"] == "heartbeat"
@@ -126,22 +141,25 @@ def test_worker_main_registers_and_persists_attestation_key(
             "resources": {"openshell_required": True},
         },
     )
-    assert worker.main(
-        [
-            "--register",
-            "--hostname",
-            "host",
-            "--agent-name",
-            "registered",
-            "--capabilities",
-            "python, ops",
-            "--resources",
-            '{"cpu": 4}',
-            "--attestation-key-env",
-            str(env_file),
-            "--heartbeat-only",
-        ]
-    ) == 0
+    assert (
+        worker.main(
+            [
+                "--register",
+                "--hostname",
+                "host",
+                "--agent-name",
+                "registered",
+                "--capabilities",
+                "python, ops",
+                "--resources",
+                '{"cpu": 4}',
+                "--attestation-key-env",
+                str(env_file),
+                "--heartbeat-only",
+            ]
+        )
+        == 0
+    )
     assert "MAC_ATTESTATION_KEY=" + ("a" * 40) in env_file.read_text(encoding="utf-8")
     assert worker.os.environ["MAC_ATTESTATION_KEY"] == "a" * 40
     assert json.loads(capsys.readouterr().out)["registered"]["id"] == "agent_registered"
@@ -150,31 +168,30 @@ def test_worker_main_registers_and_persists_attestation_key(
 @pytest.mark.parametrize("ok,expected", [(True, 0), (False, 1)])
 def test_worker_main_self_install_modes(worker_main, capsys, ok, expected):
     FakeWorker.install_ok = ok
-    assert worker.main(
-        [
-            "--agent-id",
-            "agent_test",
-            "--install-pip",
-            "ruff",
-            "--install-npm",
-            "typescript",
-            "--install-index-url",
-            "https://packages.example/simple",
-            "--install-reason",
-            "test",
-        ]
-    ) == expected
+    assert (
+        worker.main(
+            [
+                "--agent-id",
+                "agent_test",
+                "--install-pip",
+                "ruff",
+                "--install-npm",
+                "typescript",
+                "--install-index-url",
+                "https://packages.example/simple",
+                "--install-reason",
+                "test",
+            ]
+        )
+        == expected
+    )
     payload = json.loads(capsys.readouterr().out)
     assert set(payload["results"]) == {"pip", "npm"}
 
 
-def test_worker_main_never_rotates_missing_or_invalid_attestation_keys(
-    worker_main, monkeypatch
-):
+def test_worker_main_never_rotates_missing_or_invalid_attestation_keys(worker_main, monkeypatch):
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "")
-    assert worker.main(
-        ["--agent-id", "agent_test", "--heartbeat-only"]
-    ) == 0
+    assert worker.main(["--agent-id", "agent_test", "--heartbeat-only"]) == 0
     assert not any(path.endswith("attestation-key/rotate") for path, _ in worker_main[-1].posts)
 
     for removed_flag in (
@@ -201,23 +218,26 @@ def test_worker_canary_claim_filter_is_explicit_and_defaults_off():
 
 
 def test_worker_main_dry_run_and_executor_modes(worker_main, tmp_path, capsys):
-    assert worker.main(
-        [
-            "--agent-id",
-            "agent_test",
-            "--workspace",
-            str(tmp_path),
-            "--allowed-projects",
-            "one,two",
-            "--required-metadata",
-            '{"canary": true}',
-            "--claim-only-canary-tasks",
-            "--disable-agentbus-control",
-            "--self-update-repo",
-            str(tmp_path),
-            "--dry-run-claim",
-        ]
-    ) == 0
+    assert (
+        worker.main(
+            [
+                "--agent-id",
+                "agent_test",
+                "--workspace",
+                str(tmp_path),
+                "--allowed-projects",
+                "one,two",
+                "--required-metadata",
+                '{"canary": true}',
+                "--claim-only-canary-tasks",
+                "--disable-agentbus-control",
+                "--self-update-repo",
+                str(tmp_path),
+                "--dry-run-claim",
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["assignment"] == {"task": "candidate"}
     instance = FakeWorker.instances[-1]
     assert instance.kwargs["allowed_projects"] == ["one", "two"]
@@ -233,9 +253,12 @@ def test_worker_main_dry_run_and_executor_modes(worker_main, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "completed"
 
     FakeWorker.loop_statuses = ["idle", "self_update_restart"]
-    assert worker.main(
-        ["--agent-id", "agent_test", "--loop", "--max-iterations", "2", "--executor", "runner"]
-    ) == 75
+    assert (
+        worker.main(
+            ["--agent-id", "agent_test", "--loop", "--max-iterations", "2", "--executor", "runner"]
+        )
+        == 75
+    )
     assert len(json.loads(capsys.readouterr().out)) == 2
     FakeWorker.loop_statuses = ["idle"]
     assert worker.main(["--agent-id", "agent_test", "--loop", "--executor", "runner"]) == 0
@@ -256,9 +279,7 @@ def test_worker_env_file_helpers_replace_append_and_ignore_comments(tmp_path):
     assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_subprocess_executor_audits_timeout_oserror_and_sink_failure(
-    tmp_path, monkeypatch
-):
+def test_subprocess_executor_audits_timeout_oserror_and_sink_failure(tmp_path, monkeypatch):
     task = {"id": "task_1"}
     task_dir = tmp_path / "task"
     task_dir.mkdir()
@@ -332,6 +353,7 @@ def test_worker_argument_helpers_and_attestation_probe(monkeypatch):
 # Helper shared by startup-behavior tests
 # ---------------------------------------------------------------------------
 
+
 def _fake_register():
     """Return a minimal registration payload that satisfies worker.main."""
     return {"id": "agent_startup_test", "attestation_key": "", "resources": {}}
@@ -345,6 +367,7 @@ def _register_args():
 # ---------------------------------------------------------------------------
 # 1. MAC_STARTUP_CLEAR_HOLD=1 → DELETE dispatched, hold_cleared=True in output
 # ---------------------------------------------------------------------------
+
 
 def test_startup_clear_hold_enabled(worker_main, monkeypatch, capsys):
     monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "1")
@@ -362,6 +385,7 @@ def test_startup_clear_hold_enabled(worker_main, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 # 2. MAC_STARTUP_CLEAR_HOLD=0 → DELETE skipped, hold_cleared=False in output
 # ---------------------------------------------------------------------------
+
 
 def test_startup_clear_hold_disabled(worker_main, monkeypatch, capsys):
     monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
@@ -382,8 +406,7 @@ def test_startup_clear_hold_defaults_fail_closed(worker_main, monkeypatch, capsy
     assert worker.main(_register_args()) == 0
     client = worker_main[-1]
     assert not any(
-        method == "DELETE" and "/dispatch-hold" in path
-        for method, path, _body in client.requests
+        method == "DELETE" and "/dispatch-hold" in path for method, path, _body in client.requests
     )
     assert json.loads(capsys.readouterr().out)["hold_cleared"] is False
 
@@ -391,6 +414,7 @@ def test_startup_clear_hold_defaults_fail_closed(worker_main, monkeypatch, capsy
 # ---------------------------------------------------------------------------
 # 3. MAC_STARTUP_EMIT_CHECKOUT_SHA=1 → checkout_sha present in output
 # ---------------------------------------------------------------------------
+
 
 def test_startup_emit_checkout_sha_enabled(worker_main, monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("MAC_STARTUP_EMIT_CHECKOUT_SHA", "1")
@@ -412,6 +436,7 @@ def test_startup_emit_checkout_sha_enabled(worker_main, monkeypatch, tmp_path, c
 # 4. MAC_STARTUP_EMIT_CHECKOUT_SHA=0 → checkout_sha omitted (None) in output
 # ---------------------------------------------------------------------------
 
+
 def test_startup_emit_checkout_sha_disabled(worker_main, monkeypatch, capsys):
     monkeypatch.setenv("MAC_STARTUP_EMIT_CHECKOUT_SHA", "0")
     monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
@@ -424,6 +449,7 @@ def test_startup_emit_checkout_sha_disabled(worker_main, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 # 5. MAC_STARTUP_IMPORT_SELF_CHECK=1 → import_self_check result in output
 # ---------------------------------------------------------------------------
+
 
 def test_startup_import_self_check_enabled(worker_main, monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("MAC_STARTUP_IMPORT_SELF_CHECK", "1")
@@ -440,6 +466,7 @@ def test_startup_import_self_check_enabled(worker_main, monkeypatch, tmp_path, c
 # ---------------------------------------------------------------------------
 # 6. MAC_STARTUP_IMPORT_SELF_CHECK=0 → import_self_check skipped (None) in output
 # ---------------------------------------------------------------------------
+
 
 def test_startup_import_self_check_disabled(worker_main, monkeypatch, capsys):
     monkeypatch.setenv("MAC_STARTUP_IMPORT_SELF_CHECK", "0")

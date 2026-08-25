@@ -46,6 +46,7 @@ HTTP call and returns a ``_Dictish`` (or a list of them) so the
 ``_print(result)`` helper's ``hasattr(value, 'to_dict')`` check still
 works without changes to the handlers.
 """
+
 from __future__ import annotations
 
 import json
@@ -330,9 +331,7 @@ class RemoteDispatch:
         )
 
     def task_transcript(self, task_id: str, *, limit: Optional[int] = None) -> List[_Dictish]:
-        return _wrap_list(
-            self._get("/tasks/%s/transcript" % quote(task_id, safe=""), limit=limit)
-        )
+        return _wrap_list(self._get("/tasks/%s/transcript" % quote(task_id, safe=""), limit=limit))
 
     def export_task(self, task_id: str, *, include_transcript: bool = True) -> _Dictish:
         return _Dictish(
@@ -392,11 +391,7 @@ class RemoteDispatch:
         )
 
     def explain_task_dispatch(self, task_id: str, **_: Any) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/tasks/%s/dispatch-explain" % quote(task_id, safe="")
-            )
-        )
+        return _Dictish(self._get("/tasks/%s/dispatch-explain" % quote(task_id, safe="")))
 
     def search_tasks(
         self,
@@ -602,8 +597,7 @@ class RemoteDispatch:
         del authorized_by
         return _Dictish(
             self._post(
-                "/tasks/%s/break-glass-authorizations"
-                % quote(task_id, safe=""),
+                "/tasks/%s/break-glass-authorizations" % quote(task_id, safe=""),
                 {
                     "agent_id": agent_id,
                     "reason": reason,
@@ -623,10 +617,7 @@ class RemoteDispatch:
         # The task-scoped endpoint intentionally does not expose broad fleet
         # enumeration. Filter any optional status/agent request client-side.
         items = _wrap_list(
-            self._get(
-                "/tasks/%s/break-glass-authorizations"
-                % quote(task_id, safe="")
-            )
+            self._get("/tasks/%s/break-glass-authorizations" % quote(task_id, safe=""))
         )
         out = []
         for item in items:
@@ -650,8 +641,7 @@ class RemoteDispatch:
         del revoked_by
         return _Dictish(
             self._post(
-                "/break-glass-authorizations/%s/revoke"
-                % quote(authorization_id, safe=""),
+                "/break-glass-authorizations/%s/revoke" % quote(authorization_id, safe=""),
                 {"reason": reason},
             )
         )
@@ -693,11 +683,7 @@ class RemoteDispatch:
         )
 
     def review_observation(self, task_id: str) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/tasks/%s/review-observation" % quote(task_id, safe="")
-            )
-        )
+        return _Dictish(self._get("/tasks/%s/review-observation" % quote(task_id, safe="")))
 
     def record_review_outcome(
         self,
@@ -798,9 +784,7 @@ class RemoteDispatch:
             "actor": actor,
             "detail": detail or {},
         }
-        return _Dictish(
-            self._post("/tasks/%s/transition" % quote(task_id, safe=""), body)
-        )
+        return _Dictish(self._post("/tasks/%s/transition" % quote(task_id, safe=""), body))
 
     def reopen_task(
         self,
@@ -812,9 +796,7 @@ class RemoteDispatch:
         return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
 
     def update_task(self, task_id: str, **fields: Any) -> _Dictish:
-        return _Dictish(
-            self._put("/tasks/%s" % quote(task_id, safe=""), _drop_none(dict(fields)))
-        )
+        return _Dictish(self._put("/tasks/%s" % quote(task_id, safe=""), _drop_none(dict(fields))))
 
     def request_task_input(
         self,
@@ -824,9 +806,7 @@ class RemoteDispatch:
         *,
         why: str = "",
     ) -> _Dictish:
-        body = _drop_none(
-            {"questions": list(questions or []), "actor": actor, "why": why or None}
-        )
+        body = _drop_none({"questions": list(questions or []), "actor": actor, "why": why or None})
         return _Dictish(self._post("/tasks/%s/ask" % quote(task_id, safe=""), body))
 
     def answer_task_input(
@@ -992,9 +972,7 @@ class RemoteDispatch:
                 "actor": actor,
             }
         )
-        return _Dictish(
-            self._put("/projects/%s" % quote(name_or_id, safe=""), body)
-        )
+        return _Dictish(self._put("/projects/%s" % quote(name_or_id, safe=""), body))
 
     def github_ingest_status(self) -> _Dictish:
         return _Dictish(self._get("/github-ingest/status"))
@@ -1055,14 +1033,10 @@ class RemoteDispatch:
         project: Optional[str] = None,
         status: Optional[str] = None,
     ) -> List[_Dictish]:
-        return _wrap_list(
-            self._get("/optimizer/policies", project=project, status=status)
-        )
+        return _wrap_list(self._get("/optimizer/policies", project=project, status=status))
 
     def get_scientific_policy(self, policy_id: str) -> _Dictish:
-        return _Dictish(
-            self._get("/optimizer/policies/%s" % quote(policy_id, safe=""))
-        )
+        return _Dictish(self._get("/optimizer/policies/%s" % quote(policy_id, safe="")))
 
     def promote_scientific_policy(self, policy_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
@@ -1072,9 +1046,7 @@ class RemoteDispatch:
             )
         )
 
-    def rollback_scientific_policy(
-        self, project: str, policy_id: str, **kw: Any
-    ) -> _Dictish:
+    def rollback_scientific_policy(self, project: str, policy_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
             self._post(
                 "/optimizer/projects/%s/rollback/%s"
@@ -1084,9 +1056,7 @@ class RemoteDispatch:
         )
 
     def create_scientific_experiment(self, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post("/optimizer/experiments", _drop_none(kw))
-        )
+        return _Dictish(self._post("/optimizer/experiments", _drop_none(kw)))
 
     def list_scientific_experiments(
         self,
@@ -1094,64 +1064,44 @@ class RemoteDispatch:
         project: Optional[str] = None,
         state: Optional[str] = None,
     ) -> List[_Dictish]:
-        return _wrap_list(
-            self._get("/optimizer/experiments", project=project, state=state)
-        )
+        return _wrap_list(self._get("/optimizer/experiments", project=project, state=state))
 
     def get_scientific_experiment(self, experiment_id: str) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/optimizer/experiments/%s" % quote(experiment_id, safe="")
-            )
-        )
+        return _Dictish(self._get("/optimizer/experiments/%s" % quote(experiment_id, safe="")))
 
-    def scientific_experiment_evidence(
-        self, experiment_id: str, *, limit: int = 500
-    ) -> _Dictish:
+    def scientific_experiment_evidence(self, experiment_id: str, *, limit: int = 500) -> _Dictish:
         return _Dictish(
             self._get(
-                "/optimizer/experiments/%s/evidence"
-                % quote(experiment_id, safe=""),
+                "/optimizer/experiments/%s/evidence" % quote(experiment_id, safe=""),
                 limit=limit,
             )
         )
 
-    def start_scientific_experiment(
-        self, experiment_id: str, **kw: Any
-    ) -> _Dictish:
+    def start_scientific_experiment(self, experiment_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
             self._post(
-                "/optimizer/experiments/%s/start"
-                % quote(experiment_id, safe=""),
+                "/optimizer/experiments/%s/start" % quote(experiment_id, safe=""),
                 _drop_none(kw),
             )
         )
 
-    def pause_scientific_experiment(
-        self, experiment_id: str, **kw: Any
-    ) -> _Dictish:
+    def pause_scientific_experiment(self, experiment_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
             self._post(
-                "/optimizer/experiments/%s/pause"
-                % quote(experiment_id, safe=""),
+                "/optimizer/experiments/%s/pause" % quote(experiment_id, safe=""),
                 _drop_none(kw),
             )
         )
 
-    def promote_scientific_experiment(
-        self, experiment_id: str, **kw: Any
-    ) -> _Dictish:
+    def promote_scientific_experiment(self, experiment_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
             self._post(
-                "/optimizer/experiments/%s/promote"
-                % quote(experiment_id, safe=""),
+                "/optimizer/experiments/%s/promote" % quote(experiment_id, safe=""),
                 _drop_none(kw),
             )
         )
 
-    def observe_scientific_task(
-        self, experiment_id: str, task_id: str
-    ) -> _Dictish:
+    def observe_scientific_task(self, experiment_id: str, task_id: str) -> _Dictish:
         return _Dictish(
             self._post(
                 "/optimizer/experiments/%s/observe/%s"
@@ -1163,8 +1113,7 @@ class RemoteDispatch:
     def analyze_scientific_experiment(self, experiment_id: str) -> _Dictish:
         return _Dictish(
             self._post(
-                "/optimizer/experiments/%s/analyze"
-                % quote(experiment_id, safe=""),
+                "/optimizer/experiments/%s/analyze" % quote(experiment_id, safe=""),
                 {},
             )
         )
@@ -1263,9 +1212,7 @@ class RemoteDispatch:
         )
 
     def workflow_run_decisions(self, run_id: str) -> _Dictish:
-        return _Dictish(
-            self._get("/workflows/runs/%s/decisions" % quote(run_id, safe=""))
-        )
+        return _Dictish(self._get("/workflows/runs/%s/decisions" % quote(run_id, safe="")))
 
     def start_workflow(
         self,
@@ -1391,11 +1338,7 @@ class RemoteDispatch:
         )
 
     def clear_agent_dispatch_hold(self, agent_id: str) -> _Dictish:
-        return _Dictish(
-            self._delete(
-                "/agents/%s/dispatch-hold" % quote(agent_id, safe="")
-            )
-        )
+        return _Dictish(self._delete("/agents/%s/dispatch-hold" % quote(agent_id, safe="")))
 
     def list_curiosity_candidates(self, status: Optional[str] = None) -> _Dictish:
         """Quarantined curiosity candidates, read through the hub.
@@ -1430,13 +1373,10 @@ class RemoteDispatch:
     def get_agent(self, agent_id: str) -> _Dictish:
         return _Dictish(self._get("/agents/%s" % quote(agent_id, safe="")))
 
-    def recover_agent_attestation_key(
-        self, agent_id: str, probe: Mapping[str, Any]
-    ) -> _Dictish:
+    def recover_agent_attestation_key(self, agent_id: str, probe: Mapping[str, Any]) -> _Dictish:
         return _Dictish(
             self._post(
-                "/agents/%s/attestation-key/recover"
-                % quote(agent_id, safe=""),
+                "/agents/%s/attestation-key/recover" % quote(agent_id, safe=""),
                 {"probe": dict(probe)},
             )
         )
@@ -1451,8 +1391,7 @@ class RemoteDispatch:
     ) -> _Dictish:
         return _Dictish(
             self._post(
-                "/agents/%s/report-repository-executor/approve"
-                % quote(agent_id, safe=""),
+                "/agents/%s/report-repository-executor/approve" % quote(agent_id, safe=""),
                 {
                     "expected_attestation": dict(expected_attestation),
                     "expected_startup_timestamp": expected_startup_timestamp,
@@ -1470,8 +1409,7 @@ class RemoteDispatch:
     ) -> _Dictish:
         return _Dictish(
             self._post(
-                "/agents/%s/report-repository-executor/revoke"
-                % quote(agent_id, safe=""),
+                "/agents/%s/report-repository-executor/revoke" % quote(agent_id, safe=""),
                 {"reason": reason, "actor": actor},
             )
         )
@@ -1540,11 +1478,7 @@ class RemoteDispatch:
     # -- Consolidated per-agent config --------------------------------------
 
     def effective_agent_config(self, agent_id: str) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/v1/agents/%s/effective-config" % quote(agent_id, safe="")
-            )
-        )
+        return _Dictish(self._get("/v1/agents/%s/effective-config" % quote(agent_id, safe="")))
 
     def report_agent_deploy_config(
         self, agent_id: str, document: Dict[str, Any], **kw: Any
@@ -1559,9 +1493,7 @@ class RemoteDispatch:
     # -- Mood (per-agent overlay) -------------------------------------------
 
     def set_mood(self, agent_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post("/agents/%s/mood" % quote(agent_id, safe=""), _drop_none(kw))
-        )
+        return _Dictish(self._post("/agents/%s/mood" % quote(agent_id, safe=""), _drop_none(kw)))
 
     def get_current_mood(self, agent_id: str) -> Optional[_Dictish]:
         resp = self._get("/agents/%s/mood" % quote(agent_id, safe=""))
@@ -1639,9 +1571,7 @@ class RemoteDispatch:
                 "qdrant_url": qdrant_url,
             }
         )
-        return _Dictish(
-            self._post("/agents/%s/nap-cycle" % quote(agent_id, safe=""), body)
-        )
+        return _Dictish(self._post("/agents/%s/nap-cycle" % quote(agent_id, safe=""), body))
 
     def import_dream_logs(
         self,
@@ -1692,9 +1622,7 @@ class RemoteDispatch:
                 "qdrant_url": qdrant_url,
             }
         )
-        return _Dictish(
-            self._post("/agents/%s/nap-consolidate" % quote(agent_id, safe=""), body)
-        )
+        return _Dictish(self._post("/agents/%s/nap-consolidate" % quote(agent_id, safe=""), body))
 
     # -- Dispatch -----------------------------------------------------------
 
@@ -1856,9 +1784,7 @@ class RemoteDispatch:
         hub-durable position and quietly change what ``drain`` returns to a
         different caller for the same agent.
         """
-        response = self.drain_agentbus_inbox(
-            agent_id, after_cursor, limit=limit, commit=False
-        )
+        response = self.drain_agentbus_inbox(agent_id, after_cursor, limit=limit, commit=False)
         return _wrap_list(response.get("messages") or [])
 
     # No ``agentbus_inbox_cursor`` here on purpose: composing a cursor is pure
@@ -1921,9 +1847,7 @@ class RemoteDispatch:
             )
         )
 
-    def set_agentbus_consumer_cursor(
-        self, agent_id: str, topic: str, position: Any
-    ) -> _Dictish:
+    def set_agentbus_consumer_cursor(self, agent_id: str, topic: str, position: Any) -> _Dictish:
         return _Dictish(
             self._put(
                 "/v1/agents/%s/agentbus-cursor" % quote(agent_id, safe=""),
@@ -2172,9 +2096,7 @@ class RemoteDispatch:
                 "created_by",
             )
             if len(args) > len(names):
-                raise TypeError(
-                    "add_memory expected at most %d positional arguments" % len(names)
-                )
+                raise TypeError("add_memory expected at most %d positional arguments" % len(names))
             kw = {**dict(zip(names, args)), **kw}
         return _Dictish(self._post("/memory", _drop_none(kw)))
 
@@ -2216,8 +2138,7 @@ class RemoteDispatch:
     def forget_memory(self, key: str, *, project: Optional[str] = None) -> _Dictish:
         return _Dictish(
             self._delete(
-                "/memory/remembered/%s%s"
-                % (quote(key, safe=""), _query({"project": project}))
+                "/memory/remembered/%s%s" % (quote(key, safe=""), _query({"project": project}))
             )
         )
 
@@ -2420,7 +2341,9 @@ class RemoteDispatch:
     def get_eval_set(self, eval_set: str) -> _Dictish:
         return _Dictish(self._get("/eval-sets/%s" % quote(eval_set, safe="")))
 
-    def update_eval_set_baseline(self, eval_set: str, baseline_score: float, actor: str) -> _Dictish:
+    def update_eval_set_baseline(
+        self, eval_set: str, baseline_score: float, actor: str
+    ) -> _Dictish:
         return _Dictish(
             self._post(
                 "/eval-sets/%s/baseline" % quote(eval_set, safe=""),
@@ -2442,9 +2365,7 @@ class RemoteDispatch:
         # filter did nothing, and `mac admin eval run list --eval-set X`
         # returned every run rather than X's. Found by
         # tests/test_dispatch_route_contract.py on its first run.
-        return _wrap_list(
-            self._get("/eval-runs", eval_set_id=eval_set_id, target_id=target_id)
-        )
+        return _wrap_list(self._get("/eval-runs", eval_set_id=eval_set_id, target_id=target_id))
 
     # -- Notifier / Observability / Command audit / Events ------------------
 
@@ -2460,9 +2381,7 @@ class RemoteDispatch:
         return _wrap_list(self._get("/notifier/channels", **kw))
 
     def delete_notifier_channel(self, channel_id_or_name: str) -> _Dictish:
-        return _Dictish(
-            self._delete("/notifier/channels/%s" % quote(channel_id_or_name, safe=""))
-        )
+        return _Dictish(self._delete("/notifier/channels/%s" % quote(channel_id_or_name, safe="")))
 
     def deliver_pending_notifications(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/notifier/deliver", _drop_none(kw)))
@@ -2470,18 +2389,11 @@ class RemoteDispatch:
     # -- Runtime-neutral human communication -----------------------------
 
     def configure_communication_identity(self, name: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/communication/identities", _drop_none({"name": name, **kw})
-            )
-        )
+        return _Dictish(self._post("/communication/identities", _drop_none({"name": name, **kw})))
 
     def get_communication_identity(self, identity_id_or_name: str) -> _Dictish:
         return _Dictish(
-            self._get(
-                "/communication/identities/%s"
-                % quote(identity_id_or_name, safe="")
-            )
+            self._get("/communication/identities/%s" % quote(identity_id_or_name, safe=""))
         )
 
     def list_communication_identities(self, enabled: Optional[bool] = None) -> List[_Dictish]:
@@ -2489,10 +2401,7 @@ class RemoteDispatch:
 
     def delete_communication_identity(self, identity_id_or_name: str) -> _Dictish:
         return _Dictish(
-            self._delete(
-                "/communication/identities/%s"
-                % quote(identity_id_or_name, safe="")
-            )
+            self._delete("/communication/identities/%s" % quote(identity_id_or_name, safe=""))
         )
 
     def configure_communication_account(
@@ -2506,17 +2415,13 @@ class RemoteDispatch:
         )
 
     def get_communication_account(self, account_id: str) -> _Dictish:
-        return _Dictish(
-            self._get("/communication/accounts/%s" % quote(account_id, safe=""))
-        )
+        return _Dictish(self._get("/communication/accounts/%s" % quote(account_id, safe="")))
 
     def list_communication_accounts(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/communication/accounts", **kw))
 
     def delete_communication_account(self, account_id: str) -> _Dictish:
-        return _Dictish(
-            self._delete("/communication/accounts/%s" % quote(account_id, safe=""))
-        )
+        return _Dictish(self._delete("/communication/accounts/%s" % quote(account_id, safe="")))
 
     def configure_representation_binding(
         self, subject_kind: str, subject_id: str, **kw: Any
@@ -2524,9 +2429,7 @@ class RemoteDispatch:
         return _Dictish(
             self._post(
                 "/communication/representations",
-                _drop_none(
-                    {"subject_kind": subject_kind, "subject_id": subject_id, **kw}
-                ),
+                _drop_none({"subject_kind": subject_kind, "subject_id": subject_id, **kw}),
             )
         )
 
@@ -2535,17 +2438,11 @@ class RemoteDispatch:
 
     def delete_representation_binding(self, binding_id: str) -> _Dictish:
         return _Dictish(
-            self._delete(
-                "/communication/representations/%s" % quote(binding_id, safe="")
-            )
+            self._delete("/communication/representations/%s" % quote(binding_id, safe=""))
         )
 
     def resolve_agent_representation(self, agent_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._get(
-                "/agents/%s/representation" % quote(agent_id, safe=""), **kw
-            )
-        )
+        return _Dictish(self._get("/agents/%s/representation" % quote(agent_id, safe=""), **kw))
 
     def acquire_gateway_identity_lease(self, account_id: str, agent_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
@@ -2561,9 +2458,7 @@ class RemoteDispatch:
         return _Dictish(
             self._post(
                 "/communication/gateway-leases/%s/renew" % quote(lease_id, safe=""),
-                _drop_none(
-                    {"agent_id": agent_id, "fencing_token": fencing_token, **kw}
-                ),
+                _drop_none({"agent_id": agent_id, "fencing_token": fencing_token, **kw}),
             )
         )
 
@@ -2572,8 +2467,7 @@ class RemoteDispatch:
     ) -> _Dictish:
         return _Dictish(
             self._post(
-                "/communication/gateway-leases/%s/release"
-                % quote(lease_id, safe=""),
+                "/communication/gateway-leases/%s/release" % quote(lease_id, safe=""),
                 {"agent_id": agent_id, "fencing_token": fencing_token},
             )
         )
@@ -2670,9 +2564,7 @@ class RemoteDispatch:
     def list_command_audit(self, **kw: Any) -> List[_Dictish]:
         agent_id = kw.pop("agent_id", None)
         path = (
-            "/agents/%s/command-audit" % quote(agent_id, safe="")
-            if agent_id
-            else "/command-audit"
+            "/agents/%s/command-audit" % quote(agent_id, safe="") if agent_id else "/command-audit"
         )
         return _wrap_list(self._get(path, **kw))
 
@@ -2680,9 +2572,7 @@ class RemoteDispatch:
         return _wrap_list(self._get("/observability", **kw))
 
     def propose_directive(self, document: Dict[str, Any], **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post("/directives", _drop_none({"document": document, **kw}))
-        )
+        return _Dictish(self._post("/directives", _drop_none({"document": document, **kw})))
 
     def list_directives(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/directives", **kw))
@@ -2691,9 +2581,7 @@ class RemoteDispatch:
         return _Dictish(self._get("/directives/%s" % quote(directive_id, safe="")))
 
     def list_directive_versions(self, directive_id: str) -> List[_Dictish]:
-        return _wrap_list(
-            self._get("/directives/%s/versions" % quote(directive_id, safe=""))
-        )
+        return _wrap_list(self._get("/directives/%s/versions" % quote(directive_id, safe="")))
 
     def check_directive(self, directive_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
@@ -2728,9 +2616,7 @@ class RemoteDispatch:
         )
 
     def directive_impact(self, directive_id: str) -> _Dictish:
-        return _Dictish(
-            self._get("/directives/%s/impact" % quote(directive_id, safe=""))
-        )
+        return _Dictish(self._get("/directives/%s/impact" % quote(directive_id, safe="")))
 
     def effective_directives(self, **kw: Any) -> _Dictish:
         return _Dictish(self._get("/directives/effective", **kw))
@@ -2785,9 +2671,7 @@ class RemoteDispatch:
         return _wrap_list(self._get("/openshell/policies", **kw))
 
     def get_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._get("/openshell/policies/%s" % quote(policy_id, safe=""), **kw)
-        )
+        return _Dictish(self._get("/openshell/policies/%s" % quote(policy_id, safe=""), **kw))
 
     def update_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
@@ -2811,9 +2695,7 @@ class RemoteDispatch:
         )
 
     def list_openshell_policy_versions(self, policy_id: str) -> List[_Dictish]:
-        return _wrap_list(
-            self._get("/openshell/policies/%s/versions" % quote(policy_id, safe=""))
-        )
+        return _wrap_list(self._get("/openshell/policies/%s/versions" % quote(policy_id, safe="")))
 
     def assign_openshell_policy(self, policy_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
@@ -2827,9 +2709,7 @@ class RemoteDispatch:
         policy_id = kw.pop("policy_id", None)
         if policy_id:
             return _wrap_list(
-                self._get(
-                    "/openshell/policies/%s/assignments" % quote(policy_id, safe="")
-                )
+                self._get("/openshell/policies/%s/assignments" % quote(policy_id, safe=""))
             )
         raise DispatchError("listing all OpenShell assignments is local-only for now")
 
@@ -2957,9 +2837,7 @@ def _local_authority_error(
     )
     if remote_authority:
         message += "%s is configured; omit --db and use its HTTP API. " % remote_authority
-    message += (
-        "For maintenance, stop the hub service and rerun with --local-authority."
-    )
+    message += "For maintenance, stop the hub service and rerun with --local-authority."
     return DispatchError(message)
 
 
@@ -3303,9 +3181,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
         # there can deadlock with live task and lease traffic.
         initialize_schema = effective_command(args) == "init"
         return LocalDispatch(
-            ControlPlane(
-                open_postgres_store(dsn, initialize_schema=initialize_schema)
-            ),
+            ControlPlane(open_postgres_store(dsn, initialize_schema=initialize_schema)),
             db_path=dsn,
             local_authority_confirmed=local_authority or not protected_authority,
             remote_authority=remote_authority,
@@ -3338,11 +3214,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
 
 
 def _query(values: Dict[str, Any]) -> str:
-    filtered = {
-        key: _query_value(value)
-        for key, value in values.items()
-        if value is not None
-    }
+    filtered = {key: _query_value(value) for key, value in values.items() if value is not None}
     if not filtered:
         return ""
     return "?" + urlencode(filtered, doseq=True)

@@ -136,7 +136,7 @@ def _load_import_edges(
             rows = cur.fetchall()
             for from_node, to_file_raw in rows:
                 # from_node is like "file:core.py"
-                from_file = _normalize(from_node[len("file:"):])
+                from_file = _normalize(from_node[len("file:") :])
                 to_file = _normalize(to_file_raw)
                 if from_file in path_set and to_file in path_set and from_file != to_file:
                     deps[from_file].add(to_file)

@@ -110,7 +110,6 @@ class TaskTransitionService:
     def __init__(self, control_plane: Any) -> None:
         self.control_plane = control_plane
 
-
     def _transition_task_impl(
         self,
         task_id: str,
@@ -127,9 +126,7 @@ class TaskTransitionService:
         if conn is None:
             task = self.control_plane.get_task(task_id)
         else:
-            task_row = conn.execute(
-                "SELECT * FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
+            task_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if task_row is None:
                 raise NotFoundError("task not found: %s" % task_id)
             task = self.control_plane._task_from_row(task_row)
@@ -156,9 +153,7 @@ class TaskTransitionService:
             self.control_plane._require_exact_lease_actor(task, actor, lease_id)
             fenced_lease_id = str(lease_id or "").strip()
         transition_detail = dict(detail or {})
-        current_retry_generation = _retry_generation(
-            ensure_json_object(task.metadata)
-        )
+        current_retry_generation = _retry_generation(ensure_json_object(task.metadata))
         if target == TaskState.BLOCKED.value:
             # The hub owns the retry epoch. A worker cannot evade repeated
             # failure accounting by supplying an arbitrary generation.
@@ -191,9 +186,8 @@ class TaskTransitionService:
             # normalize_cancellation_detail receives a canonical full ID.
             # AmbiguousIdError and NotFoundError propagate without state change.
             _raw_replacement = str(
-                (dict(transition_detail) if transition_detail else {}).get(
-                    "replacement_task_id"
-                ) or ""
+                (dict(transition_detail) if transition_detail else {}).get("replacement_task_id")
+                or ""
             ).strip()
             if _raw_replacement:
                 _resolved_replacement = self.control_plane._resolve_task_id(_raw_replacement)
@@ -205,9 +199,7 @@ class TaskTransitionService:
             # replacement task unless the caller has explicitly set archival_override.
             disposition = str(transition_detail.get("disposition") or "").strip().lower()
             if disposition in {"superseded", "duplicate"}:
-                replacement_id = str(
-                    transition_detail.get("replacement_task_id") or ""
-                ).strip()
+                replacement_id = str(transition_detail.get("replacement_task_id") or "").strip()
                 archival_override = bool(transition_detail.get("archival_override", False))
                 validate_replacement_target(
                     replacement_id,
@@ -261,6 +253,7 @@ class TaskTransitionService:
                     detail=detail,
                     created_at=now,
                 )
+
             if conn is None:
                 with self.control_plane.store.transaction() as transaction:
                     apply_lifecycle(transaction)
@@ -278,7 +271,10 @@ class TaskTransitionService:
         review_ready_evidence: Optional[Evidence] = None
         if target == TaskState.NEEDS_REVIEW.value:
             review_ready_evidence = self.control_plane._require_review_ready(task)
-        if target == TaskState.COMPLETED.value and not self.control_plane.reviews.completion_authorized(task_id):
+        if (
+            target == TaskState.COMPLETED.value
+            and not self.control_plane.reviews.completion_authorized(task_id)
+        ):
             raise ValidationError("task completion requires approved review and evidence")
         if target == TaskState.COMPLETED.value:
             self.control_plane._require_canonical_integration_proof(task)
@@ -439,14 +435,15 @@ class TaskTransitionService:
                     SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
                         started_at = NULL, completed_at = NULL,
                         attempt_count = 0, updated_at = ?
-                    """ + transition_where,
+                    """
+                    + transition_where,
                     tuple(
                         [
-                        target,
-                        owner_agent_id,
-                        lease_id,
-                        leased_until,
-                        now,
+                            target,
+                            owner_agent_id,
+                            lease_id,
+                            leased_until,
+                            now,
                         ]
                         + transition_guards
                     ),
@@ -462,16 +459,21 @@ class TaskTransitionService:
                     UPDATE tasks
                     SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
                         started_at = ?, completed_at = ?, updated_at = ?
-                    """ + transition_where,
+                    """
+                    + transition_where,
                     tuple(
                         [
-                        target,
-                        owner_agent_id,
-                        lease_id,
-                        leased_until,
-                        now if target == TaskState.RUNNING.value and not task.started_at else task.started_at,
-                        now if target in TERMINAL_TASK_STATES and not task.completed_at else task.completed_at,
-                        now,
+                            target,
+                            owner_agent_id,
+                            lease_id,
+                            leased_until,
+                            now
+                            if target == TaskState.RUNNING.value and not task.started_at
+                            else task.started_at,
+                            now
+                            if target in TERMINAL_TASK_STATES and not task.completed_at
+                            else task.completed_at,
+                            now,
                         ]
                         + transition_guards
                     ),
@@ -525,6 +527,7 @@ class TaskTransitionService:
                         detail=detail or {},
                         created_at=now,
                     )
+
         if conn is None:
             with self.control_plane.store.transaction() as transaction:
                 apply_transition(transaction)
@@ -577,12 +580,8 @@ class TaskTransitionService:
             dependency = self.control_plane.get_task(dep_id)
         except NotFoundError:
             return None
-        lifecycle = ensure_json_object(dependency.metadata).get(
-            "repository_ref_lifecycle"
-        )
-        replacement_id = str(
-            ensure_json_object(lifecycle).get("replacement_task_id") or ""
-        ).strip()
+        lifecycle = ensure_json_object(dependency.metadata).get("repository_ref_lifecycle")
+        replacement_id = str(ensure_json_object(lifecycle).get("replacement_task_id") or "").strip()
         if not replacement_id:
             return None
         try:
@@ -658,17 +657,11 @@ class TaskTransitionService:
             try:
                 if replacement_id:
                     metadata = ensure_json_object(dependent.metadata)
-                    resolution = ensure_json_object(
-                        metadata.get("dependency_resolution")
-                    )
-                    unsatisfied = ensure_json_object(
-                        resolution.get("unsatisfied")
-                    )
+                    resolution = ensure_json_object(metadata.get("dependency_resolution"))
+                    unsatisfied = ensure_json_object(resolution.get("unsatisfied"))
                     if unsatisfied.pop(dep_id, None) is not None:
                         resolution["unsatisfied"] = unsatisfied
-                        resolution["status"] = (
-                            "repairing" if unsatisfied else "resolved"
-                        )
+                        resolution["status"] = "repairing" if unsatisfied else "resolved"
                         resolution["updated_at"] = utcnow()
                         metadata["dependency_resolution"] = resolution
                     self.control_plane.update_task(
@@ -682,17 +675,17 @@ class TaskTransitionService:
                     )
                 else:
                     metadata = ensure_json_object(dependent.metadata)
-                    policy = ensure_json_object(
-                        metadata.get("dependency_policy")
+                    policy = ensure_json_object(metadata.get("dependency_policy"))
+                    coordination = ensure_json_object(metadata.get("coordination"))
+                    on_unsatisfied = (
+                        str(
+                            policy.get("on_unsatisfied")
+                            or coordination.get("failure_policy")
+                            or "supervise"
+                        )
+                        .strip()
+                        .lower()
                     )
-                    coordination = ensure_json_object(
-                        metadata.get("coordination")
-                    )
-                    on_unsatisfied = str(
-                        policy.get("on_unsatisfied")
-                        or coordination.get("failure_policy")
-                        or "supervise"
-                    ).strip().lower()
                     if on_unsatisfied == "cancel_scope":
                         self.control_plane._transition_task_internal(
                             dependent_id,
@@ -712,12 +705,8 @@ class TaskTransitionService:
                         on_unsatisfied = "supervise"
 
                     now = utcnow()
-                    resolution = ensure_json_object(
-                        metadata.get("dependency_resolution")
-                    )
-                    unsatisfied = ensure_json_object(
-                        resolution.get("unsatisfied")
-                    )
+                    resolution = ensure_json_object(metadata.get("dependency_resolution"))
+                    unsatisfied = ensure_json_object(resolution.get("unsatisfied"))
                     unsatisfied[dep_id] = {
                         "state": dep_state,
                         "observed_at": now,
@@ -840,7 +829,9 @@ class TaskTransitionService:
         task_id: Optional[str] = None,
         limit: int = 100,
     ) -> List[TaskTransitionOutbox]:
-        return self.control_plane.task_ledger.list_outbox(status=status, task_id=task_id, limit=limit)
+        return self.control_plane.task_ledger.list_outbox(
+            status=status, task_id=task_id, limit=limit
+        )
 
     def drain_task_transition_outbox(
         self,
@@ -980,6 +971,8 @@ class TaskTransitionService:
             # column (never caller metadata), so forged task metadata cannot
             # push a free-floating task into the workflow state machine.
             if item.to_state in TERMINAL_TASK_STATES.union({TaskState.BLOCKED.value}):
-                self.control_plane.workflow_runtime.on_task_completed(item.task_id, item.to_state or "")
+                self.control_plane.workflow_runtime.on_task_completed(
+                    item.task_id, item.to_state or ""
+                )
             return
         raise ValidationError("unsupported task transition outbox event: %s" % item.event_type)

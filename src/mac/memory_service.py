@@ -77,7 +77,17 @@ class MemoryService:
                 id, task_id, subject_type, subject_id, record_type, content, evidence_id, created_by, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (memory_id, task_id, subject_type, subject_id, record_type, content, evidence_id, created_by, now),
+            (
+                memory_id,
+                task_id,
+                subject_type,
+                subject_id,
+                record_type,
+                content,
+                evidence_id,
+                created_by,
+                now,
+            ),
         )
         if task_id:
             self._record_history(
@@ -219,15 +229,20 @@ class MemoryService:
         """
         from datetime import datetime, timezone, timedelta
 
-        protected = tuple(protected_prefixes) if protected_prefixes is not None else self.PROTECTED_MEMORY_PREFIXES
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(0.0, ttl_days))).isoformat(timespec="microseconds")
+        protected = (
+            tuple(protected_prefixes)
+            if protected_prefixes is not None
+            else self.PROTECTED_MEMORY_PREFIXES
+        )
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(0.0, ttl_days))).isoformat(
+            timespec="microseconds"
+        )
         rows = self.store.query_all(
             "SELECT id, record_type, created_at FROM memory_records WHERE created_at < ? ORDER BY created_at LIMIT ?",
             (cutoff, int(limit)),
         )
         forgettable = [
-            r for r in rows
-            if not any(str(r["record_type"]).startswith(p) for p in protected)
+            r for r in rows if not any(str(r["record_type"]).startswith(p) for p in protected)
         ]
         by_type: Dict[str, int] = {}
         for r in forgettable:
@@ -316,9 +331,7 @@ class MemoryService:
         return self.get_conversation_thread(thread_id)
 
     def get_conversation_thread(self, thread_id: str) -> ConversationThread:
-        row = self.store.query_one(
-            "SELECT * FROM conversation_threads WHERE id = ?", (thread_id,)
-        )
+        row = self.store.query_one("SELECT * FROM conversation_threads WHERE id = ?", (thread_id,))
         if row is None:
             raise NotFoundError("conversation thread not found: %s" % thread_id)
         return self._thread_from_row(row)
@@ -453,9 +466,7 @@ class MemoryService:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at, id"
-        return [
-            self._vector_ref_from_row(row) for row in self.store.query_all(sql, tuple(params))
-        ]
+        return [self._vector_ref_from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
     # Row hydration -----------------------------------------------------
 

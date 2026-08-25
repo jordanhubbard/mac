@@ -15,6 +15,7 @@ worker2, devuser, agentuser). It does NOT forbid `jordanhubbard` / `NVIDIA-dev`
 Genericize new docs with READABLE role names instead: hub / worker-1 /
 worker-2 / gpu-worker, and placeholders like <user> / <host> / <mesh-ip>.
 """
+
 from __future__ import annotations
 
 import re

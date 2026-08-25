@@ -103,8 +103,7 @@ class WorkflowEdge:
         condition = str(raw.get("condition") or EdgeCondition.SUCCESS.value).strip().lower()
         if condition not in EDGE_CONDITIONS:
             raise ValidationError(
-                "%s.condition must be one of: %s"
-                % (path, ", ".join(sorted(EDGE_CONDITIONS)))
+                "%s.condition must be one of: %s" % (path, ", ".join(sorted(EDGE_CONDITIONS)))
             )
         return cls(
             from_node_key=from_key,

@@ -26,6 +26,7 @@ report_executor_attestation: dict[str, object] = {}
 if openshell_enabled and str(os.environ.get("MAC_WORKER_MODE") or "").strip() == "loop":
     try:
         from mac.worker import _read_only_report_executor_attestation
+
         observed_report_attestation = _read_only_report_executor_attestation(
             [str(mac_home / "bin" / "mac-task-executor")]
         )
@@ -33,9 +34,7 @@ if openshell_enabled and str(os.environ.get("MAC_WORKER_MODE") or "").strip() ==
         observed_report_attestation = None
         problems.append("report repository executor attestation probe failed: " + safe_error(exc))
     if not isinstance(observed_report_attestation, dict):
-        problems.append(
-            "report repository executor lacks the exact hardened OpenShell attestation"
-        )
+        problems.append("report repository executor lacks the exact hardened OpenShell attestation")
     else:
         report_executor_attestation = observed_report_attestation
         checks["report_repository_executor_attestation"] = True
@@ -109,7 +108,9 @@ def _resources_with_live_report_executor_attestation(self, resources):
     refreshed = dict(resources or {})
     refreshed.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
     refreshed.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
-    executor_argv = list(self.executor.argv) if isinstance(self.executor, SubprocessExecutor) else []
+    executor_argv = (
+        list(self.executor.argv) if isinstance(self.executor, SubprocessExecutor) else []
+    )
     attestation = _read_only_report_executor_attestation(executor_argv)
     if attestation is not None:
         refreshed[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] = attestation

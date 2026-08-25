@@ -34,7 +34,7 @@ def test_upsert_adds_tokens_preserving_other_lines(tmp_path):
     assert "SLACK_BOT_TOKEN=xoxb-1" in text
     assert "SLACK_APP_TOKEN=xapp-1" in text
     assert "TOKENHUB_URL=http://hub:8090" in text  # preserved
-    assert "# comment" in text                      # comment preserved
+    assert "# comment" in text  # comment preserved
     assert "OPENAI_API_KEY=x" in text
 
 
@@ -56,7 +56,7 @@ def test_upsert_is_idempotent_and_updates_in_place(tmp_path):
 def test_upsert_creates_file_and_noop_on_empty(tmp_path):
     m = _load()
     env = tmp_path / "sub" / ".env"  # parent doesn't exist yet
-    assert m.upsert_env_file(env, {}) is False         # nothing to write
+    assert m.upsert_env_file(env, {}) is False  # nothing to write
     assert not env.exists()
     assert m.upsert_env_file(env, {"SLACK_BOT_TOKEN": "xoxb-9"}) is True
     assert env.exists() and "xoxb-9" in env.read_text()

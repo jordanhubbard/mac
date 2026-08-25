@@ -34,6 +34,7 @@ Design constraints:
   is applied after the write-or-dedup block, re-enforcing permissions on
   both new-blob and dedup (already-exists) paths.
 """
+
 from __future__ import annotations
 
 import hashlib

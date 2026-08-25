@@ -49,7 +49,7 @@ def test_the_sandbox_reports_the_timeout_it_will_enforce():
 
 
 def test_the_timeout_report_names_its_source():
-    """"1800.0s" alone is what made the host configuration look authoritative.
+    """ "1800.0s" alone is what made the host configuration look authoritative.
     "1800.0s (default; MAC_WORKER_REPOSITORY_TEST_TIMEOUT unset)" is the
     sentence that ends the investigation."""
     source = _runner_source()
@@ -69,7 +69,7 @@ def test_the_sandbox_reports_the_baseline_it_resolved():
 
 
 def test_each_phase_reports_its_elapsed_time():
-    """"Is it hung or is it slow" cost a day. The answer is a subtraction."""
+    """ "Is it hung or is it slow" cost a day. The answer is a subtraction."""
     source = _runner_source()
 
     assert "phase bootstrap: start" in source
@@ -113,9 +113,7 @@ def test_the_resolver_splits_the_selection_by_provenance():
     assert "tests/test_control_plane_public_contract.py" in provenance["always_run"]
 
     # Every selected test is accounted for by exactly one bucket.
-    assert sorted(provenance["impact"] + provenance["always_run"]) == sorted(
-        document["tests"]
-    )
+    assert sorted(provenance["impact"] + provenance["always_run"]) == sorted(document["tests"])
 
 
 def test_the_sanity_runner_prints_the_split():

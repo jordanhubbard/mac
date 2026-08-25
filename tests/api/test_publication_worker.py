@@ -92,9 +92,7 @@ def test_a_heartbeat_does_not_run_the_sweep_by_default(monkeypatch):
     )
     monkeypatch.delenv("MAC_REVIEW_TICK_ON_HEARTBEAT", raising=False)
 
-    cp._maybe_advance_reviews_on_heartbeat(
-        type("A", (), {"id": "agent_x", "name": "x"})()
-    )
+    cp._maybe_advance_reviews_on_heartbeat(type("A", (), {"id": "agent_x", "name": "x"})())
 
     assert not called, (
         "the heartbeat path still runs the sweep by default; this is what "

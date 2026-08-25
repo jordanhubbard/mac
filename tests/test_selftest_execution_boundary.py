@@ -131,9 +131,7 @@ def _run_self_test(tmp_path, monkeypatch, sandbox_env, *, openshell_on_path=Fals
 
 def _boundary_problems(report):
     return [
-        problem
-        for problem in report["problems"]
-        if problem.startswith("worker cannot execute")
+        problem for problem in report["problems"] if problem.startswith("worker cannot execute")
     ]
 
 
@@ -205,9 +203,7 @@ def test_an_undeterminable_boundary_is_not_guessed(tmp_path, monkeypatch):
     """With neither variable set, the executor consults an identity allowlist
     the self-test cannot see. Guessing would block workers that can in fact
     run, so the check stays silent rather than inventing a problem."""
-    exit_code, report = _run_self_test(
-        tmp_path, monkeypatch, {"MAC_OPENSHELL_SANDBOX": "0"}
-    )
+    exit_code, report = _run_self_test(tmp_path, monkeypatch, {"MAC_OPENSHELL_SANDBOX": "0"})
 
     assert report["checks"]["openshell_executor_config"] is True
     assert _boundary_problems(report) == []

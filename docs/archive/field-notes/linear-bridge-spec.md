@@ -169,6 +169,7 @@ helper:
 def get_tracker_kind_for_task(task: Task) -> str:
     return (task.metadata.get("origin") or {}).get("tracker", "beads")
 
+
 def emit_lifecycle_comment(cp, task, event_type, payload):
     kind = get_tracker_kind_for_task(task)
     if kind == "linear":
@@ -279,6 +280,7 @@ for the `mac_create_task` plugin endpoint, one each for
 ```python
 # src/mac/tracker_dispatch.py — new file, ~50 lines
 
+
 def tracker_kind_for_task(task: Task) -> str:
     """Return 'beads' or 'linear' based on origin metadata.
     Default 'beads' for backward compatibility with rows imported
@@ -286,17 +288,18 @@ def tracker_kind_for_task(task: Task) -> str:
     origin = (task.metadata or {}).get("origin") or {}
     return origin.get("tracker", "beads")
 
+
 def tracker_kind_for_tenant(store: Store, tenant_id: str) -> str:
-    row = store.query_one(
-        "SELECT tracker_kind FROM tenants WHERE id = ?", (tenant_id,)
-    )
+    row = store.query_one("SELECT tracker_kind FROM tenants WHERE id = ?", (tenant_id,))
     return (row and row["tracker_kind"]) or "beads"
+
 
 def emit_lifecycle_comment(cp, task, event_type, payload):
     if tracker_kind_for_task(task) == "linear":
         cp.linear_bridge.emit_lifecycle_comment(task, event_type, payload)
     else:
         cp._append_beads_ledger_comment(task, event_type, payload)
+
 
 def create_issue_for_tenant(cp, tenant_id, title, description, **opts):
     if tracker_kind_for_tenant(cp.store, tenant_id) == "linear":
@@ -329,8 +332,7 @@ shape actually is. By then it's a defensible extraction, not a guess.
 
 ```python
 class LinearClient:
-    def __init__(self, api_key: str, *, endpoint: str = "https://api.linear.app/graphql"):
-        ...
+    def __init__(self, api_key: str, *, endpoint: str = "https://api.linear.app/graphql"): ...
 
     def list_teams(self) -> list[JsonDict]: ...
 
@@ -579,7 +581,9 @@ def _maybe_register_linear_workspace_from_env(cp: ControlPlane) -> None:
         stored_hash = (existing.metadata or {}).get("value_sha256")
         if stored_hash != api_key_hash:
             cp.secrets_service.rotate_secret(
-                secret_id, api_key, actor="mac-startup",
+                secret_id,
+                api_key,
+                actor="mac-startup",
                 metadata_patch={"value_sha256": api_key_hash},
             )
 
@@ -604,9 +608,11 @@ def _maybe_register_linear_workspace_from_env(cp: ControlPlane) -> None:
         if diff:
             cp.linear_bridge.update_workspace(name=name, **desired)
             cp.record_integration_finding(
-                source_id=existing_ws.id, source_kind="linear_workspace",
+                source_id=existing_ws.id,
+                source_kind="linear_workspace",
                 finding_type="config.env_overrode_db",
-                severity="info", title="Linear workspace config updated from env",
+                severity="info",
+                title="Linear workspace config updated from env",
                 detail={"changed_fields": list(diff.keys())},
             )
 
@@ -616,8 +622,10 @@ def _maybe_register_linear_workspace_from_env(cp: ControlPlane) -> None:
     except Exception as exc:
         log.warning("Linear state map resolution failed: %s", exc)
         cp.record_integration_finding(
-            source_id=name, source_kind="linear_workspace",
-            finding_type="state_map.refresh_failed", severity="warning",
+            source_id=name,
+            source_kind="linear_workspace",
+            finding_type="state_map.refresh_failed",
+            severity="warning",
             title="Linear state_map refresh failed at startup",
             detail={"error": str(exc)},
         )
@@ -1215,10 +1223,14 @@ def _required_scope(method, path):
     ...
     if path.startswith("/bridges/"):
         return "admin"  # all bridge mgmt requires admin
-    if "/linear/comment" in path or "/linear/state" in path \
-            or "/linear/attach" in path \
-            or "/linear/label" in path or "/linear/priority" in path \
-            or "/linear/assignee" in path:
+    if (
+        "/linear/comment" in path
+        or "/linear/state" in path
+        or "/linear/attach" in path
+        or "/linear/label" in path
+        or "/linear/priority" in path
+        or "/linear/assignee" in path
+    ):
         return "agent"  # runtime tools called by mac-task-runner
     ...
 ```

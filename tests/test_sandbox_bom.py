@@ -69,17 +69,13 @@ def test_every_project_contributes_not_only_the_busy_ones():
     A BOM that tracked projects with work in flight would change as the backlog
     moved, which destroys the reproducibility the frozen hash exists to give.
     """
-    bom = derive_bom(
-        [_registration("idle-project", ["cmake"]), _registration("busy", ["make"])]
-    )
+    bom = derive_bom([_registration("idle-project", ["cmake"]), _registration("busy", ["make"])])
 
     assert "cmake" in bom["commands"]
 
 
 def test_several_repositories_in_one_project_are_all_read():
-    bom = derive_bom(
-        [_registration("ova", ["make"]), _registration("ova", ["node"])]
-    )
+    bom = derive_bom([_registration("ova", ["make"]), _registration("ova", ["node"])])
 
     assert {"make", "node"} <= set(bom["commands"])
 
@@ -158,9 +154,7 @@ def test_the_committed_manifest_is_covered_by_the_image():
 def test_the_manifest_is_what_the_published_image_hash_covers():
     """Otherwise the BOM is a document beside the image rather than part of its
     identity, and the two can disagree without anything noticing."""
-    identity = (REPO_ROOT / "scripts/image-publication-identity.py").read_text(
-        encoding="utf-8"
-    )
+    identity = (REPO_ROOT / "scripts/image-publication-identity.py").read_text(encoding="utf-8")
 
     assert MANIFEST_PATH in identity
 
@@ -238,8 +232,9 @@ def test_the_repository_contract_declares_its_database():
     import yaml
 
     contract = yaml.safe_load(
-        (pathlib.Path(__file__).resolve().parents[1] / ".mac" / "project.yaml")
-        .read_text(encoding="utf-8")
+        (pathlib.Path(__file__).resolve().parents[1] / ".mac" / "project.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     commands = set((contract.get("toolchain") or {}).get("required_commands") or [])
     assert {"postgres", "pg_ctl", "initdb"} <= commands
@@ -261,6 +256,8 @@ def test_the_image_installs_it():
 
     containerfile = (
         pathlib.Path(__file__).resolve().parents[1]
-        / "deploy" / "openshell" / "mac-hermes.Containerfile"
+        / "deploy"
+        / "openshell"
+        / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
     assert "postgresql" in containerfile

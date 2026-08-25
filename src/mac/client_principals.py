@@ -7,6 +7,7 @@ credential. The registry stores only SHA-256 token hashes and scoped principal
 metadata. Live token material is returned once in the enrollment manifest and
 is never written to the registry or audit log.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -86,9 +87,7 @@ def default_audit_path(registry_path: Path) -> Path:
 def _validate_id(value: str) -> str:
     client_id = str(value or "").strip()
     if not _CLIENT_ID.fullmatch(client_id):
-        raise ClientPrincipalError(
-            "client id must match %s" % _CLIENT_ID.pattern
-        )
+        raise ClientPrincipalError("client id must match %s" % _CLIENT_ID.pattern)
     return client_id
 
 
@@ -109,11 +108,11 @@ def _validate_agent_id(value: str) -> str:
     return agent_id
 
 
-def normalize_scopes(
-    scopes: Optional[Iterable[str]], *, allow_elevated: bool = False
-) -> List[str]:
+def normalize_scopes(scopes: Optional[Iterable[str]], *, allow_elevated: bool = False) -> List[str]:
     """Validate and normalize a set of client scopes."""
-    values = sorted({str(scope).strip().lower() for scope in (scopes or DEFAULT_SCOPES) if str(scope).strip()})
+    values = sorted(
+        {str(scope).strip().lower() for scope in (scopes or DEFAULT_SCOPES) if str(scope).strip()}
+    )
     if not values:
         raise ClientPrincipalError("at least one client scope is required")
     unknown = sorted(set(values) - KNOWN_SCOPES)
@@ -122,8 +121,7 @@ def normalize_scopes(
     elevated = sorted(set(values) & ELEVATED_SCOPES)
     if elevated and not allow_elevated:
         raise ClientPrincipalError(
-            "elevated scope(s) %s require --allow-elevated"
-            % ", ".join(elevated)
+            "elevated scope(s) %s require --allow-elevated" % ", ".join(elevated)
         )
     return values
 
@@ -388,8 +386,7 @@ class ClientPrincipalStore:
             existing = registry["clients"].get(client_id)
             if existing and not rotate:
                 raise ClientPrincipalError(
-                    "client %r already exists; use `mac admin client renew` or --rotate"
-                    % client_id
+                    "client %r already exists; use `mac admin client renew` or --rotate" % client_id
                 )
             if existing and required_existing_metadata is not None:
                 existing_metadata = existing.get("credential_metadata")
@@ -446,8 +443,7 @@ class ClientPrincipalStore:
             if required_metadata is not None and (
                 not isinstance(existing_metadata, Mapping)
                 or any(
-                    existing_metadata.get(key) != value
-                    for key, value in required_metadata.items()
+                    existing_metadata.get(key) != value for key, value in required_metadata.items()
                 )
             ):
                 raise ClientPrincipalError(
@@ -458,8 +454,7 @@ class ClientPrincipalStore:
                 disallowed = sorted(set(existing_scopes) - set(allowed_scopes))
                 if disallowed:
                     raise ClientPrincipalError(
-                        "renewal is not authorized for scope(s): %s"
-                        % ", ".join(disallowed)
+                        "renewal is not authorized for scope(s): %s" % ", ".join(disallowed)
                     )
             return self._issue_locked(
                 registry,
@@ -481,9 +476,7 @@ class ClientPrincipalStore:
                     else None
                 ),
                 token_prefix=(
-                    "mac_worker_"
-                    if existing.get("principal_kind") == "worker"
-                    else "mac_client_"
+                    "mac_worker_" if existing.get("principal_kind") == "worker" else "mac_client_"
                 ),
                 actor=actor,
                 event="client.renewed",
@@ -506,8 +499,7 @@ class ClientPrincipalStore:
             if required_metadata is not None and (
                 not isinstance(existing_metadata, Mapping)
                 or any(
-                    existing_metadata.get(key) != value
-                    for key, value in required_metadata.items()
+                    existing_metadata.get(key) != value for key, value in required_metadata.items()
                 )
             ):
                 raise ClientPrincipalError(

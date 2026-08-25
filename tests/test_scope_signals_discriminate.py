@@ -67,9 +67,7 @@ THOROUGH_BUT_ATOMIC = " ".join(
 #: The repository contract every task in a project inherits.
 PROJECT_CONTRACT = {
     "execution_contract": {
-        "repository_contract": {
-            "toolchain": {"required_commands": ["python3", "git", "gh"]}
-        }
+        "repository_contract": {"toolchain": {"required_commands": ["python3", "git", "gh"]}}
     }
 }
 
@@ -130,9 +128,7 @@ def test_a_richer_toolchain_does_not_make_a_task_larger():
         {
             "execution_contract": {
                 "repository_contract": {
-                    "toolchain": {
-                        "required_commands": ["python3", "git", "gh", "make", "cc"]
-                    }
+                    "toolchain": {"required_commands": ["python3", "git", "gh", "make", "cc"]}
                 }
             }
         },
@@ -151,8 +147,9 @@ def test_description_length_votes_once():
     signals = _hard_signals("t", THOROUGH_BUT_ATOMIC)
     length_signals = [s for s in signals if s.startswith("desc_")]
 
-    assert len(length_signals) == 1, (
-        "description length contributed %d votes: %s" % (len(length_signals), length_signals)
+    assert len(length_signals) == 1, "description length contributed %d votes: %s" % (
+        len(length_signals),
+        length_signals,
     )
 
 

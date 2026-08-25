@@ -60,8 +60,6 @@ def test_task_list_renders_one_liner_per_task():
     assert lines[1].startswith("task_def456")
 
 
-
-
 def test_task_table_shows_dependency_arrays_for_roots_and_children():
     tasks = [
         {
@@ -168,9 +166,7 @@ def test_task_table_truncates_title_to_terminal_width():
 
 
 def test_task_table_full_ids_align_header_rule_and_row():
-    tasks = [
-        {"id": _FULL_ID, "state": "open", "project": "mac", "title": "One"}
-    ]
+    tasks = [{"id": _FULL_ID, "state": "open", "project": "mac", "title": "One"}]
     cli._set_full_ids(True)
     try:
         out = cli._render_task_table(tasks, show_project=False, color=False, width=100)
@@ -238,10 +234,6 @@ def test_cmd_task_list_json_preserves_dependency_arrays(monkeypatch):
     assert plane.route_call is None
 
 
-
-
-
-
 class _TTY:
     def __init__(self, value=True):
         self.value = value
@@ -256,9 +248,9 @@ def test_terminal_color_detection_honors_tty_force_and_no_color():
     assert cli._terminal_color_enabled(_TTY(True), {"TERM": "dumb"}) is False
     assert cli._terminal_color_enabled(_TTY(False), {"FORCE_COLOR": "1"}) is True
     assert cli._terminal_color_enabled(_TTY(True), {"FORCE_COLOR": "0"}) is False
-    assert cli._terminal_color_enabled(
-        _TTY(True), {"TERM": "xterm-256color", "NO_COLOR": ""}
-    ) is False
+    assert (
+        cli._terminal_color_enabled(_TTY(True), {"TERM": "xterm-256color", "NO_COLOR": ""}) is False
+    )
 
 
 def test_empty_list_is_none():
@@ -299,15 +291,36 @@ def test_agent_one_liner_shows_measured_hardware():
     # Agents report resources.hardware (mac.hardware.v1) at registration; the
     # human list line surfaces it so operators see real HW without --json.
     agents = [
-        {"name": "bullwinkle", "status": "idle", "current_task_id": None,
-         "resources": {"hardware": {
-             "os": "linux", "arch": "x86_64", "cpu_count": 32, "memory_mb": 188647,
-             "accelerator": "cuda",
-             "gpu": {"name": "NVIDIA GeForce RTX 5090", "vram_mb": 32607}}}},
-        {"name": "rocky", "status": "busy", "current_task_id": "task_1",
-         "resources": {"hardware": {
-             "os": "darwin", "arch": "arm64", "cpu_count": 12, "memory_mb": 65536,
-             "accelerator": "metal", "gpu": {"name": "Apple M4 Pro"}}}},
+        {
+            "name": "bullwinkle",
+            "status": "idle",
+            "current_task_id": None,
+            "resources": {
+                "hardware": {
+                    "os": "linux",
+                    "arch": "x86_64",
+                    "cpu_count": 32,
+                    "memory_mb": 188647,
+                    "accelerator": "cuda",
+                    "gpu": {"name": "NVIDIA GeForce RTX 5090", "vram_mb": 32607},
+                }
+            },
+        },
+        {
+            "name": "rocky",
+            "status": "busy",
+            "current_task_id": "task_1",
+            "resources": {
+                "hardware": {
+                    "os": "darwin",
+                    "arch": "arm64",
+                    "cpu_count": 12,
+                    "memory_mb": 65536,
+                    "accelerator": "metal",
+                    "gpu": {"name": "Apple M4 Pro"},
+                }
+            },
+        },
     ]
     lines = cli._render_text(agents).splitlines()
     assert "linux/x86_64" in lines[0] and "32c" in lines[0]
@@ -325,7 +338,13 @@ def test_agent_one_liner_without_hardware_shows_dash():
 
 def test_task_show_wrapper_is_compact():
     detail = {
-        "task": {"id": "task_x", "state": "completed", "project": "mac", "title": "T", "attempt_count": 1},
+        "task": {
+            "id": "task_x",
+            "state": "completed",
+            "project": "mac",
+            "title": "T",
+            "attempt_count": 1,
+        },
         "evidence": [1, 2],
         "reviews": [{"verdict": "approved"}],
         "publications": [{"status": "published"}],

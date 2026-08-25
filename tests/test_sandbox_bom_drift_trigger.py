@@ -58,11 +58,7 @@ def _repo(tmp_path, name, commands, project="mac"):
 
 
 def _drift_tasks(cp):
-    return [
-        task
-        for task in cp.list_tasks()
-        if "sandbox_bom_drift" in (task.metadata or {})
-    ]
+    return [task for task in cp.list_tasks() if "sandbox_bom_drift" in (task.metadata or {})]
 
 
 def test_registering_a_repo_with_a_new_tool_reports_drift(cp, tmp_path):
@@ -85,9 +81,7 @@ def test_the_report_names_the_tool_and_the_next_step(cp, tmp_path):
 def test_the_same_drift_is_not_filed_twice(cp, tmp_path):
     """Re-filing per registration buries the one report that matters."""
     for name in ("repo_a", "repo_b"):
-        cp.register_project_repository(
-            name, str(_repo(tmp_path, name, ["zig"])), project="mac"
-        )
+        cp.register_project_repository(name, str(_repo(tmp_path, name, ["zig"])), project="mac")
 
     assert len(_drift_tasks(cp)) == 1
 
@@ -238,9 +232,7 @@ def test_the_dedup_query_narrows_by_state_before_touching_metadata():
 
     assert "state IN (" in source, "dedup must narrow by state in SQL"
     assert "TERMINAL_TASK_STATES" in source
-    assert "state NOT IN" not in source, (
-        "the negative form cannot use idx_tasks_state_priority"
-    )
+    assert "state NOT IN" not in source, "the negative form cannot use idx_tasks_state_priority"
     # Matches the SQL, not the comment that explains why the SQL avoids it.
     assert "metadata_json @>" not in source, (
         "the GIN index on metadata_json is slower than a seq scan here"

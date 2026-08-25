@@ -38,9 +38,9 @@ class MemoryKind(str, Enum):
     Wins and losses are peers here on purpose; see the module docstring.
     """
 
-    PRACTICE = "practice"      # worked; repeat it
-    PITFALL = "pitfall"        # failed; avoid it
-    FACT = "fact"              # durable truth about the system or repo
+    PRACTICE = "practice"  # worked; repeat it
+    PITFALL = "pitfall"  # failed; avoid it
+    FACT = "fact"  # durable truth about the system or repo
     PREFERENCE = "preference"  # a human's stated preference
     OBLIGATION = "obligation"  # an unresolved commitment
 
@@ -63,10 +63,10 @@ class SessionOutcome(str, Enum):
 
     OBJECTIVE_MET = "objective_met"
     PARTIALLY_MET = "partially_met"
-    ABANDONED = "abandoned"      # stopped without resolution
-    DERAILED = "derailed"        # went somewhere other than the objective
-    UNRESOLVED = "unresolved"    # still open at the end of the transcript
-    UNKNOWN = "unknown"          # not enough transcript to judge
+    ABANDONED = "abandoned"  # stopped without resolution
+    DERAILED = "derailed"  # went somewhere other than the objective
+    UNRESOLVED = "unresolved"  # still open at the end of the transcript
+    UNKNOWN = "unknown"  # not enough transcript to judge
 
     @classmethod
     def parse(cls, value: Any) -> "SessionOutcome":
@@ -127,7 +127,7 @@ def confidence_for(source_count: int) -> tuple[str, float]:
 class SourceRef:
     """Where a candidate came from. Every candidate must carry at least one."""
 
-    kind: str          # "session" | "memory" | "task"
+    kind: str  # "session" | "memory" | "task"
     id: str
     detail: str = ""
 
@@ -275,9 +275,7 @@ class SessionReflection:
             derailed_at=str(data.get("derailed_at") or "")[:200],
             sources=[
                 ref
-                for ref in (
-                    SourceRef.from_dict(item) for item in data.get("sources") or []
-                )
+                for ref in (SourceRef.from_dict(item) for item in data.get("sources") or [])
                 if ref is not None
             ],
         )

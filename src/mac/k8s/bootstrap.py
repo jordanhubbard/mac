@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 DEFAULT_HEALTH_ATTEMPTS = 60
 DEFAULT_HEALTH_DELAY_S = 2.0
 
+
 @dataclass
 class BootstrapConfig:
     mac_url: str
@@ -61,17 +62,18 @@ class BootstrapConfig:
             notifier_channels=list(cfg_file.notifier_channels),
         )
 
+
 class MacApiProtocol(Protocol):
     def post(self, path: str, body: JsonDict) -> JsonDict: ...
     def get(self, path: str) -> JsonDict: ...
     def put(self, path: str, body: JsonDict) -> JsonDict: ...
 
+
 class CoreV1Protocol(Protocol):
     def read_namespaced_secret(self, name: str, namespace: str) -> Any: ...
     def create_namespaced_secret(self, namespace: str, body: Any) -> Any: ...
-    def patch_namespaced_secret(
-        self, name: str, namespace: str, body: Any
-    ) -> Any: ...
+    def patch_namespaced_secret(self, name: str, namespace: str, body: Any) -> Any: ...
+
 
 def wait_for_mac_api(
     mac: MacApiProtocol,
@@ -103,6 +105,7 @@ def wait_for_mac_api(
         % (attempts, last_exc)
     )
 
+
 def _post_machine(mac: MacApiProtocol, spec: JsonDict) -> JsonDict:
     body = {
         "hostname": spec.get("hostname") or "",
@@ -111,19 +114,14 @@ def _post_machine(mac: MacApiProtocol, spec: JsonDict) -> JsonDict:
         "trusted": bool(spec.get("trusted", True)),
     }
     if not body["hostname"] or not body["machine_id"]:
-        raise SystemExit(
-            "machine spec requires hostname and machine_id (got %r)" % spec
-        )
+        raise SystemExit("machine spec requires hostname and machine_id (got %r)" % spec)
     resp = mac.post("/machines", body)
     if not isinstance(resp, dict):
-        raise SystemExit(
-            "POST /machines returned non-object: %r" % (resp,)
-        )
+        raise SystemExit("POST /machines returned non-object: %r" % (resp,))
     return resp
 
-def _post_agent(
-    mac: MacApiProtocol, spec: JsonDict, *, machine_db_id: str
-) -> JsonDict:
+
+def _post_agent(mac: MacApiProtocol, spec: JsonDict, *, machine_db_id: str) -> JsonDict:
     body = {
         "machine_id": machine_db_id,
         "name": spec.get("name") or spec.get("agent_id") or "",
@@ -131,15 +129,12 @@ def _post_agent(
         "capabilities": list(spec.get("capabilities") or []),
     }
     if not body["name"] or not body["agent_id"]:
-        raise SystemExit(
-            "agent spec requires name and agent_id (got %r)" % spec
-        )
+        raise SystemExit("agent spec requires name and agent_id (got %r)" % spec)
     resp = mac.post("/agents", body)
     if not isinstance(resp, dict):
-        raise SystemExit(
-            "POST /agents returned non-object: %r" % (resp,)
-        )
+        raise SystemExit("POST /agents returned non-object: %r" % (resp,))
     return resp
+
 
 def register_dispatcher(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     """Register the dispatcher machine and agent with the mac-api."""
@@ -148,9 +143,7 @@ def register_dispatcher(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     machine = _post_machine(mac, machine_spec)
     machine_db_id = machine.get("id")
     if not machine_db_id:
-        raise SystemExit(
-            "POST /machines response missing id: %r" % (machine,)
-        )
+        raise SystemExit("POST /machines response missing id: %r" % (machine,))
     agent = _post_agent(mac, agent_spec, machine_db_id=machine_db_id)
     log.info(
         "dispatcher: machine=%s agent=%s caps=%s",
@@ -159,23 +152,19 @@ def register_dispatcher(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
         agent.get("capabilities"),
     )
 
-def seed_role_machines_and_agents(
-    mac: MacApiProtocol, cfg: BootstrapConfig
-) -> None:
+
+def seed_role_machines_and_agents(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     """Seed the configured role machines and their agents in the mac-api."""
     machine_db_ids: Dict[str, str] = {}
     for m in cfg.role_machines:
         seed_id = m.get("machine_id") or m.get("id")
         if not seed_id:
-            raise SystemExit(
-                "role_machines entry requires machine_id or id: %r" % (m,)
-            )
+            raise SystemExit("role_machines entry requires machine_id or id: %r" % (m,))
         resp = _post_machine(mac, m)
         db_id = resp.get("id")
         if not db_id:
             raise SystemExit(
-                "POST /machines for seed_id=%s missing response id: %r"
-                % (seed_id, resp)
+                "POST /machines for seed_id=%s missing response id: %r" % (seed_id, resp)
             )
         machine_db_ids[str(seed_id)] = str(db_id)
         log.info(
@@ -188,15 +177,12 @@ def seed_role_machines_and_agents(
     for a in cfg.role_agents:
         ref = a.get("machine_id")
         if not ref:
-            raise SystemExit(
-                "role_agents entry requires machine_id ref: %r" % (a,)
-            )
+            raise SystemExit("role_agents entry requires machine_id ref: %r" % (a,))
         machine_db_id = machine_db_ids.get(str(ref))
         if not machine_db_id:
             raise SystemExit(
                 "role_agents entry references unknown machine_id=%r "
-                "(known seed ids: %s)"
-                % (ref, sorted(machine_db_ids))
+                "(known seed ids: %s)" % (ref, sorted(machine_db_ids))
             )
         resp = _post_agent(mac, a, machine_db_id=machine_db_id)
         log.info(
@@ -206,9 +192,8 @@ def seed_role_machines_and_agents(
             resp.get("capabilities"),
         )
 
-def register_role_definitions(
-    mac: MacApiProtocol, cfg: BootstrapConfig
-) -> None:
+
+def register_role_definitions(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
     """POST /roles for each role declared in config.yaml.
 
     Required so that mac's role-gate
@@ -223,9 +208,7 @@ def register_role_definitions(
         body["actor"] = "mac-k8s-bootstrap"
         resp = mac.post("/roles", body)
         if not isinstance(resp, dict):
-            raise SystemExit(
-                "POST /roles returned non-object: %r" % (resp,)
-            )
+            raise SystemExit("POST /roles returned non-object: %r" % (resp,))
         log.info(
             "role: slug=%s id=%s level=%s required_capabilities=%s",
             resp.get("slug"),
@@ -337,8 +320,7 @@ def register_fleet(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
         dispatcher_agent.get("agent_id") or dispatcher_agent.get("id") or ""
     ).strip()
     for candidate in [dispatcher_id] + [
-        str(a.get("agent_id") or a.get("id") or "").strip()
-        for a in cfg.role_agents
+        str(a.get("agent_id") or a.get("id") or "").strip() for a in cfg.role_agents
     ]:
         if candidate and candidate not in seen:
             seen.add(candidate)
@@ -355,9 +337,7 @@ def register_fleet(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
         if "not found" in text or "404" in text:
             exists = False
         else:
-            raise SystemExit(
-                "GET /fleets/%s failed: %s" % (name, exc)
-            ) from exc
+            raise SystemExit("GET /fleets/%s failed: %s" % (name, exc)) from exc
 
     if not exists:
         resp = mac.post(
@@ -425,7 +405,10 @@ def register_notifier_channels(mac: MacApiProtocol, cfg: BootstrapConfig) -> Non
             )
         log.info(
             "notifier_channels: upserted channel name=%s type=%s enabled=%s events=%s",
-            ch.name, ch.channel_type, ch.enabled, ch.event_types,
+            ch.name,
+            ch.channel_type,
+            ch.enabled,
+            ch.event_types,
         )
 
 
@@ -438,13 +421,12 @@ def _existing_secret_data(
         status = getattr(exc, "status", None)
         if status == 404:
             return None, None
-        raise SystemExit(
-            "reading Secret %s/%s failed: %s" % (namespace, name, exc)
-        ) from exc
+        raise SystemExit("reading Secret %s/%s failed: %s" % (namespace, name, exc)) from exc
     data = getattr(obj, "data", None)
     if data is None and isinstance(obj, dict):
         data = obj.get("data")
     return dict(data or {}), obj
+
 
 def _slot_already_populated(value: Optional[str]) -> bool:
     if not value:
@@ -453,6 +435,7 @@ def _slot_already_populated(value: Optional[str]) -> bool:
         return bool(base64.b64decode(value))
     except Exception:  # noqa: BLE001
         return False
+
 
 def rotate_attestation_keys(
     mac: MacApiProtocol,
@@ -467,8 +450,7 @@ def rotate_attestation_keys(
         return
     if core is None:
         raise SystemExit(
-            "rotate_attestation_keys requires a CoreV1 client when "
-            "attestation_keys is configured"
+            "rotate_attestation_keys requires a CoreV1 client when attestation_keys is configured"
         )
 
     spec = cfg.attestation_keys
@@ -476,17 +458,11 @@ def rotate_attestation_keys(
     secret_name = str(spec.get("secret_name") or "").strip()
     roles = spec.get("roles") or {}
     if not namespace or not secret_name:
-        raise SystemExit(
-            "attestation_keys requires namespace and secret_name"
-        )
+        raise SystemExit("attestation_keys requires namespace and secret_name")
     if not isinstance(roles, dict) or not roles:
-        raise SystemExit(
-            "attestation_keys.roles must be a non-empty {role: agent_id} map"
-        )
+        raise SystemExit("attestation_keys.roles must be a non-empty {role: agent_id} map")
 
-    existing_data, existing_obj = _existing_secret_data(
-        core, namespace, secret_name
-    )
+    existing_data, existing_obj = _existing_secret_data(core, namespace, secret_name)
     if existing_data is None:
         log.info(
             "Secret %s/%s not present; will create after rotation",
@@ -512,23 +488,15 @@ def rotate_attestation_keys(
                 agent_id,
             )
             continue
-        resp = mac.post(
-            "/agents/%s/attestation-key/rotate" % agent_id, {}
-        )
+        resp = mac.post("/agents/%s/attestation-key/rotate" % agent_id, {})
         if not isinstance(resp, dict):
-            raise SystemExit(
-                "rotate response for agent=%s not an object: %r"
-                % (agent_id, resp)
-            )
+            raise SystemExit("rotate response for agent=%s not an object: %r" % (agent_id, resp))
         key = resp.get("attestation_key")
         if not key:
             raise SystemExit(
-                "rotate response for agent=%s missing attestation_key: %r"
-                % (agent_id, resp)
+                "rotate response for agent=%s missing attestation_key: %r" % (agent_id, resp)
             )
-        new_data[str(role_slug)] = base64.b64encode(
-            key.encode("utf-8")
-        ).decode("ascii")
+        new_data[str(role_slug)] = base64.b64encode(key.encode("utf-8")).decode("ascii")
         rotated_any = True
         log.info(
             "rotated role=%s agent=%s (key len=%d)",
@@ -541,9 +509,7 @@ def rotate_attestation_keys(
         log.info("no role keys needed rotation — Secret unchanged")
         return
 
-    body = _build_secret_body(
-        namespace, secret_name, new_data, factory=secret_factory
-    )
+    body = _build_secret_body(namespace, secret_name, new_data, factory=secret_factory)
     try:
         if existing_obj is None:
             core.create_namespaced_secret(namespace, body)
@@ -562,9 +528,8 @@ def rotate_attestation_keys(
                 len(new_data),
             )
     except Exception as exc:  # noqa: BLE001
-        raise SystemExit(
-            "writing Secret %s/%s failed: %s" % (namespace, secret_name, exc)
-        ) from exc
+        raise SystemExit("writing Secret %s/%s failed: %s" % (namespace, secret_name, exc)) from exc
+
 
 def _build_secret_body(
     namespace: str,
@@ -588,6 +553,7 @@ def _build_secret_body(
     )
     return k8s_client.V1Secret(metadata=meta, type="Opaque", data=data)
 
+
 def _token_from_env() -> str:
     # Resolve fleet-aware so a legacy flat MAC_WORKER_TOKEN/MAC_API_TOKEN can't
     # shadow the correct scoped MAC_*__<FLEET> form. Honors --fleet via
@@ -596,16 +562,13 @@ def _token_from_env() -> str:
 
     token = resolve_first(["MAC_WORKER_TOKEN", "MAC_API_TOKEN"]) or ""
     if not token:
-        raise SystemExit(
-            "MAC_WORKER_TOKEN (or MAC_API_TOKEN) is required"
-        )
+        raise SystemExit("MAC_WORKER_TOKEN (or MAC_API_TOKEN) is required")
     return token
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     """Run the Kubernetes bootstrap entry point and return its exit code."""
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logger = logging.getLogger("mac-k8s-bootstrap")
 
     cfg = BootstrapConfig.from_env()
@@ -635,6 +598,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     logger.info("mac-k8s-bootstrap complete")
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main(sys.argv[1:]))

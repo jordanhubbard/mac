@@ -24,7 +24,9 @@ def request(
     if token:
         headers["Authorization"] = "Bearer " + token
     body = None if payload is None else json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(base_url.rstrip("/") + path, data=body, headers=headers, method=method)
+    req = urllib.request.Request(
+        base_url.rstrip("/") + path, data=body, headers=headers, method=method
+    )
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             raw = response.read()

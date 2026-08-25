@@ -211,11 +211,7 @@ def _runtime_context_markdown_path(hermes_home: Path) -> Path:
 def _runtime_markdown_contract(markdown_path: Path) -> Dict[str, Any]:
     file_ref = _file_ref(markdown_path, "task_project_runtime_markdown", False)
     text = _read_small_text(markdown_path, limit=1_000_000)
-    missing = [
-        snippet
-        for snippet in RUNTIME_MARKDOWN_REQUIRED_SNIPPETS
-        if snippet not in text
-    ]
+    missing = [snippet for snippet in RUNTIME_MARKDOWN_REQUIRED_SNIPPETS if snippet not in text]
     return {
         "schema": "mac.hermes.runtime_markdown_contract.v1",
         "file": file_ref,
@@ -239,7 +235,9 @@ def _runtime_prompt_bridge_report(
     }
     if agent_dir is None:
         if required:
-            report["warning"] = "Hermes MAC runtime prompt bridge cannot be verified without MAC_HERMES_AGENT_DIR"
+            report["warning"] = (
+                "Hermes MAC runtime prompt bridge cannot be verified without MAC_HERMES_AGENT_DIR"
+            )
         return report
     text = _read_small_text(path, limit=1_000_000)
     report["present"] = (
@@ -248,7 +246,9 @@ def _runtime_prompt_bridge_report(
         and "mac-runtime-context.md" in text
     )
     if required and not report["present"]:
-        report["warning"] = "Hermes MAC task/project runtime prompt bridge is missing from %s" % path
+        report["warning"] = (
+            "Hermes MAC task/project runtime prompt bridge is missing from %s" % path
+        )
     return report
 
 
@@ -314,10 +314,22 @@ def _session_capability_availability(
     workspace: Dict[str, Any],
 ) -> Dict[str, Any]:
     workspace_path = str(workspace.get("path") or "").strip()
-    workspace_ref = _file_ref(Path(workspace_path).expanduser(), "mac_hermes_workspace", False) if workspace_path else None
-    project_contract = workspace.get("project_contract") if isinstance(workspace.get("project_contract"), dict) else {}
+    workspace_ref = (
+        _file_ref(Path(workspace_path).expanduser(), "mac_hermes_workspace", False)
+        if workspace_path
+        else None
+    )
+    project_contract = (
+        workspace.get("project_contract")
+        if isinstance(workspace.get("project_contract"), dict)
+        else {}
+    )
     contract_path = str(project_contract.get("path") or "").strip()
-    contract_ref = _file_ref(Path(contract_path).expanduser(), "mac_project_contract", False) if contract_path else None
+    contract_ref = (
+        _file_ref(Path(contract_path).expanduser(), "mac_project_contract", False)
+        if contract_path
+        else None
+    )
     required_commands = [
         str(command).strip()
         for command in (project_contract.get("required_commands") or [])
@@ -338,7 +350,9 @@ def _session_capability_availability(
         checks: Dict[str, bool] = {}
         command_info = _command_resolution(
             item.get("command") if isinstance(item.get("command"), str) else None,
-            expected_path=item.get("expected_path") if isinstance(item.get("expected_path"), str) else None,
+            expected_path=item.get("expected_path")
+            if isinstance(item.get("expected_path"), str)
+            else None,
             cwd=item.get("cwd") if isinstance(item.get("cwd"), str) else workspace_path or None,
         )
         if item.get("command"):
@@ -425,16 +439,16 @@ def _session_capability_availability(
         rows.append(row)
         if item.get("required") and not ready:
             missing.append(name or "unnamed_capability")
-    workspace_ready = bool(workspace_ref and workspace_ref["exists"] and workspace_ref.get("kind") == "dir")
+    workspace_ready = bool(
+        workspace_ref and workspace_ref["exists"] and workspace_ref.get("kind") == "dir"
+    )
     contract_ready = bool(
         contract_ref
         and contract_ref["exists"]
         and project_contract.get("schema") == "mac.repository_contract.v1"
     )
     missing.extend(
-        "project_toolchain:%s" % item["command"]
-        for item in toolchain
-        if not item["available"]
+        "project_toolchain:%s" % item["command"] for item in toolchain if not item["available"]
     )
     if not workspace_ready:
         missing.append("workspace")
@@ -479,7 +493,9 @@ def _topology_summary(path: Path) -> Dict[str, Any]:
             "agent": data.get("agent"),
             "hub_agent": hub.get("agent"),
             "hub_url": _redact_url(hub.get("url")) if isinstance(hub.get("url"), str) else None,
-            "qdrant_url": _redact_url(qdrant.get("url")) if isinstance(qdrant.get("url"), str) else None,
+            "qdrant_url": _redact_url(qdrant.get("url"))
+            if isinstance(qdrant.get("url"), str)
+            else None,
         }
     )
     return summary
@@ -519,7 +535,9 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
         if required:
             summary["ready"] = False
             summary["status"] = "missing_context"
-            summary["warning"] = "Hermes MAC task/project runtime context file is missing: %s" % context_path
+            summary["warning"] = (
+                "Hermes MAC task/project runtime context file is missing: %s" % context_path
+            )
         return summary
 
     try:
@@ -544,35 +562,43 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
     authority = data.get("authority") if isinstance(data.get("authority"), dict) else {}
     endpoints = data.get("endpoints") if isinstance(data.get("endpoints"), dict) else {}
     operations = data.get("operations") if isinstance(data.get("operations"), dict) else {}
-    first_class = data.get("first_class_objects") if isinstance(data.get("first_class_objects"), dict) else {}
+    first_class = (
+        data.get("first_class_objects") if isinstance(data.get("first_class_objects"), dict) else {}
+    )
     first_class_objects = (
-        first_class.get("objects")
-        if isinstance(first_class.get("objects"), dict)
+        first_class.get("objects") if isinstance(first_class.get("objects"), dict) else {}
+    )
+    session = (
+        data.get("session_capabilities")
+        if isinstance(data.get("session_capabilities"), dict)
         else {}
     )
-    session = data.get("session_capabilities") if isinstance(data.get("session_capabilities"), dict) else {}
     workspace = session.get("workspace") if isinstance(session.get("workspace"), dict) else {}
     if not workspace and isinstance(data.get("workspace"), dict):
         workspace = data.get("workspace")
-    raw_capabilities = session.get("capabilities") if isinstance(session.get("capabilities"), list) else []
+    raw_capabilities = (
+        session.get("capabilities") if isinstance(session.get("capabilities"), list) else []
+    )
     session_capabilities = [
         {
             "name": item.get("name"),
             "kind": item.get("kind"),
             "required": bool(item.get("required")),
             "command": item.get("command"),
-            "endpoint": _redact_url(item.get("endpoint")) if isinstance(item.get("endpoint"), str) else None,
+            "endpoint": _redact_url(item.get("endpoint"))
+            if isinstance(item.get("endpoint"), str)
+            else None,
             "expected_path": item.get("expected_path"),
             "cwd": item.get("cwd"),
-            "environment": item.get("environment") if isinstance(item.get("environment"), list) else [],
+            "environment": item.get("environment")
+            if isinstance(item.get("environment"), list)
+            else [],
         }
         for item in raw_capabilities
         if isinstance(item, dict) and item.get("name")
     ]
     session_capability_names = sorted(
-        str(item["name"])
-        for item in session_capabilities
-        if str(item.get("name") or "").strip()
+        str(item["name"]) for item in session_capabilities if str(item.get("name") or "").strip()
     )
     summary.update(
         {
@@ -609,7 +635,9 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
                     "api_paths": value.get("api_paths")
                     if isinstance(value.get("api_paths"), list)
                     else [],
-                    "mac_cli": value.get("mac_cli") if isinstance(value.get("mac_cli"), list) else [],
+                    "mac_cli": value.get("mac_cli")
+                    if isinstance(value.get("mac_cli"), list)
+                    else [],
                     "mac_hermes_cli": value.get("mac_hermes_cli")
                     if isinstance(value.get("mac_hermes_cli"), list)
                     else [],
@@ -633,8 +661,13 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
                         "exists": workspace.get("project_contract", {}).get("exists"),
                         "schema": workspace.get("project_contract", {}).get("schema"),
                         "project": workspace.get("project_contract", {}).get("project"),
-                        "required_commands": workspace.get("project_contract", {}).get("required_commands") or [],
-                        "bootstrap_command": workspace.get("project_contract", {}).get("bootstrap_command"),
+                        "required_commands": workspace.get("project_contract", {}).get(
+                            "required_commands"
+                        )
+                        or [],
+                        "bootstrap_command": workspace.get("project_contract", {}).get(
+                            "bootstrap_command"
+                        ),
                         "test_command": workspace.get("project_contract", {}).get("test_command"),
                     }
                     if isinstance(workspace.get("project_contract"), dict)
@@ -655,7 +688,9 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
     if required and not markdown_path.exists():
         summary["ready"] = False
         summary["status"] = "missing_markdown"
-        summary["warning"] = "Hermes MAC task/project runtime markdown is missing: %s" % markdown_path
+        summary["warning"] = (
+            "Hermes MAC task/project runtime markdown is missing: %s" % markdown_path
+        )
         return summary
     for key in ("fleets", "tasks", "projects", "agents"):
         if authority.get(key) != "mac":
@@ -686,8 +721,9 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
     if object_model_errors:
         summary["ready"] = not required
         summary["status"] = "first_class_object_contract_missing"
-        summary["error"] = "runtime context is missing first-class object contract fields: %s" % ", ".join(
-            sorted(object_model_errors)
+        summary["error"] = (
+            "runtime context is missing first-class object contract fields: %s"
+            % ", ".join(sorted(object_model_errors))
         )
         if required:
             summary["warning"] = summary["error"]
@@ -710,7 +746,9 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
         missing = sorted(expected_capabilities - set(session_capability_names))
         summary["ready"] = not required
         summary["status"] = "session_capability_contract_missing"
-        summary["error"] = "runtime context is missing session capabilities: %s" % ", ".join(missing)
+        summary["error"] = "runtime context is missing session capabilities: %s" % ", ".join(
+            missing
+        )
         if required:
             summary["warning"] = summary["error"]
         return summary
@@ -743,7 +781,9 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
     return summary
 
 
-def _fetch_qdrant_collections(endpoint: str, api_key: Optional[str], timeout_seconds: float) -> Dict[str, Any]:
+def _fetch_qdrant_collections(
+    endpoint: str, api_key: Optional[str], timeout_seconds: float
+) -> Dict[str, Any]:
     headers = {"Accept": "application/json"}
     if api_key:
         headers["api-key"] = api_key
@@ -755,7 +795,9 @@ def _fetch_qdrant_collections(endpoint: str, api_key: Optional[str], timeout_sec
     return json.loads(payload.decode("utf-8"))
 
 
-def _fetch_firecrawl_health(endpoint: str, api_key: Optional[str], timeout_seconds: float) -> Dict[str, Any]:
+def _fetch_firecrawl_health(
+    endpoint: str, api_key: Optional[str], timeout_seconds: float
+) -> Dict[str, Any]:
     headers = {"Accept": "application/json"}
     if api_key and api_key.lower() != "none":
         headers["Authorization"] = "Bearer %s" % api_key
@@ -876,7 +918,9 @@ def _firecrawl_web_search_report() -> Dict[str, Any]:
     except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:
         report["ready"] = False
         report["status"] = "unreachable"
-        report["degradation_reason"] = "Firecrawl web search health endpoint is unreachable: %s" % exc
+        report["degradation_reason"] = (
+            "Firecrawl web search health endpoint is unreachable: %s" % exc
+        )
         report["warning"] = report["degradation_reason"]
         return report
     report["status"] = "ready"
@@ -896,7 +940,9 @@ def _tokenhub_endpoint_from_env() -> Tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-def _fetch_tokenhub_json(endpoint: str, path: str, api_key: Optional[str], timeout_seconds: float) -> Dict[str, Any]:
+def _fetch_tokenhub_json(
+    endpoint: str, path: str, api_key: Optional[str], timeout_seconds: float
+) -> Dict[str, Any]:
     headers = {"Accept": "application/json"}
     if api_key:
         headers["Authorization"] = "Bearer %s" % api_key
@@ -1067,9 +1113,7 @@ def _secret_redaction_report(hermes_home: Path, acc_dir: Path) -> Dict[str, Any]
         _env_file_redaction_ref(hermes_home / ".env", "hermes_env"),
         _env_file_redaction_ref(acc_dir / ".env", "acc_env"),
     ]
-    disabled_files = [
-        ref["role"] for ref in env_files if ref.get("redact_secrets_disabled")
-    ]
+    disabled_files = [ref["role"] for ref in env_files if ref.get("redact_secrets_disabled")]
 
     if env_value is not None:
         effective = env_value
@@ -1135,19 +1179,21 @@ def _log_classification_report() -> Dict[str, Any]:
     except Exception as exc:
         report["warnings"].append("could not read Hermes log summary: %s" % exc)
     if report["actionable_count"]:
-        report["warnings"].append(
-            "Hermes gateway logs contain actionable classified warnings"
-        )
+        report["warnings"].append("Hermes gateway logs contain actionable classified warnings")
     return report
 
 
 def _slack_home_channel_name() -> str:
     return (
-        os.environ.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME")
-        or os.environ.get("ACC_SLACK_HOME_CHANNEL_NAME")
-        or os.environ.get("SLACK_HOME_CHANNEL_NAME")
-        or ""
-    ).strip().lstrip("#")
+        (
+            os.environ.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME")
+            or os.environ.get("ACC_SLACK_HOME_CHANNEL_NAME")
+            or os.environ.get("SLACK_HOME_CHANNEL_NAME")
+            or ""
+        )
+        .strip()
+        .lstrip("#")
+    )
 
 
 def _configured_gateway_model() -> str:
@@ -1224,12 +1270,8 @@ def _slack_activation_report(
     hermes_home: Path,
     hermes_refs: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    account_ref = next(
-        ref for ref in hermes_refs if ref["role"] == "slack_accounts"
-    )
-    home_channel_ref = next(
-        ref for ref in hermes_refs if ref["role"] == "slack_home_channels"
-    )
+    account_ref = next(ref for ref in hermes_refs if ref["role"] == "slack_accounts")
+    home_channel_ref = next(ref for ref in hermes_refs if ref["role"] == "slack_home_channels")
     account_file_present = bool(account_ref["exists"])
     home_channel_file_present = bool(home_channel_ref["exists"])
     env_token_present = bool(os.environ.get("SLACK_BOT_TOKEN"))
@@ -1437,7 +1479,7 @@ def build_hermes_startup_report() -> Dict[str, Any]:
                 "shell_execution",
                 "workspace_file_access",
                 "ticket_mirror",
-        "mac_task_cli",
+                "mac_task_cli",
                 "git_source_control",
                 "quality_gate",
                 "hermes_oneshot_executor",
@@ -1506,7 +1548,9 @@ def build_hermes_startup_report() -> Dict[str, Any]:
                 or not task_project_runtime["prompt_bridge"]["required"]
             ),
             "task_project_runtime_present": task_project_runtime["context_file"]["exists"],
-            "task_project_runtime_prompt_bridge_present": task_project_runtime["prompt_bridge"]["present"],
+            "task_project_runtime_prompt_bridge_present": task_project_runtime["prompt_bridge"][
+                "present"
+            ],
             "task_project_runtime_hermes_instance_id": task_project_runtime["hermes_instance_id"],
             "task_project_runtime_session_capabilities_ready": task_project_runtime[
                 "session_capability_availability"

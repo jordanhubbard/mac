@@ -29,9 +29,7 @@ def test_effect_conflicts_encode_parallel_safety_rules() -> None:
     # exclusive reason subsumes the write reason for the same resource.
     repository_lock = DeclaredEffects(exclusive=("repo:mac",))
     path_writer = DeclaredEffects(writes=("src/api",))
-    assert effect_conflicts(repository_lock, path_writer) == [
-        "exclusive:repo:mac~src/api"
-    ]
+    assert effect_conflicts(repository_lock, path_writer) == ["exclusive:repo:mac~src/api"]
 
 
 def test_conflicts_are_symmetric_and_deterministically_ordered() -> None:
@@ -54,9 +52,12 @@ def test_path_prefixes_and_the_wildcard_overlap() -> None:
         DeclaredEffects(writes=("*",)), DeclaredEffects(reads=("anything",))
     ) == ["write:*~anything"]
     # Sibling paths do not overlap.
-    assert effect_conflicts(
-        DeclaredEffects(writes=("src/api",)), DeclaredEffects(writes=("src/apiary",))
-    ) == []
+    assert (
+        effect_conflicts(
+            DeclaredEffects(writes=("src/api",)), DeclaredEffects(writes=("src/apiary",))
+        )
+        == []
+    )
 
 
 def test_empty_effects_never_conflict() -> None:

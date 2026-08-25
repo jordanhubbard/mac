@@ -32,6 +32,7 @@ If unset, ``image.generate`` is synthesized from the existing flat
 ``MAC_ROUTER_IMAGE_{UPSTREAM,KEY,MODEL,TIMEOUT}`` (the degenerate single binding),
 so existing fleets keep working with no config change.
 """
+
 from __future__ import annotations
 
 import json
@@ -113,12 +114,15 @@ def extract_b64(data: Any) -> Optional[str]:
 
 # --- nvidia_genai adapter ---------------------------------------------------
 
+
 def _is_stability(model: str) -> bool:
     m = model.lower()
     return "stable-diffusion" in m or "sdxl" in m or "stability" in m
 
 
-def nvidia_genai_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+def nvidia_genai_request(
+    op: str, body: Mapping[str, Any], model: str
+) -> Tuple[str, Dict[str, Any]]:
     """Canonical request -> NVIDIA genai (FLUX flat dialect or Stability
     text_prompts dialect). Path is the model id appended to the binding base."""
     prompt = str(body.get("prompt") or "").strip()
@@ -152,8 +156,12 @@ def nvidia_genai_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
         b64 = extract_b64(resp)
         if b64:
             return {"artifacts": [{"base64": b64}]}
-        return {"error": {"message": "no recognizable image data in upstream response",
-                          "type": "empty_response"}}
+        return {
+            "error": {
+                "message": "no recognizable image data in upstream response",
+                "type": "empty_response",
+            }
+        }
     if isinstance(resp, dict):
         return resp
     return {"error": {"message": str(resp)[:500], "type": "upstream_error"}}
@@ -177,7 +185,9 @@ def passthrough_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
 _OPENAI_SIZES = {"landscape": "1792x1024", "square": "1024x1024", "portrait": "1024x1792"}
 
 
-def openai_images_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+def openai_images_request(
+    op: str, body: Mapping[str, Any], model: str
+) -> Tuple[str, Dict[str, Any]]:
     width, height = _int(body.get("width"), 0), _int(body.get("height"), 0)
     size = "%dx%d" % (width, height) if width and height else "1024x1024"
     provider_body: Dict[str, Any] = {
@@ -196,8 +206,12 @@ def openai_images_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
         b64 = extract_b64(resp)  # handles {"data":[{"b64_json":...}]}
         if b64:
             return {"artifacts": [{"base64": b64}]}
-        return {"error": {"message": "no image data in OpenAI-images response",
-                          "type": "empty_response"}}
+        return {
+            "error": {
+                "message": "no image data in OpenAI-images response",
+                "type": "empty_response",
+            }
+        }
     return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
 
 
@@ -275,12 +289,15 @@ def media_binary_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
         b64 = extract_b64(resp)
         if b64:
             return {"artifacts": [{"base64": b64}]}
-        return {"error": {"message": "no media data in upstream response",
-                          "type": "empty_response"}}
+        return {
+            "error": {"message": "no media data in upstream response", "type": "empty_response"}
+        }
     return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
 
 
-def openai_audio_speech_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+def openai_audio_speech_request(
+    op: str, body: Mapping[str, Any], model: str
+) -> Tuple[str, Dict[str, Any]]:
     """Canonical -> OpenAI-compatible /audio/speech (text-to-speech). Returns a
     binary audio body. `input`/`prompt` is the text; `voice`/`format` optional."""
     text = str(body.get("input") or body.get("prompt") or "").strip()
@@ -304,7 +321,9 @@ def audio_music_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[s
     return "/audio/music", provider_body
 
 
-def openai_audio_transcription_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+def openai_audio_transcription_request(
+    op: str, body: Mapping[str, Any], model: str
+) -> Tuple[str, Dict[str, Any]]:
     """Canonical -> OpenAI-compatible /audio/transcriptions (ASR). The audio is a
     base64 ``audio`` field; we hand the forwarder a ``__multipart__`` marker so it
     POSTs multipart/form-data (a file upload) rather than JSON."""
@@ -338,7 +357,9 @@ def audio_transcription_response(status: Optional[int], resp: Any) -> Dict[str, 
 # id and serves status/result via GET /v1/media/jobs/{id} (see router_app).
 
 
-def video_generate_request(op: str, body: Mapping[str, Any], model: str) -> Tuple[str, Dict[str, Any]]:
+def video_generate_request(
+    op: str, body: Mapping[str, Any], model: str
+) -> Tuple[str, Dict[str, Any]]:
     """Canonical -> local /video/generate (text- or image-to-video). Async submit."""
     provider_body: Dict[str, Any] = {"prompt": str(body.get("prompt") or "").strip()}
     if body.get("image") is not None:  # image-to-video (e.g. SVD)
@@ -359,7 +380,9 @@ def video_generate_response(status: Optional[int], resp: Any) -> Dict[str, Any]:
         b64 = extract_b64(resp)
         if b64:
             return {"artifacts": [{"base64": b64}]}
-        return {"error": {"message": "no job_id/artifact in video response", "type": "empty_response"}}
+        return {
+            "error": {"message": "no job_id/artifact in video response", "type": "empty_response"}
+        }
     return resp if isinstance(resp, dict) else {"error": {"message": str(resp)[:500]}}
 
 
@@ -369,7 +392,10 @@ ADAPTERS: Dict[str, Tuple[RequestAdapter, ResponseAdapter]] = {
     "fal": (fal_request, fal_response),
     "openai_audio_speech": (openai_audio_speech_request, media_binary_response),
     "audio_music": (audio_music_request, media_binary_response),
-    "openai_audio_transcription": (openai_audio_transcription_request, audio_transcription_response),
+    "openai_audio_transcription": (
+        openai_audio_transcription_request,
+        audio_transcription_response,
+    ),
     "video_generate": (video_generate_request, video_generate_response),
     "passthrough": (passthrough_request, passthrough_response),
 }
@@ -524,7 +550,9 @@ def _agent_vram_budget(agent: Mapping[str, Any]) -> int:
     return int(gpu.get("vram_mb") or 0) or int(hardware.get("memory_mb") or 0)
 
 
-def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str, List[MediaBinding]]:
+def media_bindings_from_agents(
+    agents: Iterable[Mapping[str, Any]],
+) -> Dict[str, List[MediaBinding]]:
     """Compose ``{op: [MediaBinding]}`` from live agent registrations.
 
     Each routable agent's ``resources["media_routes"]`` contributes bindings,
@@ -551,7 +579,9 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
             if not op or not base:
                 continue
             binding = MediaBinding(
-                provider=str(route.get("provider") or agent.get("name") or agent.get("id") or "agent"),
+                provider=str(
+                    route.get("provider") or agent.get("name") or agent.get("id") or "agent"
+                ),
                 base_url=base,
                 key_spec=str(route.get("key") or ""),
                 model=str(route.get("model") or ""),
@@ -560,7 +590,9 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
                 auth_scheme=str(route.get("auth_scheme") or "Bearer"),
                 rank=accel_rank,
             )
-            staged.setdefault(op, []).append((accel_rank, -vram, _int(route.get("priority"), 0), binding))
+            staged.setdefault(op, []).append(
+                (accel_rank, -vram, _int(route.get("priority"), 0), binding)
+            )
     # rank asc, VRAM desc (note -vram), priority asc
     return {
         op: [b for _, _, _, b in sorted(items, key=lambda r: (r[0], r[1], r[2]))]
@@ -568,7 +600,9 @@ def media_bindings_from_agents(agents: Iterable[Mapping[str, Any]]) -> Dict[str,
     }
 
 
-def dispatch_order(bindings: List[MediaBinding], inflight: Optional[Mapping[str, int]] = None) -> List[MediaBinding]:
+def dispatch_order(
+    bindings: List[MediaBinding], inflight: Optional[Mapping[str, int]] = None
+) -> List[MediaBinding]:
     """Order bindings for a single request with **least-loaded load balancing**
     within the top accelerator tier.
 
@@ -604,13 +638,15 @@ def gen_capable_agents(agents: Iterable[Mapping[str, Any]]) -> List[Dict[str, An
         if not is_gen_capable(hardware):
             continue
         gpu = hardware.get("gpu") if isinstance(hardware.get("gpu"), Mapping) else {}
-        out.append({
-            "agent": agent.get("name") or agent.get("id"),
-            "accelerator": hardware.get("accelerator"),
-            "gpu": gpu.get("name"),
-            "rank": hardware_gen_rank(hardware.get("accelerator")),
-            "serving": bool(isinstance(resources, Mapping) and resources.get("media_routes")),
-        })
+        out.append(
+            {
+                "agent": agent.get("name") or agent.get("id"),
+                "accelerator": hardware.get("accelerator"),
+                "gpu": gpu.get("name"),
+                "rank": hardware_gen_rank(hardware.get("accelerator")),
+                "serving": bool(isinstance(resources, Mapping) and resources.get("media_routes")),
+            }
+        )
     return sorted(out, key=lambda a: a["rank"])
 
 

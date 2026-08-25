@@ -14,6 +14,7 @@ Configure via env:
     LOCAL_GEN_PORT      listen port (default 8191)
     LOCAL_GEN_HOST      bind host (default 0.0.0.0)
 """
+
 from __future__ import annotations
 
 import base64
@@ -24,7 +25,9 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VIDEO_MODEL = os.environ.get("LOCAL_VIDEO_MODEL", "guoyww/animatediff-motion-adapter-v1-5-2").strip()
+VIDEO_MODEL = os.environ.get(
+    "LOCAL_VIDEO_MODEL", "guoyww/animatediff-motion-adapter-v1-5-2"
+).strip()
 VIDEO_BASE = os.environ.get("LOCAL_VIDEO_BASE", "emilianJR/epiCRealism").strip()
 PORT = int(os.environ.get("LOCAL_GEN_PORT", "8191"))
 HOST = os.environ.get("LOCAL_GEN_HOST", "0.0.0.0")
@@ -64,7 +67,9 @@ def _pipeline():
         else:
             _device, dtype = "cpu", torch.float32
         adapter = MotionAdapter.from_pretrained(_resolve_repo(VIDEO_MODEL), torch_dtype=dtype)
-        pipe = AnimateDiffPipeline.from_pretrained(VIDEO_BASE, motion_adapter=adapter, torch_dtype=dtype)
+        pipe = AnimateDiffPipeline.from_pretrained(
+            VIDEO_BASE, motion_adapter=adapter, torch_dtype=dtype
+        )
         _pipe = pipe.to(_device)
         return _pipe
 
@@ -103,7 +108,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/")
         if path in ("/health", "/healthz"):
-            self._json(200, {"ok": True, "model": VIDEO_MODEL, "base": VIDEO_BASE, "device": _device})
+            self._json(
+                200, {"ok": True, "model": VIDEO_MODEL, "base": VIDEO_BASE, "device": _device}
+            )
             return
         if path.startswith("/v1/video/jobs/") or path.startswith("/video/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
@@ -145,7 +152,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    print("local-video: model=%s base=%s (lazy-load on first request)" % (VIDEO_MODEL, VIDEO_BASE), flush=True)
+    print(
+        "local-video: model=%s base=%s (lazy-load on first request)" % (VIDEO_MODEL, VIDEO_BASE),
+        flush=True,
+    )
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print("local-video: serving on %s:%d" % (HOST, PORT), flush=True)
     server.serve_forever()

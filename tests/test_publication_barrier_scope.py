@@ -48,12 +48,8 @@ def test_the_publication_runs_outside_the_barrier():
             call_line = index
 
     assert with_line is not None and call_line is not None
-    body_indent = len(source.splitlines()[with_line]) - len(
-        source.splitlines()[with_line].lstrip()
-    )
-    call_indent = len(source.splitlines()[call_line]) - len(
-        source.splitlines()[call_line].lstrip()
-    )
+    body_indent = len(source.splitlines()[with_line]) - len(source.splitlines()[with_line].lstrip())
+    call_indent = len(source.splitlines()[call_line]) - len(source.splitlines()[call_line].lstrip())
 
     assert call_indent <= body_indent, (
         "the publication is still inside the barrier's `with` block; holding it "
@@ -79,11 +75,7 @@ def test_the_deferral_still_raises_outside_the_lock():
     source = _serializer_source()
     lines = source.splitlines()
 
-    raise_idx = next(
-        i for i, line in enumerate(lines) if "PublicationDeferredError" in line
-    )
-    guard_idx = next(
-        i for i, line in enumerate(lines) if "if barrier is not None:" in line
-    )
+    raise_idx = next(i for i, line in enumerate(lines) if "PublicationDeferredError" in line)
+    guard_idx = next(i for i, line in enumerate(lines) if "if barrier is not None:" in line)
 
     assert guard_idx < raise_idx

@@ -36,8 +36,9 @@ def _agent(tmp_path, name="worker"):
 
 
 def test_a_person_can_be_registered(tmp_path):
-    rc, out = _run(tmp_path, "admin", "human", "register", "jordanh",
-                   "--display-name", "Jordan Hubbard")
+    rc, out = _run(
+        tmp_path, "admin", "human", "register", "jordanh", "--display-name", "Jordan Hubbard"
+    )
 
     assert rc in (None, 0)
     assert out["username"] == "jordanh"
@@ -49,8 +50,9 @@ def test_an_agent_can_be_given_an_owner_and_made_private(tmp_path):
     agent = _agent(tmp_path, "rocky")
     _run(tmp_path, "admin", "human", "register", "jordanh")
 
-    rc, out = _run(tmp_path, "agent", "update", agent.id,
-                   "--owner", "jordanh", "--visibility", "private")
+    rc, out = _run(
+        tmp_path, "agent", "update", agent.id, "--owner", "jordanh", "--visibility", "private"
+    )
 
     assert rc in (None, 0)
     assert out["visibility"] == "private"
@@ -82,8 +84,16 @@ def test_an_unknown_owner_is_refused(tmp_path):
     agent silently stops taking work."""
     agent = _agent(tmp_path, "typo")
 
-    rc, _out = _run(tmp_path, "agent", "update", agent.id,
-                    "--owner", "nobody-by-that-name", "--visibility", "private")
+    rc, _out = _run(
+        tmp_path,
+        "agent",
+        "update",
+        agent.id,
+        "--owner",
+        "nobody-by-that-name",
+        "--visibility",
+        "private",
+    )
 
     assert rc not in (None, 0)
 

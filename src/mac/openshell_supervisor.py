@@ -85,7 +85,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="mac-openshell-supervisor")
     parser.add_argument("--agent-id", default=os.environ.get("MAC_AGENT_ID") or os.uname().nodename)
     parser.add_argument("--policy")
-    parser.add_argument("--openshell-bin", default=os.environ.get("MAC_OPENSHELL_BIN") or "openshell")
+    parser.add_argument(
+        "--openshell-bin", default=os.environ.get("MAC_OPENSHELL_BIN") or "openshell"
+    )
     parser.add_argument("--sandbox-name")
     parser.add_argument("--no-keep", action="store_true")
     parser.add_argument("--allow-unsandboxed", action="store_true")
@@ -109,10 +111,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.openshell_bin if Path(args.openshell_bin).exists() else None
     )
     if required and not openshell:
-        sys.stderr.write("OpenShell is required for %s but %s was not found\n" % (args.agent_id, args.openshell_bin))
+        sys.stderr.write(
+            "OpenShell is required for %s but %s was not found\n"
+            % (args.agent_id, args.openshell_bin)
+        )
         return 78
     if required and not policy.is_file():
-        sys.stderr.write("OpenShell is required for %s but policy %s is missing\n" % (args.agent_id, policy))
+        sys.stderr.write(
+            "OpenShell is required for %s but policy %s is missing\n" % (args.agent_id, policy)
+        )
         return 78
     if not openshell or not policy.is_file():
         if args.allow_unsandboxed:

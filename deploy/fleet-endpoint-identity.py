@@ -36,13 +36,9 @@ COMPARISON_SCHEMA = "mac.fleet_endpoint_identity_comparison.v1"
 MAX_RECORD_BYTES = 64 * 1024
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_KIND = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
-SSH_AUTHORITY_KEYS = frozenset(
-    {"ssh_host_key_sha256", "instance_id_kind", "instance_id_sha256"}
-)
+SSH_AUTHORITY_KEYS = frozenset({"ssh_host_key_sha256", "instance_id_kind", "instance_id_sha256"})
 SSH_HUB_AUTHORITY_KEYS = SSH_AUTHORITY_KEYS | {"durable_store_uuid_sha256"}
-K8S_AUTHORITY_KEYS = frozenset(
-    {"cluster_uid_sha256", "workload_kind", "workload_uid_sha256"}
-)
+K8S_AUTHORITY_KEYS = frozenset({"cluster_uid_sha256", "workload_kind", "workload_uid_sha256"})
 K8S_HUB_AUTHORITY_KEYS = K8S_AUTHORITY_KEYS | {"durable_store_uuid_sha256"}
 K8S_OBSERVATION_KEYS = frozenset({"pod_uid_sha256"})
 TOP_LEVEL_KEYS = frozenset({"schema", "adapter", "authority", "observation"})
@@ -56,9 +52,7 @@ def _canonical(value: Any) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-def _digest_identifier(
-    value: str, field: str, *, case_insensitive: bool = False
-) -> str:
+def _digest_identifier(value: str, field: str, *, case_insensitive: bool = False) -> str:
     normalized = str(value or "").strip()
     if case_insensitive:
         normalized = normalized.lower()
@@ -76,9 +70,7 @@ def _host_key_digest(value: str) -> str:
     if HEX_SHA256.fullmatch(candidate):
         return candidate
     if not candidate.startswith("SHA256:"):
-        raise IdentityError(
-            "SSH host-key fingerprint must be lowercase hex or OpenSSH SHA256 form"
-        )
+        raise IdentityError("SSH host-key fingerprint must be lowercase hex or OpenSSH SHA256 form")
     encoded = candidate.removeprefix("SHA256:")
     try:
         raw = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
@@ -110,8 +102,7 @@ def build_ssh_machine(
         "instance_id_sha256": _digest_identifier(
             instance_id,
             "instance id",
-            case_insensitive=parsed_kind
-            in {"linux-machine-id", "darwin-platform-uuid"},
+            case_insensitive=parsed_kind in {"linux-machine-id", "darwin-platform-uuid"},
         ),
     }
     adapter = "ssh-machine"
@@ -137,9 +128,7 @@ def build_kubernetes_workload(
     durable_store_uuid: str = "",
 ) -> dict[str, Any]:
     authority = {
-        "cluster_uid_sha256": _digest_identifier(
-            cluster_uid, "cluster uid", case_insensitive=True
-        ),
+        "cluster_uid_sha256": _digest_identifier(cluster_uid, "cluster uid", case_insensitive=True),
         "workload_kind": _kind(workload_kind, "workload kind"),
         "workload_uid_sha256": _digest_identifier(
             workload_uid, "workload uid", case_insensitive=True
@@ -156,9 +145,7 @@ def build_kubernetes_workload(
         "adapter": adapter,
         "authority": authority,
         "observation": {
-            "pod_uid_sha256": _digest_identifier(
-                pod_uid, "pod uid", case_insensitive=True
-            ),
+            "pod_uid_sha256": _digest_identifier(pod_uid, "pod uid", case_insensitive=True),
         },
     }
 
@@ -197,9 +184,7 @@ def validate_identity(value: Any) -> dict[str, Any]:
     elif adapter in {"kubernetes-workload", "kubernetes-hub"}:
         authority = _exact_keys(
             authority,
-            K8S_HUB_AUTHORITY_KEYS
-            if adapter == "kubernetes-hub"
-            else K8S_AUTHORITY_KEYS,
+            K8S_HUB_AUTHORITY_KEYS if adapter == "kubernetes-hub" else K8S_AUTHORITY_KEYS,
             "Kubernetes authority",
         )
         _sha(authority["cluster_uid_sha256"], "cluster uid digest")
@@ -207,9 +192,7 @@ def validate_identity(value: Any) -> dict[str, Any]:
         _sha(authority["workload_uid_sha256"], "workload uid digest")
         if adapter == "kubernetes-hub":
             _sha(authority["durable_store_uuid_sha256"], "durable store uuid digest")
-        observation = _exact_keys(
-            observation, K8S_OBSERVATION_KEYS, "Kubernetes observation"
-        )
+        observation = _exact_keys(observation, K8S_OBSERVATION_KEYS, "Kubernetes observation")
         _sha(observation["pod_uid_sha256"], "pod uid digest")
     else:
         raise IdentityError("endpoint identity adapter is unsupported")
@@ -248,9 +231,7 @@ def compare_identities(expected: Any, observed: Any) -> dict[str, Any]:
             and not (left["adapter"].startswith("kubernetes-") and not same_observation)
         ),
         "requires_workload_adapter": bool(
-            same_resource
-            and left["adapter"].startswith("kubernetes-")
-            and not same_observation
+            same_resource and left["adapter"].startswith("kubernetes-") and not same_observation
         ),
         "mismatches": mismatches,
     }
@@ -262,25 +243,19 @@ def _open_private_directory(path: Path, *, create: bool = False) -> int:
     try:
         before = path.lstat()
     except OSError as exc:
-        raise IdentityError(
-            f"cannot inspect endpoint identity directory: {exc}"
-        ) from exc
+        raise IdentityError(f"cannot inspect endpoint identity directory: {exc}") from exc
     if (
         not stat.S_ISDIR(before.st_mode)
         or before.st_uid != os.getuid()
         or stat.S_IMODE(before.st_mode) & 0o077
     ):
-        raise IdentityError(
-            "endpoint identity directory must be owner-private and nonsymlink"
-        )
+        raise IdentityError("endpoint identity directory must be owner-private and nonsymlink")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
-        raise IdentityError(
-            f"cannot securely open endpoint identity directory: {exc}"
-        ) from exc
+        raise IdentityError(f"cannot securely open endpoint identity directory: {exc}") from exc
     after = os.fstat(descriptor)
     if (
         not stat.S_ISDIR(after.st_mode)
@@ -311,9 +286,7 @@ def _read_private_json(path: Path) -> Any:
             or before.st_size < 2
             or before.st_size > MAX_RECORD_BYTES
         ):
-            raise IdentityError(
-                "endpoint identity must be an owner-private regular file"
-            )
+            raise IdentityError("endpoint identity must be an owner-private regular file")
         raw = os.read(descriptor, before.st_size + 1)
         after = os.fstat(descriptor)
         if len(raw) != before.st_size or (

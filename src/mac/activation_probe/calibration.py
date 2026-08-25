@@ -53,25 +53,20 @@ def accuracy_at_threshold(
     """Compute classification accuracy for scores at the given decision threshold."""
     if len(scores) != len(labels) or not scores:
         raise ValueError("scores and labels must have equal nonzero length")
-    correct = sum(
-        (score >= threshold) == bool(label) for score, label in zip(scores, labels)
-    )
+    correct = sum((score >= threshold) == bool(label) for score, label in zip(scores, labels))
     return correct / len(scores)
 
 
 def load_calibration_records(path: str | Path) -> list[Mapping[str, Any]]:
     """Load held-out calibration records from a JSONL file at the given path."""
     records = []
-    for line_number, line in enumerate(
-        Path(path).read_text(encoding="utf-8").splitlines(), 1
-    ):
+    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         record = json.loads(line)
         if record.get("split") != "calibration":
             raise ValueError(
-                "held-out calibration file contains non-calibration record on line %d"
-                % line_number
+                "held-out calibration file contains non-calibration record on line %d" % line_number
             )
         records.append(record)
     if not records:
@@ -99,8 +94,6 @@ def calibration_report(
         "metrics": {
             "ece": expected_calibration_error(scores, labels, bins=bins),
             "auroc": auroc(scores, labels),
-            "accuracy": accuracy_at_threshold(
-                scores, labels, threshold=classifier.threshold
-            ),
+            "accuracy": accuracy_at_threshold(scores, labels, threshold=classifier.threshold),
         },
     }

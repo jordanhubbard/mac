@@ -7,6 +7,7 @@ Fixture outputs match real nvidia-smi --query-gpu=index,memory.total,name
   - RTX PRO 6000 Blackwell (discrete, 96 GB VRAM)
   - GB10 (unified memory, [N/A] for memory.total)
 """
+
 from __future__ import annotations
 
 import io
@@ -21,8 +22,7 @@ _FIXTURE_RTX5090 = "0, 32576, NVIDIA GeForce RTX 5090"
 _FIXTURE_RTX_PRO_6000 = "0, 98304, NVIDIA RTX PRO 6000 Blackwell"
 _FIXTURE_GB10 = "0, [N/A], NVIDIA GB10"
 _FIXTURE_RTX_PRO_6000_X2 = (
-    "0, 98304, NVIDIA RTX PRO 6000 Blackwell\n"
-    "1, 98304, NVIDIA RTX PRO 6000 Blackwell"
+    "0, 98304, NVIDIA RTX PRO 6000 Blackwell\n1, 98304, NVIDIA RTX PRO 6000 Blackwell"
 )
 
 
@@ -423,8 +423,12 @@ def test_summarize():
         }
     )
     assert hw.summarize(None) == "(no hardware reported)"
-    assert "accelerator=none" in hw.summarize({"accelerator": "none", "os": "linux", "arch": "x86_64"})
-    assert "16GB" in hw.summarize({"accelerator": "none", "os": "linux", "arch": "x86_64", "memory_mb": 16384})
+    assert "accelerator=none" in hw.summarize(
+        {"accelerator": "none", "os": "linux", "arch": "x86_64"}
+    )
+    assert "16GB" in hw.summarize(
+        {"accelerator": "none", "os": "linux", "arch": "x86_64", "memory_mb": 16384}
+    )
 
 
 def test_summarize_shared_gpu_uses_structured_memory():
@@ -509,9 +513,7 @@ def test_effective_capacity_uses_cgroup_v2_affinity_cpuset_and_quota(monkeypatch
         str(hw._CGROUP_ROOT / "memory.max"): str(4 * 1024 * 1024 * 1024),
     }
     monkeypatch.setattr(hw, "_read_text", lambda path: values.get(str(path)))
-    monkeypatch.setattr(
-        hw.os, "sched_getaffinity", lambda _pid: set(range(8)), raising=False
-    )
+    monkeypatch.setattr(hw.os, "sched_getaffinity", lambda _pid: set(range(8)), raising=False)
 
     cpu_count, cpu = hw._effective_cpu_capacity(32)
     memory_mb, memory = hw._effective_memory_capacity(65536)
@@ -537,14 +539,10 @@ def test_effective_capacity_supports_cgroup_v1(monkeypatch):
         str(hw._CGROUP_ROOT / "cpuset" / "cpuset.cpus"): "0-7",
         str(hw._CGROUP_ROOT / "cpu" / "cpu.cfs_quota_us"): "400000",
         str(hw._CGROUP_ROOT / "cpu" / "cpu.cfs_period_us"): "100000",
-        str(hw._CGROUP_ROOT / "memory" / "memory.limit_in_bytes"): str(
-            8 * 1024 * 1024 * 1024
-        ),
+        str(hw._CGROUP_ROOT / "memory" / "memory.limit_in_bytes"): str(8 * 1024 * 1024 * 1024),
     }
     monkeypatch.setattr(hw, "_read_text", lambda path: values.get(str(path)))
-    monkeypatch.setattr(
-        hw.os, "sched_getaffinity", lambda _pid: set(range(16)), raising=False
-    )
+    monkeypatch.setattr(hw.os, "sched_getaffinity", lambda _pid: set(range(16)), raising=False)
 
     cpu_count, cpu = hw._effective_cpu_capacity(32)
     memory_mb, memory = hw._effective_memory_capacity(65536)
@@ -640,11 +638,7 @@ GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-parent)
 
     info = hw.detect_hardware()
     ok, reasons = machine_hardware_satisfies(
-        {
-            "accelerators": [
-                {"kind": "gpu", "vendor": "nvidia", "memory_gb_min": 30}
-            ]
-        },
+        {"accelerators": [{"kind": "gpu", "vendor": "nvidia", "memory_gb_min": 30}]},
         info,
     )
     assert info["accelerators"][0]["memory_gb"] == 20
@@ -680,9 +674,7 @@ def test_is_unified_memory_gpu():
 # --- HGX flavor + confinement topology (fungible onboarding) --------------
 
 _FIXTURE_H100_HGX = "0, 81559, NVIDIA H100 80GB HGX"
-_FIXTURE_H100_HGX_X8 = "\n".join(
-    "%d, 81559, NVIDIA H100 80GB HGX" % index for index in range(8)
-)
+_FIXTURE_H100_HGX_X8 = "\n".join("%d, 81559, NVIDIA H100 80GB HGX" % index for index in range(8))
 _FIXTURE_H100_PCIE = "0, 81559, NVIDIA H100 PCIe"
 _FIXTURE_A100_SXM = "0, 81920, NVIDIA A100-SXM4-80GB"
 
@@ -736,14 +728,10 @@ def test_confinement_topology_hgx_baseboard():
 
 
 def test_confinement_topology_discrete_and_unified_and_none():
-    discrete = hw._confinement_topology(
-        [{"index": 0, "flavor": "pcie"}]
-    )
+    discrete = hw._confinement_topology([{"index": 0, "flavor": "pcie"}])
     assert discrete == {"kind": "discrete", "gpus": 1, "flavors": ["pcie"]}
 
-    unified = hw._confinement_topology(
-        [{"index": 0, "flavor": "unified", "shared": True}]
-    )
+    unified = hw._confinement_topology([{"index": 0, "flavor": "unified", "shared": True}])
     assert unified == {"kind": "unified", "gpus": 1, "flavors": ["unified"]}
 
     assert hw._confinement_topology([]) == {"kind": "none", "gpus": 0}
@@ -820,9 +808,7 @@ def _write_cgroup_v1(root):
     (root / "cpuset" / "cpuset.cpus").write_text("0-7")
     (root / "cpu" / "cpu.cfs_quota_us").write_text("400000")
     (root / "cpu" / "cpu.cfs_period_us").write_text("100000")
-    (root / "memory" / "memory.limit_in_bytes").write_text(
-        str(8 * 1024 * 1024 * 1024)
-    )
+    (root / "memory" / "memory.limit_in_bytes").write_text(str(8 * 1024 * 1024 * 1024))
     return root
 
 
@@ -831,9 +817,7 @@ def _linux_host(monkeypatch, *, cpus=192, memory_mb=725000):
     monkeypatch.setattr(hw.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(hw.os, "cpu_count", lambda: cpus)
     monkeypatch.setattr(hw, "_memory_mb", lambda: memory_mb)
-    monkeypatch.setattr(
-        hw.os, "sched_getaffinity", lambda _pid: set(range(cpus)), raising=False
-    )
+    monkeypatch.setattr(hw.os, "sched_getaffinity", lambda _pid: set(range(cpus)), raising=False)
     monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
 
 
@@ -924,9 +908,7 @@ def test_unlimited_cgroup_without_proof_stays_unknown(monkeypatch, tmp_path):
     assert info["effective_allocation"]["memory_mb"]["known"] is False
 
 
-def test_proven_unconfined_bare_metal_uses_host_equals_allocation(
-    monkeypatch, tmp_path
-):
+def test_proven_unconfined_bare_metal_uses_host_equals_allocation(monkeypatch, tmp_path):
     _linux_host(monkeypatch, cpus=16, memory_mb=32768)
     root = _write_cgroup_v2(
         tmp_path / "cg",
@@ -973,9 +955,7 @@ def test_cgroup_root_monkeypatch_still_drives_allocation(monkeypatch, tmp_path):
     assert info["effective_allocation"]["cpu"]["source"] == "cgroup_v2_cpu_max"
 
 
-def test_host_inventory_keeps_physical_gpu_when_mig_is_allocated(
-    monkeypatch, tmp_path
-):
+def test_host_inventory_keeps_physical_gpu_when_mig_is_allocated(monkeypatch, tmp_path):
     _linux_host(monkeypatch, cpus=8, memory_mb=16384)
     root = _write_cgroup_v2(tmp_path / "cg")
     listing = """\
@@ -1012,9 +992,7 @@ def test_effective_allocation_never_raises_on_probe_failure(monkeypatch, tmp_pat
     monkeypatch.setattr(hw, "_memory_mb", lambda: 1024)
     monkeypatch.setattr(hw, "detect_nvidia", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(hw, "detect_apple_metal", lambda: (_ for _ in ()).throw(OSError("boom")))
-    monkeypatch.setattr(
-        hw, "_read_text", lambda _path: (_ for _ in ()).throw(OSError("boom"))
-    )
+    monkeypatch.setattr(hw, "_read_text", lambda _path: (_ for _ in ()).throw(OSError("boom")))
 
     info = hw.detect_hardware(cgroup_root=tmp_path / "missing", workspace=tmp_path / "missing-ws")
 

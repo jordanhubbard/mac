@@ -2,6 +2,7 @@
 
 Workstation = source of truth; secrets travel over fleet SSH stdin only;
 every sync is verified by the worker's own detector."""
+
 from __future__ import annotations
 
 import base64
@@ -139,8 +140,11 @@ def test_sync_agent_fails_loudly_on_remote_error(tmp_path):
 
     with pytest.raises(cc.CliCredentialError, match="permission denied"):
         cc.sync_agent(
-            "demo", "worker1", {"schema": "mac.cli_credentials_sync.v1"},
-            fleets_config=_fleets_yaml(tmp_path), runner=runner,
+            "demo",
+            "worker1",
+            {"schema": "mac.cli_credentials_sync.v1"},
+            fleets_config=_fleets_yaml(tmp_path),
+            runner=runner,
         )
 
 
@@ -295,7 +299,7 @@ def test_codex_config_model_pin_is_stripped_but_provider_config_kept(tmp_path):
         'model_reasoning_effort = "xhigh"\n'
         'preferred_auth_method = "chatgpt"\n'
         "\n"
-        '[model_providers.custom]\n'
+        "[model_providers.custom]\n"
         'name = "custom"\n'
         'base_url = "https://example/v1"\n'
         'model = "keep-me-inside-table"\n'

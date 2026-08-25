@@ -157,15 +157,9 @@ class ContinuityConfig:
         return cls(
             min_score=_env_float("MAC_CONTINUITY_MIN_SCORE", DEFAULT_MIN_SCORE),
             max_items=_env_int("MAC_CONTINUITY_MAX_ITEMS", DEFAULT_MAX_ITEMS),
-            token_budget=_env_int(
-                "MAC_CONTINUITY_TOKEN_BUDGET", DEFAULT_TOKEN_BUDGET
-            ),
-            bus_stream_scan=_env_int(
-                "MAC_CONTINUITY_BUS_STREAM_SCAN", DEFAULT_BUS_STREAM_SCAN
-            ),
-            bus_chunk_scan=_env_int(
-                "MAC_CONTINUITY_BUS_CHUNK_SCAN", DEFAULT_BUS_CHUNK_SCAN
-            ),
+            token_budget=_env_int("MAC_CONTINUITY_TOKEN_BUDGET", DEFAULT_TOKEN_BUDGET),
+            bus_stream_scan=_env_int("MAC_CONTINUITY_BUS_STREAM_SCAN", DEFAULT_BUS_STREAM_SCAN),
+            bus_chunk_scan=_env_int("MAC_CONTINUITY_BUS_CHUNK_SCAN", DEFAULT_BUS_CHUNK_SCAN),
             max_low_value_memories=_env_int(
                 "MAC_CONTINUITY_MAX_LOW_VALUE_MEMORIES",
                 DEFAULT_MAX_LOW_VALUE_MEMORIES,
@@ -294,9 +288,7 @@ def collect_bus_candidates(
 
     candidates: List[_Candidate] = []
     try:
-        streams = agentbus.list_streams(
-            agent_id=agent_id, limit=config.bus_stream_scan
-        )
+        streams = agentbus.list_streams(agent_id=agent_id, limit=config.bus_stream_scan)
     except Exception:
         return candidates
 
@@ -362,9 +354,7 @@ def collect_bus_candidates(
                 "sequence": getattr(chunk, "sequence", None),
                 "schema": schema or None,
             }
-            candidates.append(
-                _Candidate(source="bus", score=float(score), text=text, item=item)
-            )
+            candidates.append(_Candidate(source="bus", score=float(score), text=text, item=item))
 
     return candidates
 
@@ -402,12 +392,7 @@ def collect_memory_candidates(
             hits = recall(query, tier=tier, limit=limit, agent_id=agent_id)
         for hit in hits or []:
             score = float(hit.get("score") or 0.0)
-            text = str(
-                hit.get("summary")
-                or hit.get("content")
-                or hit.get("text")
-                or ""
-            )
+            text = str(hit.get("summary") or hit.get("content") or hit.get("text") or "")
             # Dedup across tiers: identical records surfacing in both medium and
             # long tiers must not double-count toward budgets or the source mix.
             dedup_key = hit.get("memory_id") or hit.get("id") or ("text", text)

@@ -51,9 +51,7 @@ DEFAULT_TOO_MANY_GATES = 3
 _ACTIVE_REVIEW_STATES = frozenset({"needs_review", "reviewing"})
 _IN_FLIGHT_STATES = frozenset({"claimed", "running", "needs_review", "reviewing"})
 _ORPHAN_PR_STATES = frozenset({"completed", "cancelled"})
-_UNLANDED_PR_STATES = frozenset(
-    {"failed", "blocked", "reviewing", "needs_review", "waiting"}
-)
+_UNLANDED_PR_STATES = frozenset({"failed", "blocked", "reviewing", "needs_review", "waiting"})
 _TASK_ID_RE = re.compile(r"task_[0-9a-f]{8,}")
 _NONTERMINAL_STATES = frozenset(
     {
@@ -183,9 +181,7 @@ class JudgementConfig:
                 0.01,
                 1.0,
             ),
-            too_many_gates=int(
-                _num("MAC_JUDGEMENT_TOO_MANY_GATES", DEFAULT_TOO_MANY_GATES, 2, 20)
-            ),
+            too_many_gates=int(_num("MAC_JUDGEMENT_TOO_MANY_GATES", DEFAULT_TOO_MANY_GATES, 2, 20)),
             repo_root=repo_root,
             redeploy_command=redeploy_command,
             configuration_error="; ".join(errors),
@@ -258,9 +254,7 @@ class JudgementProcess:
             if self._thread is not None and self._thread.is_alive():
                 return False
             self._stop_event.clear()
-            thread = threading.Thread(
-                target=self._loop, name="mac-judgement", daemon=True
-            )
+            thread = threading.Thread(target=self._loop, name="mac-judgement", daemon=True)
             self._thread = thread
             thread.start()
         self._observe("judgement.started", "info", {"config": self.config.to_dict()})
@@ -352,12 +346,16 @@ class JudgementProcess:
         }
         with self._state_lock:
             self._last_report = report
-        self._observe("judgement.run", "info", {
-            "run_id": run_id,
-            "trigger": trigger,
-            "finding_count": len(findings),
-            "action_count": len(actions),
-        })
+        self._observe(
+            "judgement.run",
+            "info",
+            {
+                "run_id": run_id,
+                "trigger": trigger,
+                "finding_count": len(findings),
+                "action_count": len(actions),
+            },
+        )
         return report
 
     # -- observe ------------------------------------------------------------
@@ -379,8 +377,7 @@ class JudgementProcess:
                     task_id=task.id,
                     agent_id=str(getattr(task, "owner_agent_id", "") or ""),
                     summary=(
-                        "%s was rejected %d times after entering review"
-                        % (task.id, len(rejected))
+                        "%s was rejected %d times after entering review" % (task.id, len(rejected))
                     ),
                     detail={
                         "rejected_count": len(rejected),
@@ -445,8 +442,7 @@ class JudgementProcess:
                     kind="failed_dependency_deadlock",
                     task_id=task.id,
                     summary=(
-                        "%s is blocked on failed dependencies %s"
-                        % (task.id, ", ".join(failed))
+                        "%s is blocked on failed dependencies %s" % (task.id, ", ".join(failed))
                     ),
                     detail={"failed_dependencies": failed, "join": "all_success"},
                     recommended_action="stop_task",
@@ -481,10 +477,7 @@ class JudgementProcess:
                     kind="stuck_reviewing",
                     task_id=task.id,
                     agent_id=reviewer_id if semantic else "",
-                    summary=(
-                        "%s has been %s for %.0f minutes"
-                        % (task.id, task.state, age / 60.0)
-                    ),
+                    summary=("%s has been %s for %.0f minutes" % (task.id, task.state, age / 60.0)),
                     detail={
                         "age_seconds": age,
                         "threshold_seconds": self.config.reviewing_stuck_seconds,
@@ -513,8 +506,7 @@ class JudgementProcess:
                         task_id=task.id,
                         agent_id=reviewer_id,
                         summary=(
-                            "%s still has a pending semantic review on %s"
-                            % (task.id, reviewer_id)
+                            "%s still has a pending semantic review on %s" % (task.id, reviewer_id)
                         ),
                         detail={"review_id": getattr(review, "id", "")},
                         recommended_action="stop_task",
@@ -525,14 +517,10 @@ class JudgementProcess:
     def _check_excessive_reviewing_population(self) -> List[Finding]:
         tasks = self._all_known_tasks()
         live = [
-            task
-            for task in tasks
-            if str(getattr(task, "state", "") or "") in _NONTERMINAL_STATES
+            task for task in tasks if str(getattr(task, "state", "") or "") in _NONTERMINAL_STATES
         ]
         reviewing = [
-            task
-            for task in live
-            if str(getattr(task, "state", "") or "") in _ACTIVE_REVIEW_STATES
+            task for task in live if str(getattr(task, "state", "") or "") in _ACTIVE_REVIEW_STATES
         ]
         if not live:
             return []
@@ -566,8 +554,7 @@ class JudgementProcess:
             rejections = [
                 review
                 for review in reviews
-                if str(getattr(review, "status", "") or "").lower()
-                in {"rejected", "retracted"}
+                if str(getattr(review, "status", "") or "").lower() in {"rejected", "retracted"}
             ]
             if len(rejections) < self.config.too_many_gates:
                 continue
@@ -604,12 +591,8 @@ class JudgementProcess:
             return []
         if not isinstance(listing, Mapping):
             return []
-        open_prs = [
-            pr for pr in (listing.get("open") or []) if isinstance(pr, Mapping)
-        ]
-        merged_prs = [
-            pr for pr in (listing.get("merged") or []) if isinstance(pr, Mapping)
-        ]
+        open_prs = [pr for pr in (listing.get("open") or []) if isinstance(pr, Mapping)]
+        merged_prs = [pr for pr in (listing.get("merged") or []) if isinstance(pr, Mapping)]
         if not open_prs:
             return []
         merged_task_ids = set()
@@ -679,10 +662,7 @@ class JudgementProcess:
                         Finding(
                             kind="unlanded_pull_request",
                             task_id=task_id,
-                            summary=(
-                                "PR #%d never landed; %s is %s"
-                                % (number, task_id, state)
-                            ),
+                            summary=("PR #%d never landed; %s is %s" % (number, task_id, state)),
                             detail={
                                 "pr_number": number,
                                 "url": pr.get("url") or "",
@@ -708,10 +688,7 @@ class JudgementProcess:
                     Finding(
                         kind="duplicate_pull_request",
                         task_id=task_id,
-                        summary=(
-                            "PR #%d duplicates #%d for %s"
-                            % (number, newest, task_id)
-                        ),
+                        summary=("PR #%d duplicates #%d for %s" % (number, newest, task_id)),
                         detail={
                             "pr_number": number,
                             "kept_pr_number": newest,
@@ -747,9 +724,7 @@ class JudgementProcess:
                 continue
             recommended = finding.recommended_action
             if recommended == "close_pr":
-                actions.append(
-                    self._close_pull_request(actor=actor, finding=finding)
-                )
+                actions.append(self._close_pull_request(actor=actor, finding=finding))
                 continue
             if recommended == "fleet_stop":
                 if fleet_stopped:
@@ -758,9 +733,7 @@ class JudgementProcess:
                 fleet_stopped = True
                 continue
             if recommended == "hold_agent" and finding.agent_id:
-                actions.append(
-                    self._hold_agent(finding.agent_id, actor=actor, finding=finding)
-                )
+                actions.append(self._hold_agent(finding.agent_id, actor=actor, finding=finding))
                 continue
             if finding.task_id:
                 actions.append(self._stop_task(finding.task_id, actor=actor, finding=finding))
@@ -769,21 +742,13 @@ class JudgementProcess:
                     and not fleet_stopped
                     and self._semantic_assignment_count(findings) >= 3
                 ):
-                    actions.append(
-                        self._fleet_stop(actor=actor, run_id=run_id, finding=finding)
-                    )
-                    actions.append(
-                        self._redeploy(actor=actor, run_id=run_id, finding=finding)
-                    )
-                    actions.append(
-                        self._fleet_start(actor=actor, run_id=run_id, finding=finding)
-                    )
+                    actions.append(self._fleet_stop(actor=actor, run_id=run_id, finding=finding))
+                    actions.append(self._redeploy(actor=actor, run_id=run_id, finding=finding))
+                    actions.append(self._fleet_start(actor=actor, run_id=run_id, finding=finding))
                     fleet_stopped = True
         return actions
 
-    def _close_pull_request(
-        self, *, actor: str, finding: Finding
-    ) -> Dict[str, Any]:
+    def _close_pull_request(self, *, actor: str, finding: Finding) -> Dict[str, Any]:
         number = int((finding.detail or {}).get("pr_number") or 0)
         if number <= 0:
             return {
@@ -825,9 +790,7 @@ class JudgementProcess:
             "result": result,
         }
 
-    def _stop_task(
-        self, task_id: str, *, actor: str, finding: Finding
-    ) -> Dict[str, Any]:
+    def _stop_task(self, task_id: str, *, actor: str, finding: Finding) -> Dict[str, Any]:
         reason = "%s%s" % (HOLD_REASON_PREFIX, finding.kind)
         try:
             task = self.control_plane.get_task(task_id)
@@ -857,9 +820,7 @@ class JudgementProcess:
             "reason": reason,
         }
 
-    def _hold_agent(
-        self, agent_id: str, *, actor: str, finding: Finding
-    ) -> Dict[str, Any]:
+    def _hold_agent(self, agent_id: str, *, actor: str, finding: Finding) -> Dict[str, Any]:
         reason = "%s%s" % (HOLD_REASON_PREFIX, finding.kind)
         try:
             if self._agent_is_virtual(agent_id):
@@ -889,9 +850,7 @@ class JudgementProcess:
             "reason": reason,
         }
 
-    def _fleet_stop(
-        self, *, actor: str, run_id: str, finding: Finding
-    ) -> Dict[str, Any]:
+    def _fleet_stop(self, *, actor: str, run_id: str, finding: Finding) -> Dict[str, Any]:
         held: List[str] = []
         stopped: List[str] = []
         paused: List[str] = []
@@ -916,9 +875,7 @@ class JudgementProcess:
                 continue
         for project in self._registered_projects():
             try:
-                self.control_plane.set_project_dispatch(
-                    project, paused=True, actor=actor
-                )
+                self.control_plane.set_project_dispatch(project, paused=True, actor=actor)
                 paused.append(project)
             except Exception:  # noqa: BLE001
                 continue
@@ -942,9 +899,7 @@ class JudgementProcess:
             "reason": reason,
         }
 
-    def _fleet_start(
-        self, *, actor: str, run_id: str, finding: Finding
-    ) -> Dict[str, Any]:
+    def _fleet_start(self, *, actor: str, run_id: str, finding: Finding) -> Dict[str, Any]:
         resumed: List[str] = []
         activated: List[str] = []
         for agent in self.control_plane.list_agents():
@@ -958,9 +913,7 @@ class JudgementProcess:
                 continue
         for project in self._registered_projects():
             try:
-                self.control_plane.set_project_dispatch(
-                    project, paused=False, actor=actor
-                )
+                self.control_plane.set_project_dispatch(project, paused=False, actor=actor)
                 activated.append(project)
             except Exception:  # noqa: BLE001
                 continue
@@ -981,9 +934,7 @@ class JudgementProcess:
             "activated_projects": activated,
         }
 
-    def _redeploy(
-        self, *, actor: str, run_id: str, finding: Finding
-    ) -> Dict[str, Any]:
+    def _redeploy(self, *, actor: str, run_id: str, finding: Finding) -> Dict[str, Any]:
         now = self._now()
         recent = [
             stamp
@@ -1038,11 +989,7 @@ class JudgementProcess:
     # -- helpers ------------------------------------------------------------
 
     def _lifecycle_tasks(self) -> List[Any]:
-        return list(
-            self.control_plane.list_tasks(
-                state=list(_NONTERMINAL_STATES | {"failed"})
-            )
-        )
+        return list(self.control_plane.list_tasks(state=list(_NONTERMINAL_STATES | {"failed"})))
 
     def _all_known_tasks(self) -> List[Any]:
         return list(self.control_plane.list_tasks())
@@ -1185,9 +1132,7 @@ def _default_pr_lister(repo_root: str) -> Dict[str, Any]:
             timeout=60,
         )
         if completed.returncode != 0:
-            raise RuntimeError(
-                (completed.stderr or completed.stdout or "gh pr list failed")[:300]
-            )
+            raise RuntimeError((completed.stderr or completed.stdout or "gh pr list failed")[:300])
         payload = json.loads(completed.stdout or "[]")
         return [item for item in payload if isinstance(item, dict)]
 

@@ -75,9 +75,7 @@ def test_tasks_can_be_filtered_to_one_persons_work():
     )
     client.post("/tasks", json={"title": "not mine", "project": "mac"})
 
-    rows = client.get(
-        "/tasks", params={"project": "mac", "created_by_human": human.id}
-    ).json()
+    rows = client.get("/tasks", params={"project": "mac", "created_by_human": human.id}).json()
 
     assert [row["title"] for row in rows] == ["mine"]
 

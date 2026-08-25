@@ -40,9 +40,7 @@ def test_create_role_validates_required_fields_and_level(cp):
             slug="bad slug", name="x", description="x", system_prompt="x", level="ic"
         )
     with pytest.raises(ValidationError):
-        cp.roles.create_role(
-            slug="ok", name="", description="x", system_prompt="x", level="ic"
-        )
+        cp.roles.create_role(slug="ok", name="", description="x", system_prompt="x", level="ic")
     with pytest.raises(ValidationError):
         cp.roles.create_role(
             slug="ok", name="x", description="x", system_prompt="x", level="emperor"
@@ -97,9 +95,7 @@ def test_assign_role_merges_default_capabilities_into_agent(cp):
     )
     machine = _register_machine(cp)
     soul = bind_soul(cp, persona_name="DevOps Soul", allowed_role_slugs=["devops"])
-    agent = cp.register_agent(
-        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
-    )
+    agent = cp.register_agent(machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul)
     refreshed = cp.roles.assign_role(agent.id, "devops")
     assert refreshed.role_id == role.id
     assert set(refreshed.capabilities) == {"python", "ops", "ci"}
@@ -136,18 +132,14 @@ def test_assign_role_rejects_when_hardware_mismatch(cp):
 
 def test_machine_hardware_satisfies_handles_accelerators_and_tags():
     req = {
-        "accelerators": [
-            {"kind": "gpu", "vendor": "nvidia", "memory_gb_min": 40, "count_min": 1}
-        ],
+        "accelerators": [{"kind": "gpu", "vendor": "nvidia", "memory_gb_min": 40, "count_min": 1}],
         "tags_all": ["dgx"],
     }
     ok, _ = machine_hardware_satisfies(
         req,
         {
             "tags": ["dgx", "internal"],
-            "accelerators": [
-                {"kind": "gpu", "vendor": "nvidia", "memory_gb": 80, "count": 8}
-            ],
+            "accelerators": [{"kind": "gpu", "vendor": "nvidia", "memory_gb": 80, "count": 8}],
         },
     )
     assert ok
@@ -173,9 +165,7 @@ def test_detected_hardware_shape_satisfies_allocator_contract(monkeypatch, tmp_p
     # this schema-contract test failed on any Linux runner with < 16 CPUs --
     # invisible on macOS, which has no sched_getaffinity, and rarely selected
     # by the impact map. Pin every input so the contract is host-independent.
-    monkeypatch.setattr(
-        hw.os, "sched_getaffinity", lambda _pid: set(range(32)), raising=False
-    )
+    monkeypatch.setattr(hw.os, "sched_getaffinity", lambda _pid: set(range(32)), raising=False)
     monkeypatch.setattr(hw, "_CGROUP_ROOT", tmp_path / "no-cgroup")
     monkeypatch.setattr(hw, "_cpu_model", lambda: "AMD EPYC")
     monkeypatch.setattr(hw, "_memory_mb", lambda: 65536)
@@ -269,7 +259,9 @@ def test_designer_souled_agent_refuses_qa_role(cp):
     role. The task is simply left unclaimed for a QA-souled agent to
     pick up later."""
     cp.roles.create_role(slug="qa", name="QA", description="d", system_prompt="p", level="ic")
-    cp.roles.create_role(slug="design", name="Design", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(
+        slug="design", name="Design", description="d", system_prompt="p", level="ic"
+    )
     machine = _register_machine(cp)
     designer_soul = bind_soul(
         cp,
@@ -320,9 +312,7 @@ def test_dispatch_skips_agent_whose_soul_no_longer_accepts_role(cp):
     )
     machine = _register_machine(cp)
     soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
-    agent = cp.register_agent(
-        machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul
-    )
+    agent = cp.register_agent(machine.id, "rocky", capabilities=["python"], hermes_instance_id=soul)
     cp.roles.assign_role(agent.id, "qa")
 
     # Tighten the persona's allowed list to a different slug — agent
@@ -348,9 +338,7 @@ def test_register_agent_preserves_hermes_instance_id_across_reregistration(cp):
     assert agent.hermes_instance_id == soul
 
     # Re-register without hermes_instance_id — value preserved.
-    again = cp.register_agent(
-        machine.id, "rocky", capabilities=["python"], agent_id=agent.id
-    )
+    again = cp.register_agent(machine.id, "rocky", capabilities=["python"], agent_id=agent.id)
     assert again.hermes_instance_id == soul
 
     # Re-register WITH a new hermes_instance_id — value updated.
@@ -360,9 +348,7 @@ def test_register_agent_preserves_hermes_instance_id_across_reregistration(cp):
         tenant_name="other-tenant",
         allowed_role_slugs=["qa"],
     )
-    rebound = cp.register_agent(
-        machine.id, "rocky", agent_id=agent.id, hermes_instance_id=new_soul
-    )
+    rebound = cp.register_agent(machine.id, "rocky", agent_id=agent.id, hermes_instance_id=new_soul)
     assert rebound.hermes_instance_id == new_soul
 
 
@@ -386,7 +372,9 @@ def test_explicit_empty_role_slugs_refuses_all_roles(cp):
     but accepts no roles — different from absence (which defaults to
     persona-name). Explicit empty refuses every role."""
     cp.roles.create_role(slug="qa", name="QA", description="d", system_prompt="p", level="ic")
-    cp.roles.create_role(slug="design", name="Design", description="d", system_prompt="p", level="ic")
+    cp.roles.create_role(
+        slug="design", name="Design", description="d", system_prompt="p", level="ic"
+    )
     machine = _register_machine(cp)
     soul = bind_soul(
         cp,
@@ -423,9 +411,7 @@ def test_dispatch_refuses_role_id_smuggled_in_via_raw_db_write(cp):
     qa_soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
     agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=qa_soul)
     # Hand-edit role_id to "design" — bypasses assign_role's compat check.
-    cp.store.execute(
-        "UPDATE agents SET role_id = ? WHERE id = ?", (role.id, agent.id)
-    )
+    cp.store.execute("UPDATE agents SET role_id = ? WHERE id = ?", (role.id, agent.id))
     cp.create_task("d-work", metadata={"required_role": "design"})
     # Dispatch's compat re-check refuses the agent even though
     # agents.role_id literally says "design".
@@ -444,9 +430,7 @@ def test_agent_identity_returns_layered_view(cp):
         level="ic",
         default_capabilities=["python"],
     )
-    machine = cp.register_machine(
-        "host-id", hardware={"cpu_arch": "arm64", "memory_gb": 32}
-    )
+    machine = cp.register_machine("host-id", hardware={"cpu_arch": "arm64", "memory_gb": 32})
     soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
     agent = cp.register_agent(machine.id, "rocky", hermes_instance_id=soul)
     cp.roles.assign_role(agent.id, "qa")
@@ -487,88 +471,149 @@ def test_tenant_scoped_role_shadows_global_default(cp):
 
 # --- relocated from test_roles_service_edges.py (coverage companion folded in) ---
 
+
 def _create(service, **extra):
-    values = {'slug': 'role', 'name': 'Role', 'description': 'Description', 'system_prompt': 'Prompt', 'level': 'ic'}
+    values = {
+        "slug": "role",
+        "name": "Role",
+        "description": "Description",
+        "system_prompt": "Prompt",
+        "level": "ic",
+    }
     values.update(extra)
     return service.create_role(**values)
 
 
 def test_create_role_remaining_required_fields_and_parent(monkeypatch) -> None:
     service = ControlPlane.in_memory().roles
-    with pytest.raises(ValidationError, match='description'):
-        _create(service, description='')
-    with pytest.raises(ValidationError, match='system_prompt'):
-        _create(service, system_prompt='')
-    tenant = ControlPlane.in_memory().register_tenant('tenant')
-    monkeypatch.setattr(service, '_get_tenant', lambda *_a: (_ for _ in ()).throw(NotFoundError('tenant')))
+    with pytest.raises(ValidationError, match="description"):
+        _create(service, description="")
+    with pytest.raises(ValidationError, match="system_prompt"):
+        _create(service, system_prompt="")
+    tenant = ControlPlane.in_memory().register_tenant("tenant")
+    monkeypatch.setattr(
+        service, "_get_tenant", lambda *_a: (_ for _ in ()).throw(NotFoundError("tenant"))
+    )
     with pytest.raises(NotFoundError):
         _create(service, tenant_id=tenant.id)
-    parent = _create(service, slug='parent')
-    child = _create(service, slug='child', reports_to=parent.id)
+    parent = _create(service, slug="parent")
+    child = _create(service, slug="child", reports_to=parent.id)
     assert child.reports_to == parent.id
-    updated = _create(service, slug='child', description='Updated')
-    assert updated.id == child.id and updated.description == 'Updated'
+    updated = _create(service, slug="child", description="Updated")
+    assert updated.id == child.id and updated.description == "Updated"
 
 
 def test_list_roles_query_variants(monkeypatch) -> None:
     service = ControlPlane.in_memory().roles
     calls = []
-    monkeypatch.setattr(service.store, 'query_all', lambda sql, params: calls.append((sql, params)) or [])
-    assert service.list_roles(tenant_id='tenant', include_defaults=True) == []
-    assert 'OR tenant_id IS NULL' in calls[-1][0]
-    assert service.list_roles(tenant_id='tenant', include_defaults=False, level='IC') == []
-    assert 'tenant_id = ?' in calls[-1][0] and calls[-1][1][-1] == 'ic'
-    assert service.list_roles(level='manager') == []
+    monkeypatch.setattr(
+        service.store, "query_all", lambda sql, params: calls.append((sql, params)) or []
+    )
+    assert service.list_roles(tenant_id="tenant", include_defaults=True) == []
+    assert "OR tenant_id IS NULL" in calls[-1][0]
+    assert service.list_roles(tenant_id="tenant", include_defaults=False, level="IC") == []
+    assert "tenant_id = ?" in calls[-1][0] and calls[-1][1][-1] == "ic"
+    assert service.list_roles(level="manager") == []
 
 
-@pytest.mark.parametrize('requirements', ['bad', {'cpu_count_min': -1}, {'memory_gb_min': 'large'}, {'os': 'linux'}, {'cpu_arch': ['arm64', 3]}, {'tags_all': 'gpu'}, {'accelerators': {}}])
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        "bad",
+        {"cpu_count_min": -1},
+        {"memory_gb_min": "large"},
+        {"os": "linux"},
+        {"cpu_arch": ["arm64", 3]},
+        {"tags_all": "gpu"},
+        {"accelerators": {}},
+    ],
+)
 def test_hardware_requirement_schema_validation(requirements) -> None:
     service = ControlPlane.in_memory().roles
-    with pytest.raises(ValidationError, match='hardware_requirements'):
+    with pytest.raises(ValidationError, match="hardware_requirements"):
         service._validate_hardware_requirements(requirements)
-    assert service._validate_hardware_requirements({'future': {'anything': True}})
+    assert service._validate_hardware_requirements({"future": {"anything": True}})
 
 
 def test_soul_role_lookup_missing_identity_and_persona(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
-    machine = cp.register_machine('host')
-    agent = cp.register_agent(machine.id, 'agent')
+    machine = cp.register_machine("host")
+    agent = cp.register_agent(machine.id, "agent")
     assert cp.roles._allowed_role_slugs_for(agent) is None
-    attached = replace(agent, hermes_instance_id='hermes')
-    monkeypatch.setattr(cp.roles, '_get_persona_instance', lambda *_a: (_ for _ in ()).throw(NotFoundError()))
+    attached = replace(agent, hermes_instance_id="hermes")
+    monkeypatch.setattr(
+        cp.roles, "_get_persona_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError())
+    )
     assert cp.roles._allowed_role_slugs_for(attached) is None
-    monkeypatch.setattr(cp.roles, '_get_persona_instance', lambda *_a: SimpleNamespace(persona_id='persona'))
-    monkeypatch.setattr(cp.roles, '_get_persona', lambda *_a: (_ for _ in ()).throw(NotFoundError()))
+    monkeypatch.setattr(
+        cp.roles, "_get_persona_instance", lambda *_a: SimpleNamespace(persona_id="persona")
+    )
+    monkeypatch.setattr(
+        cp.roles, "_get_persona", lambda *_a: (_ for _ in ()).throw(NotFoundError())
+    )
     assert cp.roles._allowed_role_slugs_for(attached) == []
-    monkeypatch.setattr(cp.roles, '_get_persona', lambda *_a: SimpleNamespace(metadata='bad', name=''))
+    monkeypatch.setattr(
+        cp.roles, "_get_persona", lambda *_a: SimpleNamespace(metadata="bad", name="")
+    )
     assert cp.roles._allowed_role_slugs_for(attached) == []
 
 
 def test_hardware_matcher_all_mismatch_and_coercion_paths() -> None:
     assert machine_hardware_satisfies({}, {}) == (True, [])
-    ok, reasons = machine_hardware_satisfies({'os': ['linux'], 'cpu_arch': ['arm64'], 'cpu_count_min': 'bad', 'memory_gb_min': 32, 'disk_gb_min': 100, 'tags_all': ['gpu', 'trusted'], 'accelerators': ['bad', {'kind': 'gpu', 'memory_gb_min': 80}]}, {'os': 'darwin', 'cpu_arch': 'x86', 'memory_gb': 'bad', 'disk_gb': 10, 'tags': ['gpu'], 'accelerators': 'bad'})
+    ok, reasons = machine_hardware_satisfies(
+        {
+            "os": ["linux"],
+            "cpu_arch": ["arm64"],
+            "cpu_count_min": "bad",
+            "memory_gb_min": 32,
+            "disk_gb_min": 100,
+            "tags_all": ["gpu", "trusted"],
+            "accelerators": ["bad", {"kind": "gpu", "memory_gb_min": 80}],
+        },
+        {
+            "os": "darwin",
+            "cpu_arch": "x86",
+            "memory_gb": "bad",
+            "disk_gb": 10,
+            "tags": ["gpu"],
+            "accelerators": "bad",
+        },
+    )
     assert ok is False
     assert len(reasons) >= 6
 
 
 def test_accelerator_match_field_numeric_and_count_paths() -> None:
-    assert _accelerator_matches({}, 'bad') is False
-    assert _accelerator_matches({'kind': 'gpu'}, {'kind': 'cpu'}) is False
-    assert _accelerator_matches({'vendor': 'nvidia'}, {'vendor': 'amd'}) is False
-    assert _accelerator_matches({'model': 'h100'}, {'model': 'a100'}) is False
-    assert _accelerator_matches({'memory_gb_min': 80}, {'memory_gb': 40}) is False
-    assert _accelerator_matches({'memory_gb_min': 'bad'}, {'memory_gb': 80}) is False
-    assert _accelerator_matches({'count_min': 2}, {'count': 1}) is False
-    assert _accelerator_matches({'count_min': 'bad'}, {'count': 2}) is False
-    assert _accelerator_matches({'kind': 'gpu', 'vendor': 'nvidia', 'memory_gb_min': 40, 'count_min': 1}, {'kind': 'gpu', 'vendor': 'nvidia', 'memory_gb': 80, 'count': 8}) is True
+    assert _accelerator_matches({}, "bad") is False
+    assert _accelerator_matches({"kind": "gpu"}, {"kind": "cpu"}) is False
+    assert _accelerator_matches({"vendor": "nvidia"}, {"vendor": "amd"}) is False
+    assert _accelerator_matches({"model": "h100"}, {"model": "a100"}) is False
+    assert _accelerator_matches({"memory_gb_min": 80}, {"memory_gb": 40}) is False
+    assert _accelerator_matches({"memory_gb_min": "bad"}, {"memory_gb": 80}) is False
+    assert _accelerator_matches({"count_min": 2}, {"count": 1}) is False
+    assert _accelerator_matches({"count_min": "bad"}, {"count": 2}) is False
+    assert (
+        _accelerator_matches(
+            {"kind": "gpu", "vendor": "nvidia", "memory_gb_min": 40, "count_min": 1},
+            {"kind": "gpu", "vendor": "nvidia", "memory_gb": 80, "count": 8},
+        )
+        is True
+    )
 
 
 def test_seed_defaults_missing_catalog_and_parent_link(monkeypatch, tmp_path) -> None:
     service = ControlPlane.in_memory().roles
-    with pytest.raises(NotFoundError, match='catalog missing'):
-        service.seed_defaults(source=tmp_path / 'missing')
-    source = tmp_path / 'roles.json'
-    source.write_text(json.dumps([{'slug': 'child', 'name': 'Child', 'reports_to': 'parent'}, {'slug': 'parent', 'name': 'Parent'}]))
+    with pytest.raises(NotFoundError, match="catalog missing"):
+        service.seed_defaults(source=tmp_path / "missing")
+    source = tmp_path / "roles.json"
+    source.write_text(
+        json.dumps(
+            [
+                {"slug": "child", "name": "Child", "reports_to": "parent"},
+                {"slug": "parent", "name": "Parent"},
+            ]
+        )
+    )
     roles = service.seed_defaults(source=source)
     by_slug = {role.slug: role for role in roles}
-    assert service.get_role(by_slug['child'].id).reports_to == by_slug['parent'].id
+    assert service.get_role(by_slug["child"].id).reports_to == by_slug["parent"].id

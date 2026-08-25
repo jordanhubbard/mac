@@ -95,9 +95,7 @@ def decomposition_budget(task: Any) -> DecompositionBudget:
     metadata = _metadata_of(task)
 
     if metadata.get(NO_DECOMPOSE_KEY):
-        return DecompositionBudget(
-            authorised=False, reason="the task carries no_decompose"
-        )
+        return DecompositionBudget(authorised=False, reason="the task carries no_decompose")
 
     raw = metadata.get(DECOMPOSITION_KEY)
     if raw is None:
@@ -119,22 +117,16 @@ def decomposition_budget(task: Any) -> DecompositionBudget:
     if isinstance(raw, Mapping):
         return _budget_from(raw.get("max_children"), str(raw.get("kind") or ""))
 
-    return DecompositionBudget(
-        authorised=False, reason="decomposition metadata is not readable"
-    )
+    return DecompositionBudget(authorised=False, reason="decomposition metadata is not readable")
 
 
 def _budget_from(max_children: Any, kind: str) -> DecompositionBudget:
     try:
         limit = int(max_children)
     except (TypeError, ValueError):
-        return DecompositionBudget(
-            authorised=False, reason="max_children is not a number"
-        )
+        return DecompositionBudget(authorised=False, reason="max_children is not a number")
     if limit <= 0:
-        return DecompositionBudget(
-            authorised=False, reason="max_children is not positive"
-        )
+        return DecompositionBudget(authorised=False, reason="max_children is not positive")
     if limit > MAX_AUTHORISED_CHILDREN:
         limit = MAX_AUTHORISED_CHILDREN
     return DecompositionBudget(authorised=True, max_children=limit, kind=kind)
@@ -151,10 +143,9 @@ def check_children_allowed(task: Any, count: int) -> Tuple[bool, str]:
     if not budget.authorised:
         return False, (
             "this task did not authorise decomposition (%s). The submitter "
-            "declares it: metadata.decomposition = {\"max_children\": N, "
-            "\"kind\": \"...\"}. Splitting work nobody asked to split is how a "
-            "one-command task becomes five tasks."
-            % budget.reason
+            'declares it: metadata.decomposition = {"max_children": N, '
+            '"kind": "..."}. Splitting work nobody asked to split is how a '
+            "one-command task becomes five tasks." % budget.reason
         )
     if count > budget.max_children:
         return False, (
@@ -194,8 +185,7 @@ def prompt_section(task: Any, *, is_plan: bool, signals: Any = ()) -> str:
 
     lines = [
         "Task Sizing and Plan Decomposition:",
-        "The submitter AUTHORISED decomposition: at most %d child task(s)."
-        % budget.max_children,
+        "The submitter AUTHORISED decomposition: at most %d child task(s)." % budget.max_children,
     ]
     if budget.kind:
         lines.append("They asked for them to be split by: %s" % budget.kind)
@@ -206,8 +196,7 @@ def prompt_section(task: Any, *, is_plan: bool, signals: Any = ()) -> str:
             "If -- and only if -- the work genuinely has independent deliverables:",
             "  1. Do NOT attempt to implement all of them in one run.",
             "  2. Create at most %d focused child tasks. Each must be independently"
-            " completable and verifiable by a different agent."
-            % budget.max_children,
+            " completable and verifiable by a different agent." % budget.max_children,
             "  3. Post them to the MAC API children endpoint for this task.",
             "  4. Write mac-evidence.json with evidence_type=operator_result, a summary,"
             " and a result listing the child task titles you created.",

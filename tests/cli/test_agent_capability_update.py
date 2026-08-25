@@ -46,8 +46,13 @@ def agent(tmp_path):
     rc, machine = _run(tmp_path, "admin", "machine", "register", "host-a")
     assert rc == 0
     rc, created = _run(
-        tmp_path, "agent", "register", machine["id"], "worker-a",
-        "--capabilities", "python,testing",
+        tmp_path,
+        "agent",
+        "register",
+        machine["id"],
+        "worker-a",
+        "--capabilities",
+        "python,testing",
     )
     assert rc == 0
     return created
@@ -76,8 +81,14 @@ def test_adding_keeps_the_existing_set(tmp_path, agent):
 
 def test_several_capabilities_can_be_added_at_once(tmp_path, agent):
     _run(
-        tmp_path, "agent", "update", agent["id"],
-        "--add-capability", "c", "--add-capability", "make",
+        tmp_path,
+        "agent",
+        "update",
+        agent["id"],
+        "--add-capability",
+        "c",
+        "--add-capability",
+        "make",
     )
 
     assert _caps(tmp_path, agent["id"]) == ["c", "make", "python", "testing"]

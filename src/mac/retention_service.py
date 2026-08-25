@@ -99,6 +99,7 @@ def _size_sql(cfg: Dict[str, Any]) -> str:
         return str(expr)
     return "LENGTH(COALESCE(%s, ''))" % cfg["size_col"]
 
+
 # Maximum rows deleted in a single DELETE statement (bounded batch).
 DEFAULT_BATCH_SIZE = 500
 
@@ -121,6 +122,7 @@ MAX_SCAN_WINDOWS = 25
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
+
 
 class RetentionPolicy:
     """Versioned, per-class retention policy.
@@ -157,7 +159,9 @@ class RetentionPolicy:
                 "unknown retention record_class: %s (allowed: %s)"
                 % (record_class, ", ".join(sorted(RECORD_CLASS_CONFIG)))
             )
-        if max_age_seconds is not None and (not isinstance(max_age_seconds, int) or max_age_seconds <= 0):
+        if max_age_seconds is not None and (
+            not isinstance(max_age_seconds, int) or max_age_seconds <= 0
+        ):
             raise ValidationError("max_age_seconds must be a positive integer")
         if max_rows is not None and (not isinstance(max_rows, int) or max_rows < 0):
             raise ValidationError("max_rows must be a non-negative integer")
@@ -294,6 +298,7 @@ class PruneReport:
 # RetentionService
 # ---------------------------------------------------------------------------
 
+
 class RetentionService:
     """Preserve-by-default retention service.
 
@@ -366,9 +371,7 @@ class RetentionService:
         class.  Otherwise returns one entry per class.
         """
         if record_class is not None and record_class not in RECORD_CLASS_CONFIG:
-            raise ValidationError(
-                "unknown retention record_class: %s" % record_class
-            )
+            raise ValidationError("unknown retention record_class: %s" % record_class)
         classes = [record_class] if record_class else sorted(RECORD_CLASS_CONFIG)
         return [self._class_stats(rc).to_dict() for rc in classes]
 
@@ -395,6 +398,7 @@ class RetentionService:
         now = utcnow()
         # ISO timestamp arithmetic: subtract from now using a datetime delta
         from datetime import datetime, timedelta, timezone as _tz
+
         try:
             dt_now = datetime.fromisoformat(now)
         except Exception:
@@ -578,6 +582,7 @@ class RetentionService:
 
         if policy.max_age_seconds is not None:
             from datetime import datetime, timedelta, timezone as _tz
+
             try:
                 dt_now = datetime.fromisoformat(now)
             except Exception:
@@ -590,11 +595,11 @@ class RetentionService:
                 (cutoff,),
             )
             if total_candidates:
+
                 def _fetch(offset: int, limit: int) -> List[str]:
                     rows = self.store.query_all(
                         "SELECT %s AS pk_val FROM %s WHERE %s < ?"
-                        " ORDER BY %s ASC LIMIT ? OFFSET ?"
-                        % (pk, table, ts_col, ts_col),
+                        " ORDER BY %s ASC LIMIT ? OFFSET ?" % (pk, table, ts_col, ts_col),
                         (cutoff, limit, offset),
                     )
                     return [str(r["pk_val"]) for r in rows]
@@ -736,8 +741,7 @@ class RetentionService:
                 "SELECT %s AS pk_val, %s AS ts_val,"
                 " %s AS sz"
                 " FROM %s WHERE %s IN (%s)"
-                " ORDER BY %s ASC"
-                % (pk, ts_col, size_sql, table, pk, placeholders, ts_col),
+                " ORDER BY %s ASC" % (pk, ts_col, size_sql, table, pk, placeholders, ts_col),
                 tuple(eligible_ids),
             )
             eligible_bytes = sum(int(r["sz"] or 0) for r in sel_rows)
@@ -809,7 +813,9 @@ class RetentionService:
             excluded, reasons = self._exclude_active_task_obs(candidate_ids, excluded, reasons)
 
         elif record_class == "action_events":
-            excluded, reasons = self._exclude_active_task_action_events(candidate_ids, excluded, reasons)
+            excluded, reasons = self._exclude_active_task_action_events(
+                candidate_ids, excluded, reasons
+            )
 
         elif record_class == "evidence_artifacts":
             excluded, reasons = self._exclude_active_task_evidence(candidate_ids, excluded, reasons)
@@ -829,8 +835,7 @@ class RetentionService:
             " INNER JOIN tasks t ON t.id = oe.subject_id"
             " WHERE oe.id IN (%s)"
             " AND oe.subject_type = 'task'"
-            " AND t.state NOT IN ('completed','failed','cancelled')"
-            % placeholders,
+            " AND t.state NOT IN ('completed','failed','cancelled')" % placeholders,
             tuple(candidate_ids),
         )
         active_ids = {str(r["id"]) for r in rows}
@@ -851,8 +856,7 @@ class RetentionService:
             " INNER JOIN tasks t ON t.id = ae.task_id"
             " WHERE ae.event_id IN (%s)"
             " AND ae.task_id IS NOT NULL"
-            " AND t.state NOT IN ('completed','failed','cancelled')"
-            % placeholders,
+            " AND t.state NOT IN ('completed','failed','cancelled')" % placeholders,
             tuple(candidate_ids),
         )
         active_ids = {str(r["event_id"]) for r in rows}
@@ -872,8 +876,7 @@ class RetentionService:
             "SELECT ea.id FROM evidence_artifacts ea"
             " INNER JOIN tasks t ON t.id = ea.task_id"
             " WHERE ea.id IN (%s)"
-            " AND t.state NOT IN ('completed','failed','cancelled')"
-            % placeholders,
+            " AND t.state NOT IN ('completed','failed','cancelled')" % placeholders,
             tuple(candidate_ids),
         )
         active_ids = {str(r["id"]) for r in rows}

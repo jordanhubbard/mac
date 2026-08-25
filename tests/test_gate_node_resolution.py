@@ -94,10 +94,13 @@ def test_resolves_ci_workflow_node_version(tmp_path):
 
 
 def test_nvmrc_wins_over_engines(tmp_path):
-    assert _resolve(
-        tmp_path,
-        {".nvmrc": "18\n", "package.json": '{"engines": {"node": "20"}}'},
-    ) == "18"
+    assert (
+        _resolve(
+            tmp_path,
+            {".nvmrc": "18\n", "package.json": '{"engines": {"node": "20"}}'},
+        )
+        == "18"
+    )
 
 
 def test_no_declaration_resolves_empty(tmp_path):

@@ -86,9 +86,10 @@ def test_environment_file_native_and_version_helper_edges(
     )
     assert contract._detect_command_version("tool") is None
     assert contract._check_version_floor("x", required="1", detected=None)["status"] == "fail"
-    assert contract._check_version_floor(
-        "x", required="invalid", detected="invalid"
-    )["status"] == "warn"
+    assert (
+        contract._check_version_floor("x", required="invalid", detected="invalid")["status"]
+        == "warn"
+    )
     with pytest.raises(ValueError, match="no digits"):
         contract._version_tuple("invalid")
 
@@ -110,9 +111,10 @@ def test_fleet_learning_remote_transport_failure_and_payload_edges(
     assert fleet_learning.repository_transport("./repo") == "local"
     assert fleet_learning.repository_transport("other") == "unknown"
 
-    assert fleet_learning._credential_source_for_http(
-        "https://user@example.com/repo", {}
-    ) == "embedded"
+    assert (
+        fleet_learning._credential_source_for_http("https://user@example.com/repo", {})
+        == "embedded"
+    )
     assert fleet_learning._credential_source_for_http("not a url", {}) == "ambient:https"
 
     monkeypatch.setattr(
@@ -120,25 +122,37 @@ def test_fleet_learning_remote_transport_failure_and_payload_edges(
         "detect_host",
         lambda _remote: (_ for _ in ()).throw(ValueError("unknown")),
     )
-    assert fleet_learning._credential_source_for_http(
-        "https://example.invalid/repo", {}
-    ) == "ambient:https"
+    assert (
+        fleet_learning._credential_source_for_http("https://example.invalid/repo", {})
+        == "ambient:https"
+    )
 
-    assert fleet_learning.resolve_git_remote_access(
-        "git@example.com:org/repo.git", environ={}
-    ).credential_source == "ssh-agent-or-key"
-    assert fleet_learning.resolve_git_remote_access(
-        "/tmp/repo", environ={}
-    ).credential_source == "local"
-    assert fleet_learning.resolve_git_remote_access(
-        "git://example.com/repo", environ={}
-    ).credential_source == "anonymous"
-    assert fleet_learning.resolve_git_remote_access(
-        "other", environ={}
-    ).credential_source == "ambient:unknown"
+    assert (
+        fleet_learning.resolve_git_remote_access(
+            "git@example.com:org/repo.git", environ={}
+        ).credential_source
+        == "ssh-agent-or-key"
+    )
+    assert (
+        fleet_learning.resolve_git_remote_access("/tmp/repo", environ={}).credential_source
+        == "local"
+    )
+    assert (
+        fleet_learning.resolve_git_remote_access(
+            "git://example.com/repo", environ={}
+        ).credential_source
+        == "anonymous"
+    )
+    assert (
+        fleet_learning.resolve_git_remote_access("other", environ={}).credential_source
+        == "ambient:unknown"
+    )
 
     assert fleet_learning.classify_repository_access_failure("permission denied") == "authorization"
-    assert fleet_learning.classify_repository_access_failure("repository not found") == "repository_missing"
+    assert (
+        fleet_learning.classify_repository_access_failure("repository not found")
+        == "repository_missing"
+    )
     assert fleet_learning.classify_repository_access_failure("connection refused") == "network"
     assert fleet_learning.classify_repository_access_failure("non-fast-forward") == "conflict"
     assert "recent successful peer" in fleet_learning._recommendation(
@@ -234,9 +248,7 @@ def test_provisioning_command_inventory_filters_and_lifecycle_edges(
         reason="need command", detail={"required_commands": ["python"]}
     )
     with pytest.raises(NotFoundError, match="agent not found"):
-        cp.provisioning._assert_agent_commands_match_request(
-            command_request, "missing"
-        )
+        cp.provisioning._assert_agent_commands_match_request(command_request, "missing")
 
     no_caps = cp.provisioning.request_agent(reason="bad caps")
     original = provisioning_service.json_loads

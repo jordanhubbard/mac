@@ -31,7 +31,9 @@ def _function(name: str) -> str:
     return match.group(0)
 
 
-def _run(*, agent_dir: str | None, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    *, agent_dir: str | None, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env_lines = ["log() { printf '%s\\n' \"$*\" >&2; }"]
     if agent_dir is not None:
         env_lines.append(f"MAC_HERMES_AGENT_DIR={agent_dir!r}")
@@ -45,9 +47,7 @@ def _run(*, agent_dir: str | None, extra_env: dict[str, str] | None = None) -> s
             "echo REACHED_END",
         ]
     )
-    return subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    return subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
 
 
 def test_bridge_is_inert_with_no_agent_dir_configured() -> None:

@@ -56,12 +56,8 @@ class HgxAutoscalerConfig:
     enabled: bool = False
     interval_seconds: float = DEFAULT_INTERVAL_SECONDS
     initial_delay_seconds: float = DEFAULT_INITIAL_DELAY_SECONDS
-    scale_up_stabilization_seconds: float = (
-        DEFAULT_SCALE_UP_STABILIZATION_SECONDS
-    )
-    scale_down_stabilization_seconds: float = (
-        DEFAULT_SCALE_DOWN_STABILIZATION_SECONDS
-    )
+    scale_up_stabilization_seconds: float = DEFAULT_SCALE_UP_STABILIZATION_SECONDS
+    scale_down_stabilization_seconds: float = DEFAULT_SCALE_DOWN_STABILIZATION_SECONDS
     spare_min_age_seconds: float = DEFAULT_SPARE_MIN_AGE_SECONDS
     scale_up_step: int = 1
     scale_down_step: int = 1
@@ -105,9 +101,7 @@ class HgxAutoscalerConfig:
         )
 
     @classmethod
-    def from_env(
-        cls, environ: Optional[Mapping[str, str]] = None
-    ) -> "HgxAutoscalerConfig":
+    def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "HgxAutoscalerConfig":
         env = environ
         config = cls(
             enabled=env_bool("MAC_HGX_AUTOSCALE_ENABLED", False, environ=env),
@@ -181,9 +175,7 @@ class HgxAutoscalerConfig:
                 maximum=100,
                 environ=env,
             ),
-            cluster=env_str(
-                "MAC_HGX_AUTOSCALE_CLUSTER", "gke-newhouse", environ=env
-            ),
+            cluster=env_str("MAC_HGX_AUTOSCALE_CLUSTER", "gke-newhouse", environ=env),
             gpu_count=env_int(
                 "MAC_HGX_AUTOSCALE_GPU",
                 1,
@@ -234,15 +226,9 @@ class HgxAutoscalerConfig:
                 maximum=3600.0,
                 environ=env,
             ),
-            state_path=env_str(
-                "MAC_HGX_AUTOSCALE_STATE_FILE", DEFAULT_STATE_PATH, environ=env
-            ),
-            registered_agents_file=env_str(
-                "MAC_HGX_REGISTERED_AGENTS_FILE", "", environ=env
-            ),
-            name_prefix=env_str(
-                "MAC_HGX_AUTOSCALE_NAME_PREFIX", "mac-fungible", environ=env
-            ),
+            state_path=env_str("MAC_HGX_AUTOSCALE_STATE_FILE", DEFAULT_STATE_PATH, environ=env),
+            registered_agents_file=env_str("MAC_HGX_REGISTERED_AGENTS_FILE", "", environ=env),
+            name_prefix=env_str("MAC_HGX_AUTOSCALE_NAME_PREFIX", "mac-fungible", environ=env),
         )
         error = ""
         try:
@@ -269,11 +255,7 @@ class HgxAutoscaler:
     ) -> None:
         self.control_plane = control_plane
         self.config = config
-        policy = (
-            config.capacity_policy()
-            if not config.configuration_error
-            else HgxCapacityPolicy()
-        )
+        policy = config.capacity_policy() if not config.configuration_error else HgxCapacityPolicy()
         self.controller = controller or HgxElasticCapacityController(
             provider=HgxProvider(
                 binary=config.hgx_binary,
@@ -306,9 +288,7 @@ class HgxAutoscaler:
                 return False
             self._stop_event.clear()
             self._wake_event.clear()
-            self.control_plane.provisioning.register_request_listener(
-                self._on_provisioning_request
-            )
+            self.control_plane.provisioning.register_request_listener(self._on_provisioning_request)
             thread = threading.Thread(
                 target=self._loop,
                 name="mac-hgx-autoscaler",
@@ -316,17 +296,13 @@ class HgxAutoscaler:
             )
             self._thread = thread
             thread.start()
-        self._observe(
-            "hgx.autoscaler.started", "info", {"config": self.config.to_dict()}
-        )
+        self._observe("hgx.autoscaler.started", "info", {"config": self.config.to_dict()})
         return True
 
     def stop(self, timeout: float = 5.0) -> bool:
         self._stop_event.set()
         self._wake_event.set()
-        self.control_plane.provisioning.unregister_request_listener(
-            self._on_provisioning_request
-        )
+        self.control_plane.provisioning.unregister_request_listener(self._on_provisioning_request)
         with self._state_lock:
             thread = self._thread
         if thread is not None and thread is not threading.current_thread():
@@ -348,9 +324,7 @@ class HgxAutoscaler:
             "last_report": report,
         }
 
-    def _on_provisioning_request(
-        self, _request: AgentProvisioningRequest
-    ) -> None:
+    def _on_provisioning_request(self, _request: AgentProvisioningRequest) -> None:
         self._wake_event.set()
 
     def _loop(self) -> None:
@@ -403,10 +377,7 @@ class HgxAutoscaler:
                         pending_request_count=sustained_count,
                         registered_agents=registered_agents,
                     )
-                elif (
-                    raw_count == 0
-                    and zero_age >= self.config.scale_down_stabilization_seconds
-                ):
+                elif raw_count == 0 and zero_age >= self.config.scale_down_stabilization_seconds:
                     action = "scale_down_reconcile"
                     capacity_result = self.controller.retire_spare(
                         pending_request_count=0,
@@ -429,9 +400,7 @@ class HgxAutoscaler:
                 "schema": AUTOSCALER_SCHEMA,
                 "status": "error" if error_class else "ok",
                 "trigger": trigger,
-                "recorded_at": datetime.fromtimestamp(
-                    now, tz=timezone.utc
-                ).isoformat(),
+                "recorded_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
                 "action": action,
                 "pending_request_count": raw_count,
                 "sustained_pending_request_count": sustained_count,
@@ -483,15 +452,11 @@ class HgxAutoscaler:
             try:
                 task = self.control_plane.get_task(request.task_id)
             except NotFoundError:
-                self.control_plane.provisioning.cancel_request(
-                    request.id, reason="task-not-found"
-                )
+                self.control_plane.provisioning.cancel_request(request.id, reason="task-not-found")
                 reconciled.append(request.id)
                 continue
             if task.state in TERMINAL_TASK_STATES:
-                self.control_plane.provisioning.cancel_request(
-                    request.id, reason="task-terminal"
-                )
+                self.control_plane.provisioning.cancel_request(request.id, reason="task-terminal")
                 reconciled.append(request.id)
                 continue
             if request.reason == "dispatch.no_eligible_agent" and (
@@ -514,13 +479,9 @@ class HgxAutoscaler:
         return active, reconciled, ignored
 
     @staticmethod
-    def _request_age_seconds(
-        request: AgentProvisioningRequest, now: float
-    ) -> float:
+    def _request_age_seconds(request: AgentProvisioningRequest, now: float) -> float:
         try:
-            created = datetime.fromisoformat(
-                request.created_at.replace("Z", "+00:00")
-            ).timestamp()
+            created = datetime.fromisoformat(request.created_at.replace("Z", "+00:00")).timestamp()
         except (AttributeError, ValueError):
             return 0.0
         return max(0.0, now - created)
@@ -532,9 +493,7 @@ class HgxAutoscaler:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            raise HgxError(
-                "registered HGX agent mapping is unavailable or invalid"
-            ) from exc
+            raise HgxError("registered HGX agent mapping is unavailable or invalid") from exc
         return value
 
     def _record_metrics(self, report: Mapping[str, Any]) -> None:
@@ -569,13 +528,9 @@ class HgxAutoscaler:
                     detail={"reasons": dict(ignored)},
                 )
             except Exception:  # noqa: BLE001 - metrics cannot block capacity
-                _log.warning(
-                    "could not record ignored HGX request metric", exc_info=True
-                )
+                _log.warning("could not record ignored HGX request metric", exc_info=True)
 
-    def _observe(
-        self, event_type: str, level: str, detail: Dict[str, Any]
-    ) -> None:
+    def _observe(self, event_type: str, level: str, detail: Dict[str, Any]) -> None:
         try:
             self.control_plane.record_log(
                 event_type,

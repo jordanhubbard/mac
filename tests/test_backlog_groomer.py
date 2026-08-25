@@ -31,27 +31,37 @@ def test_config_defaults_disabled():
 
 
 def test_config_enabled_and_bounds():
-    cfg = BacklogGroomerConfig.from_env({
-        "MAC_BACKLOG_GROOM_ENABLED": "1",
-        "MAC_BACKLOG_GROOM_MIN_READY": "3",
-        "MAC_BACKLOG_GROOM_BACKLOG_SIZE": "7",
-    })
+    cfg = BacklogGroomerConfig.from_env(
+        {
+            "MAC_BACKLOG_GROOM_ENABLED": "1",
+            "MAC_BACKLOG_GROOM_MIN_READY": "3",
+            "MAC_BACKLOG_GROOM_BACKLOG_SIZE": "7",
+        }
+    )
     assert cfg.active is True and cfg.min_ready == 3 and cfg.backlog_size == 7
 
 
 def test_config_out_of_range_flags_error():
-    cfg = BacklogGroomerConfig.from_env({
-        "MAC_BACKLOG_GROOM_ENABLED": "1",
-        "MAC_BACKLOG_GROOM_INTERVAL_SECONDS": "1",  # below floor
-    })
+    cfg = BacklogGroomerConfig.from_env(
+        {
+            "MAC_BACKLOG_GROOM_ENABLED": "1",
+            "MAC_BACKLOG_GROOM_INTERVAL_SECONDS": "1",  # below floor
+        }
+    )
     assert cfg.configuration_error and cfg.active is False
 
 
 def test_policy_parsing():
-    p = ProjectGroomingPolicy.from_metadata({"backlog_grooming": {
-        "enabled": True, "backlog_size": "8", "min_ready": 1,
-        "default_capabilities": ["python", " ", 3],
-    }})
+    p = ProjectGroomingPolicy.from_metadata(
+        {
+            "backlog_grooming": {
+                "enabled": True,
+                "backlog_size": "8",
+                "min_ready": 1,
+                "default_capabilities": ["python", " ", 3],
+            }
+        }
+    )
     assert p.enabled and p.backlog_size == 8 and p.min_ready == 1
     assert p.default_capabilities == ("python",)
     assert ProjectGroomingPolicy.from_metadata({}).enabled is False
@@ -96,14 +106,26 @@ class FakeCP:
     def list_tasks(self):
         return list(self._tasks)
 
-    def create_task(self, title, *, description="", project=None, priority=0,
-                    required_capabilities=None, metadata=None, actor="human", **_):
+    def create_task(
+        self,
+        title,
+        *,
+        description="",
+        project=None,
+        priority=0,
+        required_capabilities=None,
+        metadata=None,
+        actor="human",
+        **_,
+    ):
         self._n += 1
-        t = FakeTask(id="task_%d" % self._n, project=project or "", state="open",
-                     metadata=metadata or {})
+        t = FakeTask(
+            id="task_%d" % self._n, project=project or "", state="open", metadata=metadata or {}
+        )
         self._tasks.append(t)
-        self.created.append({"title": title, "project": project, "metadata": metadata,
-                             "description": description})
+        self.created.append(
+            {"title": title, "project": project, "metadata": metadata, "description": description}
+        )
         return t
 
     def record_log(self, *a, **k):
@@ -116,8 +138,7 @@ def _proj(name="mac", url="https://github.com/o/r", **groom):
 
 
 def _groomer(cp, **cfg):
-    base = {"enabled": True, "min_ready": 2, "regroom_interval_seconds": 3600,
-            "backlog_size": 5}
+    base = {"enabled": True, "min_ready": 2, "regroom_interval_seconds": 3600, "backlog_size": 5}
     base.update(cfg)
     return BacklogGroomer(cp, BacklogGroomerConfig(**base))
 
@@ -157,8 +178,13 @@ def test_skips_when_not_idle():
 def test_grooming_tasks_do_not_count_as_project_work():
     # An open grooming task must NOT satisfy the idle threshold (else grooming
     # would suppress itself), but it DOES block stacking another.
-    groom = FakeTask("g", "mac", "open", {"origin": {"type": "backlog_grooming"}},
-                     created_at=_iso(datetime.now(timezone.utc)))
+    groom = FakeTask(
+        "g",
+        "mac",
+        "open",
+        {"origin": {"type": "backlog_grooming"}},
+        created_at=_iso(datetime.now(timezone.utc)),
+    )
     cp = FakeCP([_proj()], tasks=[groom])
     report = _groomer(cp).run_once()
     assert report["groomed_count"] == 0
@@ -173,9 +199,13 @@ def test_skips_non_repo_project():
 
 def test_cadence_blocks_regroom():
     # A completed grooming task 10 minutes ago; regroom interval is 1h -> skip.
-    recent = FakeTask("g", "mac", "completed",
-                      {"origin": {"type": "backlog_grooming"}},
-                      created_at=_iso(datetime.now(timezone.utc) - timedelta(minutes=10)))
+    recent = FakeTask(
+        "g",
+        "mac",
+        "completed",
+        {"origin": {"type": "backlog_grooming"}},
+        created_at=_iso(datetime.now(timezone.utc) - timedelta(minutes=10)),
+    )
     cp = FakeCP([_proj()], tasks=[recent])
     report = _groomer(cp, regroom_interval_seconds=3600).run_once()
     assert report["groomed_count"] == 0
@@ -183,9 +213,13 @@ def test_cadence_blocks_regroom():
 
 
 def test_regrooms_after_cadence_elapses():
-    old = FakeTask("g", "mac", "completed",
-                   {"origin": {"type": "backlog_grooming"}},
-                   created_at=_iso(datetime.now(timezone.utc) - timedelta(hours=8)))
+    old = FakeTask(
+        "g",
+        "mac",
+        "completed",
+        {"origin": {"type": "backlog_grooming"}},
+        created_at=_iso(datetime.now(timezone.utc) - timedelta(hours=8)),
+    )
     cp = FakeCP([_proj()], tasks=[old])
     report = _groomer(cp, regroom_interval_seconds=3600).run_once()
     assert report["groomed_count"] == 1

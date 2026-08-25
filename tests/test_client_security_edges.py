@@ -50,8 +50,14 @@ def client_home(tmp_path, monkeypatch):
         (lambda m: m.update(connection=[]), "must be an object"),
         (lambda m: m.update(connection={"api_url": "ftp://host"}), r"http\(s\) URL"),
         (lambda m: m.update(connection={"api_url": "https://u:p@host"}), "must not contain"),
-        (lambda m: m.update(connection={"api_url": "https://host", "mode": "bad"}), "direct or ssh"),
-        (lambda m: m.update(connection={"api_url": "https://host", "mode": "ssh-tunnel"}), "require ssh.target"),
+        (
+            lambda m: m.update(connection={"api_url": "https://host", "mode": "bad"}),
+            "direct or ssh",
+        ),
+        (
+            lambda m: m.update(connection={"api_url": "https://host", "mode": "ssh-tunnel"}),
+            "require ssh.target",
+        ),
         (lambda m: m.update(ssh={"host_key_policy": "bad"}), "host_key_policy"),
         (lambda m: m["credential"].update(token="short"), "token is missing"),
         (lambda m: m["credential"].update(id=""), "credential.id"),
@@ -122,7 +128,9 @@ def test_stored_profile_rejects_secrets_permissions_and_escape(client_home) -> N
         profiles._credential_path_from_profile({"credential": {"path": "../../outside"}})
 
 
-def test_profile_load_activation_removal_and_manifest_reader(client_home, monkeypatch, tmp_path) -> None:
+def test_profile_load_activation_removal_and_manifest_reader(
+    client_home, monkeypatch, tmp_path
+) -> None:
     with pytest.raises(profiles.ClientProfileError, match="does not exist"):
         profiles.activate_profile("missing")
     with pytest.raises(profiles.ClientProfileError, match="no active"):
@@ -229,9 +237,7 @@ def test_fleet_registry_and_route_error_matrix(tmp_path) -> None:
         fleet_ssh._optional_int("bad", field="port")
     with pytest.raises(fleet_ssh.FleetSshError, match="between"):
         fleet_ssh._optional_int(0, field="port")
-    assert fleet_ssh._normalize_agents({"a": {"target": "h"}, "bad": []}) == {
-        "a": {"target": "h"}
-    }
+    assert fleet_ssh._normalize_agents({"a": {"target": "h"}, "bad": []}) == {"a": {"target": "h"}}
     assert fleet_ssh._normalize_agents(["bad", {"name": "", "target": "h"}]) == {}
     with pytest.raises(fleet_ssh.FleetSshError, match="require hub_agent"):
         fleet_ssh.fleet_entries({"fleets": [{}]})

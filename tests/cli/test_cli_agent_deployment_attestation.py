@@ -35,9 +35,7 @@ class _RecordingPlane:
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ...]] = []
 
-    def recover_agent_attestation_key(
-        self, agent_id: str, probe: dict[str, Any]
-    ) -> str:
+    def recover_agent_attestation_key(self, agent_id: str, probe: dict[str, Any]) -> str:
         self.calls.append(("recover", agent_id, probe))
         return "replacement-attestation-key-" + "x" * 40
 

@@ -177,9 +177,7 @@ def test_a_general_write_token_cannot_reach_a_debug_shell(method, path, body):
             method, target, headers={"Authorization": "Bearer %s" % token}, json=body
         )
         assert response.status_code == 403, (token, target)
-    ok = client.request(
-        method, target, headers={"Authorization": "Bearer admin"}, json=body
-    )
+    ok = client.request(method, target, headers={"Authorization": "Bearer admin"}, json=body)
     assert ok.status_code == 200, target
 
 

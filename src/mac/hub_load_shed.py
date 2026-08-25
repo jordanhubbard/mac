@@ -52,9 +52,9 @@ __all__ = [
 class BreakerState(str, Enum):
     """Observable load-shed states for the co-located hub worker."""
 
-    CLAIMING = "claiming"   # below LOW-water: safe to claim new work
-    SHEDDING = "shedding"   # above HIGH-water and idle: refuse to claim
-    DRAINING = "draining"   # above HIGH-water with work in flight: pause/drain
+    CLAIMING = "claiming"  # below LOW-water: safe to claim new work
+    SHEDDING = "shedding"  # above HIGH-water and idle: refuse to claim
+    DRAINING = "draining"  # above HIGH-water with work in flight: pause/drain
 
 
 @dataclass(frozen=True)
@@ -89,11 +89,11 @@ class HubLoadShedConfig:
     max_concurrent_tasks: int = 1
     # Load-shed hysteresis watermarks. HIGH must exceed LOW or hysteresis
     # collapses into a flapping single threshold.
-    load_high: float = 0.85           # system load / cores
+    load_high: float = 0.85  # system load / cores
     load_low: float = 0.55
-    cpu_high: float = 70.0            # control-plane process CPU %
+    cpu_high: float = 70.0  # control-plane process CPU %
     cpu_low: float = 40.0
-    rss_high_mb: float = 0.0         # 0 => RSS does not trip (opt-in)
+    rss_high_mb: float = 0.0  # 0 => RSS does not trip (opt-in)
     rss_low_mb: float = 0.0
 
     def normalized(self) -> "HubLoadShedConfig":
@@ -122,15 +122,21 @@ class HubLoadShedConfig:
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "HubLoadShedConfig":
         env = os.environ if environ is None else environ
         return cls(
-            test_jobs_fraction=env_float("MAC_HUB_TEST_JOBS_FRACTION", cls.test_jobs_fraction, environ=env),
+            test_jobs_fraction=env_float(
+                "MAC_HUB_TEST_JOBS_FRACTION", cls.test_jobs_fraction, environ=env
+            ),
             min_test_jobs=env_int("MAC_HUB_MIN_TEST_JOBS", cls.min_test_jobs, environ=env),
             max_test_jobs=env_int("MAC_HUB_MAX_TEST_JOBS", cls.max_test_jobs, environ=env),
-            max_concurrent_tasks=env_int("MAC_HUB_MAX_CONCURRENT_TASKS", cls.max_concurrent_tasks, environ=env),
+            max_concurrent_tasks=env_int(
+                "MAC_HUB_MAX_CONCURRENT_TASKS", cls.max_concurrent_tasks, environ=env
+            ),
             load_high=env_float("MAC_HUB_LOAD_SHED_HIGH", cls.load_high, environ=env),
             load_low=env_float("MAC_HUB_LOAD_SHED_LOW", cls.load_low, environ=env),
             cpu_high=env_float("MAC_HUB_CONTROL_PLANE_CPU_HIGH", cls.cpu_high, environ=env),
             cpu_low=env_float("MAC_HUB_CONTROL_PLANE_CPU_LOW", cls.cpu_low, environ=env),
-            rss_high_mb=env_float("MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB", cls.rss_high_mb, environ=env),
+            rss_high_mb=env_float(
+                "MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB", cls.rss_high_mb, environ=env
+            ),
             rss_low_mb=env_float("MAC_HUB_CONTROL_PLANE_RSS_LOW_MB", cls.rss_low_mb, environ=env),
         ).normalized()
 
@@ -311,10 +317,10 @@ class BreakerSnapshot:
     """Observable breaker state for operators / the API."""
 
     state: BreakerState
-    metric: str            # which signal is driving the current decision
-    value: float           # its most recent sampled value
-    high: float            # the HIGH-water threshold for that metric
-    low: float             # the LOW-water threshold for that metric
+    metric: str  # which signal is driving the current decision
+    value: float  # its most recent sampled value
+    high: float  # the HIGH-water threshold for that metric
+    low: float  # the LOW-water threshold for that metric
     tasks_in_flight: int
     max_concurrent_tasks: int
     trips: int

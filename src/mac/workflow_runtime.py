@@ -141,8 +141,7 @@ class WorkflowRuntime:
         first_node = self._node_by_key(definition, start_edge["to_node_key"])
         if first_node is None:
             raise ValidationError(
-                "workflow start edge points to unknown node %r"
-                % start_edge.get("to_node_key")
+                "workflow start edge points to unknown node %r" % start_edge.get("to_node_key")
             )
         run_id = new_id("run")
         now = utcnow()
@@ -341,10 +340,7 @@ class WorkflowRuntime:
         decoded_cursor = self._decode_tick_cursor(cursor)
         if decoded_cursor is not None:
             cursor_action_at, cursor_id = decoded_cursor
-            cursor_clause = (
-                "AND (wr.next_action_at > ? OR "
-                "(wr.next_action_at = ? AND wr.id > ?)) "
-            )
+            cursor_clause = "AND (wr.next_action_at > ? OR (wr.next_action_at = ? AND wr.id > ?)) "
             params.extend([cursor_action_at, cursor_action_at, cursor_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
@@ -467,9 +463,7 @@ class WorkflowRuntime:
         now = utcnow()
         cancelled_task_id: Optional[str] = None
         with self.store.transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM workflow_runs WHERE id = ?", (run_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM workflow_runs WHERE id = ?", (run_id,)).fetchone()
             if row is None:
                 raise NotFoundError("workflow run not found: %s" % run_id)
             current = self._run_from_row(row)
@@ -486,9 +480,7 @@ class WorkflowRuntime:
                     TaskState.CANCELLED.value,
                 }:
                     if self._transition_task_in_transaction is None:
-                        raise TransitionError(
-                            "transactional task transition is unavailable"
-                        )
+                        raise TransitionError("transactional task transition is unavailable")
                     self._transition_task_in_transaction(
                         conn,
                         current.current_task_id,
@@ -564,16 +556,13 @@ class WorkflowRuntime:
             return run
         task_metadata = json_loads(row["metadata"], {})
         node_key = row["workflow_node_key"]
-        condition = self._terminal_to_condition(
-            terminal_state, metadata=task_metadata
-        )
+        condition = self._terminal_to_condition(terminal_state, metadata=task_metadata)
         # wf-04: if this was a plan-type node, harvest its evidence's
         # plan_payloads and store them on the run's context so the
         # subsequent _spawn_node_task calls can use them to parameterize
         # downstream node tasks.
-        if (
-            terminal_state == TaskState.COMPLETED.value
-            and self._is_plan_node(run.definition_snapshot, node_key)
+        if terminal_state == TaskState.COMPLETED.value and self._is_plan_node(
+            run.definition_snapshot, node_key
         ):
             self._merge_plan_payloads_from_evidence(run.id, task_id)
             run = self.get_run(run.id)
@@ -584,10 +573,7 @@ class WorkflowRuntime:
             return False
         for node in (definition or {}).get("nodes") or []:
             if node.get("node_key") == node_key:
-                return (
-                    str(node.get("node_type") or "task").strip().lower()
-                    == NodeType.PLAN.value
-                )
+                return str(node.get("node_type") or "task").strip().lower() == NodeType.PLAN.value
         return False
 
     def _merge_plan_payloads_from_evidence(self, run_id: str, task_id: str) -> None:
@@ -609,10 +595,9 @@ class WorkflowRuntime:
         # Accept either metadata.plan_payloads (flat) or
         # metadata.verification.plan_payloads (nested) — agents may use
         # the same verification envelope as other evidence types.
-        payloads = (
-            evidence_meta.get("plan_payloads")
-            or (evidence_meta.get("verification") or {}).get("plan_payloads")
-        )
+        payloads = evidence_meta.get("plan_payloads") or (
+            evidence_meta.get("verification") or {}
+        ).get("plan_payloads")
         if not isinstance(payloads, dict) or not payloads:
             return
         # Filter to dict-of-dicts (each value must be node-payload-shaped).
@@ -620,14 +605,13 @@ class WorkflowRuntime:
         for key, value in payloads.items():
             if isinstance(value, dict):
                 clean[str(key)] = {
-                    k: v for k, v in value.items()
+                    k: v
+                    for k, v in value.items()
                     if k in {"instructions", "metadata", "required_capabilities"}
                 }
         if not clean:
             return
-        run_row = self.store.query_one(
-            "SELECT context FROM workflow_runs WHERE id = ?", (run_id,)
-        )
+        run_row = self.store.query_one("SELECT context FROM workflow_runs WHERE id = ?", (run_id,))
         context = json_loads(run_row["context"] if run_row else None, {}) or {}
         existing = context.get("plan_payloads") or {}
         if not isinstance(existing, dict):
@@ -737,13 +721,9 @@ class WorkflowRuntime:
 
         initial_target = self._node_by_key(definition, edge["to_node_key"])
         if initial_target is None:
-            raise ValidationError(
-                "edge points at unknown node %r" % edge.get("to_node_key")
-            )
+            raise ValidationError("edge points at unknown node %r" % edge.get("to_node_key"))
         pre_decisions = (
-            (run.context or {}).get("pre_decisions")
-            if isinstance(run.context, dict)
-            else None
+            (run.context or {}).get("pre_decisions") if isinstance(run.context, dict) else None
         )
         target, skipped_events = self._plan_pre_decided(
             definition,
@@ -885,9 +865,7 @@ class WorkflowRuntime:
             reservation_at = run.updated_at
 
         plan_payloads = (
-            (run.context or {}).get("plan_payloads")
-            if isinstance(run.context, dict)
-            else None
+            (run.context or {}).get("plan_payloads") if isinstance(run.context, dict) else None
         )
         workflow = None
         if from_key == "":
@@ -1002,14 +980,11 @@ class WorkflowRuntime:
                 (task_id,),
             )
             if existing is not None:
-                if (
-                    str(existing["workflow_run_id"] or "") != run_id
-                    or str(existing["workflow_node_key"] or "")
-                    != str(node["node_key"])
-                ):
+                if str(existing["workflow_run_id"] or "") != run_id or str(
+                    existing["workflow_node_key"] or ""
+                ) != str(node["node_key"]):
                     raise ValidationError(
-                        "reserved workflow task %s belongs to another run or node"
-                        % task_id
+                        "reserved workflow task %s belongs to another run or node" % task_id
                     )
                 return self._get_task(task_id)
         # wf-04: if a plan node already ran and emitted a payload for
@@ -1069,9 +1044,7 @@ class WorkflowRuntime:
         if hardware_requirements:
             metadata["hardware"] = hardware_requirements
         if tenant_id is not None:
-            metadata.setdefault(
-                "origin", {"tenant_id": tenant_id, "type": "workflow_run"}
-            )
+            metadata.setdefault("origin", {"tenant_id": tenant_id, "type": "workflow_run"})
         if node.get("node_type") == "approval":
             metadata["requires_approval"] = True
         # wf-04: a plan-typed node is just a task that produces a
@@ -1127,9 +1100,9 @@ class WorkflowRuntime:
         if stale_after is None:
             return _NO_ACTION_AT
         try:
-            return (
-                parse_time(activated_at) + timedelta(seconds=stale_after)
-            ).isoformat(timespec="microseconds")
+            return (parse_time(activated_at) + timedelta(seconds=stale_after)).isoformat(
+                timespec="microseconds"
+            )
         except (TypeError, ValueError):
             return _NO_ACTION_AT
 
@@ -1141,9 +1114,7 @@ class WorkflowRuntime:
             return _NO_ACTION_AT
         if timeout_minutes <= 0:
             return _NO_ACTION_AT
-        return (activated + timedelta(minutes=timeout_minutes)).isoformat(
-            timespec="microseconds"
-        )
+        return (activated + timedelta(minutes=timeout_minutes)).isoformat(timespec="microseconds")
 
     def _backfill_next_action_at(self) -> None:
         """Populate the indexed deadline for runs created before the column.
@@ -1195,9 +1166,7 @@ class WorkflowRuntime:
     def _encode_tick_cursor(self, action_at: str, run_id: str) -> str:
         return json_dumps({"action_at": action_at, "run_id": run_id})
 
-    def _decode_tick_cursor(
-        self, cursor: Optional[str]
-    ) -> Optional[tuple[str, str]]:
+    def _decode_tick_cursor(self, cursor: Optional[str]) -> Optional[tuple[str, str]]:
         if not cursor:
             return None
         try:
@@ -1211,9 +1180,7 @@ class WorkflowRuntime:
         return action_at, run_id
 
     def _reservation_stale_after_seconds(self) -> Optional[int]:
-        raw = os.environ.get(
-            "MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "60"
-        ).strip()
+        raw = os.environ.get("MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS", "60").strip()
         try:
             return max(0, int(raw))
         except (TypeError, ValueError):
@@ -1231,9 +1198,7 @@ class WorkflowRuntime:
         if row is None or not row["workflow_node_key"]:
             return None
         metadata = json_loads(row["metadata"], {})
-        condition = self._terminal_to_condition(
-            str(row["state"]), metadata=metadata
-        )
+        condition = self._terminal_to_condition(str(row["state"]), metadata=metadata)
         return str(row["workflow_node_key"]), condition, run.current_task_id
 
     def _write_staged_history(
@@ -1387,13 +1352,11 @@ class WorkflowRuntime:
             normalized[str(key)] = normalized_value
         if bad_keys:
             raise ValidationError(
-                "pre_decisions reference unknown or non-approval nodes: %s"
-                % ", ".join(bad_keys)
+                "pre_decisions reference unknown or non-approval nodes: %s" % ", ".join(bad_keys)
             )
         if bad_values:
             raise ValidationError(
-                "pre_decisions values must be `approved` or `rejected`: %s"
-                % ", ".join(bad_values)
+                "pre_decisions values must be `approved` or `rejected`: %s" % ", ".join(bad_values)
             )
         return normalized
 

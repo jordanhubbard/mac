@@ -127,9 +127,7 @@ def test_mac_worker_cli_defaults_to_deployed_hub_env(monkeypatch):
     from mac.fleet_env import resolve_first
 
     assert (
-        resolve_first(
-            ["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet
-        )
+        resolve_first(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet)
         == "worker-token"
     )
     assert args.hermes_instance_id == "hermes_rocky"
@@ -479,7 +477,9 @@ def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
-def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: Path, semantic_reviewer_on):
+def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
+    tmp_path: Path, semantic_reviewer_on
+):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -570,14 +570,13 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: 
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     assert cp.get_agent(reviewer.id).status == "idle"
     task_metadata = cp.get_task(task.id).metadata
-    assert (
-        task_metadata["review_claims"][first["review_id"]]["reviewer_agent_id"]
-        == reviewer.id
-    )
+    assert task_metadata["review_claims"][first["review_id"]]["reviewer_agent_id"] == reviewer.id
     assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
 
 
-def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path: Path, semantic_reviewer_on):
+def test_review_nudge_prepares_review_worktree_and_git_main_publication(
+    tmp_path: Path, semantic_reviewer_on
+):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -693,9 +692,7 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
     def publication_gate(
         repo_dir: str, projected_branch: str, projected_sha: str, command: str
     ) -> tuple[int, str]:
-        publication_gate_calls.append(
-            (repo_dir, projected_branch, projected_sha, command)
-        )
+        publication_gate_calls.append((repo_dir, projected_branch, projected_sha, command))
         return 0, "projected full contract passed"
 
     cp._publication_merge_test_runner = publication_gate
@@ -711,10 +708,7 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
     # Publication is isolated from the long-lived hub checkout. The remote
     # canonical branch advances, while this checkout stays untouched.
     assert _git(repo, "rev-parse", "HEAD") == hub_checkout_head
-    assert (
-        _git(repo, "ls-remote", "origin", "refs/heads/main").split()[0]
-        == reviewed_head
-    )
+    assert _git(repo, "ls-remote", "origin", "refs/heads/main").split()[0] == reviewed_head
     _git(repo, "fetch", "origin", "main")
     assert _git(repo, "rev-parse", "origin/main") == reviewed_head
     learnings = cp.search_memory(
@@ -784,16 +778,16 @@ def test_private_review_clone_uses_env_token_but_persists_only_clean_remote(
         "review-private",
     )
 
-    clone = next(command for command in commands if command[:3] == ["git", "clone", "--no-checkout"])
+    clone = next(
+        command for command in commands if command[:3] == ["git", "clone", "--no-checkout"]
+    )
     assert "x-access-token:%s@github.com" % token in clone[4]
     scrub = next(command for command in commands if "set-url" in command)
     assert scrub[-1] == remote_url
     fetch = next(command for command in commands if "fetch" in command)
     assert any("x-access-token:%s@github.com" % token in arg for arg in fetch)
     assert context is not None and context["repository_origin_remote"] == remote_url
-    serialized_context = (task_dir / "repository-worktree.json").read_text(
-        encoding="utf-8"
-    )
+    serialized_context = (task_dir / "repository-worktree.json").read_text(encoding="utf-8")
     assert token not in serialized_context
     memory_payload = next(payload for path, payload in client.posts if path == "/memory")
     assert token not in json.dumps(memory_payload, sort_keys=True)
@@ -913,18 +907,14 @@ def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
 
     assert result.status == "review_verdict_failed"
     assert "could not read Username" in (result.error or "")
-    assert not (
-        tmp_path / "workspaces" / "_reviews" / first_review.id / "review-repo"
-    ).exists()
+    assert not (tmp_path / "workspaces" / "_reviews" / first_review.id / "review-repo").exists()
     reviews = cp.list_reviews(task.id)
     assert [review.status for review in reviews] == [
         ReviewStatus.RETRACTED.value,
         ReviewStatus.PENDING.value,
     ]
     assert reviews[0].reviewer_agent_id == failing_reviewer.id
-    assert "reviewer_repository_access_authentication:github.com" in (
-        reviews[0].reason or ""
-    )
+    assert "reviewer_repository_access_authentication:github.com" in (reviews[0].reason or "")
     assert reviews[1].reviewer_agent_id == successful_reviewer.id
     memories = cp.search_memory(
         subject_type="agent",
@@ -938,7 +928,9 @@ def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
     assert "No such device or address" in failure["error_signature"]
 
 
-def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path, semantic_reviewer_on):
+def test_mac_worker_skips_stale_review_nudge_and_processes_next(
+    tmp_path: Path, semantic_reviewer_on
+):
     from tests.conftest import submit_review_verdict
 
     cp = ControlPlane.in_memory()
@@ -985,9 +977,7 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path, 
         return task, evidence, review_tick, manifest
 
     stale_task, stale_evidence, stale_tick, _ = create_reviewable_task("Stale review")
-    stale_verdict_id = submit_review_verdict(
-        cp, stale_task.id, reviewer.id, stale_evidence.id
-    )
+    stale_verdict_id = submit_review_verdict(cp, stale_task.id, reviewer.id, stale_evidence.id)
     cp.submit_review(
         stale_tick["review_id"],
         ReviewStatus.APPROVED.value,
@@ -1350,7 +1340,9 @@ def test_mac_worker_audits_subprocess_commands(tmp_path: Path):
     # /events must NOT expose raw argv (mac-7osn): callers with read scope on /events
     # must not see flag values that may contain secrets.
     for event in events:
-        detail = event["detail"] if isinstance(event["detail"], dict) else json.loads(event["detail"])
+        detail = (
+            event["detail"] if isinstance(event["detail"], dict) else json.loads(event["detail"])
+        )
         assert "argv" not in detail, f"raw argv leaked into events view: {detail}"
         assert detail.get("argv_redacted") is True
         # argv0 (command name) is fine — same level of disclosure as `ps`
@@ -1382,7 +1374,10 @@ def test_subprocess_executor_timeout_kills_descendants_in_other_sessions(tmp_pat
     child_pid = int((task_dir / "child.pid").read_text(encoding="utf-8"))
     import psutil
 
-    assert not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+    assert (
+        not psutil.pid_exists(child_pid)
+        or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+    )
 
 
 def test_subprocess_executor_explicit_cancel_is_audited(tmp_path: Path):
@@ -1456,7 +1451,9 @@ def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_pa
 def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
-    task = cp.create_task("timeout with partial finalizer progress", required_capabilities=["python"])
+    task = cp.create_task(
+        "timeout with partial finalizer progress", required_capabilities=["python"]
+    )
     client = TestClient(create_app(control_plane=cp))
     executor_script = tmp_path / "timeout_executor.py"
     executor_script.write_text(
@@ -1494,9 +1491,7 @@ def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
     ]
     assert len(progress_artifacts) == 1
     assert progress_artifacts[0]["name"] == "finalizer-progress.json"
-    artifact_types = {
-        artifact["artifact_type"]: artifact for artifact in artifacts
-    }
+    artifact_types = {artifact["artifact_type"]: artifact for artifact in artifacts}
     assert artifact_types["repository_wip"]["name"] == "repository-wip.json"
     assert (
         artifact_types["repository_wip_bundle"]["name"]
@@ -1518,7 +1513,10 @@ def test_validate_git_remote_url_rejects_argv_smuggling():
     from mac.worker import _validate_git_remote_url
 
     # legitimate URLs pass
-    assert _validate_git_remote_url("https://github.com/foo/bar.git") == "https://github.com/foo/bar.git"
+    assert (
+        _validate_git_remote_url("https://github.com/foo/bar.git")
+        == "https://github.com/foo/bar.git"
+    )
     assert _validate_git_remote_url("git@github.com:foo/bar.git") == "git@github.com:foo/bar.git"
     assert _validate_git_remote_url("ssh://git@host/repo") == "ssh://git@host/repo"
     # file:// is allowed (used by test fixtures and legit local mirrors)
@@ -1545,12 +1543,18 @@ def test_worker_cli_has_default_executor_timeout():
     from mac.worker import build_parser
 
     parser = build_parser()
-    args = parser.parse_args([
-        "--url", "http://localhost:0",
-        "--agent-id", "agent_test",
-        "--workspace", "/tmp/wf",
-        "--executor", "/bin/true",
-    ])
+    args = parser.parse_args(
+        [
+            "--url",
+            "http://localhost:0",
+            "--agent-id",
+            "agent_test",
+            "--workspace",
+            "/tmp/wf",
+            "--executor",
+            "/bin/true",
+        ]
+    )
     assert args.timeout is not None
     assert 60 <= args.timeout <= 24 * 3600, (
         f"default --timeout {args.timeout} outside the reasonable 1m–24h window"
@@ -1824,9 +1828,7 @@ def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
     assert manifest["repo"]["pushed"] is True
     assert manifest["repo"]["freshness"]["ok"] is True
     # The rebased HEAD contains the canonical advance and the task's work.
-    assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(
-        seed, "rev-parse", "HEAD"
-    )
+    assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(seed, "rev-parse", "HEAD")
 
 
 def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
@@ -1875,9 +1877,7 @@ def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
     assert _git(repo, "ls-remote", "origin", manifest["repo"]["remote_ref"]) == ""
 
 
-def test_mac_worker_publishes_after_merging_new_canonical_tip(
-    tmp_path: Path, monkeypatch
-):
+def test_mac_worker_publishes_after_merging_new_canonical_tip(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "mac.worker.run_codegraph_audit",
         lambda _worktree, files: _codegraph_fixture(list(files)),
@@ -1914,9 +1914,7 @@ def test_mac_worker_publishes_after_merging_new_canonical_tip(
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
     assert manifest["repo"]["pushed"] is True
     assert manifest["repo"]["freshness"]["ok"] is True
-    assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(
-        seed, "rev-parse", "HEAD"
-    )
+    assert manifest["repo"]["freshness"]["canonical_tip_sha"] == _git(seed, "rev-parse", "HEAD")
 
 
 def test_mac_worker_does_not_push_invalid_finalized_repository_manifest(tmp_path: Path):
@@ -2637,8 +2635,7 @@ def test_mac_worker_run_forever_drains_queue_then_reports_offline(tmp_path: Path
         machine.id, "worker", capabilities=["python"], resources={"capacity": 3}
     )
     task_ids = [
-        cp.create_task("work-%d" % i, required_capabilities=["python"]).id
-        for i in range(3)
+        cp.create_task("work-%d" % i, required_capabilities=["python"]).id for i in range(3)
     ]
     client = TestClient(create_app(control_plane=cp))
 
@@ -2815,16 +2812,12 @@ def test_mac_worker_repo_update_preempts_idle_heartbeat_failure(tmp_path: Path):
     assert _git(work, "rev-parse", "HEAD") == expected
 
 
-def test_mac_worker_dispatch_hold_read_failure_stops_before_controls(
-    monkeypatch, tmp_path: Path
-):
+def test_mac_worker_dispatch_hold_read_failure_stops_before_controls(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     client = TestClient(create_app(control_plane=cp))
 
-    def hold_read_fails(
-        method: str, path: str, payload: Optional[Dict[str, Any]]
-    ) -> Any:
+    def hold_read_fails(method: str, path: str, payload: Optional[Dict[str, Any]]) -> Any:
         if method == "GET" and path == f"/agents/{agent.id}":
             raise MacApiError("hub hold read unavailable")
         return api_transport(client)(method, path, payload)
@@ -2864,9 +2857,7 @@ def test_mac_worker_heartbeat_recovery_processes_only_repo_update_controls(
     )
     client = TestClient(create_app(control_plane=cp))
 
-    def heartbeat_fails(
-        method: str, path: str, payload: Optional[Dict[str, Any]]
-    ) -> Any:
+    def heartbeat_fails(method: str, path: str, payload: Optional[Dict[str, Any]]) -> Any:
         if method == "POST" and path.endswith(f"/agents/{agent.id}/heartbeat"):
             raise MacApiError("heartbeat rejected")
         return api_transport(client)(method, path, payload)
@@ -2961,7 +2952,10 @@ def test_mac_worker_opens_debug_terminal_and_streams_pty_output(tmp_path: Path):
             if payload.get("data_b64"):
                 parts.append(base64.b64decode(payload["data_b64"]).decode(errors="ignore"))
         output_text = "".join(parts)
-        if "worker_terminal_ok" in output_text and cp.get_agentbus_stream(output_stream_id).status == "closed":
+        if (
+            "worker_terminal_ok" in output_text
+            and cp.get_agentbus_stream(output_stream_id).status == "closed"
+        ):
             break
         time.sleep(0.02)
 
@@ -3053,7 +3047,9 @@ def test_mac_worker_repo_update_restarts_requested_services_after_result(
     payloads = []
     for stream in cp.list_agentbus_streams(agent_id=sender.id, status="closed"):
         if stream.topic == REPO_UPDATE_RESULT_TOPIC:
-            payloads.extend(chunk.payload for chunk in cp.read_agentbus_chunks(sender.id, stream.id))
+            payloads.extend(
+                chunk.payload for chunk in cp.read_agentbus_chunks(sender.id, stream.id)
+            )
     by_status = {payload["status"]: payload for payload in payloads}
     assert by_status["updated"]["service_restart_requested"] is True
     assert by_status["updated"]["restart_services"] == ["mac.service"]
@@ -3108,9 +3104,7 @@ def test_repo_update_result_publish_can_extend_retries_for_service_result(
     assert sleeps == [0.25, 0.25]
 
 
-def test_repo_update_result_publish_default_retry_window_stays_short(
-    monkeypatch, tmp_path: Path
-):
+def test_repo_update_result_publish_default_retry_window_stays_short(monkeypatch, tmp_path: Path):
     attempts: list[Dict[str, Any]] = []
     sleeps: list[float] = []
     observed: list[Dict[str, Any]] = []
@@ -3203,9 +3197,7 @@ def test_worker_generation_barrier_heartbeats_draining_until_authorized(
     assert authorized.resources["deployment_generation"] == generation
 
 
-def test_worker_generation_barrier_registers_draining_atomically(
-    monkeypatch, tmp_path: Path
-):
+def test_worker_generation_barrier_registers_draining_atomically(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("barrier-worker-host", machine_id="machine_barrier")
     agent = cp.register_agent(
@@ -3344,6 +3336,7 @@ def test_worker_publishes_matching_sandbox_route_verification(
         "returncode": 0,
         "failure_class": "",
     }
+
     def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
         assert accept is not None
         assert which is task_executor.coding_agent_sandbox_which
@@ -3417,9 +3410,7 @@ def test_worker_verifies_darwin_host_route_without_openshell(
         assert which is None
         assert verify_all is True
         return (
-            choice
-            if accept(choice)
-            else coding_agent.CodingAgentChoice(agent="", available=False)
+            choice if accept(choice) else coding_agent.CodingAgentChoice(agent="", available=False)
         )
 
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
@@ -3944,18 +3935,28 @@ def test_register_worker_advertises_multi_modality_routes(monkeypatch):
     """Part B1b: a GPU agent advertises image + audio + video media routes from
     its configured model lists, each at its modality's port."""
     cp = ControlPlane.in_memory()
-    api = MacApiClient("http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp))))
+    api = MacApiClient(
+        "http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp)))
+    )
     monkeypatch.setattr(
         "mac.hardware.detect_hardware",
-        lambda: {"accelerator": "cuda", "gpu": {"name": "GB10", "vram_mb": 48000},
-                 "memory_mb": 120000, "os": "linux", "arch": "x86_64", "cpu_count": 20},
+        lambda: {
+            "accelerator": "cuda",
+            "gpu": {"name": "GB10", "vram_mb": 48000},
+            "memory_mb": 120000,
+            "os": "linux",
+            "arch": "x86_64",
+            "cpu_count": 20,
+        },
     )
     monkeypatch.delenv("MAC_AGENT_MEDIA_ROUTES", raising=False)
     monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
     monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark, musicgen-small")
     monkeypatch.setenv("MAC_AGENT_GEN_VIDEO_MODELS", "animatediff")
     monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
-    registered = register_worker(api, hostname="natasha", agent_name="natasha", capabilities=["python"])
+    registered = register_worker(
+        api, hostname="natasha", agent_name="natasha", capabilities=["python"]
+    )
     routes = cp.get_agent(registered["id"]).resources["media_routes"]
     by_op = {r["op"]: r for r in routes}
     assert {"image.generate", "audio.tts", "audio.music", "video.generate"} <= set(by_op)
@@ -3970,7 +3971,9 @@ def test_worker_advertises_only_held_service_ops(tmp_path: Path, monkeypatch):
     and re-stamps media_routes to ONLY the ops it currently holds."""
     cp = ControlPlane.in_memory()
     cp.seed_service_roles(["image.generate", "audio.tts", "video.generate"])
-    api = MacApiClient("http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp))))
+    api = MacApiClient(
+        "http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp)))
+    )
     monkeypatch.setattr(
         "mac.hardware.detect_hardware",
         lambda: {"accelerator": "cuda", "gpu": {"vram_mb": 48000}, "memory_mb": 120000},
@@ -3980,11 +3983,19 @@ def test_worker_advertises_only_held_service_ops(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark")
     monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
     registered = register_worker(
-        api, hostname="natasha", agent_name="natasha",
-        capabilities=["gpu", "cuda"], resources={"capacity": 1},
+        api,
+        hostname="natasha",
+        agent_name="natasha",
+        capabilities=["gpu", "cuda"],
+        resources={"capacity": 1},
     )
-    worker = MacWorker(api, registered["id"], tmp_path, lambda *a: None,
-                       attestation_key=registered.get("attestation_key"))
+    worker = MacWorker(
+        api,
+        registered["id"],
+        tmp_path,
+        lambda *a: None,
+        attestation_key=registered.get("attestation_key"),
+    )
     worker._sync_service_claims()
     held = set(cp.service_roles.held_ops_for_agent(registered["id"]))
     routes_ops = {r["op"] for r in cp.get_agent(registered["id"]).resources.get("media_routes", [])}
@@ -3997,7 +4008,9 @@ def test_worker_advertises_all_willing_when_no_service_roles(tmp_path: Path, mon
     """Back-compat: a fleet that seeds NO service_roles keeps advertise-all (the
     sync's 'managed' set is empty, so every willing op is advertised)."""
     cp = ControlPlane.in_memory()  # no seed_service_roles
-    api = MacApiClient("http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp))))
+    api = MacApiClient(
+        "http://mac.test", transport=api_transport(TestClient(create_app(control_plane=cp)))
+    )
     monkeypatch.setattr(
         "mac.hardware.detect_hardware",
         lambda: {"accelerator": "cuda", "gpu": {"vram_mb": 48000}, "memory_mb": 120000},
@@ -4006,9 +4019,16 @@ def test_worker_advertises_all_willing_when_no_service_roles(tmp_path: Path, mon
     monkeypatch.setenv("MAC_AGENT_GEN_MODEL", "sdxl-turbo")
     monkeypatch.setenv("MAC_AGENT_GEN_AUDIO_MODELS", "bark")
     monkeypatch.setenv("MAC_AGENT_GEN_HOST", "natasha")
-    registered = register_worker(api, hostname="natasha", agent_name="natasha", capabilities=["gpu", "cuda"])
-    worker = MacWorker(api, registered["id"], tmp_path, lambda *a: None,
-                       attestation_key=registered.get("attestation_key"))
+    registered = register_worker(
+        api, hostname="natasha", agent_name="natasha", capabilities=["gpu", "cuda"]
+    )
+    worker = MacWorker(
+        api,
+        registered["id"],
+        tmp_path,
+        lambda *a: None,
+        attestation_key=registered.get("attestation_key"),
+    )
     worker._sync_service_claims()
     routes_ops = {r["op"] for r in cp.get_agent(registered["id"]).resources.get("media_routes", [])}
     assert routes_ops == {"image.generate", "audio.tts"}  # all willing (unmanaged)
@@ -4170,8 +4190,7 @@ def test_worker_exception_records_diagnostics_and_output_tail(tmp_path: Path):
     blocked = [
         item
         for item in history
-        if item.event_type == "task.transitioned"
-        and item.to_state == TaskState.BLOCKED.value
+        if item.event_type == "task.transitioned" and item.to_state == TaskState.BLOCKED.value
     ][-1]
     assert blocked.detail["reason"] == "worker_exception"
     assert blocked.detail["exception_type"] == "RuntimeError"

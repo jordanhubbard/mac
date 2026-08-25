@@ -20,18 +20,13 @@ def cp() -> ControlPlane:
 
 def _agents(cp: ControlPlane, *names: str):
     machine = cp.register_machine("group-host")
-    return [
-        cp.register_agent(machine.id, name, agent_id="agent_%s" % name)
-        for name in names
-    ]
+    return [cp.register_agent(machine.id, name, agent_id="agent_%s" % name) for name in names]
 
 
 def test_group_publish_opens_shared_stream_all_members_converse(
     cp: ControlPlane,
 ) -> None:
-    natasha, rocky, bullwinkle, outsider = _agents(
-        cp, "natasha", "rocky", "bullwinkle", "outsider"
-    )
+    natasha, rocky, bullwinkle, outsider = _agents(cp, "natasha", "rocky", "bullwinkle", "outsider")
     published = cp.publish_agentbus_content(
         sender_agent_id=natasha.id,
         participant_agent_ids=[natasha.id, rocky.id, bullwinkle.id],
@@ -68,17 +63,14 @@ def test_group_publish_opens_shared_stream_all_members_converse(
     # Membership is ADDRESSING: every member sees the stream in their own
     # listing and an outsider does not, because it is not their conversation.
     for member in (natasha, rocky, bullwinkle):
-        assert any(
-            item.id == stream["id"] for item in cp.list_agentbus_streams(agent_id=member.id)
-        )
+        assert any(item.id == stream["id"] for item in cp.list_agentbus_streams(agent_id=member.id))
     assert not any(
         item.id == stream["id"] for item in cp.list_agentbus_streams(agent_id=outsider.id)
     )
     # It is NOT access: an outsider may read the conversation (the bus is not
     # confidential) but may not speak into it.
     assert [
-        chunk.sender_agent_id
-        for chunk in cp.read_agentbus_chunks(outsider.id, stream["id"])
+        chunk.sender_agent_id for chunk in cp.read_agentbus_chunks(outsider.id, stream["id"])
     ] == [natasha.id, rocky.id, bullwinkle.id]
     with pytest.raises(AuthorizationError):
         cp.append_agentbus_chunk(stream["id"], outsider.id, payload={"nope": True})
@@ -94,14 +86,10 @@ def test_group_stream_validation_and_legacy_pair_semantics(cp: ControlPlane) -> 
     natasha, rocky = _agents(cp, "natasha", "rocky")
     # Opener alone is not a group.
     with pytest.raises(ValidationError, match="at least one participant"):
-        cp.open_agentbus_stream(
-            natasha.id, participant_agent_ids=[natasha.id]
-        )
+        cp.open_agentbus_stream(natasha.id, participant_agent_ids=[natasha.id])
     # Unknown members are refused.
     with pytest.raises(Exception):
-        cp.open_agentbus_stream(
-            natasha.id, participant_agent_ids=[rocky.id, "agent_ghost"]
-        )
+        cp.open_agentbus_stream(natasha.id, participant_agent_ids=[rocky.id, "agent_ghost"])
     # Legacy pair publish is untouched: one-shot, closed, pair-authorized.
     published = cp.publish_agentbus_content(
         sender_agent_id=natasha.id,
@@ -111,6 +99,4 @@ def test_group_stream_validation_and_legacy_pair_semantics(cp: ControlPlane) -> 
     assert published["stream"]["participants"] is None
     assert published["stream"]["status"] == "closed"
     with pytest.raises(AuthorizationError):
-        cp.append_agentbus_chunk(
-            published["stream"]["id"], rocky.id, payload={"pong": True}
-        )
+        cp.append_agentbus_chunk(published["stream"]["id"], rocky.id, payload={"pong": True})

@@ -368,9 +368,7 @@ def validate_pristine(layout: Layout, supervisor: str) -> dict[str, Any]:
 def validate_route_identity(path: Path) -> tuple[dict[str, Any], str]:
     value = _private_json(path, ROUTE_SCHEMA)
     if value.get("adapter") != "ssh-machine":
-        raise OnboardingError(
-            "machine onboarding requires an SSH-machine route identity"
-        )
+        raise OnboardingError("machine onboarding requires an SSH-machine route identity")
     authority = value.get("authority")
     if not isinstance(authority, dict) or set(authority) != {
         "ssh_host_key_sha256",
@@ -400,9 +398,7 @@ def _extract_source_archive(archive: Path, destination: Path) -> None:
             try:
                 target.relative_to(root)
             except ValueError as exc:
-                raise OnboardingError(
-                    "source archive escapes its staging root"
-                ) from exc
+                raise OnboardingError("source archive escapes its staging root") from exc
             if not member.isdir() and not member.isfile():
                 raise OnboardingError("source archive contains a non-regular artifact")
             if member.isdir():
@@ -578,9 +574,7 @@ def prepare(
             _extract_source_archive(staged_archive, staged_source)
             cache = layout.mac_home / "cache" / "reviewed-assets"
             _ensure_private_directory(cache)
-            uv, codegraph, python = install_reviewed_toolchain(
-                stage, reviewed_assets, cache
-            )
+            uv, codegraph, python = install_reviewed_toolchain(stage, reviewed_assets, cache)
             gh = _trusted_gh()
             marker_value = {
                 "schema": STAGE_SCHEMA,
@@ -667,8 +661,7 @@ def _validate_placeholder(
     value = _private_json(path, PLACEHOLDER_SCHEMA)
     expected = {
         "agent": agent,
-        "agent_id": "agent_"
-        + re.sub(r"[^A-Za-z0-9_.-]+", "_", agent.lower()).strip("_"),
+        "agent_id": "agent_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", agent.lower()).strip("_"),
         "generation": generation,
         "route_identity_sha256": route_sha256,
         "instance_kind": "fungible",
@@ -677,9 +670,7 @@ def _validate_placeholder(
     }
     mismatches = [key for key, wanted in expected.items() if value.get(key) != wanted]
     if mismatches:
-        raise OnboardingError(
-            "placeholder receipt differs at: " + ",".join(sorted(mismatches))
-        )
+        raise OnboardingError("placeholder receipt differs at: " + ",".join(sorted(mismatches)))
     return value
 
 
@@ -726,9 +717,7 @@ def commit(
         relative_python = staged_python.relative_to(staged_python_root)
         final_python = final_python_root / relative_python
         final_uv = layout.mac_home / "lib" / "uv" / "versions" / UV_VERSION / "uv"
-        final_codegraph = (
-            layout.mac_home / "lib" / "codegraph" / "versions" / CODEGRAPH_VERSION
-        )
+        final_codegraph = layout.mac_home / "lib" / "codegraph" / "versions" / CODEGRAPH_VERSION
         staged_venv = stage / "venv"
         created: list[Path] = []
         try:
@@ -779,9 +768,7 @@ def commit(
                     layout.mac_bin,
                 ),
                 (
-                    _link_in_stage(
-                        stage, "codegraph", final_codegraph / "bin" / "codegraph"
-                    ),
+                    _link_in_stage(stage, "codegraph", final_codegraph / "bin" / "codegraph"),
                     layout.codegraph_bin,
                 ),
                 (_link_in_stage(stage, "gh", gh), layout.gh_bin),
@@ -829,9 +816,7 @@ def commit(
                     "gh_link": str(layout.gh_bin),
                 },
                 "services_started": False,
-                "committed_at": dt.datetime.now(dt.timezone.utc)
-                .isoformat()
-                .replace("+00:00", "Z"),
+                "committed_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
                 "pristine_proof": pristine,
             }
             _atomic_private_json(layout.receipt, receipt)
@@ -879,18 +864,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def _required(args: argparse.Namespace, *names: str) -> None:
-    missing = [
-        name for name in names if not getattr(args, name.replace("-", "_"), None)
-    ]
+    missing = [name for name in names if not getattr(args, name.replace("-", "_"), None)]
     if missing:
         raise OnboardingError("missing required arguments: " + ",".join(missing))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
-    layout = Layout.for_home(
-        Path(args.home), Path(args.mac_home) if args.mac_home else None
-    )
+    layout = Layout.for_home(Path(args.home), Path(args.mac_home) if args.mac_home else None)
     try:
         if args.action == "inspect":
             payload = inspect(layout, supervisor=args.supervisor)

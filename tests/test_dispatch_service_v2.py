@@ -110,9 +110,7 @@ def test_idle_pull_is_write_free_and_does_not_claim_reconciliation_leases():
     writes = [
         statement
         for statement in statements
-        if statement.lstrip().upper().startswith(
-            ("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE")
-        )
+        if statement.lstrip().upper().startswith(("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE"))
     ]
     assert writes == []
     assert cp.store.query_all("SELECT * FROM reconciliation_state") == []
@@ -136,9 +134,7 @@ def test_pull_provisions_unmatched_work_once_and_deduplicates_rounds():
     assert cp.claim_next_for_agent(python_worker.id) is None
 
     assert [item.id for item in emitted] == [task.id]
-    rows = cp.store.query_all(
-        "SELECT unmatched_count, assignment_count FROM dispatch_rounds"
-    )
+    rows = cp.store.query_all("SELECT unmatched_count, assignment_count FROM dispatch_rounds")
     assert len(rows) == 1
     assert rows[0]["unmatched_count"] == 1
     assert rows[0]["assignment_count"] == 0

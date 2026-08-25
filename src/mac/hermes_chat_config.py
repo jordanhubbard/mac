@@ -24,6 +24,7 @@ Dependency-free (stdlib only) like ``mac.deploy_env``; the deploy runs it via th
 mac venv after ``write-mac-env`` + ``ensure_hermes_home``, before the gateway and
 agent start.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -197,9 +198,11 @@ def sync_config_yaml(
             continue
         if in_model and re.match(r"^\S", ln):
             if not did_provider:
-                res.append("  provider: custom"); did_provider = True
+                res.append("  provider: custom")
+                did_provider = True
             if not did_base:
-                res.append("  base_url: %s/" % base); did_base = True
+                res.append("  base_url: %s/" % base)
+                did_base = True
             in_model = False
         if in_model and not did_provider and re.match(r"^\s+provider:\s", ln):
             res.append(re.sub(r"(provider:\s*).*", r"\g<1>custom", ln))
@@ -346,8 +349,12 @@ def ensure_image_gen_provider(hermes_home: Path, default: str = "mac-hub") -> st
 
 def sync(hermes_home: Path, mac_env_path: Path) -> Dict[str, object]:
     mac_env = parse_env_file(mac_env_path)
-    base_url = (mac_env.get("MAC_HERMES_GATEWAY_BASE_URL") or mac_env.get("OPENAI_BASE_URL") or "").strip()
-    api_key = (mac_env.get("MAC_HERMES_GATEWAY_API_KEY") or mac_env.get("OPENAI_API_KEY") or "").strip()
+    base_url = (
+        mac_env.get("MAC_HERMES_GATEWAY_BASE_URL") or mac_env.get("OPENAI_BASE_URL") or ""
+    ).strip()
+    api_key = (
+        mac_env.get("MAC_HERMES_GATEWAY_API_KEY") or mac_env.get("OPENAI_API_KEY") or ""
+    ).strip()
     return {
         "base_url": base_url,
         "key_present": bool(api_key),

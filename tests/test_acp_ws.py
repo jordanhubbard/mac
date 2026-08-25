@@ -135,8 +135,7 @@ def test_full_session_over_websocket():
         assert update_1["method"] == Method.SESSION_UPDATE
         assert update_1["params"]["sessionId"] == session_id
         assert (
-            update_1["params"]["update"]["sessionUpdate"]
-            == SessionUpdateKind.AGENT_MESSAGE_CHUNK
+            update_1["params"]["update"]["sessionUpdate"] == SessionUpdateKind.AGENT_MESSAGE_CHUNK
         )
         assert update_1["params"]["update"]["content"] == {
             "type": "text",
@@ -145,10 +144,7 @@ def test_full_session_over_websocket():
 
         update_2 = ws.receive_json()
         assert update_2["method"] == Method.SESSION_UPDATE
-        assert (
-            update_2["params"]["update"]["sessionUpdate"]
-            == SessionUpdateKind.TOOL_CALL
-        )
+        assert update_2["params"]["update"]["sessionUpdate"] == SessionUpdateKind.TOOL_CALL
         assert update_2["params"]["update"]["toolCallId"] == "call_1"
 
         # ...followed by the deferred final response carrying the stop reason.
@@ -173,9 +169,7 @@ def test_auth_subprotocol_accepted():
     app = _app_with_backend(backend)
     client = TestClient(app)
 
-    with client.websocket_connect(
-        "/acp/ws-test", subprotocols=["Authorization", _TOKEN]
-    ) as ws:
+    with client.websocket_connect("/acp/ws-test", subprotocols=["Authorization", _TOKEN]) as ws:
         assert ws.accepted_subprotocol == "Authorization"
         ws.send_json(
             {

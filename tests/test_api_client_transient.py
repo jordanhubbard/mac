@@ -7,6 +7,7 @@ lease-renewal thread on a hub blip, cascading into lease loss and a wedged claim
 loop. Every socket-level transient (timeout / connection reset / broken pipe)
 must surface as MacApiError so callers recover uniformly.
 """
+
 from __future__ import annotations
 
 import urllib.error
@@ -24,10 +25,10 @@ def _client():
 @pytest.mark.parametrize(
     "exc",
     [
-        TimeoutError("timed out"),                     # read timeout (the observed bug)
-        ConnectionResetError("connection reset"),      # peer reset
-        BrokenPipeError("broken pipe"),                # write failure
-        OSError("generic socket error"),               # any other socket OSError
+        TimeoutError("timed out"),  # read timeout (the observed bug)
+        ConnectionResetError("connection reset"),  # peer reset
+        BrokenPipeError("broken pipe"),  # write failure
+        OSError("generic socket error"),  # any other socket OSError
     ],
 )
 def test_transient_socket_errors_become_mac_api_error(monkeypatch, exc):

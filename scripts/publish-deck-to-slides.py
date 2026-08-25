@@ -129,8 +129,7 @@ def _slide_count(token: str, file_id: str) -> int:
     front of an audience. Counting pages needs no dependency beyond the export.
     """
     request = urllib.request.Request(
-        f"https://www.googleapis.com/drive/v3/files/{file_id}/export"
-        "?mimeType=application/pdf",
+        f"https://www.googleapis.com/drive/v3/files/{file_id}/export?mimeType=application/pdf",
         headers={"Authorization": f"Bearer {token}"},
     )
     with urllib.request.urlopen(request, timeout=300) as resp:
@@ -167,9 +166,7 @@ def main() -> int:
 
         slides = _slide_count(token, info["id"])
         if args.expect_slides is not None and slides != args.expect_slides:
-            raise PublishError(
-                f"published deck has {slides} slides, expected {args.expect_slides}"
-            )
+            raise PublishError(f"published deck has {slides} slides, expected {args.expect_slides}")
     except PublishError as exc:
         print(f"publish-deck-to-slides: {exc}", file=sys.stderr)
         return 1

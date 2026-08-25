@@ -37,9 +37,7 @@ from mac.services import ControlPlane
 def fleet():
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("host")
-    return cp, cp.register_agent(machine.id, "worker-1"), cp.register_agent(
-        machine.id, "worker-2"
-    )
+    return cp, cp.register_agent(machine.id, "worker-1"), cp.register_agent(machine.id, "worker-2")
 
 
 def test_the_terminal_verbs_are_in_the_vocabulary():
@@ -92,9 +90,7 @@ def test_the_hub_records_a_merge_in_the_ledger_without_being_told_twice(fleet):
     assert envelope["derived"] == ["bus.observed.git.merged"]
     assert "git.merged" in LEDGER_DERIVING_EVENT_TYPES
     derived = [
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type == "bus.observed.git.merged"
+        event for event in cp.task_history(task.id) if event.event_type == "bus.observed.git.merged"
     ]
     assert len(derived) == 1
     assert derived[0].detail["tree_sha"] == "t1"
@@ -157,9 +153,7 @@ def test_a_repeat_of_the_same_merge_is_still_coalesced(fleet):
     }
 
     cp.publish_agentbus_broadcast(a.id, "git.canonical_advanced", payload=dict(payload))
-    repeat = cp.publish_agentbus_broadcast(
-        a.id, "git.canonical_advanced", payload=dict(payload)
-    )
+    repeat = cp.publish_agentbus_broadcast(a.id, "git.canonical_advanced", payload=dict(payload))
 
     assert repeat["accepted"] is False
     assert repeat["reason"] == "coalesced"

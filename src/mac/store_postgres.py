@@ -23,9 +23,7 @@ from typing import Any, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from mac.store import StoreConnection, StoreError
 
-SCHEMA_PATH = (
-    Path(__file__).resolve().parent / "data" / "postgres" / "schema.sql"
-)
+SCHEMA_PATH = Path(__file__).resolve().parent / "data" / "postgres" / "schema.sql"
 
 try:
     import psycopg
@@ -57,9 +55,7 @@ def _redact_dsn(dsn: str) -> str:
                 if parts.port is not None:
                     host = "%s:%d" % (host, parts.port)
                 netloc = ("%s:***@%s" % (userinfo, host)) if userinfo else ("***@%s" % host)
-                return urlunsplit(
-                    (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
-                )
+                return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
             return dsn
         except Exception:
             return "postgres://<redacted>"
@@ -135,9 +131,7 @@ class _Row:
 
     __slots__ = ("_cols", "_values", "_lookup")
 
-    def __init__(
-        self, cols: Tuple[str, ...], values: Tuple[Any, ...]
-    ) -> None:
+    def __init__(self, cols: Tuple[str, ...], values: Tuple[Any, ...]) -> None:
         self._cols = cols
         self._values = values
         self._lookup = {c: i for i, c in enumerate(cols)}
@@ -166,9 +160,7 @@ class _Row:
         return key in self._lookup
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
-        body = ", ".join(
-            "%s=%r" % (c, self._values[i]) for i, c in enumerate(self._cols)
-        )
+        body = ", ".join("%s=%r" % (c, self._values[i]) for i, c in enumerate(self._cols))
         return "Row(%s)" % body
 
 
@@ -246,8 +238,7 @@ def _load_packaged_schema() -> str:
     if not SCHEMA_PATH.exists():  # pragma: no cover - packaging guard
         raise StoreError(
             "Postgres schema.sql is missing at %s; the wheel's "
-            "force-include for src/mac/data may be misconfigured."
-            % SCHEMA_PATH
+            "force-include for src/mac/data may be misconfigured." % SCHEMA_PATH
         )
     return SCHEMA_PATH.read_text()
 
@@ -335,15 +326,9 @@ class PostgresStore(StoreHelpersMixin):
         self.ensure_column("tasks", "created_by_human", "created_by_human TEXT")
         self.ensure_column("tasks", "idempotency_key", "idempotency_key TEXT")
         # schema_dispatch_hold: per-agent dispatch hold + zombie-detection counters.
-        self.ensure_column(
-            "agents", "dispatch_hold", "dispatch_hold INTEGER NOT NULL DEFAULT 0"
-        )
-        self.ensure_column(
-            "agents", "dispatch_hold_reason", "dispatch_hold_reason TEXT"
-        )
-        self.ensure_column(
-            "agents", "dispatch_hold_at", "dispatch_hold_at TEXT"
-        )
+        self.ensure_column("agents", "dispatch_hold", "dispatch_hold INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("agents", "dispatch_hold_reason", "dispatch_hold_reason TEXT")
+        self.ensure_column("agents", "dispatch_hold_at", "dispatch_hold_at TEXT")
         self.ensure_column(
             "agents",
             "consecutive_lease_expiries_no_telemetry",
@@ -362,17 +347,13 @@ class PostgresStore(StoreHelpersMixin):
         # reviews.findings: what the reviewer actually said. Additive and
         # idempotent, so an existing hub keeps every stored review and simply
         # starts recording judgement alongside the verdict.
-        self.ensure_column(
-            "reviews", "findings", "findings TEXT NOT NULL DEFAULT '{}'"
-        )
+        self.ensure_column("reviews", "findings", "findings TEXT NOT NULL DEFAULT '{}'")
         # fleet_release_admission_episodes: the base table is created by the
         # bundled schema (CREATE TABLE IF NOT EXISTS). These additive column
         # migrations upgrade any database that already has an earlier, partial
         # version of the table so SQLite<->Postgres parity holds. Each is
         # idempotent via ADD COLUMN IF NOT EXISTS.
-        self.ensure_column(
-            "fleet_release_admission_episodes", "project", "project TEXT"
-        )
+        self.ensure_column("fleet_release_admission_episodes", "project", "project TEXT")
         self.ensure_column(
             "fleet_release_admission_episodes",
             "barrier_resource_digest",
@@ -383,17 +364,13 @@ class PostgresStore(StoreHelpersMixin):
             "owner_kind",
             "owner_kind TEXT NOT NULL DEFAULT 'publisher'",
         )
-        self.ensure_column(
-            "fleet_release_admission_episodes", "owner_id", "owner_id TEXT"
-        )
+        self.ensure_column("fleet_release_admission_episodes", "owner_id", "owner_id TEXT")
         self.ensure_column(
             "fleet_release_admission_episodes",
             "waiter_kind",
             "waiter_kind TEXT NOT NULL DEFAULT 'epoch_opener'",
         )
-        self.ensure_column(
-            "fleet_release_admission_episodes", "waiter_id", "waiter_id TEXT"
-        )
+        self.ensure_column("fleet_release_admission_episodes", "waiter_id", "waiter_id TEXT")
         self.ensure_column(
             "fleet_release_admission_episodes",
             "waiting_publishers",
@@ -438,9 +415,7 @@ class PostgresStore(StoreHelpersMixin):
 
         migrate_dependency_edges(self)
 
-    def ensure_column(
-        self, table: str, column: str, definition: str
-    ) -> None:
+    def ensure_column(self, table: str, column: str, definition: str) -> None:
         """Additive migration helper — matches SQLiteStore._ensure_column.
 
         ``definition`` includes the column name + type clause as in the
@@ -468,17 +443,13 @@ class PostgresStore(StoreHelpersMixin):
         try:
             with self._pool.connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        translated, tuple(params) if params else None
-                    )
+                    cur.execute(translated, tuple(params) if params else None)
                     rowcount, rows = _materialize(cur)
                     return _Result(rowcount, rows)
         except psycopg.Error as exc:
             raise StoreError(str(exc)) from exc
 
-    def executemany(
-        self, sql: str, params: Iterable[Sequence[Any]]
-    ) -> _Result:
+    def executemany(self, sql: str, params: Iterable[Sequence[Any]]) -> _Result:
         translated = _translate_placeholders(sql)
         try:
             with self._pool.connection() as conn:
@@ -488,9 +459,7 @@ class PostgresStore(StoreHelpersMixin):
         except psycopg.Error as exc:
             raise StoreError(str(exc)) from exc
 
-    def query_one(
-        self, sql: str, params: Sequence[Any] = ()
-    ) -> Optional[_Row]:
+    def query_one(self, sql: str, params: Sequence[Any] = ()) -> Optional[_Row]:
         return self.execute(sql, params).fetchone()
 
     def query_all(self, sql: str, params: Sequence[Any] = ()) -> List[_Row]:

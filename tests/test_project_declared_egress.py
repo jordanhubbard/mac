@@ -52,9 +52,7 @@ def fleet():
 def _assignment_egress(cp, agent, task):
     cp.claim_task(task.id, agent.id)
     assignment = cp._active_assignment_for_agent(cp.get_agent(agent.id))
-    return (assignment or {}).get("task", {}).get("metadata", {}).get(
-        "egress_contract"
-    )
+    return (assignment or {}).get("task", {}).get("metadata", {}).get("egress_contract")
 
 
 # --- the declaration reaches the sandbox ----------------------------------
@@ -206,17 +204,18 @@ def test_the_operator_template_no_longer_declares_aviation_hosts():
     from pathlib import Path
 
     template = (
-        Path(__file__).resolve().parents[1]
-        / "deploy"
-        / "openshell"
-        / "mac-hermes-policy.yaml"
+        Path(__file__).resolve().parents[1] / "deploy" / "openshell" / "mac-hermes-policy.yaml"
     )
     text = template.read_text(encoding="utf-8")
     parsed = yaml.safe_load(
-        text.replace("__MAC_HUB_HOST__", "h").replace("__MAC_HUB_PORT__", "8789")
-        .replace("__MODEL_GATEWAY_HOST__", "g").replace("__RUNTIME_PY__", "/p")
-        .replace("__RUNTIME_VENV__", "/v").replace("__RUNTIME_SRC__", "/s")
-        .replace("__CACHE_DIR__", "/c").replace("__CONFIG_DIR__", "/cfg")
+        text.replace("__MAC_HUB_HOST__", "h")
+        .replace("__MAC_HUB_PORT__", "8789")
+        .replace("__MODEL_GATEWAY_HOST__", "g")
+        .replace("__RUNTIME_PY__", "/p")
+        .replace("__RUNTIME_VENV__", "/v")
+        .replace("__RUNTIME_SRC__", "/s")
+        .replace("__CACHE_DIR__", "/c")
+        .replace("__CONFIG_DIR__", "/cfg")
         .replace("__AGENT_USER__", "u")
     )
     assert "aviation_apis" not in (parsed.get("network_policies") or {})

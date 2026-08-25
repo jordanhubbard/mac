@@ -44,9 +44,7 @@ def test_every_repository_path_it_names_exists():
             continue
         if not (ROOT / token.rstrip("/")).exists():
             missing.append(token)
-    assert not missing, "the release skill names paths that do not exist: %s" % sorted(
-        set(missing)
-    )
+    assert not missing, "the release skill names paths that do not exist: %s" % sorted(set(missing))
 
 
 def test_every_make_target_it_invokes_is_real():
@@ -63,7 +61,7 @@ def test_the_version_bump_it_describes_is_still_single_sourced():
     """The skill tells the reader to edit exactly one line. If the version stops
     being single-sourced, that instruction silently ships a half-bumped release.
     """
-    assert '__version__' in (ROOT / "src" / "mac" / "__init__.py").read_text(encoding="utf-8")
+    assert "__version__" in (ROOT / "src" / "mac" / "__init__.py").read_text(encoding="utf-8")
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'dynamic = ["version"]' in pyproject, (
         "pyproject no longer derives the version dynamically; the release skill's "

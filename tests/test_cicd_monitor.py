@@ -128,9 +128,7 @@ class FakeControlPlane:
 class FakeReconciliation:
     def __init__(self, claim: object | None = None) -> None:
         self.next_claim = (
-            SimpleNamespace(name="cicd-monitor", cursor="cursor")
-            if claim is None
-            else claim
+            SimpleNamespace(name="cicd-monitor", cursor="cursor") if claim is None else claim
         )
         self.completed: list[tuple[object, str | None]] = []
         self.abandoned: list[object] = []
@@ -191,9 +189,7 @@ def run(
 
 def payload(*runs: dict, workflows: bool = True) -> dict:
     return {
-        "workflows": {
-            "workflows": [{"id": 10, "name": "tests"}] if workflows else []
-        },
+        "workflows": {"workflows": [{"id": 10, "name": "tests"}] if workflows else []},
         "runs": {"workflow_runs": list(runs)},
     }
 
@@ -242,22 +238,14 @@ def test_config_is_default_on_and_supports_explicit_opt_out() -> None:
 
 def test_project_policy_defaults_on_only_for_registered_github_repositories() -> None:
     assert ProjectCICDPolicy.from_metadata({}, REPOSITORY_URL).enabled is True
-    assert (
-        ProjectCICDPolicy.from_metadata(
-            {"cicd_monitor": False}, REPOSITORY_URL
-        ).enabled
-        is False
-    )
+    assert ProjectCICDPolicy.from_metadata({"cicd_monitor": False}, REPOSITORY_URL).enabled is False
     assert (
         ProjectCICDPolicy.from_metadata(
             {"cicd_monitor": {"enabled": "false"}}, REPOSITORY_URL
         ).enabled
         is False
     )
-    assert (
-        ProjectCICDPolicy.from_metadata({}, "https://gitlab.com/acme/widgets").enabled
-        is False
-    )
+    assert ProjectCICDPolicy.from_metadata({}, "https://gitlab.com/acme/widgets").enabled is False
 
     configured = ProjectCICDPolicy.from_metadata(
         {
@@ -284,9 +272,7 @@ def test_project_policy_defaults_on_only_for_registered_github_repositories() ->
         (2 * 60 * 60 + 1, 8 * 60 * 60),
     ],
 )
-def test_cadence_uses_observed_average_latency(
-    average: float | None, expected: float
-) -> None:
+def test_cadence_uses_observed_average_latency(average: float | None, expected: float) -> None:
     assert cadence_seconds_for_latency(average) == expected
 
 

@@ -61,16 +61,13 @@ def parse_authority(raw: bytes, *, expected_commit: str | None = None) -> Dict[s
     keys = set(payload)
     if keys != TOP_LEVEL_KEYS:
         raise AuthorityError(
-            "authority keys must be exactly: %s"
-            % ", ".join(sorted(TOP_LEVEL_KEYS))
+            "authority keys must be exactly: %s" % ", ".join(sorted(TOP_LEVEL_KEYS))
         )
     if payload.get("schema") != SCHEMA:
         raise AuthorityError("authority schema must be %s" % SCHEMA)
     fleet = _bounded_text(payload.get("fleet"), "fleet", maximum=200)
     hub_agent = _bounded_text(payload.get("hub_agent"), "hub_agent", maximum=200)
-    source_commit = _bounded_text(
-        payload.get("source_commit"), "source_commit", maximum=128
-    )
+    source_commit = _bounded_text(payload.get("source_commit"), "source_commit", maximum=128)
     if expected_commit is not None and source_commit != expected_commit:
         raise AuthorityError(
             "authority source_commit %s does not match deploy commit %s"
@@ -84,17 +81,11 @@ def parse_authority(raw: bytes, *, expected_commit: str | None = None) -> Dict[s
     seen_casefolded: set[str] = set()
     for index, item in enumerate(raw_adoptions):
         if not isinstance(item, dict) or set(item) != ADOPTION_KEYS:
-            raise AuthorityError(
-                "adoptions[%d] keys must be exactly: agent, reason" % index
-            )
+            raise AuthorityError("adoptions[%d] keys must be exactly: agent, reason" % index)
         agent = _bounded_text(item.get("agent"), "adoptions[%d].agent" % index, maximum=200)
         if not agent.startswith("agent_"):
-            raise AuthorityError(
-                "adoptions[%d].agent must be a stable agent id" % index
-            )
-        reason = _bounded_text(
-            item.get("reason"), "adoptions[%d].reason" % index, maximum=1024
-        )
+            raise AuthorityError("adoptions[%d].agent must be a stable agent id" % index)
+        reason = _bounded_text(item.get("reason"), "adoptions[%d].reason" % index, maximum=1024)
         if agent in seen:
             raise AuthorityError("duplicate adoption agent: %s" % agent)
         if agent.casefold() in seen_casefolded:
@@ -152,9 +143,7 @@ def snapshot_authority(source: Path, output: Path, *, expected_commit: str) -> N
         _read_owner_only_regular_file(source), expected_commit=expected_commit
     )
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=output.name + ".", dir=str(output.parent)
-    )
+    descriptor, temporary_name = tempfile.mkstemp(prefix=output.name + ".", dir=str(output.parent))
     temporary = Path(temporary_name)
     try:
         os.fchmod(descriptor, 0o600)
@@ -203,13 +192,9 @@ def validate_selected(
     selected = set(selected_agents)
     if not selected:
         raise AuthorityError("selected cohort is empty")
-    extras = sorted(
-        item["agent"] for item in payload["adoptions"] if item["agent"] not in selected
-    )
+    extras = sorted(item["agent"] for item in payload["adoptions"] if item["agent"] not in selected)
     if extras:
-        raise AuthorityError(
-            "authority contains unselected agents: %s" % ", ".join(extras)
-        )
+        raise AuthorityError("authority contains unselected agents: %s" % ", ".join(extras))
 
 
 def _parser() -> argparse.ArgumentParser:

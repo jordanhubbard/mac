@@ -82,7 +82,14 @@ def test_derive_returns_correct_schema(empty_repo_contract: dict):
 
 
 def test_derive_returns_all_top_level_keys(empty_repo_contract: dict):
-    for key in ("schema", "repository_path", "runtime_versions", "native_build", "egress", "preflight"):
+    for key in (
+        "schema",
+        "repository_path",
+        "runtime_versions",
+        "native_build",
+        "egress",
+        "preflight",
+    ):
         assert key in empty_repo_contract, "missing top-level key: %s" % key
 
 
@@ -141,7 +148,9 @@ def test_node_min_from_node_version_file(tmp_path: Path):
     ],
     ids=["gte", "caret", "tilde"],
 )
-def test_node_min_from_package_json_engines(tmp_path: Path, node_engine: str, expected_node_min: str):
+def test_node_min_from_package_json_engines(
+    tmp_path: Path, node_engine: str, expected_node_min: str
+):
     (tmp_path / "package.json").write_text(json.dumps({"engines": {"node": node_engine}}))
     c = derive_environment_contract(tmp_path)
     assert c["runtime_versions"]["node_min"] == expected_node_min
@@ -200,7 +209,9 @@ def test_pnpm_min_from_lockfile(tmp_path: Path, lockfile_version: str, expected_
     ],
     ids=["floor_3_11", "floor_3_12"],
 )
-def test_python_min_from_pyproject_toml(tmp_path: Path, requires_python: str, expected_python_min: str):
+def test_python_min_from_pyproject_toml(
+    tmp_path: Path, requires_python: str, expected_python_min: str
+):
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nrequires-python = "%s"\n' % requires_python
     )
@@ -209,17 +220,13 @@ def test_python_min_from_pyproject_toml(tmp_path: Path, requires_python: str, ex
 
 
 def test_python_min_from_setup_cfg(tmp_path: Path):
-    (tmp_path / "setup.cfg").write_text(
-        "[options]\npython_requires = >=3.10\n"
-    )
+    (tmp_path / "setup.cfg").write_text("[options]\npython_requires = >=3.10\n")
     c = derive_environment_contract(tmp_path)
     assert c["runtime_versions"]["python_min"] == "3.10"
 
 
 def test_python_min_from_setup_py(tmp_path: Path):
-    (tmp_path / "setup.py").write_text(
-        "setup(python_requires='>=3.9', name='x')\n"
-    )
+    (tmp_path / "setup.py").write_text("setup(python_requires='>=3.9', name='x')\n")
     c = derive_environment_contract(tmp_path)
     assert c["runtime_versions"]["python_min"] == "3.9"
 
@@ -308,8 +315,7 @@ def test_no_native_build_plain_js_package(tmp_path: Path):
 
 def test_egress_from_npmrc(tmp_path: Path):
     (tmp_path / ".npmrc").write_text(
-        "registry=https://registry.npmjs.org/\n"
-        "@myorg:registry=https://npm.pkg.github.com\n"
+        "registry=https://registry.npmjs.org/\n@myorg:registry=https://npm.pkg.github.com\n"
     )
     c = derive_environment_contract(tmp_path)
     assert "registry.npmjs.org" in c["egress"]["hosts"]
@@ -327,8 +333,7 @@ def test_egress_nodejs_org_absent_without_native_build(tmp_path: Path):
 
 def test_egress_hosts_sorted_and_deduplicated(tmp_path: Path):
     (tmp_path / ".npmrc").write_text(
-        "registry=https://registry.npmjs.org/\n"
-        "registry=https://registry.npmjs.org/\n"  # duplicate
+        "registry=https://registry.npmjs.org/\nregistry=https://registry.npmjs.org/\n"  # duplicate
     )
     c = derive_environment_contract(tmp_path)
     hosts = c["egress"]["hosts"]
@@ -418,9 +423,7 @@ def test_validate_no_checks_when_no_constraints(empty_repo: Path):
 
 
 def test_validate_python_floor(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nrequires-python = ">=3.11"\n'
-    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = ">=3.11"\n')
     c = derive_environment_contract(tmp_path)
     c = validate_environment_contract(c, python_version="3.12.0")
     py_check = next(ch for ch in c["preflight"]["checks"] if ch["name"] == "python3")
@@ -428,9 +431,7 @@ def test_validate_python_floor(tmp_path: Path):
 
 
 def test_validate_python_fail_too_old(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nrequires-python = ">=3.12"\n'
-    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = ">=3.12"\n')
     c = derive_environment_contract(tmp_path)
     c = validate_environment_contract(c, python_version="3.10.0")
     py_check = next(ch for ch in c["preflight"]["checks"] if ch["name"] == "python3")

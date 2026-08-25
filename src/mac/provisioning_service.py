@@ -102,9 +102,7 @@ class ProvisioningService:
         if listener not in self._request_listeners:
             self._request_listeners.append(listener)
 
-    def unregister_request_listener(
-        self, listener: ProvisioningRequestListener
-    ) -> None:
+    def unregister_request_listener(self, listener: ProvisioningRequestListener) -> None:
         """Remove a previously registered wake-up listener."""
 
         try:
@@ -258,9 +256,7 @@ class ProvisioningService:
                 # request; otherwise a buggy provisioner can hide an unmet
                 # command shortage while dispatch continues to reject it.
                 try:
-                    request = self.fulfill_request(
-                        rid, fulfilled_agent_id, allow_self_fulfill=True
-                    )
+                    request = self.fulfill_request(rid, fulfilled_agent_id, allow_self_fulfill=True)
                 except Exception as exc:  # noqa: BLE001 - keep provisioning signal pending
                     self.observability.record_log(
                         "provisioning.hook_failed",

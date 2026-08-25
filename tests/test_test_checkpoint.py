@@ -25,9 +25,7 @@ from mac import test_checkpoint as tc
 
 
 def _git(repo: Path, *argv: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *argv], cwd=str(repo), capture_output=True, text=True, check=True
-    )
+    return subprocess.run(["git", *argv], cwd=str(repo), capture_output=True, text=True, check=True)
 
 
 @pytest.fixture()
@@ -93,8 +91,7 @@ def _write_map(root: Path) -> dict:
         "file_line_tests": {},
         "file_scope_tests": {},
         "file_hashes": {
-            name: tc._sha256_file(root / name)
-            for name in ("src/mac/alpha.py", "src/mac/beta.py")
+            name: tc._sha256_file(root / name) for name in ("src/mac/alpha.py", "src/mac/beta.py")
         },
         "always_run": [],
         "stats": {},
@@ -459,14 +456,18 @@ def test_results_merge_across_workers_with_failure_winning(tmp_path):
     directory = tmp_path / "results"
     directory.mkdir()
     (directory / "gw0.jsonl").write_text(
-        json.dumps({"nodeid": "t.py::a", "outcome": "passed"}) + "\n"
-        + json.dumps({"nodeid": "t.py::b", "outcome": "passed"}) + "\n",
+        json.dumps({"nodeid": "t.py::a", "outcome": "passed"})
+        + "\n"
+        + json.dumps({"nodeid": "t.py::b", "outcome": "passed"})
+        + "\n",
         encoding="utf-8",
     )
     (directory / "gw1.jsonl").write_text(
-        json.dumps({"nodeid": "t.py::b", "outcome": "failed"}) + "\n"
+        json.dumps({"nodeid": "t.py::b", "outcome": "failed"})
+        + "\n"
         + "not json at all\n"
-        + json.dumps({"nodeid": "t.py::c", "outcome": "bogus"}) + "\n",
+        + json.dumps({"nodeid": "t.py::c", "outcome": "bogus"})
+        + "\n",
         encoding="utf-8",
     )
     assert tc.ingest_results(directory) == {"t.py::a": "passed", "t.py::b": "failed"}
@@ -617,7 +618,9 @@ def mini_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     (project / "tests").mkdir(parents=True)
     real_conftest = Path(__file__).resolve().parents[1] / "conftest.py"
-    (project / "conftest.py").write_text(real_conftest.read_text(encoding="utf-8"), encoding="utf-8")
+    (project / "conftest.py").write_text(
+        real_conftest.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (project / "tests" / "test_green.py").write_text(
         "def test_one():\n    pass\n\n\ndef test_two():\n    pass\n", encoding="utf-8"
     )

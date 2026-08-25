@@ -283,7 +283,9 @@ def crawl_url(seed_url: str, limit: int, formats: set[str]) -> list[dict[str, An
 def _fetch_text(url: str, *, allow_private: bool) -> str:
     if not allow_private:
         _validate_public_http_url(url)
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"}
+    )
     try:
         with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
@@ -306,9 +308,13 @@ def _validate_public_http_url(url: str) -> None:
     if _allow_private_targets():
         return
     try:
-        infos = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        infos = socket.getaddrinfo(
+            parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+        )
     except socket.gaierror as exc:
-        raise HTTPException(status_code=400, detail=f"cannot resolve host: {parsed.hostname}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"cannot resolve host: {parsed.hostname}"
+        ) from exc
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         if (
@@ -364,7 +370,9 @@ def _absolute_links(base_url: str, links: list[str]) -> list[str]:
         parsed = urllib.parse.urlsplit(absolute)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             continue
-        normalized = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+        normalized = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, parsed.query, "")
+        )
         if normalized not in seen:
             output.append(normalized)
             seen.add(normalized)

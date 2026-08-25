@@ -38,9 +38,7 @@ from mac.services import ControlPlane
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CODER_SCRIPT = REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-codex"
-REVIEWER_SCRIPT = (
-    REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-codex-review"
-)
+REVIEWER_SCRIPT = REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-codex-review"
 
 
 pytestmark = pytest.mark.skipif(
@@ -144,8 +142,9 @@ class TestCoderExecutorProducesSignedManifest:
             attestation_key=attestation_key,
             manifest_path=manifest_path,
         )
-        assert result.returncode == 0, (
-            "executor failed: stdout=%s stderr=%s" % (result.stdout, result.stderr)
+        assert result.returncode == 0, "executor failed: stdout=%s stderr=%s" % (
+            result.stdout,
+            result.stderr,
         )
         assert manifest_path.exists(), "executor must write the manifest file"
 
@@ -248,9 +247,7 @@ class TestDeprecatedReviewerExecutorFailsClosed:
         self, cp: ControlPlane, tmp_path: Path
     ) -> None:
         """The removed always-approve path must fail without a manifest."""
-        reviewer = _register_worker(
-            cp, "mac-worker-python-reviewer", ["review", "python"]
-        )
+        reviewer = _register_worker(cp, "mac-worker-python-reviewer", ["review", "python"])
         attestation_key = getattr(reviewer, "attestation_key", None)
         assert attestation_key
 

@@ -75,8 +75,7 @@ class StoreHelpersMixin:
         encoded = _json.dumps(value, sort_keys=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > self.PIPELINE_CURSOR_MAX_BYTES:
             raise ValueError(
-                "pipeline cursor value exceeds %d bytes"
-                % self.PIPELINE_CURSOR_MAX_BYTES
+                "pipeline cursor value exceeds %d bytes" % self.PIPELINE_CURSOR_MAX_BYTES
             )
         now = _utcnow_iso()
         self.execute(
@@ -163,9 +162,7 @@ class StoreHelpersMixin:
         # INSERT OR IGNORE, which Postgres rejects outright -- shared helpers
         # must be written in SQL both backends accept.
         current_groups = sorted(set(groups or []))
-        self.execute(
-            "DELETE FROM human_groups WHERE human_id = ?", (human_id,)
-        )
+        self.execute("DELETE FROM human_groups WHERE human_id = ?", (human_id,))
         for group_name in current_groups:
             self.execute(
                 """
@@ -183,15 +180,11 @@ class StoreHelpersMixin:
 
     def get_human(self, human_id: str) -> Optional[Any]:
         """Return the human row for ``human_id``, or None if not found."""
-        return self.query_one(
-            "SELECT * FROM humans WHERE id = ?", (human_id,)
-        )
+        return self.query_one("SELECT * FROM humans WHERE id = ?", (human_id,))
 
     def get_human_by_username(self, username: str) -> Optional[Any]:
         """Return the human row for ``username``, or None if not found."""
-        return self.query_one(
-            "SELECT * FROM humans WHERE username = ?", (username,)
-        )
+        return self.query_one("SELECT * FROM humans WHERE username = ?", (username,))
 
     def list_humans(self, *, group: Optional[str] = None) -> list:
         """Return all humans, optionally filtered by group membership."""
@@ -209,9 +202,7 @@ class StoreHelpersMixin:
 
     def delete_human(self, human_id: str) -> bool:
         """Delete a human by id; returns True if a row was deleted."""
-        cursor = self.execute(
-            "DELETE FROM humans WHERE id = ?", (human_id,)
-        )
+        cursor = self.execute("DELETE FROM humans WHERE id = ?", (human_id,))
         return cursor.rowcount > 0
 
     # -- Task-flow analytics helpers -------------------------------------
@@ -286,17 +277,27 @@ class StoreHelpersMixin:
                 updated_at             = excluded.updated_at
             """,
             (
-                episode_id, project, barrier_resource_digest, owner_kind,
-                owner_id, waiter_kind, waiter_id, waiting_publishers,
-                waiting_epoch_openers, queue_depth, wait_started_at,
-                wait_ended_at, wait_seconds, outcome, metadata_json,
-                created_at, updated_at,
+                episode_id,
+                project,
+                barrier_resource_digest,
+                owner_kind,
+                owner_id,
+                waiter_kind,
+                waiter_id,
+                waiting_publishers,
+                waiting_epoch_openers,
+                queue_depth,
+                wait_started_at,
+                wait_ended_at,
+                wait_seconds,
+                outcome,
+                metadata_json,
+                created_at,
+                updated_at,
             ),
         )
 
-    def get_fleet_release_admission_episode(
-        self, episode_id: str
-    ) -> Optional[Any]:
+    def get_fleet_release_admission_episode(self, episode_id: str) -> Optional[Any]:
         """Return a single admission episode by id, or None."""
         return self.query_one(
             "SELECT * FROM fleet_release_admission_episodes WHERE id = ?",

@@ -13,6 +13,7 @@ NEEDS_INPUT is that state. The properties that make it safe:
 * it leaves only to OPEN (answered) or CANCELLED (abandoned) -- never FAILED,
 * no sweeper, reaper, or dispatcher touches it, so it waits indefinitely.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -27,9 +28,7 @@ def cp():
 
 
 def _park(cp, task, questions=("which database?",), actor="human"):
-    return cp.request_task_input(
-        task.id, [{"question": q} for q in questions], actor
-    )
+    return cp.request_task_input(task.id, [{"question": q} for q in questions], actor)
 
 
 def test_parking_requires_a_stated_question(cp):
@@ -60,9 +59,7 @@ def test_parking_records_the_question_and_who_asked(cp):
 def test_answering_returns_the_task_to_the_dispatch_pool(cp):
     task = cp.create_task("ambiguous work")
     _park(cp, task)
-    answered = cp.answer_task_input(
-        task.id, "postgres, us-west", "jordan", disposition="resume"
-    )
+    answered = cp.answer_task_input(task.id, "postgres, us-west", "jordan", disposition="resume")
 
     assert answered.state == TaskState.OPEN.value
     # The outstanding question is cleared, but preserved next to its answer.
@@ -193,10 +190,7 @@ def test_a_superseding_task_is_recorded_and_implies_cancel(cp):
     )
 
     assert answered.state == TaskState.CANCELLED.value
-    event = [
-        e for e in cp.task_history(task.id)
-        if e.to_state == TaskState.CANCELLED.value
-    ][-1]
+    event = [e for e in cp.task_history(task.id) if e.to_state == TaskState.CANCELLED.value][-1]
     assert event.detail["replacement_task_id"] == replacement.id
 
 
@@ -206,8 +200,11 @@ def test_a_dangling_replacement_is_refused(cp):
 
     with pytest.raises(NotFoundError):
         cp.answer_task_input(
-            task.id, "Superseded.", "jordan",
-            disposition="superseded", replaced_by="task_does_not_exist",
+            task.id,
+            "Superseded.",
+            "jordan",
+            disposition="superseded",
+            replaced_by="task_does_not_exist",
         )
     # The task is left parked rather than half-disposed.
     assert cp.get_task(task.id).state == TaskState.NEEDS_INPUT.value
@@ -224,7 +221,10 @@ def test_disposition_is_required_and_validated(cp):
     # replaced_by is meaningless when the task is being released.
     with pytest.raises(ValidationError):
         cp.answer_task_input(
-            task.id, "an answer", "jordan",
-            disposition="resume", replaced_by="task_whatever",
+            task.id,
+            "an answer",
+            "jordan",
+            disposition="resume",
+            replaced_by="task_whatever",
         )
     assert cp.get_task(task.id).state == TaskState.NEEDS_INPUT.value

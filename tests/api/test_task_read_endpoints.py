@@ -3,6 +3,7 @@
 These let `mac task ready/search/stats` work against the hub instead of
 requiring --db (a direct database authority).
 """
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient

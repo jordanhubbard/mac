@@ -534,9 +534,7 @@ def _run_quiescence(
     docker_state = tmp_path / "docker-state.json"
     podman_state = tmp_path / "podman-state.json"
     child_pid = tmp_path / "child.pid"
-    openshell_state.write_text(
-        json.dumps({"present": sandbox_present}), encoding="utf-8"
-    )
+    openshell_state.write_text(json.dumps({"present": sandbox_present}), encoding="utf-8")
     docker_state.write_text(
         json.dumps(
             {
@@ -546,9 +544,7 @@ def _run_quiescence(
         ),
         encoding="utf-8",
     )
-    podman_state.write_text(
-        json.dumps({"containers": podman or []}), encoding="utf-8"
-    )
+    podman_state.write_text(json.dumps({"containers": podman or []}), encoding="utf-8")
 
     canonical_openshell = mac_bin / "openshell"
     if install_openshell:
@@ -608,9 +604,7 @@ def _run_quiescence(
             # must treat this as installed (is_symlink() is True even when
             # the target is missing) and let it reach the normal
             # resolve_owned_executable() path, which fails closed on it.
-            canonical_openshell.symlink_to(
-                mac_bin / "openshell-target-does-not-exist"
-            )
+            canonical_openshell.symlink_to(mac_bin / "openshell-target-does-not-exist")
     _write_executable(mac_bin / "openclaw-gateway-stop", _fake_stop_wrapper_source())
     _write_executable(fake_bin / "podman", _fake_runtime_source("podman"))
     if podman_docker_symlink:
@@ -629,9 +623,7 @@ def _run_quiescence(
         invocation += f"\n{FUNCTION}\n"
     if assert_phase is not None:
         invocation += (
-            "\nassert_legacy_nemoclaw_containers_inactive "
-            + _shell_quote(assert_phase)
-            + "\n"
+            "\nassert_legacy_nemoclaw_containers_inactive " + _shell_quote(assert_phase) + "\n"
         )
     harness.write_text(
         "#!/usr/bin/env bash\n"
@@ -650,7 +642,7 @@ def _run_quiescence(
         f"export MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256={receipt_sha256}\n"
         f"DOCKER_BIN={_shell_quote(str(fake_bin / 'docker'))}\n"
         f"PODMAN_BIN={_shell_quote(str(fake_bin / 'podman'))}\n"
-        "CONTAINER_RUNTIME_PATHS=(\"$DOCKER_BIN\" \"$PODMAN_BIN\")\n"
+        'CONTAINER_RUNTIME_PATHS=("$DOCKER_BIN" "$PODMAN_BIN")\n'
         + _quiescence_block()
         + invocation,
         encoding="utf-8",
@@ -759,18 +751,14 @@ def test_block_interface_and_main_call_order_are_stable() -> None:
     assert "os.environ.copy()" not in block
     assert "SSH_AUTH_SOCK" not in block
 
-    main = _installer_text().split(
-        'write_deploy_manifest "pre" "$MANIFEST_PRE"', 1
-    )[1]
+    main = _installer_text().split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
     stop = main.index("stop_existing_services_for_deploy\n")
     quiesce = main.index(FUNCTION + "\n", stop)
     backup = main.index("backup_existing_artifacts\n", quiesce)
     install = main.index('log "installing mac source"', backup)
     assert stop < quiesce < backup < install
 
-    gate_main = block.split('elif mode == "quiesce":', 1)[1].split(
-        "\n    else:", 1
-    )[0]
+    gate_main = block.split('elif mode == "quiesce":', 1)[1].split("\n    else:", 1)[0]
     assert gate_main.index("reconcile_managed_task_sandboxes()") < gate_main.index(
         "prove_managed_openshell_inactive(runtimes)"
     )
@@ -985,9 +973,7 @@ def test_openshell_inventory_paginates_before_deciding_absence(
         "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
     ],
 )
-def test_non_finite_deadline_configuration_fails_closed(
-    tmp_path: Path, variable: str
-) -> None:
+def test_non_finite_deadline_configuration_fails_closed(tmp_path: Path, variable: str) -> None:
     run = _run_quiescence(
         tmp_path,
         seed_marker=True,
@@ -1018,9 +1004,7 @@ def test_zero_poll_interval_cannot_certify_back_to_back_absence(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("mode", ["nonzero", "malformed", "timeout", "duplicate"])
-def test_openshell_unknown_states_fail_closed_without_raw_output(
-    tmp_path: Path, mode: str
-) -> None:
+def test_openshell_unknown_states_fail_closed_without_raw_output(tmp_path: Path, mode: str) -> None:
     run = _run_quiescence(tmp_path, openshell_mode=mode, seed_marker=True)
     assert run.result.returncode != 0
     assert not run.marker.exists()
@@ -1063,9 +1047,7 @@ def test_persistent_sandbox_deletion_fails_without_receipt(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("mode", ["failure", "timeout"])
-def test_stop_wrapper_failure_blocks_delete_and_receipt(
-    tmp_path: Path, mode: str
-) -> None:
+def test_stop_wrapper_failure_blocks_delete_and_receipt(tmp_path: Path, mode: str) -> None:
     run = _run_quiescence(tmp_path, wrapper_mode=mode, seed_marker=True)
     assert run.result.returncode != 0
     assert not run.marker.exists()
@@ -1115,12 +1097,8 @@ def test_stopped_docker_and_podman_nemoclaw_containers_are_retained_inactive(
         podman=[_container(podman_id)],
     )
     receipt = _assert_success_marker(run)
-    assert len(
-        json.loads(run.docker_state.read_text(encoding="utf-8"))["containers"]
-    ) == 1
-    assert len(
-        json.loads(run.podman_state.read_text(encoding="utf-8"))["containers"]
-    ) == 1
+    assert len(json.loads(run.docker_state.read_text(encoding="utf-8"))["containers"]) == 1
+    assert len(json.loads(run.podman_state.read_text(encoding="utf-8"))["containers"]) == 1
     calls = _call_lines(run)
     assert not any("rm -f" in line for line in calls)
     serialized = json.dumps(receipt, sort_keys=True)
@@ -1245,9 +1223,7 @@ def test_stale_orphaned_task_sandbox_is_reconciled_before_receipt(
     assert proof["stable_inactive_observations"] == 2
     assert proof["reconciled"] == ["mac-task-orphaned-fixture"]
     assert proof["reconciled_count"] == 1
-    assert (
-        "openshell:sandbox delete mac-task-orphaned-fixture" in _call_lines(run)
-    )
+    assert "openshell:sandbox delete mac-task-orphaned-fixture" in _call_lines(run)
     _assert_no_secret(run)
 
 
@@ -1258,15 +1234,9 @@ def test_partially_labeled_task_sandboxes_are_never_reaped(
     # owner, unmanaged kind) are protective, so the gate certifies quiescence
     # without deleting or waiting on any of them.
     protected = [
-        _managed_task_sandbox(
-            "mac-task-missing-keep-fixture", keep="", pid=_dead_pid()
-        ),
-        _managed_task_sandbox(
-            "mac-task-foreign-owner-fixture", owner="other", pid=_dead_pid()
-        ),
-        _managed_task_sandbox(
-            "mac-task-unmanaged-kind-fixture", kind="gadget", pid=_dead_pid()
-        ),
+        _managed_task_sandbox("mac-task-missing-keep-fixture", keep="", pid=_dead_pid()),
+        _managed_task_sandbox("mac-task-foreign-owner-fixture", owner="other", pid=_dead_pid()),
+        _managed_task_sandbox("mac-task-unmanaged-kind-fixture", kind="gadget", pid=_dead_pid()),
     ]
     run = _run_quiescence(
         tmp_path,
@@ -1376,8 +1346,7 @@ def test_live_lease_owned_sandbox_is_never_interrupted_during_drain(
     )
     assert run.result.returncode != 0
     assert not any(
-        "mac-task-protected-live-fixture" in line
-        and ("delete" in line or "download" in line)
+        "mac-task-protected-live-fixture" in line and ("delete" in line or "download" in line)
         for line in _call_lines(run)
     )
     _assert_no_secret(run)
@@ -1388,9 +1357,7 @@ def test_multiple_stale_task_sandboxes_are_reaped_in_one_gate_pass(
 ) -> None:
     stale = [
         _managed_task_sandbox("mac-task-alpha-fixture", pid=_dead_pid()),
-        _managed_task_sandbox(
-            "mac-hubverify-beta-fixture", kind="hubverify", pid=_dead_pid()
-        ),
+        _managed_task_sandbox("mac-hubverify-beta-fixture", kind="hubverify", pid=_dead_pid()),
         _managed_task_sandbox(
             "mac-security-probe-gamma-fixture",
             kind="security-probe",
@@ -1418,9 +1385,7 @@ def test_multiple_stale_task_sandboxes_are_reaped_in_one_gate_pass(
     assert proof["scanned"] == 0
     assert proof["managed"] == 0
     delete_calls = [
-        line
-        for line in _call_lines(run)
-        if line.startswith("openshell:sandbox delete ")
+        line for line in _call_lines(run) if line.startswith("openshell:sandbox delete ")
     ]
     assert sorted(delete_calls) == [
         "openshell:sandbox delete mac-hubverify-beta-fixture",
@@ -1435,9 +1400,7 @@ def test_each_managed_kind_is_reaped_when_its_recorded_pid_is_dead(
 ) -> None:
     kinds = ("task", "hubverify", "codingcap", "runtime-smoke", "security-probe")
     stale = [
-        _managed_task_sandbox(
-            f"mac-{kind}-deadpid-fixture", kind=kind, pid=_dead_pid()
-        )
+        _managed_task_sandbox(f"mac-{kind}-deadpid-fixture", kind=kind, pid=_dead_pid())
         for kind in kinds
     ]
     run = _run_quiescence(
@@ -1450,16 +1413,12 @@ def test_each_managed_kind_is_reaped_when_its_recorded_pid_is_dead(
     proof = receipt["openshell_task_sandboxes"]
     assert proof["final_state"] == "quiescent"
     assert proof["stable_inactive_observations"] == 2
-    assert proof["reconciled"] == sorted(
-        f"mac-{kind}-deadpid-fixture" for kind in kinds
-    )
+    assert proof["reconciled"] == sorted(f"mac-{kind}-deadpid-fixture" for kind in kinds)
     assert proof["reconciled_count"] == len(kinds)
     assert proof["scanned"] == 0
     assert proof["managed"] == 0
     delete_calls = {
-        line
-        for line in _call_lines(run)
-        if line.startswith("openshell:sandbox delete ")
+        line for line in _call_lines(run) if line.startswith("openshell:sandbox delete ")
     }
     assert delete_calls == {
         f"openshell:sandbox delete mac-{kind}-deadpid-fixture" for kind in kinds
@@ -1472,14 +1431,10 @@ def test_all_falsey_keep_spellings_are_reaped_and_dead_truthy_task_is_archived(
 ) -> None:
     falsey = ["0", "false", "no", "off", "FALSE", "Off", "No"]
     reapable = [
-        _managed_task_sandbox(
-            f"mac-task-falsey-{index}-fixture", keep=value, pid=_dead_pid()
-        )
+        _managed_task_sandbox(f"mac-task-falsey-{index}-fixture", keep=value, pid=_dead_pid())
         for index, value in enumerate(falsey)
     ]
-    preserved = _managed_task_sandbox(
-        "mac-task-truthy-keep-fixture", keep="true", pid=_dead_pid()
-    )
+    preserved = _managed_task_sandbox("mac-task-truthy-keep-fixture", keep="true", pid=_dead_pid())
     run = _run_quiescence(
         tmp_path,
         sandbox_source="none",
@@ -1490,9 +1445,9 @@ def test_all_falsey_keep_spellings_are_reaped_and_dead_truthy_task_is_archived(
     proof = receipt["openshell_task_sandboxes"]
     assert proof["final_state"] == "quiescent"
     assert proof["stable_inactive_observations"] == 2
-    expected_reconciled = {
-        f"mac-task-falsey-{index}-fixture" for index in range(len(falsey))
-    } | {"mac-task-truthy-keep-fixture"}
+    expected_reconciled = {f"mac-task-falsey-{index}-fixture" for index in range(len(falsey))} | {
+        "mac-task-truthy-keep-fixture"
+    }
     assert proof["reconciled"] == sorted(expected_reconciled)
     assert proof["reconciled_count"] == len(expected_reconciled)
     assert proof["preserved"] == ["mac-task-truthy-keep-fixture"]
@@ -1500,23 +1455,17 @@ def test_all_falsey_keep_spellings_are_reaped_and_dead_truthy_task_is_archived(
     assert proof["scanned"] == 0
     assert proof["managed"] == 0
     delete_calls = {
-        line
-        for line in _call_lines(run)
-        if line.startswith("openshell:sandbox delete ")
+        line for line in _call_lines(run) if line.startswith("openshell:sandbox delete ")
     }
     assert delete_calls == {
-        f"openshell:sandbox delete mac-task-falsey-{index}-fixture"
-        for index in range(len(falsey))
+        f"openshell:sandbox delete mac-task-falsey-{index}-fixture" for index in range(len(falsey))
     } | {"openshell:sandbox delete mac-task-truthy-keep-fixture"}
-    assert (
-        "openshell:sandbox download mac-task-truthy-keep-fixture "
-        "/sandbox"
-    ) in "\n".join(_call_lines(run))
+    assert ("openshell:sandbox download mac-task-truthy-keep-fixture /sandbox") in "\n".join(
+        _call_lines(run)
+    )
     recovery_dirs = list((run.mac_home / "openshell-recovery").iterdir())
     assert len(recovery_dirs) == 1
-    manifest = json.loads(
-        (recovery_dirs[0] / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((recovery_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["schema"] == "mac.openshell.task_preservation.v1"
     assert manifest["sandbox"] == "mac-task-truthy-keep-fixture"
     assert (recovery_dirs[0] / "workspace" / "task.json").is_file()
@@ -1543,9 +1492,7 @@ def test_protected_task_archive_has_a_separate_bounded_transfer_window(
         },
     )
     receipt = _assert_success_marker(run)
-    assert receipt["openshell_task_sandboxes"]["preserved"] == [
-        "mac-task-slow-preserve-fixture"
-    ]
+    assert receipt["openshell_task_sandboxes"]["preserved"] == ["mac-task-slow-preserve-fixture"]
     _assert_no_secret(run)
 
 
@@ -1567,15 +1514,11 @@ def test_dead_protected_task_download_failure_fails_closed_without_delete(
     assert not run.marker.exists()
     calls = _call_lines(run)
     assert any(
-        line.startswith(
-            "openshell:sandbox download mac-task-preserve-failure-fixture "
-            "/sandbox"
-        )
+        line.startswith("openshell:sandbox download mac-task-preserve-failure-fixture /sandbox")
         for line in calls
     )
     assert not any(
-        line == "openshell:sandbox delete mac-task-preserve-failure-fixture"
-        for line in calls
+        line == "openshell:sandbox delete mac-task-preserve-failure-fixture" for line in calls
     )
     _assert_no_secret(run)
 
@@ -1608,9 +1551,7 @@ def test_task_sandbox_reconciliation_runs_when_primary_sandbox_is_absent(
     assert openclaw["stop_wrapper_invoked"] is False
     assert openclaw["delete_invoked"] is False
     delete_calls = [
-        line
-        for line in _call_lines(run)
-        if line.startswith("openshell:sandbox delete ")
+        line for line in _call_lines(run) if line.startswith("openshell:sandbox delete ")
     ]
     assert delete_calls == ["openshell:sandbox delete mac-task-no-openclaw-fixture"]
     _assert_no_secret(run)
@@ -1693,9 +1634,7 @@ def test_task_sandbox_with_foreign_or_missing_owner_is_never_reaped(
 ) -> None:
     """A foreign or blank ``mac.owner`` is never reaped (never reap on partial)."""
 
-    sandbox = _managed_task_sandbox(
-        "mac-task-foreign-fixture", owner=owner, pid=_dead_pid()
-    )
+    sandbox = _managed_task_sandbox("mac-task-foreign-fixture", owner=owner, pid=_dead_pid())
     run = _run_quiescence(
         tmp_path,
         sandbox_source="none",
@@ -1764,9 +1703,7 @@ def test_stale_task_sandbox_delete_failure_fails_closed_without_receipt(
     assert run.result.returncode != 0
     assert not run.marker.exists()
     # The delete was attempted (proving the classifier reaped it) but failed.
-    assert (
-        "openshell:sandbox delete mac-task-delfail-fixture" in _call_lines(run)
-    )
+    assert "openshell:sandbox delete mac-task-delfail-fixture" in _call_lines(run)
     _assert_no_secret(run)
 
 
@@ -1796,10 +1733,7 @@ def test_persistently_stale_task_sandbox_trips_deadline_fail_closed(
     )
     assert run.result.returncode != 0
     assert not run.marker.exists()
-    assert (
-        "stale OpenShell task sandboxes survived phase-1 quiescence"
-        in run.result.stderr
-    )
+    assert "stale OpenShell task sandboxes survived phase-1 quiescence" in run.result.stderr
     # At least one delete was attempted before the deadline fired.
     assert any(
         line.startswith("openshell:sandbox delete mac-task-persist-fixture")
@@ -1882,9 +1816,7 @@ def test_reconciled_names_are_deduplicated_across_multipass_observations(
     ]
     assert proof["reconciled_count"] == 2
     delete_calls = [
-        line
-        for line in _call_lines(run)
-        if line.startswith("openshell:sandbox delete ")
+        line for line in _call_lines(run) if line.startswith("openshell:sandbox delete ")
     ]
     # ``linger`` forces two delete attempts per sandbox, proving multi-pass
     # observation, while the reconciled proof still de-duplicates the names.
@@ -1904,9 +1836,7 @@ def test_all_local_docker_context_endpoints_are_certified(tmp_path: Path) -> Non
     )
     receipt = _assert_success_marker(run)
     docker_endpoints = {
-        item["endpoint"]
-        for item in receipt["container_runtimes"]
-        if item["kind"] == "docker"
+        item["endpoint"] for item in receipt["container_runtimes"] if item["kind"] == "docker"
     }
     assert len(docker_endpoints) == 2
     calls = _call_lines(run)
@@ -1937,16 +1867,13 @@ def test_macos_podman_machine_connection_is_explicitly_certified(
     )
     receipt = _assert_success_marker(run)
     podman_endpoints = [
-        item["endpoint"]
-        for item in receipt["container_runtimes"]
-        if item["kind"] == "podman"
+        item["endpoint"] for item in receipt["container_runtimes"] if item["kind"] == "podman"
     ]
     assert podman_endpoints == [
         "podman-machine://podman-machine-default@127.0.0.1:51234/run/user/501/podman/podman.sock"
     ]
     assert any(
-        "podman:--connection podman-machine-default info" in line
-        for line in _call_lines(run)
+        "podman:--connection podman-machine-default info" in line for line in _call_lines(run)
     )
 
 
@@ -1970,9 +1897,7 @@ def test_podman_installed_with_no_connections_configured_quiesces_cleanly(
     _assert_success_marker(run)
 
 
-@pytest.mark.parametrize(
-    "podman_mode", ["machine-malformed-string", "machine-malformed-zero"]
-)
+@pytest.mark.parametrize("podman_mode", ["machine-malformed-string", "machine-malformed-zero"])
 def test_malformed_podman_machine_metadata_cannot_authorize_inventory_or_deletion(
     tmp_path: Path,
     podman_mode: str,
@@ -2029,9 +1954,7 @@ def test_unproven_loopback_daemon_endpoints_fail_closed_before_mutation(
     assert not run.marker.exists()
     runtime_calls = [line for line in _call_lines(run) if line.startswith(runtime + ":")]
     assert not any(forbidden_selector in line for line in runtime_calls)
-    assert not any(
-        " ps " in f" {line} " or " rm " in f" {line} " for line in runtime_calls
-    )
+    assert not any(" ps " in f" {line} " or " rm " in f" {line} " for line in runtime_calls)
     _assert_no_secret(run)
 
 
@@ -2048,8 +1971,7 @@ def test_linux_native_podman_store_is_inventoried_with_stored_remote_connections
     )
     receipt = _assert_success_marker(run)
     assert any(
-        item["endpoint"].startswith("podman-local://")
-        for item in receipt["container_runtimes"]
+        item["endpoint"].startswith("podman-local://") for item in receipt["container_runtimes"]
     )
     assert not any("rm -f" in line for line in _call_lines(run))
 
@@ -2104,9 +2026,7 @@ def test_ambiguous_compose_service_label_fails_closed_without_deletion(
     )
     assert run.result.returncode != 0
     assert not run.marker.exists()
-    assert not any(
-        line.startswith("docker:") and "rm -f" in line for line in _call_lines(run)
-    )
+    assert not any(line.startswith("docker:") and "rm -f" in line for line in _call_lines(run))
     state = json.loads(run.docker_state.read_text(encoding="utf-8"))
     assert [item["Id"] for item in state["containers"]] == [container_id]
 

@@ -74,7 +74,7 @@ class ModelSelection:
     models: List[str]
     leading_families: List[str] = field(default_factory=list)
     available_count: int = 0
-    source: str = ""            # "dynamic" | "fallback"
+    source: str = ""  # "dynamic" | "fallback"
     at: str = ""
     ladder: List[str] = field(default_factory=list)
 
@@ -172,7 +172,7 @@ def _models_dev_cost(model_id: str) -> Optional[float]:
     # id (so nvidia/meta/llama -> (nvidia, "meta/llama") and (meta, "llama"),
     # not the previous (nvidia, "llama") which dropped the intermediate path).
     for i in range(len(segments) - 1):
-        candidates.append((segments[i], "/".join(segments[i + 1:])))
+        candidates.append((segments[i], "/".join(segments[i + 1 :])))
         candidates.append((segments[i], segments[-1]))
     bare = segments[-1] if segments else mid
     for provider in ("anthropic", "openai", "google", "xai", "deepseek", "meta", "mistral", "qwen"):
@@ -204,9 +204,7 @@ def extract_leading_families(
     scores: Dict[str, int] = {}
     order = {name: i for i, (name, _) in enumerate(_FAMILY_RES)}
     for result in search_results or []:
-        text = " ".join(
-            str(result.get(k) or "") for k in ("title", "description", "snippet")
-        )
+        text = " ".join(str(result.get(k) or "") for k in ("title", "description", "snippet"))
         for name, rx in _FAMILY_RES:
             if rx.search(text):
                 scores[name] = scores.get(name, 0) + 1
@@ -381,7 +379,7 @@ _log = logging.getLogger("mac.model_selection")
 # promote) can interleave and one silently drops the other's update (lost update).
 _STORE_LOCK = threading.RLock()
 
-DEFAULT_INTERVAL_SECONDS = 7 * 24 * 60 * 60.0   # weekly — "what's leading" moves slowly
+DEFAULT_INTERVAL_SECONDS = 7 * 24 * 60 * 60.0  # weekly — "what's leading" moves slowly
 DEFAULT_INITIAL_DELAY_SECONDS = 300.0
 MIN_INTERVAL_SECONDS = 60.0
 
@@ -466,9 +464,7 @@ def selected_models(environ: Optional[Mapping[str, str]] = None) -> List[str]:
     return [str(m) for m in (data or {}).get("models", []) if str(m).strip()]
 
 
-def resolve_strength_from_selection(
-    scale: int, environ: Optional[Mapping[str, str]] = None
-) -> str:
+def resolve_strength_from_selection(scale: int, environ: Optional[Mapping[str, str]] = None) -> str:
     """Resolve a 1..10 strength to a concrete model via the ACTIVE ladder.
 
     Returns "" when no ladder is adopted yet (caller falls back to the fleet
@@ -506,8 +502,9 @@ def promote_pending(environ: Optional[Mapping[str, str]] = None) -> Optional[dic
 
 
 # Legacy name retained for callers/tests that adopt directly (bootstrap path).
-def write_selection(sel: ModelSelection, path: Optional[Path] = None,
-                    environ: Optional[Mapping[str, str]] = None) -> Path:
+def write_selection(
+    sel: ModelSelection, path: Optional[Path] = None, environ: Optional[Mapping[str, str]] = None
+) -> Path:
     return _write_store({"active": sel.to_dict(), "pending": None}, path, environ)
 
 
@@ -625,9 +622,16 @@ def compare_eval_metrics(
                 drifted.append(_annotate({"metric": metric, "rel_delta": d, "direction": "down"}))
     if _SAFETY_METRIC in baseline and _SAFETY_METRIC in current:
         if float(current[_SAFETY_METRIC]) > float(baseline[_SAFETY_METRIC]):
-            drifted.append(_annotate({"metric": _SAFETY_METRIC,
-                            "abs_delta": float(current[_SAFETY_METRIC]) - float(baseline[_SAFETY_METRIC]),
-                            "direction": "up"}))
+            drifted.append(
+                _annotate(
+                    {
+                        "metric": _SAFETY_METRIC,
+                        "abs_delta": float(current[_SAFETY_METRIC])
+                        - float(baseline[_SAFETY_METRIC]),
+                        "direction": "up",
+                    }
+                )
+            )
     for metric in _COST_METRICS:
         if metric in baseline and metric in current:
             d = rel(float(baseline[metric]), float(current[metric]))
@@ -637,9 +641,7 @@ def compare_eval_metrics(
         if metric in baseline and metric in current:
             delta = float(current[metric]) - float(baseline[metric])
             if delta > threshold:
-                drifted.append(
-                    _annotate({"metric": metric, "abs_delta": delta, "direction": "up"})
-                )
+                drifted.append(_annotate({"metric": metric, "abs_delta": delta, "direction": "up"}))
     return {"regressed": bool(drifted), "drifted": drifted}
 
 
@@ -662,7 +664,11 @@ class ModelSelectionConfig:
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "ModelSelectionConfig":
         env = os.environ if environ is None else environ
         enabled = str(env.get("MAC_MODEL_SELECT_ENABLED") or "").strip().lower() in {
-            "1", "true", "yes", "on"}
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         raw = str(env.get("MAC_MODEL_SELECT_INTERVAL_SECONDS") or "").strip()
         try:
             interval = max(MIN_INTERVAL_SECONDS, float(raw)) if raw else DEFAULT_INTERVAL_SECONDS
@@ -671,14 +677,11 @@ class ModelSelectionConfig:
         # Fallback = the fleet's configured strong default, so a discovery/network
         # failure preserves today's behavior rather than blanking the model.
         fallback = str(
-            env.get("MAC_ROUTER_DEFAULT_MODEL")
-            or env.get("MAC_HERMES_GATEWAY_MODEL")
-            or ""
+            env.get("MAC_ROUTER_DEFAULT_MODEL") or env.get("MAC_HERMES_GATEWAY_MODEL") or ""
         ).strip()
         if fallback == "*":
             fallback = ""
-        return cls(enabled=enabled, interval_seconds=interval,
-                   fallback_model=fallback)
+        return cls(enabled=enabled, interval_seconds=interval, fallback_model=fallback)
 
 
 class ModelSelectionService:
@@ -686,10 +689,15 @@ class ModelSelectionService:
     leading (web search) → moderate by what the gateway can route → select top N
     → persist. Mirrors the other hub daemons (own thread, env-gated)."""
 
-    def __init__(self, control_plane: Any, config: ModelSelectionConfig, *,
-                 searcher: Optional[Callable[[str, int], List[dict]]] = None,
-                 swap_evaluator: Optional[Callable[[List[str], List[str]], dict]] = None,
-                 environ: Optional[Mapping[str, str]] = None) -> None:
+    def __init__(
+        self,
+        control_plane: Any,
+        config: ModelSelectionConfig,
+        *,
+        searcher: Optional[Callable[[str, int], List[dict]]] = None,
+        swap_evaluator: Optional[Callable[[List[str], List[str]], dict]] = None,
+        environ: Optional[Mapping[str, str]] = None,
+    ) -> None:
         self.control_plane = control_plane
         self.config = config
         self._environ = os.environ if environ is None else environ
@@ -720,6 +728,7 @@ class ModelSelectionService:
             return self._searcher
         try:
             from mac.firecrawl_gateway import search_web
+
             return search_web
         except Exception:  # noqa: BLE001
             return None
@@ -762,8 +771,11 @@ class ModelSelectionService:
         """Promote the pending swap to active (operator action, or an automated
         eval-drift gate). No-op if nothing is pending."""
         promoted = promote_pending(environ=self._environ)
-        report = {"status": "ok" if promoted else "nothing_pending",
-                  "promoted": promoted, "actor": actor}
+        report = {
+            "status": "ok" if promoted else "nothing_pending",
+            "promoted": promoted,
+            "actor": actor,
+        }
         self._observe("model.selection.promote", "info", report)
         return report
 
@@ -793,12 +805,19 @@ class ModelSelectionService:
             available = available_models_from_providers(provider_objs)
             providers = [p.name for p in provider_objs]
             sel = select_powerhouse_models(
-                results, available, n=self.config.count,
-                fallback=self.config.fallback_model, now=now,
+                results,
+                available,
+                n=self.config.count,
+                fallback=self.config.fallback_model,
+                now=now,
                 cost_lookup=_models_dev_cost,
             )
-            report = {"status": "ok", "trigger": trigger, "selection": sel.to_dict(),
-                      "providers": providers}
+            report = {
+                "status": "ok",
+                "trigger": trigger,
+                "selection": sel.to_dict(),
+                "providers": providers,
+            }
             active = read_active(environ=self._environ)
             active_models = list((active or {}).get("models", []))
 
@@ -880,8 +899,12 @@ class ModelSelectionService:
     def _observe(self, event: str, level: str, detail: dict) -> None:
         try:
             self.control_plane.record_log(
-                event, layer="control_plane", source="model-selection",
-                level=level, subject_type="service", subject_id="model-selection",
+                event,
+                layer="control_plane",
+                source="model-selection",
+                level=level,
+                subject_type="service",
+                subject_id="model-selection",
                 detail=detail,
             )
         except Exception:  # noqa: BLE001

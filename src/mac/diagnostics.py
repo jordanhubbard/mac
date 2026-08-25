@@ -41,7 +41,9 @@ class Finding:
 
     def __post_init__(self) -> None:
         if self.severity not in SEVERITIES:
-            raise ValueError("invalid severity %r (expected one of %r)" % (self.severity, SEVERITIES))
+            raise ValueError(
+                "invalid severity %r (expected one of %r)" % (self.severity, SEVERITIES)
+            )
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -210,8 +212,7 @@ def _stale_agents(control_plane: Any, threshold_seconds: int = 3600) -> List[Fin
             )
         ]
     stale = [
-        {"id": row["id"], "name": row["name"], "last_seen_at": row["last_seen_at"]}
-        for row in rows
+        {"id": row["id"], "name": row["name"], "last_seen_at": row["last_seen_at"]} for row in rows
     ]
     return [
         Finding(
@@ -245,8 +246,7 @@ def _expired_active_leases(control_plane: Any) -> List[Finding]:
     if not rows:
         return [Finding("expired-active-leases", "ok", "no expired active leases")]
     offenders = [
-        {"id": row["id"], "task_id": row["task_id"], "agent_id": row["agent_id"]}
-        for row in rows
+        {"id": row["id"], "task_id": row["task_id"], "agent_id": row["agent_id"]} for row in rows
     ]
     return [
         Finding(
@@ -356,8 +356,7 @@ def _unsatisfiable_requirements(
     # them -- so the honest summary names both, and names the excluded case
     # first because it is the one nobody would guess.
     excluded = sum(
-        1 for item in offenders
-        if any(code.endswith(":excluded") for code in item["unmet"])
+        1 for item in offenders if any(code.endswith(":excluded") for code in item["unmet"])
     )
     if severity == "ok":
         summary = "every open task's requirements can be met by some registered agent"
@@ -365,13 +364,12 @@ def _unsatisfiable_requirements(
         summary = (
             "%d open task(s) cannot be dispatched; %d of them have a capable "
             "agent that is EXCLUDED from the task (clear the exclusion, do not "
-            "add capabilities). Blockers: %s"
-            % (count, excluded, ", ".join(sorted(unmet_counts)))
+            "add capabilities). Blockers: %s" % (count, excluded, ", ".join(sorted(unmet_counts)))
         )
     else:
-        summary = (
-            "%d open task(s) state requirements no agent can satisfy: %s"
-            % (count, ", ".join(sorted(unmet_counts)))
+        summary = "%d open task(s) state requirements no agent can satisfy: %s" % (
+            count,
+            ", ".join(sorted(unmet_counts)),
         )
     return [
         Finding(
@@ -576,8 +574,7 @@ def _reviewing_publication_parked(
         Finding(
             "reviewing-publication-parked",
             "warn",
-            "%d approved task(s) have no publication destination and cannot complete"
-            % len(parked),
+            "%d approved task(s) have no publication destination and cannot complete" % len(parked),
             {
                 "threshold_seconds": threshold_seconds,
                 "count": len(parked),

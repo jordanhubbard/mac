@@ -62,7 +62,6 @@ def _nested_dict(root: Dict[str, Any], *path: str) -> Dict[str, Any]:
     return node if isinstance(node, dict) else {}
 
 
-
 def _lessons_section(lessons: List[str]) -> str:
     """Render recalled outcomes as bounded, explicitly untrusted prompt data."""
     if not lessons:
@@ -145,16 +144,11 @@ def _compute_scope_signals(
         except Exception:
             continue
         if isinstance(data, dict) and data.get("schema") == _PLAN_LEARNING_SCHEMA:
-            signals.append(
-                "memory:prior_decomposition:%s"
-                % str(data.get("task_id") or "unknown")
-            )
+            signals.append("memory:prior_decomposition:%s" % str(data.get("task_id") or "unknown"))
     return signals
 
 
-def recall_scope_lessons(
-    task: Dict[str, Any], *, limit: int = 5
-) -> List[Dict[str, Any]]:
+def recall_scope_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[Dict[str, Any]]:
     """Recall prior plan-decomposition records relevant to *task*."""
     project = _task_project(task)
     records: List[Dict[str, Any]] = []
@@ -209,9 +203,7 @@ def compute_scope_estimate_from_lessons(
     if not isinstance(metadata, dict):
         metadata = {}
     signals = _compute_scope_signals(title, description, metadata, prior_lessons)
-    large_signal_count = sum(
-        1 for signal in signals if not signal.startswith("plan_signal:")
-    )
+    large_signal_count = sum(1 for signal in signals if not signal.startswith("plan_signal:"))
     size = "large" if large_signal_count >= 2 else "small"
     rationale = (
         "size=%s based on: %s" % (size, "; ".join(signals[:5]))
@@ -324,11 +316,7 @@ def should_enter_planning_phase(
     """
     if not is_planning_phase(task):
         return False
-    capability = (
-        hub_capability
-        if isinstance(hub_capability, dict)
-        else hub_write_capability()
-    )
+    capability = hub_capability if isinstance(hub_capability, dict) else hub_write_capability()
     return bool(capability.get("ready"))
 
 
@@ -339,8 +327,7 @@ def planning_phase_skip_notice(capability: Optional[Dict[str, Any]] = None) -> s
         reason = str(capability.get("reason"))
     return "\n".join(
         [
-            "HUB WRITES UNAVAILABLE: this executor cannot reach the hub (%s)."
-            % reason,
+            "HUB WRITES UNAVAILABLE: this executor cannot reach the hub (%s)." % reason,
             "A planning/decomposition phase requires hub writes to create child tasks.",
             "Do not enter that phase. Do not write evidence_type=plan_decomposed.",
             "Proceed with the work this process can do. Treat this as an environment "
@@ -370,8 +357,7 @@ def build_planning_prompt(
     trigger_reason = (
         "metadata.plan_first=true"
         if plan_first
-        else "scope_estimate.size=%s (signals: %s)"
-        % (size, ", ".join(signals) or "none")
+        else "scope_estimate.size=%s (signals: %s)" % (size, ", ".join(signals) or "none")
     )
     parts = [
         "You are running as a MAC fleet worker in PLANNING MODE. "
@@ -407,14 +393,14 @@ def build_planning_prompt(
                 "manifest is self-contradictory and must not be written.",
                 "  5. Write mac-evidence.json with:",
                 "     {",
-                "       \"schema\": \"mac.worker_evidence.v1\",",
-                "       \"status\": \"complete\",",
-                "       \"evidence_type\": \"plan_decomposed\",",
-                "       \"summary\": \"<one-sentence description of the plan>\",",
-                "       \"children\": [{\"node_id\": \"...\", \"title\": \"...\", "
-                "\"description\": \"...\", \"depends_on\": [\"earlier_node_id\"]}, ...],",
-                "       \"ordering_rationale\": \"<why this order>\",",
-                "       \"coverage_claim\": \"<how the children together cover the full parent scope>\"",
+                '       "schema": "mac.worker_evidence.v1",',
+                '       "status": "complete",',
+                '       "evidence_type": "plan_decomposed",',
+                '       "summary": "<one-sentence description of the plan>",',
+                '       "children": [{"node_id": "...", "title": "...", '
+                '"description": "...", "depends_on": ["earlier_node_id"]}, ...],',
+                '       "ordering_rationale": "<why this order>",',
+                '       "coverage_claim": "<how the children together cover the full parent scope>"',
                 "     }",
                 "  6. Exit — the parent task will automatically block on its children.",
                 "DO NOT write any code, DO NOT make any code changes, DO NOT run tests.",
@@ -488,9 +474,7 @@ def reject_empty_plan_decomposed_evidence(task_workspace: Path) -> bool:
     manifest["evidence_type"] = "operator_result"
     manifest["status"] = "invalid"
     manifest["rejected_evidence_type"] = "plan_decomposed"
-    manifest["rejected_reason"] = (
-        "plan_decomposed with zero titled children must not be emitted"
-    )
+    manifest["rejected_reason"] = "plan_decomposed with zero titled children must not be emitted"
     problems = manifest.get("problems")
     if not isinstance(problems, list):
         problems = []

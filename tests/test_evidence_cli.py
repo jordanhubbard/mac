@@ -96,17 +96,13 @@ def test_sign_manifest_stdin_writes_to_stdout(
     assert parsed["signature"] == sign_verification_manifest("stdin-key", expected_input)
 
 
-def test_sign_signed_by_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sign_signed_by_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(_sample_manifest()), encoding="utf-8")
     monkeypatch.setenv("MAC_AGENT_ATTESTATION_KEY", "k")
     monkeypatch.delenv("MAC_AGENT_ID", raising=False)
 
-    rc = cli_main(
-        ["sign", "--manifest", str(manifest_path), "--signed-by", "explicit-agent"]
-    )
+    rc = cli_main(["sign", "--manifest", str(manifest_path), "--signed-by", "explicit-agent"])
     assert rc == 0
     signed = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert signed["signed_by"] == "explicit-agent"
@@ -124,17 +120,13 @@ def test_sign_invalid_json_returns_input_error(
     assert "not valid JSON" in capsys.readouterr().err
 
 
-def test_sign_custom_key_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sign_custom_key_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(_sample_manifest()), encoding="utf-8")
     monkeypatch.delenv("MAC_AGENT_ATTESTATION_KEY", raising=False)
     monkeypatch.setenv("CUSTOM_KEY", "alt-key")
     monkeypatch.setenv("MAC_AGENT_ID", "agent-c")
-    rc = cli_main(
-        ["sign", "--manifest", str(manifest_path), "--key-env", "CUSTOM_KEY"]
-    )
+    rc = cli_main(["sign", "--manifest", str(manifest_path), "--key-env", "CUSTOM_KEY"])
     assert rc == 0
     signed = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected_input = dict(signed)

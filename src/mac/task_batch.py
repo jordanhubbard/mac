@@ -171,9 +171,7 @@ def _metadata_impact(tasks: Sequence[Any], options: Mapping[str, Any]) -> JsonDi
         for key in (set(before) - set(after)) - _DERIVED_METADATA_KEYS:
             removed[key] = removed.get(key, 0) + 1
     load_bearing = {
-        key: count
-        for key, count in removed.items()
-        if key in LOAD_BEARING_METADATA_KEYS
+        key: count for key, count in removed.items() if key in LOAD_BEARING_METADATA_KEYS
     }
     return {
         "tasks_changed": changed_tasks,
@@ -257,9 +255,7 @@ class TaskSelection:
         another created between preview and apply, the count is unchanged and
         the batch silently acts on a task nobody previewed.
         """
-        digest = hashlib.sha256(
-            "\n".join(sorted(task.id for task in self.tasks)).encode("utf-8")
-        )
+        digest = hashlib.sha256("\n".join(sorted(task.id for task in self.tasks)).encode("utf-8"))
         return digest.hexdigest()[:16]
 
     def to_dict(self, *, sample: int = 20) -> JsonDict:
@@ -528,9 +524,7 @@ class TaskGroupService:
     def list(self) -> List[JsonDict]:
         return [
             dict(row)
-            for row in self.control_plane.store.query_all(
-                "SELECT * FROM task_groups ORDER BY name"
-            )
+            for row in self.control_plane.store.query_all("SELECT * FROM task_groups ORDER BY name")
         ]
 
     def save(
@@ -578,9 +572,7 @@ class TaskGroupService:
         return self.get(clean)
 
     def delete(self, name: str) -> None:
-        result = self.control_plane.store.execute(
-            "DELETE FROM task_groups WHERE name = ?", (name,)
-        )
+        result = self.control_plane.store.execute("DELETE FROM task_groups WHERE name = ?", (name,))
         if not getattr(result, "rowcount", 1):
             raise NotFoundError("task group %r not found" % name)
 
@@ -619,18 +611,12 @@ class TaskBatchService:
         terms are confirmed in Python. The fleet is evaluated at most once for
         the whole scan rather than once per task.
         """
-        parsed = (
-            selector
-            if isinstance(selector, TaskSelector)
-            else parse_selector(str(selector))
-        )
+        parsed = selector if isinstance(selector, TaskSelector) else parse_selector(str(selector))
         parsed = expand_groups(parsed, self.control_plane.task_groups.resolve)
         if parsed.is_empty:
             # parse_selector refuses an empty expression, but TaskSelector() is
             # constructible directly and would match every task in the ledger.
-            raise SelectorError(
-                "empty selector: refusing to match every task by accident"
-            )
+            raise SelectorError("empty selector: refusing to match every task by accident")
         where, params = compile_sql(parsed)
         store = self.control_plane.store
         effective = limit if limit is not None else parsed.limit
@@ -641,18 +627,14 @@ class TaskBatchService:
             # scan: the preview no longer pays for rows it will not show, and
             # `matched` stays exact however large the group is. This is what
             # makes a limit a display choice instead of a correctness one.
-            total = store.query_one(
-                "SELECT COUNT(*) AS n FROM tasks" + where, tuple(params)
-            )
+            total = store.query_one("SELECT COUNT(*) AS n FROM tasks" + where, tuple(params))
             matched = int(total["n"]) if total else 0
             fetch = "SELECT * FROM tasks" + where + order
             fetch_params = list(params)
             if effective is not None:
                 fetch += " LIMIT ?"
                 fetch_params.append(int(effective))
-            selected = [
-                _TaskRow(row) for row in store.query_all(fetch, tuple(fetch_params))
-            ]
+            selected = [_TaskRow(row) for row in store.query_all(fetch, tuple(fetch_params))]
             truncated = effective is not None and matched > len(selected)
         else:
             # A term SQL cannot express (unmet, or a negated JSON path) still
@@ -688,9 +670,7 @@ class TaskBatchService:
         dispatch = self.control_plane.dispatch
         agents = list(self.control_plane.list_agents())
         agent_snapshots = [dispatch._v2_snapshot_agent(agent) for agent in agents]
-        projects = {
-            record.name: record for record in self.control_plane.list_project_records()
-        }
+        projects = {record.name: record for record in self.control_plane.list_project_records()}
         agent_ids_by_name: Dict[str, List[str]] = {}
         for agent in agents:
             agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
@@ -746,14 +726,12 @@ class TaskBatchService:
         if expect_count is not None and selection.matched != int(expect_count):
             raise BatchCountMismatch(
                 "selector now matches %d task(s), not the %d expected; "
-                "re-run the preview before applying"
-                % (selection.matched, int(expect_count))
+                "re-run the preview before applying" % (selection.matched, int(expect_count))
             )
         if expect_token is not None and selection.token != expect_token:
             raise BatchCountMismatch(
                 "the selected group is no longer the one previewed (token %s, "
-                "expected %s); re-run the preview before applying"
-                % (selection.token, expect_token)
+                "expected %s); re-run the preview before applying" % (selection.token, expect_token)
             )
         if apply and selection.truncated:
             # expect_count compares the FULL match count while the loop walks
@@ -762,8 +740,7 @@ class TaskBatchService:
             raise BatchCountMismatch(
                 "selector matches %d task(s) but the batch is limited to %d; "
                 "refusing to apply a silently truncated group -- raise the "
-                "limit or narrow the selector"
-                % (selection.matched, len(selection.tasks))
+                "limit or narrow the selector" % (selection.matched, len(selection.tasks))
             )
 
         batch_id = new_id("batch")
@@ -786,9 +763,7 @@ class TaskBatchService:
                 self._apply_one(task, resolved, actor=actor, batch_id=batch_id, **options)
             except Exception as exc:  # noqa: BLE001 - reported per task, never fatal
                 # One refused transition must not cost the rest of the batch.
-                failed.append(
-                    {"id": task.id, "error": "%s: %s" % (type(exc).__name__, exc)[:400]}
-                )
+                failed.append({"id": task.id, "error": "%s: %s" % (type(exc).__name__, exc)[:400]})
             else:
                 changed.append(task.id)
 
@@ -838,16 +813,14 @@ class TaskBatchService:
             raise BatchOperationError("answer requires the answer text")
         if resolved is BatchOperation.SET and not supplied:
             raise BatchOperationError(
-                "set requires at least one field to change: %s"
-                % ", ".join(sorted(allowed))
+                "set requires at least one field to change: %s" % ", ".join(sorted(allowed))
             )
         if resolved is BatchOperation.CLOSE:
             target = str(options.get("target_state") or TaskState.COMPLETED.value)
             valid = {TaskState.COMPLETED.value, TaskState.CANCELLED.value, TaskState.FAILED.value}
             if target not in valid:
                 raise BatchOperationError(
-                    "close target_state %r must be one of %s"
-                    % (target, ", ".join(sorted(valid)))
+                    "close target_state %r must be one of %s" % (target, ", ".join(sorted(valid)))
                 )
         return resolved
 
@@ -874,9 +847,7 @@ class TaskBatchService:
                 task.id,
                 str(options["answer"]).strip(),
                 actor,
-                disposition=str(
-                    options.get("disposition") or cp.ANSWER_RESUME
-                ).strip().lower(),
+                disposition=str(options.get("disposition") or cp.ANSWER_RESUME).strip().lower(),
             )
             return
         if operation is BatchOperation.SET:
@@ -907,9 +878,7 @@ class TaskBatchService:
             # Cancellation is close_task to CANCELLED with a disposition, the
             # same shape `mac task cancel` uses -- so the disposition rules
             # (superseded needs a replacement, and so on) apply unchanged.
-            detail = _batch_detail(
-                batch_id, options.get("reason") or "batch cancellation"
-            )
+            detail = _batch_detail(batch_id, options.get("reason") or "batch cancellation")
             detail["disposition"] = options.get("disposition") or "preserve"
             if options.get("replacement_task"):
                 detail["replacement_task_id"] = options["replacement_task"]

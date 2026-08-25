@@ -197,7 +197,10 @@ def _category(relative: Path) -> str:
         return "architecture decision"
     if value.startswith("reference/"):
         return "generated reference"
-    if any(token in value for token in ("runbook", "deployment", "onboarding", "cutover", "availability", "recovery")):
+    if any(
+        token in value
+        for token in ("runbook", "deployment", "onboarding", "cutover", "availability", "recovery")
+    ):
         return "runbook"
     if value == "index.md":
         return "landing page"
@@ -322,7 +325,11 @@ def main(argv: list[str] | None = None) -> int:
         (ARCHIVE_OUTPUT, archive_index()),
         (INVENTORY_OUTPUT, documentation_inventory()),
     )
-    return 0 if all(_check_or_write(path, content, write=args.write) for path, content in outputs) else 1
+    return (
+        0
+        if all(_check_or_write(path, content, write=args.write) for path, content in outputs)
+        else 1
+    )
 
 
 if __name__ == "__main__":

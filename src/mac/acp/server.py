@@ -243,9 +243,7 @@ class PromptTurn:
             tool_call=tool_call,
             options=list(options),
         )
-        pending = self._peer.request(
-            Method.SESSION_REQUEST_PERMISSION, params.to_dict()
-        )
+        pending = self._peer.request(Method.SESSION_REQUEST_PERMISSION, params.to_dict())
         effective_timeout = timeout if timeout is not None else self._permission_timeout
         try:
             raw = pending.result(effective_timeout)
@@ -291,8 +289,7 @@ def _as_backend(backend: Union[PromptBackend, PromptBackendFn]) -> PromptBackend
     if callable(backend):
         return _CallableBackend(backend)
     raise TypeError(
-        "backend must be a PromptBackend (have run_prompt) or a callable "
-        "(PromptTurn) -> str"
+        "backend must be a PromptBackend (have run_prompt) or a callable (PromptTurn) -> str"
     )
 
 
@@ -488,15 +485,11 @@ class ACPAgentServer:
         ).start()
         return DEFERRED
 
-    def _run_turn(
-        self, request_id: Any, session: "_Session", turn: "PromptTurn"
-    ) -> None:
+    def _run_turn(self, request_id: Any, session: "_Session", turn: "PromptTurn") -> None:
         try:
             stop_reason = self._backend.run_prompt(turn)
             # A backend that returns nothing is a clean end of turn.
-            result = PromptResult(
-                stop_reason=stop_reason or StopReason.END_TURN
-            ).to_dict()
+            result = PromptResult(stop_reason=stop_reason or StopReason.END_TURN).to_dict()
             self._peer.respond_result(request_id, result)
         except RemoteError as exc:
             self._peer.respond_error(request_id, exc.error)
@@ -578,9 +571,7 @@ def serve_stdio(
             backend = EchoBackend()
 
     in_stream = stdin if stdin is not None else getattr(sys.stdin, "buffer", sys.stdin)
-    out_stream = (
-        stdout if stdout is not None else getattr(sys.stdout, "buffer", sys.stdout)
-    )
+    out_stream = stdout if stdout is not None else getattr(sys.stdout, "buffer", sys.stdout)
 
     out_lock = threading.Lock()
 
@@ -597,9 +588,7 @@ def serve_stdio(
             line = in_stream.readline()
             if not line:  # EOF -- client closed stdin
                 break
-            peer.feed_and_pump(
-                line if isinstance(line, bytes) else line.encode("utf-8")
-            )
+            peer.feed_and_pump(line if isinstance(line, bytes) else line.encode("utf-8"))
     finally:
         # Let any in-flight turn finish writing its response before we return
         # (and the interpreter starts tearing down stdout under the worker).

@@ -45,9 +45,9 @@ GROOMER_SCHEMA = "mac.backlog_groomer.v1"
 MIN_INTERVAL_SECONDS = 60.0
 MAX_INTERVAL_SECONDS = 24 * 60 * 60.0
 MAX_INITIAL_DELAY_SECONDS = 60 * 60.0
-DEFAULT_INTERVAL_SECONDS = 900.0          # how often the groomer wakes
+DEFAULT_INTERVAL_SECONDS = 900.0  # how often the groomer wakes
 DEFAULT_INITIAL_DELAY_SECONDS = 120.0
-DEFAULT_MIN_READY = 2                      # groom only when a project has < this pending work
+DEFAULT_MIN_READY = 2  # groom only when a project has < this pending work
 DEFAULT_REGROOM_INTERVAL_SECONDS = 6 * 60 * 60.0  # don't re-groom a project faster than this
 DEFAULT_BACKLOG_SIZE = 5
 
@@ -85,19 +85,34 @@ class BacklogGroomerConfig:
         env = os.environ if environ is None else environ
         errors: List[str] = []
         enabled = str(env.get("MAC_BACKLOG_GROOM_ENABLED") or "").strip().lower() in {
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
             return bounded_env_number(env, name, default, low, high, errors=errors)
 
-        interval = _num("MAC_BACKLOG_GROOM_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS,
-                        MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
-        initial_delay = _num("MAC_BACKLOG_GROOM_INITIAL_DELAY_SECONDS",
-                             DEFAULT_INITIAL_DELAY_SECONDS, 0.0, MAX_INITIAL_DELAY_SECONDS)
+        interval = _num(
+            "MAC_BACKLOG_GROOM_INTERVAL_SECONDS",
+            DEFAULT_INTERVAL_SECONDS,
+            MIN_INTERVAL_SECONDS,
+            MAX_INTERVAL_SECONDS,
+        )
+        initial_delay = _num(
+            "MAC_BACKLOG_GROOM_INITIAL_DELAY_SECONDS",
+            DEFAULT_INITIAL_DELAY_SECONDS,
+            0.0,
+            MAX_INITIAL_DELAY_SECONDS,
+        )
         min_ready = int(_num("MAC_BACKLOG_GROOM_MIN_READY", DEFAULT_MIN_READY, 0, 1000))
-        regroom = _num("MAC_BACKLOG_GROOM_REGROOM_INTERVAL_SECONDS",
-                       DEFAULT_REGROOM_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS, 30 * 24 * 60 * 60.0)
+        regroom = _num(
+            "MAC_BACKLOG_GROOM_REGROOM_INTERVAL_SECONDS",
+            DEFAULT_REGROOM_INTERVAL_SECONDS,
+            MIN_INTERVAL_SECONDS,
+            30 * 24 * 60 * 60.0,
+        )
         size = int(_num("MAC_BACKLOG_GROOM_BACKLOG_SIZE", DEFAULT_BACKLOG_SIZE, 1, 50))
         return cls(
             enabled=enabled,
@@ -125,9 +140,11 @@ class ProjectGroomingPolicy:
         if not isinstance(raw, Mapping):
             return cls()
         caps_raw = raw.get("default_capabilities") or []
-        caps = tuple(
-            str(c).strip() for c in caps_raw if isinstance(c, str) and str(c).strip()
-        ) if isinstance(caps_raw, (list, tuple)) else ()
+        caps = (
+            tuple(str(c).strip() for c in caps_raw if isinstance(c, str) and str(c).strip())
+            if isinstance(caps_raw, (list, tuple))
+            else ()
+        )
 
         def _opt_int(key: str) -> Optional[int]:
             if raw.get(key) is None:
@@ -147,33 +164,35 @@ class ProjectGroomingPolicy:
 
 def build_grooming_description(project: str, repo_url: str, backlog_size: int) -> str:
     """Build the task description for an autonomous backlog-grooming task."""
-    return "\n".join([
-        "Autonomous backlog grooming for project %s (%s)." % (project, repo_url),
-        "",
-        "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE.",
-        "This is READ-ONLY with respect to the remote: do NOT push or open a pull "
-        "request. This task produces a PLAN, not code.",
-        "",
-        "Analyze the repository (start from README.md, AGENTS.md, PLAN.md, open "
-        "issues/TODOs, failing or missing tests, and obvious gaps). Reconcile "
-        "against PLAN.md if present: prefer already-planned work, and only surface "
-        "genuinely new items.",
-        "",
-        "Produce a prioritized backlog of %d concrete, independently-actionable "
-        "next steps and emit them as `plan_steps` in mac-evidence.json so MAC can "
-        "turn them into real tasks. Each step MUST be a JSON object with:" % backlog_size,
-        '  - "title": a short imperative task title (required)',
-        '  - "description": what to do and how to know it is done (acceptance criteria)',
-        '  - "required_capabilities": optional list (e.g. ["python"], ["docs"])',
-        "",
-        "Evidence shape (evidence_type=investigation):",
-        '  {"plan_steps": [ {"title": "...", "description": "..."}, ... ],',
-        '   "rationale": "one line on how you prioritized"}',
-        "",
-        "Keep each step small enough for one focused task. Do NOT include "
-        "already-open work. Quality over quantity: fewer, well-scoped steps beat "
-        "a padded list.",
-    ])
+    return "\n".join(
+        [
+            "Autonomous backlog grooming for project %s (%s)." % (project, repo_url),
+            "",
+            "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE.",
+            "This is READ-ONLY with respect to the remote: do NOT push or open a pull "
+            "request. This task produces a PLAN, not code.",
+            "",
+            "Analyze the repository (start from README.md, AGENTS.md, PLAN.md, open "
+            "issues/TODOs, failing or missing tests, and obvious gaps). Reconcile "
+            "against PLAN.md if present: prefer already-planned work, and only surface "
+            "genuinely new items.",
+            "",
+            "Produce a prioritized backlog of %d concrete, independently-actionable "
+            "next steps and emit them as `plan_steps` in mac-evidence.json so MAC can "
+            "turn them into real tasks. Each step MUST be a JSON object with:" % backlog_size,
+            '  - "title": a short imperative task title (required)',
+            '  - "description": what to do and how to know it is done (acceptance criteria)',
+            '  - "required_capabilities": optional list (e.g. ["python"], ["docs"])',
+            "",
+            "Evidence shape (evidence_type=investigation):",
+            '  {"plan_steps": [ {"title": "...", "description": "..."}, ... ],',
+            '   "rationale": "one line on how you prioritized"}',
+            "",
+            "Keep each step small enough for one focused task. Do NOT include "
+            "already-open work. Quality over quantity: fewer, well-scoped steps beat "
+            "a padded list.",
+        ]
+    )
 
 
 class BacklogGroomer:
@@ -193,8 +212,11 @@ class BacklogGroomer:
     def start(self) -> bool:
         if not self.config.active:
             if self.config.configuration_error:
-                self._observe("backlog.groom.configuration_invalid", "warning",
-                              {"error": self.config.configuration_error})
+                self._observe(
+                    "backlog.groom.configuration_invalid",
+                    "warning",
+                    {"error": self.config.configuration_error},
+                )
             return False
         with self._state_lock:
             if self._thread is not None and self._thread.is_alive():
@@ -242,7 +264,9 @@ class BacklogGroomer:
 
     # -- core ---------------------------------------------------------------
 
-    def run_once(self, *, actor: str = "backlog-groomer", trigger: str = "operator") -> Dict[str, Any]:
+    def run_once(
+        self, *, actor: str = "backlog-groomer", trigger: str = "operator"
+    ) -> Dict[str, Any]:
         if not self._run_lock.acquire(blocking=False):
             return {"schema": GROOMER_SCHEMA, "status": "busy", "trigger": trigger, "projects": []}
         results: List[Dict[str, Any]] = []
@@ -250,10 +274,14 @@ class BacklogGroomer:
         try:
             active_counts, latest_groom = self._project_work_snapshot()
             for record in self._candidate_projects():
-                results.append(self._groom_project(
-                    record, actor=actor,
-                    active_counts=active_counts, latest_groom=latest_groom,
-                ))
+                results.append(
+                    self._groom_project(
+                        record,
+                        actor=actor,
+                        active_counts=active_counts,
+                        latest_groom=latest_groom,
+                    )
+                )
         finally:
             self._run_lock.release()
         report = {
@@ -307,8 +335,14 @@ class BacklogGroomer:
                     latest_groom.setdefault("__open__:" + project, _utcnow())
         return active_counts, latest_groom
 
-    def _groom_project(self, record: Any, *, actor: str,
-                       active_counts: Dict[str, int], latest_groom: Dict[str, datetime]) -> Dict[str, Any]:
+    def _groom_project(
+        self,
+        record: Any,
+        *,
+        actor: str,
+        active_counts: Dict[str, int],
+        latest_groom: Dict[str, datetime],
+    ) -> Dict[str, Any]:
         project = str(getattr(record, "name", "") or "")
         metadata = getattr(record, "metadata", None) or {}
         policy = ProjectGroomingPolicy.from_metadata(metadata)
@@ -339,7 +373,9 @@ class BacklogGroomer:
             age = (_utcnow() - last).total_seconds()
             if age < self.config.regroom_interval_seconds:
                 result["skipped_reason"] = "groomed %.0fs ago (< %.0fs)" % (
-                    age, self.config.regroom_interval_seconds)
+                    age,
+                    self.config.regroom_interval_seconds,
+                )
                 return result
 
         size = policy.backlog_size if policy.backlog_size is not None else self.config.backlog_size
@@ -352,8 +388,9 @@ class BacklogGroomer:
         result["task_id"] = getattr(task, "id", None)
         return result
 
-    def _create_grooming_task(self, project: str, repo_url: str, size: int,
-                              policy: ProjectGroomingPolicy, actor: str) -> Any:
+    def _create_grooming_task(
+        self, project: str, repo_url: str, size: int, policy: ProjectGroomingPolicy, actor: str
+    ) -> Any:
         origin = {
             "type": "backlog_grooming",
             "repository_url": repo_url,
@@ -379,8 +416,12 @@ class BacklogGroomer:
     def _observe(self, event_type: str, level: str, detail: Dict[str, Any]) -> None:
         try:
             self.control_plane.record_log(
-                event_type, layer="control_plane", source="backlog-groomer",
-                level=level, subject_type="service", subject_id="backlog-groomer",
+                event_type,
+                layer="control_plane",
+                source="backlog-groomer",
+                level=level,
+                subject_type="service",
+                subject_id="backlog-groomer",
                 detail=detail,
             )
         except Exception:  # noqa: BLE001 - telemetry must not stop grooming.

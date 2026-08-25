@@ -309,8 +309,7 @@ def test_dead_letter_page_exposes_bounded_cursor():
     for index in range(3):
         task = cp.create_task("dead letter page %d" % index)
         cp.store.execute(
-            "UPDATE tasks SET state = ?, attempt_count = max_attempts, updated_at = ? "
-            "WHERE id = ?",
+            "UPDATE tasks SET state = ?, attempt_count = max_attempts, updated_at = ? WHERE id = ?",
             (
                 "failed",
                 "2000-01-%02dT00:00:00+00:00" % (index + 1),
@@ -401,9 +400,12 @@ def test_task_create_http_idempotency_is_principal_scoped_and_intent_bound():
     assert first.status_code == 200
     assert retry.status_code == 200
     assert retry.json()["id"] == first.json()["id"]
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.json()["id"],)
-    )["n"] == 1
+    assert (
+        cp.store.query_one("SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.json()["id"],))[
+            "n"
+        ]
+        == 1
+    )
 
     changed = client.post(
         "/tasks",
@@ -418,8 +420,7 @@ def test_task_create_http_idempotency_is_principal_scoped_and_intent_bound():
     assert other_principal.json()["id"] != first.json()["id"]
 
     binding = cp.store.query_one(
-        "SELECT scope_digest, key_digest FROM task_create_idempotency "
-        "WHERE task_id = ?",
+        "SELECT scope_digest, key_digest FROM task_create_idempotency WHERE task_id = ?",
         (first.json()["id"],),
     )
     assert binding["scope_digest"] != "writer-a"
@@ -459,9 +460,7 @@ def test_task_create_idempotency_survives_token_renewal_for_same_client():
     assert before.status_code == 200
     assert after.status_code == 200
     assert after.json()["id"] == before.json()["id"]
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM task_create_idempotency"
-    )["n"] == 1
+    assert cp.store.query_one("SELECT COUNT(*) AS n FROM task_create_idempotency")["n"] == 1
 
 
 def test_review_experiment_api_persists_assignment_observation_and_outcome():
@@ -495,15 +494,11 @@ def test_review_experiment_api_persists_assignment_observation_and_outcome():
     )
     assert outcome.status_code == 200
 
-    observation = client.get(
-        "/tasks/%s/review-observation" % task["id"]
-    ).json()
+    observation = client.get("/tasks/%s/review-observation" % task["id"]).json()
     assert observation["experiment"]["experiment_id"] == "api-review-exp"
     assert observation["outcomes"][0]["kind"] == "clean_window"
 
-    report = client.get(
-        "/review-experiments/api-review-exp", params={"project": "demo"}
-    ).json()
+    report = client.get("/review-experiments/api-review-exp", params={"project": "demo"}).json()
     assert report["task_count"] == 1
     assert report["policy"]["status"] == "insufficient_evidence"
 
@@ -547,9 +542,7 @@ def test_evidence_artifacts_are_retrievable_via_api():
     listed = client.get("/evidence/%s/artifacts" % evidence["id"]).json()
     assert listed[0]["name"] == "stdout.txt"
     assert "content_base64" not in listed[0]
-    artifact = client.get(
-        "/evidence/%s/artifacts/%s" % (evidence["id"], listed[0]["id"])
-    ).json()
+    artifact = client.get("/evidence/%s/artifacts/%s" % (evidence["id"], listed[0]["id"])).json()
     assert base64.b64decode(artifact["content_base64"]) == b"captured stdout\n"
 
 
@@ -854,8 +847,7 @@ def test_agent_registration_reuses_existing_name_capabilities_identity():
     matching = [
         agent
         for agent in client.get("/agents", headers=headers).json()
-        if agent["name"] == "hub-reviewer"
-        and agent["capabilities"] == ["python", "review"]
+        if agent["name"] == "hub-reviewer" and agent["capabilities"] == ["python", "review"]
     ]
     assert [agent["id"] for agent in matching] == [first_body["id"]]
 
@@ -952,12 +944,10 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert work_context["relationships"]["task_dependencies"][0]["task_id"] == task["id"]
     assert work_context["relationships"]["agent_assignments"][0]["agent_id"] == agent["id"]
     assert any(
-        operation["name"] == "get_work_context"
-        for operation in work_context["operations"]["api"]
+        operation["name"] == "get_work_context" for operation in work_context["operations"]["api"]
     )
     assert any(
-        operation["name"] == "get_runtime_proof"
-        for operation in work_context["operations"]["api"]
+        operation["name"] == "get_runtime_proof" for operation in work_context["operations"]["api"]
     )
     operation_names = {operation["name"] for operation in work_context["operations"]["api"]}
     assert {
@@ -1000,16 +990,43 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert any("mac task list" in command for command in work_context["operations"]["mac_cli"])
     assert any("mac project create" in command for command in work_context["operations"]["mac_cli"])
     assert any("mac project list" in command for command in work_context["operations"]["mac_cli"])
-    assert any("mac-hermes work-context" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes runtime-proof" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes tasks" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes projects" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes create-project" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes project-items" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes claim-next" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes command-audit" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes web-search" in command for command in work_context["operations"]["mac_hermes_cli"])
-    assert any("mac-hermes agents" in command for command in work_context["operations"]["mac_hermes_cli"])
+    assert any(
+        "mac-hermes work-context" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes runtime-proof" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes tasks" in command for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes projects" in command for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes create-project" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes project-items" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes claim-next" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes command-audit" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes web-search" in command
+        for command in work_context["operations"]["mac_hermes_cli"]
+    )
+    assert any(
+        "mac-hermes agents" in command for command in work_context["operations"]["mac_hermes_cli"]
+    )
     # The legacy `hgmac` binary is gone; agent/fleet/project/task CRUD is the
     # mac-hermes CLI + the REST API. There is no hgmac_cli operation surface.
     assert "hgmac_cli" not in work_context["operations"]
@@ -1024,9 +1041,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     # The console carries URL state for the view and the task drill-down only.
     # `selected`, `task_state` and the obs_* filters belonged to the retired
     # shell's panes; the console filters in-page rather than through the URL.
-    assert {"view", "task"} == set(
-        work_context["operations"]["dashboard"]["url_state_parameters"]
-    )
+    assert {"view", "task"} == set(work_context["operations"]["dashboard"]["url_state_parameters"])
     # The console addresses ONE object kind by URL: a task. Project and agent
     # links land on the view, which the contract states rather than implies.
     links = work_context["operations"]["dashboard"]["deep_link_templates"]
@@ -1054,9 +1069,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     # agents link to their VIEW and say so via object_addressable=False, rather
     # than offering a template whose id parameter is silently ignored.
     links = dashboard_url_contract["object_deep_links"]
-    assert any(
-        url.startswith("/ui?view=task&task=") for url in links["tasks"]["samples"]
-    )
+    assert any(url.startswith("/ui?view=task&task=") for url in links["tasks"]["samples"])
     assert links["tasks"]["object_addressable"] is True
     for name in ("fleets", "projects", "agents"):
         assert links[name]["object_addressable"] is False, name
@@ -1150,8 +1163,14 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert posted_runtime_proof["ready"] is True
     assert posted_runtime_proof["checks"]["runtime_first_class_object_model_declared"] is True
     assert posted_runtime_proof["evidence"]["hermes_runtime"]["hermes_instance_id"] == hermes["id"]
-    assert "hermes_oneshot_executor" in posted_runtime_proof["evidence"]["first_class_objects"]["tasks"]["runtime_capabilities"]
-    assert "hermes_oneshot_executor" in posted_runtime_proof["evidence"]["hermes_runtime"]["session_capability_names"]
+    assert (
+        "hermes_oneshot_executor"
+        in posted_runtime_proof["evidence"]["first_class_objects"]["tasks"]["runtime_capabilities"]
+    )
+    assert (
+        "hermes_oneshot_executor"
+        in posted_runtime_proof["evidence"]["hermes_runtime"]["session_capability_names"]
+    )
 
     active_only = client.get(
         "/persona-instances/%s/work-context?include_completed=false&task_limit=1" % hermes["id"]
@@ -1491,6 +1510,7 @@ def test_create_app_refuses_open_mode_on_non_loopback_bind(monkeypatch):
     Refuse to start in that combination unless MAC_API_ALLOW_OPEN is set.
     """
     from mac.models import ValidationError as _VE
+
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKENS", raising=False)
     monkeypatch.setenv("MAC_LOCAL_CONSOLE_ENABLED", "0")
@@ -1527,11 +1547,23 @@ def test_secret_routes_bind_actor_and_tenant_to_principal():
             control_plane=cp,
             auth_tokens={
                 # Token bound to agent_a, scopes secret + write.
-                "tok-a": {"scopes": ["secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-a"},
+                "tok-a": {
+                    "scopes": ["secret", "write"],
+                    "agent_id": agent_a.id,
+                    "tenant_id": "tenant-a",
+                },
                 # Token bound to agent_b, also scoped to tenant-a — but agent_b is not the secret scope target.
-                "tok-b": {"scopes": ["secret", "write"], "agent_id": agent_b.id, "tenant_id": "tenant-a"},
+                "tok-b": {
+                    "scopes": ["secret", "write"],
+                    "agent_id": agent_b.id,
+                    "tenant_id": "tenant-a",
+                },
                 # Tenant-b token: same secret-scope, different tenant.
-                "tok-c": {"scopes": ["secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-b"},
+                "tok-c": {
+                    "scopes": ["secret", "write"],
+                    "agent_id": agent_a.id,
+                    "tenant_id": "tenant-b",
+                },
                 "admin": ["admin"],
             },
         )
@@ -1730,31 +1762,46 @@ def test_agentbus_reads_bind_requested_agent_to_token_principal():
 
     # A bound token cannot substitute another fleet identity, even though
     # that substituted id is a legitimate stream member.
-    assert client.get(
-        "/agentbus/streams",
-        headers={"Authorization": "Bearer tok-c"},
-        params={"agent_id": agent_b.id},
-    ).status_code == 403
-    assert client.get(
-        f"/agentbus/streams/{stream_id}/chunks",
-        headers={"Authorization": "Bearer tok-c"},
-        params={"agent_id": agent_b.id},
-    ).status_code == 403
-    assert client.get(
-        f"/agentbus/streams/{stream_id}/events",
-        headers={"Authorization": "Bearer tok-c"},
-        params={"agent_id": agent_b.id, "timeout_seconds": 0.01},
-    ).status_code == 403
+    assert (
+        client.get(
+            "/agentbus/streams",
+            headers={"Authorization": "Bearer tok-c"},
+            params={"agent_id": agent_b.id},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"/agentbus/streams/{stream_id}/chunks",
+            headers={"Authorization": "Bearer tok-c"},
+            params={"agent_id": agent_b.id},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"/agentbus/streams/{stream_id}/events",
+            headers={"Authorization": "Bearer tok-c"},
+            params={"agent_id": agent_b.id, "timeout_seconds": 0.01},
+        ).status_code
+        == 403
+    )
 
     # Omitting agent_id is fleet-wide enumeration and therefore admin-only.
-    assert client.get(
-        "/agentbus/streams",
-        headers={"Authorization": "Bearer tok-a"},
-    ).status_code == 403
-    assert client.get(
-        "/agentbus/streams",
-        headers={"Authorization": "Bearer admin"},
-    ).status_code == 200
+    assert (
+        client.get(
+            "/agentbus/streams",
+            headers={"Authorization": "Bearer tok-a"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            "/agentbus/streams",
+            headers={"Authorization": "Bearer admin"},
+        ).status_code
+        == 200
+    )
 
 
 def test_evidence_created_by_bound_to_principal():
@@ -2035,16 +2082,22 @@ def test_fastapi_can_require_scoped_bearer_tokens():
 
     assert client.get("/health").status_code == 200
     assert client.post("/machines", json={"hostname": "host-1"}).status_code == 403
-    assert client.post(
-        "/machines",
-        headers={"Authorization": "Bearer reader"},
-        json={"hostname": "host-1"},
-    ).status_code == 403
-    assert client.post(
-        "/machines",
-        headers={"Authorization": "Bearer writer"},
-        json={"hostname": "host-1"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/machines",
+            headers={"Authorization": "Bearer reader"},
+            json={"hostname": "host-1"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/machines",
+            headers={"Authorization": "Bearer writer"},
+            json={"hostname": "host-1"},
+        ).status_code
+        == 200
+    )
     assert client.get("/machines", headers={"Authorization": "Bearer reader"}).status_code == 200
 
 
@@ -2061,16 +2114,30 @@ def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
     )
 
     # /runtimes requires deploy scope, not write.
-    assert client.post(
-        "/runtimes",
-        headers={"Authorization": "Bearer writer"},
-        json={"name": "rt", "manifest": {"image": "python:3.12@sha256:abc123"}, "created_by": "ops"},
-    ).status_code == 403
-    assert client.post(
-        "/runtimes",
-        headers={"Authorization": "Bearer deployer"},
-        json={"name": "rt", "manifest": {"image": "python:3.12@sha256:abc123"}, "created_by": "ops"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/runtimes",
+            headers={"Authorization": "Bearer writer"},
+            json={
+                "name": "rt",
+                "manifest": {"image": "python:3.12@sha256:abc123"},
+                "created_by": "ops",
+            },
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/runtimes",
+            headers={"Authorization": "Bearer deployer"},
+            json={
+                "name": "rt",
+                "manifest": {"image": "python:3.12@sha256:abc123"},
+                "created_by": "ops",
+            },
+        ).status_code
+        == 200
+    )
     runtime = cp.get_runtime("rt")
     machine = cp.register_machine("delta-host")
     agent = cp.register_agent(machine.id, "delta-worker", capabilities=["python"])
@@ -2086,11 +2153,14 @@ def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
         "lockfile_path": "requirements.txt",
         "lockfile_digest": "sha256:" + "d" * 64,
     }
-    assert client.post(
-        "/runtime-deltas",
-        headers={"Authorization": "Bearer writer"},
-        json=delta_payload,
-    ).status_code == 403
+    assert (
+        client.post(
+            "/runtime-deltas",
+            headers={"Authorization": "Bearer writer"},
+            json=delta_payload,
+        ).status_code
+        == 403
+    )
     delta_response = client.post(
         "/runtime-deltas",
         headers={"Authorization": "Bearer deployer"},
@@ -2098,24 +2168,33 @@ def test_deploy_scope_is_required_for_runtimes_environments_and_rollouts():
     )
     assert delta_response.status_code == 200
     delta_id = delta_response.json()["id"]
-    assert client.post(
-        "/runtime-deltas/%s/validate" % delta_id,
-        headers={"Authorization": "Bearer deployer"},
-        json={"actor": "ops"},
-    ).json()["status"] == "validated"
+    assert (
+        client.post(
+            "/runtime-deltas/%s/validate" % delta_id,
+            headers={"Authorization": "Bearer deployer"},
+            json={"actor": "ops"},
+        ).json()["status"]
+        == "validated"
+    )
 
     # /environments also requires deploy.
     tenant = cp.register_tenant("team-a")
-    assert client.post(
-        "/environments",
-        headers={"Authorization": "Bearer writer"},
-        json={"name": "prod", "tenant_id": tenant.id},
-    ).status_code == 403
-    assert client.post(
-        "/environments",
-        headers={"Authorization": "Bearer deployer"},
-        json={"name": "prod", "tenant_id": tenant.id},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/environments",
+            headers={"Authorization": "Bearer writer"},
+            json={"name": "prod", "tenant_id": tenant.id},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/environments",
+            headers={"Authorization": "Bearer deployer"},
+            json={"name": "prod", "tenant_id": tenant.id},
+        ).status_code
+        == 200
+    )
 
 
 def test_tenant_bound_token_cannot_cross_tenants_or_touch_global_fleet():
@@ -2162,25 +2241,34 @@ def test_tenant_bound_token_cannot_cross_tenants_or_touch_global_fleet():
     assert persona_xtenant.status_code == 403
 
     # Tenant-bound principal cannot create a new tenant.
-    assert client.post(
-        "/tenants",
-        headers={"Authorization": "Bearer alpha-writer"},
-        json={"name": "gamma"},
-    ).status_code == 403
+    assert (
+        client.post(
+            "/tenants",
+            headers={"Authorization": "Bearer alpha-writer"},
+            json={"name": "gamma"},
+        ).status_code
+        == 403
+    )
 
     # Tenant-bound principal cannot register a global-fleet machine.
-    assert client.post(
-        "/machines",
-        headers={"Authorization": "Bearer alpha-writer"},
-        json={"hostname": "host-1"},
-    ).status_code == 403
+    assert (
+        client.post(
+            "/machines",
+            headers={"Authorization": "Bearer alpha-writer"},
+            json={"hostname": "host-1"},
+        ).status_code
+        == 403
+    )
 
     # Admin still can.
-    assert client.post(
-        "/machines",
-        headers={"Authorization": "Bearer admin"},
-        json={"hostname": "host-1"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/machines",
+            headers={"Authorization": "Bearer admin"},
+            json={"hostname": "host-1"},
+        ).status_code
+        == 200
+    )
 
     # Tasks created by the tenant-bound principal get tenant_id stamped.
     task = client.post(
@@ -2201,16 +2289,22 @@ def test_unknown_bearer_token_is_rejected_with_constant_time_compare():
             auth_tokens={"correct-token-32chars-xxxxxxxxx": ["admin"]},
         )
     )
-    assert client.post(
-        "/machines",
-        headers={"Authorization": "Bearer correct-token-32chars-xxxxxxxxy"},
-        json={"hostname": "h"},
-    ).status_code == 403
-    assert client.post(
-        "/machines",
-        headers={"Authorization": "Bearer correct-token-32chars-xxxxxxxxx"},
-        json={"hostname": "h"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/machines",
+            headers={"Authorization": "Bearer correct-token-32chars-xxxxxxxxy"},
+            json={"hostname": "h"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/machines",
+            headers={"Authorization": "Bearer correct-token-32chars-xxxxxxxxx"},
+            json={"hostname": "h"},
+        ).status_code
+        == 200
+    )
 
 
 def test_registration_payloads_are_size_capped():
@@ -2249,8 +2343,6 @@ def test_agent_registration_observes_created_agent_in_existing_fleet():
     assert refreshed["agent_ids"] == []
     assert refreshed["observed_agent_ids"] == ["agent_rocky"]
     assert refreshed["unmanaged_agent_ids"] == ["agent_rocky"]
-
-
 
 
 def test_fleet_observed_agents_endpoint_does_not_change_configured_members():
@@ -2411,9 +2503,7 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     # fleet-maintenance so it can be counted, reported on, and paused like any
     # other project. The old "unassigned" bucket no longer collects anything.
     unscoped = next(
-        item
-        for item in state["project_summaries"]
-        if item["project"] == "fleet-maintenance"
+        item for item in state["project_summaries"] if item["project"] == "fleet-maintenance"
     )
     assert unscoped["ready_count"] == 1
     assert state["swarm_summary"]["agent_total"] == 1
@@ -2736,8 +2826,6 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
     assert failed["last_updated_at"] == failed["updated_at"]
 
 
-
-
 def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates():
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
@@ -2791,13 +2879,17 @@ def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates(
 
     state = client.get("/dashboard/state").json()
 
-    nanolang = next(project for project in state["project_summaries"] if project["project"] == "nanolang")
+    nanolang = next(
+        project for project in state["project_summaries"] if project["project"] == "nanolang"
+    )
     assert nanolang["ready_count"] == 1
     assert nanolang["blocked_count"] == 1
     assert nanolang["waiting_count"] == 1
     assert nanolang["cross_project_dependency_count"] == 1
     assert nanolang["frontier_tasks"][0]["id"] == story["id"]
-    manual_waiting = next(item for item in nanolang["waiting_tasks"] if item["id"] == manual_block["id"])
+    manual_waiting = next(
+        item for item in nanolang["waiting_tasks"] if item["id"] == manual_block["id"]
+    )
     assert "waiting_on" not in manual_waiting
     assert state["swarm_summary"]["agent_total"] == 75
     assert state["dispatch"]["tasks"][0]["candidate_count"] == 75
@@ -2903,7 +2995,11 @@ def test_fastapi_exposes_first_class_object_crud_e2e():
 
     fleet_update = client.put(
         "/fleets/%s" % fleet_body["id"],
-        json={"status": "inactive", "agent_ids": [], "metadata": {"hub": "rocky", "vpn": "tailscale"}},
+        json={
+            "status": "inactive",
+            "agent_ids": [],
+            "metadata": {"hub": "rocky", "vpn": "tailscale"},
+        },
     )
     assert fleet_update.status_code == 200, fleet_update.text
     assert fleet_update.json()["status"] == "inactive"
@@ -2919,7 +3015,11 @@ def test_fastapi_exposes_first_class_object_crud_e2e():
 
     task = client.post(
         "/tasks",
-        json={"title": "Implement parser", "project": "nanolang", "required_capabilities": ["python"]},
+        json={
+            "title": "Implement parser",
+            "project": "nanolang",
+            "required_capabilities": ["python"],
+        },
     )
     assert task.status_code == 200, task.text
     task_body = task.json()
@@ -2927,7 +3027,11 @@ def test_fastapi_exposes_first_class_object_crud_e2e():
 
     task_update = client.put(
         "/tasks/%s" % task_body["id"],
-        json={"title": "Implement parser v2", "priority": 7, "required_capabilities": ["python", "tests"]},
+        json={
+            "title": "Implement parser v2",
+            "priority": 7,
+            "required_capabilities": ["python", "tests"],
+        },
     )
     assert task_update.status_code == 200, task_update.text
     assert task_update.json()["title"] == "Implement parser v2"
@@ -3287,7 +3391,12 @@ def test_observability_logs_silenced_poll_name_is_filtered_not_500():
     # a normal log name still records and returns the event
     kept = client.post(
         "/observability/logs",
-        json={"name": "worker.dispatch.waiting", "level": "warning", "layer": "worker", "source": "rocky"},
+        json={
+            "name": "worker.dispatch.waiting",
+            "level": "warning",
+            "layer": "worker",
+            "source": "rocky",
+        },
     )
     assert kept.status_code == 200
     assert kept.json()["name"] == "worker.dispatch.waiting"
@@ -3301,9 +3410,7 @@ def test_http_observation_middleware_is_off_by_default_and_writes_one_row_when_o
     assert not any(item.layer == "api" for item in off_cp.list_observability(limit=50))
 
     on_cp = ControlPlane.in_memory()
-    on_client = TestClient(
-        create_app(control_plane=on_cp, record_http_observations=True)
-    )
+    on_client = TestClient(create_app(control_plane=on_cp, record_http_observations=True))
     assert on_client.get("/agents").status_code == 200
     api_rows = [item for item in on_cp.list_observability(limit=50) if item.layer == "api"]
     # Exactly one row per non-excluded request (the GET /agents above), no log+metric pair.
@@ -3333,20 +3440,29 @@ def test_observability_write_requires_agent_scope_when_auth_enabled():
     )
     body = {"name": "worker.queue.depth", "value": 1, "layer": "worker"}
 
-    assert client.post(
-        "/observability/metrics",
-        headers={"Authorization": "Bearer reader"},
-        json=body,
-    ).status_code == 403
-    assert client.post(
-        "/observability/metrics",
-        headers={"Authorization": "Bearer agent"},
-        json=body,
-    ).status_code == 200
-    assert client.get(
-        "/observability",
-        headers={"Authorization": "Bearer reader"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/observability/metrics",
+            headers={"Authorization": "Bearer reader"},
+            json=body,
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/observability/metrics",
+            headers={"Authorization": "Bearer agent"},
+            json=body,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/observability",
+            headers={"Authorization": "Bearer reader"},
+        ).status_code
+        == 200
+    )
 
 
 def test_create_app_refuses_to_start_with_placeholder_secret_key():
@@ -3398,8 +3514,6 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, short_s
     from mac.test_support import store_on
 
     assert store_on(dsn).query_one("SELECT 1 AS ok")["ok"] == 1
-
-
 
 
 def test_fastapi_exposes_typed_agentbus_streams_and_ndjson_events():
@@ -3465,8 +3579,6 @@ def test_fastapi_exposes_typed_agentbus_streams_and_ndjson_events():
     ).json()
     assert published["stream"]["status"] == "closed"
     assert published["chunk"]["payload"] == "one-shot"
-
-
 
 
 def test_fastapi_publishes_agentbus_repo_update_to_all_agents():
@@ -3637,10 +3749,6 @@ def test_fastapi_project_import_preserves_first_class_task_fields():
     assert task["metadata"]["external_id"] == "mac-api"
 
 
-
-
-
-
 def test_agentbus_rejects_oversized_chunks_but_not_non_party_readers():
     """Size still fails closed; a non-party read no longer does.
 
@@ -3652,19 +3760,13 @@ def test_agentbus_rejects_oversized_chunks_but_not_non_party_readers():
     """
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     machine = client.post("/machines", json={"hostname": "bus-host"}).json()
-    sender = client.post(
-        "/agents", json={"machine_id": machine["id"], "name": "sender"}
-    ).json()
+    sender = client.post("/agents", json={"machine_id": machine["id"], "name": "sender"}).json()
     recipient = client.post(
         "/agents", json={"machine_id": machine["id"], "name": "recipient"}
     ).json()
-    outsider = client.post(
-        "/agents", json={"machine_id": machine["id"], "name": "outsider"}
-    ).json()
+    outsider = client.post("/agents", json={"machine_id": machine["id"], "name": "outsider"}).json()
 
-    no_recipient = client.post(
-        "/agentbus/streams", json={"sender_agent_id": sender["id"]}
-    )
+    no_recipient = client.post("/agentbus/streams", json={"sender_agent_id": sender["id"]})
     # AgentBus now accepts either a direct recipient or group participants in
     # the request schema. Supplying neither is therefore a semantic MAC
     # ValidationError (400), not a Pydantic shape error (422).
@@ -3777,9 +3879,7 @@ def test_agentbus_events_delivers_chunks_appended_after_request_starts(monkeypat
     control_plane = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=control_plane))
     machine = client.post("/machines", json={"hostname": "bus-host"}).json()
-    sender = client.post(
-        "/agents", json={"machine_id": machine["id"], "name": "sender"}
-    ).json()
+    sender = client.post("/agents", json={"machine_id": machine["id"], "name": "sender"}).json()
     recipient = client.post(
         "/agents", json={"machine_id": machine["id"], "name": "recipient"}
     ).json()
@@ -3893,16 +3993,17 @@ def test_needs_input_round_trip_and_privilege_boundary():
     writer = {"Authorization": "Bearer writer"}
     admin = {"Authorization": "Bearer admin"}
 
-    task = client.post(
-        "/tasks", headers=writer, json={"title": "ambiguous work"}
-    ).json()
+    task = client.post("/tasks", headers=writer, json={"title": "ambiguous work"}).json()
 
     # An ordinary writer may neither park work nor release it.
-    assert client.post(
-        "/tasks/%s/ask" % task["id"],
-        headers=writer,
-        json={"actor": "writer", "questions": [{"question": "which db?"}]},
-    ).status_code == 403
+    assert (
+        client.post(
+            "/tasks/%s/ask" % task["id"],
+            headers=writer,
+            json={"actor": "writer", "questions": [{"question": "which db?"}]},
+        ).status_code
+        == 403
+    )
 
     parked = client.post(
         "/tasks/%s/ask" % task["id"],
@@ -3913,17 +4014,23 @@ def test_needs_input_round_trip_and_privilege_boundary():
     assert parked.json()["state"] == "needs_input"
 
     # A question is mandatory: parking on an unstated blocker is refused.
-    assert client.post(
-        "/tasks/%s/ask" % task["id"],
-        headers=admin,
-        json={"actor": "operator", "questions": []},
-    ).status_code == 400
+    assert (
+        client.post(
+            "/tasks/%s/ask" % task["id"],
+            headers=admin,
+            json={"actor": "operator", "questions": []},
+        ).status_code
+        == 400
+    )
 
-    assert client.post(
-        "/tasks/%s/answer" % task["id"],
-        headers=writer,
-        json={"actor": "writer", "answer": "postgres"},
-    ).status_code == 403
+    assert (
+        client.post(
+            "/tasks/%s/answer" % task["id"],
+            headers=writer,
+            json={"actor": "writer", "answer": "postgres"},
+        ).status_code
+        == 403
+    )
 
     answered = client.post(
         "/tasks/%s/answer" % task["id"],

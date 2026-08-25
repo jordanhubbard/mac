@@ -162,14 +162,17 @@ def test_integration_finding_filters_notifications_and_idempotent_resolution() -
         channels=[],
         notification_body="Fix the branch",
     )
-    assert cp.list_integration_findings(
-        source_kind="github",
-        source_id="repo",
-        finding_type="drift",
-        status="open",
-        severity="error",
-        limit=0,
-    )[0].id == finding.id
+    assert (
+        cp.list_integration_findings(
+            source_kind="github",
+            source_id="repo",
+            finding_type="drift",
+            status="open",
+            severity="error",
+            limit=0,
+        )[0].id
+        == finding.id
+    )
     resolved = cp.resolve_integration_finding(finding.id, resolution="fixed")
     assert resolved.status == "resolved"
     assert cp.resolve_integration_finding(finding.id).id == finding.id
@@ -202,24 +205,39 @@ def test_agent_resources_satisfy_numeric_list_exact_and_hardware(monkeypatch) ->
     machine, agent = _registered(cp)
     base_task = cp.create_task("resource task", metadata={})
     assert cp._agent_resources_satisfy(agent, machine, base_task) is True
-    assert cp._agent_resources_satisfy(
-        agent, machine, replace(base_task, metadata={"resources": {"cpu": 99}})
-    ) is False
-    assert cp._agent_resources_satisfy(
-        agent, machine, replace(base_task, metadata={"resources": {"tags": ["gpu"]}})
-    ) is True
-    assert cp._agent_resources_satisfy(
-        agent, machine, replace(base_task, metadata={"resources": {"tags": ["missing"]}})
-    ) is False
-    assert cp._agent_resources_satisfy(
-        agent, machine, replace(base_task, metadata={"resources": {"os": "linux"}})
-    ) is False
+    assert (
+        cp._agent_resources_satisfy(
+            agent, machine, replace(base_task, metadata={"resources": {"cpu": 99}})
+        )
+        is False
+    )
+    assert (
+        cp._agent_resources_satisfy(
+            agent, machine, replace(base_task, metadata={"resources": {"tags": ["gpu"]}})
+        )
+        is True
+    )
+    assert (
+        cp._agent_resources_satisfy(
+            agent, machine, replace(base_task, metadata={"resources": {"tags": ["missing"]}})
+        )
+        is False
+    )
+    assert (
+        cp._agent_resources_satisfy(
+            agent, machine, replace(base_task, metadata={"resources": {"os": "linux"}})
+        )
+        is False
+    )
     monkeypatch.setattr(
         "mac.roles_service.machine_hardware_satisfies", lambda *_a, **_k: (False, ["gpu"])
     )
-    assert cp._agent_resources_satisfy(
-        agent, machine, replace(base_task, metadata={"hardware": {"gpu": True}})
-    ) is False
+    assert (
+        cp._agent_resources_satisfy(
+            agent, machine, replace(base_task, metadata={"hardware": {"gpu": True}})
+        )
+        is False
+    )
 
 
 def test_agent_available_fast_failure_gates(monkeypatch) -> None:
@@ -229,16 +247,21 @@ def test_agent_available_fast_failure_gates(monkeypatch) -> None:
     assert cp._agent_available_for(agent, task) is True
     assert cp._agent_available_for(replace(agent, status="offline"), task) is False
     assert cp._agent_available_for(replace(agent, health_status="degraded"), task) is False
-    assert cp._agent_available_for(
-        agent, replace(task, metadata={"target_agent_id": "other"})
-    ) is False
-    assert cp._agent_available_for(
-        agent, replace(task, metadata={"target_agent_name": "other"})
-    ) is False
-    assert cp._agent_available_for(
-        replace(agent, running_digest="old"),
-        replace(task, metadata={"required_runtime_digest": "new"}),
-    ) is False
+    assert (
+        cp._agent_available_for(agent, replace(task, metadata={"target_agent_id": "other"}))
+        is False
+    )
+    assert (
+        cp._agent_available_for(agent, replace(task, metadata={"target_agent_name": "other"}))
+        is False
+    )
+    assert (
+        cp._agent_available_for(
+            replace(agent, running_digest="old"),
+            replace(task, metadata={"required_runtime_digest": "new"}),
+        )
+        is False
+    )
     monkeypatch.setattr(cp, "_agent_active_lease_count", lambda _id: 99)
     assert cp._agent_available_for(agent, task) is False
 

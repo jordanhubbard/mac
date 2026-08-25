@@ -52,18 +52,14 @@ def _resource(name: str, prior: str, final: str | None = None) -> dict[str, str]
     return {"name": name, "prior_state": prior, "state": final}
 
 
-def _systemd_supervisor(
-    *, gateway: str = "hermes", agent: str = "active"
-) -> dict[str, Any]:
+def _systemd_supervisor(*, gateway: str = "hermes", agent: str = "active") -> dict[str, Any]:
     owners = {"hermes": 0, "openclaw": 1, "nemoclaw": 2}
     prior = ["inactive", "inactive", "inactive", agent]
     if gateway != "none":
         prior[owners[gateway]] = "active"
     return {
         "manager": "systemd",
-        "resources": [
-            _resource(name, state) for name, state in zip(SYSTEMD_NAMES, prior)
-        ],
+        "resources": [_resource(name, state) for name, state in zip(SYSTEMD_NAMES, prior)],
     }
 
 
@@ -82,9 +78,7 @@ def _launchd_supervisor(*, system_active: bool = False) -> dict[str, Any]:
                 {
                     "name": name,
                     "target": f"system/{name}",
-                    "prior_state": (
-                        "active" if system_active and index == 1 else "absent"
-                    ),
+                    "prior_state": ("active" if system_active and index == 1 else "absent"),
                     "state": "absent",
                 },
             ]
@@ -99,10 +93,7 @@ def _supervisord_resources(
     prior = ["STOPPED", "STOPPED", "STOPPED", agent]
     if gateway != "none":
         prior[owners[gateway]] = "RUNNING"
-    return [
-        _resource(name, state, "STOPPED")
-        for name, state in zip(SUPERVISORD_NAMES, prior)
-    ]
+    return [_resource(name, state, "STOPPED") for name, state in zip(SUPERVISORD_NAMES, prior)]
 
 
 def _supervisord_supervisor(
@@ -133,7 +124,8 @@ def _run(
     tmp_path: Path,
     manager: str,
     supervisor: dict[str, Any],
-    *, receipt_mode: int = 0o600,
+    *,
+    receipt_mode: int = 0o600,
     generation: str = GENERATION,
     write_receipt: bool = True,
     require_phase1_quiescence: str = "1",
@@ -188,7 +180,7 @@ def _run(
         + "\nwrite_rollback_script() { :; }\n"
         + "die() { printf '%s\\n' \"$*\" >&2; return 1; }\n"
         + "truthy() {\n"
-        + "  case \"${1:-}\" in\n"
+        + '  case "${1:-}" in\n'
         + "    1|true|TRUE|yes|YES|on|ON) return 0 ;;\n"
         + "    *) return 1 ;;\n"
         + "  esac\n"
@@ -277,9 +269,7 @@ def test_supervisord_uses_only_canonical_system_manager_prior_state(
 
 
 @pytest.mark.parametrize("failure", ["missing", "duplicate", "active-user"])
-def test_supervisord_invalid_manager_topology_fails_closed(
-    tmp_path: Path, failure: str
-) -> None:
+def test_supervisord_invalid_manager_topology_fails_closed(tmp_path: Path, failure: str) -> None:
     supervisor = _supervisord_supervisor(user_active=failure == "active-user")
     if failure == "missing":
         supervisor["managers"] = [supervisor["managers"][1]]

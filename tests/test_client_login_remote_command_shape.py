@@ -59,8 +59,7 @@ def test_no_remote_invocation_uses_the_pre_317_client_group():
                 stale.append((i + 1, line.strip()))
     assert not stale, (
         "these remote invocations still use the pre-#317 `client` group and "
-        "will fail with exit 2 against any host running #317 or later: %s"
-        % stale
+        "will fail with exit 2 against any host running #317 or later: %s" % stale
     )
 
 

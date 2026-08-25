@@ -23,9 +23,7 @@ CONTAINERFILE = ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
 ADR_0001 = ROOT / "docs" / "adr" / "0001-unify-hermes-runtime-into-mac.md"
 FATE_DOC = ROOT / "docs" / "hermes-vendor-fate.md"
 
-_IMPORT_HERMES_CLI = re.compile(
-    r"(?:^|\s)(?:from\s+hermes_cli\b|import\s+hermes_cli\b)"
-)
+_IMPORT_HERMES_CLI = re.compile(r"(?:^|\s)(?:from\s+hermes_cli\b|import\s+hermes_cli\b)")
 
 
 def test_vendored_hermes_tree_is_gone() -> None:
@@ -44,9 +42,7 @@ def test_a_no_live_hermes_cli_imports_in_mac_sources() -> None:
             if stripped.startswith("#"):
                 continue
             if _IMPORT_HERMES_CLI.search(line):
-                offenders.append(
-                    "%s:%d:%s" % (path.relative_to(ROOT), lineno, line.strip())
-                )
+                offenders.append("%s:%d:%s" % (path.relative_to(ROOT), lineno, line.strip()))
     assert offenders == [], "live hermes_cli imports returned:\n" + "\n".join(offenders)
 
 
@@ -82,9 +78,7 @@ def test_d_snapshot_obligation_and_revendor_job_are_gone() -> None:
     # the Containerfile may still *mention* hermes_cli; they do not reintroduce it.
     containerfile = CONTAINERFILE.read_text(encoding="utf-8")
     assert "zz_hermes_vendor.pth" not in containerfile
-    assert not re.search(
-        r"^\s*(?:COPY|RUN|ADD).*\.pth", containerfile, flags=re.MULTILINE
-    )
+    assert not re.search(r"^\s*(?:COPY|RUN|ADD).*\.pth", containerfile, flags=re.MULTILINE)
 
 
 def test_deploy_env_does_not_default_agent_dir_to_removed_vendor_tree() -> None:

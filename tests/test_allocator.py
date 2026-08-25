@@ -80,9 +80,7 @@ def test_execution_boundary_reads_three_states_not_two():
             machine_trusted=True,
         )
 
-    proven = {
-        "openclaw_runtime": {"confinement": {"provider": "openshell"}, "verified": True}
-    }
+    proven = {"openclaw_runtime": {"confinement": {"provider": "openshell"}, "verified": True}}
     contradicted = {"openshell_required": False}
     # Proof outranks the contradiction: a worker that verified a sandbox is
     # usable whatever a stale requirement flag says.

@@ -166,9 +166,7 @@ def test_report_executor_attestation_gap_does_not_block_startup(tmp_path, monkey
     assert report["blocking_problems"] == []
 
     # The attestation-gap problem is present and classified non-blocking only.
-    attestation_problems = [
-        p for p in report["problems"] if "report repository executor" in p
-    ]
+    attestation_problems = [p for p in report["problems"] if "report repository executor" in p]
     assert attestation_problems, report["problems"]
     assert set(attestation_problems).issubset(set(report["non_blocking_problems"]))
     assert not set(attestation_problems) & set(report["blocking_problems"])
@@ -211,8 +209,7 @@ def test_invalid_openshell_create_args_still_blocks_startup(tmp_path, monkeypatc
     assert report["blocking_problems"], report
     assert report["checks"]["openshell_executor_config"] is False
     assert any(
-        p.startswith("MAC_OPENSHELL_CREATE_ARGS is invalid")
-        for p in report["blocking_problems"]
+        p.startswith("MAC_OPENSHELL_CREATE_ARGS is invalid") for p in report["blocking_problems"]
     )
 
 

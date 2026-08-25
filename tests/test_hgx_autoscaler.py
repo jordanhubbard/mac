@@ -96,9 +96,7 @@ def test_sustained_demand_executes_one_bounded_capacity_step() -> None:
 
     assert report["action"] == "scale_up_reconcile"
     assert report["sustained_pending_request_count"] == 1
-    assert controller.executions == [
-        {"pending_request_count": 1, "registered_agents": None}
-    ]
+    assert controller.executions == [{"pending_request_count": 1, "registered_agents": None}]
 
 
 def test_stale_task_request_is_cancelled_before_capacity_math() -> None:
@@ -122,9 +120,7 @@ def test_stale_task_request_is_cancelled_before_capacity_math() -> None:
 
     assert report["pending_request_count"] == 0
     assert report["reconciled_stale_request_ids"] == [request.id]
-    assert cp.provisioning.get_request(request.id).status == (
-        ProvisioningStatus.CANCELLED.value
-    )
+    assert cp.provisioning.get_request(request.id).status == (ProvisioningStatus.CANCELLED.value)
     assert controller.executions == []
 
 
@@ -142,9 +138,7 @@ def test_taskless_legacy_dispatch_request_is_cancelled() -> None:
     assert report["pending_request_count"] == 0
     assert report["reconciled_stale_request_ids"] == [request.id]
     assert report["ignored_request_counts"] == {}
-    assert cp.provisioning.get_request(request.id).status == (
-        ProvisioningStatus.CANCELLED.value
-    )
+    assert cp.provisioning.get_request(request.id).status == (ProvisioningStatus.CANCELLED.value)
     assert controller.executions == []
 
 
@@ -172,12 +166,8 @@ def test_reviewer_and_service_role_requests_do_not_create_generic_workers() -> N
         "review.no_eligible_reviewer": 1,
         "service_role:media:image.generate": 1,
     }
-    assert cp.provisioning.get_request(review.id).status == (
-        ProvisioningStatus.PENDING.value
-    )
-    assert cp.provisioning.get_request(service.id).status == (
-        ProvisioningStatus.PENDING.value
-    )
+    assert cp.provisioning.get_request(review.id).status == (ProvisioningStatus.PENDING.value)
+    assert cp.provisioning.get_request(service.id).status == (ProvisioningStatus.PENDING.value)
     assert controller.executions == []
 
 

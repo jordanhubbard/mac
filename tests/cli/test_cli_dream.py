@@ -28,7 +28,8 @@ def _seed_learning(tmp_path, count: int = 6) -> None:
         outcome = "success" if index % 2 else "failure"
         _run(
             tmp_path,
-            "admin", "memory",
+            "admin",
+            "memory",
             "add",
             "--subject-type",
             "project",
@@ -118,7 +119,8 @@ def test_dream_import_logs_empty_dry_run_is_safe_and_observable(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "admin", "dream",
+        "admin",
+        "dream",
         "import-logs",
         "--dream-logs-dir",
         str(dream_logs),

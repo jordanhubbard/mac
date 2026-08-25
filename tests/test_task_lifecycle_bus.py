@@ -75,8 +75,7 @@ def _lifecycle(cp, agent_id):
     return [
         chunk.payload
         for chunk in cp.read_agentbus_inbox(agent_id, "", limit=100)
-        if isinstance(chunk.payload, dict)
-        and chunk.payload.get("schema") == TASK_LIFECYCLE_SCHEMA
+        if isinstance(chunk.payload, dict) and chunk.payload.get("schema") == TASK_LIFECYCLE_SCHEMA
     ]
 
 
@@ -91,8 +90,7 @@ def test_every_task_state_has_a_topic_and_no_state_is_missed():
     """
     assert set(TASK_LIFECYCLE_TOPICS) == {state.value for state in TaskState}
     assert all(
-        topic.startswith(TASK_LIFECYCLE_TOPIC_PREFIX)
-        for topic in TASK_LIFECYCLE_TOPICS.values()
+        topic.startswith(TASK_LIFECYCLE_TOPIC_PREFIX) for topic in TASK_LIFECYCLE_TOPICS.values()
     )
     assert lifecycle_topic(TaskState.COMPLETED) == "task.completed.v1"
     assert lifecycle_topic("needs_review") == "task.needs_review.v1"
@@ -258,9 +256,7 @@ def test_an_empty_stream_from_a_half_written_publish_is_finished_not_skipped(fle
     # Simulate the half-written state: same derived id, no chunk.
     orphan_id = lifecycle_stream_id("tout_orphan_%s" % row.id)
     persona = cp._ensure_operator_persona()
-    cp.agentbus.open_stream(
-        persona.id, owner.id, stream_id=orphan_id, topic="task.running.v1"
-    )
+    cp.agentbus.open_stream(persona.id, owner.id, stream_id=orphan_id, topic="task.running.v1")
     before = len(_lifecycle(cp, owner.id))
 
     result = cp.publish_task_lifecycle_event(

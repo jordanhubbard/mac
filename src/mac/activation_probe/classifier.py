@@ -77,16 +77,12 @@ class ActivationProbeClassifier:
 
     def predict(self, activations: Any) -> ActivationProbePrediction:
         if not self.enabled:
-            return ActivationProbePrediction(
-                score=0.5, label="disabled", confidence=0.0
-            )
+            return ActivationProbePrediction(score=0.5, label="disabled", confidence=0.0)
         array = np.asarray(activations, dtype=float)
         if array.ndim == 2:
             array = array.mean(axis=0)
         if array.ndim != 1:
-            raise ValueError(
-                "classifier input must be [seq_len, hidden_dim] or [hidden_dim]"
-            )
+            raise ValueError("classifier input must be [seq_len, hidden_dim] or [hidden_dim]")
         if array.shape[0] != self.weights.shape[0]:
             raise ValueError(
                 "classifier hidden dimension mismatch: expected %d, got %d"
@@ -99,6 +95,4 @@ class ActivationProbeClassifier:
         label = self.positive_label if score >= self.threshold else self.negative_label
         denominator = self.threshold if score < self.threshold else 1.0 - self.threshold
         confidence = min(1.0, abs(score - self.threshold) / max(denominator, 1e-9))
-        return ActivationProbePrediction(
-            score=score, label=label, confidence=confidence
-        )
+        return ActivationProbePrediction(score=score, label=label, confidence=confidence)

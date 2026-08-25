@@ -57,12 +57,27 @@ def _ordered_route_keys(app) -> list[RouteKey]:
 def _workflow_definition() -> Dict[str, Any]:
     return {
         "nodes": [
-            {"node_key": "investigate", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+            {
+                "node_key": "investigate",
+                "node_type": "task",
+                "role_required": "qa",
+                "max_attempts": 1,
+            },
             {"node_key": "fix", "node_type": "task", "role_required": "dev", "max_attempts": 1},
         ],
         "edges": [
-            {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
-            {"from_node_key": "investigate", "to_node_key": "fix", "condition": "success", "priority": 100},
+            {
+                "from_node_key": "",
+                "to_node_key": "investigate",
+                "condition": "success",
+                "priority": 100,
+            },
+            {
+                "from_node_key": "investigate",
+                "to_node_key": "fix",
+                "condition": "success",
+                "priority": 100,
+            },
             {"from_node_key": "fix", "to_node_key": "", "condition": "success", "priority": 100},
         ],
     }
@@ -231,15 +246,19 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     human = _ok(
         client.post(
             "/humans",
-            json={"username": "route-coverage-human", "email": "route@example.test", "groups": ["ops"]},
+            json={
+                "username": "route-coverage-human",
+                "email": "route@example.test",
+                "groups": ["ops"],
+            },
         )
     )
     # /humans route coverage seeds: `human_id` backs GET /humans/{human_id}
     # and `delete_human_id` backs DELETE /humans/{human_id} (see _path_for).
     ctx["human_id"] = human["id"]
-    ctx["delete_human_id"] = _ok(
-        client.post("/humans", json={"username": "route-delete-human"})
-    )["id"]
+    ctx["delete_human_id"] = _ok(client.post("/humans", json={"username": "route-delete-human"}))[
+        "id"
+    ]
 
     hermes = _ok(
         client.post(
@@ -418,15 +437,11 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     # the DELETE /agents/{agent_id} route then returns 400 ("agent cannot be
     # deleted while holding an active lease") instead of the expected 200 --
     # an order-dependent flake this route-coverage sweep must not carry.
-    cp.set_agent_dispatch_hold(
-        ctx["delete_agent_id"], "reserved for deletion route coverage"
-    )
+    cp.set_agent_dispatch_hold(ctx["delete_agent_id"], "reserved for deletion route coverage")
     # Keep the deregistration fixture out of dispatcher eligibility so the
     # earlier dispatch-route cases cannot hand it a lease before its route is
     # exercised.
-    ctx["deregister_agent_id"] = agent(
-        "deregister-route-agent", ["deregister-only"]
-    )["id"]
+    ctx["deregister_agent_id"] = agent("deregister-route-agent", ["deregister-only"])["id"]
     cp.set_agent_dispatch_hold(
         ctx["deregister_agent_id"], "reserved for deregistration route coverage"
     )
@@ -460,9 +475,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     attest_recover = agent("attest-recover-route-agent", ["python"])
     ctx["attest_recover_agent_id"] = attest_recover["id"]
     report_attestation = read_only_report_repository_executor_attestation(
-        runtime_image_ref=(
-            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64
-        ),
+        runtime_image_ref=("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64),
         policy_sha256="sha256:" + "2" * 64,
         openshell_bin_path="/route/openshell",
         openshell_bin_sha256="sha256:" + "3" * 64,
@@ -501,9 +514,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
         },
     )
     ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
-    ctx["dispatch_hold_batch_agent_id"] = agent(
-        "dispatch-hold-batch-route-agent", ["python"]
-    )["id"]
+    ctx["dispatch_hold_batch_agent_id"] = agent("dispatch-hold-batch-route-agent", ["python"])["id"]
     cp.set_agent_dispatch_hold(
         ctx["dispatch_hold_batch_agent_id"], "route-coverage batch deployment"
     )
@@ -524,9 +535,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
         ctx["dispatch_hold_transition_agent_id"],
         status="idle",
         health_status="healthy",
-        resources={
-            "deployment_generation": "route-coverage-transition-generation"
-        },
+        resources={"deployment_generation": "route-coverage-transition-generation"},
     )
     ctx["transition_agent_id"] = agent("transition-route-agent", ["python"])["id"]
     ctx["evidence_agent_id"] = agent("evidence-route-agent", ["python"])["id"]
@@ -556,34 +565,73 @@ network_policies:
     # Scientific optimizer fixtures (route coverage for /optimizer/*): a
     # control+treatment policy pair and one experiment, so GET-by-id routes
     # resolve and action routes act on real rows.
-    sci_control = _ok(client.post("/optimizer/policies", json={
-        "name": "route-sci-control", "project": ctx["project_name"],
-        "parameters": {"plan_first": True}, "created_by": "route-coverage"}))
-    sci_treatment = _ok(client.post("/optimizer/policies", json={
-        "name": "route-sci-treatment", "project": ctx["project_name"],
-        "parameters": {"plan_first": False}, "created_by": "route-coverage"}))
+    sci_control = _ok(
+        client.post(
+            "/optimizer/policies",
+            json={
+                "name": "route-sci-control",
+                "project": ctx["project_name"],
+                "parameters": {"plan_first": True},
+                "created_by": "route-coverage",
+            },
+        )
+    )
+    sci_treatment = _ok(
+        client.post(
+            "/optimizer/policies",
+            json={
+                "name": "route-sci-treatment",
+                "project": ctx["project_name"],
+                "parameters": {"plan_first": False},
+                "created_by": "route-coverage",
+            },
+        )
+    )
     ctx["sci_policy_id"] = sci_control["id"]
     ctx["sci_policy2_id"] = sci_treatment["id"]
-    sci_exp = _ok(client.post("/optimizer/experiments", json={
-        "name": "route-sci-experiment", "project": ctx["project_name"],
-        "hypothesis": "treatment beats control on route coverage",
-        "control_policy_id": sci_control["id"],
-        "treatment_policy_id": sci_treatment["id"],
-        "primary_metric": "accepted_success", "created_by": "route-coverage"}))
+    sci_exp = _ok(
+        client.post(
+            "/optimizer/experiments",
+            json={
+                "name": "route-sci-experiment",
+                "project": ctx["project_name"],
+                "hypothesis": "treatment beats control on route coverage",
+                "control_policy_id": sci_control["id"],
+                "treatment_policy_id": sci_treatment["id"],
+                "primary_metric": "accepted_success",
+                "created_by": "route-coverage",
+            },
+        )
+    )
     ctx["sci_experiment_id"] = sci_exp["id"]
-    sci_exp2 = _ok(client.post("/optimizer/experiments", json={
-        "name": "route-sci-experiment-promote", "project": ctx["project_name"],
-        "hypothesis": "promote-path route coverage",
-        "control_policy_id": sci_control["id"],
-        "treatment_policy_id": sci_treatment["id"],
-        "primary_metric": "accepted_success", "created_by": "route-coverage"}))
-    _ok(client.post("/optimizer/experiments/%s/start" % sci_exp2["id"],
-                    json={"actor": "route-coverage"}))
+    sci_exp2 = _ok(
+        client.post(
+            "/optimizer/experiments",
+            json={
+                "name": "route-sci-experiment-promote",
+                "project": ctx["project_name"],
+                "hypothesis": "promote-path route coverage",
+                "control_policy_id": sci_control["id"],
+                "treatment_policy_id": sci_treatment["id"],
+                "primary_metric": "accepted_success",
+                "created_by": "route-coverage",
+            },
+        )
+    )
+    _ok(
+        client.post(
+            "/optimizer/experiments/%s/start" % sci_exp2["id"], json={"actor": "route-coverage"}
+        )
+    )
     ctx["sci_experiment2_id"] = sci_exp2["id"]
     _ok(
         client.post(
             "/openshell/policies/%s/assignments" % openshell_policy["id"],
-            json={"target_type": "agent", "target_id": default_agent["id"], "created_by": "operator"},
+            json={
+                "target_type": "agent",
+                "target_id": default_agent["id"],
+                "created_by": "operator",
+            },
         )
     )
     _ok(
@@ -621,13 +669,15 @@ network_policies:
     fleet = _ok(
         client.post(
             "/fleets",
-            json={"name": "route-fleet", "description": "route fleet", "agent_ids": [default_agent["id"]]},
+            json={
+                "name": "route-fleet",
+                "description": "route fleet",
+                "agent_ids": [default_agent["id"]],
+            },
         )
     )
     ctx["fleet_id"] = fleet["id"]
-    ctx["delete_fleet_id"] = _ok(
-        client.post("/fleets", json={"name": "route-fleet-delete"})
-    )["id"]
+    ctx["delete_fleet_id"] = _ok(client.post("/fleets", json={"name": "route-fleet-delete"}))["id"]
 
     role_qa = _ok(
         client.post(
@@ -670,7 +720,9 @@ network_policies:
         )
     )["id"]
 
-    def task(title: str, *, caps: list[str] | None = None, metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def task(
+        title: str, *, caps: list[str] | None = None, metadata: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
         return _ok(
             client.post(
                 "/tasks",
@@ -697,9 +749,7 @@ network_policies:
     ctx["ask_task_id"] = task("route ask task")["id"]
     answer_task = task("route answer task")
     # Answering only applies to a task already parked on a question.
-    cp.request_task_input(
-        answer_task["id"], [{"question": "route coverage question?"}], "operator"
-    )
+    cp.request_task_input(answer_task["id"], [{"question": "route coverage question?"}], "operator")
     ctx["answer_task_id"] = answer_task["id"]
     ctx["force_complete_task_id"] = task("route force-complete task")["id"]
     ctx["claim_task_id"] = task("route claim task")["id"]
@@ -831,14 +881,22 @@ network_policies:
     provisioning = _ok(
         client.post(
             "/provisioning/requests",
-            json={"reason": "route coverage provision", "capabilities": ["python"], "tenant_id": tenant["id"]},
+            json={
+                "reason": "route coverage provision",
+                "capabilities": ["python"],
+                "tenant_id": tenant["id"],
+            },
         )
     )
     ctx["request_id"] = provisioning["id"]
     ctx["cancel_request_id"] = _ok(
         client.post(
             "/provisioning/requests",
-            json={"reason": "route coverage cancel", "capabilities": ["ops"], "tenant_id": tenant["id"]},
+            json={
+                "reason": "route coverage cancel",
+                "capabilities": ["ops"],
+                "tenant_id": tenant["id"],
+            },
         )
     )["id"]
 
@@ -1165,7 +1223,11 @@ network_policies:
     runtime = _ok(
         client.post(
             "/runtimes",
-            json={"name": "route-runtime", "manifest": _runtime_manifest(), "created_by": "operator"},
+            json={
+                "name": "route-runtime",
+                "manifest": _runtime_manifest(),
+                "created_by": "operator",
+            },
         )
     )
     ctx["runtime_id"] = runtime["id"]
@@ -1190,7 +1252,9 @@ network_policies:
                 "artifact_type": "test-output",
                 "source_uri": "artifact://route/runtime-evidence.txt",
                 "content_type": "text/plain; charset=utf-8",
-                "content_base64": base64.b64encode(b"route runtime durable artifact\n").decode("ascii"),
+                "content_base64": base64.b64encode(b"route runtime durable artifact\n").decode(
+                    "ascii"
+                ),
             }
         ],
         sync_beads=False,
@@ -1332,17 +1396,19 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/tasks/{task_id}/start"): {"task_id": "start_task_id"},
         ("POST", "/tasks/{task_id}/submit-for-review"): {"task_id": "submit_task_id"},
         ("POST", "/tasks/{task_id}/evidence"): {"task_id": "evidence_task_id"},
-        ("POST", "/tasks/{task_id}/break-glass-authorizations"): {
-            "task_id": "break_glass_task_id"
-        },
+        ("POST", "/tasks/{task_id}/break-glass-authorizations"): {"task_id": "break_glass_task_id"},
         ("POST", "/break-glass-authorizations/{authorization_id}/revoke"): {
             "authorization_id": "break_glass_authorization_id"
         },
         ("POST", "/tasks/{task_id}/reviews"): {"task_id": "review_task_id"},
         ("DELETE", "/fleets/{fleet_id_or_name}"): {"fleet_id_or_name": "delete_fleet_id"},
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
-        ("POST", "/agents/{agent_id}/attestation-key/rotate"): {"agent_id": "attest_rotate_agent_id"},
-        ("POST", "/agents/{agent_id}/attestation-key/verify"): {"agent_id": "attest_verify_agent_id"},
+        ("POST", "/agents/{agent_id}/attestation-key/rotate"): {
+            "agent_id": "attest_rotate_agent_id"
+        },
+        ("POST", "/agents/{agent_id}/attestation-key/verify"): {
+            "agent_id": "attest_verify_agent_id"
+        },
         ("POST", "/agents/{agent_id}/attestation-key/recover"): {
             "agent_id": "attest_recover_agent_id"
         },
@@ -1406,7 +1472,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/provisioning/requests/{request_id}/cancel"): {"request_id": "cancel_request_id"},
         ("DELETE", "/roles/{role_id}"): {"role_id": "delete_role_id"},
         ("DELETE", "/workflows/{workflow_id}"): {"workflow_id": "delete_workflow_id"},
-        ("DELETE", "/artifacts/{artifact_id_or_digest}"): {"artifact_id_or_digest": "delete_artifact_id"},
+        ("DELETE", "/artifacts/{artifact_id_or_digest}"): {
+            "artifact_id_or_digest": "delete_artifact_id"
+        },
         ("POST", "/runtime-deltas/{delta_id}/validate"): {"delta_id": "validate_delta_id"},
         ("POST", "/runtime-deltas/{delta_id}/reject"): {"delta_id": "reject_delta_id"},
         ("POST", "/runtime-deltas/{delta_id}/promote"): {"delta_id": "promote_delta_id"},
@@ -1415,7 +1483,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/rollouts/{rollout_id}/artifact"): {"rollout_id": "artifact_rollout_id"},
         ("POST", "/rollouts/{rollout_id}/health"): {"rollout_id": "health_rollout_id"},
         ("POST", "/rollouts/{rollout_id}/rescue"): {"rollout_id": "rescue_rollout_id"},
-        ("DELETE", "/notifier/channels/{channel_id_or_name}"): {"channel_id_or_name": "delete_channel_id"},
+        ("DELETE", "/notifier/channels/{channel_id_or_name}"): {
+            "channel_id_or_name": "delete_channel_id"
+        },
         ("DELETE", "/communication/identities/{identity_id_or_name}"): {
             "identity_id_or_name": "delete_communication_identity_id"
         },
@@ -1445,14 +1515,28 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/task-groups/{name}"): {"name": "task_group_delete_name"},
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
-        ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {"policy_id": "sci_policy_id"},
+        ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
+            "policy_id": "sci_policy_id"
+        },
         ("GET", "/optimizer/experiments/{experiment_id}"): {"experiment_id": "sci_experiment_id"},
-        ("POST", "/optimizer/experiments/{experiment_id}/start"): {"experiment_id": "sci_experiment_id"},
-        ("POST", "/optimizer/experiments/{experiment_id}/pause"): {"experiment_id": "sci_experiment_id"},
-        ("POST", "/optimizer/experiments/{experiment_id}/promote"): {"experiment_id": "sci_experiment2_id"},
-        ("GET", "/optimizer/experiments/{experiment_id}/evidence"): {"experiment_id": "sci_experiment_id"},
-        ("POST", "/optimizer/experiments/{experiment_id}/observe/{task_id}"): {"experiment_id": "sci_experiment_id"},
-        ("POST", "/optimizer/experiments/{experiment_id}/analyze"): {"experiment_id": "sci_experiment_id"},
+        ("POST", "/optimizer/experiments/{experiment_id}/start"): {
+            "experiment_id": "sci_experiment_id"
+        },
+        ("POST", "/optimizer/experiments/{experiment_id}/pause"): {
+            "experiment_id": "sci_experiment_id"
+        },
+        ("POST", "/optimizer/experiments/{experiment_id}/promote"): {
+            "experiment_id": "sci_experiment2_id"
+        },
+        ("GET", "/optimizer/experiments/{experiment_id}/evidence"): {
+            "experiment_id": "sci_experiment_id"
+        },
+        ("POST", "/optimizer/experiments/{experiment_id}/observe/{task_id}"): {
+            "experiment_id": "sci_experiment_id"
+        },
+        ("POST", "/optimizer/experiments/{experiment_id}/analyze"): {
+            "experiment_id": "sci_experiment_id"
+        },
     }
     values = {
         "service_id": "qdrant",
@@ -1558,7 +1642,11 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["follow_redirects"] = False
             expected = (303,)
         elif path_template == "/agentbus/streams/{stream_id}/chunks":
-            kwargs["params"] = {"agent_id": ctx["reviewer_agent_id"], "after_sequence": 0, "limit": 10}
+            kwargs["params"] = {
+                "agent_id": ctx["reviewer_agent_id"],
+                "after_sequence": 0,
+                "limit": 10,
+            }
         elif path_template == "/agentbus/streams/{stream_id}/events":
             kwargs["params"] = {
                 "agent_id": ctx["reviewer_agent_id"],
@@ -1573,7 +1661,11 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                 "poll_interval_seconds": 0.25,
             }
         elif path_template == "/observability/stream":
-            kwargs["params"] = {"after_sequence": 0, "timeout_seconds": 0, "poll_interval_seconds": 0.25}
+            kwargs["params"] = {
+                "after_sequence": 0,
+                "timeout_seconds": 0,
+                "poll_interval_seconds": 0.25,
+            }
         elif path_template == "/action-events/stream":
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/dashboard/stream":
@@ -1820,7 +1912,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "skills": {"disabled": ["route-skill"]},
             "apply_local": False,
         },
-        ("POST", "/projects"): {"name": "route-project-case", "description": "created by route coverage"},
+        ("POST", "/projects"): {
+            "name": "route-project-case",
+            "description": "created by route coverage",
+        },
         ("PUT", "/projects/{project}"): {
             "description": "updated route project",
             "metadata": {"route_case": True},
@@ -1848,7 +1943,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "operator",
             "reason": "route coverage force-complete",
         },
-        ("POST", "/leases/{lease_id}/renew"): {"agent_id": ctx["lease_agent_id"], "lease_seconds": 120},
+        ("POST", "/leases/{lease_id}/renew"): {
+            "agent_id": ctx["lease_agent_id"],
+            "lease_seconds": 120,
+        },
         ("POST", "/leases/{lease_id}/delegate"): {
             "agent_id": ctx["lease_agent_id"],
             "to_agent_id": ctx["delegate_agent_id"],
@@ -1859,7 +1957,9 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "summary": "route evidence summary",
             "created_by": ctx["evidence_agent_id"],
             "lease_id": ctx["evidence_lease_id"],
-            "metadata": {"verification": _operator_manifest("route evidence summary is substantive")},
+            "metadata": {
+                "verification": _operator_manifest("route evidence summary is substantive")
+            },
         },
         ("POST", "/work-package-pipeline/trigger"): {},
         ("POST", "/work-packages"): {
@@ -1910,9 +2010,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/work-packages/{package_id}/integration-batches"): {
             "integration_node_key": "integrate"
         },
-        ("POST", "/work-packages/{package_id}/assemble"): {
-            "integration_node_key": "integrate"
-        },
+        ("POST", "/work-packages/{package_id}/assemble"): {"integration_node_key": "integrate"},
         ("POST", "/work-package-integration-batches/{batch_id}/claim"): {},
         ("POST", "/work-package-integration-batches/{batch_id}/assemble"): {},
         ("POST", "/work-package-integration-batches/{batch_id}/certification-jobs"): {
@@ -1988,9 +2086,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         },
         ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
             "expected_attestation": ctx["report_executor_attestation"],
-            "expected_startup_timestamp": ctx[
-                "report_executor_startup_timestamp"
-            ],
+            "expected_startup_timestamp": ctx["report_executor_startup_timestamp"],
             "actor": "route-coverage",
         },
         ("POST", "/agents/{agent_id}/report-repository-executor/revoke"): {
@@ -2162,7 +2258,10 @@ edges:
             "started_by": "operator",
             "input": {"ticket": "route-start"},
         },
-        ("POST", "/workflows/runs/{run_id}/cancel"): {"reason": "route coverage", "actor": "operator"},
+        ("POST", "/workflows/runs/{run_id}/cancel"): {
+            "reason": "route coverage",
+            "actor": "operator",
+        },
         ("POST", "/agents/{agent_id}/mood"): {"mode": "warm", "set_by": "operator"},
         ("PUT", "/agents/{agent_id}/mood"): {"mode": "cheerful", "set_by": "operator"},
         ("POST", "/v1/agents/{agent_id}/mood"): {"mode": "warm", "reason": "route coverage"},
@@ -2201,8 +2300,14 @@ edges:
         ("POST", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 20, "window_minutes": 30},
         ("PUT", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 25, "window_minutes": 30},
         ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},
-        ("POST", "/nap-runs/{run_id}/complete"): {"actor": "operator", "detail": {"summary": "rested"}},
-        ("POST", "/nap-runs/{run_id}/fail"): {"actor": "operator", "reason": "route coverage failure case"},
+        ("POST", "/nap-runs/{run_id}/complete"): {
+            "actor": "operator",
+            "detail": {"summary": "rested"},
+        },
+        ("POST", "/nap-runs/{run_id}/fail"): {
+            "actor": "operator",
+            "reason": "route coverage failure case",
+        },
         ("POST", "/agents/{agent_id}/nap-cycle"): {
             "actor": "operator",
             "embed_into_medium": False,
@@ -2237,7 +2342,10 @@ edges:
             # assert on the published inventory only.
             "reflect_timeout": 0,
         },
-        ("POST", "/agents/{agent_id}/claim-next"): {"lease_seconds": 60, "capabilities": ["python"]},
+        ("POST", "/agents/{agent_id}/claim-next"): {
+            "lease_seconds": 60,
+            "capabilities": ["python"],
+        },
         ("POST", "/agents/{agent_id}/service-claims/sync"): {
             "willing_ops": ["image.generate"],
             "lease_seconds": 60,
@@ -2608,23 +2716,37 @@ edges:
         },
         ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
         ("POST", "/optimizer/policies"): {
-            "name": "route-sci-extra", "project": ctx["project_name"],
-            "parameters": {"plan_first": True}, "created_by": "route-coverage"},
+            "name": "route-sci-extra",
+            "project": ctx["project_name"],
+            "parameters": {"plan_first": True},
+            "created_by": "route-coverage",
+        },
         ("POST", "/optimizer/policies/{policy_id}/promote"): {
-            "actor": "route-coverage", "reason": "route coverage"},
+            "actor": "route-coverage",
+            "reason": "route coverage",
+        },
         ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
-            "actor": "route-coverage", "reason": "route coverage"},
+            "actor": "route-coverage",
+            "reason": "route coverage",
+        },
         ("POST", "/optimizer/experiments"): {
-            "name": "route-sci-exp-2", "project": ctx["project_name"],
+            "name": "route-sci-exp-2",
+            "project": ctx["project_name"],
             "hypothesis": "route coverage hypothesis",
             "control_policy_id": ctx["sci_policy_id"],
             "treatment_policy_id": ctx["sci_policy2_id"],
-            "primary_metric": "accepted_success", "created_by": "route-coverage"},
+            "primary_metric": "accepted_success",
+            "created_by": "route-coverage",
+        },
         ("POST", "/optimizer/experiments/{experiment_id}/start"): {"actor": "route-coverage"},
         ("POST", "/optimizer/experiments/{experiment_id}/pause"): {
-            "actor": "route-coverage", "reason": "route coverage"},
+            "actor": "route-coverage",
+            "reason": "route coverage",
+        },
         ("POST", "/optimizer/experiments/{experiment_id}/promote"): {
-            "actor": "route-coverage", "reason": "route coverage"},
+            "actor": "route-coverage",
+            "reason": "route coverage",
+        },
         ("POST", "/agents/dispatch-hold/epochs/open"): {
             "epoch_id": "route-coverage-open-empty",
             "participants": [],
@@ -2736,9 +2858,7 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
             return {"reembedded": 0, "reembedded_memory_ids": [], "orphaned": []}
 
         def embed_memory(self, memory_id, **kwargs):
-            raise AssertionError(
-                "route coverage must not embed; the promote case is dry_run"
-            )
+            raise AssertionError("route coverage must not embed; the promote case is dry_run")
 
     import mac.vector_writer_service as vector_writer_service
 

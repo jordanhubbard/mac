@@ -63,8 +63,7 @@ def test_skips_stale_cache_media(tmp_path, monkeypatch):
     hermes, task_dir = _setup(tmp_path, monkeypatch)
     # A file from a prior task (mtime well before the task started) must not be
     # attached to this task's deliverables.
-    _write(hermes / "cache" / "images" / "old.png", b"old",
-           mtime=time.time() - 3600)
+    _write(hermes / "cache" / "images" / "old.png", b"old", mtime=time.time() - 3600)
     _write(hermes / "cache" / "images" / "new.png", b"new")  # recent
     arts = _durable_media_artifacts(task_dir)
     names = {a["name"] for a in arts}

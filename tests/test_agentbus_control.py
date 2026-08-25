@@ -23,18 +23,13 @@ from mac.agentbus_control import (
 def test_reflect_request_wire_constants() -> None:
     assert REFLECT_REQUEST_SCHEMA == "mac.agentbus.reflect_request.v1"
     assert REFLECT_REQUEST_TOPIC == "mac.reflect.request.v1"
-    assert (
-        REFLECT_REQUEST_CONTENT_TYPE
-        == "application/vnd.mac.reflect-request+json"
-    )
+    assert REFLECT_REQUEST_CONTENT_TYPE == "application/vnd.mac.reflect-request+json"
 
 
 def test_reflect_result_wire_constants() -> None:
     assert REFLECT_RESULT_SCHEMA == "mac.agentbus.reflect_result.v1"
     assert REFLECT_RESULT_TOPIC == "mac.reflect.result.v1"
-    assert (
-        REFLECT_RESULT_CONTENT_TYPE == "application/vnd.mac.reflect-result+json"
-    )
+    assert REFLECT_RESULT_CONTENT_TYPE == "application/vnd.mac.reflect-result+json"
 
 
 def test_reflect_request_payload_uses_schema_and_required_fields() -> None:
@@ -278,7 +273,5 @@ def test_agent_reflection_payload_narrative_truncated_when_overlong() -> None:
 
 
 def test_agent_reflection_payload_narrative_strips_whitespace() -> None:
-    payload = agent_reflection_payload(
-        agent=_SAMPLE_AGENT, narrative="  trimmed narrative  "
-    )
+    payload = agent_reflection_payload(agent=_SAMPLE_AGENT, narrative="  trimmed narrative  ")
     assert payload["reflection"] == "trimmed narrative"

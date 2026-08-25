@@ -23,9 +23,7 @@ from mac.gitops import validate_git_ref, validate_git_remote_url
 
 
 _SAFE_GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}$")
-_SCP_REMOTE_RE = re.compile(
-    r"^(?:(?P<user>[^@/:]+)@)?(?P<host>[^@/:]+):(?P<path>.+)$"
-)
+_SCP_REMOTE_RE = re.compile(r"^(?:(?P<user>[^@/:]+)@)?(?P<host>[^@/:]+):(?P<path>.+)$")
 
 
 @dataclass(frozen=True)
@@ -56,17 +54,11 @@ def resolve_task_repository_branch(
     """
 
     metadata_raw = task.get("metadata") if isinstance(task, Mapping) else None
-    metadata: Mapping[str, Any] = (
-        metadata_raw if isinstance(metadata_raw, Mapping) else {}
-    )
+    metadata: Mapping[str, Any] = metadata_raw if isinstance(metadata_raw, Mapping) else {}
     execution_raw = metadata.get("execution_contract")
-    execution: Mapping[str, Any] = (
-        execution_raw if isinstance(execution_raw, Mapping) else {}
-    )
+    execution: Mapping[str, Any] = execution_raw if isinstance(execution_raw, Mapping) else {}
     origin_raw = metadata.get("origin")
-    origin: Mapping[str, Any] = (
-        origin_raw if isinstance(origin_raw, Mapping) else {}
-    )
+    origin: Mapping[str, Any] = origin_raw if isinstance(origin_raw, Mapping) else {}
 
     locations = (
         ("metadata.execution_contract.repository_contract", execution),
@@ -91,31 +83,19 @@ def resolve_task_repository_branch(
         resolved: list[tuple[str, str]] = []
         for location, contract in contracts:
             declared_default = str(contract.get("default_branch") or "").strip()
-            declared_canonical = str(
-                contract.get("canonical_branch") or ""
-            ).strip()
-            if (
-                declared_default
-                and declared_canonical
-                and declared_default != declared_canonical
-            ):
-                raise ValueError(
-                    "%s default_branch contradicts canonical_branch" % location
-                )
+            declared_canonical = str(contract.get("canonical_branch") or "").strip()
+            if declared_default and declared_canonical and declared_default != declared_canonical:
+                raise ValueError("%s default_branch contradicts canonical_branch" % location)
             branch = declared_default or declared_canonical
             if branch:
                 resolved.append((location, branch))
 
         authoritative_branch = str(
-            authoritative.get("default_branch")
-            or authoritative.get("canonical_branch")
-            or ""
+            authoritative.get("default_branch") or authoritative.get("canonical_branch") or ""
         ).strip()
         if not authoritative_branch:
             if contract_backed:
-                raise ValueError(
-                    "%s has no canonical branch" % authoritative_location
-                )
+                raise ValueError("%s has no canonical branch" % authoritative_location)
             for candidate in (legacy_branch, environment_branch, default_branch):
                 branch = str(candidate or "").strip()
                 if branch:
@@ -130,9 +110,7 @@ def resolve_task_repository_branch(
         return validate_git_ref(authoritative_branch)
 
     if contract_backed:
-        raise ValueError(
-            "contract-backed repository task has no repository_contract branch"
-        )
+        raise ValueError("contract-backed repository task has no repository_contract branch")
 
     for candidate in (legacy_branch, environment_branch, default_branch):
         branch = str(candidate or "").strip()
@@ -189,9 +167,11 @@ def canonical_git_remote_identity(value: Any) -> str:
         if not host:
             raise ValueError("canonical Git remote has no host")
         port = parsed.port
-        if (scheme == "ssh" and port == 22) or (
-            scheme == "https" and port == 443
-        ) or (scheme in {"http", "git"} and port in {80, 9418}):
+        if (
+            (scheme == "ssh" and port == 22)
+            or (scheme == "https" and port == 443)
+            or (scheme in {"http", "git"} and port in {80, 9418})
+        ):
             port = None
         host_identity = "%s:%d" % (host, port) if port is not None else host
         path = parsed.path.strip("/")

@@ -538,9 +538,7 @@ def test_unmeasured_cost_is_unknown_and_never_zero():
         route_named(ladder, "opencode"),
         RouteCost(usd_per_million_tokens=0.9, observed_at=12.0, source="nemo-relay"),
     )
-    row = next(
-        r for r in ladder.telemetry()["routes"] if r["route"]["harness"] == "opencode"
-    )
+    row = next(r for r in ladder.telemetry()["routes"] if r["route"]["harness"] == "opencode")
     assert row["cost"] == {
         "known": True,
         "usd_per_million_tokens": 0.9,
@@ -726,9 +724,7 @@ class TestCodingAgentSelectionConsumesTheLadder:
         )
         assert choice.agent == "claude"
 
-    def test_an_unconfigured_fleet_keeps_the_built_in_order_and_its_rationale(
-        self, tmp_path
-    ):
+    def test_an_unconfigured_fleet_keeps_the_built_in_order_and_its_rationale(self, tmp_path):
         from mac.coding_agent import resolve_coding_agent
 
         choice = resolve_coding_agent(

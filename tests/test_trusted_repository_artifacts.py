@@ -33,9 +33,7 @@ def test_regular_file_identity_rejects_relative_parent_and_final_symlinks(
         trusted_artifact.nofollow_regular_file_identity(real_parent)
 
 
-def test_regular_file_identity_binds_open_descriptor(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_regular_file_identity_binds_open_descriptor(monkeypatch, tmp_path: Path) -> None:
     artifact = tmp_path / "artifact"
     artifact.write_bytes(b"content")
     original_fstat = trusted_artifact.os.fstat

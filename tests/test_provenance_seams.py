@@ -75,9 +75,7 @@ def test_list_conversation_threads_filters_by_binding(cp):
     binding_a = _setup_binding(cp)
     tenant_b = cp.register_tenant("other")
     hermes_b = cp.register_hermes_instance(tenant_b.id, "natasha")
-    binding_b = cp.register_platform_binding(
-        tenant_b.id, hermes_b.id, "telegram", "chat-7"
-    )
+    binding_b = cp.register_platform_binding(tenant_b.id, hermes_b.id, "telegram", "chat-7")
     cp.track_conversation(binding_a.id, "a-1")
     cp.track_conversation(binding_a.id, "a-2")
     cp.track_conversation(binding_b.id, "b-1")
@@ -119,9 +117,7 @@ def test_record_vector_ref_rejects_unknown_memory_and_blank_fields(cp):
     with pytest.raises(NotFoundError):
         cp.record_vector_ref("memory_does_not_exist", "qdrant", "c", "p")
     task = cp.create_task("dummy", required_capabilities=["ops"])
-    memory = cp.add_memory(
-        task.id, "task", task.id, "decision", "x", None, "human"
-    )
+    memory = cp.add_memory(task.id, "task", task.id, "decision", "x", None, "human")
     with pytest.raises(ValidationError):
         cp.record_vector_ref(memory.id, "", "c", "p")
     with pytest.raises(ValidationError):

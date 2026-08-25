@@ -41,9 +41,7 @@ _LAST_OPENCLAW_AGENT_ID: list = []
 
 
 def _register_openclaw_agent(cp, name="rocky"):
-    agent = _register_agent(
-        cp, name, resources={"chat_gateway": {"implementation": "openclaw"}}
-    )
+    agent = _register_agent(cp, name, resources={"chat_gateway": {"implementation": "openclaw"}})
     _LAST_OPENCLAW_AGENT_ID.append(agent.id)
     return agent
 
@@ -96,12 +94,14 @@ def test_config_disabled_flag_forms(value):
 
 
 def test_config_reads_numeric_overrides():
-    cfg = CuriosityReviewerConfig.from_env({
-        "MAC_CURIOSITY_REVIEW_ENABLED": "1",
-        "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS": "3600",
-        "MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS": "0",
-        "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS": "7200",
-    })
+    cfg = CuriosityReviewerConfig.from_env(
+        {
+            "MAC_CURIOSITY_REVIEW_ENABLED": "1",
+            "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS": "3600",
+            "MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS": "0",
+            "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS": "7200",
+        }
+    )
     assert cfg.active is True
     assert cfg.interval_seconds == 3600.0
     assert cfg.initial_delay_seconds == 0.0
@@ -109,20 +109,24 @@ def test_config_reads_numeric_overrides():
 
 
 def test_config_non_numeric_sets_error_and_deactivates():
-    cfg = CuriosityReviewerConfig.from_env({
-        "MAC_CURIOSITY_REVIEW_ENABLED": "1",
-        "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS": "later",
-    })
+    cfg = CuriosityReviewerConfig.from_env(
+        {
+            "MAC_CURIOSITY_REVIEW_ENABLED": "1",
+            "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS": "later",
+        }
+    )
     assert "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS must be numeric" in cfg.configuration_error
     assert cfg.enabled is True and cfg.active is False
     assert cfg.cooldown_seconds == DEFAULT_COOLDOWN_SECONDS
 
 
 def test_config_out_of_range_sets_error_and_deactivates():
-    cfg = CuriosityReviewerConfig.from_env({
-        "MAC_CURIOSITY_REVIEW_ENABLED": "1",
-        "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS": "1",  # below the 300s floor
-    })
+    cfg = CuriosityReviewerConfig.from_env(
+        {
+            "MAC_CURIOSITY_REVIEW_ENABLED": "1",
+            "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS": "1",  # below the 300s floor
+        }
+    )
     assert "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS must be between" in cfg.configuration_error
     assert cfg.active is False
 
@@ -147,7 +151,9 @@ def test_disabled_reviewer_does_not_start(cp):
 
 
 def test_misconfigured_reviewer_does_not_start(cp):
-    reviewer = CuriosityReviewer(cp, CuriosityReviewerConfig(enabled=True, configuration_error="bad"))
+    reviewer = CuriosityReviewer(
+        cp, CuriosityReviewerConfig(enabled=True, configuration_error="bad")
+    )
     assert reviewer.start() is False
     assert reviewer.status()["thread_alive"] is False
 
@@ -226,7 +232,8 @@ def test_second_run_dedupes_while_task_open(cp):
 
     # Still exactly one adjudication task in the ledger.
     adjudications = [
-        t for t in cp.list_tasks()
+        t
+        for t in cp.list_tasks()
         if (t.metadata.get("origin") or {}).get("type") == ADJUDICATION_ORIGIN_TYPE
     ]
     assert len(adjudications) == 1
@@ -237,9 +244,7 @@ def test_cooldown_blocks_refile_after_task_closes(cp):
     reviewer = _reviewer(cp)
     first = reviewer.run_once()
     task_id = first["agents"][0]["task_id"]
-    cp.close_task(
-        task_id, "cancelled", "operator", detail={"reason": "test cleanup"}
-    )
+    cp.close_task(task_id, "cancelled", "operator", detail={"reason": "test cleanup"})
 
     report = reviewer.run_once()
     assert report["filed_count"] == 0
@@ -461,8 +466,7 @@ def test_it_refuses_to_file_for_an_agent_whose_ledger_the_hub_cannot_serve(cp):
         "read; it would have adjudicated the wrong host's candidates"
     )
     reasons = " ".join(
-        str(entry.get("skipped_reason") or "")
-        for entry in (report.get("agents") or [])
+        str(entry.get("skipped_reason") or "") for entry in (report.get("agents") or [])
     )
     assert "per-agent routing" in reasons
 
@@ -485,8 +489,7 @@ def test_an_unknown_hub_identity_files_nothing(cp):
     ]
     assert not filed
     reasons = " ".join(
-        str(entry.get("skipped_reason") or "")
-        for entry in (report.get("agents") or [])
+        str(entry.get("skipped_reason") or "") for entry in (report.get("agents") or [])
     )
     assert "MAC_AGENT_ID" in reasons
 

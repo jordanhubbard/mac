@@ -366,10 +366,7 @@ class DispatchService:
             priority=task.priority,
             created_at=task.created_at,
             state=task.state,
-            released=(
-                break_glass is not None
-                or not self.control_plane._task_dispatch_held(task)
-            ),
+            released=(break_glass is not None or not self.control_plane._task_dispatch_held(task)),
             lease_id=task.lease_id,
             dependencies_satisfied=dependencies_satisfied,
             project=task.project,
@@ -380,9 +377,7 @@ class DispatchService:
             order_signal=float(order_signal_override),
             tenant_id=self.control_plane._task_tenant_id(task),
             target_agent_id=target_agent_id,
-            break_glass_agent_id=(
-                break_glass.agent_id if break_glass is not None else None
-            ),
+            break_glass_agent_id=(break_glass.agent_id if break_glass is not None else None),
             # Two soft preferences, unioned: agents that already participated
             # in this cooperative family, and agents that already attempted
             # THIS task and did not finish it. Both only reorder candidates --
@@ -468,9 +463,7 @@ class DispatchService:
         # allocation round on the hottest endpoint in the system.
         for task in self.control_plane._non_terminal_tasks():
             metadata = ensure_json_object(task.metadata)
-            if normalize_execution_mode(
-                metadata.get("execution_mode")
-            ) != EXECUTION_MODE_SYNC:
+            if normalize_execution_mode(metadata.get("execution_mode")) != EXECUTION_MODE_SYNC:
                 continue
             agent_id = str(metadata.get("target_agent_id") or "")
             if not agent_id:
@@ -547,8 +540,7 @@ class DispatchService:
                     machine,
                 )
                 bound_role_eligible = bool(
-                    hardware_ok
-                    and self.control_plane.roles.soul_accepts_role(agent, role)
+                    hardware_ok and self.control_plane.roles.soul_accepts_role(agent, role)
                 )
         # A caller building a whole round passes the bulk map; anyone
         # asking about one agent still gets the single-agent scan.
@@ -563,9 +555,7 @@ class DispatchService:
             hardware=ensure_json_object(machine.hardware),
             bound_role_slug=bound_role_slug,
             bound_role_eligible=bound_role_eligible,
-            bound_role_required_capabilities=frozenset(
-                bound_role_required_capabilities
-            ),
+            bound_role_required_capabilities=frozenset(bound_role_required_capabilities),
         )
 
     def ready_tasks(
@@ -650,9 +640,7 @@ class DispatchService:
             )
         )
         eligible_count = sum(1 for item in candidates if item["eligible"])
-        requirement_eligibility = classify_requirement_eligibility(
-            task_snapshot, agent_snapshots
-        )
+        requirement_eligibility = classify_requirement_eligibility(task_snapshot, agent_snapshots)
         task_reasons = [self._v2_dispatch_reason(code) for code in task_evaluation.task_rejections]
         if task_reasons:
             unclaimed = list(task_reasons)
@@ -797,9 +785,7 @@ class DispatchService:
             for task in tasks
         ]
         sync_states = self._sync_barrier_states()
-        agent_snapshots = [
-            self._v2_snapshot_agent(agent, sync_states) for agent in agents
-        ]
+        agent_snapshots = [self._v2_snapshot_agent(agent, sync_states) for agent in agents]
         return task_snapshots, agent_snapshots, task_records, agent_records
 
     def _allocate_v2_round(
@@ -833,9 +819,7 @@ class DispatchService:
                     lease_seconds=lease_seconds,
                 )
             except TransitionError as exc:
-                return ClaimCommit.rejected(
-                    "%s:%s" % (exc.__class__.__name__, str(exc))
-                )
+                return ClaimCommit.rejected("%s:%s" % (exc.__class__.__name__, str(exc)))
             except (AuthorizationError, ValidationError) as exc:
                 return ClaimCommit.rejected(
                     "%s:%s" % (exc.__class__.__name__, str(exc)),
@@ -899,9 +883,7 @@ class DispatchService:
                     "score": score,
                     "rationale": rationale,
                     "decision": dict(decision),
-                    "assignment_audit_behavior": (
-                        "routing_observation_only"
-                    ),
+                    "assignment_audit_behavior": ("routing_observation_only"),
                 },
             )
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.

@@ -18,9 +18,7 @@ _CONFTEST_PATH = Path(__file__).resolve().parent / "conftest.py"
 
 
 def _load_conftest():
-    spec = importlib.util.spec_from_file_location(
-        "mac_conftest_under_test", _CONFTEST_PATH
-    )
+    spec = importlib.util.spec_from_file_location("mac_conftest_under_test", _CONFTEST_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

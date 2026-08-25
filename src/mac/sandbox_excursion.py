@@ -67,9 +67,7 @@ def excursion_from_delta(
         str(item).strip() for item in (delta.get("missing_after") or []) if str(item).strip()
     ]
     provisioned = [
-        str(item).strip()
-        for item in (delta.get("provisioned") or [])
-        if str(item).strip()
+        str(item).strip() for item in (delta.get("provisioned") or []) if str(item).strip()
     ]
     escaped = sorted(set(missing) | set(provisioned))
     if not escaped:
@@ -113,12 +111,9 @@ def excursion_description(excursion: Mapping[str, Any], command: str) -> str:
     ]
     if excursion.get("missing_after"):
         lines.append(
-            "  still absent AFTER provisioning: %s"
-            % ", ".join(excursion["missing_after"])
+            "  still absent AFTER provisioning: %s" % ", ".join(excursion["missing_after"])
         )
-        lines.append(
-            "    (this one the sandbox could not paper over; the task ran without it)"
-        )
+        lines.append("    (this one the sandbox could not paper over; the task ran without it)")
     lines.extend(
         [
             "",

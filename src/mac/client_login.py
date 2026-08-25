@@ -283,9 +283,7 @@ def prepare_login_spec(
         return spec, None
     if fingerprint:
         spec = replace(spec, host_key_policy="strict")
-        path = _pin_scanned_fingerprint(
-            spec, profile, fingerprint, timeout=connect_timeout
-        )
+        path = _pin_scanned_fingerprint(spec, profile, fingerprint, timeout=connect_timeout)
         return replace(spec, known_hosts_file=path), Path(path)
 
     # No explicit trust: verify against the operator's default known_hosts using
@@ -326,9 +324,7 @@ def resolve_login_spec(
             proxy_jump=proxy_jump,
             identity_file=str(Path(identity_file).expanduser()) if identity_file else None,
             identity_ref=None,
-            known_hosts_file=str(Path(known_hosts_file).expanduser())
-            if known_hosts_file
-            else None,
+            known_hosts_file=str(Path(known_hosts_file).expanduser()) if known_hosts_file else None,
             host_key_policy="strict",
             host_key_fingerprint=host_key_fingerprint,
             host_ca=str(Path(host_ca).expanduser()) if host_ca else None,
@@ -446,9 +442,7 @@ def _start_tunnel(
             return process
         time.sleep(0.05)
     _terminate_process(process)
-    raise ClientLoginError(
-        "SSH tunnel did not become ready; verify the hub API port and route"
-    )
+    raise ClientLoginError("SSH tunnel did not become ready; verify the hub API port and route")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -559,9 +553,7 @@ def _resolve_remote_mac(spec: FleetSshSpec, *, timeout: int) -> Optional[str]:
     return None
 
 
-def _run_remote_json(
-    spec: FleetSshSpec, command: Iterable[str], *, timeout: int
-) -> Dict[str, Any]:
+def _run_remote_json(spec: FleetSshSpec, command: Iterable[str], *, timeout: int) -> Dict[str, Any]:
     try:
         result = subprocess.run(
             ssh_argv(
@@ -619,9 +611,7 @@ def _run_remote_json(
     return value
 
 
-def _run_remote_action(
-    spec: FleetSshSpec, command: Iterable[str], *, timeout: int
-) -> None:
+def _run_remote_action(spec: FleetSshSpec, command: Iterable[str], *, timeout: int) -> None:
     try:
         result = subprocess.run(
             ssh_argv(
@@ -768,9 +758,7 @@ def login(
             # it explicitly.  This keeps the remote install path an internal
             # detail rather than something the operator must pass by hand.
             if remote_mac == "mac":
-                remote_mac = _resolve_remote_mac(
-                    prepared, timeout=connect_timeout
-                ) or remote_mac
+                remote_mac = _resolve_remote_mac(prepared, timeout=connect_timeout) or remote_mac
             selected_port = choose_local_port(local_port)
             process = _start_tunnel(
                 prepared,
@@ -807,9 +795,7 @@ def login(
                 command.append("--allow-elevated")
             if rotate:
                 command.append("--rotate")
-            remote_manifest = _run_remote_json(
-                prepared, command, timeout=connect_timeout
-            )
+            remote_manifest = _run_remote_json(prepared, command, timeout=connect_timeout)
             issued = True
             manifest = _profile_manifest(
                 remote_manifest,
@@ -820,13 +806,10 @@ def login(
                 remote_port=remote_port,
             )
             token = str((manifest.get("credential") or {}).get("token") or "")
-            valid, reason = _validate_token(
-                _api_url(selected_port), token, timeout=connect_timeout
-            )
+            valid, reason = _validate_token(_api_url(selected_port), token, timeout=connect_timeout)
             if not valid:
                 raise ClientLoginError(
-                    "hub rejected the enrolled credential through the SSH tunnel (%s)"
-                    % reason
+                    "hub rejected the enrolled credential through the SSH tunnel (%s)" % reason
                 )
             _state_for(
                 profile,
@@ -836,9 +819,7 @@ def login(
                 remote_host=remote_host,
                 remote_port=remote_port,
             )
-            result = install_enrollment_manifest(
-                manifest, profile_override=profile, activate=True
-            )
+            result = install_enrollment_manifest(manifest, profile_override=profile, activate=True)
             return {
                 "status": "logged_in",
                 "profile": profile,
@@ -919,9 +900,7 @@ def local_console_login(
     with _session_lock(profile):
         exists = any(item.get("profile") == profile for item in list_profiles())
         if exists and not rotate:
-            raise ClientLoginError(
-                "client profile %r already exists; use --rotate" % profile
-            )
+            raise ClientLoginError("client profile %r already exists; use --rotate" % profile)
         request = {
             "action": "enroll",
             "client_id": client_id,
@@ -941,24 +920,16 @@ def local_console_login(
             )
             issued = True
             validate_enrollment_manifest(manifest, profile_override=profile)
-            manifest_api_url = str(
-                (manifest.get("connection") or {}).get("api_url") or ""
-            ).rstrip("/")
+            manifest_api_url = str((manifest.get("connection") or {}).get("api_url") or "").rstrip(
+                "/"
+            )
             if manifest_api_url != resolved_api_url:
-                raise ClientLoginError(
-                    "local-console manifest changed the requested API authority"
-                )
+                raise ClientLoginError("local-console manifest changed the requested API authority")
             token = str((manifest.get("credential") or {}).get("token") or "")
-            valid, reason = _validate_token(
-                resolved_api_url, token, timeout=connect_timeout
-            )
+            valid, reason = _validate_token(resolved_api_url, token, timeout=connect_timeout)
             if not valid:
-                raise ClientLoginError(
-                    "hub rejected the local-console credential (%s)" % reason
-                )
-            result = install_enrollment_manifest(
-                manifest, profile_override=profile, activate=True
-            )
+                raise ClientLoginError("hub rejected the local-console credential (%s)" % reason)
+            result = install_enrollment_manifest(manifest, profile_override=profile, activate=True)
             return {
                 "status": "logged_in",
                 "profile": profile,
@@ -1040,13 +1011,11 @@ def renew_local_console_login(
             )
             issued = True
             validate_enrollment_manifest(manifest, profile_override=selected)
-            manifest_api_url = str(
-                (manifest.get("connection") or {}).get("api_url") or ""
-            ).rstrip("/")
+            manifest_api_url = str((manifest.get("connection") or {}).get("api_url") or "").rstrip(
+                "/"
+            )
             if manifest_api_url != api_url:
-                raise ClientLoginError(
-                    "local-console renewal changed the profile API authority"
-                )
+                raise ClientLoginError("local-console renewal changed the profile API authority")
             token = str((manifest.get("credential") or {}).get("token") or "")
             valid, reason = _validate_token(api_url, token, timeout=connect_timeout)
             if not valid:
@@ -1054,9 +1023,7 @@ def renew_local_console_login(
                     "renewed local-console credential failed validation (%s)" % reason
                 )
             install_started = True
-            result = install_enrollment_manifest(
-                manifest, profile_override=selected, activate=True
-            )
+            result = install_enrollment_manifest(manifest, profile_override=selected, activate=True)
             return {
                 "status": "renewed",
                 "profile": selected,
@@ -1094,8 +1061,7 @@ def renew_local_console_login(
                 credential = "new credential" if issued else "hub credential"
                 raise ClientLoginError(
                     "%s; the %s was revoked and the local profile was not "
-                    "replaced; its old credential is no longer valid"
-                    % (exc, credential)
+                    "replaced; its old credential is no longer valid" % (exc, credential)
                 ) from exc
             if isinstance(exc, (ClientLoginError, ClientProfileError, LocalConsoleError)):
                 raise ClientLoginError(str(exc)) from exc
@@ -1113,11 +1079,7 @@ def _ensure_session_unlocked(profile_name: str) -> Dict[str, Any]:
     remote_host = str(connection.get("remote_host") or "127.0.0.1")
     remote_port = int(connection.get("remote_port") or 8789)
     state = _read_state(profile_name)
-    if (
-        state.get("local_port") == local_port
-        and _managed_process(state)
-        and _port_open(local_port)
-    ):
+    if state.get("local_port") == local_port and _managed_process(state) and _port_open(local_port):
         return {"status": "running", "profile": profile_name, "local_port": local_port}
     if state:
         _stop_managed_state(state)
@@ -1128,9 +1090,7 @@ def _ensure_session_unlocked(profile_name: str) -> Dict[str, Any]:
             % local_port
         )
     spec, _created = prepare_login_spec(_spec_from_profile(profile), profile_name)
-    process = _start_tunnel(
-        spec, local_port, remote_host, remote_port, timeout=10
-    )
+    process = _start_tunnel(spec, local_port, remote_host, remote_port, timeout=10)
     token = str((profile.get("credential") or {}).get("token") or "")
     valid, reason = _validate_token(_api_url(local_port), token, timeout=10)
     if not valid:
@@ -1175,8 +1135,8 @@ def login_status(profile: Optional[str] = None) -> Dict[str, Any]:
             str(credential.get("token") or ""),
             timeout=3,
         )
-    status = "connected" if authenticated else (
-        "stopped" if not reachable else "credential_rejected"
+    status = (
+        "connected" if authenticated else ("stopped" if not reachable else "credential_rejected")
     )
     return {
         "status": status,

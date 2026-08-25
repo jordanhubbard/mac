@@ -66,6 +66,7 @@ def resolve_retire_cap(environ: Optional[Mapping[str, str]] = None) -> int:
         errors=errors,
     )
 
+
 _RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS dream_runs (
     id TEXT PRIMARY KEY,
@@ -270,8 +271,7 @@ def promote_run(
         return {"schema": "mac.dream_promotion.v2", "run_id": run_id, "status": "already_promoted"}
     if run.get("state") != StoreState.READY_FOR_REVIEW.value:
         raise ValidationError(
-            "run %s is %s; only ready_for_review runs may be promoted"
-            % (run_id, run.get("state"))
+            "run %s is %s; only ready_for_review runs may be promoted" % (run_id, run.get("state"))
         )
 
     if max_retire is None:
@@ -303,7 +303,9 @@ def promote_run(
                 created_by=actor,
             )
         except Exception as exc:  # noqa: BLE001 - one bad entry must not abort
-            errors.append({"entry_id": entry.get("id"), "phase": "add_memory", "error": str(exc)[:300]})
+            errors.append(
+                {"entry_id": entry.get("id"), "phase": "add_memory", "error": str(exc)[:300]}
+            )
             continue
         store.execute(
             "UPDATE dream_candidate_entries SET promoted_memory_id = ? WHERE id = ?",
@@ -323,9 +325,7 @@ def promote_run(
                     retire_capped = True
                     break
                 try:
-                    store.execute(
-                        "DELETE FROM memory_records WHERE id = ?", (str(superseded_id),)
-                    )
+                    store.execute("DELETE FROM memory_records WHERE id = ?", (str(superseded_id),))
                     store.execute(
                         "DELETE FROM vector_refs WHERE memory_id = ?", (str(superseded_id),)
                     )
@@ -426,9 +426,7 @@ def prune_runs(
         # output. When productive runs fill the budget, every empty one goes.
         stale = productive[keep_count:] + empty[max(0, keep_count - len(productive)) :]
         for run_id in stale:
-            store.execute(
-                "DELETE FROM dream_candidate_entries WHERE run_id = ?", (run_id,)
-            )
+            store.execute("DELETE FROM dream_candidate_entries WHERE run_id = ?", (run_id,))
             deleted_entries += 1
             store.execute("DELETE FROM dream_runs WHERE id = ?", (run_id,))
             deleted_runs += 1

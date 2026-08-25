@@ -125,9 +125,7 @@ def test_full_session_with_updates_and_permission():
 
     def _permit(req: RequestPermissionParams) -> RequestPermissionResult:
         permission_calls.append(req)
-        return RequestPermissionResult(
-            outcome="selected", option_id="allow"
-        )
+        return RequestPermissionResult(outcome="selected", option_id="allow")
 
     client.on_request_permission(_permit)
 
@@ -159,9 +157,7 @@ def test_full_session_with_updates_and_permission():
     assert permission_calls[0].tool_call["toolCallId"] == "call_1"
 
     # ...and the agent received the client's "selected/allow" decision.
-    decision = RequestPermissionResult.from_dict(
-        agent._pending_permission.result(timeout=0)
-    )
+    decision = RequestPermissionResult.from_dict(agent._pending_permission.result(timeout=0))
     assert decision.outcome == "selected"
     assert decision.option_id == "allow"
 

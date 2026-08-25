@@ -31,9 +31,7 @@ def _plane():
 def _parked(cp, count, *, project=None, metadata=None):
     tasks = []
     for index in range(count):
-        task = cp.create_task(
-            "parked %d" % index, project=project, metadata=dict(metadata or {})
-        )
+        task = cp.create_task("parked %d" % index, project=project, metadata=dict(metadata or {}))
         cp.request_task_input(task.id, [{"question": "which database?"}], "worker-1")
         tasks.append(task)
     return tasks
@@ -116,9 +114,7 @@ def test_an_unknown_option_is_refused_not_dropped():
     cp = _plane()
     _parked(cp, 2)
     with pytest.raises(BatchOperationError):
-        cp.task_batches.apply(
-            "state=needs_input", "cancel", reasons="typo", apply=True
-        )
+        cp.task_batches.apply("state=needs_input", "cancel", reasons="typo", apply=True)
 
 
 # --- applying -------------------------------------------------------------
@@ -175,9 +171,7 @@ def test_metadata_is_merged_never_replaced():
     cp = _plane()
     _parked(cp, 2, metadata={"keep": "me"})
 
-    cp.task_batches.apply(
-        "state=needs_input", "set", metadata_merge={"triaged": "yes"}, apply=True
-    )
+    cp.task_batches.apply("state=needs_input", "set", metadata_merge={"triaged": "yes"}, apply=True)
 
     for task in cp.task_batches.select("state=needs_input").tasks:
         metadata = cp.get_task(task.id).metadata
@@ -190,9 +184,7 @@ def test_set_changes_the_fields_it_is_given():
     cp = _plane()
     _parked(cp, 2, project="mac")
 
-    cp.task_batches.apply(
-        "state=needs_input project=mac", "set", priority=7, apply=True
-    )
+    cp.task_batches.apply("state=needs_input project=mac", "set", priority=7, apply=True)
 
     assert all(
         cp.get_task(task.id).priority == 7
@@ -295,7 +287,9 @@ def test_a_group_that_changed_membership_without_changing_size_is_refused():
     previewed = cp.task_batches.select("state=needs_input")
 
     cp.close_task(
-        parked[0].id, "cancelled", "ops",
+        parked[0].id,
+        "cancelled",
+        "ops",
         {"reason": "x", "disposition": "not_applicable"},
     )
     _parked(cp, 1)
@@ -304,8 +298,11 @@ def test_a_group_that_changed_membership_without_changing_size_is_refused():
 
     with pytest.raises(BatchCountMismatch) as excinfo:
         cp.task_batches.apply(
-            "state=needs_input", "answer", answer="x",
-            apply=True, expect_token=previewed.token,
+            "state=needs_input",
+            "answer",
+            answer="x",
+            apply=True,
+            expect_token=previewed.token,
         )
     assert "no longer the one previewed" in str(excinfo.value)
 
@@ -323,8 +320,7 @@ def test_unmet_never_selects_a_terminal_task():
 
     live = cp.create_task("live", required_capabilities=["cuda"])
     dead = cp.create_task("dead", required_capabilities=["cuda"])
-    cp.close_task(dead.id, "cancelled", "ops",
-                  {"reason": "x", "disposition": "not_applicable"})
+    cp.close_task(dead.id, "cancelled", "ops", {"reason": "x", "disposition": "not_applicable"})
 
     selected = cp.task_batches.select("unmet=agent_capabilities_missing")
     ids = {task.id for task in selected.tasks}
@@ -348,8 +344,11 @@ def test_the_audit_names_the_tasks_it_touched():
     cp = _plane()
     _parked(cp, 2, project="mac")
     outcome = cp.task_batches.apply(
-        "state=needs_input project=mac", "answer", answer="pg",
-        actor="jordan", apply=True,
+        "state=needs_input project=mac",
+        "answer",
+        answer="pg",
+        actor="jordan",
+        apply=True,
     )
     assert len(outcome.changed) == 2
     assert outcome.selection_token
@@ -381,9 +380,7 @@ def test_wholesale_replacement_is_allowed_and_reports_what_it_removes():
     cp = _plane()
     _parked(cp, 3, metadata={"keep": "me"})
 
-    preview = cp.task_batches.apply(
-        "state=needs_input", "set", metadata_replace={"fresh": "start"}
-    )
+    preview = cp.task_batches.apply("state=needs_input", "set", metadata_replace={"fresh": "start"})
 
     impact = preview.metadata_impact
     assert impact is not None
@@ -432,8 +429,10 @@ def test_merge_is_deep_so_a_sibling_key_survives():
     assert preview.metadata_impact["removed_keys"] == {}
 
     cp.task_batches.apply(
-        "state=needs_input", "set",
-        metadata_merge={"origin": {"kind": "manual"}}, apply=True,
+        "state=needs_input",
+        "set",
+        metadata_merge={"origin": {"kind": "manual"}},
+        apply=True,
     )
     for task in cp.task_batches.select("state=needs_input").tasks:
         origin = cp.get_task(task.id).metadata["origin"]
@@ -445,12 +444,12 @@ def test_a_path_can_be_set_and_unset_precisely():
     _parked(cp, 2, metadata={"keep": "me"})
 
     cp.task_batches.apply(
-        "state=needs_input", "set",
-        metadata_set={"triage.owner": "jordan"}, apply=True,
+        "state=needs_input",
+        "set",
+        metadata_set={"triage.owner": "jordan"},
+        apply=True,
     )
-    cp.task_batches.apply(
-        "state=needs_input", "set", metadata_unset=["keep"], apply=True
-    )
+    cp.task_batches.apply("state=needs_input", "set", metadata_unset=["keep"], apply=True)
 
     for task in cp.task_batches.select("state=needs_input").tasks:
         metadata = cp.get_task(task.id).metadata
@@ -487,6 +486,4 @@ def test_the_preview_impact_is_computed_by_the_code_that_writes():
 def test_metadata_impact_is_absent_when_the_operation_does_not_touch_metadata():
     cp = _plane()
     _parked(cp, 2)
-    assert cp.task_batches.apply(
-        "state=needs_input", "set", priority=3
-    ).metadata_impact is None
+    assert cp.task_batches.apply("state=needs_input", "set", priority=3).metadata_impact is None

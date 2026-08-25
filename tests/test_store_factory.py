@@ -21,6 +21,8 @@ def test_factory_uses_explicit_mac_db_when_database_url_unset(monkeypatch) -> No
         assert s.path == dsn
     finally:
         s.close()
+
+
 def test_factory_ignores_blank_database_url(monkeypatch) -> None:
     """A blank MAC_DATABASE_URL falls through to MAC_DB, which is also a DSN."""
     from mac.test_support import ephemeral_dsn
@@ -71,9 +73,9 @@ def test_client_role_refuses_database_even_when_stale_path_is_present(
         make_store_from_env()
 
     assert not (tmp_path / "stale.db").exists()
-def test_default_control_plane_and_api_require_explicit_database(
-    monkeypatch, tmp_path
-) -> None:
+
+
+def test_default_control_plane_and_api_require_explicit_database(monkeypatch, tmp_path) -> None:
     from mac.api import create_app
     from mac.services import ControlPlane
 
@@ -107,9 +109,7 @@ def test_factory_takes_postgres_branch(monkeypatch) -> None:
             seen.append({"initialize": True})
 
     monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)
-    monkeypatch.setenv(
-        "MAC_DATABASE_URL", "postgresql://user@host:5432/macdb"
-    )
+    monkeypatch.setenv("MAC_DATABASE_URL", "postgresql://user@host:5432/macdb")
     monkeypatch.setenv("MAC_PG_POOL_SIZE", "7")
 
     s = make_store_from_env()
@@ -146,6 +146,8 @@ def test_factory_can_attach_to_existing_postgres_without_schema_ddl(
 
     assert isinstance(s, _FakePG)
     assert seen == [{"dsn": "postgresql://user@host/macdb", "pool_size": 10}]
+
+
 def test_factory_supports_postgres_scheme_alias(monkeypatch) -> None:
     """Both ``postgresql://`` and the legacy ``postgres://`` alias work."""
     pytest.importorskip("psycopg")

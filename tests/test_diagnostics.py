@@ -119,7 +119,9 @@ def test_expired_active_leases_check():
     finding = findings[0]
     assert finding.severity == "warn"
     assert lease.id in finding.detail["lease_ids"]
-    assert any(entry["id"] == lease.id and entry["task_id"] == t.id for entry in finding.detail["leases"])
+    assert any(
+        entry["id"] == lease.id and entry["task_id"] == t.id for entry in finding.detail["leases"]
+    )
 
 
 def test_failed_tasks_check_warns_when_failed_present_else_ok():
@@ -185,7 +187,9 @@ def test_threshold_finding_ok_and_warn_shape():
     assert ok.detail == {"count": 2, "threshold": 5}
     assert "recent" not in ok.detail
 
-    warn = diagnostics._threshold_finding("c", count=7, threshold=5, recent=recent, noun="widget(s)")
+    warn = diagnostics._threshold_finding(
+        "c", count=7, threshold=5, recent=recent, noun="widget(s)"
+    )
     assert warn.severity == "warn"
     assert warn.summary == "7 widget(s) exceed threshold 5"
     assert warn.detail == {"count": 7, "threshold": 5, "recent": recent}
@@ -316,9 +320,7 @@ def test_data_source_identity_is_ok_for_a_durable_authority():
 
     store = ephemeral_store()
     try:
-        cp = ControlPlane(
-            store=store, secret_key="diagnostics-test-secret-key-32-characters"
-        )
+        cp = ControlPlane(store=store, secret_key="diagnostics-test-secret-key-32-characters")
         findings = diagnostics.run_diagnostics(cp, names=["data-source-identity"])
         assert findings and len(findings) == 1
         assert findings[0].severity == "ok"
@@ -372,8 +374,7 @@ def test_lifecycle_stage_dwell_ok_when_fresh_then_warns_when_stuck():
         ("2000-01-01T00:00:00.000000+00:00", task.id),
     )
     cp.store.execute(
-        "UPDATE task_flow_spans SET started_at=? "
-        "WHERE task_id=? AND ended_at IS NULL",
+        "UPDATE task_flow_spans SET started_at=? WHERE task_id=? AND ended_at IS NULL",
         ("2000-01-01T00:00:00.000000+00:00", task.id),
     )
     warn = diagnostics.run_diagnostics(cp, names=["lifecycle-stage-dwell"])
@@ -416,8 +417,7 @@ def test_unsatisfiable_requirements_finds_permanently_undispatchable_work():
     cp.register_agent(machine.id, "worker", capabilities=["python", "make"])
 
     cp.create_task("runnable", required_capabilities=["python"])
-    stuck = cp.create_task("needs a capability nobody has",
-                           required_capabilities=["python", "ci"])
+    stuck = cp.create_task("needs a capability nobody has", required_capabilities=["python", "ci"])
 
     findings = diagnostics.run_diagnostics(cp, names=["unsatisfiable-requirements"])
     assert findings and len(findings) == 1

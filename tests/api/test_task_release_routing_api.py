@@ -27,9 +27,7 @@ from mac.api import create_app
 from mac.services import ControlPlane
 
 
-ROUTING_KEYS = (
-    "managed_fast_lane",
-)
+ROUTING_KEYS = ("managed_fast_lane",)
 
 
 def _app_and_cp():
@@ -38,9 +36,7 @@ def _app_and_cp():
 
 
 def _persisted_metadata(cp, task_id):
-    row = cp.store.query_one(
-        "SELECT metadata FROM tasks WHERE id = ?", (task_id,)
-    )
+    row = cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task_id,))
     return json.loads(row["metadata"])
 
 

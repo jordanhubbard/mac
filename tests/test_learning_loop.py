@@ -53,8 +53,9 @@ def test_record_type_matches_recall_contract(tmp_path):
     cp = _cp(tmp_path)
     cp.create_project("proj-x")
     task = cp.create_task("t", project="proj-x")
-    cp._record_project_failure_lesson(task.id, evidence_type="review_verdict",
-                                      error_signature="review_rejected")
+    cp._record_project_failure_lesson(
+        task.id, evidence_type="review_verdict", error_signature="review_rejected"
+    )
     lessons = _lessons(cp, "proj-x")
     assert lessons and lessons[0].record_type == "deployment_learning:proj-x"
 
@@ -62,6 +63,6 @@ def test_record_type_matches_recall_contract(tmp_path):
 def test_lesson_recording_is_best_effort_on_unknown_task(tmp_path):
     cp = _cp(tmp_path)
     # Must not raise for a nonexistent task (telemetry-only, never breaks review).
-    cp._record_project_failure_lesson("task_does_not_exist",
-                                      evidence_type="review_verdict",
-                                      error_signature="review_rejected")
+    cp._record_project_failure_lesson(
+        "task_does_not_exist", evidence_type="review_verdict", error_signature="review_rejected"
+    )

@@ -176,8 +176,7 @@ class MemoryPromotionService:
         reference = now or datetime.now(tz=timezone.utc)
         cutoff = reference - timedelta(days=max(0.0, float(min_age_days)))
         promoted = {
-            ref.memory_id
-            for ref in self._memory.list_vector_refs(collection=self.long_collection)
+            ref.memory_id for ref in self._memory.list_vector_refs(collection=self.long_collection)
         }
         out: List[Any] = []
         for ref in self._memory.list_vector_refs(collection=self.medium_collection):
@@ -237,9 +236,7 @@ class MemoryPromotionService:
             promoted.append(ref.memory_id)
             if drop_medium:
                 try:
-                    self._vector_writer.delete_point(
-                        self.medium_collection, ref.point_id
-                    )
+                    self._vector_writer.delete_point(self.medium_collection, ref.point_id)
                     self._memory.delete_vector_ref(ref.id)
                     dropped.append(ref.memory_id)
                 except Exception as exc:  # noqa: BLE001

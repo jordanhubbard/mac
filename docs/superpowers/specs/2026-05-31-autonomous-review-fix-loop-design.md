@@ -80,7 +80,9 @@ If no pushed branch and PR/MR are produced, it marks the run ineffective and for
 
 ```python
 if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
-    target = TaskState.FAILED.value if task.attempt_count >= task.max_attempts else TaskState.OPEN.value
+    target = (
+        TaskState.FAILED.value if task.attempt_count >= task.max_attempts else TaskState.OPEN.value
+    )
     self._transition_task(review.task_id, target, reviewer_agent_id, {...})
 ```
 

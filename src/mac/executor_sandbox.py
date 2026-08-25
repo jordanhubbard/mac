@@ -263,12 +263,12 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
     write_fallback_evidence_manifest,
 )
 
+
 def post_command_audit(agent_id: str, payload: Dict[str, Any]) -> None:
     """Post a command audit record for the given agent to the hub."""
     if not agent_id:
         return
     _hub_post("/agents/%s/command-audit" % agent_id, payload)
-
 
 
 def post_task_transcript(task_id, payload: Dict[str, Any]) -> None:
@@ -327,7 +327,9 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
                 "metadata": {**base["metadata"], "timeout_seconds": timeout},
             },
         )
-        return subprocess.CompletedProcess(argv, 124, out, err + "\n[executor] agent run timed out after %ss" % timeout)
+        return subprocess.CompletedProcess(
+            argv, 124, out, err + "\n[executor] agent run timed out after %ss" % timeout
+        )
     except OSError as exc:
         post_command_audit(
             agent_id,
@@ -440,9 +442,7 @@ def _write_agent_command_bundle(
     prompt_file.chmod(0o600)
     command_file.chmod(0o600)
     policy_file.write_text(
-        (Path(__file__).resolve().parent / "executor-policy.txt").read_text(
-            encoding="utf-8"
-        ),
+        (Path(__file__).resolve().parent / "executor-policy.txt").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     policy_file.chmod(0o600)
@@ -547,9 +547,7 @@ _HOST_ONLY_HUB_CREDENTIALS = frozenset(
     }
 )
 _DEFAULT_OPENSHELL_ENV_NAMES = frozenset(
-    item.strip()
-    for item in _DEFAULT_OPENSHELL_ENV_PASSTHROUGH.split(",")
-    if item.strip()
+    item.strip() for item in _DEFAULT_OPENSHELL_ENV_PASSTHROUGH.split(",") if item.strip()
 )
 _READ_ONLY_REPORT_ENV_ALLOWLIST = (
     _DEFAULT_OPENSHELL_ENV_NAMES
@@ -574,9 +572,7 @@ def _read_only_report_environment_passthrough_valid() -> bool:
         # stripped globally and repository authority is fenced for this lane.
         return True
     names = custom
-    requested = {
-        item.strip() for item in names.split(",") if item.strip()
-    }
+    requested = {item.strip() for item in names.split(",") if item.strip()}
     return requested <= _READ_ONLY_REPORT_ENV_ALLOWLIST
 
 
@@ -630,8 +626,7 @@ def _openshell_environment() -> Dict[str, str]:
         if name in _FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH:
             raise ValueError(
                 "%s may not be forwarded from the host into OpenShell; "
-                "the sandbox image and repository toolchain own command resolution"
-                % name
+                "the sandbox image and repository toolchain own command resolution" % name
             )
         val = os.environ.get(name)
         if val is None:
@@ -876,9 +871,7 @@ def _resolve_task_openshell_policy(task: Any) -> str:
             % (
                 len(decision.granted),
                 len(decision.rejected),
-                "; ".join(
-                    "%s: %s" % (item.host, item.reason) for item in decision.rejected[:5]
-                ),
+                "; ".join("%s: %s" % (item.host, item.reason) for item in decision.rejected[:5]),
             )
         )
     if decision.is_empty:
@@ -886,9 +879,7 @@ def _resolve_task_openshell_policy(task: Any) -> str:
 
     try:
         base_text = Path(base).read_text(encoding="utf-8")
-        expanded = expand_policy_text(
-            base_text, decision, binaries=_egress_policy_binaries()
-        )
+        expanded = expand_policy_text(base_text, decision, binaries=_egress_policy_binaries())
         handle, raw_path = tempfile.mkstemp(prefix="mac-task-policy-", suffix=".yaml")
         os.close(handle)
         path = Path(raw_path)
@@ -901,9 +892,7 @@ def _resolve_task_openshell_policy(task: Any) -> str:
             "[executor] per-repo egress expansion failed (%s); using base policy\n" % exc
         )
         return base
-    sys.stderr.write(
-        "[executor] per-repo egress: granted %s\n" % ", ".join(decision.granted_hosts)
-    )
+    sys.stderr.write("[executor] per-repo egress: granted %s\n" % ", ".join(decision.granted_hosts))
     return str(path)
 
 
@@ -919,9 +908,7 @@ _SANDBOX_WORKDIR = "/sandbox"
 _SANDBOX_HOME = "/tmp"
 _SANDBOX_VERIFICATION_FILE = "mac-sandbox-verification.json"
 _SANDBOX_VERIFICATION_STARTED_FILE = ".mac-sandbox-verification.started"
-_TRUSTED_READ_ONLY_VERIFICATION_FILE = (
-    ".mac-trusted-read-only-sandbox-verification.json"
-)
+_TRUSTED_READ_ONLY_VERIFICATION_FILE = ".mac-trusted-read-only-sandbox-verification.json"
 _MAX_SANDBOX_VERIFICATION_BYTES = 2 * 1024 * 1024
 
 
@@ -1026,9 +1013,7 @@ def _sandbox_gc_best_effort() -> None:
     if not env_bool("MAC_OPENSHELL_GC"):
         return
     try:
-        stale_after = float(
-            env_str("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
-        )
+        stale_after = float(env_str("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400")
     except ValueError:
         stale_after = 86400.0
     try:
@@ -1042,8 +1027,7 @@ def _sandbox_gc_best_effort() -> None:
         )
         if report["deleted"]:
             sys.stderr.write(
-                "[executor] removed %d stale OpenShell sandbox(es)\n"
-                % len(report["deleted"])
+                "[executor] removed %d stale OpenShell sandbox(es)\n" % len(report["deleted"])
             )
         if report["failures"]:
             sys.stderr.write(
@@ -1080,9 +1064,7 @@ def _reap_orphaned_task_sandboxes_best_effort(audit_id: Any = None) -> None:
             apply=True,
         )
     except Exception as exc:  # noqa: BLE001 - cleanup must not block guarded execution
-        sys.stderr.write(
-            "[executor] WARNING: orphaned task sandbox reap failed: %s\n" % exc
-        )
+        sys.stderr.write("[executor] WARNING: orphaned task sandbox reap failed: %s\n" % exc)
         return
 
     if report["candidates"]:
@@ -1158,9 +1140,7 @@ def _reconcile_task_sandboxes_from_lease_authority_best_effort(
             apply=True,
         )
     except Exception as exc:  # noqa: BLE001 - cleanup must not block guarded execution
-        sys.stderr.write(
-            "[executor] WARNING: lease-authority sandbox reconcile failed: %s\n" % exc
-        )
+        sys.stderr.write("[executor] WARNING: lease-authority sandbox reconcile failed: %s\n" % exc)
         return
 
     if report["candidates"]:
@@ -1192,7 +1172,9 @@ def _workspace_basename(workspace: Path) -> str:
     return os.path.basename(str(workspace).rstrip("/")) or "workspace"
 
 
-def _sandbox_path_for_workspace_child(workspace: Path, sandbox_workspace: str, value: str) -> Optional[str]:
+def _sandbox_path_for_workspace_child(
+    workspace: Path, sandbox_workspace: str, value: str
+) -> Optional[str]:
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -1262,7 +1244,7 @@ def _ensure_landlock_or_fail() -> None:
 
 def _sandbox_toolchain_setup_shell() -> str:
     """Shell function injected into the task sandbox before agent/test work."""
-    return r'''
+    return r"""
 mac_sandbox_toolchain_setup() {
   set +e
   MAC_SANDBOX_PYTHON="${MAC_SANDBOX_PYTHON:-/opt/mac-venv/bin/python}"
@@ -1645,7 +1627,7 @@ with open(os.path.join(root, "environment-delta.json"), "w", encoding="utf-8") a
 PY
   return 0
 }
-'''
+"""
 
 
 def _sandbox_repository_verification_shell(
@@ -1663,8 +1645,7 @@ def _sandbox_repository_verification_shell(
     return "\n".join(
         [
             *exports,
-            'if [ -n "${VERIFICATION_START_MARKER:-}" ]; then '
-            ': > "$VERIFICATION_START_MARKER"; fi',
+            'if [ -n "${VERIFICATION_START_MARKER:-}" ]; then : > "$VERIFICATION_START_MARKER"; fi',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
@@ -2071,9 +2052,7 @@ def _write_private_shell_env(path: Path, values: Mapping[str, str]) -> Path:
     return path
 
 
-def _write_sandbox_runtime_files(
-    workspace: Path, sandbox_workspace: str
-) -> tuple[Path, Path]:
+def _write_sandbox_runtime_files(workspace: Path, sandbox_workspace: str) -> tuple[Path, Path]:
     env_values: Dict[str, str] = {
         **_openshell_environment(),
         **_sandbox_repository_environment(workspace, sandbox_workspace),
@@ -2090,9 +2069,7 @@ def _write_sandbox_runtime_files(
         "MAC_SANDBOX_BASE_PATH": _SANDBOX_BASE_PATH,
         "PATH": _SANDBOX_BASE_PATH,
     }
-    env_file = _write_private_shell_env(
-        workspace / ".mac-openshell-env.sh", env_values
-    )
+    env_file = _write_private_shell_env(workspace / ".mac-openshell-env.sh", env_values)
 
     toolchain_file = workspace / ".mac-sandbox-toolchain.sh"
     toolchain_file.write_text(_sandbox_toolchain_setup_shell(), encoding="utf-8")
@@ -2156,11 +2133,7 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
         if token == "--upload" and index + 1 < len(argv):
             upload = argv[index + 1]
             _source, separator, destination = upload.rpartition(":")
-            if (
-                separator
-                and destination == "/tmp/.codex/auth.json"
-                and not permit_codex_file_auth
-            ):
+            if separator and destination == "/tmp/.codex/auth.json" and not permit_codex_file_auth:
                 index += 2
                 continue
         filtered.append(token)
@@ -2202,31 +2175,21 @@ def _managed_openshell_runtime_image_ref() -> str:
     return image_ref
 
 
-def _assert_approved_read_only_report_runtime(
-    *, runtime_image_ref: str
-) -> None:
+def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None:
     """Revalidate the hub-approved tuple immediately before sandbox create."""
 
     expected_runtime = env_str("MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF")
     expected_policy = env_str("MAC_REPORT_EXECUTOR_APPROVED_POLICY_SHA256")
     expected_bin_path = env_str("MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_PATH")
-    expected_bin_digest = env_str(
-        "MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_SHA256"
-    )
+    expected_bin_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_SHA256")
     expected_platform = env_str("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM")
     expected_posture = env_str("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE")
     expected_python_path = env_str("MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH")
     expected_python_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256")
-    expected_script_path = env_str(
-        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH"
-    )
-    expected_script_digest = env_str(
-        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256"
-    )
+    expected_script_path = env_str("MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH")
+    expected_script_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256")
     expected_source_root = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT")
-    expected_source_digest = env_str(
-        "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256"
-    )
+    expected_source_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256")
     # macOS nodes are host installs: no image, no policy, no OpenShell binary
     # exists to be approved, so those four fields are legitimately empty and
     # must not be present. Everything that still exists stays digest-bound.
@@ -2250,27 +2213,20 @@ def _assert_approved_read_only_report_runtime(
     if not host_install:
         required.extend(container_fields)
     if not all(required):
-        raise RuntimeError(
-            "read-only repository report lacks the hub-approved runtime tuple"
-        )
+        raise RuntimeError("read-only repository report lacks the hub-approved runtime tuple")
     if host_install:
         if any(container_fields) or runtime_image_ref:
             raise RuntimeError(
-                "read-only repository report on a host install must not claim "
-                "a container runtime"
+                "read-only repository report on a host install must not claim a container runtime"
             )
     else:
         if runtime_image_ref != expected_runtime:
             raise RuntimeError(
                 "read-only repository report runtime image differs from hub approval"
             )
-        _policy_path, policy_digest = nofollow_regular_file_identity(
-            _resolve_openshell_policy()
-        )
+        _policy_path, policy_digest = nofollow_regular_file_identity(_resolve_openshell_policy())
         if policy_digest != expected_policy:
-            raise RuntimeError(
-                "read-only repository report policy differs from hub approval"
-            )
+            raise RuntimeError("read-only repository report policy differs from hub approval")
         resolved_bin = shutil.which(_openshell_bin())
         if resolved_bin is None:
             raise RuntimeError("approved OpenShell binary is unavailable")
@@ -2284,29 +2240,19 @@ def _assert_approved_read_only_report_runtime(
         Path(python_candidate).expanduser().resolve(strict=True)
     )
     if python_path != expected_python_path or python_digest != expected_python_digest:
-        raise RuntimeError(
-            "read-only repository report Python differs from hub approval"
-        )
+        raise RuntimeError("read-only repository report Python differs from hub approval")
     script_candidate = env_str("MAC_TASK_EXECUTOR_SCRIPT")
     if not script_candidate:
-        raise RuntimeError(
-            "read-only repository report executor script is not configured"
-        )
+        raise RuntimeError("read-only repository report executor script is not configured")
     script_path, script_digest = nofollow_regular_file_identity(script_candidate)
     if script_path != expected_script_path or script_digest != expected_script_digest:
-        raise RuntimeError(
-            "read-only repository report executor script differs from hub approval"
-        )
+        raise RuntimeError("read-only repository report executor script differs from hub approval")
     source_candidate = env_str("MAC_SELF_UPDATE_REPO")
     if not source_candidate:
-        raise RuntimeError(
-            "read-only repository report MAC source root is not configured"
-        )
+        raise RuntimeError("read-only repository report MAC source root is not configured")
     source_root, source_digest = nofollow_source_bundle_digest(source_candidate)
     if source_root != expected_source_root or source_digest != expected_source_digest:
-        raise RuntimeError(
-            "read-only repository report MAC source differs from hub approval"
-        )
+        raise RuntimeError("read-only repository report MAC source differs from hub approval")
     if sys.platform.startswith("linux"):
         if (
             expected_platform != "linux"
@@ -2326,9 +2272,7 @@ def _assert_approved_read_only_report_runtime(
                 "isolation posture"
             )
     else:
-        raise RuntimeError(
-            "read-only repository reports are unsupported on this platform"
-        )
+        raise RuntimeError("read-only repository reports are unsupported on this platform")
 
 
 def _read_only_report_extra_create_argv(
@@ -2352,9 +2296,7 @@ def _read_only_report_extra_create_argv(
     source = _openshell_extra_create_argv(require_gpu=require_gpu)
     runtime_image_ref = _managed_openshell_runtime_image_ref()
     if require_approval:
-        _assert_approved_read_only_report_runtime(
-            runtime_image_ref=runtime_image_ref
-        )
+        _assert_approved_read_only_report_runtime(runtime_image_ref=runtime_image_ref)
     filtered: List[str] = ["--from", runtime_image_ref]
     saw_from = False
     index = 0
@@ -2362,9 +2304,7 @@ def _read_only_report_extra_create_argv(
         token = source[index]
         if token == "--from" or token.startswith("--from="):
             if saw_from:
-                raise ValueError(
-                    "read-only repository reports forbid duplicate --from arguments"
-                )
+                raise ValueError("read-only repository reports forbid duplicate --from arguments")
             saw_from = True
             if token == "--from":
                 if index + 1 >= len(source) or source[index + 1].startswith("-"):
@@ -2392,13 +2332,9 @@ def _read_only_report_extra_create_argv(
                 if token == "--memory" and index + 1 < len(source)
                 else token.partition("=")[2]
             )
-            match = _re.fullmatch(
-                r"([1-9][0-9]{0,5})([KMGTP]i?B?|[kmgpt])?", value
-            )
+            match = _re.fullmatch(r"([1-9][0-9]{0,5})([KMGTP]i?B?|[kmgpt])?", value)
             if match is None or int(match.group(1)) > 65536:
-                raise ValueError(
-                    "read-only repository report --memory is missing or unbounded"
-                )
+                raise ValueError("read-only repository report --memory is missing or unbounded")
             filtered.extend(("--memory", value))
             index += 2 if token == "--memory" else 1
             continue
@@ -2453,20 +2389,10 @@ def _build_sandbox_create_argv(
         raise ValueError("sandbox agent argv must use the private-file command wrapper")
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
-    policy = (
-        _resolve_openshell_policy()
-        if task is None
-        else _resolve_task_openshell_policy(task)
-    )
+    policy = _resolve_openshell_policy() if task is None else _resolve_task_openshell_policy(task)
     argv += ["--policy", policy, "--name", name]
-    argv += _sandbox_label_argv(
-        "task", keep=env_bool("MAC_OPENSHELL_KEEP")
-    )
-    argv += (
-        _openshell_extra_create_argv()
-        if extra_create_argv is None
-        else list(extra_create_argv)
-    )
+    argv += _sandbox_label_argv("task", keep=env_bool("MAC_OPENSHELL_KEEP"))
+    argv += _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
     inner = "\n".join(
         [
@@ -2552,9 +2478,7 @@ def _verifier_output_excerpt(stdout_file, stderr_file, *, limit: int = 600) -> s
     return "; ".join(parts)
 
 
-def _sandbox_verification_report_detail(
-    name: str, sub: str, *, limit: int = 1200
-) -> str:
+def _sandbox_verification_report_detail(name: str, sub: str, *, limit: int = 1200) -> str:
     """Recover what the gate said from the report the sandbox wrote.
 
     The in-sandbox verifier deliberately prints nothing: it captures the gate's
@@ -2614,9 +2538,7 @@ def _sandbox_verification_report_detail(
     # other an environment to repair -- so name the phase explicitly.
     bootstrap = payload.get("bootstrap")
     if isinstance(bootstrap, Mapping) and bootstrap.get("returncode") not in (0, None):
-        detail = str(
-            bootstrap.get("stderr") or bootstrap.get("stdout") or ""
-        ).strip()
+        detail = str(bootstrap.get("stderr") or bootstrap.get("stdout") or "").strip()
         if len(detail) > limit:
             detail = "... (head omitted) " + detail[-limit:]
         parts.append(
@@ -2672,9 +2594,7 @@ def _sandbox_run_repository_verification_exec(
     legitimately long test without shortening the latter's budget.
     """
     try:
-        start_timeout = float(
-            env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "120"
-        )
+        start_timeout = float(env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "120")
     except ValueError:
         start_timeout = 120.0
     start_timeout = max(0.05, min(start_timeout, 300.0))
@@ -2798,8 +2718,7 @@ def _sandbox_run_repository_verification_exec(
                 else:
                     message = (
                         "OpenShell repository verifier did not start within "
-                        "%.1fs (still running; marker never appeared)"
-                        % start_timeout
+                        "%.1fs (still running; marker never appeared)" % start_timeout
                     )
                 if detail:
                     message = "%s: %s" % (message, detail)
@@ -2913,10 +2832,7 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
         "stderr.txt",
     }:
         return True
-    if (
-        name.startswith("repository-wip-")
-        and name.endswith(".bundle")
-    ):
+    if name.startswith("repository-wip-") and name.endswith(".bundle"):
         return True
     return name.startswith((".mac-agent-command-", ".mac-agent-prompt-"))
 
@@ -2945,8 +2861,7 @@ def _validate_sandbox_download_symlinks(
                 continue
             rel = rel_root / name
             if _sandbox_download_path_is_host_control(rel) or (
-                len(rel.parts) == 1
-                and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
+                len(rel.parts) == 1 and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
             ):
                 raise ValueError(
                     "sandbox download attempted to replace host/evidence control %s with a symlink"
@@ -2956,14 +2871,12 @@ def _validate_sandbox_download_symlinks(
                 continue
             target = os.readlink(src)
             if os.path.isabs(target):
-                raise ValueError(
-                    "sandbox download symlink has an absolute target: %s" % rel
-                )
+                raise ValueError("sandbox download symlink has an absolute target: %s" % rel)
             try:
                 src.resolve(strict=False).relative_to(download_root_resolved)
-                (workspace / rel).parent.joinpath(target).resolve(
-                    strict=False
-                ).relative_to(workspace_resolved)
+                (workspace / rel).parent.joinpath(target).resolve(strict=False).relative_to(
+                    workspace_resolved
+                )
             except (OSError, RuntimeError, ValueError):
                 raise ValueError(
                     "sandbox download symlink escapes the task workspace: %s" % rel
@@ -2982,10 +2895,7 @@ def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path])
         or _sandbox_download_path_is_host_control(rel_path)
     ):
         return True
-    if (
-        rel_path.parts
-        and rel_path.parts[0] in _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES
-    ):
+    if rel_path.parts and rel_path.parts[0] in _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES:
         return True
     for root in repository_roots:
         for name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES:
@@ -3044,9 +2954,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
     """
     workspace.mkdir(parents=True, exist_ok=True)
     repository_roots = _sandbox_repository_roots(workspace, download_root)
-    _validate_sandbox_download_symlinks(
-        download_root, workspace, repository_roots
-    )
+    _validate_sandbox_download_symlinks(download_root, workspace, repository_roots)
     source_files: set[Path] = set()
     source_dirs: set[Path] = {Path(".")}
     source_links: set[Path] = set()
@@ -3207,9 +3115,7 @@ def _read_only_git_control_digest(worktree: Path) -> str:
             return
         relative_bytes = relative.encode("utf-8", "surrogateescape")
         if stat.S_ISLNK(info.st_mode):
-            payload = os.readlink(name, dir_fd=parent_fd).encode(
-                "utf-8", "surrogateescape"
-            )
+            payload = os.readlink(name, dir_fd=parent_fd).encode("utf-8", "surrogateescape")
             digest.update(b"L\0" + relative_bytes + b"\0")
             digest.update(hashlib.sha256(payload).digest())
             return
@@ -3277,9 +3183,7 @@ def _read_only_git_control_digest(worktree: Path) -> str:
                         except OSError:
                             _record(parent_fd, part, "/".join(traversed))
                             digest.update(
-                                b"M\0"
-                                + relative.encode("utf-8", "surrogateescape")
-                                + b"\0"
+                                b"M\0" + relative.encode("utf-8", "surrogateescape") + b"\0"
                             )
                             break
                         os.close(parent_fd)
@@ -3299,7 +3203,8 @@ def _read_only_git_control_digest_program() -> str:
     """Standalone equivalent used before Git in the OpenShell postcheck."""
 
     paths = repr(_READ_ONLY_GIT_CONTROL_PATHS)
-    return r'''import hashlib, os, stat, sys
+    return (
+        r"""import hashlib, os, stat, sys
 paths = %s
 root = os.path.realpath(sys.argv[1])
 directory = getattr(os, "O_DIRECTORY", 0)
@@ -3377,7 +3282,9 @@ try:
 finally:
     os.close(root_fd)
 print(digest.hexdigest())
-''' % paths
+"""
+        % paths
+    )
 
 
 def _git_for_read_only_verifier(
@@ -3459,9 +3366,7 @@ def _prepare_read_only_verifier_workspace(
     expected_tree = str(runtime.get("repository_base_tree") or "").strip()
     expected_refs = str(runtime.get("repository_refs_digest") or "").strip()
     expected_content = str(runtime.get("repository_content_digest") or "").strip()
-    if not all(
-        (worktree_raw, expected_head, expected_tree, expected_refs, expected_content)
-    ):
+    if not all((worktree_raw, expected_head, expected_tree, expected_refs, expected_content)):
         raise ValueError("read-only verifier exact-base context is incomplete")
 
     workspace_resolved = workspace.resolve()
@@ -3496,9 +3401,7 @@ def _prepare_read_only_verifier_workspace(
     )
     remotes = _git_for_read_only_verifier(target, ["remote"])
     observed_refs = (
-        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
-        if refs.returncode == 0
-        else ""
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest() if refs.returncode == 0 else ""
     )
     try:
         observed_content = read_only_repository_content_digest(target)
@@ -3635,10 +3538,13 @@ def _sandbox_run_read_only_repository_verification(
     def _delete_verifier() -> None:
         deletion_succeeded[0] = _sandbox_delete(verifier_name)
 
-    with contextlib.ExitStack() as cleanup, tempfile.TemporaryDirectory(
-        prefix=".%s-read-only-verifier-" % workspace.name,
-        dir=str(workspace.parent) if workspace.parent.is_dir() else None,
-    ) as temp:
+    with (
+        contextlib.ExitStack() as cleanup,
+        tempfile.TemporaryDirectory(
+            prefix=".%s-read-only-verifier-" % workspace.name,
+            dir=str(workspace.parent) if workspace.parent.is_dir() else None,
+        ) as temp,
+    ):
         # Register before any preparation or OpenShell call so even early
         # returns and unexpected exceptions cannot strand the verifier.
         cleanup.callback(_delete_verifier)
@@ -3648,13 +3554,10 @@ def _sandbox_run_read_only_repository_verification(
             relative, target = _prepare_read_only_verifier_workspace(
                 workspace, verifier_workspace, task
             )
-            expected_git_control = _authoritative_read_only_git_control_digest(
-                target
-            )
+            expected_git_control = _authoritative_read_only_git_control_digest(target)
         except (OSError, ValueError) as exc:
             sys.stderr.write(
-                "[executor] WARNING: could not prepare independent read-only "
-                "verifier: %s\n" % exc
+                "[executor] WARNING: could not prepare independent read-only verifier: %s\n" % exc
             )
             return False
 
@@ -3689,10 +3592,7 @@ def _sandbox_run_read_only_repository_verification(
             if value:
                 verification_environment[environment_name] = value
         script_path.write_text(
-            _sandbox_read_only_repository_verification_shell(
-                verification_environment
-            )
-            + "\n",
+            _sandbox_read_only_repository_verification_shell(verification_environment) + "\n",
             encoding="utf-8",
         )
         script_path.chmod(0o700)
@@ -3716,9 +3616,7 @@ def _sandbox_run_read_only_repository_verification(
             "--norc",
             sandbox_script,
         ]
-        created, create_message = _sandbox_step(
-            create_args, timeout=timeout + 90.0
-        )
+        created, create_message = _sandbox_step(create_args, timeout=timeout + 90.0)
         if not created and create_message:
             sys.stderr.write(
                 "[executor] independent read-only verifier returned non-zero: %s\n"
@@ -3735,9 +3633,7 @@ def _sandbox_run_read_only_repository_verification(
             timeout=120.0,
         )
         if downloaded:
-            stored_pass = _store_trusted_read_only_verification(
-                destination, workspace, task
-            )
+            stored_pass = _store_trusted_read_only_verification(destination, workspace, task)
         elif download_message:
             sys.stderr.write(
                 "[executor] WARNING: independent read-only verifier result "
@@ -3838,7 +3734,9 @@ def _sandbox_run_repository_verification(
         timeout=120.0,
     )
     if not ok:
-        sys.stderr.write("[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg)
+        sys.stderr.write(
+            "[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg
+        )
         return _SandboxRepositoryVerificationResult(
             False,
             "verifier_infrastructure",
@@ -3935,8 +3833,7 @@ def _sandbox_read_only_repository_violation(
             "repo=%s" % shlex.quote(repo),
             "expected_head=%s" % shlex.quote(expected_head),
             "expected_tree=%s" % shlex.quote(expected_tree),
-            "expected_git_control=%s"
-            % shlex.quote(expected_git_control_digest),
+            "expected_git_control=%s" % shlex.quote(expected_git_control_digest),
             'fail() { printf "%s\\n" "$1" >&2; exit 66; }',
             'test ! -L "$repo" || fail "read-only repository worktree became a symlink"',
             'test -d "$repo/.git" || fail "read-only repository Git metadata is missing"',
@@ -3944,7 +3841,7 @@ def _sandbox_read_only_repository_violation(
             # post-agent repository interpretation.  In particular, do not run
             # `git -C`: a poisoned core.worktree would make Git inspect an
             # attacker-selected clean tree instead of the uploaded checkout.
-            'python_bin=/opt/mac-venv/bin/python',
+            "python_bin=/opt/mac-venv/bin/python",
             '[ -x "$python_bin" ] || python_bin="$(PATH=%s command -v python3 || PATH=%s command -v python || true)"'
             % (shlex.quote(_SANDBOX_BASE_PATH), shlex.quote(_SANDBOX_BASE_PATH)),
             '[ -n "$python_bin" ] || fail "trusted Python is unavailable for Git control validation"',
@@ -3953,8 +3850,7 @@ def _sandbox_read_only_repository_violation(
             "PY",
             ')" || fail "could not digest read-only repository Git controls"',
             'test "$observed_git_control" = "$expected_git_control" || fail "read-only repository Git control metadata changed"',
-            'git_bin="$(PATH=%s command -v git || true)"'
-            % shlex.quote(_SANDBOX_BASE_PATH),
+            'git_bin="$(PATH=%s command -v git || true)"' % shlex.quote(_SANDBOX_BASE_PATH),
             'case "$git_bin" in /*) ;; *) fail "trusted absolute Git executable is unavailable" ;; esac',
             'trusted_git() { env -i HOME=/tmp/mac-read-only-postcheck PATH=%s GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 "$git_bin" --no-optional-locks --git-dir="$repo/.git" --work-tree="$repo" -c "safe.directory=$repo" -c "core.worktree=$repo" -c core.fsmonitor=false -c core.hooksPath=/dev/null -c credential.helper= -c protocol.file.allow=never "$@"; }'
             % shlex.quote(_SANDBOX_BASE_PATH),
@@ -3997,13 +3893,11 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     repository_roots = _sandbox_repository_roots(workspace, workspace)
     generated_paths = {
-        Path(root_name)
-        for root_name in _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES
+        Path(root_name) for root_name in _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES
     }
     for repository_root in repository_roots:
         generated_paths.update(
-            repository_root / root_name
-            for root_name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES
+            repository_root / root_name for root_name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES
         )
     cleanup_script = shlex.join(
         ["rm", "-rf", "--", *(str(path) for path in sorted(generated_paths))]
@@ -4056,7 +3950,7 @@ def _sandbox_delete(name: str) -> bool:
 
 
 def _sandbox_progress_interval() -> float:
-    raw = (env_str("MAC_OPENSHELL_PROGRESS_INTERVAL") or "5")
+    raw = env_str("MAC_OPENSHELL_PROGRESS_INTERVAL") or "5"
     try:
         return max(0.0, float(raw))
     except ValueError:
@@ -4157,9 +4051,7 @@ class _SandboxProgressMonitor:
             self.observe()
 
     def observe(self) -> None:
-        snapshot = _sandbox_progress_snapshot(
-            self.name, self.basename, self.workspace
-        )
+        snapshot = _sandbox_progress_snapshot(self.name, self.basename, self.workspace)
         if snapshot is None:
             return
         if not self.ready:
@@ -4421,9 +4313,7 @@ def _run_sandboxed(
                 task_id=str(audit_id) if audit_id else None,
                 sandbox=name,
             )
-        verification = _sandbox_run_repository_verification(
-            name, basename, workspace, task
-        )
+        verification = _sandbox_run_repository_verification(name, basename, workspace, task)
         if verification is not None:
             verification_passed = (
                 verification.passed
@@ -4455,15 +4345,8 @@ def _run_sandboxed(
                 detail=verification_detail,
                 attempt_count=verification_attempt_count,
             )
-            metadata = (
-                task.get("metadata")
-                if isinstance(task, dict)
-                else None
-            )
-            if (
-                not verification_passed
-                and metadata_declares_read_only_report_repository(metadata)
-            ):
+            metadata = task.get("metadata") if isinstance(task, dict) else None
+            if not verification_passed and metadata_declares_read_only_report_repository(metadata):
                 result = subprocess.CompletedProcess(
                     getattr(result, "args", ["read_only_repository_report"]),
                     67,
@@ -4481,9 +4364,7 @@ def _run_sandboxed(
             elif not verification_passed:
                 failure = (
                     verification.as_dict()
-                    if isinstance(
-                        verification, _SandboxRepositoryVerificationResult
-                    )
+                    if isinstance(verification, _SandboxRepositoryVerificationResult)
                     else {
                         "schema": "mac.openshell_repository_verification.v1",
                         "passed": False,
@@ -4525,10 +4406,7 @@ def _run_sandboxed(
             harvested = _sandbox_download(name, basename, workspace)
         except Exception as exc:  # noqa: BLE001 - teardown must continue to delete
             harvested = False
-            sys.stderr.write(
-                "[executor] WARNING: sandbox download raised unexpectedly: %s\n"
-                % exc
-            )
+            sys.stderr.write("[executor] WARNING: sandbox download raised unexpectedly: %s\n" % exc)
         promoted: Optional[bool] = None
         if read_only_report:
             # The agent sandbox is allowed to contain a same-named file, but it
@@ -4541,8 +4419,7 @@ def _run_sandboxed(
             except Exception as exc:  # noqa: BLE001 - teardown must still delete
                 promoted = False
                 sys.stderr.write(
-                    "[executor] WARNING: trusted verification promotion raised: %s\n"
-                    % exc
+                    "[executor] WARNING: trusted verification promotion raised: %s\n" % exc
                 )
         preservation_required = (
             not read_only_report
@@ -4597,12 +4474,8 @@ def _run_sandboxed(
                     task_id=str(audit_id) if audit_id else None,
                     sandbox=name,
                     status=str(wip_preservation.get("status") or ""),
-                    bundle_sha256=str(
-                        wip_preservation.get("bundle_sha256") or ""
-                    ),
-                    salvage_head_sha=str(
-                        wip_preservation.get("salvage_head_sha") or ""
-                    ),
+                    bundle_sha256=str(wip_preservation.get("bundle_sha256") or ""),
+                    salvage_head_sha=str(wip_preservation.get("salvage_head_sha") or ""),
                 )
         salvage = {
             "schema": "mac.openshell_salvage.v1",
@@ -4622,7 +4495,9 @@ def _run_sandboxed(
                 encoding="utf-8",
             )
         except OSError as exc:
-            sys.stderr.write("[executor] WARNING: could not write sandbox salvage record: %s\n" % exc)
+            sys.stderr.write(
+                "[executor] WARNING: could not write sandbox salvage record: %s\n" % exc
+            )
         emit_telemetry(
             "sandbox_harvested",
             task_id=str(audit_id) if audit_id else None,
@@ -4646,19 +4521,13 @@ def _run_sandboxed(
             if not harvested:
                 lifecycle_problems.append("sandbox result harvest failed")
             if promoted is not True:
-                lifecycle_problems.append(
-                    "trusted repository verification result was not promoted"
-                )
+                lifecycle_problems.append("trusted repository verification result was not promoted")
             if kept:
-                lifecycle_problems.append(
-                    "sandbox deletion was skipped by MAC_OPENSHELL_KEEP"
-                )
+                lifecycle_problems.append("sandbox deletion was skipped by MAC_OPENSHELL_KEEP")
             elif not deleted:
                 lifecycle_problems.append("sandbox deletion failed")
             if lifecycle_problems:
-                detail = "read-only report lifecycle incomplete: %s" % "; ".join(
-                    lifecycle_problems
-                )
+                detail = "read-only report lifecycle incomplete: %s" % "; ".join(lifecycle_problems)
                 # A return expression inside the try has already retained this
                 # object when finally runs, so mutate it rather than rebinding
                 # the local.  This makes teardown failures authoritative at the
@@ -4707,11 +4576,7 @@ def _validated_host_break_glass_authorization(task: Any) -> Optional[Dict[str, A
         return None
     metadata = task.get("metadata")
     runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
-    raw = (
-        runtime.get("break_glass_authorization")
-        if isinstance(runtime, dict)
-        else None
-    )
+    raw = runtime.get("break_glass_authorization") if isinstance(runtime, dict) else None
     if raw is None:
         return None
     if not isinstance(raw, dict):
@@ -4735,14 +4600,11 @@ def _validated_host_break_glass_authorization(task: Any) -> Optional[Dict[str, A
         "lease_id": env_str("MAC_LEASE_ID"),
     }
     mismatches = [
-        key
-        for key, value in expected.items()
-        if not value or str(checks.get(key) or "") != value
+        key for key, value in expected.items() if not value or str(checks.get(key) or "") != value
     ]
     if mismatches:
         raise RuntimeError(
-            "break-glass authorization binding mismatch: %s"
-            % ", ".join(sorted(mismatches))
+            "break-glass authorization binding mismatch: %s" % ", ".join(sorted(mismatches))
         )
     if not str(raw.get("id") or "").startswith("breakglass_"):
         raise RuntimeError("break-glass authorization id is invalid")
@@ -4821,8 +4683,7 @@ def _unsandboxed_agent_argv(
         authorization_id = str(break_glass_authorization.get("id") or "unknown")
         sys.stderr.write(
             "[executor] BREAK-GLASS: launching exact lease directly on the host "
-            "under authorization %s; OpenShell bypass is task-scoped.\n"
-            % authorization_id
+            "under authorization %s; OpenShell bypass is task-scoped.\n" % authorization_id
         )
         emit_telemetry(
             "break_glass_host_execution",
@@ -4865,7 +4726,8 @@ def _record_runner_choice(
     Claude / Codex / Cursor / the gateway?" rather than facing a silent choice.
     """
     sys.stderr.write(
-        "[executor] coding-agent routing: %s (%s)\n" % (target, "; ".join(rationale) or "no rationale")
+        "[executor] coding-agent routing: %s (%s)\n"
+        % (target, "; ".join(rationale) or "no rationale")
     )
     try:
         detail: Dict[str, Any] = {
@@ -4920,8 +4782,7 @@ def _write_mac_mcp_config(*, task_id: str = "") -> Optional[str]:
 def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     msg = (
         "task execution requires an available coding agent and, when confined, "
-        "a verified in-sandbox route; %s"
-        % (reason or "no coding agent was verified")
+        "a verified in-sandbox route; %s" % (reason or "no coding agent was verified")
     )
     code = "import sys; sys.stderr.write(%r + '\\n'); raise SystemExit(42)" % msg
     # Every command is serialized through ``_write_agent_command_bundle``, which
@@ -5001,12 +4862,9 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
     text = (output or "").lower()
     if returncode in {124, 137} or "timed out" in text or "timeout" in text:
         return "timeout"
-    if (
-        "nvidia-persistenced" in text
-        or (
-            ("oci runtime create failed" in text or "containerstartfailed" in text)
-            and ("nvidia" in text or "gpu" in text or "cdi" in text)
-        )
+    if "nvidia-persistenced" in text or (
+        ("oci runtime create failed" in text or "containerstartfailed" in text)
+        and ("nvidia" in text or "gpu" in text or "cdi" in text)
     ):
         return "sandbox_gpu_unavailable"
     # The OpenShell sandbox itself could not be created/uploaded, so the probe
@@ -5034,7 +4892,8 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
         or "out of credit" in text
         or "quota exceeded" in text
         or "usage limit" in text
-        or "billing" in text and "limit" in text
+        or "billing" in text
+        and "limit" in text
     ):
         return "credit_exhausted"
     # Provider throttling. A 429 (or an explicit rate-limit message) is
@@ -5064,16 +4923,13 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
     # both more actionable than ``probe_failed`` and proof that the binary is
     # present.  Keep this ahead of the generic endpoint checks: the remediation
     # is the sandbox policy/proxy path, not the provider URL or credential.
-    if (
-        "failed to reach the cursor api" in text
-        or (
-            "proxy" in text
-            and (
-                "unreachable" in text
-                or "is reachable" in text
-                or "failed to connect" in text
-                or "connect failed" in text
-            )
+    if "failed to reach the cursor api" in text or (
+        "proxy" in text
+        and (
+            "unreachable" in text
+            or "is reachable" in text
+            or "failed to connect" in text
+            or "connect failed" in text
         )
     ):
         return "sandbox_proxy_unreachable"
@@ -5082,11 +4938,7 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
     # mutually supported ALPN protocol. The route and credential were reached;
     # the endpoint needs `tls: skip` so the no-protocol policy entry remains a
     # byte-for-byte TCP passthrough.
-    if (
-        "no application protocol" in text
-        or "alpn" in text
-        or "tls alert number 120" in text
-    ):
+    if "no application protocol" in text or "alpn" in text or "tls alert number 120" in text:
         return "sandbox_proxy_protocol_unsupported"
     # OpenShell's egress proxy answered the request itself: the destination is
     # not in the sandbox policy. The CLI launched, resolved a credential, and
@@ -5166,9 +5018,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
     return "unverified"
 
 
-_SANDBOX_CODING_AGENT_BINARIES = frozenset(
-    {"claude", "codex", "cursor", "cursor-agent"}
-)
+_SANDBOX_CODING_AGENT_BINARIES = frozenset({"claude", "codex", "cursor", "cursor-agent"})
 
 
 def coding_agent_sandbox_which(name: str) -> Optional[str]:
@@ -5182,9 +5032,7 @@ def coding_agent_sandbox_which(name: str) -> Optional[str]:
     return name if name in _SANDBOX_CODING_AGENT_BINARIES else None
 
 
-def _build_sandbox_probe_argv(
-    name: str, agent_argv: List[str], private_dir: Path
-) -> List[str]:
+def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Path) -> List[str]:
     """Build a credential-free process argv for the coding-agent probe."""
     if "mac.agent_command" not in agent_argv:
         raise ValueError("sandbox probe must use the private-file command wrapper")
@@ -5222,9 +5070,7 @@ def _coding_agent_choice_for_sandbox(choice: Any) -> Any:
     endpoint = str(getattr(choice, "endpoint", "") or "")
     binary = str(getattr(choice, "binary", "") or "")
     rewritten_endpoint = (
-        _rewrite_host_local_url(endpoint, _openshell_host_alias())
-        if endpoint
-        else endpoint
+        _rewrite_host_local_url(endpoint, _openshell_host_alias()) if endpoint else endpoint
     )
     sandbox_binary = Path(binary).name if binary else binary
     if rewritten_endpoint == endpoint and sandbox_binary == binary:
@@ -5290,9 +5136,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
             PROMPT_SENTINEL,
             env=_coding_agent_env_for_sandbox(sandbox_choice),
         )
-        bundle = _write_agent_command_bundle(
-            private_dir, _ca.PREFLIGHT_PROMPT, probe_argv
-        )
+        bundle = _write_agent_command_bundle(private_dir, _ca.PREFLIGHT_PROMPT, probe_argv)
         _write_private_shell_env(
             private_dir / ".mac-openshell-env.sh",
             {**_openshell_environment(), "HOME": _SANDBOX_HOME},
@@ -5311,9 +5155,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
             bundle.cleanup()
             _sandbox_step(["delete", name], timeout=60.0)
     ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
-    failure_class = (
-        "" if ok else _classify_coding_agent_preflight_failure(rc, out)
-    )
+    failure_class = "" if ok else _classify_coding_agent_preflight_failure(rc, out)
     result: Dict[str, object] = {
         "schema": "mac.coding_agent.verification.v1",
         "agent": choice.agent,
@@ -5543,7 +5385,9 @@ def _acp_agent_argv() -> List[str]:
     return shlex.split(env_str("MAC_ACP_AGENT_CMD"))
 
 
-def _acp_update_action_event(audit_id: Any, session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _acp_update_action_event(
+    audit_id: Any, session_id: str, params: Dict[str, Any]
+) -> Dict[str, Any]:
     """Map one ACP ``session/update`` notification to a mac action-event record."""
     inner = params.get("update") or {}
     return {
@@ -5600,7 +5444,9 @@ def _acp_permission_handler(audit_id: Any) -> Callable[[Any], Any]:
                 "session_id": getattr(params, "session_id", None),
                 "actor": "mac-acp",
                 "action_type": "acp.permission",
-                "action_name": str(tool_call.get("title") or tool_call.get("toolCallId") or "tool_call"),
+                "action_name": str(
+                    tool_call.get("title") or tool_call.get("toolCallId") or "tool_call"
+                ),
                 "outcome": "allowed" if decision.allow else "denied",
                 "severity": "info",
                 "attributes": {
@@ -5611,7 +5457,9 @@ def _acp_permission_handler(audit_id: Any) -> Callable[[Any], Any]:
             },
         )
         if chosen is not None:
-            return RequestPermissionResult(outcome=PermissionOutcome.SELECTED, option_id=chosen.option_id)
+            return RequestPermissionResult(
+                outcome=PermissionOutcome.SELECTED, option_id=chosen.option_id
+            )
         return RequestPermissionResult(outcome=PermissionOutcome.CANCELLED)
 
     return _handler
@@ -5651,7 +5499,10 @@ def _invoke_acp_agent(
             content = inner.get("content") or {}
             if isinstance(content, dict) and content.get("type") == ContentBlockType.TEXT:
                 text_chunks.append(str(content.get("text") or ""))
-        _hub_post("/action-events", _acp_update_action_event(audit_id, str(params.get("sessionId") or ""), params))
+        _hub_post(
+            "/action-events",
+            _acp_update_action_event(audit_id, str(params.get("sessionId") or ""), params),
+        )
 
     argv_label = list(getattr(executor, "_argv", ["acp"]))
     try:
@@ -5662,11 +5513,12 @@ def _invoke_acp_agent(
             timeout=opts.get("timeout"),
         )
     except Exception as exc:  # noqa: BLE001 - a backend failure must finalize, not crash the loop
-        return subprocess.CompletedProcess(argv_label, 1, "".join(text_chunks), "ACP agent run failed: %s" % exc)
+        return subprocess.CompletedProcess(
+            argv_label, 1, "".join(text_chunks), "ACP agent run failed: %s" % exc
+        )
     rc = 0 if run.stop_reason == StopReason.END_TURN else 1
     stderr = "" if rc == 0 else "ACP agent stopped with reason: %s" % run.stop_reason
     return subprocess.CompletedProcess(argv_label, rc, "".join(text_chunks), stderr)
-
 
 
 #: Failure classes that mean "this route cannot do the work right now, but
@@ -5792,11 +5644,7 @@ def _invoke_agent(
     The agent argv is a detected coding-agent CLI when one is available + authed;
     otherwise execution fails closed (see :func:`_agent_argv`).
     Returns the runner's result (carries .returncode)."""
-    metadata = (
-        opts.get("task", {}).get("metadata")
-        if isinstance(opts.get("task"), dict)
-        else None
-    )
+    metadata = opts.get("task", {}).get("metadata") if isinstance(opts.get("task"), dict) else None
     read_only_repository = metadata_declares_read_only_report_repository(metadata)
     if _executor_backend() == "acp":
         if read_only_repository:
@@ -5810,9 +5658,7 @@ def _invoke_agent(
     # the production supervisor (which runs this whole process inside a sandbox,
     # with MAC_OPENSHELL_SANDBOX off but the agent required). Coding-agent
     # enablement is gated on `confined`, not `wrap`.
-    break_glass_authorization = _validated_host_break_glass_authorization(
-        opts.get("task")
-    )
+    break_glass_authorization = _validated_host_break_glass_authorization(opts.get("task"))
     if break_glass_authorization is not None:
         _prepare_host_break_glass_environment(break_glass_authorization)
     wrap = _openshell_enabled() and break_glass_authorization is None
@@ -5821,9 +5667,7 @@ def _invoke_agent(
             "read-only repository reports require per-task OpenShell confinement; "
             "direct, supervisor-only, and host break-glass execution are forbidden"
         )
-    confined = (
-        wrap or _openshell_required_for_local_agent()
-    ) and break_glass_authorization is None
+    confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
     route: Dict[str, str] = {}
     agent_argv = _agent_argv(
         PROMPT_SENTINEL,
@@ -5866,8 +5710,7 @@ def _invoke_agent(
                 _forget_coding_agent_route(route.get("fingerprint") or "")
                 sys.stderr.write(
                     "[executor] coding-agent %s failed with %s; "
-                    "re-routing to the next configured agent\n"
-                    % (failed_agent, failover_class)
+                    "re-routing to the next configured agent\n" % (failed_agent, failover_class)
                 )
                 fallback_route: Dict[str, str] = {}
                 fallback_argv = _agent_argv(
@@ -5888,9 +5731,7 @@ def _invoke_agent(
                         model=fallback_route.get("model") or "",
                         route_fingerprint=fallback_route.get("fingerprint") or "",
                     )
-                    bundle = _write_agent_command_bundle(
-                        workspace, fallback_prompt, fallback_argv
-                    )
+                    bundle = _write_agent_command_bundle(workspace, fallback_prompt, fallback_argv)
                     _record_runner_choice(
                         fallback_route["agent"],
                         [
@@ -6078,9 +5919,7 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
         workspace_raw = os.environ.get("MAC_TASK_WORKSPACE")
         if workspace_raw:
             try:
-                _write_startup_failclose_evidence(
-                    Path(workspace_raw), resolved_task_id, detail
-                )
+                _write_startup_failclose_evidence(Path(workspace_raw), resolved_task_id, detail)
             except Exception:  # noqa: BLE001 - evidence write must never re-raise
                 pass
         sys.stderr.write("[executor] startup failed: %s\n" % detail)
@@ -6105,9 +5944,7 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
     return rc
 
 
-def _read_only_report_repository_violation(
-    task: Any, expected_git_control_digest: str = ""
-) -> str:
+def _read_only_report_repository_violation(task: Any, expected_git_control_digest: str = "") -> str:
     """Return a fail-closed reason when an inspection checkout was mutated."""
 
     metadata = task.get("metadata") if isinstance(task, dict) else None
@@ -6115,9 +5952,7 @@ def _read_only_report_repository_violation(
         return ""
     runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
     worktree_raw = env_str("MAC_TASK_REPO_WORKTREE") or (
-        str(runtime.get("repository_worktree") or "")
-        if isinstance(runtime, dict)
-        else ""
+        str(runtime.get("repository_worktree") or "") if isinstance(runtime, dict) else ""
     )
     if not worktree_raw:
         return "read-only repository report has no task-owned worktree"
@@ -6133,9 +5968,7 @@ def _read_only_report_repository_violation(
     if observed_git_control_digest != expected_git_control_digest:
         return "read-only repository report Git control metadata changed"
     base_sha = env_str("MAC_TASK_REPO_BASE_SHA") or (
-        str(runtime.get("repository_base_sha") or "")
-        if isinstance(runtime, dict)
-        else ""
+        str(runtime.get("repository_base_sha") or "") if isinstance(runtime, dict) else ""
     )
     status = _git_for_read_only_verifier(worktree, ["status", "--porcelain"])
     if status.returncode != 0:
@@ -6146,25 +5979,19 @@ def _read_only_report_repository_violation(
     if head.returncode != 0 or not base_sha or head.stdout.strip() != base_sha:
         return "read-only repository report changed repository HEAD"
     base_tree = env_str("MAC_TASK_REPO_BASE_TREE") or (
-        str(runtime.get("repository_base_tree") or "")
-        if isinstance(runtime, dict)
-        else ""
+        str(runtime.get("repository_base_tree") or "") if isinstance(runtime, dict) else ""
     )
     tree = _git_for_read_only_verifier(worktree, ["rev-parse", "HEAD^{tree}"])
     if tree.returncode != 0 or not base_tree or tree.stdout.strip() != base_tree:
         return "read-only repository report changed repository tree"
     expected_refs_digest = env_str("MAC_TASK_REPO_REFS_DIGEST") or (
-        str(runtime.get("repository_refs_digest") or "")
-        if isinstance(runtime, dict)
-        else ""
+        str(runtime.get("repository_refs_digest") or "") if isinstance(runtime, dict) else ""
     )
     refs = _git_for_read_only_verifier(
         worktree, ["for-each-ref", "--format=%(refname) %(objectname)"]
     )
     observed_refs_digest = (
-        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
-        if refs.returncode == 0
-        else ""
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest() if refs.returncode == 0 else ""
     )
     if (
         refs.returncode != 0
@@ -6179,24 +6006,17 @@ def _read_only_report_repository_violation(
     # The clean status above proves there are no tracked or untracked edits, so
     # it is safe to remove only the remaining disposable/ignored output while
     # preserving the generated CodeGraph analysis cache.
-    cleaned = _git_for_read_only_verifier(
-        worktree, ["clean", "-fdx", "-e", ".codegraph/"]
-    )
+    cleaned = _git_for_read_only_verifier(worktree, ["clean", "-fdx", "-e", ".codegraph/"])
     if cleaned.returncode != 0:
         return "could not clean read-only repository report disposable outputs"
     expected_content_digest = env_str("MAC_TASK_REPO_CONTENT_DIGEST") or (
-        str(runtime.get("repository_content_digest") or "")
-        if isinstance(runtime, dict)
-        else ""
+        str(runtime.get("repository_content_digest") or "") if isinstance(runtime, dict) else ""
     )
     try:
         observed_content_digest = read_only_repository_content_digest(worktree)
     except OSError:
         observed_content_digest = ""
-    if (
-        not expected_content_digest
-        or observed_content_digest != expected_content_digest
-    ):
+    if not expected_content_digest or observed_content_digest != expected_content_digest:
         return "read-only repository report changed repository content"
     return ""
 
@@ -6244,17 +6064,11 @@ def _write_repository_verification_failure_manifest(
     """Replace model-authored success with the authoritative verifier failure."""
 
     failure_payload = {
-        "schema": str(
-            failure.get("schema")
-            or "mac.openshell_repository_verification.v1"
-        ),
+        "schema": str(failure.get("schema") or "mac.openshell_repository_verification.v1"),
         "passed": False,
-        "failure_class": str(
-            failure.get("failure_class") or "verifier_infrastructure"
-        ),
+        "failure_class": str(failure.get("failure_class") or "verifier_infrastructure"),
         "detail": str(
-            failure.get("detail")
-            or "repository verification failed without a causal detail"
+            failure.get("detail") or "repository verification failed without a causal detail"
         ),
         "retryable": bool(failure.get("retryable")),
         "attempt_count": max(0, int(failure.get("attempt_count") or 0)),
@@ -6328,13 +6142,9 @@ def _run_executor(
         kind="review" if is_review else "task",
         recalled_lessons=len(lessons),
         sandboxed=_openshell_enabled() and break_glass_authorization is None,
-        execution_boundary=(
-            "host" if break_glass_authorization is not None else "sandbox"
-        ),
+        execution_boundary=("host" if break_glass_authorization is not None else "sandbox"),
         break_glass_authorization_id=(
-            break_glass_authorization.get("id")
-            if break_glass_authorization is not None
-            else None
+            break_glass_authorization.get("id") if break_glass_authorization is not None else None
         ),
     )
 
@@ -6387,17 +6197,11 @@ def _run_executor(
             "sandbox_hub_connectivity",
             task_id=task_id,
             level="info" if _hub_capability.get("ready") else "warning",
-            **{
-                key: value
-                for key, value in _hub_capability.items()
-                if key != "schema"
-            },
+            **{key: value for key, value in _hub_capability.items() if key != "schema"},
         )
         try:
             _wanted_planning = is_planning_phase(task)
-            _is_planning = should_enter_planning_phase(
-                task, hub_capability=_hub_capability
-            )
+            _is_planning = should_enter_planning_phase(task, hub_capability=_hub_capability)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("planning phase check failed: %s\n" % exc)
             _wanted_planning = False
@@ -6438,9 +6242,7 @@ def _run_executor(
     blind_protocol_failed = False
     if assignment.get("blind"):
         executor_evidence = task_workspace / "executor-evidence.json"
-        legacy_withheld_evidence = (
-            task_workspace / ".mac-withheld-executor-evidence.json"
-        )
+        legacy_withheld_evidence = task_workspace / ".mac-withheld-executor-evidence.json"
         independent_findings = task_workspace / "review-independent-findings.json"
         evidence_hidden = False
         evidence_payload: Optional[bytes] = None
@@ -6479,9 +6281,7 @@ def _run_executor(
         discovery_duration_ms = (time.monotonic() - discovery_started) * 1000.0
         discovery_manifest = task_workspace / "mac-evidence.json"
         if discovery_manifest.exists():
-            discovery_manifest.replace(
-                task_workspace / "review-independent-draft-evidence.json"
-            )
+            discovery_manifest.replace(task_workspace / "review-independent-draft-evidence.json")
         protocol = _blind_review_protocol(
             task_workspace,
             assignment,
@@ -6536,7 +6336,11 @@ def _run_executor(
             prompt,
             task_workspace,
             str(audit_task_id) if audit_task_id else None,
-            {"execution_kind": "review" if is_review else "task", "timeout": _agent_timeout(), "task": task},
+            {
+                "execution_kind": "review" if is_review else "task",
+                "timeout": _agent_timeout(),
+                "task": task,
+            },
         )
     emit_telemetry(
         "agent_completed",
@@ -6553,14 +6357,10 @@ def _run_executor(
     read_only_verification_failure = bool(
         getattr(result, "mac_read_only_verification_failure", False)
     )
-    repository_verification_failure = getattr(
-        result, "mac_repository_verification_failure", None
-    )
+    repository_verification_failure = getattr(result, "mac_repository_verification_failure", None)
     if not isinstance(repository_verification_failure, dict):
         repository_verification_failure = None
-    authoritative_read_only_failure = bool(
-        read_only_violation or read_only_verification_failure
-    )
+    authoritative_read_only_failure = bool(read_only_violation or read_only_verification_failure)
     if read_only_violation:
         result = subprocess.CompletedProcess(
             getattr(result, "args", ["read_only_repository_report"]),
@@ -6628,9 +6428,7 @@ def _run_executor(
             level="warning",
             **repository_verification_failure,
         )
-    clean_agent_failure = bool(
-        getattr(result, "mac_clean_agent_failure", False)
-    )
+    clean_agent_failure = bool(getattr(result, "mac_clean_agent_failure", False))
 
     if repository_verification_failure is not None:
         emit_telemetry(
@@ -6725,7 +6523,9 @@ def _run_executor(
         and repository_verification_failure is None
         and _manifest_is_complete(task_workspace)
     ):
-        emit_telemetry("evidence_salvaged", task_id=task_id, level="warning", original_returncode=rc)
+        emit_telemetry(
+            "evidence_salvaged", task_id=task_id, level="warning", original_returncode=rc
+        )
         rc = 0
 
     # Memory feed (out): distill this run's outcome into a deployment lesson the

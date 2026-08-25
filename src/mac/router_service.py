@@ -28,6 +28,7 @@ compared in constant time. ``llm.route`` observations are written to the
 service log (structured JSON); a router co-located with the hub store also
 records them into the ledger, preserving today's observability.
 """
+
 from __future__ import annotations
 
 import argparse

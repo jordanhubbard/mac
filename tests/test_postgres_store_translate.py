@@ -28,14 +28,13 @@ class TestTranslatePlaceholders:
         )
 
     def test_multiple_placeholders(self) -> None:
-        assert _translate_placeholders(
-            "INSERT INTO t (a, b, c) VALUES (?, ?, ?)"
-        ) == "INSERT INTO t (a, b, c) VALUES (%s, %s, %s)"
+        assert (
+            _translate_placeholders("INSERT INTO t (a, b, c) VALUES (?, ?, ?)")
+            == "INSERT INTO t (a, b, c) VALUES (%s, %s, %s)"
+        )
 
     def test_no_placeholders_passes_through(self) -> None:
-        assert _translate_placeholders("SELECT COUNT(*) FROM t") == (
-            "SELECT COUNT(*) FROM t"
-        )
+        assert _translate_placeholders("SELECT COUNT(*) FROM t") == ("SELECT COUNT(*) FROM t")
 
     def test_percent_outside_string_is_escaped(self) -> None:
         assert _translate_placeholders("SELECT 100 % 3") == "SELECT 100 %% 3"
@@ -43,37 +42,23 @@ class TestTranslatePlaceholders:
     def test_percent_inside_string_is_escaped(self) -> None:
         # LIKE wildcards: '%foo%' must survive as '%%foo%%' so psycopg
         # passes a literal '%foo%' to Postgres.
-        translated = _translate_placeholders(
-            "SELECT id FROM t WHERE name LIKE 'beads_memory:%'"
-        )
-        assert translated == (
-            "SELECT id FROM t WHERE name LIKE 'beads_memory:%%'"
-        )
+        translated = _translate_placeholders("SELECT id FROM t WHERE name LIKE 'beads_memory:%'")
+        assert translated == ("SELECT id FROM t WHERE name LIKE 'beads_memory:%%'")
 
     def test_question_mark_inside_string_is_preserved(self) -> None:
-        translated = _translate_placeholders(
-            "SELECT id FROM t WHERE label = 'q?' AND state = ?"
-        )
-        assert translated == (
-            "SELECT id FROM t WHERE label = 'q?' AND state = %s"
-        )
+        translated = _translate_placeholders("SELECT id FROM t WHERE label = 'q?' AND state = ?")
+        assert translated == ("SELECT id FROM t WHERE label = 'q?' AND state = %s")
 
     def test_escaped_single_quote_inside_string(self) -> None:
         # SQL escapes single quote by doubling: 'it''s'
-        translated = _translate_placeholders(
-            "SELECT id FROM t WHERE note = 'it''s ok' AND id = ?"
-        )
-        assert translated == (
-            "SELECT id FROM t WHERE note = 'it''s ok' AND id = %s"
-        )
+        translated = _translate_placeholders("SELECT id FROM t WHERE note = 'it''s ok' AND id = ?")
+        assert translated == ("SELECT id FROM t WHERE note = 'it''s ok' AND id = %s")
 
     def test_empty_string_literal(self) -> None:
         translated = _translate_placeholders(
             "SELECT COALESCE(NULLIF(detail, ''), '{}') FROM events WHERE id = ?"
         )
-        assert translated == (
-            "SELECT COALESCE(NULLIF(detail, ''), '{}') FROM events WHERE id = %s"
-        )
+        assert translated == ("SELECT COALESCE(NULLIF(detail, ''), '{}') FROM events WHERE id = %s")
 
     def test_on_conflict_upsert(self) -> None:
         translated = _translate_placeholders(
@@ -104,8 +89,7 @@ class TestTranslatePlaceholders:
 
     def test_sqlite_index_hint_is_removed(self) -> None:
         translated = _translate_placeholders(
-            "SELECT * FROM tasks INDEXED BY idx_tasks_review_queue "
-            "WHERE state = ? LIMIT ?"
+            "SELECT * FROM tasks INDEXED BY idx_tasks_review_queue WHERE state = ? LIMIT ?"
         )
         assert translated == "SELECT * FROM tasks WHERE state = %s LIMIT %s"
 

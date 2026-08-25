@@ -104,11 +104,7 @@ def test_install_reports_convergence_to_the_hub(mac_home, tmp_path):
 
     instance._maybe_sync_openshell_policy()
 
-    status = next(
-        payload
-        for path, payload in client.posts
-        if path.endswith("/openshell/status")
-    )
+    status = next(payload for path, payload in client.posts if path.endswith("/openshell/status"))
     assert status["policy_id"] == "ospol_1"
     assert status["policy_version"] == 3
     assert status["status"] == "active"
@@ -139,9 +135,7 @@ def test_updated_assignment_replaces_an_older_policy(mac_home, tmp_path):
     assert target.read_text(encoding="utf-8") == POLICY_TEXT
 
 
-def test_explicit_operator_override_is_never_overwritten(
-    mac_home, tmp_path, monkeypatch
-):
+def test_explicit_operator_override_is_never_overwritten(mac_home, tmp_path, monkeypatch):
     """MAC_OPENSHELL_POLICY outranks the hub assignment; silently replacing the
     file it points at would make the override a lie."""
     monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(tmp_path / "explicit.yaml"))
@@ -227,9 +221,7 @@ def test_failed_post_is_spooled_not_dropped(mac_home, tmp_path):
 
     spool = instance._command_audit_spool_path()
     assert spool.is_file()
-    assert json.loads(spool.read_text(encoding="utf-8").splitlines()[0])[
-        "command_id"
-    ] == "cmd-1"
+    assert json.loads(spool.read_text(encoding="utf-8").splitlines()[0])["command_id"] == "cmd-1"
 
 
 def test_spool_drains_on_the_next_successful_post(mac_home, tmp_path):
@@ -242,9 +234,7 @@ def test_spool_drains_on_the_next_successful_post(mac_home, tmp_path):
     instance._record_command_audit(_audit("cmd-3"))
 
     delivered = [
-        payload["command_id"]
-        for path, payload in client.posts
-        if path.endswith("/command-audit")
+        payload["command_id"] for path, payload in client.posts if path.endswith("/command-audit")
     ]
     # cmd-3 posts directly, then the spool replays oldest-first.
     assert delivered == ["cmd-3", "cmd-1", "cmd-2"]
@@ -277,9 +267,7 @@ def test_partial_drain_keeps_the_undelivered_remainder_in_order(mac_home, tmp_pa
 
     remaining = [
         json.loads(line)["command_id"]
-        for line in instance._command_audit_spool_path()
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in instance._command_audit_spool_path().read_text(encoding="utf-8").splitlines()
     ]
     assert remaining == ["cmd-1", "cmd-2", "cmd-3"]
 
@@ -296,17 +284,11 @@ def test_spool_is_bounded_and_truncation_is_recorded(mac_home, tmp_path, monkeyp
 
     kept = [
         json.loads(line)["command_id"]
-        for line in instance._command_audit_spool_path()
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in instance._command_audit_spool_path().read_text(encoding="utf-8").splitlines()
     ]
     # Oldest dropped, newest retained.
     assert kept == ["cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8"]
-    names = [
-        payload.get("name")
-        for path, payload in client.posts
-        if path == "/observability/logs"
-    ]
+    names = [payload.get("name") for path, payload in client.posts if path == "/observability/logs"]
     assert "worker.command_audit.spool_truncated" in names
 
 
@@ -321,9 +303,7 @@ def test_unparseable_spool_line_does_not_wedge_the_drain(mac_home, tmp_path):
     instance._record_command_audit(_audit("cmd-2"))
 
     delivered = [
-        payload["command_id"]
-        for path, payload in client.posts
-        if path.endswith("/command-audit")
+        payload["command_id"] for path, payload in client.posts if path.endswith("/command-audit")
     ]
     assert delivered == ["cmd-2", "cmd-1"]
     assert not spool.exists()
@@ -367,9 +347,7 @@ def test_spool_is_per_worker_not_per_shared_home(mac_home, tmp_path):
     # B's successful post must not drain A's spool into B's agent_id.
     b._record_command_audit(_audit("b-only"))
     delivered = [
-        payload["command_id"]
-        for path, payload in b.client.posts
-        if path.endswith("/command-audit")
+        payload["command_id"] for path, payload in b.client.posts if path.endswith("/command-audit")
     ]
     assert delivered == ["b-only"]
     assert a._command_audit_spool_path().is_file()

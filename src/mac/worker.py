@@ -69,6 +69,7 @@ from mac.agentbus_control import (
     reflect_result_payload,
 )
 from mac.env_config import resolve_hub_agent
+
 # Shared with the hub's checksum helper on purpose: if the two ever computed the
 # digest differently the worker would rewrite its policy on every sweep and
 # never converge.
@@ -358,6 +359,7 @@ class WorkerRunResult:
     def to_dict(self) -> JsonDict:
         return asdict(self)
 
+
 def _build_willing_media_routes(host: str, hardware: Optional[JsonDict]) -> List[JsonDict]:
     """All media routes this host is configured (willing) to serve: catalog-
     derived + GPU-gated (advertised_media_routes returns [] off-GPU). One server
@@ -379,11 +381,24 @@ def _build_willing_media_routes(host: str, hardware: Optional[JsonDict]) -> List
     routes: List[JsonDict] = []
     img = (os.environ.get("MAC_AGENT_GEN_MODEL") or "").strip()
     if img:
-        routes.extend(advertised_media_routes(
-            img, _base("MAC_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_PORT", "8189"), hardware))
+        routes.extend(
+            advertised_media_routes(
+                img, _base("MAC_AGENT_GEN_BASE_URL", "MAC_AGENT_GEN_PORT", "8189"), hardware
+            )
+        )
     for models_env, base_env, port_env, default_port in (
-        ("MAC_AGENT_GEN_AUDIO_MODELS", "MAC_AGENT_GEN_AUDIO_BASE_URL", "MAC_AGENT_GEN_AUDIO_PORT", "8190"),
-        ("MAC_AGENT_GEN_VIDEO_MODELS", "MAC_AGENT_GEN_VIDEO_BASE_URL", "MAC_AGENT_GEN_VIDEO_PORT", "8191"),
+        (
+            "MAC_AGENT_GEN_AUDIO_MODELS",
+            "MAC_AGENT_GEN_AUDIO_BASE_URL",
+            "MAC_AGENT_GEN_AUDIO_PORT",
+            "8190",
+        ),
+        (
+            "MAC_AGENT_GEN_VIDEO_MODELS",
+            "MAC_AGENT_GEN_VIDEO_BASE_URL",
+            "MAC_AGENT_GEN_VIDEO_PORT",
+            "8191",
+        ),
     ):
         base = _base(base_env, port_env, default_port)
         for model_id in (os.environ.get(models_env) or "").split(","):
@@ -586,9 +601,7 @@ def _read_only_report_executor_attestation(
         if not _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")):
             return None
         openshell_bin = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip()
-        resolved_openshell_bin = (
-            shutil.which(openshell_bin) if openshell_bin else None
-        )
+        resolved_openshell_bin = shutil.which(openshell_bin) if openshell_bin else None
         if resolved_openshell_bin is None:
             return None
     try:
@@ -604,8 +617,8 @@ def _read_only_report_executor_attestation(
         openshell_bin_path = openshell_bin_sha256 = ""
         policy_sha256 = runtime_image_ref = ""
         if not host_install:
-            openshell_bin_path, openshell_bin_sha256 = (
-                nofollow_regular_file_identity(resolved_openshell_bin)
+            openshell_bin_path, openshell_bin_sha256 = nofollow_regular_file_identity(
+                resolved_openshell_bin
             )
             _policy_path, policy_sha256 = nofollow_regular_file_identity(
                 _resolve_openshell_policy()
@@ -617,9 +630,7 @@ def _read_only_report_executor_attestation(
             _read_only_report_extra_create_argv(require_approval=False)
         if not _read_only_report_environment_passthrough_valid():
             return None
-        python_candidate = (
-            os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or sys.executable
-        ).strip()
+        python_candidate = (os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or sys.executable).strip()
         python_path, python_sha256 = nofollow_regular_file_identity(
             Path(python_candidate).expanduser().resolve(strict=True)
         )
@@ -627,16 +638,13 @@ def _read_only_report_executor_attestation(
             os.environ.get("MAC_TASK_EXECUTOR_SCRIPT")
             or str(Path(executor_path).with_name("mac-task-executor.py"))
         ).strip()
-        executor_script_path, executor_script_sha256 = (
-            nofollow_regular_file_identity(script_candidate)
+        executor_script_path, executor_script_sha256 = nofollow_regular_file_identity(
+            script_candidate
         )
         source_candidate = (
-            os.environ.get("MAC_SELF_UPDATE_REPO")
-            or str(_default_self_update_repo())
+            os.environ.get("MAC_SELF_UPDATE_REPO") or str(_default_self_update_repo())
         ).strip()
-        source_root, source_bundle_sha256 = nofollow_source_bundle_digest(
-            source_candidate
-        )
+        source_root, source_bundle_sha256 = nofollow_source_bundle_digest(source_candidate)
         if sys.platform.startswith("linux") and _kernel_has_landlock():
             platform = "linux"
             isolation_posture = REPORT_REPOSITORY_LINUX_POSTURE
@@ -690,9 +698,7 @@ _REPORT_EXECUTOR_RUNTIME_PATH_ENV = {
 }
 
 
-def _apply_read_only_report_executor_approval(
-    resources: Any, environ: Dict[str, str]
-) -> bool:
+def _apply_read_only_report_executor_approval(resources: Any, environ: Dict[str, str]) -> bool:
     for name in _REPORT_EXECUTOR_APPROVAL_ENV.values():
         environ.pop(name, None)
     if not agent_has_read_only_report_repository_executor(resources):
@@ -812,13 +818,9 @@ def register_worker(
     # work.  Never trust a similarly named value supplied through --resources.
     resources = dict(resources or {})
     resources.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
-    report_executor_attestation = _read_only_report_executor_attestation(
-        executor_argv
-    )
+    report_executor_attestation = _read_only_report_executor_attestation(executor_argv)
     if report_executor_attestation is not None:
-        resources[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] = (
-            report_executor_attestation
-        )
+        resources[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] = report_executor_attestation
     resources = _resources_with_command_inventory(
         resources,
         source_repo=_default_self_update_repo(),
@@ -862,7 +864,15 @@ def register_worker(
 # fresh or stale node converges to the right versions on demand WITHOUT waiting
 # for a redeploy. Add fleet-wide runtime deps here; keep them pinned.
 
-class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMixin, RepoPrepMixin, RuntimeDepsMixin):
+
+class MacWorker(
+    DebugTerminalMixin,
+    ReflectMixin,
+    DirectableMixin,
+    WorkspaceGCMixin,
+    RepoPrepMixin,
+    RuntimeDepsMixin,
+):
     """Small worker harness for mac-owned tasks.
 
     This is intentionally narrower than ACC's deployed worker. It proves the
@@ -919,7 +929,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self.claim_only_canary_tasks = bool(claim_only_canary_tasks)
         self.lease_renew_interval_seconds = lease_renew_interval_seconds
         self.agentbus_control_enabled = bool(agentbus_control_enabled)
-        self.self_update_repo = (self_update_repo or _default_self_update_repo()).expanduser().resolve()
+        self.self_update_repo = (
+            (self_update_repo or _default_self_update_repo()).expanduser().resolve()
+        )
         self.agentbus_control_state_path = (
             agentbus_control_state_path
             if agentbus_control_state_path is not None
@@ -929,9 +941,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # mid-task is stashed here and applied on a later iteration, before
         # the next claim. Persisted so a pending update survives a worker
         # restart (the agentbus stream is already marked processed by then).
-        self.pending_repo_update_path = (
-            self.agentbus_control_state_path.parent
-            / (self.agentbus_control_state_path.stem + "-pending-repo-update.json")
+        self.pending_repo_update_path = self.agentbus_control_state_path.parent / (
+            self.agentbus_control_state_path.stem + "-pending-repo-update.json"
         )
         self.status_update_sink = status_update_sink or self._send_status_update_to_home_channels
         self._stop = False
@@ -1004,9 +1015,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._last_hub_shed_state: Optional[str] = None
         try:
             agent_name = str(
-                getattr(self, "agent_name", "")
-                or os.environ.get("MAC_AGENT_NAME", "")
-                or ""
+                getattr(self, "agent_name", "") or os.environ.get("MAC_AGENT_NAME", "") or ""
             )
             if is_hub_host(self.agent_id, agent_name):
                 self._hub_load_shed = LoadShedBreaker(
@@ -1195,9 +1204,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # agent is now free to claim. Stop it before letting go.
             try:
                 if isinstance(self.executor, SubprocessExecutor):
-                    detail["executor_cancelled"] = bool(
-                        self.executor.cancel_current(reason)
-                    )
+                    detail["executor_cancelled"] = bool(self.executor.cancel_current(reason))
             except Exception as exc:  # noqa: BLE001 — shutdown is a boundary
                 detail["executor_cancel_error"] = str(exc)
             try:
@@ -1241,9 +1248,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # Deliberate: the run loop is blocked in an executor that will not
             # see our SIGTERM, and the unit is counting down to SIGKILL. We
             # have already released everything the hub cares about.
-            sys.stderr.write(
-                "mac-worker: abandoning active assignment and exiting (%s)\n" % reason
-            )
+            sys.stderr.write("mac-worker: abandoning active assignment and exiting (%s)\n" % reason)
             sys.stderr.flush()
             os._exit(0)
         return detail
@@ -1476,9 +1481,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 "/tasks/%s/start?%s"
                 % (
                     quote(task_id, safe=""),
-                    urlencode(
-                        {"agent_id": self.agent_id, "lease_id": lease_id}
-                    ),
+                    urlencode({"agent_id": self.agent_id, "lease_id": lease_id}),
                 ),
                 {},
             )
@@ -1510,13 +1513,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     attempt_state,
                     str(_prep_exc),
                     None,  # no remediation dispatcher wired
-                    lambda _s, _c, _r: self._emit_recovery_observability(
-                        task_id, _s, _c, _r
-                    ),
+                    lambda _s, _c, _r: self._emit_recovery_observability(task_id, _s, _c, _r),
                 )
-                self._append_harness_recovery_log(
-                    _wt_dir, _step, _choice, _msg
-                )
+                self._append_harness_recovery_log(_wt_dir, _step, _choice, _msg)
                 if _recovered:
                     task_dir = self._prepare_task_workspace(task, lease)
                 else:
@@ -1546,28 +1545,23 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     "assignment no longer current after executor completed",
                     execution=execution,
                 )
-            _bootstrap_meta = (execution.metadata.get("bootstrap") or {})
-            _boot_failed = (
-                isinstance(_bootstrap_meta, dict)
-                and (
-                    (_bootstrap_meta.get("returncode") not in (None, 0))
-                    or bool(_bootstrap_meta.get("error"))
-                    or bool(_bootstrap_meta.get("status"))
-                )
+            _bootstrap_meta = execution.metadata.get("bootstrap") or {}
+            _boot_failed = isinstance(_bootstrap_meta, dict) and (
+                (_bootstrap_meta.get("returncode") not in (None, 0))
+                or bool(_bootstrap_meta.get("error"))
+                or bool(_bootstrap_meta.get("status"))
             )
             if not execution.succeeded and _boot_failed:
-                _boot_info = "bootstrap failed: %s" % (_bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown")
+                _boot_info = "bootstrap failed: %s" % (
+                    _bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown"
+                )
                 _b_recovered, _b_choice, _b_msg = _hrr.try_recovery(
                     attempt_state,
                     _boot_info,
                     None,  # no remediation dispatcher wired
-                    lambda _s, _c, _r: self._emit_recovery_observability(
-                        task_id, _s, _c, _r
-                    ),
+                    lambda _s, _c, _r: self._emit_recovery_observability(task_id, _s, _c, _r),
                 )
-                self._append_harness_recovery_log(
-                    task_dir, "bootstrap", _b_choice, _b_msg
-                )
+                self._append_harness_recovery_log(task_dir, "bootstrap", _b_choice, _b_msg)
                 if _b_recovered:
                     started = time.monotonic()
                     execution = self._execute_with_lease_renewal(task, lease, task_dir)
@@ -1581,9 +1575,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             if execution.succeeded:
                 evidence_metadata = ensure_json_object(evidence.get("metadata"))
                 manifest = ensure_json_object(evidence_metadata.get("verification"))
-                evidence_type = str(
-                    manifest.get("evidence_type") or ""
-                ).strip().lower()
+                evidence_type = str(manifest.get("evidence_type") or "").strip().lower()
                 if evidence_type == "plan_decomposed":
                     submission_problems = _worker_verification_contract_problems(
                         manifest,
@@ -1653,9 +1645,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                             error="; ".join(submission_problems[:4]),
                         )
                 else:
-                    submission_problems = self._execution_submission_problems(
-                        task_dir, evidence
-                    )
+                    submission_problems = self._execution_submission_problems(task_dir, evidence)
                 if submission_problems:
                     self._observe_log(
                         "worker.execution.verification_failed",
@@ -2097,9 +2087,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # unavailable or malformed hub response must stop this iteration; it
         # must never be interpreted as positive proof that the worker is
         # unheld.  run_forever owns retry/backoff for transient API failures.
-        agent = self.client.get(
-            "/agents/%s" % quote(self.agent_id, safe="")
-        )
+        agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
         if not isinstance(agent, dict):
             raise MacApiError("agent dispatch-hold response is not an object")
         return agent if isinstance(agent, dict) and agent.get("dispatch_hold") else None
@@ -2356,10 +2344,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         (task_c049302b). Ephemeral or represented agents' proxied messages land
         on this gateway's account; they must not wait for its task cadence.
         """
-        if (
-            self._delivery_drain_thread is not None
-            or self.delivery_drain_interval_seconds <= 0
-        ):
+        if self._delivery_drain_thread is not None or self.delivery_drain_interval_seconds <= 0:
             return
         stop = threading.Event()
 
@@ -2374,9 +2359,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         detail={"error": str(exc)},
                     )
 
-        thread = threading.Thread(
-            target=_loop, name="delivery-outbox-drain", daemon=True
-        )
+        thread = threading.Thread(target=_loop, name="delivery-outbox-drain", daemon=True)
         self._delivery_drain_stop = stop
         self._delivery_drain_thread = thread
         thread.start()
@@ -2395,11 +2378,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         thread = self._delivery_drain_thread
         if stop is not None:
             stop.set()
-        if (
-            thread is not None
-            and thread.is_alive()
-            and thread is not threading.current_thread()
-        ):
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
                 self._observe_log(
@@ -2442,8 +2421,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 account = account_cache.get(account_record_id)
                 if account is None:
                     loaded = self.client.get(
-                        "/communication/accounts/%s"
-                        % quote(account_record_id, safe="")
+                        "/communication/accounts/%s" % quote(account_record_id, safe="")
                     )
                     if not isinstance(loaded, dict):
                         raise MacApiError("communication account response is not an object")
@@ -2471,12 +2449,13 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 )
                 if completed.returncode != 0:
                     raise RuntimeError(
-                        (completed.stderr or completed.stdout or "OpenClaw send failed").strip()[:1000]
+                        (completed.stderr or completed.stdout or "OpenClaw send failed").strip()[
+                            :1000
+                        ]
                     )
                 receipt = _json_object_from_text(completed.stdout)
                 self.client.post(
-                    "/communication/deliveries/%s/ack"
-                    % quote(delivery_id, safe=""),
+                    "/communication/deliveries/%s/ack" % quote(delivery_id, safe=""),
                     {
                         "agent_id": self.agent_id,
                         "provider_message_id": _provider_message_id(receipt),
@@ -2496,8 +2475,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             except Exception as exc:
                 try:
                     self.client.post(
-                        "/communication/deliveries/%s/fail"
-                        % quote(delivery_id, safe=""),
+                        "/communication/deliveries/%s/fail" % quote(delivery_id, safe=""),
                         {
                             "agent_id": self.agent_id,
                             "error": str(exc)[:1000],
@@ -2539,11 +2517,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             if isinstance(claim, dict) and claim.get("status") != "claimed":
                 return WorkerRunResult(
                     status="review_not_claimable",
-                    task=(
-                        claim.get("task")
-                        if isinstance(claim.get("task"), dict)
-                        else None
-                    ),
+                    task=(claim.get("task") if isinstance(claim.get("task"), dict) else None),
                     error=str(claim.get("reason") or "review is not claimable"),
                 )
             task_detail = self.client.get("/tasks/%s" % quote(task_id, safe=""))
@@ -2657,8 +2631,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _advance_review_workflow_after_verdict(self, task_id: str) -> None:
         try:
             self.client.post(
-                "/reviews/default/tick?%s"
-                % urlencode({"limit": 10, "actor": self.agent_id}),
+                "/reviews/default/tick?%s" % urlencode({"limit": 10, "actor": self.agent_id}),
                 {},
             )
         except Exception as exc:  # noqa: BLE001 - verdict evidence is already recorded.
@@ -2702,8 +2675,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             topic = str(stream.get("topic") or "")
             content_type = str(stream.get("content_type") or "").split(";", 1)[0]
             if repository_update_only and not (
-                topic == REPO_UPDATE_TOPIC
-                and content_type == REPO_UPDATE_CONTENT_TYPE
+                topic == REPO_UPDATE_TOPIC and content_type == REPO_UPDATE_CONTENT_TYPE
             ):
                 # A worker that cannot heartbeat is allowed only the signed,
                 # bounded source-recovery control.  Config, terminal, reflect,
@@ -2735,7 +2707,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 if result.get("restart_requested"):
                     return result
                 continue
-            if topic == DEBUG_TERMINAL_OPEN_TOPIC and content_type == DEBUG_TERMINAL_OPEN_CONTENT_TYPE:
+            if (
+                topic == DEBUG_TERMINAL_OPEN_TOPIC
+                and content_type == DEBUG_TERMINAL_OPEN_CONTENT_TYPE
+            ):
                 result = self._handle_debug_terminal_open_stream(stream)
                 processed.append(stream_id)
                 self._save_agentbus_control_state(processed)
@@ -2762,14 +2737,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     and content_type == PEER_MESSAGE_CONTENT_TYPE
                     and not stream.get("participants")
                 ):
-                    self._dispatch_directable_turn(
-                        stream, self._handle_peer_message_stream
-                    )
+                    self._dispatch_directable_turn(stream, self._handle_peer_message_stream)
                     continue
                 if topic == HUMAN_DIRECTIVE_TOPIC:
-                    self._dispatch_directable_turn(
-                        stream, self._handle_human_directive_stream
-                    )
+                    self._dispatch_directable_turn(stream, self._handle_human_directive_stream)
                     continue
             continue
         return None
@@ -2985,31 +2956,50 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         if target_sha:
             if not branch:
                 return self._repo_update_result(
-                    stream_id, "error", "branch/ref is required with target_sha",
-                    request, repo_path=str(repo), before_sha=before_sha,
+                    stream_id,
+                    "error",
+                    "branch/ref is required with target_sha",
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
                 )
             fetched = _run_git(repo, ["fetch", "--no-tags", remote, branch])
             if fetched.returncode != 0:
                 return self._repo_update_result(
-                    stream_id, "error", "git fetch for exact source release failed",
-                    request, repo_path=str(repo), before_sha=before_sha,
-                    stdout=fetched.stdout, stderr=fetched.stderr,
+                    stream_id,
+                    "error",
+                    "git fetch for exact source release failed",
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
+                    stdout=fetched.stdout,
+                    stderr=fetched.stderr,
                 )
             target_exists = _run_git(repo, ["cat-file", "-e", "%s^{commit}" % target_sha])
-            target_published = _run_git(repo, ["merge-base", "--is-ancestor", target_sha, "FETCH_HEAD"])
-            can_fast_forward = _run_git(repo, ["merge-base", "--is-ancestor", before_sha, target_sha])
+            target_published = _run_git(
+                repo, ["merge-base", "--is-ancestor", target_sha, "FETCH_HEAD"]
+            )
+            can_fast_forward = _run_git(
+                repo, ["merge-base", "--is-ancestor", before_sha, target_sha]
+            )
             if target_exists.returncode != 0 or target_published.returncode != 0:
                 return self._repo_update_result(
-                    stream_id, "error",
+                    stream_id,
+                    "error",
                     "target_sha is not present on the fetched canonical ref",
-                    request, repo_path=str(repo), before_sha=before_sha,
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
                     target_sha=target_sha,
                 )
             if can_fast_forward.returncode != 0:
                 return self._repo_update_result(
-                    stream_id, "error",
+                    stream_id,
+                    "error",
                     "exact source release is not a fast-forward from current HEAD",
-                    request, repo_path=str(repo), before_sha=before_sha,
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
                     target_sha=target_sha,
                 )
             managed_guard = self._managed_openshell_source_update_guard(
@@ -3029,8 +3019,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 return self._repo_update_result(
                     stream_id,
                     "error",
-                    "source update rejected before checkout: %s"
-                    % managed_guard["reason"],
+                    "source update rejected before checkout: %s" % managed_guard["reason"],
                     request,
                     repo_path=str(repo),
                     before_sha=before_sha,
@@ -3063,9 +3052,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         after_sha = after.stdout.strip() if after.returncode == 0 else ""
         if target_sha and after_sha != target_sha:
             return self._repo_update_result(
-                stream_id, "error", "checkout did not reach requested target_sha",
-                request, repo_path=str(repo), before_sha=before_sha,
-                after_sha=after_sha, target_sha=target_sha,
+                stream_id,
+                "error",
+                "checkout did not reach requested target_sha",
+                request,
+                repo_path=str(repo),
+                before_sha=before_sha,
+                after_sha=after_sha,
+                target_sha=target_sha,
             )
         updated = bool(before_sha and after_sha and before_sha != after_sha)
 
@@ -3091,9 +3085,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     blocker = {
                         "status": "self_test_rollback_failed",
                         "fatal": True,
-                        "reason": (
-                            "checkout rollback failed after post-update self-test failure"
-                        ),
+                        "reason": ("checkout rollback failed after post-update self-test failure"),
                         "before_sha": before_sha,
                         "attempted_after_sha": after_sha,
                         "rollback_ok": False,
@@ -3122,8 +3114,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 return self._repo_update_result(
                     stream_id,
                     "rolled_back",
-                    "post-update self-test failed; checkout rolled back to %s"
-                    % before_sha[:12],
+                    "post-update self-test failed; checkout rolled back to %s" % before_sha[:12],
                     request,
                     repo_path=str(repo),
                     before_sha=before_sha,
@@ -3145,8 +3136,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         )
         managed_image_failure = bool(
             image_rebuild
-            and image_rebuild.get("status")
-            in {"managed_image_invalid", "managed_image_stale"}
+            and image_rebuild.get("status") in {"managed_image_invalid", "managed_image_stale"}
         )
         if updated and managed_image_failure:
             attempted_after_sha = after_sha
@@ -3160,10 +3150,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 and rollback_dirty.returncode == 0
                 and not rollback_dirty.stdout.strip()
             )
-            fatal = bool(
-                image_rebuild.get("status") == "managed_image_invalid"
-                or not rollback_ok
-            )
+            fatal = bool(image_rebuild.get("status") == "managed_image_invalid" or not rollback_ok)
             if fatal:
                 self._write_repo_update_dispatch_blocker(
                     {
@@ -3321,23 +3308,18 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         return result
 
     def _repo_update_dispatch_blocker_path(self) -> Path:
-        configured = str(
-            os.environ.get("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE") or ""
-        ).strip()
+        configured = str(os.environ.get("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE") or "").strip()
         if configured:
             return Path(configured).expanduser()
         mac_home = mac_paths.mac_home()
         return mac_home / "repo-update-dispatch-blocked.json"
 
-    def _write_repo_update_dispatch_blocker(
-        self, detail: Mapping[str, Any]
-    ) -> None:
+    def _write_repo_update_dispatch_blocker(self, detail: Mapping[str, Any]) -> None:
         payload = {
             "schema": "mac.worker.source_runtime_dispatch_block.v1",
             "agent_id": self.agent_id,
             "reason": str(
-                detail.get("reason")
-                or "source/runtime consistency requires a fleet redeploy"
+                detail.get("reason") or "source/runtime consistency requires a fleet redeploy"
             )[:1000],
             "detail": dict(detail),
             "observed_at": utcnow(),
@@ -3363,9 +3345,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
 
     def _local_repo_update_dispatch_blocker(self) -> Optional[JsonDict]:
-        in_memory = getattr(
-            self, "_in_memory_repo_update_dispatch_blocker", None
-        )
+        in_memory = getattr(self, "_in_memory_repo_update_dispatch_blocker", None)
         if isinstance(in_memory, dict):
             return dict(in_memory)
         path = self._repo_update_dispatch_blocker_path()
@@ -3459,9 +3439,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         """Prove the updated tree can at least import before adopting it."""
         if not _env_truthy(os.environ.get("MAC_REPO_UPDATE_SELF_TEST", "1")):
             return {"ok": True, "skipped": "disabled"}
-        python = (
-            os.environ.get("MAC_REPO_UPDATE_SELF_TEST_PYTHON") or sys.executable
-        )
+        python = os.environ.get("MAC_REPO_UPDATE_SELF_TEST_PYTHON") or sys.executable
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             [str(repo / "src")] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
@@ -3621,9 +3599,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             return None
         marker = Path(
             os.environ.get("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE")
-            or mac_paths.mac_home()
-            / "openshell"
-            / "image-source-sha"
+            or mac_paths.mac_home() / "openshell" / "image-source-sha"
         ).expanduser()
         try:
             marked_sha = marker.read_text(encoding="utf-8").strip()
@@ -3633,9 +3609,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             return None
         managed_ref_file = Path(
             os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
-            or mac_paths.mac_home()
-            / "openshell"
-            / "runtime-image-ref"
+            or mac_paths.mac_home() / "openshell" / "runtime-image-ref"
         ).expanduser()
         try:
             managed_ref = managed_ref_file.read_text(encoding="utf-8").strip()
@@ -3695,7 +3669,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             }
         containerfile = repo / _OPENSHELL_CONTAINERFILE_RELPATH
         image_builder = repo / "deploy/openshell/build-runtime-image.sh"
-        tag = (os.environ.get("MAC_OPENSHELL_IMAGE_TAG") or "").strip() or "localhost/mac-hermes:net"
+        tag = (
+            os.environ.get("MAC_OPENSHELL_IMAGE_TAG") or ""
+        ).strip() or "localhost/mac-hermes:net"
         docker = _resolve_openshell_docker_bin()
         if not containerfile.is_file() or not image_builder.is_file() or not docker:
             self._observe_log(
@@ -3768,7 +3744,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         if podman:
             try:
                 save = subprocess.Popen([docker, "image", "save", tag], stdout=subprocess.PIPE)
-                subprocess.run([podman, "load"], stdin=save.stdout, capture_output=True, text=True, check=False, timeout=900)
+                subprocess.run(
+                    [podman, "load"],
+                    stdin=save.stdout,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=900,
+                )
                 if save.stdout:
                     save.stdout.close()
                 save.wait(timeout=900)
@@ -4265,7 +4248,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 if isinstance(test, dict) and test.get("command"):
                     facts.append(
                         "%s %s"
-                        % (test.get("command"), "passed" if test.get("returncode") == 0 else "FAILED")
+                        % (
+                            test.get("command"),
+                            "passed" if test.get("returncode") == 0 else "FAILED",
+                        )
                     )
         if repo.get("pushed") is True:
             facts.append("branch pushed")
@@ -4332,9 +4318,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # when the contract test does not pass (it records the failure), so
         # unverified/incomplete dirt is never silently accepted.
         is_dirty = (
-            worktree is not None
-            and worktree.exists()
-            and _repository_worktree_is_dirty(worktree)
+            worktree is not None and worktree.exists() and _repository_worktree_is_dirty(worktree)
         )
         manifest_path = task_dir / "mac-evidence.json"
         # When we adopted an already-pushed branch, the agent-authored manifest
@@ -4409,16 +4393,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         manifest_path = task_dir / "mac-evidence.json"
         try:
-            existing = ensure_json_object(
-                json.loads(manifest_path.read_text(encoding="utf-8"))
-            )
+            existing = ensure_json_object(json.loads(manifest_path.read_text(encoding="utf-8")))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             existing = {}
         existing_type = str(existing.get("evidence_type") or "").strip().lower()
         if existing and existing_type != "operator_result":
-            problems.append(
-                "read-only repository report evidence_type must be operator_result"
-            )
+            problems.append("read-only repository report evidence_type must be operator_result")
         result_text = (execution.stdout or execution.stderr or execution.summary or "").strip()
         summary = str(existing.get("summary") or execution.summary or "").strip()
         if not summary:
@@ -4500,7 +4480,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
 
         test_command = _repository_contract_test_command(task)
         hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
-        test_item = self._run_repository_contract_test(worktree, test_command, task_dir=task_dir, hub_verify=hub_verify)
+        test_item = self._run_repository_contract_test(
+            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify
+        )
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
         repo["head_sha"] = _git_stdout(worktree, ["rev-parse", "HEAD"]) or repo.get("head_sha", "")
@@ -4509,13 +4491,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         repo["pushed"] = False
         repo["canonical_sync"] = canonical_sync
         if branch:
-            repo["remote_ref"] = (
-                branch if branch.startswith("refs/") else "refs/heads/%s" % branch
-            )
+            repo["remote_ref"] = branch if branch.startswith("refs/") else "refs/heads/%s" % branch
         repo["base_sha"] = prepared_base_sha
-        repo["push_remote"] = _redact_git_remote_auth(
-            _inject_git_remote_auth(canonical_remote)
-        )
+        repo["push_remote"] = _redact_git_remote_auth(_inject_git_remote_auth(canonical_remote))
         codegraph = run_codegraph_audit(worktree, files_changed)
         repo["dirty"] = _repository_worktree_is_dirty(worktree)
 
@@ -4558,7 +4536,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         elif prepush_problems:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
-        elif test_item.get("returncode") == 0 or (hub_verify and _is_hub_verify_deferred_item(test_item)):
+        elif test_item.get("returncode") == 0 or (
+            hub_verify and _is_hub_verify_deferred_item(test_item)
+        ):
             if publication_target is not None:
                 publication = guarded_push(publication_target)
                 display = (
@@ -4589,9 +4569,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                                 task_id, _s, _c, _r
                             ),
                         )
-                        self._append_harness_recovery_log(
-                            task_dir, "retry_push", _p_choice, _p_msg
-                        )
+                        self._append_harness_recovery_log(task_dir, "retry_push", _p_choice, _p_msg)
                         if _p_recovered:
                             publication = guarded_push(publication_target)
                             display = (
@@ -4606,7 +4584,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                             push_item = _process_check_item(
                                 "guarded git push",
                                 0 if publication.ok and publication.remote_verified else 1,
-                                command="guarded git push %s HEAD:refs/heads/%s" % (display, branch),
+                                command="guarded git push %s HEAD:refs/heads/%s"
+                                % (display, branch),
                                 stdout=publication.push_stdout,
                                 stderr=publication.push_stderr or publication.error,
                             )
@@ -4739,7 +4718,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 % ((status.stderr or status.stdout or "").strip() or worktree)
             )
             return
-        tracked_lines, untracked_paths, staged_new_paths = _split_repository_porcelain_status(status.stdout)
+        tracked_lines, untracked_paths, staged_new_paths = _split_repository_porcelain_status(
+            status.stdout
+        )
         if not (tracked_lines or untracked_paths or staged_new_paths):
             return
         # OpenShell returns repository content, not an authoritative Git index.
@@ -4788,7 +4769,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         task_dir: Optional[Path] = None,
         hub_verify: bool = False,
     ) -> JsonDict:
-        sandbox_item = _sandbox_repository_verification_item(task_dir, command, hub_verify=hub_verify)
+        sandbox_item = _sandbox_repository_verification_item(
+            task_dir, command, hub_verify=hub_verify
+        )
         if sandbox_item is not None:
             return sandbox_item
         if not command:
@@ -4838,7 +4821,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         evidence_type = str(manifest.get("evidence_type") or "").strip().lower()
         if not evidence_type:
             problems.append("verification.evidence_type is required")
-        if not str(manifest.get("signed_by") or "").strip() or not str(manifest.get("signature") or "").strip():
+        if (
+            not str(manifest.get("signed_by") or "").strip()
+            or not str(manifest.get("signature") or "").strip()
+        ):
             problems.append("verification.signed_by and verification.signature are required")
         if evidence_type:
             if (
@@ -4884,9 +4870,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         trusted_read_only_context, serialized_context
                     )
                 )
-                expected_evidence_type = (
-                    "review_verdict" if is_review_task else "operator_result"
-                )
+                expected_evidence_type = "review_verdict" if is_review_task else "operator_result"
                 if evidence_type != expected_evidence_type:
                     problems.append(
                         "read-only repository %s evidence_type must be %s"
@@ -4895,12 +4879,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                             expected_evidence_type,
                         )
                     )
-                problems.extend(
-                    _read_only_repository_problems(worktree, repository_context)
-                )
-                expected_access = _read_only_repository_access_evidence(
-                    trusted_read_only_context
-                )
+                problems.extend(_read_only_repository_problems(worktree, repository_context))
+                expected_access = _read_only_repository_access_evidence(trusted_read_only_context)
                 if is_review_task:
                     expected_access["independent_review_verified"] = True
                 if manifest.get("repository_access") != expected_access:
@@ -4908,14 +4888,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         "verification.repository_access does not match the prepared "
                         "read-only repository contract"
                     )
-                trusted_test_item, trusted_test_problems = (
-                    _trusted_read_only_report_test_item(task_dir, task_payload)
+                trusted_test_item, trusted_test_problems = _trusted_read_only_report_test_item(
+                    task_dir, task_payload
                 )
                 problems.extend(trusted_test_problems)
                 if _repository_contract_test_command(task_payload):
-                    expected_tests = (
-                        [trusted_test_item] if trusted_test_item is not None else []
-                    )
+                    expected_tests = [trusted_test_item] if trusted_test_item is not None else []
                     if manifest.get("tests") != expected_tests:
                         problems.append(
                             "verification.tests does not match the trusted OpenShell "
@@ -4930,9 +4908,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 # edits instead of tripping "uncommitted changes" and wasting an
                 # attempt on an otherwise-successful task.
                 task_id = str(task_payload.get("id") or "").strip()
-                self._commit_dirty_repository_worktree(
-                    task_id, task_payload, worktree, problems
-                )
+                self._commit_dirty_repository_worktree(task_id, task_payload, worktree, problems)
                 dirty = _run_git(worktree, ["status", "--porcelain"])
                 if dirty.returncode != 0:
                     problems.append(
@@ -4944,7 +4920,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 head = _run_git(worktree, ["rev-parse", "HEAD"])
                 repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
                 worktree_head = head.stdout.strip() if head.returncode == 0 else ""
-                manifest_head = str(repo.get("head_sha") or "").strip() if isinstance(repo, dict) else ""
+                manifest_head = (
+                    str(repo.get("head_sha") or "").strip() if isinstance(repo, dict) else ""
+                )
                 # Auto-committing new files advances HEAD past the SHA the agent
                 # recorded. Reconcile the manifest with the freshly committed
                 # HEAD (on disk and in memory) so the head_sha equality check
@@ -4955,9 +4933,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     and worktree_head != manifest_head
                     and isinstance(repo, dict)
                 ):
-                    self._reconcile_manifest_head(
-                        task_dir, evidence, repo, worktree_head
-                    )
+                    self._reconcile_manifest_head(task_dir, evidence, repo, worktree_head)
                     manifest_head = worktree_head
                 if worktree_head and manifest_head and worktree_head != manifest_head:
                     problems.append("verification.repo.head_sha does not match worktree HEAD")
@@ -5105,15 +5081,15 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # imposing pushed-commit semantics on operator_result evidence.
             manifest = dict(manifest)
             manifest.pop("repo", None)
-            manifest["evidence_type"] = (
-                "review_verdict" if is_review_task else "operator_result"
-            )
-            authoritative_access = _read_only_repository_access_evidence(
-                trusted_read_only_context
-            )
-            if is_review_task and ensure_json_object(
-                manifest.get("repository_access")
-            ).get("independent_review_verified") is True:
+            manifest["evidence_type"] = "review_verdict" if is_review_task else "operator_result"
+            authoritative_access = _read_only_repository_access_evidence(trusted_read_only_context)
+            if (
+                is_review_task
+                and ensure_json_object(manifest.get("repository_access")).get(
+                    "independent_review_verified"
+                )
+                is True
+            ):
                 authoritative_access["independent_review_verified"] = True
             manifest["repository_access"] = authoritative_access
             manifest, trusted_test_problems = _attach_trusted_read_only_report_test(
@@ -5181,9 +5157,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             return False
         self._last_attestation_heal_at = now
         try:
-            if _attestation_key_matches_hub(
-                self.client, self.agent_id, self.attestation_key
-            ):
+            if _attestation_key_matches_hub(self.client, self.agent_id, self.attestation_key):
                 return False
         except Exception as exc:  # noqa: BLE001 - healing is best-effort.
             self._observe_log(
@@ -5442,9 +5416,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._openshell_policy_id = str(assigned.get("policy_id") or "")
         target = self._mac_home() / "openshell-policy.yaml"
         try:
-            if target.is_file() and policy_checksum(
-                target.read_text(encoding="utf-8")
-            ) == checksum:
+            if target.is_file() and policy_checksum(target.read_text(encoding="utf-8")) == checksum:
                 return
         except OSError:
             pass
@@ -5668,8 +5640,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             "to_version": payload.get("to_version"),
             "to_checksum": to_checksum,
             "published": to_checksum == "",
-            "deadline": time.monotonic()
-            + _env_float("MAC_OPENSHELL_POLICY_WAIT_SECONDS", 300.0),
+            "deadline": time.monotonic() + _env_float("MAC_OPENSHELL_POLICY_WAIT_SECONDS", 300.0),
         }
 
     def _openshell_policy_gate(self) -> Optional[WorkerRunResult]:
@@ -5827,9 +5798,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         refreshed.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
         refreshed.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
         executor_argv = (
-            list(self.executor.argv)
-            if isinstance(self.executor, SubprocessExecutor)
-            else []
+            list(self.executor.argv) if isinstance(self.executor, SubprocessExecutor) else []
         )
         attestation = _read_only_report_executor_attestation(executor_argv)
         if attestation is not None:
@@ -5845,9 +5814,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         heartbeat_status = status_override or "idle"
         current_agent: Optional[JsonDict] = None
         try:
-            current_agent = self.client.get(
-                "/agents/%s" % quote(self.agent_id, safe="")
-            )
+            current_agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
             if status_override is None and (current_agent or {}).get("current_task_id"):
                 heartbeat_status = "busy"
         except MacApiError:
@@ -5938,7 +5905,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _maybe_start_coding_route_probe(self) -> None:
         """Asynchronously verify the preferred route before the hub dispatches work."""
         with self._coding_route_probe_lock:
-            if self._coding_route_probe_thread is not None and self._coding_route_probe_thread.is_alive():
+            if (
+                self._coding_route_probe_thread is not None
+                and self._coding_route_probe_thread.is_alive()
+            ):
                 return
             verified = self._coding_route_report.get("verified") is True
             # Successful executor-side proofs cache for five minutes. Probe on
@@ -5950,7 +5920,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 default_interval,
             )
             now = time.monotonic()
-            if self._last_coding_route_probe_at and now - self._last_coding_route_probe_at < max(1.0, interval):
+            if self._last_coding_route_probe_at and now - self._last_coding_route_probe_at < max(
+                1.0, interval
+            ):
                 return
             self._last_coding_route_probe_at = now
             self._coding_route_report = {
@@ -5990,16 +5962,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                             argv,
                             capture_output=True,
                             text=True,
-                            timeout=_env_float(
-                                "MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0
-                            ),
+                            timeout=_env_float("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0),
                             check=False,
                         )
                         output = (completed.stdout or "") + (completed.stderr or "")
-                        verified = (
-                            completed.returncode == 0
-                            and _ca.PREFLIGHT_SENTINEL in output
-                        )
+                        verified = completed.returncode == 0 and _ca.PREFLIGHT_SENTINEL in output
                         checked = {
                             **choice.observable(),
                             "schema": "mac.coding_agent.verification.v1",
@@ -6285,7 +6252,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 parsed = json.loads(raw)
                 if isinstance(parsed, list):
                     existing = [e for e in parsed if isinstance(e, dict)]
-            existing.append({"step": step, "choice": choice, "result": result_detail, "ts": _utcnow()})
+            existing.append(
+                {"step": step, "choice": choice, "result": result_detail, "ts": _utcnow()}
+            )
             log_path.write_text(
                 json.dumps(existing, indent=2) + "\n",
                 encoding="utf-8",
@@ -6299,7 +6268,11 @@ def _summary_from_output(returncode: int, stdout: str, stderr: str) -> str:
     first_line = next((line.strip() for line in stream.splitlines() if line.strip()), "")
     if first_line:
         return first_line[:500]
-    return "executor completed" if returncode == 0 else "executor failed with returncode %d" % returncode
+    return (
+        "executor completed"
+        if returncode == 0
+        else "executor failed with returncode %d" % returncode
+    )
 
 
 def _utcnow() -> str:
@@ -6372,8 +6345,7 @@ def _load_slack_accounts(hermes_home: Path) -> List[JsonDict]:
         raw_accounts = data.get("accounts") or data.get("workspaces") or data
         if isinstance(raw_accounts, dict):
             raw_accounts = [
-                {**ensure_json_object(value), "name": key}
-                for key, value in raw_accounts.items()
+                {**ensure_json_object(value), "name": key} for key, value in raw_accounts.items()
             ]
     else:
         raw_accounts = data
@@ -6388,8 +6360,7 @@ def _load_slack_home_channels(hermes_home: Path) -> List[JsonDict]:
         raw_channels = data.get("channels") or data.get("home_channels") or data
         if isinstance(raw_channels, dict):
             raw_channels = [
-                {**ensure_json_object(value), "name": key}
-                for key, value in raw_channels.items()
+                {**ensure_json_object(value), "name": key} for key, value in raw_channels.items()
             ]
     else:
         raw_channels = data
@@ -6449,7 +6420,10 @@ def _audit_safe_argv(argv: List[str]) -> List[str]:
             safe.append(arg)
             redact_next = True
             continue
-        if any(marker in lowered for marker in ("bearer ", "token=", "api_key=", "apikey=", "password=", "secret=")):
+        if any(
+            marker in lowered
+            for marker in ("bearer ", "token=", "api_key=", "apikey=", "password=", "secret=")
+        ):
             safe.append(_redacted_arg(arg))
             continue
         if len(arg) > 512:
@@ -6500,13 +6474,24 @@ def _evidence_artifact_total_max_bytes() -> int:
 # recognize generated media for durable capture and to stamp a correct
 # content-type so a downstream consumer can render/replay it.
 _MEDIA_CONTENT_TYPES = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-    ".bmp": "image/bmp", ".tiff": "image/tiff",
-    ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
     ".mkv": "video/x-matroska",
-    ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
-    ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
 }
 
 
@@ -6547,11 +6532,7 @@ def _hermes_media_cache_dirs() -> List[Path]:
     the repo worktree — captures produced media without picking up the repo's
     own checked-in assets.
     """
-    home = (
-        os.environ.get("HERMES_HOME")
-        or os.environ.get("MAC_HERMES_HOME")
-        or ""
-    ).strip()
+    home = (os.environ.get("HERMES_HOME") or os.environ.get("MAC_HERMES_HOME") or "").strip()
     base = Path(home).expanduser() if home else mac_paths.gateway_home()
     cache = base / "cache"
     return [cache / "images", cache / "audio", cache / "video"]
@@ -6724,19 +6705,29 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "stderr.txt", "stderr.txt", "stderr"),
         (task_dir / "mac-evidence.json", "mac-evidence.json", "verification_manifest"),
         (task_dir / "finalizer-progress.json", "finalizer-progress.json", "finalizer_progress"),
-        (task_dir / "mac-sandbox-verification.json", "mac-sandbox-verification.json", "sandbox_verification"),
+        (
+            task_dir / "mac-sandbox-verification.json",
+            "mac-sandbox-verification.json",
+            "sandbox_verification",
+        ),
         (task_dir / "openshell-salvage.json", "openshell-salvage.json", "sandbox_salvage"),
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
         (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
         (task_dir / "executor-task.json", "executor-task.json", "review_context"),
-        (task_dir / "review-independent-findings.json", "review-independent-findings.json", "review_experiment"),
+        (
+            task_dir / "review-independent-findings.json",
+            "review-independent-findings.json",
+            "review_experiment",
+        ),
         (task_dir / "review-protocol.json", "review-protocol.json", "review_experiment"),
-        (task_dir / "review-independent-draft-evidence.json", "review-independent-draft-evidence.json", "review_experiment"),
+        (
+            task_dir / "review-independent-draft-evidence.json",
+            "review-independent-draft-evidence.json",
+            "review_experiment",
+        ),
     ]
     try:
-        wip_manifest = json.loads(
-            (task_dir / "repository-wip.json").read_text(encoding="utf-8")
-        )
+        wip_manifest = json.loads((task_dir / "repository-wip.json").read_text(encoding="utf-8"))
     except Exception:
         wip_manifest = {}
     if isinstance(wip_manifest, dict):
@@ -6794,6 +6785,7 @@ def _default_self_update_repo() -> Path:
     if configured:
         return Path(configured).expanduser()
     return Path(__file__).resolve().parents[2]
+
 
 def _startup_import_self_check(repo: Path) -> str:
     """Run 'import mac.services, mac.worker, mac.api' in a subprocess; non-fatal."""
@@ -7193,21 +7185,15 @@ def _task_detail_canonical_remote_url(task_detail: JsonDict) -> str:
     metadata = ensure_json_object(task.get("metadata"))
     candidates = (
         ensure_json_object(
-            ensure_json_object(metadata.get("execution_contract")).get(
-                "repository_contract"
-            )
+            ensure_json_object(metadata.get("execution_contract")).get("repository_contract")
         ),
-        ensure_json_object(
-            ensure_json_object(metadata.get("origin")).get("repository_contract")
-        ),
+        ensure_json_object(ensure_json_object(metadata.get("origin")).get("repository_contract")),
         ensure_json_object(metadata.get("repository_contract")),
         ensure_json_object(metadata.get("origin")),
     )
     for candidate in candidates:
         remote_url = str(
-            candidate.get("canonical_remote_url")
-            or candidate.get("repository_url")
-            or ""
+            candidate.get("canonical_remote_url") or candidate.get("repository_url") or ""
         ).strip()
         if remote_url:
             return remote_url
@@ -7366,15 +7352,9 @@ def _read_only_repository_problems(worktree: Path, context: JsonDict) -> List[st
     )
     refs_digest = str(context.get("repository_refs_digest") or "").strip()
     observed_refs_digest = (
-        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
-        if refs.returncode == 0
-        else ""
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest() if refs.returncode == 0 else ""
     )
-    if (
-        refs.returncode != 0
-        or not refs_digest
-        or observed_refs_digest != refs_digest
-    ):
+    if refs.returncode != 0 or not refs_digest or observed_refs_digest != refs_digest:
         problems.append("read-only repository refs changed from their prepared state")
     remotes = _run_git(worktree, ["remote"])
     if remotes.returncode != 0:
@@ -7389,23 +7369,14 @@ def _read_only_repository_problems(worktree: Path, context: JsonDict) -> List[st
         cleaned = _run_git(worktree, ["clean", "-fdx", "-e", ".codegraph/"])
         if cleaned.returncode != 0:
             problems.append("could not clean read-only repository disposable outputs")
-    expected_content_digest = str(
-        context.get("repository_content_digest") or ""
-    ).strip()
+    expected_content_digest = str(context.get("repository_content_digest") or "").strip()
     try:
         observed_content_digest = read_only_repository_content_digest(worktree)
     except OSError as exc:
         observed_content_digest = ""
-        problems.append(
-            "could not hash read-only repository content: %s" % str(exc)
-        )
-    if (
-        not expected_content_digest
-        or observed_content_digest != expected_content_digest
-    ):
-        problems.append(
-            "read-only repository content changed from its prepared state"
-        )
+        problems.append("could not hash read-only repository content: %s" % str(exc))
+    if not expected_content_digest or observed_content_digest != expected_content_digest:
+        problems.append("read-only repository content changed from its prepared state")
     return problems
 
 
@@ -7432,9 +7403,7 @@ def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
         "base_sha": context.get("repository_base_sha"),
         "head_sha": context.get("repository_base_sha"),
         # branch may already be a full ref; avoid doubling the prefix.
-        "remote_ref": (
-            branch if branch.startswith("refs/") else "refs/heads/%s" % branch
-        )
+        "remote_ref": (branch if branch.startswith("refs/") else "refs/heads/%s" % branch)
         if branch
         else "",
         "dirty": True,
@@ -7497,9 +7466,7 @@ def _repository_contract_test_command(task: JsonDict) -> str:
         # Read-only reports may execute only the test command in their current
         # execution contract.  Historical origin/top-level contracts are not
         # authority for executable verification code.
-        current = _nested_dict(
-            metadata, "execution_contract", "repository_contract", "test"
-        )
+        current = _nested_dict(metadata, "execution_contract", "repository_contract", "test")
         return str(current.get("command") or "").strip()
     candidates = [
         _nested_dict(metadata, "execution_contract", "test"),
@@ -7557,7 +7524,6 @@ def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str
     return authed, _redact_git_remote_auth(authed)
 
 
-
 def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
@@ -7610,8 +7576,7 @@ def _is_hub_verify_deferred_item(item: Any) -> bool:
         return False
     return (
         str(item.get("status") or "").strip().lower() == "deferred"
-        and str(item.get("execution_environment") or "").strip().lower()
-        == "hub_verify_pending"
+        and str(item.get("execution_environment") or "").strip().lower() == "hub_verify_pending"
     )
 
 
@@ -7644,9 +7609,7 @@ def _sandbox_repository_verification_item(
     if str(loaded.get("schema") or "").strip() != "mac.sandbox_verification.v1":
         record_problem = "sandbox verification record has an invalid schema"
     elif require_command_match and observed_command != command:
-        record_problem = (
-            "sandbox verification command does not match the repository contract"
-        )
+        record_problem = "sandbox verification command does not match the repository contract"
     try:
         returncode = int(loaded.get("returncode"))
     except (TypeError, ValueError):
@@ -7659,9 +7622,7 @@ def _sandbox_repository_verification_item(
         command=command if require_command_match else (observed_command or command),
         stdout=str(loaded.get("stdout") or ""),
         stderr="\n".join(
-            part
-            for part in (str(loaded.get("stderr") or "").strip(), record_problem)
-            if part
+            part for part in (str(loaded.get("stderr") or "").strip(), record_problem) if part
         ),
     )
     item["execution_environment"] = "openshell_sandbox"
@@ -7679,18 +7640,14 @@ def _trusted_read_only_report_test_item(
 
     command = _repository_contract_test_command(task)
     if not command:
-        return None, [
-            "read-only repository report current contract lacks test.command"
-        ]
+        return None, ["read-only repository report current contract lacks test.command"]
     item = _sandbox_repository_verification_item(
         task_dir,
         command,
         require_command_match=True,
     )
     if item is None:
-        return None, [
-            "read-only repository report lacks trusted OpenShell contract test evidence"
-        ]
+        return None, ["read-only repository report lacks trusted OpenShell contract test evidence"]
     if _worker_verification_item_passed(item) is not True:
         return item, ["read-only repository report contract test did not pass"]
     return item, []
@@ -7912,7 +7869,9 @@ def _worker_verification_contract_problems(
     if evidence_type in {"test", "artifact"}:
         problems = _worker_require_pushed_repo_anchor(manifest)
         if _worker_passed_verification_check_count(manifest) < 1:
-            problems.append("%s evidence requires at least one passing check or test" % evidence_type)
+            problems.append(
+                "%s evidence requires at least one passing check or test" % evidence_type
+            )
         if evidence_type == "artifact" and not _manifest_list(manifest.get("artifacts")):
             problems.append("artifact evidence requires artifacts")
         problems.extend(codegraph_audit_manifest_problems(manifest))
@@ -7980,7 +7939,9 @@ def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> Jso
     if not isinstance(loaded, dict):
         return {}
     metadata = loaded.get("metadata") if isinstance(loaded.get("metadata"), dict) else {}
-    manifest = metadata.get("verification") if isinstance(metadata.get("verification"), dict) else None
+    manifest = (
+        metadata.get("verification") if isinstance(metadata.get("verification"), dict) else None
+    )
     if manifest is None and isinstance(loaded.get("verification"), dict):
         manifest = loaded.get("verification")
     return dict(manifest) if isinstance(manifest, dict) else {}
@@ -7988,7 +7949,9 @@ def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> Jso
 
 def _worker_review_verdict_executor_repo_problems(task_dir: Path, manifest: JsonDict) -> List[str]:
     executor_manifest = _executor_verification_manifest_from_review_workspace(task_dir)
-    executor_repo = executor_manifest.get("repo") if isinstance(executor_manifest.get("repo"), dict) else {}
+    executor_repo = (
+        executor_manifest.get("repo") if isinstance(executor_manifest.get("repo"), dict) else {}
+    )
     if not executor_repo:
         return []
     review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
@@ -8208,18 +8171,11 @@ def _executor_failure_transition_detail(
     """Preserve a bounded diagnosis and identify retryable verifier transport."""
 
     output_tail = _truncate_process_text(
-        "\n".join(
-            part
-            for part in (execution.stderr, execution.stdout)
-            if str(part or "").strip()
-        )
+        "\n".join(part for part in (execution.stderr, execution.stdout) if str(part or "").strip())
     )
-    blob = " ".join(
-        (execution.summary, execution.stderr, execution.stdout)
-    ).lower()
+    blob = " ".join((execution.summary, execution.stderr, execution.stdout)).lower()
     verifier_context = (
-        "openshell repository verifier" in blob
-        or "sandbox repository verification" in blob
+        "openshell repository verifier" in blob or "sandbox repository verification" in blob
     )
     verifier_transport = any(
         marker in blob
@@ -8531,16 +8487,19 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
 
 def _inject_git_remote_auth(url: str) -> str:
     from mac.gitops import inject_git_remote_auth as _impl
+
     return _impl(url)
 
 
 def _redact_git_remote_auth(url: str) -> str:
     from mac.gitops import redact_git_remote_auth as _impl
+
     return _impl(url)
 
 
 def _redact_git_remote_auth_in_text(value: str) -> str:
     from mac.gitops import redact_git_remote_auth_in_text as _impl
+
     return _impl(value)
 
 
@@ -8857,7 +8816,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="mac worker harness")
     parser.add_argument(
         "--url",
-        default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8789",
+        default=os.environ.get("MAC_URL")
+        or os.environ.get("MAC_HUB_URL")
+        or "http://127.0.0.1:8789",
     )
     # Token resolution honors --fleet (or MAC_FLEET) so machines in
     # multiple fleets don't collide on a single MAC_API_TOKEN. Resolution
@@ -9020,7 +8981,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         registered: Optional[JsonDict] = None
         attestation_key = os.environ.get("MAC_ATTESTATION_KEY")
-        attestation_env_path = Path(args.attestation_key_env).expanduser() if args.attestation_key_env else None
+        attestation_env_path = (
+            Path(args.attestation_key_env).expanduser() if args.attestation_key_env else None
+        )
         if not attestation_key and attestation_env_path is not None:
             attestation_key = _read_env_value(attestation_env_path, "MAC_ATTESTATION_KEY")
         if args.register:
@@ -9056,9 +9019,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             from mac.openshell_runtime import apply_openshell_requirement
 
             apply_openshell_requirement(registered.get("resources"), os.environ)
-            _apply_read_only_report_executor_approval(
-                registered.get("resources"), os.environ
-            )
+            _apply_read_only_report_executor_approval(registered.get("resources"), os.environ)
         # --- startup behaviors (all default-on, env-gated) ---
         startup_info: JsonDict = {"agent_id": agent_id}
         # Dispatch holds are hub/operator authority. An ordinary worker restart
@@ -9066,7 +9027,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         # operator, so clearing is legacy opt-in rather than the default.
         if args.register and _env_bool("MAC_STARTUP_CLEAR_HOLD", False):
             try:
-                client.request("DELETE", "/agents/%s/dispatch-hold" % quote(agent_id, safe=""), None)
+                client.request(
+                    "DELETE", "/agents/%s/dispatch-hold" % quote(agent_id, safe=""), None
+                )
                 startup_info["hold_cleared"] = True
             except Exception:
                 startup_info["hold_cleared"] = False
@@ -9079,11 +9042,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if args.self_update_repo
                     else _default_self_update_repo()
                 )
-                sha = subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=str(self_update_repo),
-                    stderr=subprocess.DEVNULL,
-                ).decode("utf-8").strip()
+                sha = (
+                    subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=str(self_update_repo),
+                        stderr=subprocess.DEVNULL,
+                    )
+                    .decode("utf-8")
+                    .strip()
+                )
                 startup_info["checkout_sha"] = sha
             except Exception:
                 startup_info["checkout_sha"] = None
@@ -9096,7 +9063,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if args.self_update_repo
                     else _default_self_update_repo()
                 )
-                startup_info["import_self_check"] = _startup_import_self_check(self_update_repo_for_check)
+                startup_info["import_self_check"] = _startup_import_self_check(
+                    self_update_repo_for_check
+                )
             except Exception as exc:
                 startup_info["import_self_check"] = "error: " + str(exc)
         else:
@@ -9117,24 +9086,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                     index_url=args.install_index_url,
                 )
             if args.install_npm:
-                results["npm"] = installer.ensure_npm(
-                    args.install_npm, reason=args.install_reason
-                )
-            print(json.dumps({"status": "self-install", "results": results}, indent=2, sort_keys=True))
+                results["npm"] = installer.ensure_npm(args.install_npm, reason=args.install_reason)
+            print(
+                json.dumps({"status": "self-install", "results": results}, indent=2, sort_keys=True)
+            )
             return 0 if all(r.get("ok", True) for r in results.values()) else 1
         if args.heartbeat_only:
             deployment_generation, _ = _deployment_barrier_state()
             heartbeat_resources: Optional[Mapping[str, Any]] = None
             if deployment_generation:
                 registered_resources = (
-                    registered.get("resources")
-                    if isinstance(registered, Mapping)
-                    else None
+                    registered.get("resources") if isinstance(registered, Mapping) else None
                 )
                 heartbeat_resources = (
-                    dict(registered_resources)
-                    if isinstance(registered_resources, Mapping)
-                    else {}
+                    dict(registered_resources) if isinstance(registered_resources, Mapping) else {}
                 )
             heartbeat_payload = _deployment_heartbeat_payload(
                 "idle",
@@ -9184,7 +9149,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else None,
                 attestation_key=attestation_key,
             )
-            print(json.dumps({**startup_info, "status": "dry_run", "assignment": worker.dry_run_claim()}, indent=2, sort_keys=True))
+            print(
+                json.dumps(
+                    {**startup_info, "status": "dry_run", "assignment": worker.dry_run_claim()},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
             return 0
         if not executor_argv:
             raise MacApiError("--executor is required unless --heartbeat-only is set")
@@ -9208,7 +9179,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         if args.loop:
             results = worker.run_forever(max_iterations=args.max_iterations)
-            print(json.dumps([{**startup_info, **r.to_dict()} for r in results], indent=2, sort_keys=True))
+            print(
+                json.dumps(
+                    [{**startup_info, **r.to_dict()} for r in results], indent=2, sort_keys=True
+                )
+            )
             if any(result.status == "self_update_restart" for result in results):
                 return SELF_UPDATE_RESTART_EXIT_CODE
         else:

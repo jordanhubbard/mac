@@ -180,9 +180,7 @@ def test_bound_openclaw_agent_can_crud_only_its_own_config_flags() -> None:
             f"/v1/agents/{agent.id}/config-flags?channel=slack:C123",
             headers=headers,
         )
-        listed_peer = client.get(
-            f"/v1/agents/{peer.id}/config-flags", headers=headers
-        )
+        listed_peer = client.get(f"/v1/agents/{peer.id}/config-flags", headers=headers)
         cleared = client.request(
             "DELETE",
             f"/v1/agents/{agent.id}/config-flags/show_reasoning",
@@ -237,12 +235,8 @@ def test_bound_agent_reports_own_deploy_config_and_reads_effective_view() -> Non
             headers=headers,
             json={"document": document},
         )
-        effective = client.get(
-            f"/v1/agents/{agent.id}/effective-config", headers=headers
-        )
-        effective_peer = client.get(
-            f"/v1/agents/{peer.id}/effective-config", headers=headers
-        )
+        effective = client.get(f"/v1/agents/{agent.id}/effective-config", headers=headers)
+        effective_peer = client.get(f"/v1/agents/{peer.id}/effective-config", headers=headers)
 
     assert reported.status_code == 200
     assert reported.json()["schema"] == "mac.agent_deploy_config.v1"
@@ -364,9 +358,7 @@ def test_continuity_serve_emits_observability_event() -> None:
     )
     headers = {"Authorization": "Bearer agent-token"}
     with TestClient(app) as client:
-        response = client.get(
-            f"/v1/agents/{agent.id}/continuity", headers=headers
-        )
+        response = client.get(f"/v1/agents/{agent.id}/continuity", headers=headers)
     assert response.status_code == 200
     events = cp.list_observability(name="continuity.context_served", limit=5)
     assert events and events[0].subject_id == agent.id

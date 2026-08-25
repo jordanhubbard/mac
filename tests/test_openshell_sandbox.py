@@ -329,16 +329,14 @@ def test_build_whitelists_uploaded_paths_for_git(create_argv):
     assert "GIT_CONFIG_KEY_0=safe.directory" in inner
     assert "GIT_CONFIG_VALUE_0='*'" in inner
     # Must be in force before the git snapshot section AND the agent exec.
-    assert inner.index("safe.directory") < inner.index('init -q')
+    assert inner.index("safe.directory") < inner.index("init -q")
     assert inner.index("safe.directory") < inner.index("\nexec ")
 
 
 def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
     workspace = tmp_path / "task-7"
     workspace.mkdir()
-    env_file, toolchain_file = te._write_sandbox_runtime_files(
-        workspace, "/sandbox/task-7"
-    )
+    env_file, toolchain_file = te._write_sandbox_runtime_files(workspace, "/sandbox/task-7")
     content = env_file.read_text(encoding="utf-8")
     assert "HOME=/tmp" in content
     assert "MAC_TASK_WORKSPACE=/sandbox/task-7" in content
@@ -438,9 +436,7 @@ def test_read_only_report_env_withholds_repository_credentials_and_git_config(
         "GIT_CONFIG_KEY_0,GIT_CONFIG_VALUE_0,OPENAI_API_KEY",
     )
     monkeypatch.setenv("MAC_TASK_REPO_ACCESS_MODE", "read_only")
-    monkeypatch.setenv(
-        "MAC_TASK_REPO_ACCESS_SCHEMA", "mac.report_repository_access.v1"
-    )
+    monkeypatch.setenv("MAC_TASK_REPO_ACCESS_SCHEMA", "mac.report_repository_access.v1")
     for name in (
         "GH_TOKEN",
         "GIT_ASKPASS",
@@ -468,7 +464,9 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_CODING_AGENT_SANDBOX", "off")
     steps = []
     events = []
-    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args) or (True, "")))
+    monkeypatch.setattr(
+        te, "_sandbox_step", lambda args, *, timeout: steps.append(args) or (True, "")
+    )
     monkeypatch.setattr(
         te,
         "emit_telemetry",
@@ -499,9 +497,7 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
     ]
 
 
-def test_sandbox_create_argv_is_small_and_contains_no_prompt_or_tokens(
-    monkeypatch, tmp_path
-):
+def test_sandbox_create_argv_is_small_and_contains_no_prompt_or_tokens(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_WORKER_TOKEN", "mac-super-secret-token")
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
@@ -519,9 +515,7 @@ def test_sandbox_create_argv_is_small_and_contains_no_prompt_or_tokens(
     assert len(joined) < 4000
 
 
-def test_progress_monitor_emits_state_transitions_from_sandbox_snapshot(
-    monkeypatch, tmp_path
-):
+def test_progress_monitor_emits_state_transitions_from_sandbox_snapshot(monkeypatch, tmp_path):
     snapshots = iter(
         [
             {
@@ -543,9 +537,7 @@ def test_progress_monitor_emits_state_transitions_from_sandbox_snapshot(
     events = []
     monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
     monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "a" * 40)
-    monkeypatch.setattr(
-        te, "_sandbox_progress_snapshot", lambda *args: next(snapshots)
-    )
+    monkeypatch.setattr(te, "_sandbox_progress_snapshot", lambda *args: next(snapshots))
     monkeypatch.setattr(
         te,
         "emit_telemetry",
@@ -571,15 +563,17 @@ def test_invoke_sandboxed_harvests_then_tears_down_on_agent_failure(monkeypatch,
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "sb2")
     steps = []
-    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args[0]) or (True, "")))
+    monkeypatch.setattr(
+        te, "_sandbox_step", lambda args, *, timeout: steps.append(args[0]) or (True, "")
+    )
     workspace = tmp_path / "task-7"
     workspace.mkdir()
     with pytest.raises(RuntimeError, match="agent boom"):
         te._invoke_agent(FakeRunner(raises=True), "do it", workspace, "tid", {})
     assert steps[-2:] == ["download", "delete"]
-    assert '"runner_completed": false' in (
-        workspace / "openshell-salvage.json"
-    ).read_text(encoding="utf-8")
+    assert '"runner_completed": false' in (workspace / "openshell-salvage.json").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_repository_failure_preserves_wip_before_delete(monkeypatch, tmp_path):
@@ -598,18 +592,14 @@ def test_repository_failure_preserves_wip_before_delete(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(te, "_sandbox_download", lambda *_: True)
     deleted = []
-    monkeypatch.setattr(
-        te, "_sandbox_delete", lambda name: deleted.append(name) or True
-    )
+    monkeypatch.setattr(te, "_sandbox_delete", lambda name: deleted.append(name) or True)
     preserved = {
         "schema": te.REPOSITORY_WIP_BUNDLE_SCHEMA,
         "status": "preserved",
         "salvage_head_sha": "a" * 40,
         "bundle_sha256": "sha256:" + ("b" * 64),
     }
-    monkeypatch.setattr(
-        te, "preserve_repository_wip_bundle", lambda *_: preserved
-    )
+    monkeypatch.setattr(te, "preserve_repository_wip_bundle", lambda *_: preserved)
     task = {
         "id": "task-repo-failure",
         "metadata": {"execution_contract": {"type": "repository"}},
@@ -625,16 +615,12 @@ def test_repository_failure_preserves_wip_before_delete(monkeypatch, tmp_path):
 
     assert result.returncode == 124
     assert deleted == ["sb-repo-failure"]
-    salvage = json.loads(
-        (workspace / "openshell-salvage.json").read_text(encoding="utf-8")
-    )
+    salvage = json.loads((workspace / "openshell-salvage.json").read_text(encoding="utf-8"))
     assert salvage["wip_preservation"] == preserved
     assert salvage["kept"] is False
 
 
-def test_repository_failure_retains_sandbox_when_wip_preservation_fails(
-    monkeypatch, tmp_path
-):
+def test_repository_failure_retains_sandbox_when_wip_preservation_fails(monkeypatch, tmp_path):
     workspace = tmp_path / "task-7"
     repo = workspace / "repo"
     repo.mkdir(parents=True)
@@ -650,9 +636,7 @@ def test_repository_failure_retains_sandbox_when_wip_preservation_fails(
     )
     monkeypatch.setattr(te, "_sandbox_download", lambda *_: True)
     deleted = []
-    monkeypatch.setattr(
-        te, "_sandbox_delete", lambda name: deleted.append(name) or True
-    )
+    monkeypatch.setattr(te, "_sandbox_delete", lambda name: deleted.append(name) or True)
 
     def refuse_preservation(*_args):
         raise te.PreservationMissing("bundle verification failed")
@@ -673,9 +657,7 @@ def test_repository_failure_retains_sandbox_when_wip_preservation_fails(
 
     assert result.returncode == 124
     assert deleted == []
-    salvage = json.loads(
-        (workspace / "openshell-salvage.json").read_text(encoding="utf-8")
-    )
+    salvage = json.loads((workspace / "openshell-salvage.json").read_text(encoding="utf-8"))
     assert salvage["kept"] is True
     assert salvage["wip_preservation"]["status"] == "failed"
     assert "bundle verification failed" in salvage["wip_preservation"]["error"]
@@ -685,7 +667,9 @@ def test_invoke_sandboxed_keep_skips_delete(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_KEEP", "1")
     steps = []
-    monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args[0]) or (True, "")))
+    monkeypatch.setattr(
+        te, "_sandbox_step", lambda args, *, timeout: steps.append(args[0]) or (True, "")
+    )
     workspace = tmp_path / "task-7"
     workspace.mkdir()
     te._invoke_agent(FakeRunner(), "do it", workspace, "tid", {})
@@ -705,9 +689,7 @@ def test_merge_replaces_prior_internal_symlink_before_real_directory(tmp_path):
 
     second = tmp_path / "second-download"
     (second / "foo").mkdir(parents=True)
-    (second / "foo" / "task.json").write_text(
-        "nested sandbox output\n", encoding="utf-8"
-    )
+    (second / "foo" / "task.json").write_text("nested sandbox output\n", encoding="utf-8")
     _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(second, workspace)
 
     assert not (workspace / "foo").is_symlink()
@@ -715,9 +697,7 @@ def test_merge_replaces_prior_internal_symlink_before_real_directory(tmp_path):
     assert (workspace / "foo" / "task.json").read_text(encoding="utf-8") == (
         "nested sandbox output\n"
     )
-    assert (workspace / "task.json").read_text(encoding="utf-8") == (
-        "trusted host control\n"
-    )
+    assert (workspace / "task.json").read_text(encoding="utf-8") == ("trusted host control\n")
 
 
 def test_merge_replaces_external_destination_symlink_without_traversal(tmp_path):
@@ -729,22 +709,18 @@ def test_merge_replaces_external_destination_symlink_without_traversal(tmp_path)
     (workspace / "foo").symlink_to(outside, target_is_directory=True)
     download = tmp_path / "download"
     (download / "foo").mkdir(parents=True)
-    (download / "foo" / "result.txt").write_text(
-        "sandbox result\n", encoding="utf-8"
-    )
+    (download / "foo" / "result.txt").write_text("sandbox result\n", encoding="utf-8")
 
     _REAL_MERGE_SANDBOX_DOWNLOAD_TREE(download, workspace)
 
     assert not (workspace / "foo").is_symlink()
-    assert (workspace / "foo" / "result.txt").read_text(encoding="utf-8") == (
-        "sandbox result\n"
-    )
-    assert (outside / "result.txt").read_text(encoding="utf-8") == (
-        "outside sentinel\n"
-    )
+    assert (workspace / "foo" / "result.txt").read_text(encoding="utf-8") == ("sandbox result\n")
+    assert (outside / "result.txt").read_text(encoding="utf-8") == ("outside sentinel\n")
 
 
-@pytest.mark.parametrize("name", ["task.json", "mac-evidence.json", "mac-sandbox-verification.json"])
+@pytest.mark.parametrize(
+    "name", ["task.json", "mac-evidence.json", "mac-sandbox-verification.json"]
+)
 def test_merge_rejects_symlinked_host_and_evidence_controls(tmp_path, name):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -778,9 +754,7 @@ def test_unsandboxed_explicit_allow(monkeypatch):
 def test_unsandboxed_fail_closed_raises(monkeypatch):
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "0")
     with pytest.raises(RuntimeError, match="without an OpenShell sandbox"):
-        te._unsandboxed_agent_argv(
-            ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
-        )
+        te._unsandboxed_agent_argv(["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"])
 
 
 def test_invoke_unsandboxed_fail_closed_raises(monkeypatch, tmp_path):
@@ -831,9 +805,7 @@ def _exact_read_only_report_workspace(tmp_path: Path):
     _git(repo, "config", "user.email", "mac-tests@example.invalid")
     _git(repo, "config", "user.name", "MAC tests")
     (repo / ".gitignore").write_text("build/\n", encoding="utf-8")
-    (repo / "Makefile").write_text(
-        "smoke:\n\t@echo trusted-smoke\n", encoding="utf-8"
-    )
+    (repo / "Makefile").write_text("smoke:\n\t@echo trusted-smoke\n", encoding="utf-8")
     _git(repo, "add", ".gitignore", "Makefile")
     _git(repo, "commit", "-m", "base")
     base_sha = _git(repo, "rev-parse", "HEAD")
@@ -863,9 +835,7 @@ def _exact_read_only_report_workspace(tmp_path: Path):
         "repository_access_schema": "mac.report_repository_access.v1",
         "repository_access_mode": "read_only",
     }
-    (workspace / "task.json").write_text(
-        json.dumps({"task": task}), encoding="utf-8"
-    )
+    (workspace / "task.json").write_text(json.dumps({"task": task}), encoding="utf-8")
     (workspace / "repository-worktree.json").write_text(
         json.dumps(task["metadata"]["runtime"]), encoding="utf-8"
     )
@@ -895,18 +865,15 @@ def test_read_only_verifier_workspace_is_fresh_exact_base(tmp_path):
     assert _git(verifier_repo, "for-each-ref") == ""
 
 
-def test_read_only_verification_uses_second_secret_free_sandbox(
-    monkeypatch, tmp_path
-):
+def test_read_only_verification_uses_second_secret_free_sandbox(monkeypatch, tmp_path):
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     monkeypatch.setenv(
         "MAC_OPENSHELL_CREATE_ARGS",
         "--from ghcr.io/example/runtime@sha256:%s "
         "--upload /host/secret:/tmp/secret --provider codex "
         "--env=GH_TOKEN=secret --name evil --policy /tmp/evil --no-keep "
-        "--driver-config-json '{\"host_path\":\"/host/secret\"}' "
-        "--approval-mode auto --cpu 2 --gateway fleet"
-        % ("a" * 64),
+        '--driver-config-json \'{"host_path":"/host/secret"}\' '
+        "--approval-mode auto --cpu 2 --gateway fleet" % ("a" * 64),
     )
     calls = []
     monkeypatch.setattr(
@@ -954,9 +921,9 @@ def test_read_only_verification_uses_second_secret_free_sandbox(
             upload = Path(args[args.index("--upload") + 1].split(":", 1)[0])
             assert not (upload / ".mac-toolchain").exists()
             assert not (upload / "repo" / "build").exists()
-            verifier_script = (
-                upload / ".mac-sandbox-repository-verify.sh"
-            ).read_text(encoding="utf-8")
+            verifier_script = (upload / ".mac-sandbox-repository-verify.sh").read_text(
+                encoding="utf-8"
+            )
             assert "mac.read_only_report_verifier" in verifier_script
             assert "MAC_READ_ONLY_AUTHORITATIVE_VERIFIER" in verifier_script
             return True, ""
@@ -969,29 +936,21 @@ def test_read_only_verification_uses_second_secret_free_sandbox(
 
     monkeypatch.setattr(te, "_sandbox_step", step)
 
-    assert te._sandbox_run_read_only_repository_verification(
-        "mac-task-agent", workspace, task
-    )
+    assert te._sandbox_run_read_only_repository_verification("mac-task-agent", workspace, task)
     assert [call[0] for call in calls] == ["create", "download", "delete"]
     trusted = workspace / te._TRUSTED_READ_ONLY_VERIFICATION_FILE
-    assert json.loads(trusted.read_text(encoding="utf-8"))["stdout"] == (
-        "trusted-smoke\n"
-    )
+    assert json.loads(trusted.read_text(encoding="utf-8"))["stdout"] == ("trusted-smoke\n")
 
     # An agent-authored same-named result is replaced only after harvest.
     (workspace / te._SANDBOX_VERIFICATION_FILE).write_text(
         '{"status":"pass","stdout":"fake"}', encoding="utf-8"
     )
     assert te._promote_trusted_read_only_verification(workspace)
-    promoted = json.loads(
-        (workspace / te._SANDBOX_VERIFICATION_FILE).read_text(encoding="utf-8")
-    )
+    promoted = json.loads((workspace / te._SANDBOX_VERIFICATION_FILE).read_text(encoding="utf-8"))
     assert promoted["stdout"] == "trusted-smoke\n"
 
 
-def test_read_only_verifier_is_deleted_after_unexpected_create_failure(
-    monkeypatch, tmp_path
-):
+def test_read_only_verifier_is_deleted_after_unexpected_create_failure(monkeypatch, tmp_path):
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     calls = []
     monkeypatch.setattr(
@@ -1014,15 +973,11 @@ def test_read_only_verifier_is_deleted_after_unexpected_create_failure(
     monkeypatch.setattr(te, "_sandbox_step", step)
 
     with pytest.raises(RuntimeError, match="gateway disconnected"):
-        te._sandbox_run_read_only_repository_verification(
-            "mac-task-agent", workspace, task
-        )
+        te._sandbox_run_read_only_repository_verification("mac-task-agent", workspace, task)
     assert [call[0] for call in calls] == ["create", "delete"]
 
 
-def test_trusted_read_only_verification_fails_closed_on_atomic_store_error(
-    monkeypatch, tmp_path
-):
+def test_trusted_read_only_verification_fails_closed_on_atomic_store_error(monkeypatch, tmp_path):
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     source = tmp_path / "verification.json"
     source.write_text(
@@ -1064,23 +1019,17 @@ def test_trusted_read_only_verification_rejects_unbound_legacy_pass(
         encoding="utf-8",
     )
 
-    assert not te._store_trusted_read_only_verification(
-        source, workspace, task
-    )
+    assert not te._store_trusted_read_only_verification(source, workspace, task)
     assert not (workspace / te._TRUSTED_READ_ONLY_VERIFICATION_FILE).exists()
 
 
-def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(
-    monkeypatch, tmp_path
-):
+def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(monkeypatch, tmp_path):
     workspace, repo, task = _exact_read_only_report_workspace(tmp_path)
     expected_control = te._read_only_git_control_digest(repo)
     alternate = tmp_path / "attacker-clean-worktree"
     alternate.mkdir()
     (alternate / ".gitignore").write_text("build/\n", encoding="utf-8")
-    (alternate / "Makefile").write_text(
-        "smoke:\n\t@echo trusted-smoke\n", encoding="utf-8"
-    )
+    (alternate / "Makefile").write_text("smoke:\n\t@echo trusted-smoke\n", encoding="utf-8")
 
     # This is the confirmed bypass: plain `git -C` obeys the poisoned local
     # config and reports the alternate tree as clean while the actual checkout
@@ -1088,9 +1037,7 @@ def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(
     _git(repo, "config", "core.worktree", str(alternate))
     (repo / "Makefile").write_text("mutated actual checkout\n", encoding="utf-8")
     assert _git(repo, "status", "--porcelain") == ""
-    trusted_status = te._git_for_read_only_verifier(
-        repo, ["status", "--porcelain"]
-    )
+    trusted_status = te._git_for_read_only_verifier(repo, ["status", "--porcelain"])
     assert trusted_status.returncode == 0
     assert "Makefile" in trusted_status.stdout
     assert "-C" not in trusted_status.args
@@ -1104,9 +1051,7 @@ def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(
     def execute_postcheck(args, *, timeout):
         del timeout
         script = args[-1]
-        assert script.index("observed_git_control") < script.index(
-            "trusted_git status"
-        )
+        assert script.index("observed_git_control") < script.index("trusted_git status")
         assert "git -C" not in script
         completed = subprocess.run(
             ["/bin/bash", "-c", script],
@@ -1114,9 +1059,7 @@ def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(
             capture_output=True,
             check=False,
         )
-        return completed.returncode == 0, (
-            completed.stderr or completed.stdout
-        ).strip()
+        return completed.returncode == 0, (completed.stderr or completed.stdout).strip()
 
     monkeypatch.setattr(te, "_sandbox_step", execute_postcheck)
 
@@ -1132,25 +1075,15 @@ def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(
 
 
 def _stub_successful_read_only_postchecks(monkeypatch):
-    monkeypatch.setattr(
-        te, "_sandbox_read_only_repository_violation", lambda *_args: ""
-    )
-    monkeypatch.setattr(
-        te, "_sandbox_run_repository_verification", lambda *_args: True
-    )
-    monkeypatch.setattr(
-        te, "_promote_trusted_read_only_verification", lambda *_args: True
-    )
+    monkeypatch.setattr(te, "_sandbox_read_only_repository_violation", lambda *_args: "")
+    monkeypatch.setattr(te, "_sandbox_run_repository_verification", lambda *_args: True)
+    monkeypatch.setattr(te, "_promote_trusted_read_only_verification", lambda *_args: True)
 
 
-def test_read_only_absolute_symlink_harvest_failure_overrides_success(
-    monkeypatch, tmp_path
-):
+def test_read_only_absolute_symlink_harvest_failure_overrides_success(monkeypatch, tmp_path):
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     _stub_successful_read_only_postchecks(monkeypatch)
-    monkeypatch.setattr(
-        te, "_merge_sandbox_download_tree", _REAL_MERGE_SANDBOX_DOWNLOAD_TREE
-    )
+    monkeypatch.setattr(te, "_merge_sandbox_download_tree", _REAL_MERGE_SANDBOX_DOWNLOAD_TREE)
     monkeypatch.setattr(te, "_sandbox_delete", lambda *_args: True)
     monkeypatch.setattr(
         te,
@@ -1171,20 +1104,14 @@ def test_read_only_absolute_symlink_harvest_failure_overrides_success(
 
     monkeypatch.setattr(te, "_sandbox_step", download_with_ignored_absolute_symlink)
 
-    result = te._run_sandboxed(
-        FakeRunner(), _ARGV, workspace, "tid", {"task": task}
-    )
+    result = te._run_sandboxed(FakeRunner(), _ARGV, workspace, "tid", {"task": task})
 
     assert result.returncode == 68
     assert "sandbox result harvest failed" in result.mac_read_only_lifecycle_failure
-    assert result.mac_read_only_repository_violation == (
-        result.mac_read_only_lifecycle_failure
-    )
+    assert result.mac_read_only_repository_violation == (result.mac_read_only_lifecycle_failure)
 
 
-def test_read_only_openshell_delete_api_failure_overrides_success(
-    monkeypatch, tmp_path
-):
+def test_read_only_openshell_delete_api_failure_overrides_success(monkeypatch, tmp_path):
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     _stub_successful_read_only_postchecks(monkeypatch)
     monkeypatch.setattr(te, "_sandbox_download", lambda *_args: True)
@@ -1207,15 +1134,11 @@ def test_read_only_openshell_delete_api_failure_overrides_success(
 
     monkeypatch.setattr(te, "_sandbox_step", failed_delete)
 
-    result = te._run_sandboxed(
-        FakeRunner(), _ARGV, workspace, "tid", {"task": task}
-    )
+    result = te._run_sandboxed(FakeRunner(), _ARGV, workspace, "tid", {"task": task})
 
     assert result.returncode == 68
     assert "sandbox deletion failed" in result.mac_read_only_lifecycle_failure
-    assert result.mac_read_only_repository_violation == (
-        result.mac_read_only_lifecycle_failure
-    )
+    assert result.mac_read_only_repository_violation == (result.mac_read_only_lifecycle_failure)
     assert len(deleted) == 1
 
 
@@ -1225,16 +1148,12 @@ def test_read_only_report_forbids_keep_before_agent_runs(monkeypatch, tmp_path):
     runner = FakeRunner()
 
     with pytest.raises(RuntimeError, match="forbid MAC_OPENSHELL_KEEP"):
-        te._run_sandboxed(
-            runner, _ARGV, workspace, "tid", {"task": task}
-        )
+        te._run_sandboxed(runner, _ARGV, workspace, "tid", {"task": task})
 
     assert runner.calls == []
 
 
-def test_read_only_verification_requires_current_contract_test_command(
-    monkeypatch, tmp_path
-):
+def test_read_only_verification_requires_current_contract_test_command(monkeypatch, tmp_path):
     workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     del task["metadata"]["execution_contract"]["repository_contract"]["test"]
     monkeypatch.setattr(
@@ -1243,15 +1162,13 @@ def test_read_only_verification_requires_current_contract_test_command(
         lambda *_args: pytest.fail("missing test.command reached verifier sandbox"),
     )
 
-    assert te._sandbox_run_repository_verification(
-        "sandbox", workspace.name, workspace, task
-    ) is False
+    assert (
+        te._sandbox_run_repository_verification("sandbox", workspace.name, workspace, task) is False
+    )
 
 
 @pytest.mark.parametrize("review", [False, True])
-def test_read_only_report_and_reviewer_reject_direct_execution(
-    monkeypatch, tmp_path, review
-):
+def test_read_only_report_and_reviewer_reject_direct_execution(monkeypatch, tmp_path, review):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     with pytest.raises(RuntimeError, match="per-task OpenShell confinement"):
         te._invoke_agent(
@@ -1363,7 +1280,10 @@ def test_repo_worktree_aliases_hermes_clone_path(create_argv):
 
 def test_host_alias_override(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_HOST_ALIAS", "10.0.0.1")
-    assert te._rewrite_host_local_url("http://127.0.0.1:8789", te._openshell_host_alias()) == "http://10.0.0.1:8789"
+    assert (
+        te._rewrite_host_local_url("http://127.0.0.1:8789", te._openshell_host_alias())
+        == "http://10.0.0.1:8789"
+    )
 
 
 # ---------------------------------------------------------------------------

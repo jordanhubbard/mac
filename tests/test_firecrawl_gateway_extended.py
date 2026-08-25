@@ -14,7 +14,9 @@ from mac import firecrawl_gateway as gateway
 
 
 def test_gateway_routes_validate_and_persist_crawl_jobs(monkeypatch):
-    monkeypatch.setattr(gateway, "search_web", lambda query, limit: [{"url": f"https://{query}/{limit}"}])
+    monkeypatch.setattr(
+        gateway, "search_web", lambda query, limit: [{"url": f"https://{query}/{limit}"}]
+    )
     monkeypatch.setattr(
         gateway,
         "scrape_url",
@@ -23,14 +25,22 @@ def test_gateway_routes_validate_and_persist_crawl_jobs(monkeypatch):
     monkeypatch.setattr(
         gateway,
         "crawl_url",
-        lambda url, limit, formats: [{"metadata": {"url": url}, "limit": limit, "formats": sorted(formats)}],
+        lambda url, limit, formats: [
+            {"metadata": {"url": url}, "limit": limit, "formats": sorted(formats)}
+        ],
     )
     client = TestClient(gateway.create_app())
     assert client.get("/health").json()["status"] == "ok"
     assert client.post("/v2/search", json={}).status_code == 400
-    assert client.post("/v2/search", json={"query": "mac", "limit": 999}).json()["data"]["web"][0]["url"].endswith("/25")
+    assert (
+        client.post("/v2/search", json={"query": "mac", "limit": 999})
+        .json()["data"]["web"][0]["url"]
+        .endswith("/25")
+    )
     assert client.post("/v2/scrape", json={}).status_code == 400
-    assert client.post("/v2/scrape", json={"url": "https://example.com", "formats": "html"}).json()["data"]["formats"] == ["html"]
+    assert client.post("/v2/scrape", json={"url": "https://example.com", "formats": "html"}).json()[
+        "data"
+    ]["formats"] == ["html"]
     assert client.post("/v2/crawl", json={}).status_code == 400
     created = client.post(
         "/v2/crawl",
@@ -159,9 +169,13 @@ def test_public_url_validation_and_helpers(monkeypatch):
         gateway._validate_public_http_url("file:///tmp/private")
 
     monkeypatch.delenv("MAC_FIRECRAWL_GATEWAY_ALLOW_PRIVATE_TARGETS", raising=False)
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *_args: [(None, None, None, None, ("93.184.216.34", 0))])
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *_args: [(None, None, None, None, ("93.184.216.34", 0))]
+    )
     gateway._validate_public_http_url("https://example.com")
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *_args: [(None, None, None, None, ("127.0.0.1", 0))])
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *_args: [(None, None, None, None, ("127.0.0.1", 0))]
+    )
     with pytest.raises(HTTPException, match="private"):
         gateway._validate_public_http_url("http://localhost")
     monkeypatch.setattr(
@@ -179,7 +193,10 @@ def test_public_url_validation_and_helpers(monkeypatch):
     assert gateway._formats(None) == {"markdown"}
     assert gateway._bounded_int("bad", default=3, minimum=1, maximum=5) == 3
     assert gateway._bounded_int(99, default=3, minimum=1, maximum=5) == 5
-    assert gateway._decode_duckduckgo_url("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com") == "https://example.com"
+    assert (
+        gateway._decode_duckduckgo_url("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com")
+        == "https://example.com"
+    )
     assert gateway._absolute_links(
         "https://example.com/base",
         ["/a#fragment", "/a#other", "mailto:user@example.com", "https://other.example/b"],
@@ -191,7 +208,9 @@ def test_firecrawl_main_runs_uvicorn(monkeypatch):
     import uvicorn
 
     seen = []
-    monkeypatch.setattr("sys.argv", ["mac-firecrawl-gateway", "--host", "0.0.0.0", "--port", "3456"])
+    monkeypatch.setattr(
+        "sys.argv", ["mac-firecrawl-gateway", "--host", "0.0.0.0", "--port", "3456"]
+    )
     monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: seen.append((app, kwargs)))
     gateway.main()
     assert seen[-1][1] == {"host": "0.0.0.0", "port": 3456, "log_level": "info"}

@@ -75,8 +75,7 @@ TASK_LIFECYCLE_TOPIC_PREFIX = "task."
 #: The closed lifecycle vocabulary: one topic per task state, derived from the
 #: state enum so the two cannot drift.
 TASK_LIFECYCLE_TOPICS: Dict[str, str] = {
-    state.value: TASK_LIFECYCLE_TOPIC_PREFIX + state.value + ".v1"
-    for state in TaskState
+    state.value: TASK_LIFECYCLE_TOPIC_PREFIX + state.value + ".v1" for state in TaskState
 }
 
 TASK_LIFECYCLE_TOPIC_SET = frozenset(TASK_LIFECYCLE_TOPICS.values())
@@ -417,9 +416,7 @@ class TaskLifecycleBusPublisher:
             # duplicate would strand the notification forever behind an id
             # that can never be re-opened. So the empty case falls through and
             # finishes the job.
-            if agentbus.read_chunks(
-                sender, stream_id, 0, 1, record_observation=False
-            ):
+            if agentbus.read_chunks(sender, stream_id, 0, 1, record_observation=False):
                 return {
                     "status": "duplicate",
                     "stream_id": stream_id,

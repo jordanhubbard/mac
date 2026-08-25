@@ -133,18 +133,14 @@ def _bootstrap_active(cp: ControlPlane, agent_id: str, root: Path):
         installation_manifest(issue), env_path, expected_agent_id=agent_id
     )
     _observe(cp, issue, env_path, generation="prior-generation")
-    WorkerCredentialLifecycle(cp.store).activate(
-        agent_id, issue.record["id"], receipt=receipt
-    )
+    WorkerCredentialLifecycle(cp.store).activate(agent_id, issue.record["id"], receipt=receipt)
     return issue
 
 
 def _report_attestation() -> dict:
     digest = "sha256:" + ("b" * 64)
     return read_only_report_repository_executor_attestation(
-        runtime_image_ref=(
-            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + ("c" * 64)
-        ),
+        runtime_image_ref=("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + ("c" * 64)),
         policy_sha256=digest,
         openshell_bin_path="/usr/local/bin/openshell",
         openshell_bin_sha256=digest,
@@ -258,9 +254,7 @@ def _prepare_item(
         "generation": generation,
         "baseline_seen": baseline_seen,
         "principal_id": pending.record["id"],
-        "attestation_candidate": (
-            {"key": candidate_key} if candidate_key is not None else None
-        ),
+        "attestation_candidate": ({"key": candidate_key} if candidate_key is not None else None),
         "report_executor_action": report_action,
         "report_executor_attestation": report_attestation,
     }
@@ -372,9 +366,7 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
         "prepared_at": opened["prepared_at"],
         "proved_at": None,
     }
-    assert cp.get_agent("agent_alpha").dispatch_hold_reason.startswith(
-        "mac:fleet-release:"
-    )
+    assert cp.get_agent("agent_alpha").dispatch_hold_reason.startswith("mac:fleet-release:")
     assert cp._agent_attestation_key("agent_alpha") == old_attestation_key
     states = {
         item["id"]: item["state"]
@@ -391,9 +383,7 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
         pending,
         tmp_path,
         generation=generation,
-        extra_resources=_report_resources(
-            "agent_alpha", report_attestation, report_timestamp
-        ),
+        extra_resources=_report_resources("agent_alpha", report_attestation, report_timestamp),
     )
     proof = _proof_item(
         pending,
@@ -407,27 +397,17 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
     assert proved["status"] == "proved"
     assert cp.fleet_release_epochs.active_publication_barrier()["state"] == "proved"
     assert cp._agent_attestation_key("agent_alpha") == old_attestation_key
-    assert (
-        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
-        == proved
-    )
+    assert cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof]) == proved
 
     committed = cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
     assert committed["status"] == "committed"
     assert cp.fleet_release_epochs.active_publication_barrier() is None
-    assert (
-        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"]) == committed
-    )
-    assert (
-        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
-        == committed
-    )
+    assert cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"]) == committed
+    assert cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof]) == committed
     changed_proof = json.loads(json.dumps(proof))
     changed_proof["install_receipt"]["installed_at"] = "2100-01-03T00:00:00+00:00"
     with pytest.raises(ValidationError, match="different evidence"):
-        cp.fleet_release_epochs.prove(
-            epoch_id, opened["identity_sha256"], [changed_proof]
-        )
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [changed_proof])
     with pytest.raises(ValidationError, match="identity digest"):
         cp.fleet_release_epochs.commit(epoch_id, "sha256:" + ("e" * 64))
     with pytest.raises(TransitionError, match="cannot abort"):
@@ -455,20 +435,14 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
         )
         is None
     )
-    assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == committed
-    )
-    assert (
-        cp.fleet_release_epochs.status(epoch_id, "sha256:" + ("f" * 64))["status"]
-        == "mismatch"
-    )
+    assert cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == committed
+    assert cp.fleet_release_epochs.status(epoch_id, "sha256:" + ("f" * 64))["status"] == "mismatch"
     cp.store.execute(
         "DELETE FROM agent_lifecycle_events WHERE id = ?",
         (cp.fleet_release_epochs._marker_id(epoch_id),),
     )
     assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"]
-        == "mismatch"
+        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"] == "mismatch"
     )
     with pytest.raises(TransitionError, match="marker is incomplete"):
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
@@ -576,8 +550,7 @@ def test_status_and_terminal_actions_reject_corrupt_participant_identity(
         ("manually-corrupted-generation", epoch_id),
     )
     assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"]
-        == "mismatch"
+        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"] == "mismatch"
     )
     with pytest.raises(TransitionError, match="identity storage is corrupt"):
         cp.fleet_release_epochs.abort(
@@ -624,8 +597,7 @@ def test_status_and_commit_reject_corrupt_proof_projection(tmp_path: Path) -> No
         ("sha256:" + ("0" * 64), epoch_id),
     )
     assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"]
-        == "mismatch"
+        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"] == "mismatch"
     )
     with pytest.raises(TransitionError, match="proof storage is corrupt"):
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
@@ -671,9 +643,7 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
                     baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
                     candidate_key=None,
                     expected_dispatch_hold=True,
-                    expected_hold_reason=cp.get_agent(
-                        "agent_alpha"
-                    ).dispatch_hold_reason,
+                    expected_hold_reason=cp.get_agent("agent_alpha").dispatch_hold_reason,
                     expected_hold_at=cp.get_agent("agent_alpha").dispatch_hold_at,
                 )
             ],
@@ -719,9 +689,7 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
         disposition=abort_disposition,
     )
     assert aborted["status"] == "aborted"
-    assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == aborted
-    )
+    assert cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == aborted
     assert (
         cp.fleet_release_epochs.abort(
             epoch_id,
@@ -804,9 +772,7 @@ def test_abort_retain_installed_preserves_proven_predecessor_projection(
             )
         ],
     )
-    receipt = _apply_pending(
-        cp, pending, tmp_path, generation="generation-retain"
-    )
+    receipt = _apply_pending(cp, pending, tmp_path, generation="generation-retain")
     cp.fleet_release_epochs.prove(
         epoch_id,
         opened["identity_sha256"],
@@ -837,9 +803,7 @@ def test_abort_retain_installed_preserves_proven_predecessor_projection(
     )
     assert aborted["status"] == "aborted"
     assert aborted["abort_disposition"] == "retain_installed"
-    assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == aborted
-    )
+    assert cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == aborted
 
     # The installed successor stays pending_install so the node keeps
     # authenticating with the credential already written into its mac.env.
@@ -1026,17 +990,13 @@ def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) 
             )
         )
     cp.fleet_release_epochs.prove("epoch-two-agent", opened["identity_sha256"], proofs)
-    superseding = cp.set_agent_dispatch_hold(
-        "agent_beta", "operator superseded epoch"
-    )
+    superseding = cp.set_agent_dispatch_hold("agent_beta", "operator superseded epoch")
     with pytest.raises(ValidationError, match="epoch-owned hold"):
         cp.fleet_release_epochs.commit("epoch-two-agent", opened["identity_sha256"])
     for name in ("alpha", "beta"):
         states = {
             item["id"]: item["state"]
-            for item in WorkerCredentialLifecycle(cp.store).list(
-                agent_id="agent_%s" % name
-            )
+            for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_%s" % name)
         }
         assert states == {
             old[name].record["id"]: "active",
@@ -1069,9 +1029,7 @@ def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) 
     for name in ("alpha", "beta"):
         states = {
             item["id"]: item["state"]
-            for item in WorkerCredentialLifecycle(cp.store).list(
-                agent_id="agent_%s" % name
-            )
+            for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_%s" % name)
         }
         assert states == {
             old[name].record["id"]: "active",
@@ -1109,9 +1067,7 @@ def test_proof_rejects_secret_bearing_receipt_and_wrong_candidate(
     secret_bearing = json.loads(json.dumps(proof))
     secret_bearing["install_receipt"]["token"] = pending.token
     with pytest.raises(ValidationError, match="unexpected or missing fields"):
-        cp.fleet_release_epochs.prove(
-            epoch_id, opened["identity_sha256"], [secret_bearing]
-        )
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [secret_bearing])
     wrong = json.loads(json.dumps(proof))
     wrong["attestation_proof"]["signature"] = sign_verification_manifest(
         "other-key-" + ("w" * 40),
@@ -1154,9 +1110,7 @@ def test_report_executor_revoke_is_staged_until_commit(tmp_path: Path) -> None:
             )
         ],
     )
-    assert (
-        REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in cp.get_agent("agent_alpha").resources
-    )
+    assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in cp.get_agent("agent_alpha").resources
     receipt = _apply_pending(
         cp,
         pending,
@@ -1177,9 +1131,7 @@ def test_report_executor_revoke_is_staged_until_commit(tmp_path: Path) -> None:
     cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
     proved_resources = cp.get_agent("agent_alpha").resources
     drifted_resources = dict(proved_resources)
-    drifted_resources[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = {
-        "concurrent": "replacement"
-    }
+    drifted_resources[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = {"concurrent": "replacement"}
     cp.store.execute(
         "UPDATE agents SET resources = ? WHERE id = 'agent_alpha'",
         (json.dumps(drifted_resources),),
@@ -1234,9 +1186,7 @@ def test_staged_report_action_accepts_only_derived_marker_loss(
                 baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
                 candidate_key=None,
                 report_action=report_action,
-                report_attestation=(
-                    new_attestation if report_action == "approve" else None
-                ),
+                report_attestation=(new_attestation if report_action == "approve" else None),
             )
         ],
     )
@@ -1263,16 +1213,11 @@ def test_staged_report_action_accepts_only_derived_marker_loss(
     )
 
     assert (
-        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])[
-            "status"
-        ]
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])["status"]
         == "proved"
     )
     assert (
-        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])[
-            "status"
-        ]
-        == "committed"
+        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])["status"] == "committed"
     )
     resources = cp.get_agent("agent_alpha").resources
     if report_action == "revoke":
@@ -1281,9 +1226,7 @@ def test_staged_report_action_accepts_only_derived_marker_loss(
     else:
         assert agent_has_read_only_report_repository_executor(resources)
         assert (
-            resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY][
-                "source_bundle_sha256"
-            ]
+            resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY]["source_bundle_sha256"]
             == new_attestation["source_bundle_sha256"]
         )
 
@@ -1314,9 +1257,7 @@ def test_staged_report_action_rejects_approval_change_after_marker_loss(
             )
         ],
     )
-    changed_approval = dict(
-        old_projection[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY]
-    )
+    changed_approval = dict(old_projection[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY])
     changed_approval["source_bundle_sha256"] = "sha256:" + ("e" * 64)
     receipt = _apply_pending(
         cp,
@@ -1336,9 +1277,7 @@ def test_staged_report_action_rejects_approval_change_after_marker_loss(
     )
 
     with pytest.raises(ValidationError, match="report executor authority changed"):
-        cp.fleet_release_epochs.prove(
-            epoch_id, opened["identity_sha256"], [proof]
-        )
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
 
 
 def test_report_preserve_rejects_derived_marker_loss(tmp_path: Path) -> None:
@@ -1384,9 +1323,7 @@ def test_report_preserve_rejects_derived_marker_loss(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValidationError, match="report executor authority changed"):
-        cp.fleet_release_epochs.prove(
-            epoch_id, opened["identity_sha256"], [proof]
-        )
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
 
 
 def test_commit_rejects_new_service_claim_without_partial_promotion(
@@ -1494,9 +1431,7 @@ def test_commit_and_abort_serialize_to_one_terminal_winner(tmp_path: Path) -> No
         try:
             barrier.wait(timeout=10)
             if action == "commit":
-                result = plane.fleet_release_epochs.commit(
-                    epoch_id, opened["identity_sha256"]
-                )
+                result = plane.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
             else:
                 result = plane.fleet_release_epochs.abort(
                     epoch_id,
@@ -1523,10 +1458,7 @@ def test_commit_and_abort_serialize_to_one_terminal_winner(tmp_path: Path) -> No
     assert isinstance(errors[0], TransitionError)
     winner = results[0]["status"]
     assert winner in {"committed", "aborted"}
-    assert (
-        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"]
-        == winner
-    )
+    assert cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])["status"] == winner
     states = {
         item["id"]: item["state"]
         for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
@@ -1585,19 +1517,15 @@ def test_principal_inventory_and_policy_are_commit_cas_inputs(
     with pytest.raises(ValidationError, match="principal set changed"):
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
     cp.store.execute(
-        "UPDATE worker_credentials SET state = 'pending_install', revoked_at = NULL "
-        "WHERE id = ?",
+        "UPDATE worker_credentials SET state = 'pending_install', revoked_at = NULL WHERE id = ?",
         (pending.record["id"],),
     )
     write_policy_state(MODE_COMPATIBILITY, store=cp.store, actor="concurrent")
     with pytest.raises(ValidationError, match="policy changed"):
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
-    cp.store.execute(
-        "DELETE FROM worker_credential_policy_state WHERE singleton_key = 'fleet'"
-    )
+    cp.store.execute("DELETE FROM worker_credential_policy_state WHERE singleton_key = 'fleet'")
     assert (
-        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])["status"]
-        == "committed"
+        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])["status"] == "committed"
     )
 
 
@@ -1687,17 +1615,14 @@ def test_prove_rejects_active_work_and_node_readiness_drift(
         if drift != "health":
             resources["startup_self_test"] = {
                 "schema": "mac.agent_startup_self_test.v1",
-                "agent_id": (
-                    "agent_other" if drift == "health_wrong_agent" else "agent_alpha"
-                ),
+                "agent_id": ("agent_other" if drift == "health_wrong_agent" else "agent_alpha"),
                 "status": "degraded",
                 "blocking_problems": (
                     ["executor unavailable"] if drift == "health_blocking" else []
                 ),
             }
         cp.store.execute(
-            "UPDATE agents SET resources = ?, health_status = 'degraded' "
-            "WHERE id = 'agent_alpha'",
+            "UPDATE agents SET resources = ?, health_status = 'degraded' WHERE id = 'agent_alpha'",
             (json.dumps(resources),),
         )
     else:
@@ -1757,9 +1682,7 @@ def test_prove_and_commit_accept_advisory_degraded_startup_health(
             }
         },
     )
-    cp.store.execute(
-        "UPDATE agents SET health_status = 'degraded' WHERE id = 'agent_alpha'"
-    )
+    cp.store.execute("UPDATE agents SET health_status = 'degraded' WHERE id = 'agent_alpha'")
     cp.fleet_release_epochs.prove(
         epoch_id,
         opened["identity_sha256"],
@@ -1774,8 +1697,7 @@ def test_prove_and_commit_accept_advisory_degraded_startup_health(
         ],
     )
     assert (
-        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])["status"]
-        == "committed"
+        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])["status"] == "committed"
     )
 
 
@@ -1800,9 +1722,7 @@ def test_pre_prove_readiness_uses_pending_credential_evidence_without_mutation(
     )
     _apply_pending(cp, pending, tmp_path, generation=generation)
 
-    readiness = cp.fleet_release_epochs.pre_prove_readiness(
-        epoch_id, opened["identity_sha256"]
-    )
+    readiness = cp.fleet_release_epochs.pre_prove_readiness(epoch_id, opened["identity_sha256"])
     assert readiness == {
         "schema": "mac.fleet_release_pre_prove_readiness.v1",
         "status": "ready",
@@ -1832,9 +1752,7 @@ def test_pre_prove_readiness_uses_pending_credential_evidence_without_mutation(
     with pytest.raises(
         ValidationError, match="activation requires live authenticated heartbeat proof"
     ):
-        cp.fleet_release_epochs.pre_prove_readiness(
-            epoch_id, opened["identity_sha256"]
-        )
+        cp.fleet_release_epochs.pre_prove_readiness(epoch_id, opened["identity_sha256"])
     stored = cp.store.query_one(
         "SELECT state, proof_sha256 FROM fleet_release_epochs WHERE epoch_id = ?",
         (epoch_id,),
@@ -1856,9 +1774,7 @@ def test_hub_authority_uuid_is_durable_and_status_exposes_it(tmp_path: Path) -> 
     restarted = ControlPlane(store_on(dsn), secret_key=SECRET_KEY)
     assert restarted.fleet_release_epochs.hub_authority_id == authority_id
     assert (
-        restarted.store.query_one(
-            "SELECT COUNT(*) AS count FROM hub_authority_identity"
-        )["count"]
+        restarted.store.query_one("SELECT COUNT(*) AS count FROM hub_authority_identity")["count"]
         == 1
     )
 
@@ -2049,8 +1965,7 @@ def test_open_epoch_replay_is_idempotent_and_pre_mutation(tmp_path: Path) -> Non
         for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
     }
     candidate_rows_after_open = cp.store.query_one(
-        "SELECT COUNT(*) AS count FROM fleet_release_attestation_candidates "
-        "WHERE epoch_id = ?",
+        "SELECT COUNT(*) AS count FROM fleet_release_attestation_candidates WHERE epoch_id = ?",
         (epoch_id,),
     )["count"]
 
@@ -2069,16 +1984,14 @@ def test_open_epoch_replay_is_idempotent_and_pre_mutation(tmp_path: Path) -> Non
     } == staged_after_open
     assert (
         cp.store.query_one(
-            "SELECT COUNT(*) AS count FROM fleet_release_attestation_candidates "
-            "WHERE epoch_id = ?",
+            "SELECT COUNT(*) AS count FROM fleet_release_attestation_candidates WHERE epoch_id = ?",
             (epoch_id,),
         )["count"]
         == candidate_rows_after_open
     )
     assert (
         cp.store.query_one(
-            "SELECT COUNT(*) AS count FROM fleet_release_epoch_agents "
-            "WHERE epoch_id = ?",
+            "SELECT COUNT(*) AS count FROM fleet_release_epoch_agents WHERE epoch_id = ?",
             (epoch_id,),
         )["count"]
         == 1

@@ -61,8 +61,7 @@ def test_a_direct_message_reaches_the_recipients_inbox(fleet):
 
 def test_a_group_message_reaches_every_member(fleet):
     cp, a, b, c = fleet
-    _say(cp, c, None, "team: rebase first", stream_id="s2",
-         participants=[a.id, b.id])
+    _say(cp, c, None, "team: rebase first", stream_id="s2", participants=[a.id, b.id])
     assert _texts(cp.read_agentbus_inbox(a.id)) == ["team: rebase first"]
     assert _texts(cp.read_agentbus_inbox(b.id)) == ["team: rebase first"]
 
@@ -87,9 +86,9 @@ def test_another_pairs_conversation_is_not_in_your_inbox(fleet):
     assert cp.read_agentbus_inbox(a.id) == []
     assert _texts(cp.read_agentbus_inbox(c.id)) == ["addressed to c"]
     # ...and a is not prevented from hearing it, just not woken by it.
-    assert [
-        item["chunk"]["payload"]["text"] for item in cp.read_agentbus_traffic(a.id)
-    ] == ["addressed to c"]
+    assert [item["chunk"]["payload"]["text"] for item in cp.read_agentbus_traffic(a.id)] == [
+        "addressed to c"
+    ]
 
 
 def test_a_group_stream_is_addressed_to_its_members(fleet):

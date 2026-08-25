@@ -59,9 +59,7 @@ def _plane(db):
 
 
 def _persisted_metadata(db, task_id):
-    row = _plane(db).store.query_one(
-        "SELECT metadata FROM tasks WHERE id = ?", (task_id,)
-    )
+    row = _plane(db).store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task_id,))
     return json.loads(row["metadata"])
 
 
@@ -74,9 +72,7 @@ def _create_staged(db, title="staged via cli"):
 
 def _attach_controller_routing(db, task_id):
     cp = _plane(db)
-    row = cp.store.query_one(
-        "SELECT metadata FROM tasks WHERE id = ?", (task_id,)
-    )
+    row = cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task_id,))
     md = json.loads(row["metadata"])
     md["publication_route"] = {
         "schema": "mac.task_publication_route.v1",

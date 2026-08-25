@@ -250,9 +250,7 @@ def test_attest_ssh_requires_remote_nonce_echo(monkeypatch):
     monkeypatch.setattr("mac.hgx_provider.secrets.token_hex", lambda size: "a1b2")
     calls = _install_run(
         monkeypatch,
-        lambda argv, kw: _FakeCompleted(
-            "Connecting to sess-1...\nmac-hgx-ssh-attest-a1b2"
-        ),
+        lambda argv, kw: _FakeCompleted("Connecting to sess-1...\nmac-hgx-ssh-attest-a1b2"),
     )
 
     assert HgxProvider().attest_ssh("sess-1") == "sess-1"
@@ -508,9 +506,7 @@ def test_endpoint_properties_and_is_dind():
 # -- targeted parser-edge coverage --------------------------------------
 def test_ssh_invocation_with_non_p_flag_still_finds_host(monkeypatch):
     # A leading -i keyfile option is skipped; host is still recovered.
-    endpoint = _parse_ssh_from_text(
-        "connect via: ssh -i key.pem -p 2202 admin@192.0.2.5\n"
-    )
+    endpoint = _parse_ssh_from_text("connect via: ssh -i key.pem -p 2202 admin@192.0.2.5\n")
     assert endpoint is not None
     assert endpoint.user_host == "admin@192.0.2.5"
     assert endpoint.port == 2202

@@ -70,8 +70,13 @@ def _agent_view(agent: Any) -> Dict[str, Any]:
         record = {
             field: getattr(agent, field, None)
             for field in (
-                "id", "name", "status", "capabilities", "resources",
-                "visibility", "owner_human_id",
+                "id",
+                "name",
+                "status",
+                "capabilities",
+                "resources",
+                "visibility",
+                "owner_human_id",
             )
         }
     resources = record.get("resources") or {}
@@ -135,9 +140,7 @@ def preflight(
         view = _agent_view(agent)
         fleet_caps |= view["capabilities"]
         missing = sorted(wanted_caps - view["capabilities"])
-        hardware_ok, hardware_reasons = machine_hardware_satisfies(
-            wanted_hw, view["hardware"]
-        )
+        hardware_ok, hardware_reasons = machine_hardware_satisfies(wanted_hw, view["hardware"])
         # Visibility is deliberately not consulted. It describes who the HUB
         # may talk to, not which problems an agent may work on, and mirroring
         # the old dispatch gate here made preflight under-report capacity: on

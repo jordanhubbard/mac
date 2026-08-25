@@ -85,9 +85,7 @@ def test_record_carries_full_accountable_tuple():
 
 
 def test_live_matching_lease_is_kept():
-    record = classify_lifecycle_orphan_sandbox(
-        _sandbox(), _task(), trigger="finalization", now=NOW
-    )
+    record = classify_lifecycle_orphan_sandbox(_sandbox(), _task(), trigger="finalization", now=NOW)
     assert record["action"] == "keep"
     assert record["outcome"] == "kept"
     assert record["ownership"] == "lease-live"
@@ -154,9 +152,7 @@ def test_idle_worker_with_live_lease_is_never_reaped():
     # An old sandbox whose worker is "idle" but whose lease is still live in the
     # hub must be preserved -- age is recorded but never authorizes a delete.
     old = _sandbox(created_at="2026-06-01 12:00:00")
-    record = classify_lifecycle_orphan_sandbox(
-        old, _task(), trigger="periodic", now=NOW
-    )
+    record = classify_lifecycle_orphan_sandbox(old, _task(), trigger="periodic", now=NOW)
     assert record["action"] == "keep"
     assert record["age_seconds"] > 24 * 60 * 60
 
@@ -317,9 +313,7 @@ def test_reconcile_rejects_unknown_trigger(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", _fake_lister([]))
     with pytest.raises(ValueError):
-        reconcile_task_sandbox_lifecycle(
-            lambda _tid: None, trigger="not-a-trigger", now=NOW
-        )
+        reconcile_task_sandbox_lifecycle(lambda _tid: None, trigger="not-a-trigger", now=NOW)
 
 
 @pytest.mark.parametrize(
@@ -330,9 +324,7 @@ def test_reconcile_rejects_unknown_trigger(monkeypatch):
         (0, "{}", "", "not an array"),
     ],
 )
-def test_reconcile_rejects_unusable_inventory(
-    monkeypatch, returncode, stdout, stderr, message
-):
+def test_reconcile_rejects_unusable_inventory(monkeypatch, returncode, stdout, stderr, message):
     import subprocess
 
     class _Proc:
@@ -426,9 +418,7 @@ def test_control_plane_lifecycle_gc_uses_real_task_authority(monkeypatch):
 
     # Live matching lease: the controller preserves the sandbox.
     _install_fake_lister(monkeypatch, [sandbox])
-    report = cp.reconcile_openshell_task_sandbox_lifecycle(
-        trigger="periodic", apply=False
-    )
+    report = cp.reconcile_openshell_task_sandbox_lifecycle(trigger="periodic", apply=False)
     assert report["candidates"] == []
     assert report["protected"] == 1
 
@@ -465,9 +455,7 @@ def test_control_plane_lifecycle_gc_missing_binary_is_best_effort(monkeypatch):
         raise FileNotFoundError("openshell not installed")
 
     monkeypatch.setattr(subprocess, "run", _boom)
-    report = cp.reconcile_openshell_task_sandbox_lifecycle(
-        trigger="finalization", apply=True
-    )
+    report = cp.reconcile_openshell_task_sandbox_lifecycle(trigger="finalization", apply=True)
     assert report["schema"] == "mac.openshell.sandbox_lifecycle_gc.v1"
     assert report["candidates"] == []
     assert "error" in report
@@ -614,9 +602,7 @@ def test_leftover_reconcile_applies_successes_and_records_failures(monkeypatch):
         (0, "{}", "not an array"),
     ],
 )
-def test_leftover_reconcile_rejects_unusable_inventory(
-    monkeypatch, returncode, stdout, message
-):
+def test_leftover_reconcile_rejects_unusable_inventory(monkeypatch, returncode, stdout, message):
     import subprocess
 
     proc = type(

@@ -173,10 +173,7 @@ def test_report_executor_approval_accepts_a_host_install_attestation() -> None:
 
     function = _report_executor_approval_body()
     assert "report_repository_executor_attestation_is_host_install," in function
-    assert (
-        "or report_repository_executor_attestation_is_host_install(attestation)"
-        in function
-    )
+    assert "or report_repository_executor_attestation_is_host_install(attestation)" in function
 
 
 def _fleet_config_query_source() -> str:
@@ -268,16 +265,12 @@ def test_fleet_wide_openshell_default_does_not_fail_a_darwin_node(tmp_path: Path
       worker:
         openshell_required: true
 """
-    registry = _registry(
-        tmp_path, os_kind="darwin", worker_block="", defaults=defaults
-    )
+    registry = _registry(tmp_path, os_kind="darwin", worker_block="", defaults=defaults)
     result = _specs(registry)
     assert result.returncode == 0, result.stderr
     fields = result.stdout.strip().split("|")
     assert fields[OPENSHELL_REQUIRED_FIELD] == "0"
 
-    linux = _specs(
-        _registry(tmp_path, os_kind="linux", worker_block="", defaults=defaults)
-    )
+    linux = _specs(_registry(tmp_path, os_kind="linux", worker_block="", defaults=defaults))
     assert linux.returncode == 0, linux.stderr
     assert linux.stdout.strip().split("|")[OPENSHELL_REQUIRED_FIELD] == "1"

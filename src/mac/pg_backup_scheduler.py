@@ -22,6 +22,7 @@ The restore drill (proving schema + representative row counts come back from the
 artifact) runs every ``MAC_PG_BACKUP_VERIFY_EVERY`` runs (default: every run) so
 operators can trade drill cost for cadence without ever losing the artifact.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +38,7 @@ _log = logging.getLogger("mac.pg_backup_scheduler")
 
 PG_BACKUP_SCHEMA = "mac.pg_backup_run.v1"
 
-DEFAULT_INTERVAL_SECONDS = 3600.0          # 60 min
+DEFAULT_INTERVAL_SECONDS = 3600.0  # 60 min
 MIN_INTERVAL_SECONDS = 60.0
 DEFAULT_INITIAL_DELAY_SECONDS = 120.0
 DEFAULT_KEEP_LAST = 14
@@ -91,13 +92,14 @@ class PgBackupConfig:
                 or env.get("MAC_LEDGER_BACKUP_DIR")
                 or (Path(default_home) / "backups")
             ),
-            interval_seconds=_num("MAC_PG_BACKUP_INTERVAL_SECONDS",
-                                  DEFAULT_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS),
-            initial_delay_seconds=_num("MAC_PG_BACKUP_INITIAL_DELAY_SECONDS",
-                                       DEFAULT_INITIAL_DELAY_SECONDS, 0.0),
+            interval_seconds=_num(
+                "MAC_PG_BACKUP_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS
+            ),
+            initial_delay_seconds=_num(
+                "MAC_PG_BACKUP_INITIAL_DELAY_SECONDS", DEFAULT_INITIAL_DELAY_SECONDS, 0.0
+            ),
             keep_last=int(_num("MAC_PG_BACKUP_KEEP_LAST", float(DEFAULT_KEEP_LAST), 1.0)),
-            verify_every=int(_num("MAC_PG_BACKUP_VERIFY_EVERY",
-                                  float(DEFAULT_VERIFY_EVERY), 1.0)),
+            verify_every=int(_num("MAC_PG_BACKUP_VERIFY_EVERY", float(DEFAULT_VERIFY_EVERY), 1.0)),
             sync_cmd=str(env.get(pg_backup.SYNC_CMD_ENV) or "").strip(),
         )
 
@@ -127,8 +129,7 @@ class PgBackupScheduler:
             if self._thread is not None and self._thread.is_alive():
                 return False
             self._stop.clear()
-            self._thread = threading.Thread(
-                target=self._loop, name="mac-pg-backup", daemon=True)
+            self._thread = threading.Thread(target=self._loop, name="mac-pg-backup", daemon=True)
             self._thread.start()
         return True
 
@@ -195,8 +196,12 @@ class PgBackupScheduler:
             }
             self._observe("pg.backup.run", "info", result)
         except Exception as exc:  # noqa: BLE001 - backup must never kill the hub.
-            result = {"status": "error", "trigger": trigger,
-                      "verify_performed": do_verify, "error": str(exc)[:500]}
+            result = {
+                "status": "error",
+                "trigger": trigger,
+                "verify_performed": do_verify,
+                "error": str(exc)[:500],
+            }
             self._observe("pg.backup.failed", "error", result)
             self._notify_failure(str(exc))
         with self._lock:
@@ -209,8 +214,9 @@ class PgBackupScheduler:
         cp = self.control_plane
         if cp is not None and hasattr(cp, "record_log"):
             try:
-                cp.record_log(event, level=level, layer="control_plane",
-                              source="pg_backup", detail=detail)
+                cp.record_log(
+                    event, level=level, layer="control_plane", source="pg_backup", detail=detail
+                )
                 return
             except Exception:  # noqa: BLE001 - telemetry must never raise.
                 pass
@@ -224,10 +230,12 @@ class PgBackupScheduler:
             cp.record_notification(
                 "pg.backup.failed",
                 "Hub PostgreSQL backup failed",
-                ("A scheduled PostgreSQL authority backup failed: %s\n\nThe hub is "
-                 "running WITHOUT a fresh, restore-verified off-box backup. There is "
-                 "NO SQLite fallback — the PostgreSQL authority is at recovery risk "
-                 "until this is fixed." % error),
+                (
+                    "A scheduled PostgreSQL authority backup failed: %s\n\nThe hub is "
+                    "running WITHOUT a fresh, restore-verified off-box backup. There is "
+                    "NO SQLite fallback — the PostgreSQL authority is at recovery risk "
+                    "until this is fixed." % error
+                ),
                 subject_type="pg_backup",
                 subject_id="scheduler",
                 channels=["dashboard", "hermes"],

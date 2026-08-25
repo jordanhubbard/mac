@@ -234,14 +234,10 @@ def build_console_snapshot(
 
     # --- tasks: state distribution -----------------------------------------
     def tasks_section() -> Dict[str, Any]:
-        by_state = _counts(
-            q("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state"), "state"
-        )
+        by_state = _counts(q("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state"), "state")
         # Dwell only over non-terminal work: how long has each in-flight task
         # been sitting where it is. Uses idx_tasks_state_updated.
-        live = q(
-            "SELECT state, updated_at FROM tasks WHERE state NOT IN (%s)" % terminal_sql
-        )
+        live = q("SELECT state, updated_at FROM tasks WHERE state NOT IN (%s)" % terminal_sql)
         ages: Dict[str, List[float]] = {}
         undated = 0
         for row in live:
@@ -285,17 +281,13 @@ def build_console_snapshot(
                     "project": name,
                     "by_state": states,
                     "total": sum(states.values()),
-                    "live": sum(
-                        n for s, n in states.items() if s not in TERMINAL_TASK_STATES
-                    ),
+                    "live": sum(n for s, n in states.items() if s not in TERMINAL_TASK_STATES),
                 }
                 for name, states in grouped.items()
             ),
             key=lambda item: (-item["live"], -item["total"], item["project"]),
         )
-        records = _counts(
-            q("SELECT status, COUNT(*) AS n FROM projects GROUP BY status"), "status"
-        )
+        records = _counts(q("SELECT status, COUNT(*) AS n FROM projects GROUP BY status"), "status")
         return {
             "registered_by_status": records,
             "with_tasks": len(ranked),
@@ -363,9 +355,7 @@ def build_console_snapshot(
             # mode this console exists to surface; we report both halves and
             # let the UI mark the contradiction rather than picking a winner.
             row["belief_contradicted"] = bool(
-                seen is not None
-                and seen > 900
-                and str(row.get("status")) in {"idle", "busy"}
+                seen is not None and seen > 900 and str(row.get("status")) in {"idle", "busy"}
             )
             status = str(row.get("status") or "(unknown)")
             by_status[status] = by_status.get(status, 0) + 1
@@ -397,9 +387,7 @@ def build_console_snapshot(
 
     # --- dreaming / nap cycles ----------------------------------------------
     def cycles_section() -> Dict[str, Any]:
-        naps = _counts(
-            q("SELECT status, COUNT(*) AS n FROM nap_runs GROUP BY status"), "status"
-        )
+        naps = _counts(q("SELECT status, COUNT(*) AS n FROM nap_runs GROUP BY status"), "status")
         recent = q(
             "SELECT id, agent_id, status, started_at, completed_at "
             "FROM nap_runs ORDER BY started_at DESC LIMIT %d" % RECENT_CYCLE_RUNS
@@ -426,9 +414,7 @@ def build_console_snapshot(
         by_status = _counts(
             q("SELECT status, COUNT(*) AS n FROM dream_runs GROUP BY status"), "status"
         )
-        by_state = _counts(
-            q("SELECT state, COUNT(*) AS n FROM dream_runs GROUP BY state"), "state"
-        )
+        by_state = _counts(q("SELECT state, COUNT(*) AS n FROM dream_runs GROUP BY state"), "state")
         recent = q(
             "SELECT id, agent_id, project, status, state, created_at, promoted_at "
             "FROM dream_runs ORDER BY created_at DESC LIMIT %d" % RECENT_CYCLE_RUNS
@@ -487,8 +473,7 @@ def build_console_snapshot(
             "events_in_window": sum(by_level.values()),
             "by_level_in_window": by_level,
             "top_names_in_window": [
-                {"name": str(row.get("name")), "count": int(row.get("n") or 0)}
-                for row in top_names
+                {"name": str(row.get("name")), "count": int(row.get("n") or 0)} for row in top_names
             ],
             "oldest_event_at": oldest,
             "newest_event_at": summary.get("newest"),
@@ -504,6 +489,7 @@ def build_console_snapshot(
     payload["pipelines"] = sections.run("pipelines", pipelines_section)
     payload["cycles"] = sections.run("cycles", cycles_section)
     payload["dreams"] = sections.run("dreams", dreams_section)
+
     # --- transcript coverage -------------------------------------------------
     def transcripts_section() -> Dict[str, Any]:
         """How much of the fleet's work has a recorded conversation at all.
@@ -644,9 +630,7 @@ def build_console_snapshot(
         payload.pop(key)
 
     payload["degraded"] = sections.degraded
-    payload["observability_sequence"] = int(
-        (payload.get("telemetry") or {}).get("cursor") or 0
-    )
+    payload["observability_sequence"] = int((payload.get("telemetry") or {}).get("cursor") or 0)
     payload["build_ms"] = round((time.monotonic() - started) * 1000.0, 1)
     return payload
 

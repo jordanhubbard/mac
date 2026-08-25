@@ -36,10 +36,45 @@ ModelCaller = Callable[[str, str, str], Tuple[str, Any, Any]]
 _WORD_RE = re.compile(r"[a-z0-9_./-]+")
 _STOPWORDS = frozenset(
     {
-        "a", "an", "and", "are", "as", "at", "be", "because", "been", "but", "by",
-        "for", "from", "had", "has", "have", "if", "in", "into", "is", "it", "its",
-        "of", "on", "or", "that", "the", "then", "there", "this", "to", "was",
-        "were", "when", "which", "while", "with", "you", "your",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "because",
+        "been",
+        "but",
+        "by",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "then",
+        "there",
+        "this",
+        "to",
+        "was",
+        "were",
+        "when",
+        "which",
+        "while",
+        "with",
+        "you",
+        "your",
     }
 )
 
@@ -61,9 +96,7 @@ def freeze_inputs(
     stable input size even though the live hub keeps writing during the run.
     """
 
-    return Snapshot(
-        records=list(records), sessions=list(sessions), existing=list(existing)
-    )
+    return Snapshot(records=list(records), sessions=list(sessions), existing=list(existing))
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +176,7 @@ def extract_candidates(
             if not policy.allow_heuristic_fallback:
                 raise
             candidates, reflections, _ = _extract_heuristic(snapshot, policy)
-            return candidates, reflections, "heuristic(after-model-error:%s)" % (
-                str(exc)[:80],
-            )
+            return candidates, reflections, "heuristic(after-model-error:%s)" % (str(exc)[:80],)
     if not policy.allow_heuristic_fallback:
         raise RuntimeError("no model available and heuristic fallback is disabled")
     return _extract_heuristic(snapshot, policy)
@@ -181,16 +212,13 @@ def _extract_with_model(
     payload = _parse_json_object(str(answer or ""))
     candidates = [
         candidate
-        for candidate in (
-            MemoryCandidate.from_dict(item) for item in payload.get("memories") or []
-        )
+        for candidate in (MemoryCandidate.from_dict(item) for item in payload.get("memories") or [])
         if candidate is not None
     ]
     reflections = [
         reflection
         for reflection in (
-            SessionReflection.from_dict(item)
-            for item in payload.get("reflections") or []
+            SessionReflection.from_dict(item) for item in payload.get("reflections") or []
         )
         if reflection is not None
     ]
@@ -222,9 +250,7 @@ def _render_sessions(sessions: Sequence[InputSession], policy: DreamPolicy) -> s
     # Keep room to say that input was omitted. Without the reservation, the
     # first large transcript can consume the entire budget and even the
     # truncation itself becomes invisible.
-    notice_reserve = len(
-        "--- (%d further session(s) omitted for budget) ---" % len(sessions)
-    ) + 2
+    notice_reserve = len("--- (%d further session(s) omitted for budget) ---" % len(sessions)) + 2
     content_budget = max(0, budget - notice_reserve)
     for index, session in enumerate(sessions):
         separator = 2 if blocks else 0
@@ -459,9 +485,7 @@ def _heuristic_statement(kind: MemoryKind, payload: Dict[str, Any]) -> str:
             return ""
         return redact("%s work fails with: %s" % (evidence_type, signature), limit=400)
     detail = signature or "no follow-up issues recorded"
-    return redact(
-        "%s work completed successfully; %s" % (evidence_type, detail), limit=400
-    )
+    return redact("%s work completed successfully; %s" % (evidence_type, detail), limit=400)
 
 
 # ---------------------------------------------------------------------------
@@ -482,14 +506,15 @@ def resolve_duplicates_and_conflicts(
     """
 
     canonical: List[MemoryCandidate] = []
-    for candidate in sorted(
-        candidates, key=lambda c: (-c.source_count, len(c.statement))
-    ):
+    for candidate in sorted(candidates, key=lambda c: (-c.source_count, len(c.statement))):
         merged_into = None
         for existing in canonical:
             if existing.kind is not candidate.kind:
                 continue
-            if _similarity(existing.statement, candidate.statement) < policy.max_pairwise_similarity:
+            if (
+                _similarity(existing.statement, candidate.statement)
+                < policy.max_pairwise_similarity
+            ):
                 continue
             merged_into = existing
             break
@@ -512,11 +537,7 @@ def resolve_duplicates_and_conflicts(
     known = snapshot.supersedable_ids
     for candidate in canonical:
         candidate.supersedes = sorted(
-            {
-                ref.id
-                for ref in candidate.sources
-                if ref.kind == "memory" and ref.id in known
-            }
+            {ref.id for ref in candidate.sources if ref.kind == "memory" and ref.id in known}
         )
     return canonical
 

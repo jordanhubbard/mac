@@ -321,11 +321,24 @@ def test_a_plan_scoring_task_gets_the_recipe_when_authorised():
 def test_task_executor_reexports_all_hub_io_symbols():
     """task_executor must still expose all moved symbols for downstream callers."""
     symbols = [
-        "utcnow", "sha256_text", "command_audit_id", "redacted_arg",
-        "audit_safe_argv", "safe_path_component", "local_agent_id",
-        "_hub_env", "_hub_post", "_hub_post_json", "_hub_get", "_hub_put",
-        "_hub_post_child_tasks", "_PLAN_TITLE_KEYWORDS", "_NUMBERED_STEP_RE",
-        "_BULLET_RE", "detect_plan_signals", "_plan_detection_section",
+        "utcnow",
+        "sha256_text",
+        "command_audit_id",
+        "redacted_arg",
+        "audit_safe_argv",
+        "safe_path_component",
+        "local_agent_id",
+        "_hub_env",
+        "_hub_post",
+        "_hub_post_json",
+        "_hub_get",
+        "_hub_put",
+        "_hub_post_child_tasks",
+        "_PLAN_TITLE_KEYWORDS",
+        "_NUMBERED_STEP_RE",
+        "_BULLET_RE",
+        "detect_plan_signals",
+        "_plan_detection_section",
         "hub_write_capability",
     ]
     for sym in symbols:

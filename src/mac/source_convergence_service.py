@@ -63,8 +63,7 @@ def _source_action(metadata: JsonDict) -> tuple[str, str]:
     if isinstance(changed, list) and changed:
         paths = [str(item).strip() for item in changed if str(item).strip()]
         if paths and all(
-            path.startswith(("docs/", ".github/"))
-            or path.lower().endswith((".md", ".rst", ".txt"))
+            path.startswith(("docs/", ".github/")) or path.lower().endswith((".md", ".rst", ".txt"))
             for path in paths
         ):
             return "source_sync", "documentation_only"
@@ -118,9 +117,7 @@ class SourceConvergenceService:
                 used = self._reconcile_fleet(state, remaining, summary)
                 remaining -= used
             except Exception as exc:  # noqa: BLE001 - one fleet cannot stop all convergence.
-                summary["errors"].append(
-                    {"fleet_id": fleet_id, "error": str(exc)[:500]}
-                )
+                summary["errors"].append({"fleet_id": fleet_id, "error": str(exc)[:500]})
         summary["errors"] = summary["errors"][:20]
         return summary
 
@@ -166,9 +163,7 @@ class SourceConvergenceService:
             summary["nodes_examined"] += 1
             agent_id = str(row["id"])
             resources = json_loads(row["resources"], {})
-            source_state = (
-                resources.get("source_state") if isinstance(resources, dict) else {}
-            )
+            source_state = resources.get("source_state") if isinstance(resources, dict) else {}
             source_state = source_state if isinstance(source_state, dict) else {}
             actual_sha = str(source_state.get("commit_sha") or "")
             dirty = bool(source_state.get("dirty"))
@@ -207,8 +202,7 @@ class SourceConvergenceService:
                     request_id=None,
                     stream_id=None,
                     blocker_code="external_dispatch_hold",
-                    blocker_detail=hold_reason
-                    or "agent has an operator-owned dispatch hold",
+                    blocker_detail=hold_reason or "agent has an operator-owned dispatch hold",
                     attempt=int(existing["attempt"] or 0) if existing else 0,
                 )
                 summary["blocked"] += 1
@@ -216,8 +210,7 @@ class SourceConvergenceService:
 
             self.cp.set_agent_dispatch_hold(
                 agent_id,
-                "%sgeneration=%d:desired=%s"
-                % (_HOLD_PREFIX, generation, desired_sha[:12]),
+                "%sgeneration=%d:desired=%s" % (_HOLD_PREFIX, generation, desired_sha[:12]),
             )
             summary["held"] += 1
             if dirty:
@@ -272,10 +265,7 @@ class SourceConvergenceService:
                 )
                 summary["blocked"] += 1
                 continue
-            if (
-                str(row["current_task_id"] or "")
-                or str(row["status"]) == AgentStatus.BUSY.value
-            ):
+            if str(row["current_task_id"] or "") or str(row["status"]) == AgentStatus.BUSY.value:
                 self._write_node(
                     state,
                     row,
@@ -366,8 +356,7 @@ class SourceConvergenceService:
             request_id = (
                 str(existing["request_id"])
                 if recovering_dispatch
-                else "source-convergence:%s:%d:%s:%d"
-                % (fleet_id, generation, agent_id, attempt)
+                else "source-convergence:%s:%d:%s:%d" % (fleet_id, generation, agent_id, attempt)
             )
             payload = repo_update_payload(
                 remote=str(metadata.get("remote") or "origin"),
@@ -430,9 +419,7 @@ class SourceConvergenceService:
         request_id: str,
         payload: JsonDict,
     ) -> str:
-        stream_id = (
-            "srcconv_%s" % hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:40]
-        )
+        stream_id = "srcconv_%s" % hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:40]
         try:
             stream = self.cp.get_agentbus_stream(stream_id)
         except NotFoundError:
@@ -443,13 +430,8 @@ class SourceConvergenceService:
                 topic=REPO_UPDATE_TOPIC,
                 stream_id=stream_id,
             )
-        if (
-            stream.sender_agent_id != sender_id
-            or stream.recipient_agent_id != recipient_id
-        ):
-            raise RuntimeError(
-                "deterministic source-convergence stream identity collision"
-            )
+        if stream.sender_agent_id != sender_id or stream.recipient_agent_id != recipient_id:
+            raise RuntimeError("deterministic source-convergence stream identity collision")
         chunks = self.cp.read_agentbus_chunks(sender_id, stream_id, 0, 10)
         if not chunks:
             self.cp.append_agentbus_chunk(
@@ -505,11 +487,7 @@ class SourceConvergenceService:
             elif status in _TERMINAL_FAILURE_RESULTS or status == "error":
                 next_retry = (
                     parse_time(now)
-                    + timedelta(
-                        seconds=min(
-                            900, 30 * (2 ** min(5, int(node["attempt"] or 1) - 1))
-                        )
-                    )
+                    + timedelta(seconds=min(900, 30 * (2 ** min(5, int(node["attempt"] or 1) - 1))))
                 ).isoformat()
                 self.store.execute(
                     """
@@ -613,10 +591,7 @@ class SourceConvergenceService:
         )
 
     def _retry_not_due(self, row: Any, generation: int, desired_sha: str) -> bool:
-        if (
-            int(row["desired_generation"]) != generation
-            or str(row["desired_sha"]) != desired_sha
-        ):
+        if int(row["desired_generation"]) != generation or str(row["desired_sha"]) != desired_sha:
             return False
         if str(row["phase"]) in {
             "awaiting_attestation",
@@ -644,9 +619,9 @@ class SourceConvergenceService:
         return str(row["id"]) if row else ""
 
     def _clear_owned_hold(self, row: Any) -> None:
-        if bool(row["dispatch_hold"]) and str(
-            row["dispatch_hold_reason"] or ""
-        ).startswith(_HOLD_PREFIX):
+        if bool(row["dispatch_hold"]) and str(row["dispatch_hold_reason"] or "").startswith(
+            _HOLD_PREFIX
+        ):
             self.cp.clear_agent_dispatch_hold(str(row["id"]))
 
     def _acquire_lease(self, scope_key: str, seconds: int = 30) -> bool:

@@ -137,7 +137,11 @@ def test_openshell_policy_update_and_render_to_file(monkeypatch, tmp_path) -> No
 def test_fleet_memory_export_and_prune(monkeypatch, tmp_path, capsys) -> None:
     from mac import memory_vetting
 
-    monkeypatch.setattr(memory_vetting, "QdrantClient", lambda _url: SimpleNamespace(scroll=lambda *_a, **_k: [] , delete=lambda *_a, **_k: {}))
+    monkeypatch.setattr(
+        memory_vetting,
+        "QdrantClient",
+        lambda _url: SimpleNamespace(scroll=lambda *_a, **_k: [], delete=lambda *_a, **_k: {}),
+    )
     monkeypatch.setattr(
         memory_vetting,
         "export_memory_records",
@@ -151,7 +155,11 @@ def test_fleet_memory_export_and_prune(monkeypatch, tmp_path, capsys) -> None:
         "search_records",
         lambda records, term: [record for record in records if term in record.get("text", "")],
     )
-    monkeypatch.setattr(memory_vetting, "prune_points", lambda _delete, collection, ids: {"collection": collection, "ids": ids})
+    monkeypatch.setattr(
+        memory_vetting,
+        "prune_points",
+        lambda _delete, collection, ids: {"collection": collection, "ids": ids},
+    )
     outputs = []
     monkeypatch.setattr(cli, "_print", outputs.append)
     destination = tmp_path / "records.jsonl"
@@ -193,8 +201,12 @@ def test_refresh_context_updates_fleet_and_mood(monkeypatch, tmp_path) -> None:
     seen = []
     monkeypatch.setattr(hermes_runtime, "render_fleet_section", lambda value: "fleet")
     monkeypatch.setattr(hermes_runtime, "render_mood_section", lambda value: "mood")
-    monkeypatch.setattr(hermes_runtime, "refresh_fleet_section", lambda path, text: seen.append((path, text)))
-    monkeypatch.setattr(hermes_runtime, "refresh_mood_section", lambda path, text: seen.append((path, text)))
+    monkeypatch.setattr(
+        hermes_runtime, "refresh_fleet_section", lambda path, text: seen.append((path, text))
+    )
+    monkeypatch.setattr(
+        hermes_runtime, "refresh_mood_section", lambda path, text: seen.append((path, text))
+    )
     outputs = []
     monkeypatch.setattr(cli, "_print", outputs.append)
     target = tmp_path / "context.md"
@@ -222,11 +234,17 @@ def test_journal_commands_delegate_and_render(monkeypatch, tmp_path) -> None:
     outputs = []
     monkeypatch.setattr(cli, "_print", outputs.append)
     args = Namespace(
-        dir=str(tmp_path), home=str(tmp_path / "home"), date="2026-01-01", agent="agent", no_hook=True
+        dir=str(tmp_path),
+        home=str(tmp_path / "home"),
+        date="2026-01-01",
+        agent="agent",
+        no_hook=True,
     )
     cli.cmd_journal_snapshot(args)
     cli.cmd_journal_list(Namespace(dir=str(tmp_path)))
-    cli.cmd_journal_restore(Namespace(dir=str(tmp_path), home=str(tmp_path / "home"), date="2026-01-01", dry_run=True))
+    cli.cmd_journal_restore(
+        Namespace(dir=str(tmp_path), home=str(tmp_path / "home"), date="2026-01-01", dry_run=True)
+    )
     assert outputs[0]["files"] == 2
     assert outputs[-1]["dry_run"] is True
 
@@ -239,7 +257,9 @@ def test_pull_request_open_success_finding_failure_and_required_url(monkeypatch)
     outputs = []
     monkeypatch.setattr(cli, "_print", outputs.append)
     plane = SimpleNamespace(
-        record_integration_finding=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("ledger down"))
+        record_integration_finding=lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("ledger down")
+        )
     )
     monkeypatch.setattr(cli, "_plane", lambda _args: plane)
     with pytest.raises(SystemExit, match="repo-url is required"):
@@ -247,7 +267,9 @@ def test_pull_request_open_success_finding_failure_and_required_url(monkeypatch)
             Namespace(repo_url="", head="h", base=None, title=None, body=None, task_id=None)
         )
     cli.cmd_pull_request_open(
-        Namespace(repo_url="https://repo", head="h", base="main", title="t", body="b", task_id="task")
+        Namespace(
+            repo_url="https://repo", head="h", base="main", title="t", body="b", task_id="task"
+        )
     )
     assert outputs[-1]["finding_error"] == "ledger down"
 
@@ -256,11 +278,19 @@ def test_secret_value_sources(monkeypatch, tmp_path) -> None:
     with pytest.raises(MACError, match="exactly one"):
         cli._resolve_secret_value(Namespace(value="", from_stdin=False, from_file=None))
     monkeypatch.setattr("sys.stdin", io.StringIO("stdin\n"))
-    assert cli._resolve_secret_value(Namespace(value="", from_stdin=True, from_file=None)) == "stdin"
+    assert (
+        cli._resolve_secret_value(Namespace(value="", from_stdin=True, from_file=None)) == "stdin"
+    )
     path = tmp_path / "secret"
     path.write_text("file\n")
-    assert cli._resolve_secret_value(Namespace(value="", from_stdin=False, from_file=str(path))) == "file"
-    assert cli._resolve_secret_value(Namespace(value="value", from_stdin=False, from_file=None)) == "value"
+    assert (
+        cli._resolve_secret_value(Namespace(value="", from_stdin=False, from_file=str(path)))
+        == "file"
+    )
+    assert (
+        cli._resolve_secret_value(Namespace(value="value", from_stdin=False, from_file=None))
+        == "value"
+    )
 
 
 def test_action_stream_non_follow_prints_events(monkeypatch, capsys) -> None:

@@ -74,12 +74,14 @@ def test_config_disabled_flag_forms(value):
 
 
 def test_config_reads_numeric_overrides():
-    cfg = NapTickerConfig.from_env({
-        "MAC_NAP_TICK_ENABLED": "1",
-        "MAC_NAP_TICK_INTERVAL_SECONDS": "120",
-        "MAC_NAP_TICK_INITIAL_DELAY_SECONDS": "0",
-        "MAC_NAP_TICK_MAX_AGENTS_PER_TICK": "3",
-    })
+    cfg = NapTickerConfig.from_env(
+        {
+            "MAC_NAP_TICK_ENABLED": "1",
+            "MAC_NAP_TICK_INTERVAL_SECONDS": "120",
+            "MAC_NAP_TICK_INITIAL_DELAY_SECONDS": "0",
+            "MAC_NAP_TICK_MAX_AGENTS_PER_TICK": "3",
+        }
+    )
     assert cfg.active is True
     assert cfg.interval_seconds == 120.0
     assert cfg.initial_delay_seconds == 0.0
@@ -88,10 +90,12 @@ def test_config_reads_numeric_overrides():
 
 
 def test_config_non_numeric_sets_error_and_deactivates():
-    cfg = NapTickerConfig.from_env({
-        "MAC_NAP_TICK_ENABLED": "1",
-        "MAC_NAP_TICK_INTERVAL_SECONDS": "abc",
-    })
+    cfg = NapTickerConfig.from_env(
+        {
+            "MAC_NAP_TICK_ENABLED": "1",
+            "MAC_NAP_TICK_INTERVAL_SECONDS": "abc",
+        }
+    )
     assert "MAC_NAP_TICK_INTERVAL_SECONDS must be numeric" in cfg.configuration_error
     assert cfg.enabled is True and cfg.active is False
     # The default survives the rejected override.
@@ -99,11 +103,13 @@ def test_config_non_numeric_sets_error_and_deactivates():
 
 
 def test_config_out_of_range_sets_error_and_deactivates():
-    cfg = NapTickerConfig.from_env({
-        "MAC_NAP_TICK_ENABLED": "1",
-        "MAC_NAP_TICK_INTERVAL_SECONDS": "1",  # below the 60s floor
-        "MAC_NAP_TICK_MAX_AGENTS_PER_TICK": "1000",  # above the 100 cap
-    })
+    cfg = NapTickerConfig.from_env(
+        {
+            "MAC_NAP_TICK_ENABLED": "1",
+            "MAC_NAP_TICK_INTERVAL_SECONDS": "1",  # below the 60s floor
+            "MAC_NAP_TICK_MAX_AGENTS_PER_TICK": "1000",  # above the 100 cap
+        }
+    )
     assert "MAC_NAP_TICK_INTERVAL_SECONDS must be between" in cfg.configuration_error
     assert "MAC_NAP_TICK_MAX_AGENTS_PER_TICK must be between" in cfg.configuration_error
     assert cfg.active is False
@@ -291,10 +297,12 @@ def test_interval_zero_disables_cleanly():
 
 def test_interval_zero_overrides_enabled_flag():
     """MAC_NAP_TICK_INTERVAL_SECONDS=0 wins even if MAC_NAP_TICK_ENABLED=1."""
-    cfg = NapTickerConfig.from_env({
-        "MAC_NAP_TICK_ENABLED": "1",
-        "MAC_NAP_TICK_INTERVAL_SECONDS": "0",
-    })
+    cfg = NapTickerConfig.from_env(
+        {
+            "MAC_NAP_TICK_ENABLED": "1",
+            "MAC_NAP_TICK_INTERVAL_SECONDS": "0",
+        }
+    )
     assert cfg.enabled is False
     assert cfg.active is False
     assert cfg.configuration_error == ""

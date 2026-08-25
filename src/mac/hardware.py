@@ -49,6 +49,7 @@ reported with ``shared=True`` and a structured ``memory.type`` of ``unified``.
 When system memory is measurable, the compatibility ``vram_mb`` field is set to
 that capacity so existing route filters can still reason about usable memory.
 """
+
 from __future__ import annotations
 
 import os
@@ -397,7 +398,9 @@ def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
             known=False,
             source="unknown",
             unit="cores",
-            detail={**detail, "reason": "cgroup_unresolved"} if detail else {"reason": "cgroup_unresolved"},
+            detail={**detail, "reason": "cgroup_unresolved"}
+            if detail
+            else {"reason": "cgroup_unresolved"},
         )
 
     bounded: Optional[float] = None
@@ -1014,17 +1017,13 @@ def _detect_hardware(
     architecture = platform.machine()
     host_cpu_count = os.cpu_count() or 0
     try:
-        cpu_count, cpu_capacity = _effective_cpu_capacity(
-            host_cpu_count, cgroup_root=root
-        )
+        cpu_count, cpu_capacity = _effective_cpu_capacity(host_cpu_count, cgroup_root=root)
     except TypeError:
         cpu_count, cpu_capacity = _effective_cpu_capacity(host_cpu_count)
     cpu_model = _cpu_model()
     host_memory_mb = _memory_mb()
     try:
-        memory_mb, memory_capacity = _effective_memory_capacity(
-            host_memory_mb, cgroup_root=root
-        )
+        memory_mb, memory_capacity = _effective_memory_capacity(host_memory_mb, cgroup_root=root)
     except TypeError:
         memory_mb, memory_capacity = _effective_memory_capacity(host_memory_mb)
     try:
@@ -1062,9 +1061,7 @@ def _detect_hardware(
                 "effective_count": 0,
                 "mig_count": 0,
                 "visibility": (
-                    "cuda_visible_devices"
-                    if "CUDA_VISIBLE_DEVICES" in os.environ
-                    else "runtime"
+                    "cuda_visible_devices" if "CUDA_VISIBLE_DEVICES" in os.environ else "runtime"
                 ),
             },
         },
@@ -1116,9 +1113,7 @@ def _detect_hardware(
                     gpu.pop("vram_mb", None)
         info["gpu"] = gpu
         if isinstance(gpu.get("gpus"), list):
-            info["gpus"] = [
-                item for item in gpu["gpus"] if isinstance(item, dict)
-            ]
+            info["gpus"] = [item for item in gpu["gpus"] if isinstance(item, dict)]
         info["accelerator"] = gpu.get("accelerator", "none")
         groups: Dict[tuple[str, str, int], Dict[str, Any]] = {}
         vendor = "nvidia" if gpu.get("accelerator") == "cuda" else "apple"
@@ -1142,13 +1137,9 @@ def _detect_hardware(
         info["accelerators"] = list(groups.values())
         info["capacity"]["accelerators"] = {
             "effective_count": len(info.get("gpus") or []),
-            "mig_count": sum(
-                1 for item in info.get("gpus") or [] if item.get("flavor") == "mig"
-            ),
+            "mig_count": sum(1 for item in info.get("gpus") or [] if item.get("flavor") == "mig"),
             "visibility": (
-                "cuda_visible_devices"
-                if "CUDA_VISIBLE_DEVICES" in os.environ
-                else "runtime"
+                "cuda_visible_devices" if "CUDA_VISIBLE_DEVICES" in os.environ else "runtime"
             ),
         }
         if info["capacity"]["accelerators"]["mig_count"]:
@@ -1202,7 +1193,9 @@ def summarize(hardware: Optional[Dict[str, Any]]) -> str:
         vram = _gpu_capacity_mb(gpu)
         count = gpu.get("count") or 1
         shared = gpu.get("shared", False)
-        label = "%s x%d" % (gpu.get("name", "GPU"), count) if count > 1 else str(gpu.get("name", "GPU"))
+        label = (
+            "%s x%d" % (gpu.get("name", "GPU"), count) if count > 1 else str(gpu.get("name", "GPU"))
+        )
         vram_label = (" %dGB%s" % (vram / 1024, " shared" if shared else "")) if vram else ""
         parts.append("%s [%s%s]" % (label, accel, vram_label))
         # Surface the HGX baseboard confinement so `mac agent hardware` shows the

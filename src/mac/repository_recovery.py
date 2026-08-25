@@ -149,8 +149,7 @@ def _git_stdout(worktree: Path, args: Sequence[str]) -> str:
     result = _run_git(worktree, args)
     if result.returncode != 0:
         raise RepositoryRecoveryError(
-            "git %s failed: %s"
-            % (" ".join(args), (result.stderr or result.stdout).strip())
+            "git %s failed: %s" % (" ".join(args), (result.stderr or result.stdout).strip())
         )
     return result.stdout.strip()
 
@@ -294,8 +293,7 @@ def _sanity_wrapper_is_repository_owned(worktree: Path) -> bool:
     """
 
     return (
-        _run_git(worktree, ["cat-file", "-e", "HEAD:%s" % _SANITY_WRAPPER_COMMAND]).returncode
-        == 0
+        _run_git(worktree, ["cat-file", "-e", "HEAD:%s" % _SANITY_WRAPPER_COMMAND]).returncode == 0
     )
 
 
@@ -338,15 +336,14 @@ def _classify_preserved_test_item(
             verdict["reason"] = "sanity wrapper carries unapproved arguments"
         elif not _sanity_wrapper_is_repository_owned(worktree):
             verdict["reason"] = (
-                "%s is not committed in the preserved worktree HEAD"
-                % _SANITY_WRAPPER_COMMAND
+                "%s is not committed in the preserved worktree HEAD" % _SANITY_WRAPPER_COMMAND
             )
         elif not base:
             verdict["reason"] = "sanity wrapper ran without a --base prepared-base argument"
         elif not _matches_prepared_base(base, prepared_base):
-            verdict["reason"] = (
-                "sanity wrapper base %r does not match the prepared base %r"
-                % (base, prepared_base)
+            verdict["reason"] = "sanity wrapper base %r does not match the prepared base %r" % (
+                base,
+                prepared_base,
             )
         if "reason" in verdict:
             verdict["accepted"] = False
@@ -390,26 +387,21 @@ def _accepted_test_evidence(
         refused.append("%s: %s" % (verdict["command"], verdict["reason"]))
     detail = "; ".join(refused)
     raise RepositoryRecoveryError(
-        "preserved contract-test evidence is not passing"
-        + (" (%s)" % detail if detail else "")
+        "preserved contract-test evidence is not passing" + (" (%s)" % detail if detail else "")
     )
 
 
 def _canonical_remote(task: Mapping[str, Any], context: Mapping[str, Any]) -> str:
     contract = _contract(task)
     return str(
-        contract.get("canonical_remote_url")
-        or context.get("repository_canonical_remote_url")
-        or ""
+        contract.get("canonical_remote_url") or context.get("repository_canonical_remote_url") or ""
     ).strip()
 
 
 def _canonical_branch(task: Mapping[str, Any], context: Mapping[str, Any]) -> str:
     contract = _contract(task)
     return str(
-        contract.get("default_branch")
-        or context.get("repository_canonical_branch")
-        or "main"
+        contract.get("default_branch") or context.get("repository_canonical_branch") or "main"
     ).strip()
 
 
@@ -473,9 +465,7 @@ def inspect_finalizer_recovery(
     head_sha = _git_stdout(worktree, ["rev-parse", "HEAD"])
     manifest_head = str(repo.get("head_sha") or "").strip()
     if len(manifest_head) != _SHA_LENGTH or head_sha != manifest_head:
-        raise RepositoryRecoveryError(
-            "preserved worktree HEAD no longer matches executor evidence"
-        )
+        raise RepositoryRecoveryError("preserved worktree HEAD no longer matches executor evidence")
 
     # Judged after the worktree anchor is proven, because an approved sanity
     # wrapper must be a committed repository file at the evidenced HEAD.
@@ -563,9 +553,7 @@ def recover_finalizer_worktree(
         raise RepositoryRecoveryError("--evidence-id is required with --execute")
     approved = plan["approved_new_files"]
     if not approved:
-        raise RepositoryRecoveryError(
-            "--execute requires every new file via --approve-new-file"
-        )
+        raise RepositoryRecoveryError("--execute requires every new file via --approve-new-file")
     branch = str(plan["branch"] or "").strip()
     base_sha = str(plan["base_sha"] or "").strip()
     remote = str(plan["canonical_remote"] or "").strip()
@@ -659,9 +647,7 @@ def recover_finalizer_worktree(
     )
     publication = publisher(target)
     if not publication.ok or not publication.remote_verified:
-        raise RepositoryRecoveryError(
-            "guarded recovery push failed: %s" % publication.error
-        )
+        raise RepositoryRecoveryError("guarded recovery push failed: %s" % publication.error)
 
     result: JsonDict = {
         **plan,
@@ -722,14 +708,10 @@ def inspect_stalled_finalizer_recovery(
         raise RepositoryRecoveryError("preserved task has no id")
 
     if not progress:
-        raise RepositoryRecoveryError(
-            "no finalizer-progress.json — not a stalled-finalizer case"
-        )
+        raise RepositoryRecoveryError("no finalizer-progress.json — not a stalled-finalizer case")
     progress_status = str(progress.get("status") or "").strip().lower()
     if progress_status == "pass" or progress_status == "complete":
-        raise RepositoryRecoveryError(
-            "finalizer progress reports completion — nothing to recover"
-        )
+        raise RepositoryRecoveryError("finalizer progress reports completion — nothing to recover")
     if progress_status not in _STALLED_FINALIZER_STATUSES:
         raise RepositoryRecoveryError(
             "unrecognized finalizer progress status: %r" % (progress.get("status"),)
@@ -759,9 +741,7 @@ def inspect_stalled_finalizer_recovery(
 
     worktree = Path(str(context.get("repository_worktree") or "")).expanduser().resolve()
     if not worktree.is_dir():
-        raise RepositoryRecoveryError(
-            "preserved repository worktree is missing: %s" % worktree
-        )
+        raise RepositoryRecoveryError("preserved repository worktree is missing: %s" % worktree)
     head_sha = _git_stdout(worktree, ["rev-parse", "HEAD"])
     manifest_head = str(repo.get("head_sha") or "").strip()
     if manifest_head:
@@ -770,9 +750,7 @@ def inspect_stalled_finalizer_recovery(
                 "preserved worktree HEAD no longer matches finalizer evidence"
             )
 
-    base_sha = str(
-        context.get("repository_base_sha") or repo.get("base_sha") or ""
-    ).strip()
+    base_sha = str(context.get("repository_base_sha") or repo.get("base_sha") or "").strip()
     if len(base_sha) != _SHA_LENGTH:
         raise RepositoryRecoveryError("preserved base sha is missing or malformed")
 
@@ -852,16 +830,12 @@ def recover_stalled_finalizer(
     remote = str(plan["canonical_remote"] or "").strip()
     canonical_branch = str(plan["canonical_branch"] or "").strip()
     if not branch or not base_sha or not remote or not canonical_branch:
-        raise RepositoryRecoveryError(
-            "repository context is incomplete for guarded publication"
-        )
+        raise RepositoryRecoveryError("repository context is incomplete for guarded publication")
 
     worktree = Path(plan["worktree"])
     approved = plan["approved_new_files"]
     if plan["new_files"] and not approved:
-        raise RepositoryRecoveryError(
-            "--execute requires every new file via --approve-new-file"
-        )
+        raise RepositoryRecoveryError("--execute requires every new file via --approve-new-file")
 
     add_tracked = _run_git(worktree, ["add", "-u"])
     if add_tracked.returncode != 0:
@@ -893,8 +867,7 @@ def recover_stalled_finalizer(
                 "-m",
                 "Recover MAC task %s: %s" % (task_id, title[:100]),
                 "-m",
-                "MAC-Original-Evidence: %s\nMAC-Recovery-Reason: stalled-finalizer"
-                % evidence_id,
+                "MAC-Original-Evidence: %s\nMAC-Recovery-Reason: stalled-finalizer" % evidence_id,
             ],
         )
         if commit.returncode != 0:
@@ -905,9 +878,7 @@ def recover_stalled_finalizer(
         raise RepositoryRecoveryError("could not inspect staged recovery changes")
 
     if _git_stdout(worktree, ["rev-list", "--count", "%s..HEAD" % base_sha]) == "0":
-        raise RepositoryRecoveryError(
-            "no committed work ahead of the prepared base after staging"
-        )
+        raise RepositoryRecoveryError("no committed work ahead of the prepared base after staging")
 
     sync = canonical_syncer(worktree, remote, canonical_branch)
     if str(sync.get("status") or "") not in {"fresh", "rebased"}:
@@ -921,12 +892,8 @@ def recover_stalled_finalizer(
 
     test = test_runner(str(plan["test_command"]), worktree)
     root = Path(plan["workspace"])
-    (root / "stalled-recovery-test.stdout.txt").write_text(
-        test.stdout or "", encoding="utf-8"
-    )
-    (root / "stalled-recovery-test.stderr.txt").write_text(
-        test.stderr or "", encoding="utf-8"
-    )
+    (root / "stalled-recovery-test.stdout.txt").write_text(test.stdout or "", encoding="utf-8")
+    (root / "stalled-recovery-test.stderr.txt").write_text(test.stderr or "", encoding="utf-8")
     if test.returncode != 0:
         raise RepositoryRecoveryError(
             "recovery contract test failed with returncode %d" % test.returncode
@@ -958,9 +925,7 @@ def recover_stalled_finalizer(
     )
     publication = publisher(target)
     if not publication.ok or not publication.remote_verified:
-        raise RepositoryRecoveryError(
-            "guarded recovery push failed: %s" % publication.error
-        )
+        raise RepositoryRecoveryError("guarded recovery push failed: %s" % publication.error)
 
     result: JsonDict = {
         **plan,

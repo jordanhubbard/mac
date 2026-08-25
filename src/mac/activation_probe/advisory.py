@@ -52,15 +52,10 @@ def activation_probe_audit_from_environment(
         return None
     started = time.perf_counter()
     try:
-        checkpoint = (
-            str(environment.get("MAC_ACTIVATION_PROBE_CHECKPOINT") or "").strip()
-            or None
-        )
+        checkpoint = str(environment.get("MAC_ACTIVATION_PROBE_CHECKPOINT") or "").strip() or None
         classifier = ActivationProbeClassifier.load(checkpoint)
         prediction = (
-            classifier.predict(
-                _activation_input(task_dir, execution_metadata, environment)
-            )
+            classifier.predict(_activation_input(task_dir, execution_metadata, environment))
             if classifier.enabled
             else classifier.predict([])
         )

@@ -150,7 +150,9 @@ def test_load_openshell_policy_missing_returns_none(tmp_path, monkeypatch):
 
 def test_load_openshell_policy_uses_env(tmp_path, monkeypatch):
     policy_file = tmp_path / "env-policy.yaml"
-    policy_file.write_text("network_policies: {}\nfilesystem_policy: {read_write: []}\n", encoding="utf-8")
+    policy_file.write_text(
+        "network_policies: {}\nfilesystem_policy: {read_write: []}\n", encoding="utf-8"
+    )
     monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(policy_file))
     parsed = load_openshell_policy()
     assert parsed == {"network_policies": {}, "filesystem_policy": {"read_write": []}}

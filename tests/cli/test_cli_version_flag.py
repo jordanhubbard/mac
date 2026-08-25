@@ -69,9 +69,7 @@ def test_it_works_alongside_the_other_global_flags():
 def test_the_flag_is_on_the_root_parser_not_a_subcommand():
     parser = cli.build_parser()
 
-    assert "--version" in {
-        option for action in parser._actions for option in action.option_strings
-    }
+    assert "--version" in {option for action in parser._actions for option in action.option_strings}
 
 
 def test_a_real_subcommand_still_requires_its_arguments():

@@ -23,7 +23,11 @@ def test_book_has_ordered_chapters_and_executable_shell_contracts():
     chapters = _module().load_chapters()
     assert [chapter.number for chapter in chapters] == list(range(1, 19))
     assert all(chapter.blocks for chapter in chapters)
-    assert all(block.language in {"bash", "sh", "shell"} for chapter in chapters for block in chapter.blocks)
+    assert all(
+        block.language in {"bash", "sh", "shell"}
+        for chapter in chapters
+        for block in chapter.blocks
+    )
 
 
 def test_non_book_pages_cannot_bypass_the_shell_execution_contract():

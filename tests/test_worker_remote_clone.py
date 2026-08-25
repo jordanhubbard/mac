@@ -105,7 +105,9 @@ def _repo_task(repository_url: str = "", repository_path: str = "") -> Dict[str,
     }
 
 
-def test_remote_clone_happy_path_creates_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remote_clone_happy_path_creates_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     worker = _make_worker(tmp_path)
     fake = _FakeGit(head_sha="a" * 40)
     monkeypatch.setattr("mac.worker._run_git_in", fake.run_git_in)
@@ -140,7 +142,9 @@ def test_remote_clone_happy_path_creates_branch(tmp_path: Path, monkeypatch: pyt
     assert "x-access-token" in auth_url
 
     # A `checkout -b <branch>` should appear in the repo-mode calls.
-    checkout_calls = [c for c in fake.calls if c["helper"] == "repo" and c["args"][:1] == ["checkout"]]
+    checkout_calls = [
+        c for c in fake.calls if c["helper"] == "repo" and c["args"][:1] == ["checkout"]
+    ]
     assert checkout_calls, "expected `git checkout -b <branch>` after clone"
     assert checkout_calls[0]["args"][1] == "-b"
 
@@ -156,9 +160,7 @@ def test_remote_clone_uses_execution_contract_feature_branch_without_legacy_copy
 
     task = _repo_task(repository_url="https://github.com/org/repo.git")
     task["metadata"]["origin"].pop("default_branch", None)
-    task["metadata"]["origin"]["repository_contract"]["default_branch"] = (
-        "feature/one"
-    )
+    task["metadata"]["origin"]["repository_contract"]["default_branch"] = "feature/one"
     task["metadata"]["execution_contract"]["repository_contract"] = {
         "schema": "mac.repository_contract.v1",
         "canonical_remote_url": "https://github.com/org/repo.git",
@@ -167,9 +169,7 @@ def test_remote_clone_uses_execution_contract_feature_branch_without_legacy_copy
     task_dir = tmp_path / "tasks" / "task-feature"
     task_dir.mkdir(parents=True)
 
-    context = worker._prepare_repository_worktree(
-        task, {"id": "lease-feature"}, task_dir
-    )
+    context = worker._prepare_repository_worktree(task, {"id": "lease-feature"}, task_dir)
 
     assert context is not None
     clone_args = fake.calls[0]["args"]
@@ -177,10 +177,7 @@ def test_remote_clone_uses_execution_contract_feature_branch_without_legacy_copy
     assert clone_args[branch_index + 1] == "feature/one"
     assert "main" not in clone_args
     assert context["repository_canonical_branch"] == "feature/one"
-    assert (
-        _repository_context_env(context)["MAC_TASK_REPO_DEFAULT_BRANCH"]
-        == "feature/one"
-    )
+    assert _repository_context_env(context)["MAC_TASK_REPO_DEFAULT_BRANCH"] == "feature/one"
 
 
 def test_remote_clone_contract_without_branch_fails_before_git(
@@ -201,9 +198,7 @@ def test_remote_clone_contract_without_branch_fails_before_git(
     task_dir.mkdir(parents=True)
 
     with pytest.raises(ValueError, match="has no canonical branch"):
-        worker._prepare_repository_worktree(
-            task, {"id": "lease-missing-branch"}, task_dir
-        )
+        worker._prepare_repository_worktree(task, {"id": "lease-missing-branch"}, task_dir)
 
     assert fake.calls == []
 
@@ -280,9 +275,7 @@ def test_remote_clone_invalid_contract_url_fails_closed_without_secret(
     monkeypatch.delenv("MAC_TASK_REPO_URL", raising=False)
 
     redaction_marker = "test-only-redaction-marker"
-    credential_url = (
-        "https://" + "operator:" + redaction_marker + "@" + "github.com/org/repo.git"
-    )
+    credential_url = "https://" + "operator:" + redaction_marker + "@" + "github.com/org/repo.git"
     task = _repo_task(repository_path="/hub-only/src/repo")
     task["metadata"]["origin"]["repository_name"] = "external-repo"
     task["metadata"]["origin"]["repository_contract"]["project"] = "external-repo"
@@ -575,23 +568,52 @@ def _make_local_git_fixture(tmp_path: Path):
 
     _subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
     _subprocess.run(["git", "init", str(seed)], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "config", "user.email", "mac-tests@example.invalid"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "config", "user.name", "mac tests"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(seed), "config", "user.email", "mac-tests@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "config", "user.name", "mac tests"],
+        check=True,
+        capture_output=True,
+    )
     (seed / "README.md").write_text("initial\n", encoding="utf-8")
     _subprocess.run(["git", "-C", str(seed), "add", "README.md"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "commit", "-m", "initial"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "branch", "-M", "main"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(origin)], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "push", "-u", "origin", "main"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(seed), "commit", "-m", "initial"], check=True, capture_output=True
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "branch", "-M", "main"], check=True, capture_output=True
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "remote", "add", "origin", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "push", "-u", "origin", "main"], check=True, capture_output=True
+    )
     _subprocess.run(
         ["git", "clone", "--branch", "main", str(origin), str(work)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
-    _subprocess.run(["git", "-C", str(work), "config", "user.email", "mac-tests@example.invalid"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(work), "config", "user.name", "mac tests"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(work), "config", "user.email", "mac-tests@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(work), "config", "user.name", "mac tests"],
+        check=True,
+        capture_output=True,
+    )
     initial_sha = _subprocess.run(
         ["git", "-C", str(work), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     return origin, seed, work, initial_sha
 
@@ -599,11 +621,17 @@ def _make_local_git_fixture(tmp_path: Path):
 def _commit_to_origin(seed: Path, origin: Path, text: str) -> str:
     (seed / "README.md").write_text(text, encoding="utf-8")
     _subprocess.run(["git", "-C", str(seed), "add", "README.md"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "commit", "-m", "update"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "push", "origin", "main"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(seed), "commit", "-m", "update"], check=True, capture_output=True
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "push", "origin", "main"], check=True, capture_output=True
+    )
     return _subprocess.run(
         ["git", "-C", str(seed), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
@@ -646,7 +674,9 @@ def test_local_worktree_uses_fetched_canonical_head_not_stale_local(
 
     work_head = _subprocess.run(
         ["git", "-C", str(work), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     assert work_head == stale_sha, "work should still be on the old commit"
 
@@ -676,14 +706,18 @@ def test_local_worktree_uses_fetched_canonical_head_not_stale_local(
     # Verify the worktree itself is at the new SHA.
     worktree_head = _subprocess.run(
         ["git", "-C", ctx["repository_worktree"], "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     assert worktree_head == new_sha
 
     # Verify registered checkout (work) is unchanged.
     work_head_after = _subprocess.run(
         ["git", "-C", str(work), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     assert work_head_after == stale_sha, "registered checkout must not be modified"
 
@@ -721,7 +755,10 @@ def test_local_worktree_fetch_failure_falls_back_to_local_head(
         if args[:1] == ["fetch"]:
             fetch_calls.append({"args": list(args)})
             return _subprocess.CompletedProcess(
-                args=args, returncode=128, stdout="", stderr="fatal: unable to connect to remote",
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: unable to connect to remote",
             )
         if args[:1] == ["update-ref"]:
             return _ok()
@@ -771,7 +808,10 @@ def test_local_worktree_git_common_dir_failure_fails_closed(
         if args[:1] == ["rev-parse"] and "--git-common-dir" in args:
             # Simulate failure: git-common-dir cannot be resolved.
             return _subprocess.CompletedProcess(
-                args=args, returncode=128, stdout="", stderr="fatal: not a git repository",
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: not a git repository",
             )
         return _ok()
 
@@ -813,7 +853,10 @@ def test_local_worktree_prior_head_failure_inside_lock_fails_closed(
         if args[:2] == ["rev-parse", "HEAD"]:
             # Simulate HEAD resolution failure inside the lock.
             return _subprocess.CompletedProcess(
-                args=args, returncode=128, stdout="", stderr="fatal: ambiguous argument 'HEAD'",
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: ambiguous argument 'HEAD'",
             )
         if args[:1] == ["update-ref"]:
             return _ok()
@@ -998,29 +1041,58 @@ def test_local_worktree_non_main_default_branch(
 
     _subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
     _subprocess.run(["git", "init", str(seed)], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "config", "user.email", "t@example.invalid"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "config", "user.name", "tester"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(seed), "config", "user.email", "t@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "config", "user.name", "tester"], check=True, capture_output=True
+    )
     (seed / "README.md").write_text("initial\n", encoding="utf-8")
     _subprocess.run(["git", "-C", str(seed), "add", "README.md"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "commit", "-m", "initial"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "branch", "-M", "develop"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(origin)], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "push", "-u", "origin", "develop"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(seed), "commit", "-m", "initial"], check=True, capture_output=True
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "branch", "-M", "develop"], check=True, capture_output=True
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "remote", "add", "origin", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "push", "-u", "origin", "develop"], check=True, capture_output=True
+    )
     _subprocess.run(
         ["git", "clone", "--branch", "develop", str(origin), str(work)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
-    _subprocess.run(["git", "-C", str(work), "config", "user.email", "t@example.invalid"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(work), "config", "user.name", "tester"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(work), "config", "user.email", "t@example.invalid"],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(work), "config", "user.name", "tester"], check=True, capture_output=True
+    )
 
     # Push a new commit to origin/develop so work is behind.
     (seed / "README.md").write_text("updated\n", encoding="utf-8")
     _subprocess.run(["git", "-C", str(seed), "add", "README.md"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "commit", "-m", "update"], check=True, capture_output=True)
-    _subprocess.run(["git", "-C", str(seed), "push", "origin", "develop"], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "-C", str(seed), "commit", "-m", "update"], check=True, capture_output=True
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "push", "origin", "develop"], check=True, capture_output=True
+    )
     canonical_sha = _subprocess.run(
         ["git", "-C", str(seed), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
     worker = _make_worker(tmp_path)
@@ -1089,9 +1161,7 @@ def test_local_worktree_execution_contract_feature_branch_is_exact_base(
 
     task = _repo_task_local(str(work))
     task["metadata"]["origin"].pop("default_branch")
-    task["metadata"]["origin"]["repository_contract"]["default_branch"] = (
-        "feature/one"
-    )
+    task["metadata"]["origin"]["repository_contract"]["default_branch"] = "feature/one"
     task["metadata"]["execution_contract"]["repository_contract"] = {
         "schema": "mac.repository_contract.v1",
         "default_branch": "feature/one",
@@ -1109,10 +1179,7 @@ def test_local_worktree_execution_contract_feature_branch_is_exact_base(
     assert context["repository_canonical_branch"] == "feature/one"
     assert context["repository_base_sha"] == feature_sha
     assert context["repository_base_sha"] != main_sha
-    assert (
-        _repository_context_env(context)["MAC_TASK_REPO_DEFAULT_BRANCH"]
-        == "feature/one"
-    )
+    assert _repository_context_env(context)["MAC_TASK_REPO_DEFAULT_BRANCH"] == "feature/one"
 
 
 def test_local_worktree_concurrent_preparation_no_race(
@@ -1387,9 +1454,7 @@ def test_malformed_ahead_behind_fails_closed(
         worker._prepare_repository_worktree(task, lease, task_dir)
 
 
-def test_failed_ahead_behind_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_failed_ahead_behind_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If rev-list --left-right --count exits non-zero, the worker must
     raise RuntimeError (fail closed).  Evidence must never emit null counts.
     """
@@ -1420,7 +1485,10 @@ def test_failed_ahead_behind_fails_closed(
         if args[:1] == ["rev-list"]:
             # Simulate rev-list failure.
             return _subprocess.CompletedProcess(
-                args=args, returncode=128, stdout="", stderr="fatal: bad revision range",
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: bad revision range",
             )
         if args[:1] == ["update-ref"]:
             return _ok()
@@ -1468,7 +1536,10 @@ def test_non_commit_fetched_object_fails_closed(
         if args[:1] == ["rev-parse"] and "--verify" in args and any("^{commit}" in a for a in args):
             # Simulate: the ref exists as an object but is not a commit.
             return _subprocess.CompletedProcess(
-                args=args, returncode=128, stdout="", stderr="fatal: Not a valid object name",
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: Not a valid object name",
             )
         if args[:1] == ["rev-parse"] and any(a.startswith("refs/mac/fetch/") for a in args):
             # Returns a well-formed 40-hex SHA (passes hex check).
@@ -1523,7 +1594,10 @@ def test_repo_snapshot_falls_back_to_origin_remote_when_no_canonical() -> None:
         "repository_base_sha": "0" * 40,
         "repository_origin_remote": "https://github.com/org/repo.git",
     }
-    assert _repository_context_repo_snapshot(context)["remote_url"] == "https://github.com/org/repo.git"
+    assert (
+        _repository_context_repo_snapshot(context)["remote_url"]
+        == "https://github.com/org/repo.git"
+    )
 
 
 def test_manifest_enrichment_replaces_redacted_display_remote_with_canonical() -> None:
@@ -1602,7 +1676,9 @@ def test_review_clone_prefers_task_contract_over_redacted_executor_remote(
         "review-contract-remote",
     )
 
-    clone = next(command for command in commands if command[:3] == ["git", "clone", "--no-checkout"])
+    clone = next(
+        command for command in commands if command[:3] == ["git", "clone", "--no-checkout"]
+    )
     assert clone[4] == canonical_remote
     assert redacted_remote not in clone
     assert context is not None
@@ -1641,6 +1717,8 @@ def test_local_worktree_same_lease_debris_is_reclaimed(
     assert not (fresh_dir / "half-done.txt").exists(), "reclaim must re-prepare cleanly"
     head = _subprocess.run(
         ["git", "-C", str(fresh_dir), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     assert head == sha

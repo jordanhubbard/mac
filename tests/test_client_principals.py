@@ -94,23 +94,29 @@ def test_api_hot_reloads_issue_and_revoke_without_restart(tmp_path):
     )
     client = TestClient(app)
 
-    assert client.get(
-        "/agents", headers={"Authorization": "Bearer %s" % first.token}
-    ).status_code == 200
-    assert client.post(
-        "/secrets",
-        json={"name": "nope", "value": "nope"},
-        headers={"Authorization": "Bearer %s" % first.token},
-    ).status_code == 403
+    assert (
+        client.get("/agents", headers={"Authorization": "Bearer %s" % first.token}).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/secrets",
+            json={"name": "nope", "value": "nope"},
+            headers={"Authorization": "Bearer %s" % first.token},
+        ).status_code
+        == 403
+    )
 
     store.revoke("first")
 
-    assert client.get(
-        "/agents", headers={"Authorization": "Bearer %s" % first.token}
-    ).status_code == 403
-    assert client.get(
-        "/agents", headers={"Authorization": "Bearer %s" % second.token}
-    ).status_code == 200
+    assert (
+        client.get("/agents", headers={"Authorization": "Bearer %s" % first.token}).status_code
+        == 403
+    )
+    assert (
+        client.get("/agents", headers={"Authorization": "Bearer %s" % second.token}).status_code
+        == 200
+    )
 
 
 def test_registry_with_broad_permissions_fails_closed(tmp_path):

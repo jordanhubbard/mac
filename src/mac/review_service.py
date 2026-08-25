@@ -89,8 +89,17 @@ _MODEL_FAMILY_PATTERNS = (
     ("minimax", re.compile(r"\bminimax\b", re.IGNORECASE)),
 )
 _MODEL_PROVIDER_NAMES = (
-    "anthropic", "openai", "google", "xai", "deepseek", "qwen", "meta",
-    "mistral", "moonshot", "zai", "minimax",
+    "anthropic",
+    "openai",
+    "google",
+    "xai",
+    "deepseek",
+    "qwen",
+    "meta",
+    "mistral",
+    "moonshot",
+    "zai",
+    "minimax",
 )
 _FAMILY_PROVIDER = {
     "claude": "anthropic",
@@ -159,18 +168,21 @@ def review_diversity_requirements(task: Any) -> Dict[str, bool]:
         if isinstance(value, dict):
             policy = value
             break
-    risk = str(
-        policy.get("risk_level")
-        or policy.get("risk")
-        or metadata.get("risk_level")
-        or metadata.get("risk")
-        or ""
-    ).strip().lower()
+    risk = (
+        str(
+            policy.get("risk_level")
+            or policy.get("risk")
+            or metadata.get("risk_level")
+            or metadata.get("risk")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
     high_risk = policy.get("high_risk") is True or risk in {"high", "critical"}
     return {
         "high_risk": high_risk,
-        "different_model_family": high_risk
-        or policy.get("require_different_model_family") is True,
+        "different_model_family": high_risk or policy.get("require_different_model_family") is True,
         "different_provider": high_risk
         or policy.get("require_different_model_provider") is True
         or policy.get("require_different_provider") is True,
@@ -207,20 +219,15 @@ def cross_llm_review_problems(
     reviewer_model = manifest_llm_model(verdict_manifest)
     problems: List[str] = []
     if not executor_model:
-        problems.append(
-            "executor evidence from an agent runner requires llm.model or llm_model"
-        )
+        problems.append("executor evidence from an agent runner requires llm.model or llm_model")
     if not reviewer_model:
-        problems.append(
-            "review_verdict evidence requires reviewer llm.model or llm_model"
-        )
-    if executor_model and reviewer_model and (
-        normalize_llm_model(executor_model) == normalize_llm_model(reviewer_model)
+        problems.append("review_verdict evidence requires reviewer llm.model or llm_model")
+    if (
+        executor_model
+        and reviewer_model
+        and (normalize_llm_model(executor_model) == normalize_llm_model(reviewer_model))
     ):
-        problems.append(
-            "reviewer LLM must differ from executor LLM (both %s)"
-            % executor_model
-        )
+        problems.append("reviewer LLM must differ from executor LLM (both %s)" % executor_model)
     requirements = requirements or {}
     if executor_model and reviewer_model and requirements.get("different_model_family"):
         executor_family = manifest_llm_family(executor_manifest)
@@ -231,8 +238,7 @@ def cross_llm_review_problems(
             problems.append("review verdict requires llm.family for family-diverse review")
         if executor_family and reviewer_family and executor_family == reviewer_family:
             problems.append(
-                "reviewer LLM family must differ from executor family (both %s)"
-                % executor_family
+                "reviewer LLM family must differ from executor family (both %s)" % executor_family
             )
     if executor_model and reviewer_model and requirements.get("different_provider"):
         executor_provider = manifest_llm_provider(executor_manifest)
@@ -298,9 +304,7 @@ class ReviewService:
     ) -> Review:
         task = self._get_task(task_id)
         reviewer = self._get_agent(reviewer_agent_id)
-        fallback_reason = self._ensure_reviewer_eligible(
-            task, reviewer, reviewer_agent_id
-        )
+        fallback_reason = self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
         if task.state not in {
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
@@ -316,15 +320,11 @@ class ReviewService:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("task not found: %s" % task_id)
-            current = conn.execute(
-                "SELECT state FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
+            current = conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()
             current_state = str(current["state"])
             if current_state == TaskState.NEEDS_REVIEW.value:
                 if self._transition_task_in_transaction is None:
-                    raise TransitionError(
-                        "transactional task transition is unavailable"
-                    )
+                    raise TransitionError("transactional task transition is unavailable")
                 transition_detail = {"reviewer_agent_id": reviewer_agent_id}
                 if fallback_reason:
                     transition_detail.update(
@@ -365,9 +365,7 @@ class ReviewService:
                 history_detail = {
                     "review_id": review_id,
                     "reviewer_agent_id": reviewer_agent_id,
-                    "reviewer_independence": (
-                        "fallback" if fallback_reason else "independent"
-                    ),
+                    "reviewer_independence": ("fallback" if fallback_reason else "independent"),
                 }
                 if fallback_reason:
                     history_detail["reviewer_independence_reason"] = fallback_reason
@@ -396,9 +394,7 @@ class ReviewService:
             {
                 "task_id": task_id,
                 "review_id": review_id,
-                "reviewer_independence": (
-                    "fallback" if fallback_reason else "independent"
-                ),
+                "reviewer_independence": ("fallback" if fallback_reason else "independent"),
             },
             task_id=task_id,
         )
@@ -410,9 +406,7 @@ class ReviewService:
         reviewer: Agent,
         reviewer_agent_id: Optional[str] = None,
     ) -> Optional[str]:
-        reviewer_id = str(
-            getattr(reviewer, "id", None) or reviewer_agent_id or ""
-        ).strip()
+        reviewer_id = str(getattr(reviewer, "id", None) or reviewer_agent_id or "").strip()
         if not reviewer_id:
             raise AuthorizationError("reviewer agent identity is required")
         if "review" not in set(reviewer.capabilities):
@@ -426,10 +420,7 @@ class ReviewService:
             raise AuthorizationError(
                 "reviewer cannot review a task it currently or previously owned"
             )
-        if (
-            self.latest_executor_evidence_author(task.id) == reviewer_id
-            and not fallback_reason
-        ):
+        if self.latest_executor_evidence_author(task.id) == reviewer_id and not fallback_reason:
             raise AuthorizationError("reviewer cannot review its own latest evidence")
         eligibility_check = self._reviewer_independence_check
         if eligibility_check is not None:
@@ -467,9 +458,7 @@ class ReviewService:
                 # re-running evidence or task-state checks that may have changed
                 # after the decision committed.
                 return review
-            raise ValidationError(
-                "review is already completed with a different decision"
-            )
+            raise ValidationError("review is already completed with a different decision")
         if status_value == ReviewStatus.APPROVED.value and evidence_id is None:
             raise ValidationError("approving a review requires an evidence_id")
         if evidence_id is not None:
@@ -493,9 +482,9 @@ class ReviewService:
                 )
                 executor_evidence_id_from_manifest = None
                 if isinstance(manifest, dict):
-                    executor_evidence_id_from_manifest = str(
-                        manifest.get("reviewed_evidence_id") or ""
-                    ).strip() or None
+                    executor_evidence_id_from_manifest = (
+                        str(manifest.get("reviewed_evidence_id") or "").strip() or None
+                    )
                 if not executor_evidence_id_from_manifest:
                     raise ValidationError(
                         "review approval evidence %s is not a review_verdict "
@@ -532,9 +521,7 @@ class ReviewService:
                 llm_problems = cross_llm_review_problems(
                     executor_manifest,
                     manifest,
-                    requirements=review_diversity_requirements(
-                        self._get_task(review.task_id)
-                    ),
+                    requirements=review_diversity_requirements(self._get_task(review.task_id)),
                 )
                 if llm_problems:
                     raise ValidationError(
@@ -597,15 +584,11 @@ class ReviewService:
             refund_attempt = bool(classification.is_infrastructure)
             effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
             exhausted = effective_attempts >= reviewed_task.max_attempts
-            transition_target = (
-                TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
-            )
+            transition_target = TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
             transition_detail = {
                 "review_id": review_id,
                 "review_status": status_value,
-                "reason": "review rejected after max attempts"
-                if exhausted
-                else "review rejected",
+                "reason": "review rejected after max attempts" if exhausted else "review rejected",
                 "review_failure_class": classification.failure_class,
                 "review_failure_is_infrastructure": classification.is_infrastructure,
             }
@@ -614,8 +597,7 @@ class ReviewService:
                 # why this rejection did not cost the task an attempt.
                 transition_detail["attempt_refunded"] = True
                 transition_detail["reason"] = (
-                    "review harness failed (%s); attempt refunded"
-                    % classification.failure_class
+                    "review harness failed (%s); attempt refunded" % classification.failure_class
                 )
             if exhausted:
                 transition_detail["manual_repair_required"] = True
@@ -628,9 +610,7 @@ class ReviewService:
                 (review.task_id, TaskState.REVIEWING.value),
             )
             if locked_task.rowcount != 1:
-                raise TransitionError(
-                    "reviewed task state changed during submission; retry"
-                )
+                raise TransitionError("reviewed task state changed during submission; retry")
             changed = conn.execute(
                 """
                 UPDATE reviews
@@ -652,7 +632,11 @@ class ReviewService:
                 raise ValidationError("review state changed during submission; retry")
             if rejected_feedback is not None:
                 metadata = dict(task_for_feedback.metadata)
-                block = metadata.get("review_feedback") if isinstance(metadata.get("review_feedback"), dict) else {}
+                block = (
+                    metadata.get("review_feedback")
+                    if isinstance(metadata.get("review_feedback"), dict)
+                    else {}
+                )
                 history = list(block.get("history") or [])
                 latest = block.get("latest")
                 if isinstance(latest, dict):
@@ -705,9 +689,7 @@ class ReviewService:
             )
             if transition_target is not None:
                 if self._transition_task_in_transaction is None:
-                    raise TransitionError(
-                        "transactional task transition is unavailable"
-                    )
+                    raise TransitionError("transactional task transition is unavailable")
                 self._transition_task_in_transaction(
                     conn,
                     review.task_id,
@@ -803,8 +785,7 @@ class ReviewService:
                 ):
                     raise ValidationError(
                         "publication evidence checksum must be one of "
-                        "sha256/sha512/blake2b in <algo>:<hex> form (got %r)"
-                        % content_hash
+                        "sha256/sha512/blake2b in <algo>:<hex> form (got %r)" % content_hash
                     )
         owner_agent_id = task.owner_agent_id
         now = utcnow()
@@ -863,9 +844,7 @@ class ReviewService:
         return self.get_publication(publication_id)
 
     def get_publication(self, publication_id: str) -> Publication:
-        row = self.store.query_one(
-            "SELECT * FROM publications WHERE id = ?", (publication_id,)
-        )
+        row = self.store.query_one("SELECT * FROM publications WHERE id = ?", (publication_id,))
         if row is None:
             raise NotFoundError("publication not found: %s" % publication_id)
         return self._publication_from_row(row)
@@ -900,9 +879,7 @@ class ReviewService:
                     )
                 )
         elif limit_value is None:
-            rows = self.store.query_all(
-                "SELECT * FROM publications ORDER BY created_at, id"
-            )
+            rows = self.store.query_all("SELECT * FROM publications ORDER BY created_at, id")
         else:
             rows = list(
                 reversed(
@@ -970,9 +947,7 @@ class ReviewService:
         )
         return prior is not None
 
-    def agent_is_current_owner_or_latest_evidence_author(
-        self, task_id: str, agent_id: str
-    ) -> bool:
+    def agent_is_current_owner_or_latest_evidence_author(self, task_id: str, agent_id: str) -> bool:
         task = self._get_task(task_id)
         if task.owner_agent_id == agent_id:
             return True
@@ -1018,29 +993,37 @@ class ReviewService:
         for item in value[:20]:
             if not isinstance(item, dict):
                 continue
-            out.append({
-                "severity": str(item.get("severity") or "")[:64],
-                "path": str(item.get("path") or "")[:512],
-                "line": item.get("line") if isinstance(item.get("line"), int) else None,
-                "message": str(item.get("message") or "")[:2000],
-                "recommendation": str(item.get("recommendation") or "")[:2000],
-            })
+            out.append(
+                {
+                    "severity": str(item.get("severity") or "")[:64],
+                    "path": str(item.get("path") or "")[:512],
+                    "line": item.get("line") if isinstance(item.get("line"), int) else None,
+                    "message": str(item.get("message") or "")[:2000],
+                    "recommendation": str(item.get("recommendation") or "")[:2000],
+                }
+            )
         return out
 
-    def _bounded_review_feedback_block(self, latest: Dict[str, Any], history: List[Any]) -> Dict[str, Any]:
+    def _bounded_review_feedback_block(
+        self, latest: Dict[str, Any], history: List[Any]
+    ) -> Dict[str, Any]:
         block = {"latest": latest, "history": history[:5]}
         encoded = json.dumps(block, sort_keys=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) <= 24 * 1024:
             return block
         trimmed_latest = dict(latest)
-        trimmed_latest["feedback"] = str(trimmed_latest.get("feedback") or "")[:4000] + "\n[truncated]"
+        trimmed_latest["feedback"] = (
+            str(trimmed_latest.get("feedback") or "")[:4000] + "\n[truncated]"
+        )
         trimmed_latest["summary"] = str(trimmed_latest.get("summary") or "")[:1000]
         trimmed_latest["findings"] = list(trimmed_latest.get("findings") or [])[:5]
         block = {"latest": trimmed_latest, "history": []}
         encoded = json.dumps(block, sort_keys=True, separators=(",", ":"))
         if len(encoded.encode("utf-8")) <= 24 * 1024:
             return block
-        trimmed_latest["feedback"] = str(trimmed_latest.get("feedback") or "")[:1000] + "\n[truncated]"
+        trimmed_latest["feedback"] = (
+            str(trimmed_latest.get("feedback") or "")[:1000] + "\n[truncated]"
+        )
         trimmed_latest["findings"] = []
         return {"latest": trimmed_latest, "history": []}
 
@@ -1068,9 +1051,7 @@ class ReviewService:
         except Exception:  # noqa: BLE001 - findings must never block a verdict
             return {}
         manifest = (
-            evidence.metadata.get("verification")
-            if isinstance(evidence.metadata, dict)
-            else None
+            evidence.metadata.get("verification") if isinstance(evidence.metadata, dict) else None
         )
         if not isinstance(manifest, dict):
             return {}
@@ -1089,18 +1070,20 @@ class ReviewService:
             # A verdict that names nothing specific is the case worth counting.
             "cited_specifics": bool(items or summary.strip()),
         }
-        classification = classify_review_failure(
-            str(review.reason or ""), error=feedback or None
-        )
+        classification = classify_review_failure(str(review.reason or ""), error=feedback or None)
         record["failure_class"] = classification.failure_class
         record["is_infrastructure"] = bool(classification.is_infrastructure)
         return record
 
-    def _review_feedback_from_evidence(self, review: Review, evidence_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _review_feedback_from_evidence(
+        self, review: Review, evidence_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         if not evidence_id:
             return None
         evidence = self._get_evidence(evidence_id)
-        manifest = evidence.metadata.get("verification") if isinstance(evidence.metadata, dict) else None
+        manifest = (
+            evidence.metadata.get("verification") if isinstance(evidence.metadata, dict) else None
+        )
         if not isinstance(manifest, dict):
             return None
         return {

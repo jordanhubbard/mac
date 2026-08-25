@@ -111,13 +111,24 @@ def test_text_negation_excludes_rather_than_selects():
 def test_negation_is_the_complement_of_equality(key):
     """For every negatable key, `x!=v` must match exactly what `x=v` does not."""
     tasks = [
-        _Task(state="open", project="mac", title="alpha", priority=1,
-              required_capabilities=["python"]),
-        _Task(state="failed", project="other", title="beta", priority=2,
-              required_capabilities=["cuda"]),
+        _Task(
+            state="open", project="mac", title="alpha", priority=1, required_capabilities=["python"]
+        ),
+        _Task(
+            state="failed",
+            project="other",
+            title="beta",
+            priority=2,
+            required_capabilities=["cuda"],
+        ),
     ]
-    value = {"state": "open", "project": "mac", "title": "alpha",
-             "priority": "1", "capability": "python"}[key]
+    value = {
+        "state": "open",
+        "project": "mac",
+        "title": "alpha",
+        "priority": "1",
+        "capability": "python",
+    }[key]
     positive = parse_selector("%s=%s" % (key, value))
     negative = parse_selector("%s!=%s" % (key, value))
     for task in tasks:
@@ -274,9 +285,10 @@ def test_sql_never_excludes_a_row_python_would_match():
             % (expression, sorted(python_hits - sql_hits))
         )
         # And the end-to-end answer must equal the matcher's answer exactly.
-        assert sql_hits == python_hits, (
-            "%s: end-to-end %s != matcher %s"
-            % (expression, sorted(sql_hits), sorted(python_hits))
+        assert sql_hits == python_hits, "%s: end-to-end %s != matcher %s" % (
+            expression,
+            sorted(sql_hits),
+            sorted(python_hits),
         )
 
 

@@ -63,9 +63,7 @@ def test_the_type_filter_selects_the_terminal_events(fleet):
     tmp, cp, worker, peer = fleet
     cp.publish_agentbus_broadcast(peer.id, "task.progress", payload={"note": "noise"})
     cp.publish_agentbus_broadcast(peer.id, "git.merged", payload={"tree_sha": "t1"})
-    cp.publish_agentbus_broadcast(
-        peer.id, "git.canonical_advanced", payload={"to_sha": "tip1"}
-    )
+    cp.publish_agentbus_broadcast(peer.id, "git.canonical_advanced", payload={"to_sha": "tip1"})
 
     heard = _run(
         tmp,

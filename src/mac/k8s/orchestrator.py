@@ -201,6 +201,7 @@ def _run_review_loop_forever(
 ) -> None:
     global review_loop_failures
     from mac.k8s.runner import review_loop  # noqa: WPS433
+
     try:
         review_loop(mac, jobs, cfg)
     except Exception:  # noqa: BLE001
@@ -224,9 +225,7 @@ def _report_bound_worker_credential(mac: Any, agent_id: str, log: logging.Logger
         current = mac.get("/agents/%s" % agent_id)
         resources = dict((current or {}).get("resources") or {})
         resources["worker_credential"] = proof
-        source_commit = (
-            os.environ.get("MAC_WORKER_CREDENTIAL_SOURCE_COMMIT") or ""
-        ).strip()
+        source_commit = (os.environ.get("MAC_WORKER_CREDENTIAL_SOURCE_COMMIT") or "").strip()
         if source_commit:
             resources["source_state"] = {
                 "schema": "mac.worker_source_state.v1",
@@ -237,9 +236,7 @@ def _report_bound_worker_credential(mac: Any, agent_id: str, log: logging.Logger
                 "observed_at": proof["observed_at"],
             }
         payload: Dict[str, Any] = {"resources": resources}
-        runtime_digest = (
-            os.environ.get("MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST") or ""
-        ).strip()
+        runtime_digest = (os.environ.get("MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST") or "").strip()
         if runtime_digest:
             payload["running_digest"] = runtime_digest
         mac.post("/agents/%s/heartbeat" % agent_id, payload)
@@ -284,10 +281,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     # derive the active fleet from MAC_FLEET (mac-g55y).
     from mac.fleet_env import resolve_first
 
-    token = resolve_first(
-        ["MAC_WORKER_TOKEN", "MAC_API_TOKEN"],
-        fleet=os.environ.get("MAC_FLEET"),
-    ) or ""
+    token = (
+        resolve_first(
+            ["MAC_WORKER_TOKEN", "MAC_API_TOKEN"],
+            fleet=os.environ.get("MAC_FLEET"),
+        )
+        or ""
+    )
     if not token:
         log.error("MAC_WORKER_TOKEN (or MAC_API_TOKEN) is required")
         return 2
@@ -316,9 +316,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             kwargs={
                 "mac": mac,
                 "agent_id": runner_cfg.agent_id,
-                "interval": float(
-                    os.environ.get("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
-                ),
+                "interval": float(os.environ.get("MAC_WORKER_HEARTBEAT_INTERVAL", "30")),
                 "log": logging.getLogger("mac-k8s-orchestrator.credential"),
             },
             name="mac-orchestrator-credential-heartbeat",
@@ -338,9 +336,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     namespace = os.environ.get("MAC_RUNNER_NAMESPACE", runner_cfg.namespace)
     interval = float(os.environ.get("MAC_CONTROLLER_INTERVAL_SECONDS", "30"))
-    controller_cfg = ControllerConfig(
-        namespace=namespace, reconcile_interval_seconds=interval
-    )
+    controller_cfg = ControllerConfig(namespace=namespace, reconcile_interval_seconds=interval)
 
     log.info(
         "controller loop: namespace=%s interval=%.1fs",
@@ -389,9 +385,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Review-tick loop: opens reviews for needs_review tasks. Enabled by
     # default; disable with MAC_REVIEW_TICK_LOOP_ENABLED=0.
     if _truthy(os.environ.get("MAC_REVIEW_TICK_LOOP_ENABLED", "1")):
-        tick_interval = float(
-            os.environ.get("MAC_REVIEW_TICK_INTERVAL_SECONDS", "30")
-        )
+        tick_interval = float(os.environ.get("MAC_REVIEW_TICK_INTERVAL_SECONDS", "30"))
         try:
             tick_limit = int(os.environ.get("MAC_REVIEW_TICK_LIMIT", "25"))
         except ValueError:
@@ -428,6 +422,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         log.exception("runner loop crashed; exiting non-zero for pod restart")
         return 1
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main(sys.argv[1:]))

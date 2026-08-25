@@ -73,12 +73,15 @@ def test_loopback_url_and_private_file_contract(tmp_path: Path) -> None:
 
 def test_authority_and_receipts_are_exactly_bound() -> None:
     client = _module()
-    assert client._authority(
-        {
-            "schema": "mac.fleet_release_hub_authority.v1",
-            "hub_authority_id": AUTHORITY_ID.upper(),
-        }
-    )["hub_authority_id"] == AUTHORITY_ID
+    assert (
+        client._authority(
+            {
+                "schema": "mac.fleet_release_hub_authority.v1",
+                "hub_authority_id": AUTHORITY_ID.upper(),
+            }
+        )["hub_authority_id"]
+        == AUTHORITY_ID
+    )
     with pytest.raises(client.ClientError):
         client._authority(
             {
@@ -107,12 +110,15 @@ def test_authority_and_receipts_are_exactly_bound() -> None:
         "expected_hold_at": "2100-01-01T00:00:00+00:00",
     }
 
-    assert client._receipt(
-        _receipt("committed"),
-        expected_epoch="epoch-one",
-        expected_status="committed",
-        expected_identity=DIGEST,
-    )["status"] == "committed"
+    assert (
+        client._receipt(
+            _receipt("committed"),
+            expected_epoch="epoch-one",
+            expected_status="committed",
+            expected_identity=DIGEST,
+        )["status"]
+        == "committed"
+    )
     changed = _receipt("committed")
     changed["identity_sha256"] = "sha256:" + ("c" * 64)
     with pytest.raises(client.ClientError):
@@ -132,11 +138,14 @@ def test_authority_and_receipts_are_exactly_bound() -> None:
         "cohort_size": 1,
         "agents": [{"agent_id": "agent_one", "credential_version": 2}],
     }
-    assert client._readiness(
-        readiness,
-        expected_epoch="epoch-one",
-        expected_identity=DIGEST,
-    ) == readiness
+    assert (
+        client._readiness(
+            readiness,
+            expected_epoch="epoch-one",
+            expected_identity=DIGEST,
+        )
+        == readiness
+    )
     leaked = dict(readiness)
     leaked["token"] = "secret"
     with pytest.raises(client.ClientError, match="schema is not exact"):
@@ -191,11 +200,7 @@ def test_http_error_detail_allows_only_plain_fleet_release_validation() -> None:
     assert (
         client._safe_http_error_detail(
             json.dumps(
-                {
-                    "detail": (
-                        "fleet release epoch lost node readiness for agent_rocky"
-                    )
-                }
+                {"detail": ("fleet release epoch lost node readiness for agent_rocky")}
             ).encode()
         )
         == "fleet release epoch lost node readiness for agent_rocky"
@@ -206,15 +211,9 @@ def test_http_error_detail_allows_only_plain_fleet_release_validation() -> None:
         )
         == "activation requires live authenticated heartbeat proof"
     )
-    assert (
-        client._safe_http_error_detail(
-            b'{"detail":"canonical runtime-source publication is in progress; retry fleet release epoch open"}'
-        )
-        == (
-            "canonical runtime-source publication is in progress; "
-            "retry fleet release epoch open"
-        )
-    )
+    assert client._safe_http_error_detail(
+        b'{"detail":"canonical runtime-source publication is in progress; retry fleet release epoch open"}'
+    ) == ("canonical runtime-source publication is in progress; retry fleet release epoch open")
     for unsafe in (
         b'{"detail":"token=secret"}',
         b'{"detail":"fleet release leaked /private/path"}',

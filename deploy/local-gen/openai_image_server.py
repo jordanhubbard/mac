@@ -17,6 +17,7 @@ Configure via env:
 Run (on the GPU agent):
     LOCAL_GEN_MODEL=stabilityai/sdxl-turbo ~/gen/venv/bin/python openai_image_server.py
 """
+
 from __future__ import annotations
 
 import base64
@@ -142,7 +143,9 @@ def main() -> int:
         _pipeline()  # warm-load so the first request isn't a cold start
         print("local-gen: pipeline ready on %s" % _device, flush=True)
     except Exception as exc:  # noqa: BLE001
-        print("local-gen: WARNING failed to warm-load pipeline: %s" % exc, file=sys.stderr, flush=True)
+        print(
+            "local-gen: WARNING failed to warm-load pipeline: %s" % exc, file=sys.stderr, flush=True
+        )
     ThreadingHTTPServer((HOST, PORT), _Handler).serve_forever()
     return 0
 

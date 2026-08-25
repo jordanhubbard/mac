@@ -107,17 +107,17 @@ def test_shutdown_grace_expiry_releases_the_lease_and_marks_agent_offline(tmp_pa
 
         # Without the fix this never happens: the flag is only read between
         # iterations, so the lease lives until it expires 900s later.
-        assert _wait_for(
-            lambda: cp.get_task(task.id).state == TaskState.OPEN.value
-        ), "shutdown did not release the lease within the grace deadline"
+        assert _wait_for(lambda: cp.get_task(task.id).state == TaskState.OPEN.value), (
+            "shutdown did not release the lease within the grace deadline"
+        )
         released = cp.get_task(task.id)
         assert released.lease_id is None
         assert released.owner_agent_id is None
         # The offline heartbeat follows the release; the hub needs both to tell
         # a departing worker from one that simply stopped answering.
-        assert _wait_for(
-            lambda: cp.get_agent(agent.id).status == "offline"
-        ), "the worker never marked itself offline on the way out"
+        assert _wait_for(lambda: cp.get_agent(agent.id).status == "offline"), (
+            "the worker never marked itself offline on the way out"
+        )
     finally:
         release_executor.set()
         loop.join(timeout=30)
@@ -154,9 +154,9 @@ def test_second_signal_abandons_immediately_without_waiting_for_the_grace(tmp_pa
         worker._handle_shutdown_signal(signal.SIGTERM)
         assert cp.get_task(task.id).state == TaskState.RUNNING.value
         worker._handle_shutdown_signal(signal.SIGTERM)
-        assert _wait_for(
-            lambda: cp.get_task(task.id).state == TaskState.OPEN.value
-        ), "a second SIGTERM did not abandon the assignment"
+        assert _wait_for(lambda: cp.get_task(task.id).state == TaskState.OPEN.value), (
+            "a second SIGTERM did not abandon the assignment"
+        )
     finally:
         release_executor.set()
         loop.join(timeout=30)
@@ -195,9 +195,7 @@ def test_abandonment_publishes_a_shutdown_observation(tmp_path: Path):
         worker._handle_shutdown_signal(signal.SIGTERM)
         assert _wait_for(lambda: cp.get_task(task.id).state == TaskState.OPEN.value)
         assert _wait_for(
-            lambda: bool(
-                cp.list_observability(name="worker.shutdown.abandoned", limit=5)
-            )
+            lambda: bool(cp.list_observability(name="worker.shutdown.abandoned", limit=5))
         ), "no worker.shutdown.abandoned observation was published"
     finally:
         release_executor.set()
@@ -270,8 +268,7 @@ def test_delivery_drain_thread_is_joined_before_shutdown_completes(tmp_path: Pat
     worker._stop_delivery_drain_thread()
 
     assert finished.is_set(), (
-        "the drain was still in flight when shutdown returned; it was stopped "
-        "without a join"
+        "the drain was still in flight when shutdown returned; it was stopped without a join"
     )
     assert not thread.is_alive()
 
@@ -368,7 +365,7 @@ class _FakeHub:
             return list(self.requests)
 
 
-_CHILD_SCRIPT = '''
+_CHILD_SCRIPT = """
 import sys, time
 from pathlib import Path
 from mac.hermes_adapter import MacApiClient
@@ -404,7 +401,7 @@ worker = _Worker(
 worker.shutdown_grace_seconds = 1.0
 worker.delivery_drain_interval_seconds = 0
 worker.run_forever()
-'''
+"""
 
 
 def test_real_sigterm_then_sigkill_still_releases_the_lease(tmp_path: Path):
@@ -426,11 +423,9 @@ def test_real_sigterm_then_sigkill_still_releases_the_lease(tmp_path: Path):
             text=True,
         )
         try:
+
             def started() -> bool:
-                return any(
-                    "/tasks/task_fake/start" in entry["path"]
-                    for entry in hub.snapshot()
-                )
+                return any("/tasks/task_fake/start" in entry["path"] for entry in hub.snapshot())
 
             assert _wait_for(started, timeout=60), (
                 "worker never began executing the fake task; hub saw %r"
@@ -463,8 +458,7 @@ def test_real_sigterm_then_sigkill_still_releases_the_lease(tmp_path: Path):
                 "Paths seen: %r" % [entry["path"] for entry in observed][-40:]
             )
             assert released, (
-                "the held lease was never released; the task stays "
-                "undispatchable until it expires"
+                "the held lease was never released; the task stays undispatchable until it expires"
             )
         finally:
             if child.poll() is None:

@@ -46,9 +46,7 @@ def test_moderate_picks_newest_available_of_family():
         "azure/anthropic/claude-opus-4-8",
         "azure/anthropic/claude-opus-4-2",
     ]
-    assert moderate_by_availability(leading, available) == [
-        "azure/anthropic/claude-opus-4-8"
-    ]
+    assert moderate_by_availability(leading, available) == ["azure/anthropic/claude-opus-4-8"]
 
 
 def test_select_end_to_end_dynamic():
@@ -94,8 +92,10 @@ def test_discover_via_web_aggregates_and_isolates_failures():
             raise RuntimeError("boom")  # one query fails
         return [{"title": "Claude Opus 4.8", "description": ""}]
 
-    out = discover_via_web(searcher, queries=("a best models", "b leaderboard", "c ranking"), limit=5)
-    assert len(calls) == 3          # all queries attempted despite one failing
+    out = discover_via_web(
+        searcher, queries=("a best models", "b leaderboard", "c ranking"), limit=5
+    )
+    assert len(calls) == 3  # all queries attempted despite one failing
     assert any("Opus" in r["title"] for r in out)
 
 
@@ -105,8 +105,14 @@ def test_available_models_from_providers_empty_safe():
 
 
 def test_selection_serializes():
-    sel = ModelSelection(models=["m1", "m2"], leading_families=["claude-opus"],
-                         available_count=5, source="dynamic", at="T", ladder=["w", "s"])
+    sel = ModelSelection(
+        models=["m1", "m2"],
+        leading_families=["claude-opus"],
+        available_count=5,
+        source="dynamic",
+        at="T",
+        ladder=["w", "s"],
+    )
     d = sel.to_dict()
     assert d["schema"] == "mac.model_selection.v1"
     assert d["models"] == ["m1", "m2"] and d["source"] == "dynamic"
@@ -140,24 +146,23 @@ def test_ladder_orders_by_cost_then_name_tier():
 def test_ladder_name_tier_fallback_when_no_cost():
     available = ["p/foo-opus", "p/foo-mini", "p/foo-base"]
     ladder = model_strength_ladder(available, cost_lookup=lambda m: None)
-    assert ladder[0] == "p/foo-mini"     # weak tier
-    assert ladder[-1] == "p/foo-opus"    # strong tier
+    assert ladder[0] == "p/foo-mini"  # weak tier
+    assert ladder[-1] == "p/foo-opus"  # strong tier
 
 
 def test_resolve_strength_endpoints_and_clamp():
     ladder = ["w", "a", "b", "c", "strong"]
     assert resolve_strength(1, ladder) == "w"
     assert resolve_strength(10, ladder) == "strong"
-    assert resolve_strength(0, ladder) == "w"      # clamp low
+    assert resolve_strength(0, ladder) == "w"  # clamp low
     assert resolve_strength(99, ladder) == "strong"  # clamp high
     assert resolve_strength(5, ladder) in ladder
-    assert resolve_strength(5, []) == ""            # empty ladder
+    assert resolve_strength(5, []) == ""  # empty ladder
 
 
 def test_persist_and_resolve_strength_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "sel.json"))
-    sel = _MS(models=["p/opus"], source="dynamic", at="T",
-              ladder=["p/mini", "p/base", "p/opus"])
+    sel = _MS(models=["p/opus"], source="dynamic", at="T", ladder=["p/mini", "p/base", "p/opus"])
     write_selection(sel)
     assert selected_models() == ["p/opus"]
     assert resolve_strength_from_selection(1) == "p/mini"
@@ -167,7 +172,7 @@ def test_persist_and_resolve_strength_roundtrip(tmp_path, monkeypatch):
 
 def test_resolve_strength_no_selection_returns_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "absent.json"))
-    assert resolve_strength_from_selection(5) == ""   # caller falls back to fleet default
+    assert resolve_strength_from_selection(5) == ""  # caller falls back to fleet default
 
 
 # --------------------------------------------------------------------------- #
@@ -189,11 +194,18 @@ def test_service_run_once_persists_dynamic_selection(tmp_path, monkeypatch):
 
     # Inject availability by monkeypatching the catalog adapter.
     import mac.model_selection as ms
-    monkeypatch.setattr(ms, "available_models_from_providers",
-                        lambda providers: ["azure/anthropic/claude-opus-4-8",
-                                           "openai/gpt-5-mini"])
-    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="fb"),
-                                searcher=searcher, environ=dict(os.environ))
+
+    monkeypatch.setattr(
+        ms,
+        "available_models_from_providers",
+        lambda providers: ["azure/anthropic/claude-opus-4-8", "openai/gpt-5-mini"],
+    )
+    svc = ModelSelectionService(
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True, fallback_model="fb"),
+        searcher=searcher,
+        environ=dict(os.environ),
+    )
     report = svc.run_once()
     assert report["status"] == "ok"
     assert report["selection"]["source"] == "dynamic"
@@ -201,7 +213,9 @@ def test_service_run_once_persists_dynamic_selection(tmp_path, monkeypatch):
     assert report["outcome"] == "adopted_bootstrap"
     # The active file drives both the powerhouse pick and the strength ladder.
     assert "azure/anthropic/claude-opus-4-8" in selected_models(dict(os.environ))
-    assert resolve_strength_from_selection(10, dict(os.environ)) == "azure/anthropic/claude-opus-4-8"
+    assert (
+        resolve_strength_from_selection(10, dict(os.environ)) == "azure/anthropic/claude-opus-4-8"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +236,7 @@ def _svc_env(tmp_path, monkeypatch, providers="openai=https://x,0,key=secret:o",
     monkeypatch.setenv("MAC_ROUTER_PROVIDERS", providers)
     if avail is not None:
         import mac.model_selection as ms
+
         monkeypatch.setattr(ms, "available_models_from_providers", lambda p: avail)
     return dict(os.environ)
 
@@ -229,11 +244,21 @@ def _svc_env(tmp_path, monkeypatch, providers="openai=https://x,0,key=secret:o",
 def test_swap_is_pending_not_adopted_without_evaluator(tmp_path, monkeypatch):
     # Active = opus. A refresh now finds gpt-5 leading+available -> a SWAP.
     env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
-    set_active(ModelSelection(models=["azure/anthropic/claude-opus-4-8"], source="dynamic",
-                              at="T0", ladder=["azure/anthropic/claude-opus-4-8"]), environ=env)
-    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True),
-                                searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
-                                environ=env)
+    set_active(
+        ModelSelection(
+            models=["azure/anthropic/claude-opus-4-8"],
+            source="dynamic",
+            at="T0",
+            ladder=["azure/anthropic/claude-opus-4-8"],
+        ),
+        environ=env,
+    )
+    svc = ModelSelectionService(
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True),
+        searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+        environ=env,
+    )
     report = svc.run_once()
     assert report["outcome"] == "pending_promotion"
     # Routing is UNCHANGED — active still the incumbent.
@@ -243,12 +268,22 @@ def test_swap_is_pending_not_adopted_without_evaluator(tmp_path, monkeypatch):
 
 def test_swap_adopted_when_evaluator_approves(tmp_path, monkeypatch):
     env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
-    set_active(ModelSelection(models=["azure/anthropic/claude-opus-4-8"], source="dynamic", at="T0",
-                              ladder=["azure/anthropic/claude-opus-4-8"]), environ=env)
-    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True),
-                                searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
-                                swap_evaluator=lambda cand, inc: {"approved": True, "detail": "no regression"},
-                                environ=env)
+    set_active(
+        ModelSelection(
+            models=["azure/anthropic/claude-opus-4-8"],
+            source="dynamic",
+            at="T0",
+            ladder=["azure/anthropic/claude-opus-4-8"],
+        ),
+        environ=env,
+    )
+    svc = ModelSelectionService(
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True),
+        searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+        swap_evaluator=lambda cand, inc: {"approved": True, "detail": "no regression"},
+        environ=env,
+    )
     report = svc.run_once()
     assert report["outcome"] == "adopted_gate_passed"
     assert selected_models(env) == ["openai/gpt-5-2"]
@@ -257,12 +292,22 @@ def test_swap_adopted_when_evaluator_approves(tmp_path, monkeypatch):
 
 def test_swap_stays_pending_when_evaluator_rejects(tmp_path, monkeypatch):
     env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
-    set_active(ModelSelection(models=["azure/anthropic/claude-opus-4-8"], source="dynamic", at="T0",
-                              ladder=["azure/anthropic/claude-opus-4-8"]), environ=env)
-    svc = ModelSelectionService(_FakeCP(), ModelSelectionConfig(enabled=True),
-                                searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
-                                swap_evaluator=lambda cand, inc: {"approved": False, "detail": "correctness regressed"},
-                                environ=env)
+    set_active(
+        ModelSelection(
+            models=["azure/anthropic/claude-opus-4-8"],
+            source="dynamic",
+            at="T0",
+            ladder=["azure/anthropic/claude-opus-4-8"],
+        ),
+        environ=env,
+    )
+    svc = ModelSelectionService(
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True),
+        searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
+        swap_evaluator=lambda cand, inc: {"approved": False, "detail": "correctness regressed"},
+        environ=env,
+    )
     report = svc.run_once()
     assert report["outcome"] == "pending_promotion"
     assert selected_models(env) == ["azure/anthropic/claude-opus-4-8"]  # incumbent kept
@@ -273,9 +318,21 @@ def test_swap_stays_pending_when_evaluator_rejects(tmp_path, monkeypatch):
 
 
 def test_compare_eval_metrics_direction_rules():
-    base = {"overall_score": 0.90, "safety_violation_rate": 0.01, "realism_gap": 0.01, "latency_p95_ms": 1000, "unit_output_cost_avg": 0.02}
+    base = {
+        "overall_score": 0.90,
+        "safety_violation_rate": 0.01,
+        "realism_gap": 0.01,
+        "latency_p95_ms": 1000,
+        "unit_output_cost_avg": 0.02,
+    }
     # Quality drop, safety up, realism gap up, latency up => regressions.
-    worse = {"overall_score": 0.80, "safety_violation_rate": 0.05, "realism_gap": 0.10, "latency_p95_ms": 1200, "unit_output_cost_avg": 0.02}
+    worse = {
+        "overall_score": 0.80,
+        "safety_violation_rate": 0.05,
+        "realism_gap": 0.10,
+        "latency_p95_ms": 1200,
+        "unit_output_cost_avg": 0.02,
+    }
     res = compare_eval_metrics(base, worse, threshold=0.03)
     assert res["regressed"] is True
     metrics = {d["metric"] for d in res["drifted"]}
@@ -293,7 +350,13 @@ def test_compare_eval_metrics_direction_rules():
     assert bucket_by_metric["realism_gap"] == "robustness_regression"
     assert bucket_by_metric["latency_p95_ms"] == "cost_regression"
     # A better candidate does not regress.
-    better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "realism_gap": 0.0, "latency_p95_ms": 900, "unit_output_cost_avg": 0.02}
+    better = {
+        "overall_score": 0.93,
+        "safety_violation_rate": 0.0,
+        "realism_gap": 0.0,
+        "latency_p95_ms": 900,
+        "unit_output_cost_avg": 0.02,
+    }
     assert compare_eval_metrics(base, better)["regressed"] is False
 
 
@@ -309,6 +372,7 @@ import os  # noqa: E402
 def test_moderate_natural_version_order():
     # 4-10 is newer than 4-9; a lexical sort would wrongly pick 4-9.
     from mac.model_selection import moderate_by_availability
+
     avail = ["anthropic/claude-opus-4-9", "anthropic/claude-opus-4-10", "anthropic/claude-opus-4-2"]
     assert moderate_by_availability(["claude-opus"], avail) == ["anthropic/claude-opus-4-10"]
 
@@ -323,6 +387,7 @@ def test_available_models_uses_allowlist_verbatim_not_prefixed():
     # (exactly what ProviderRouter._serves matches and the upstream expects) — not
     # provider-name-prefixed ids that the router would reject.
     from mac.provider_router import providers_from_env
+
     providers = providers_from_env(
         {"MAC_ROUTER_PROVIDERS": "openai=https://x,0,models=gpt-5-2|o3,key=K"}
     )
@@ -336,8 +401,10 @@ def test_available_models_wildcard_provider_enumerates_catalog(monkeypatch):
     # catalog — and returns the catalog's own bare ids, unprefixed.
     import mac.model_selection as ms
     from mac.provider_router import providers_from_env
-    monkeypatch.setattr(ms, "available_models_from_providers",
-                        ms.available_models_from_providers)  # ensure real impl
+
+    monkeypatch.setattr(
+        ms, "available_models_from_providers", ms.available_models_from_providers
+    )  # ensure real impl
     monkeypatch.setattr(
         ms.models_catalog,
         "list_agentic_models",
@@ -360,14 +427,15 @@ def test_unknown_cost_strong_model_is_not_weakest():
     # Only the mini has a known price; opus + base are unknown.
     costs = {"openai/gpt-5-mini": 0.2}
     ladder = model_strength_ladder(available, cost_lookup=lambda m: costs.get(m))
-    assert ladder[-1] == "anthropic/claude-opus-4-8"   # strong tier wins the top
-    assert ladder[0] == "openai/gpt-5-mini"            # weak tier at the bottom
+    assert ladder[-1] == "anthropic/claude-opus-4-8"  # strong tier wins the top
+    assert ladder[0] == "openai/gpt-5-mini"  # weak tier at the bottom
 
 
 def test_models_dev_cost_nested_id_keeps_middle_segment(monkeypatch):
     # nvidia/meta/llama must try (nvidia, "meta/llama") and (meta, "llama"),
     # never the old (nvidia, "llama") which dropped the middle path.
     import mac.model_selection as ms
+
     seen = []
 
     class _Info:
@@ -381,8 +449,8 @@ def test_models_dev_cost_nested_id_keeps_middle_segment(monkeypatch):
 
     monkeypatch.setattr(ms.models_catalog, "get_model_info", fake_get_model_info)
     assert ms._models_dev_cost("nvidia/meta/llama") == 4.2
-    assert ("nvidia", "meta/llama") in seen   # full remainder tried
-    assert ("meta", "llama") in seen          # deeper boundary tried
+    assert ("nvidia", "meta/llama") in seen  # full remainder tried
+    assert ("meta", "llama") in seen  # deeper boundary tried
 
 
 # --------------------------------------------------------------------------- #
@@ -392,11 +460,14 @@ def test_models_dev_cost_nested_id_keeps_middle_segment(monkeypatch):
 
 def test_concurrent_set_pending_and_active_no_lost_update(tmp_path, monkeypatch):
     import threading
+
     env = dict(os.environ)
     monkeypatch.setenv("MAC_MODEL_SELECTION_FILE", str(tmp_path / "sel.json"))
     env["MAC_MODEL_SELECTION_FILE"] = str(tmp_path / "sel.json")
-    set_active(ModelSelection(models=["a/active"], source="dynamic", at="T",
-                              ladder=["a/active"]), environ=env)
+    set_active(
+        ModelSelection(models=["a/active"], source="dynamic", at="T", ladder=["a/active"]),
+        environ=env,
+    )
 
     barrier = threading.Barrier(2)
     errors = []
@@ -405,8 +476,12 @@ def test_concurrent_set_pending_and_active_no_lost_update(tmp_path, monkeypatch)
         try:
             barrier.wait()
             for _ in range(50):
-                set_pending(ModelSelection(models=["p/pending"], source="dynamic", at="T",
-                                           ladder=["p/pending"]), environ=env)
+                set_pending(
+                    ModelSelection(
+                        models=["p/pending"], source="dynamic", at="T", ladder=["p/pending"]
+                    ),
+                    environ=env,
+                )
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -414,8 +489,12 @@ def test_concurrent_set_pending_and_active_no_lost_update(tmp_path, monkeypatch)
         try:
             barrier.wait()
             for _ in range(50):
-                set_active(ModelSelection(models=["a/active"], source="dynamic", at="T",
-                                          ladder=["a/active"]), environ=env)
+                set_active(
+                    ModelSelection(
+                        models=["a/active"], source="dynamic", at="T", ladder=["a/active"]
+                    ),
+                    environ=env,
+                )
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -440,21 +519,23 @@ def test_bootstrap_gated_against_deploy_default(tmp_path, monkeypatch):
     # selection must not flip routing until it passes the gate.
     env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
     svc = ModelSelectionService(
-        _FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
         searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
         swap_evaluator=lambda cand, inc: {"approved": False, "detail": "regressed vs default"},
         environ=env,
     )
     report = svc.run_once()
     assert report["outcome"] == "pending_promotion"
-    assert read_active(env) is None                   # routing still on the deploy default
+    assert read_active(env) is None  # routing still on the deploy default
     assert read_pending(env)["models"] == ["openai/gpt-5-2"]
 
 
 def test_bootstrap_adopts_when_gate_passes(tmp_path, monkeypatch):
     env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
     svc = ModelSelectionService(
-        _FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
         searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
         swap_evaluator=lambda cand, inc: {"approved": True, "detail": "no regression"},
         environ=env,
@@ -469,7 +550,8 @@ def test_bootstrap_adopts_immediately_without_evaluator(tmp_path, monkeypatch):
     # regress against). This preserves the operator-gated default behavior.
     env = _svc_env(tmp_path, monkeypatch, avail=["openai/gpt-5-2"])
     svc = ModelSelectionService(
-        _FakeCP(), ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
+        _FakeCP(),
+        ModelSelectionConfig(enabled=True, fallback_model="deploy/default"),
         searcher=lambda q, n: [{"title": "GPT-5.2 leads", "description": ""}],
         environ=env,
     )

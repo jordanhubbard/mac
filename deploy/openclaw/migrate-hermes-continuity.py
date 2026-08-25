@@ -200,11 +200,19 @@ class Importer:
         user, legacy_users = self._authoritative_hermes_file("USER.md")
         memory, legacy_memories = self._authoritative_hermes_file("MEMORY.md")
         if soul:
-            self.install_text("SOUL.md", soul.read_text(encoding="utf-8", errors="replace"), source=str(soul))
+            self.install_text(
+                "SOUL.md", soul.read_text(encoding="utf-8", errors="replace"), source=str(soul)
+            )
         if user:
-            self.install_text("USER.md", user.read_text(encoding="utf-8", errors="replace"), source=str(user))
+            self.install_text(
+                "USER.md", user.read_text(encoding="utf-8", errors="replace"), source=str(user)
+            )
         if memory:
-            self.install_text("MEMORY.md", memory.read_text(encoding="utf-8", errors="replace"), source=str(memory))
+            self.install_text(
+                "MEMORY.md",
+                memory.read_text(encoding="utf-8", errors="replace"),
+                source=str(memory),
+            )
 
         name = self.public_identity or self.agent_id.removeprefix("agent_")
         identity = (
@@ -215,7 +223,9 @@ class Importer:
             "SOUL.md remains the authoritative personality.\n"
         )
         self.install_text("IDENTITY.md", identity, source="generated:hermes-identity")
-        marker = "MAC_CONTINUITY_%s" % hashlib.sha256(self.agent_id.encode("utf-8")).hexdigest()[:16]
+        marker = (
+            "MAC_CONTINUITY_%s" % hashlib.sha256(self.agent_id.encode("utf-8")).hexdigest()[:16]
+        )
         self.install_text(
             "memory/continuity-acceptance.md",
             "# MAC continuity acceptance marker\n\n"
@@ -269,7 +279,9 @@ class Importer:
         self.install_text("SOUL.md", str(proposal["soul"]), source=str(self.proposal))
         self.install_text("USER.md", str(proposal["user"]), source=str(self.proposal))
         self.install_text("MEMORY.md", str(proposal["memory"]), source=str(self.proposal))
-        marker = "MAC_CONTINUITY_%s" % hashlib.sha256(self.agent_id.encode("utf-8")).hexdigest()[:16]
+        marker = (
+            "MAC_CONTINUITY_%s" % hashlib.sha256(self.agent_id.encode("utf-8")).hexdigest()[:16]
+        )
         self.install_text(
             "memory/continuity-acceptance.md",
             "# MAC continuity acceptance marker\n\n"
@@ -309,7 +321,9 @@ class Importer:
                 # cannot be redacted without corrupting the asset.
                 raw = source.read_bytes()
                 binary_view = raw.decode("latin-1", errors="ignore")
-                secret_hits = sum(len(pattern.findall(binary_view)) for pattern in HIGH_CONFIDENCE_SECRETS)
+                secret_hits = sum(
+                    len(pattern.findall(binary_view)) for pattern in HIGH_CONFIDENCE_SECRETS
+                )
                 if secret_hits:
                     self.redaction_count += secret_hits
                     self.counts["binary_skill_files_withheld"] += 1
@@ -330,7 +344,13 @@ class Importer:
                     candidate = self._candidate_path(f"skills/{relative}")
                     candidate.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, candidate)
-                    self.conflicts.append({"path": f"skills/{relative}", "source": str(source), "candidate": str(candidate)})
+                    self.conflicts.append(
+                        {
+                            "path": f"skills/{relative}",
+                            "source": str(source),
+                            "candidate": str(candidate),
+                        }
+                    )
                     self.managed_files[f"skills/{relative}"] = current_hash
                     continue
                 shutil.copy2(source, destination)
@@ -427,7 +447,10 @@ class Importer:
         )
         assert recover.stdout is not None
         restore = subprocess.run(
-            [sqlite_bin, str(temporary)], stdin=recover.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            [sqlite_bin, str(temporary)],
+            stdin=recover.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         recover.stdout.close()
         recover_stderr = recover.stderr.read() if recover.stderr else b""
@@ -458,9 +481,7 @@ class Importer:
                 conn = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
                 tables = {
                     row[0]
-                    for row in conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table'"
-                    )
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 }
                 # A freshly initialized Hermes home may contain a state DB
                 # without conversation history.  That is valid continuity
@@ -481,9 +502,7 @@ class Importer:
                     conn = sqlite3.connect(f"file:{recovered}?mode=ro", uri=True)
                     tables = {
                         row[0]
-                        for row in conn.execute(
-                            "SELECT name FROM sqlite_master WHERE type='table'"
-                        )
+                        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                     }
                     if "messages" in tables:
                         conn.execute("SELECT 1 FROM messages LIMIT 1").fetchone()
@@ -508,7 +527,12 @@ class Importer:
                 continue
             if not isinstance(content, str):
                 content = json.dumps(content, ensure_ascii=False, sort_keys=True)
-            yield str(session_id or "unknown"), str(role or "unknown"), content, str(timestamp or "")
+            yield (
+                str(session_id or "unknown"),
+                str(role or "unknown"),
+                content,
+                str(timestamp or ""),
+            )
 
     def import_history(self) -> None:
         conn, source = self._database()
@@ -546,7 +570,9 @@ class Importer:
                     handles[day] = handle
                 content, redactions = redact(content)
                 self.redaction_count += redactions
-                handle.write(f"## {timestamp or 'timestamp unavailable'} · {role} · session {session_id}\n\n")
+                handle.write(
+                    f"## {timestamp or 'timestamp unavailable'} · {role} · session {session_id}\n\n"
+                )
                 handle.write(content.rstrip() + "\n\n")
                 self.counts["history_messages"] += 1
         finally:
@@ -603,7 +629,9 @@ class Importer:
             "generated_at": utcnow(),
             "jobs": jobs,
         }
-        atomic_write(self.migration_dir / "cron-plan.json", json.dumps(plan, indent=2, sort_keys=True) + "\n")
+        atomic_write(
+            self.migration_dir / "cron-plan.json", json.dumps(plan, indent=2, sort_keys=True) + "\n"
+        )
         self.counts["cron_jobs"] = len(jobs)
         self.counts["cron_jobs_enabled"] = sum(1 for job in jobs if job["enabled"])
 

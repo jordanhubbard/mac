@@ -117,9 +117,7 @@ _KNOWN_NATIVE_NPM_PACKAGES = frozenset(
 # ---------------------------------------------------------------------------
 # Well-known registry hostname patterns
 # ---------------------------------------------------------------------------
-_REGISTRY_RE = re.compile(
-    r"https?://([a-zA-Z0-9][a-zA-Z0-9._-]*\.[a-zA-Z]{2,})"
-)
+_REGISTRY_RE = re.compile(r"https?://([a-zA-Z0-9][a-zA-Z0-9._-]*\.[a-zA-Z]{2,})")
 
 
 # ===========================================================================
@@ -223,49 +221,49 @@ def validate_environment_contract(
     if node_min:
         if node_version is None:
             node_version = _detect_command_version("node", "--version")
-        checks.append(
-            _check_version_floor("node", required=node_min, detected=node_version)
-        )
+        checks.append(_check_version_floor("node", required=node_min, detected=node_version))
 
     # --- Python version floor ---
     python_min = rv.get("python_min")
     if python_min:
         if python_version is None:
             python_version = _detect_command_version("python3", "--version")
-        checks.append(
-            _check_version_floor("python3", required=python_min, detected=python_version)
-        )
+        checks.append(_check_version_floor("python3", required=python_min, detected=python_version))
 
     # --- pnpm version floor ---
     pnpm_min = rv.get("pnpm_min")
     if pnpm_min:
         if pnpm_version is None:
             pnpm_version = _detect_command_version("pnpm", "--version")
-        checks.append(
-            _check_version_floor("pnpm", required=pnpm_min, detected=pnpm_version)
-        )
+        checks.append(_check_version_floor("pnpm", required=pnpm_min, detected=pnpm_version))
 
     # --- Native build toolchain ---
     nb = contract.get("native_build", {})
     if nb.get("required"):
         if has_c_compiler is None:
-            has_c_compiler = bool(shutil.which("gcc") or shutil.which("clang") or shutil.which("cc"))
+            has_c_compiler = bool(
+                shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+            )
         if has_c_compiler:
-            checks.append({
-                "name": "c_compiler",
-                "status": "pass",
-                "message": "C compiler detected (native build supported)",
-            })
+            checks.append(
+                {
+                    "name": "c_compiler",
+                    "status": "pass",
+                    "message": "C compiler detected (native build supported)",
+                }
+            )
         else:
-            checks.append({
-                "name": "c_compiler",
-                "status": "fail",
-                "message": (
-                    "native_build.required=true but no C compiler found "
-                    "(gcc/clang/cc); repo needs a compiler toolchain and "
-                    "Node headers — rebuild the sandbox image or install build-essential"
-                ),
-            })
+            checks.append(
+                {
+                    "name": "c_compiler",
+                    "status": "fail",
+                    "message": (
+                        "native_build.required=true but no C compiler found "
+                        "(gcc/clang/cc); repo needs a compiler toolchain and "
+                        "Node headers — rebuild the sandbox image or install build-essential"
+                    ),
+                }
+            )
 
     statuses = {c["status"] for c in checks}
     if "fail" in statuses:
@@ -305,7 +303,9 @@ def environment_contract_summary(contract: JsonDict) -> str:
     if nb.get("required"):
         signals = nb.get("signals", [])
         sig_str = ("; ".join(signals[:3])) if signals else "native bindings detected"
-        parts.append("Native build required (%s): sandbox needs a C compiler and Node headers." % sig_str)
+        parts.append(
+            "Native build required (%s): sandbox needs a C compiler and Node headers." % sig_str
+        )
     else:
         parts.append("No native build signals detected.")
 
@@ -319,7 +319,8 @@ def environment_contract_summary(contract: JsonDict) -> str:
         failed = [c for c in pf.get("checks", []) if c.get("status") == "fail"]
         if failed:
             parts.append(
-                "PREFLIGHT %s: %s" % (
+                "PREFLIGHT %s: %s"
+                % (
                     status.upper(),
                     "; ".join(c["message"] for c in failed),
                 )
@@ -450,9 +451,7 @@ def _derive_native_build(root: Path) -> Tuple[bool, List[str]]:
             for _name, cmd in scripts.items():
                 cmd_str = str(cmd or "")
                 if "node-gyp rebuild" in cmd_str or "node-pre-gyp install" in cmd_str:
-                    signals.append(
-                        "package.json script contains node-gyp/node-pre-gyp rebuild"
-                    )
+                    signals.append("package.json script contains node-gyp/node-pre-gyp rebuild")
                     break
 
         for dep_key in ("dependencies", "devDependencies", "optionalDependencies"):
@@ -461,9 +460,7 @@ def _derive_native_build(root: Path) -> Tuple[bool, List[str]]:
                 continue
             for pkg_name in deps:
                 if pkg_name in _KNOWN_NATIVE_NPM_PACKAGES:
-                    signals.append(
-                        "known-native npm package in %s: %s" % (dep_key, pkg_name)
-                    )
+                    signals.append("known-native npm package in %s: %s" % (dep_key, pkg_name))
 
     # pnpm onlyBuiltDependencies (pnpm >= 8 native allow-list)
     pnpm_ws = root / "pnpm-workspace.yaml"
@@ -558,6 +555,7 @@ def _detect_command_version(command: str, flag: str = "--version") -> Optional[s
         return None
     try:
         import subprocess as _sp
+
         result = _sp.run(
             [exe, flag],
             capture_output=True,
@@ -584,9 +582,7 @@ def _check_version_floor(
         return {
             "name": name,
             "status": "fail",
-            "message": (
-                "%s not found in PATH; repo requires >=%s" % (name, required)
-            ),
+            "message": ("%s not found in PATH; repo requires >=%s" % (name, required)),
         }
     try:
         req_parts = _version_tuple(required)
@@ -603,8 +599,7 @@ def _check_version_floor(
                 "status": "fail",
                 "message": (
                     "%s %s is too old; repo requires >=%s — "
-                    "update the runtime or rebuild the sandbox image"
-                    % (name, detected, required)
+                    "update the runtime or rebuild the sandbox image" % (name, detected, required)
                 ),
             }
     except (ValueError, TypeError):
@@ -612,8 +607,7 @@ def _check_version_floor(
             "name": name,
             "status": "warn",
             "message": (
-                "could not compare %s %s against required >=%s"
-                % (name, detected, required)
+                "could not compare %s %s against required >=%s" % (name, detected, required)
             ),
         }
 

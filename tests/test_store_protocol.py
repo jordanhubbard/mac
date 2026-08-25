@@ -20,9 +20,7 @@ from mac.test_support import ephemeral_store
 @pytest.fixture()
 def store() -> Store:
     s: Store = ephemeral_store()
-    s.execute(
-        "CREATE TABLE t (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-    )
+    s.execute("CREATE TABLE t (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
     yield s
     s.close()
 
@@ -49,9 +47,7 @@ def test_query_one_returns_none_when_missing(store: Store) -> None:
 
 def test_query_all_returns_list(store: Store) -> None:
     for i in range(3):
-        store.execute(
-            "INSERT INTO t (id, payload) VALUES (?, ?)", (f"k{i}", str(i))
-        )
+        store.execute("INSERT INTO t (id, payload) VALUES (?, ?)", (f"k{i}", str(i)))
     rows = store.query_all("SELECT id FROM t ORDER BY id")
     assert [r["id"] for r in rows] == ["k0", "k1", "k2"]
 
@@ -68,9 +64,7 @@ def test_executemany_inserts_batch(store: Store) -> None:
 def test_transaction_commits_on_clean_exit(store: Store) -> None:
     with store.transaction() as conn:
         assert isinstance(conn, StoreConnection)
-        conn.execute(
-            "INSERT INTO t (id, payload) VALUES (?, ?)", ("txn-ok", "x")
-        )
+        conn.execute("INSERT INTO t (id, payload) VALUES (?, ?)", ("txn-ok", "x"))
     assert store.query_one("SELECT id FROM t WHERE id = ?", ("txn-ok",)) is not None
 
 
@@ -80,11 +74,11 @@ def test_transaction_rolls_back_on_exception(store: Store) -> None:
 
     with pytest.raises(_Boom):
         with store.transaction() as conn:
-            conn.execute(
-                "INSERT INTO t (id, payload) VALUES (?, ?)", ("txn-bad", "x")
-            )
+            conn.execute("INSERT INTO t (id, payload) VALUES (?, ?)", ("txn-bad", "x"))
             raise _Boom("rollback")
     assert store.query_one("SELECT id FROM t WHERE id = ?", ("txn-bad",)) is None
+
+
 def test_observability_subject_query_has_covering_order_index() -> None:
     """The subject/sequence lookup must be an index scan, not a scan plus sort."""
     store = ephemeral_store()
@@ -154,18 +148,14 @@ def test_shared_store_helpers_use_sql_both_backends_accept():
     import re
     from pathlib import Path
 
-    source = (
-        Path(__file__).resolve().parents[1] / "src" / "mac" / "store_helpers.py"
-    ).read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "mac" / "store_helpers.py").read_text()
     # Only SQL string literals. Prose about a SQLite-ism is not a SQLite-ism,
     # and docstrings legitimately say things like "insert or replace a row".
     tree = ast.parse(source)
     docstrings = {
         id(node.body[0].value)
         for node in ast.walk(tree)
-        if isinstance(
-            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-        )
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
         and node.body
         and isinstance(node.body[0], ast.Expr)
         and isinstance(node.body[0].value, ast.Constant)
@@ -278,11 +268,9 @@ def test_the_protocol_declares_exactly_the_members_we_committed_to():
 
     assert expected - declared == set(), (
         "Store protocol no longer declares: %s -- if this is deliberate, remove "
-        "them from EXPECTED_STORE_PROTOCOL_MEMBERS in the same commit"
-        % sorted(expected - declared)
+        "them from EXPECTED_STORE_PROTOCOL_MEMBERS in the same commit" % sorted(expected - declared)
     )
     assert declared - expected == set(), (
         "Store protocol declares members absent from "
-        "EXPECTED_STORE_PROTOCOL_MEMBERS: %s -- add them deliberately"
-        % sorted(declared - expected)
+        "EXPECTED_STORE_PROTOCOL_MEMBERS: %s -- add them deliberately" % sorted(declared - expected)
     )

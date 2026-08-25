@@ -147,9 +147,7 @@ TERMINAL_TASK_STATES = {
 # stuck and want attention. Terminal work is the only thing hidden, and
 # `--all-states` brings it back.
 ACTIVE_TASK_STATES = tuple(
-    state.value
-    for state in TaskState
-    if state.value not in TERMINAL_TASK_STATES
+    state.value for state in TaskState if state.value not in TERMINAL_TASK_STATES
 )
 
 
@@ -166,22 +164,14 @@ REPORT_DELIVERABLE = "report"
 _REPORT_DELIVERABLE_ALIASES = frozenset(
     {"report", "answer", "analysis", "investigation", "question", "triage"}
 )
-NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES = frozenset(
-    {"investigation", "plan_decomposed"}
-)
+NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES = frozenset({"investigation", "plan_decomposed"})
 REPORT_REPOSITORY_ACCESS_SCHEMA = "mac.report_repository_access.v1"
 REPORT_REPOSITORY_ACCESS_KEY = "report_repository_access"
 REPORT_REPOSITORY_READ_ONLY_MODE = "read_only"
-REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY = (
-    "report_repository_executor_attestation"
-)
-REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA = (
-    "mac.report_repository_executor_attestation.v1"
-)
+REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY = "report_repository_executor_attestation"
+REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA = "mac.report_repository_executor_attestation.v1"
 REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY = "report_repository_executor_approval"
-REPORT_REPOSITORY_EXECUTOR_APPROVAL_SCHEMA = (
-    "mac.report_repository_executor_approval.v1"
-)
+REPORT_REPOSITORY_EXECUTOR_APPROVAL_SCHEMA = "mac.report_repository_executor_approval.v1"
 REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY = "report_repository_executor"
 REPORT_REPOSITORY_EXECUTOR_SCHEMA = "mac.report_repository_executor.v1"
 REPORT_REPOSITORY_EXECUTOR_NAME = "mac.task_executor"
@@ -315,9 +305,7 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
     if host_install:
         # No container runtime exists on this node; refuse anything that
         # claims one, in either direction.
-        if any(
-            value.get(key) != "" for key in REPORT_REPOSITORY_CONTAINER_ONLY_FIELDS
-        ):
+        if any(value.get(key) != "" for key in REPORT_REPOSITORY_CONTAINER_ONLY_FIELDS):
             return False
     else:
         runtime_ref = str(value.get("runtime_image_ref") or "")
@@ -329,8 +317,7 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
         digest_keys.extend(("policy_sha256", "openshell_bin_sha256"))
         path_keys.append("openshell_bin_path")
     if not all(
-        re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get(key) or ""))
-        for key in digest_keys
+        re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get(key) or "")) for key in digest_keys
     ):
         return False
     return all(
@@ -617,8 +604,7 @@ def metadata_declares_read_only_report_repository(metadata: Any) -> bool:
         return False
     return (
         str(access.get("schema") or "").strip() == REPORT_REPOSITORY_ACCESS_SCHEMA
-        and str(access.get("mode") or "").strip().lower()
-        == REPORT_REPOSITORY_READ_ONLY_MODE
+        and str(access.get("mode") or "").strip().lower() == REPORT_REPOSITORY_READ_ONLY_MODE
     )
 
 
@@ -650,8 +636,7 @@ def report_repository_context_execution_contract(
         "quality": "weak",
         "source": "task_crud",
         "repository_required": False,
-        "evidence_type": str(evidence_type or "operator_result").strip()
-        or "operator_result",
+        "evidence_type": str(evidence_type or "operator_result").strip() or "operator_result",
         "required_capabilities": list(required_capabilities or []),
         "reason": "report_deliverable_no_repository_mutation",
     }
@@ -700,9 +685,7 @@ def normalize_needs_input_detail(detail: Optional[Mapping[str, Any]]) -> JsonDic
             text = str(item.get("question") or item.get("text") or "").strip()
             why = str(item.get("why") or item.get("context") or "").strip()
             options = [
-                str(opt).strip()
-                for opt in list(item.get("options") or [])
-                if str(opt).strip()
+                str(opt).strip() for opt in list(item.get("options") or []) if str(opt).strip()
             ]
         else:
             text, why, options = str(item or "").strip(), "", []
@@ -953,9 +936,7 @@ _VALIDATOR_EVIDENCE_KINDS = {
     "investigation",
     "plan_decomposed",
 }
-EVIDENCE_KINDS = (
-    _STORED_EVIDENCE_KINDS | _INTERNAL_EVIDENCE_KINDS | _VALIDATOR_EVIDENCE_KINDS
-)
+EVIDENCE_KINDS = _STORED_EVIDENCE_KINDS | _INTERNAL_EVIDENCE_KINDS | _VALIDATOR_EVIDENCE_KINDS
 # Deterministic, sorted view of the canonical evidence kinds. This is the single
 # source of truth shared by the CLI (argparse ``choices`` + help), the runtime
 # service (``ControlPlane.add_evidence``), the validator registry, and any other
@@ -2389,9 +2370,7 @@ class MacVectorPayload:
         )
         for name in required_fields:
             if not raw.get(name):
-                raise ValidationError(
-                    "vector payload missing required field: %s" % name
-                )
+                raise ValidationError("vector payload missing required field: %s" % name)
         return cls(
             schema=MAC_MEMORY_PAYLOAD_SCHEMA,
             tier=tier,
@@ -2406,9 +2385,7 @@ class MacVectorPayload:
             project=str(raw["project"]) if raw.get("project") else None,
             agent_id=str(raw["agent_id"]) if raw.get("agent_id") else None,
             tenant_id=str(raw["tenant_id"]) if raw.get("tenant_id") else None,
-            evidence_type=(
-                str(raw["evidence_type"]) if raw.get("evidence_type") else None
-            ),
+            evidence_type=(str(raw["evidence_type"]) if raw.get("evidence_type") else None),
             record_type=str(raw["record_type"]) if raw.get("record_type") else None,
             dream_kind=str(raw["dream_kind"]) if raw.get("dream_kind") else None,
             dream_scope=str(raw["dream_scope"]) if raw.get("dream_scope") else None,
@@ -2769,9 +2746,7 @@ def validate_transition(current: str, target: str) -> None:
     """Raise TransitionError if the task state transition is not allowed."""
     allowed = TASK_TRANSITIONS.get(current, set())
     if target not in allowed:
-        raise TransitionError(
-            "cannot transition task from %s to %s" % (current, target)
-        )
+        raise TransitionError("cannot transition task from %s to %s" % (current, target))
 
 
 # ---------------------------------------------------------------------------
@@ -2890,9 +2865,7 @@ class FleetDesiredSourceState:
         if self.generation < 1:
             raise ValidationError("generation must be >= 1; got %d" % self.generation)
         if self.fleet_id is None and self.environment_id is None:
-            raise ValidationError(
-                "FleetDesiredSourceState requires fleet_id or environment_id"
-            )
+            raise ValidationError("FleetDesiredSourceState requires fleet_id or environment_id")
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this FleetDesiredSourceState."""
@@ -3084,8 +3057,7 @@ def _validate_stage_name(stage: str) -> None:
     """Reject any stage that is not a canonical task-flow boundary."""
     if stage not in TASK_FLOW_STAGE_NAMES:
         raise ValidationError(
-            "stage must be one of %s; got %r"
-            % (", ".join(sorted(TASK_FLOW_STAGE_NAMES)), stage)
+            "stage must be one of %s; got %r" % (", ".join(sorted(TASK_FLOW_STAGE_NAMES)), stage)
         )
 
 
@@ -3124,13 +3096,9 @@ class TaskFlowSpan:
     def __post_init__(self) -> None:
         _validate_stage_name(self.stage)
         if self.attempt < 1:
-            raise ValidationError(
-                "attempt must be >= 1; got %d" % self.attempt
-            )
+            raise ValidationError("attempt must be >= 1; got %d" % self.attempt)
         if self.duration_seconds is not None and self.duration_seconds < 0:
-            raise ValidationError(
-                "duration_seconds must be >= 0; got %r" % self.duration_seconds
-            )
+            raise ValidationError("duration_seconds must be >= 0; got %r" % self.duration_seconds)
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this TaskFlowSpan."""
@@ -3184,13 +3152,9 @@ class TaskCompletion:
 
     def __post_init__(self) -> None:
         if self.attempt < 1:
-            raise ValidationError(
-                "attempt must be >= 1; got %d" % self.attempt
-            )
+            raise ValidationError("attempt must be >= 1; got %d" % self.attempt)
         if self.duration_seconds is not None and self.duration_seconds < 0:
-            raise ValidationError(
-                "duration_seconds must be >= 0; got %r" % self.duration_seconds
-            )
+            raise ValidationError("duration_seconds must be >= 0; got %r" % self.duration_seconds)
         for name in self.per_stage_durations:
             _validate_stage_name(name)
 

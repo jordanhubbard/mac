@@ -120,8 +120,7 @@ def test_harness_failure_refunds_the_attempt_it_spent(cp):
 
     after = cp.get_task(task.id)
     assert after.attempt_count == 0, (
-        "a rejection caused by the review harness must not spend the work's "
-        "retry budget"
+        "a rejection caused by the review harness must not spend the work's retry budget"
     )
     assert after.state == TaskState.OPEN.value
 
@@ -147,8 +146,7 @@ def test_semantic_rejection_still_spends_the_attempt(cp):
 
     after = cp.get_task(task.id)
     assert after.attempt_count == 1, (
-        "a rejection on the merits is evidence about the work and must still "
-        "cost an attempt"
+        "a rejection on the merits is evidence about the work and must still cost an attempt"
     )
     assert after.state == TaskState.OPEN.value
 
@@ -161,13 +159,12 @@ def test_repeated_harness_failures_never_exhaust_the_budget(cp):
     """
     executor, reviewer, task, review, ev = _drive_to_review(cp, "three-strikes")
 
-    for round_index, feedback in enumerate(
-        (HARNESS_588_ERRORS, HARNESS_UTF8, HARNESS_588_ERRORS)
-    ):
+    for round_index, feedback in enumerate((HARNESS_588_ERRORS, HARNESS_UTF8, HARNESS_588_ERRORS)):
         _reject_with(cp, review, reviewer, task, feedback, ev)
         current = cp.get_task(task.id)
-        assert current.state == TaskState.OPEN.value, (
-            "round %d left the task in %s" % (round_index, current.state)
+        assert current.state == TaskState.OPEN.value, "round %d left the task in %s" % (
+            round_index,
+            current.state,
         )
         assert current.attempt_count == 0
         assert current.attempt_count < current.max_attempts
@@ -206,7 +203,6 @@ def test_the_transition_says_why_the_attempt_was_refunded(cp):
     ]
     refunded = [d for d in details if d.get("attempt_refunded") is True]
     assert refunded, "no history row recorded the refund"
-    assert any(
-        str(d.get("review_failure_class") or "")
-        for d in refunded
-    ), "the refund did not name the harness failure class"
+    assert any(str(d.get("review_failure_class") or "") for d in refunded), (
+        "the refund did not name the harness failure class"
+    )

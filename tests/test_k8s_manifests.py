@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,9 +27,9 @@ def test_mac_api_deployment_is_stateless() -> None:
     volumes = template_spec.get("volumes", [])
     # Only emptyDir or configMap or secret volumes allowed.
     for v in volumes:
-        assert (
-            "emptyDir" in v or "configMap" in v or "secret" in v
-        ), f"unexpected persistent volume: {v}"
+        assert "emptyDir" in v or "configMap" in v or "secret" in v, (
+            f"unexpected persistent volume: {v}"
+        )
     assert "volumeClaimTemplates" not in spec, "stateless apps have no PVCs"
 
 
@@ -106,14 +105,10 @@ def test_orchestrator_rbac_is_scoped_to_namespace() -> None:
     assert "ClusterRoleBinding" not in kinds
     role = next(d for d in docs if d["kind"] == "Role")
     # Has create+delete on batch.jobs (task/review Job dispatch + reconcile).
-    job_rule = next(
-        r for r in role["rules"] if "jobs" in (r.get("resources") or [])
-    )
+    job_rule = next(r for r in role["rules"] if "jobs" in (r.get("resources") or []))
     assert "create" in job_rule["verbs"]
     assert "delete" in job_rule["verbs"]
-    scale_rule = next(
-        r for r in role["rules"] if "deployments/scale" in (r.get("resources") or [])
-    )
+    scale_rule = next(r for r in role["rules"] if "deployments/scale" in (r.get("resources") or []))
     assert "patch" in scale_rule["verbs"]
 
 

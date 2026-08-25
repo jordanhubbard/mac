@@ -127,8 +127,7 @@ def read_request(source: Optional[str]) -> Dict[str, Any]:
         raise DispatchAdapterError("dispatch request must be a JSON object")
     if request.get("schema") != REQUEST_SCHEMA:
         raise DispatchAdapterError(
-            f"dispatch request must declare schema {REQUEST_SCHEMA}, "
-            f"not {request.get('schema')!r}"
+            f"dispatch request must declare schema {REQUEST_SCHEMA}, not {request.get('schema')!r}"
         )
     missing = [field for field in REQUEST_FIELDS if field not in request]
     if missing:
@@ -277,14 +276,11 @@ def refuse_unroutable(
     # exact failure this function exists to prevent.
     from mac.dispatch_preflight import explain, preflight
 
-    result = preflight(
-        agents, required_capabilities=capabilities, required_hardware=hardware
-    )
+    result = preflight(agents, required_capabilities=capabilities, required_hardware=hardware)
     if result["dispatchable"]:
         return
     raise DispatchAdapterError(
-        explain(result)
-        + ". The task would be created and never claimed, and a blocking "
+        explain(result) + ". The task would be created and never claimed, and a blocking "
         "dispatch would wait out its timeout."
     )
 
@@ -474,9 +470,7 @@ def build_result(
         "stdout": stdout,
         "stderr": stderr,
         "diagnostic_digest": (
-            content_identity({"stdout": stdout, "stderr": stderr})
-            if stdout or stderr
-            else None
+            content_identity({"stdout": stdout, "stderr": stderr}) if stdout or stderr else None
         ),
     }
 

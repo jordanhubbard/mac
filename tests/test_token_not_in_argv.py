@@ -69,9 +69,7 @@ def test_the_helper_degrades_rather_than_failing(monkeypatch):
     """A missing askpass helper must not stop a publication. It falls back to
     the old URL form -- still redacted in logs and evidence, exposed only in
     argv, which is exactly the pre-existing behaviour."""
-    monkeypatch.setattr(
-        gitops.Path, "is_file", lambda self: False, raising=False
-    )
+    monkeypatch.setattr(gitops.Path, "is_file", lambda self: False, raising=False)
 
     url, env = gitops.askpass_remote_auth("https://github.com/o/r.git")
 

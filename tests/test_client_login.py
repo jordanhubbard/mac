@@ -178,9 +178,7 @@ def test_fleet_route_resolution_applies_explicit_overrides(login_files, tmp_path
 
 def test_prepare_login_spec_pins_explicit_identity_and_trust(login_files):
     _home, identity, known_hosts = login_files
-    prepared, created = client_login.prepare_login_spec(
-        _spec(identity, known_hosts), "production"
-    )
+    prepared, created = client_login.prepare_login_spec(_spec(identity, known_hosts), "production")
     assert prepared.identity_file == str(identity.resolve())
     assert prepared.known_hosts_file == str(known_hosts.resolve())
     assert prepared.host_key_policy == "strict"
@@ -240,9 +238,7 @@ def test_prepare_login_spec_defers_to_ssh_defaults_when_unset(login_files):
     assert prepared.host_key_policy == "insecure"
 
 
-def test_prepare_login_spec_materializes_matching_fingerprint(
-    login_files, monkeypatch
-):
+def test_prepare_login_spec_materializes_matching_fingerprint(login_files, monkeypatch):
     home, identity, known_hosts = login_files
     fingerprint = "SHA256:fixturePin="
 
@@ -288,9 +284,7 @@ def test_prepare_login_spec_materializes_matching_fingerprint(
 
 def test_prepare_login_spec_rejects_fingerprint_mismatch(login_files, monkeypatch):
     _home, identity, known_hosts = login_files
-    monkeypatch.setattr(
-        client_login, "_existing_fingerprints", lambda _path: {"SHA256:other"}
-    )
+    monkeypatch.setattr(client_login, "_existing_fingerprints", lambda _path: {"SHA256:other"})
     with pytest.raises(client_login.ClientLoginError, match="does not contain"):
         client_login.prepare_login_spec(
             _spec(identity, known_hosts, host_key_fingerprint="SHA256:wanted"),
@@ -312,10 +306,7 @@ def test_resolve_remote_mac_discovers_and_tolerates_absence(login_files, monkeyp
         )
 
     monkeypatch.setattr(client_login.subprocess, "run", found)
-    assert (
-        client_login._resolve_remote_mac(spec, timeout=5)
-        == "/Users/jkh/.local/bin/mac"
-    )
+    assert client_login._resolve_remote_mac(spec, timeout=5) == "/Users/jkh/.local/bin/mac"
 
     # No sentinel (not found) -> None, so the caller falls back to bare `mac`.
     monkeypatch.setattr(
@@ -348,9 +339,7 @@ def test_choose_local_port_and_tunnel_argv(login_files):
         port = occupied.getsockname()[1]
         with pytest.raises(client_login.ClientLoginError, match="already in use"):
             client_login.choose_local_port(port)
-    argv = client_login._tunnel_argv(
-        _spec(identity, known_hosts), 49000, "127.0.0.1", 8789, 7
-    )
+    argv = client_login._tunnel_argv(_spec(identity, known_hosts), 49000, "127.0.0.1", 8789, 7)
     assert argv[0] == "ssh"
     assert "ExitOnForwardFailure=yes" in argv
     assert "127.0.0.1:49000:127.0.0.1:8789" in argv
@@ -361,9 +350,12 @@ def test_start_tunnel_success_exit_and_timeout(login_files, monkeypatch):
     process = FakeProcess()
     monkeypatch.setattr(client_login.subprocess, "Popen", lambda *_a, **_k: process)
     monkeypatch.setattr(client_login, "_port_open", lambda *_a, **_k: True)
-    assert client_login._start_tunnel(
-        _spec(identity, known_hosts), 49000, "127.0.0.1", 8789, timeout=1
-    ) is process
+    assert (
+        client_login._start_tunnel(
+            _spec(identity, known_hosts), 49000, "127.0.0.1", 8789, timeout=1
+        )
+        is process
+    )
 
     exited = FakeProcess(returncode=255)
     monkeypatch.setattr(client_login.subprocess, "Popen", lambda *_a, **_k: exited)
@@ -374,9 +366,7 @@ def test_start_tunnel_success_exit_and_timeout(login_files, monkeypatch):
         )
 
     timeout_process = FakeProcess()
-    monkeypatch.setattr(
-        client_login.subprocess, "Popen", lambda *_a, **_k: timeout_process
-    )
+    monkeypatch.setattr(client_login.subprocess, "Popen", lambda *_a, **_k: timeout_process)
     ticks = iter((0.0, 2.0, 2.0))
     monkeypatch.setattr(client_login.time, "monotonic", lambda: next(ticks))
     with pytest.raises(client_login.ClientLoginError, match="did not become ready"):
@@ -386,9 +376,7 @@ def test_start_tunnel_success_exit_and_timeout(login_files, monkeypatch):
     assert timeout_process.terminated
 
 
-def test_login_validates_before_atomic_install_and_never_returns_token(
-    login_files, monkeypatch
-):
+def test_login_validates_before_atomic_install_and_never_returns_token(login_files, monkeypatch):
     home, identity, known_hosts = login_files
     process = FakeProcess()
     commands = []
@@ -420,9 +408,7 @@ def test_login_validates_before_atomic_install_and_never_returns_token(
     assert "--scopes" in commands[0]
 
 
-def test_login_rolls_back_and_revokes_after_malformed_manifest(
-    login_files, monkeypatch
-):
+def test_login_rolls_back_and_revokes_after_malformed_manifest(login_files, monkeypatch):
     home, identity, known_hosts = login_files
     process = FakeProcess()
     actions = []
@@ -484,13 +470,9 @@ def test_rotating_login_stops_previous_managed_tunnel(login_files, monkeypatch):
     monkeypatch.setattr(
         client_login,
         "_run_remote_json",
-        lambda *_a, **_k: _manifest(
-            "mac_client_rotated_login_token_123456789", version=2
-        ),
+        lambda *_a, **_k: _manifest("mac_client_rotated_login_token_123456789", version=2),
     )
-    monkeypatch.setattr(
-        client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated")
-    )
+    monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
     result = client_login.login(
         spec=_spec(identity, known_hosts),
         profile="production",
@@ -518,9 +500,7 @@ def test_login_cleans_interrupted_session_without_profile(login_files, monkeypat
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
     monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(client_login, "_run_remote_json", lambda *_a, **_k: _manifest())
-    monkeypatch.setattr(
-        client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated")
-    )
+    monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
     client_login.login(
         spec=_spec(identity, known_hosts),
         profile="production",
@@ -530,9 +510,7 @@ def test_login_cleans_interrupted_session_without_profile(login_files, monkeypat
     assert stopped == [previous]
 
 
-def test_ensure_session_running_reconnect_conflict_and_auth_failure(
-    login_files, monkeypatch
-):
+def test_ensure_session_running_reconnect_conflict_and_auth_failure(login_files, monkeypatch):
     _install(login_files)
     _home, identity, known_hosts = login_files
     state = client_login._write_state(
@@ -550,9 +528,7 @@ def test_ensure_session_running_reconnect_conflict_and_auth_failure(
     client_login._remove_state("production")
     process = FakeProcess(333)
     monkeypatch.setattr(client_login, "_port_open", lambda *_a, **_k: False)
-    monkeypatch.setattr(
-        client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None)
-    )
+    monkeypatch.setattr(client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None))
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
     monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
     monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
@@ -577,9 +553,7 @@ def test_ensure_session_running_reconnect_conflict_and_auth_failure(
     assert failing.terminated
 
 
-def test_login_status_is_secret_free_for_connected_and_stopped(
-    login_files, monkeypatch
-):
+def test_login_status_is_secret_free_for_connected_and_stopped(login_files, monkeypatch):
     manifest = _install(login_files)
     client_login._write_state(
         "production",
@@ -608,9 +582,7 @@ def test_renew_rotates_only_after_validation(login_files, monkeypatch):
     second = _manifest("mac_client_rotated_fixture_token_987654321", version=2)
     actions = []
     monkeypatch.setattr(client_login, "_ensure_session_unlocked", lambda *_a: {"status": "running"})
-    monkeypatch.setattr(
-        client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None)
-    )
+    monkeypatch.setattr(client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None))
     monkeypatch.setattr(client_login, "_run_remote_json", lambda *_a, **_k: second)
     monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
     result = client_login.renew_login("production")
@@ -638,9 +610,7 @@ def test_renew_rotates_only_after_validation(login_files, monkeypatch):
     assert stored["credential"]["token"] == second["credential"]["token"]
 
 
-def test_logout_revokes_before_removing_profile_and_managed_pin(
-    login_files, monkeypatch
-):
+def test_logout_revokes_before_removing_profile_and_managed_pin(login_files, monkeypatch):
     home, identity, _known_hosts = login_files
     managed = client_login.managed_known_hosts_path("production")
     managed.parent.mkdir(parents=True)
@@ -655,13 +625,9 @@ def test_logout_revokes_before_removing_profile_and_managed_pin(
         remote_port=8789,
     )
     install_enrollment_manifest(manifest)
-    client_login._write_state(
-        "production", {"ssh_pid": 222, "ssh_target": "mac@hub.example"}
-    )
+    client_login._write_state("production", {"ssh_pid": 222, "ssh_target": "mac@hub.example"})
     order = []
-    monkeypatch.setattr(
-        client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None)
-    )
+    monkeypatch.setattr(client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None))
     monkeypatch.setattr(
         client_login,
         "_run_remote_action",
@@ -679,9 +645,7 @@ def test_logout_revokes_before_removing_profile_and_managed_pin(
     assert not managed.exists()
 
 
-def test_state_permissions_schema_and_managed_process_edges(
-    login_files, monkeypatch
-):
+def test_state_permissions_schema_and_managed_process_edges(login_files, monkeypatch):
     home, _identity, _known_hosts = login_files
     path = home / "sessions" / "production.json"
     path.parent.mkdir(parents=True)
@@ -743,30 +707,31 @@ def test_validate_token_maps_success_http_and_network_failures(monkeypatch):
             return b'{"open": 1}'
 
     monkeypatch.setattr(client_login.urllib.request, "urlopen", lambda *_a, **_k: Response())
-    assert client_login._validate_token(
-        "http://127.0.0.1:1", "token", timeout=1
-    ) == (True, "authenticated")
+    assert client_login._validate_token("http://127.0.0.1:1", "token", timeout=1) == (
+        True,
+        "authenticated",
+    )
 
     def forbidden(*_args, **_kwargs):
         raise urllib.error.HTTPError("url", 403, "forbidden", {}, None)
 
     monkeypatch.setattr(client_login.urllib.request, "urlopen", forbidden)
-    assert client_login._validate_token(
-        "http://127.0.0.1:1", "token", timeout=1
-    ) == (False, "credential_rejected")
+    assert client_login._validate_token("http://127.0.0.1:1", "token", timeout=1) == (
+        False,
+        "credential_rejected",
+    )
     monkeypatch.setattr(
         client_login.urllib.request,
         "urlopen",
         lambda *_a, **_k: (_ for _ in ()).throw(urllib.error.URLError("down")),
     )
-    assert client_login._validate_token(
-        "http://127.0.0.1:1", "token", timeout=1
-    ) == (False, "hub_unreachable")
+    assert client_login._validate_token("http://127.0.0.1:1", "token", timeout=1) == (
+        False,
+        "hub_unreachable",
+    )
 
 
-def test_private_file_fingerprint_and_target_helper_edges(
-    login_files, monkeypatch, tmp_path
-):
+def test_private_file_fingerprint_and_target_helper_edges(login_files, monkeypatch, tmp_path):
     home, identity, _known_hosts = login_files
     assert client_login._read_state("missing") == {}
     bad_state = home / "sessions" / "bad.json"
@@ -824,9 +789,7 @@ def test_host_pin_and_route_error_edges(login_files, monkeypatch, tmp_path):
         )
 
     with pytest.raises(client_login.ClientLoginError, match="does not exist"):
-        client_login.prepare_login_spec(
-            _spec(identity, tmp_path / "absent"), "production"
-        )
+        client_login.prepare_login_spec(_spec(identity, tmp_path / "absent"), "production")
     host_ca = tmp_path / "host_ca"
     host_ca.write_text("@cert-authority *.example fixture\n", encoding="utf-8")
     prepared, _ = client_login.prepare_login_spec(
@@ -907,9 +870,12 @@ def test_start_tunnel_waits_for_second_probe(login_files, monkeypatch):
     monkeypatch.setattr(client_login.subprocess, "Popen", lambda *_a, **_k: process)
     monkeypatch.setattr(client_login, "_port_open", lambda *_a, **_k: next(probes))
     monkeypatch.setattr(client_login.time, "sleep", lambda _delay: None)
-    assert client_login._start_tunnel(
-        _spec(identity, known_hosts), 49000, "127.0.0.1", 8789, timeout=1
-    ) is process
+    assert (
+        client_login._start_tunnel(
+            _spec(identity, known_hosts), 49000, "127.0.0.1", 8789, timeout=1
+        )
+        is process
+    )
 
 
 def test_remote_json_rejects_malformed_and_non_object(login_files, monkeypatch):
@@ -945,9 +911,7 @@ def test_missing_or_timed_out_ssh_tools_fail_safely(login_files, monkeypatch):
         client_login._run_remote_json(spec, ["mac"], timeout=1)
     with pytest.raises(client_login.ClientLoginError, match="revocation"):
         client_login._run_remote_action(spec, ["mac"], timeout=1)
-    assert client_login._managed_process(
-        {"ssh_pid": os.getpid(), "ssh_target": "target"}
-    ) is False
+    assert client_login._managed_process({"ssh_pid": os.getpid(), "ssh_target": "target"}) is False
 
     monkeypatch.setattr(
         client_login.subprocess,
@@ -955,9 +919,7 @@ def test_missing_or_timed_out_ssh_tools_fail_safely(login_files, monkeypatch):
         lambda *_a, **_k: (_ for _ in ()).throw(OSError("missing")),
     )
     with pytest.raises(client_login.ClientLoginError, match="OpenSSH"):
-        client_login._start_tunnel(
-            spec, 49000, "127.0.0.1", 8789, timeout=1
-        )
+        client_login._start_tunnel(spec, 49000, "127.0.0.1", 8789, timeout=1)
 
 
 def test_stop_managed_state_handles_process_race(monkeypatch):
@@ -979,9 +941,7 @@ def test_login_option_flags_and_validation_rollback(login_files, monkeypatch):
     pin.write_text("pin\n", encoding="utf-8")
     pin.chmod(0o600)
     spec = _spec(identity, known_hosts)
-    monkeypatch.setattr(
-        client_login, "prepare_login_spec", lambda *_a, **_k: (spec, pin)
-    )
+    monkeypatch.setattr(client_login, "prepare_login_spec", lambda *_a, **_k: (spec, pin))
     monkeypatch.setattr(client_login, "choose_local_port", lambda *_a: 48789)
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
     monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
@@ -990,9 +950,7 @@ def test_login_option_flags_and_validation_rollback(login_files, monkeypatch):
         "_run_remote_json",
         lambda _spec, command, **_k: command_seen.append(command) or _manifest(),
     )
-    monkeypatch.setattr(
-        client_login, "_validate_token", lambda *_a, **_k: (False, "rejected")
-    )
+    monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (False, "rejected"))
     monkeypatch.setattr(
         client_login,
         "_run_remote_action",
@@ -1047,14 +1005,10 @@ def test_direct_and_stale_session_recovery_edges(login_files, monkeypatch):
     )
     monkeypatch.setattr(client_login, "_managed_process", lambda _state: False)
     monkeypatch.setattr(client_login, "_port_open", lambda *_a, **_k: False)
-    monkeypatch.setattr(
-        client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None)
-    )
+    monkeypatch.setattr(client_login, "prepare_login_spec", lambda spec, *_a, **_k: (spec, None))
     monkeypatch.setattr(client_login, "_start_tunnel", lambda *_a, **_k: process)
     monkeypatch.setattr(client_login, "_resolve_remote_mac", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated")
-    )
+    monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
     assert client_login.ensure_session("production")["status"] == "reconnected"
     assert stopped
 
@@ -1075,9 +1029,7 @@ def test_no_active_profile_errors_and_direct_status(login_files, monkeypatch):
     }
     direct["ssh"] = {}
     install_enrollment_manifest(direct, profile_override="direct", activate=False)
-    monkeypatch.setattr(
-        client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated")
-    )
+    monkeypatch.setattr(client_login, "_validate_token", lambda *_a, **_k: (True, "authenticated"))
     result = client_login.login_status("direct")
     assert result["mode"] == "direct"
     assert result["local_port"] is None

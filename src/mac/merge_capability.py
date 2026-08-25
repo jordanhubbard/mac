@@ -323,15 +323,11 @@ def forge_owner_is_organization(remote_url: str) -> Optional[bool]:
     from mac import gitops as _gitops
 
     try:
-        _host, owner, repo, api_base, headers, _token = _gitops._forge_api_context(
-            remote_url
-        )
+        _host, owner, repo, api_base, headers, _token = _gitops._forge_api_context(remote_url)
     except Exception:  # noqa: BLE001
         return None
     try:
-        payload = _gitops._http_get_json(
-            "%s/repos/%s/%s" % (api_base, owner, repo), headers
-        )
+        payload = _gitops._http_get_json("%s/repos/%s/%s" % (api_base, owner, repo), headers)
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(payload, dict):
@@ -362,9 +358,7 @@ def repository_remote_and_branch(repository: Any) -> Dict[str, str]:
     metadata = ensure_json_object(getattr(repository, "metadata", None))
     contract = ensure_json_object(metadata.get("repository_contract"))
     remote = str(contract.get("canonical_remote_url") or "").strip()
-    branch = str(
-        contract.get("canonical_branch") or contract.get("default_branch") or ""
-    ).strip()
+    branch = str(contract.get("canonical_branch") or contract.get("default_branch") or "").strip()
     return {"remote": remote, "branch": branch}
 
 

@@ -1,4 +1,5 @@
 """Tests for client-side fleet credential sync + rotation (auth-token-sync-01)."""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +8,7 @@ import pytest
 
 from mac import fleet_creds as fc
 from mac.fleet_env import scoped_var, set_env_key
+
 
 # --------------------------------------------------------------------------- #
 # set_env_key (idempotent single-key env writer)
@@ -71,8 +73,11 @@ SAMPLE_CONFIG = {
         "gke": {
             "fleet_name": "gke",
             "hub_agent": "hub",
-            "defaults": {"ssh_jump": "bastion@jump:2222", "ssh_strict_host_key_checking": False,
-                         "supervisor": "supervisord"},
+            "defaults": {
+                "ssh_jump": "bastion@jump:2222",
+                "ssh_strict_host_key_checking": False,
+                "supervisor": "supervisord",
+            },
             "agents": [{"name": "hub", "target": "horde@hub.internal", "os": "linux"}],
         },
     }
@@ -185,7 +190,9 @@ def fleets_file(tmp_path):
 def test_sync_token_writes_scoped_client_var(tmp_path, fleets_file):
     env = tmp_path / ".env"
     runner = FakeRunner(hub_token="HUBTOKEN")
-    result = fc.sync_token("rocky", fleets_config_path=fleets_file, env_path=str(env), runner=runner)
+    result = fc.sync_token(
+        "rocky", fleets_config_path=fleets_file, env_path=str(env), runner=runner
+    )
     assert result["key"] == scoped_var("MAC_API_TOKEN", "rocky")
     assert result["changed"] is True
     from mac.fleet_env import parse_env_file
@@ -199,15 +206,21 @@ def test_sync_token_idempotent_second_run(tmp_path, fleets_file):
     env = tmp_path / ".env"
     runner = FakeRunner(hub_token="HUBTOKEN")
     fc.sync_token("rocky", fleets_config_path=fleets_file, env_path=str(env), runner=runner)
-    second = fc.sync_token("rocky", fleets_config_path=fleets_file, env_path=str(env), runner=runner)
+    second = fc.sync_token(
+        "rocky", fleets_config_path=fleets_file, env_path=str(env), runner=runner
+    )
     assert second["changed"] is False
 
 
 def test_sync_token_errors_when_hub_has_no_token(tmp_path, fleets_file):
     env = tmp_path / ".env"
     with pytest.raises(fc.FleetCredsError):
-        fc.sync_token("rocky", fleets_config_path=fleets_file, env_path=str(env),
-                      runner=FakeRunner(hub_token=""))
+        fc.sync_token(
+            "rocky",
+            fleets_config_path=fleets_file,
+            env_path=str(env),
+            runner=FakeRunner(hub_token=""),
+        )
 
 
 def test_sync_token_host_key_failure_is_closed_and_actionable(tmp_path, fleets_file):
@@ -234,20 +247,31 @@ def test_rotate_dry_run_mutates_nothing(tmp_path, fleets_file):
     env = tmp_path / ".env"
     env.write_text("X=1\n")
     runner = FakeRunner(hub_token="T0")
-    plan = fc.rotate_token("rocky", fleets_config_path=fleets_file, env_path=str(env),
-                           runner=runner, token_factory=lambda: "NEWTOKEN")
+    plan = fc.rotate_token(
+        "rocky",
+        fleets_config_path=fleets_file,
+        env_path=str(env),
+        runner=runner,
+        token_factory=lambda: "NEWTOKEN",
+    )
     assert plan["applied"] is False
     assert plan["new_token_fingerprint"] == fc._fingerprint("NEWTOKEN")
-    assert runner.env_writes == []          # no hub mutation
-    assert env.read_text() == "X=1\n"       # no local mutation
+    assert runner.env_writes == []  # no hub mutation
+    assert env.read_text() == "X=1\n"  # no local mutation
     assert "NEWTOKEN" not in json.dumps(plan)  # only fingerprints, never the secret
 
 
 def test_rotate_apply_overlaps_old_and_new_and_advertises_primary(tmp_path, fleets_file):
     env = tmp_path / ".env"
     runner = FakeRunner(hub_token="T0")
-    plan = fc.rotate_token("rocky", fleets_config_path=fleets_file, env_path=str(env),
-                           do_apply=True, runner=runner, token_factory=lambda: "T1")
+    plan = fc.rotate_token(
+        "rocky",
+        fleets_config_path=fleets_file,
+        env_path=str(env),
+        do_apply=True,
+        runner=runner,
+        token_factory=lambda: "T1",
+    )
     assert plan["applied"] is True
     assert len(runner.env_writes) == 1
     write = runner.env_writes[0]
@@ -258,15 +282,24 @@ def test_rotate_apply_overlaps_old_and_new_and_advertises_primary(tmp_path, flee
     assert set(registry) == {"T0", "T1"}
     # operator's own client is moved to the new token
     from mac.fleet_env import parse_env_file
+
     assert parse_env_file(env)[scoped_var("MAC_API_TOKEN", "rocky")] == "T1"
 
 
 def test_rotate_prune_clears_overlap_keeping_current(tmp_path, fleets_file):
     env = tmp_path / ".env"
     # hub currently has an overlap map + a single current primary T1
-    runner = FakeRunner(hub_token="T1", hub_tokens='{"T0":{"scopes":["admin"]},"T1":{"scopes":["admin"]}}')
-    plan = fc.rotate_token("rocky", fleets_config_path=fleets_file, env_path=str(env),
-                           prune=True, do_apply=True, runner=runner)
+    runner = FakeRunner(
+        hub_token="T1", hub_tokens='{"T0":{"scopes":["admin"]},"T1":{"scopes":["admin"]}}'
+    )
+    plan = fc.rotate_token(
+        "rocky",
+        fleets_config_path=fleets_file,
+        env_path=str(env),
+        prune=True,
+        do_apply=True,
+        runner=runner,
+    )
     assert plan["applied"] is True
     assert plan["kept_token_fingerprint"] == fc._fingerprint("T1")
     # clearing MAC_API_TOKENS makes the hub fall back to the single MAC_API_TOKEN
@@ -276,6 +309,13 @@ def test_rotate_prune_clears_overlap_keeping_current(tmp_path, fleets_file):
 def test_rotate_apply_restart_runs_restart_command(tmp_path, fleets_file):
     env = tmp_path / ".env"
     runner = FakeRunner(hub_token="T0")
-    fc.rotate_token("rocky", fleets_config_path=fleets_file, env_path=str(env),
-                    do_apply=True, restart=True, runner=runner, token_factory=lambda: "T1")
+    fc.rotate_token(
+        "rocky",
+        fleets_config_path=fleets_file,
+        env_path=str(env),
+        do_apply=True,
+        restart=True,
+        runner=runner,
+        token_factory=lambda: "T1",
+    )
     assert runner.restarts == 1

@@ -21,6 +21,7 @@ Slack workspaces.
 Note the signing secret is NOT a gap: Socket Mode verifies no inbound request
 signatures, and no ~/.hermes/.env backup has ever contained one.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,8 +45,16 @@ def _write(path, text):
     path.write_text(text, encoding="utf-8")
 
 
-def _seed(home, *, hermes_memory=None, openclaw_memory=None, hermes_soul=None,
-          openclaw_soul=None, hermes_env=None, openclaw_env=None):
+def _seed(
+    home,
+    *,
+    hermes_memory=None,
+    openclaw_memory=None,
+    hermes_soul=None,
+    openclaw_soul=None,
+    hermes_env=None,
+    openclaw_env=None,
+):
     h, o = hermes_layout(home), openclaw_layout(home)
     if hermes_soul is not None:
         _write(h.identity_dir / "SOUL.md", hermes_soul)
@@ -129,9 +138,10 @@ def test_the_source_is_never_modified(tmp_path):
 
     port_profile(OPENCLAW, HERMES, home=tmp_path, dry_run=False)
 
-    assert openclaw_layout(tmp_path).identity_dir.joinpath("SOUL.md").read_text(
-        encoding="utf-8"
-    ) == original
+    assert (
+        openclaw_layout(tmp_path).identity_dir.joinpath("SOUL.md").read_text(encoding="utf-8")
+        == original
+    )
 
 
 def _hermes_accounts(home):
@@ -178,10 +188,12 @@ def test_an_account_only_the_target_knows_is_preserved(tmp_path):
     h = hermes_layout(tmp_path)
     h.accounts_file.parent.mkdir(parents=True, exist_ok=True)
     h.accounts_file.write_text(
-        json.dumps([
-            {"name": "omgjkh", "bot_token": "xoxb-old", "app_token": "xapp-old"},
-            {"name": "legacy", "bot_token": "xoxb-legacy", "app_token": "xapp-legacy"},
-        ]),
+        json.dumps(
+            [
+                {"name": "omgjkh", "bot_token": "xoxb-old", "app_token": "xapp-old"},
+                {"name": "legacy", "bot_token": "xoxb-legacy", "app_token": "xapp-legacy"},
+            ]
+        ),
         encoding="utf-8",
     )
     _seed(
@@ -205,10 +217,12 @@ def test_hermes_accounts_port_back_to_openclaw_namespaced_keys(tmp_path):
     h = hermes_layout(tmp_path)
     h.accounts_file.parent.mkdir(parents=True, exist_ok=True)
     h.accounts_file.write_text(
-        json.dumps([
-            {"name": "omgjkh", "bot_token": "xoxb-1", "app_token": "xapp-1"},
-            {"name": "offtera", "bot_token": "xoxb-2", "app_token": "xapp-2"},
-        ]),
+        json.dumps(
+            [
+                {"name": "omgjkh", "bot_token": "xoxb-1", "app_token": "xapp-1"},
+                {"name": "offtera", "bot_token": "xoxb-2", "app_token": "xapp-2"},
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -303,9 +317,10 @@ def test_a_re_port_of_managed_content_is_not_a_conflict(tmp_path):
 
     assert "MEMORY.md" in report["ported"]
     assert not report["conflicts"]
-    assert hermes_layout(tmp_path).identity_dir.joinpath("MEMORY.md").read_text(
-        encoding="utf-8"
-    ) == "v2\n"
+    assert (
+        hermes_layout(tmp_path).identity_dir.joinpath("MEMORY.md").read_text(encoding="utf-8")
+        == "v2\n"
+    )
 
 
 def test_both_directions_are_supported(tmp_path):
@@ -313,9 +328,10 @@ def test_both_directions_are_supported(tmp_path):
     _seed(tmp_path, hermes_soul="from hermes\n")
     report = port_profile(HERMES, OPENCLAW, home=tmp_path, dry_run=False)
     assert "SOUL.md" in report["ported"]
-    assert openclaw_layout(tmp_path).identity_dir.joinpath("SOUL.md").read_text(
-        encoding="utf-8"
-    ) == "from hermes\n"
+    assert (
+        openclaw_layout(tmp_path).identity_dir.joinpath("SOUL.md").read_text(encoding="utf-8")
+        == "from hermes\n"
+    )
 
 
 def test_porting_to_the_same_interface_is_refused(tmp_path):

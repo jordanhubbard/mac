@@ -84,7 +84,13 @@ def test_override_kwargs_layers_onto_hermes_resolve_result():
     }
     decision = resolve_agent_provider(env=env)
     # Simulate what Hermes' resolve_runtime_provider would have returned.
-    base = {"provider": "custom", "api_mode": "chat_completions", "base_url": "ignored", "api_key": "stale", "source": "pool"}
+    base = {
+        "provider": "custom",
+        "api_mode": "chat_completions",
+        "base_url": "ignored",
+        "api_key": "stale",
+        "source": "pool",
+    }
     kwargs = decision.override_kwargs(base)
     assert kwargs["base_url"] == "http://hub:9000/v1"
     assert kwargs["api_key"] == "th-agent-key"

@@ -14,6 +14,7 @@ tasks and freed ZERO; walking the chain freed 76. These tests pin the
 behaviour at the reconciler, so a repair sweep is no longer required to reach
 past the first hop.
 """
+
 from __future__ import annotations
 
 from mac.models import TaskState

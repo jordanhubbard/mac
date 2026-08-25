@@ -121,10 +121,9 @@ def test_maybe_auto_decompose_preserves_dependency_graph(tmp_path, monkeypatch) 
     monkeypatch.setattr(
         scope,
         "_hub_post_child_tasks",
-        lambda task_id, children: captured.update(
-            task_id=task_id, children=children
-        )
-        or {"ok": True},
+        lambda task_id, children: (
+            captured.update(task_id=task_id, children=children) or {"ok": True}
+        ),
     )
 
     assert scope.maybe_auto_decompose(tmp_path, {"id": "task_plan"}) is True

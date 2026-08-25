@@ -8,6 +8,7 @@ Contains:
 These are imported back into worker.py; callers that import from mac.worker
 see no change.
 """
+
 from __future__ import annotations
 
 import json

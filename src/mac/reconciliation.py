@@ -47,9 +47,9 @@ class ReconciliationCoordinator:
     def claim(self, name: str) -> Optional[ReconciliationClaim]:
         now = utcnow()
         claim_owner = "%s:%s" % (self.owner_id, new_id("claim"))
-        expires_at = (
-            parse_time(now) + timedelta(seconds=self.lease_seconds)
-        ).isoformat(timespec="microseconds")
+        expires_at = (parse_time(now) + timedelta(seconds=self.lease_seconds)).isoformat(
+            timespec="microseconds"
+        )
         with self.store.transaction() as conn:
             conn.execute(
                 """

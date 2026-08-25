@@ -40,7 +40,10 @@ from mac.executor_sandbox import _sandbox_repository_verification_shell
 
 def _script() -> str:
     return _sandbox_repository_verification_shell(
-        {"MAC_TASK_WORKSPACE": "/workspace/repo", "MAC_REPO_TEST_COMMAND": "scripts/run-contract-tests.sh"}
+        {
+            "MAC_TASK_WORKSPACE": "/workspace/repo",
+            "MAC_REPO_TEST_COMMAND": "scripts/run-contract-tests.sh",
+        }
     )
 
 
@@ -54,7 +57,7 @@ def test_an_unchanged_worktree_skips_the_gate():
 
 
 def test_the_skip_is_recorded_rather_than_silent():
-    """"We did not test this, and here is why" is evidence. An absent result is
+    """ "We did not test this, and here is why" is evidence. An absent result is
     indistinguishable from a gate that never ran -- which is exactly the
     ambiguity that made the original failure take three attempts to read."""
     script = _script()

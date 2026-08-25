@@ -224,9 +224,7 @@ def build_map(
         },
         "file_line_tests": line_index,
         "file_scope_tests": {
-            filename: {
-                name: sorted(indices) for name, indices in sorted(scopes.items())
-            }
+            filename: {name: sorted(indices) for name, indices in sorted(scopes.items())}
             for filename, scopes in sorted(scope_tests.items())
             if scopes
         },

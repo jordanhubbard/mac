@@ -54,7 +54,10 @@ class _Stdout:
 class _Proc:
     def __init__(self, lines=("one\n", "two\n"), returncode=0) -> None:
         self.stdout = _Stdout(lines)
-        self.stdin = SimpleNamespace(write=lambda data: setattr(self, "written", data), flush=lambda: setattr(self, "flushed", True))
+        self.stdin = SimpleNamespace(
+            write=lambda data: setattr(self, "written", data),
+            flush=lambda: setattr(self, "flushed", True),
+        )
         self.returncode = returncode
         self.terminated = False
         self.killed = False
@@ -215,7 +218,9 @@ def test_pending_request_timeout_error_and_success() -> None:
     pending = peer.PendingRequest(1)
     with pytest.raises(TimeoutError):
         pending.result(0)
-    pending._fulfill(SimpleNamespace(is_error=True, error=JSONRPCError(code=1, message="bad"), result=None))
+    pending._fulfill(
+        SimpleNamespace(is_error=True, error=JSONRPCError(code=1, message="bad"), result=None)
+    )
     assert pending.done() is True
     with pytest.raises(peer.RemoteError, match="bad"):
         pending.result(0)
@@ -237,7 +242,9 @@ def test_peer_request_error_deferred_and_notification_paths() -> None:
 
     endpoint.on_request(
         "remote",
-        lambda _params: (_ for _ in ()).throw(peer.RemoteError(JSONRPCError(code=9, message="wire"))),
+        lambda _params: (_ for _ in ()).throw(
+            peer.RemoteError(JSONRPCError(code=9, message="wire"))
+        ),
     )
     endpoint.feed_and_pump(b'{"jsonrpc":"2.0","id":3,"method":"remote"}\n')
     assert "wire" in sent[-1].decode()
@@ -301,10 +308,14 @@ def test_websocket_dial_headers_and_subprotocols(monkeypatch) -> None:
     connection = _Connection()
     captured = {}
     websocket = SimpleNamespace(
-        create_connection=lambda url, **kwargs: captured.update(url=url, kwargs=kwargs) or connection
+        create_connection=lambda url, **kwargs: (
+            captured.update(url=url, kwargs=kwargs) or connection
+        )
     )
     monkeypatch.setattr(ws_client, "_load_websocket", lambda: websocket)
-    monkeypatch.setattr(ws_client.threading, "Thread", lambda **_k: SimpleNamespace(start=lambda: None))
+    monkeypatch.setattr(
+        ws_client.threading, "Thread", lambda **_k: SimpleNamespace(start=lambda: None)
+    )
     client_peer = ws_client.connect_acp_websocket(
         "ws://host/acp", token="tok", header={"X-Test": "yes"}, timeout=4
     )
@@ -319,8 +330,12 @@ def test_websocket_dial_headers_and_subprotocols(monkeypatch) -> None:
 
 
 def test_websocket_peer_send_read_and_close_failures(monkeypatch) -> None:
-    monkeypatch.setattr(ws_client.threading, "Thread", lambda **_k: SimpleNamespace(start=lambda: None))
-    connection = _Connection([b'{"jsonrpc":"2.0","method":"n"}', '{"jsonrpc":"2.0","method":"n"}', OSError("closed")])
+    monkeypatch.setattr(
+        ws_client.threading, "Thread", lambda **_k: SimpleNamespace(start=lambda: None)
+    )
+    connection = _Connection(
+        [b'{"jsonrpc":"2.0","method":"n"}', '{"jsonrpc":"2.0","method":"n"}', OSError("closed")]
+    )
     endpoint = ws_client._WebSocketPeer(connection)
     endpoint._send_to_socket(b"frame\n")
     assert connection.sent == ["frame"]

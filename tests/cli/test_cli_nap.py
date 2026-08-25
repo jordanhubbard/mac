@@ -96,9 +96,7 @@ def _assert_configure_disabled(schedule):
             _assert_configure_window_20,
             id="window_minutes",
         ),
-        pytest.param(
-            ["--disabled"], _assert_configure_disabled, id="disabled_flag"
-        ),
+        pytest.param(["--disabled"], _assert_configure_disabled, id="disabled_flag"),
     ],
 )
 def test_nap_configure_variants(tmp_path, extra_args, check):
@@ -111,13 +109,9 @@ def test_nap_configure_variants(tmp_path, extra_args, check):
 
 def test_nap_configure_is_idempotent(tmp_path):
     agent = _register_agent(tmp_path)
-    rc, s1 = _run(
-        tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "30"
-    )
+    rc, s1 = _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "30")
     assert rc == 0
-    rc, s2 = _run(
-        tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "30"
-    )
+    rc, s2 = _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "30")
     assert rc == 0
     assert s1["offset_minutes"] == s2["offset_minutes"] == 30
 
@@ -260,9 +254,7 @@ def test_nap_fail_marks_run_failed(tmp_path):
     rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
 
-    rc, failed = _run(
-        tmp_path, "admin", "nap", "fail", run["id"], "--reason", "qdrant unreachable"
-    )
+    rc, failed = _run(tmp_path, "admin", "nap", "fail", run["id"], "--reason", "qdrant unreachable")
     assert rc == 0
     assert failed["status"] == "failed"
     assert failed["id"] == run["id"]
@@ -386,9 +378,7 @@ def _assert_due_entry_fields(due, agent):
 @pytest.mark.parametrize(
     "check",
     [
-        pytest.param(
-            _assert_due_contains_agent, id="lists_agent_with_open_window"
-        ),
+        pytest.param(_assert_due_contains_agent, id="lists_agent_with_open_window"),
         pytest.param(_assert_due_entry_fields, id="returns_expected_fields"),
     ],
 )

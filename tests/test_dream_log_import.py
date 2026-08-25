@@ -98,9 +98,9 @@ def test_same_findings_different_timestamp_dedupe_to_one(tmp_path):
     d = tmp_path / "dream_logs"
     d.mkdir()
     hour1 = _SUBSTANTIVE
-    hour2 = _SUBSTANTIVE.replace(
-        "2026-07-10 08:01", "2026-07-10 09:01"
-    ).replace("Analyzed 42 messages across 12 sessions", "Analyzed 44 messages across 13 sessions")
+    hour2 = _SUBSTANTIVE.replace("2026-07-10 08:01", "2026-07-10 09:01").replace(
+        "Analyzed 42 messages across 12 sessions", "Analyzed 44 messages across 13 sessions"
+    )
     (d / "dream_20260710_080115.md").write_text(hour1, encoding="utf-8")
     (d / "dream_20260710_090036.md").write_text(hour2, encoding="utf-8")
     cp = ControlPlane.in_memory()

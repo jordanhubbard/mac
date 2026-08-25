@@ -69,7 +69,10 @@ def audit_safe_argv(argv: List[str]) -> List[str]:
             safe.append(arg)
             redact_next = True
             continue
-        if any(marker in lowered for marker in ("bearer ", "token=", "api_key=", "apikey=", "password=", "secret=")):
+        if any(
+            marker in lowered
+            for marker in ("bearer ", "token=", "api_key=", "apikey=", "password=", "secret=")
+        ):
             safe.append(redacted_arg(arg))
             continue
         if len(arg) > 512:

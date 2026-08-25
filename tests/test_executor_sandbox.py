@@ -28,15 +28,11 @@ def test_loopback_urls_are_rewritten_for_the_sandbox_host() -> None:
     sandbox = importlib.import_module("mac.executor_sandbox")
 
     assert (
-        sandbox._rewrite_host_local_url(
-            "http://127.0.0.1:8789/v1", "host.openshell.internal"
-        )
+        sandbox._rewrite_host_local_url("http://127.0.0.1:8789/v1", "host.openshell.internal")
         == "http://host.openshell.internal:8789/v1"
     )
     assert (
-        sandbox._rewrite_host_local_url(
-            "https://hub.example.test/v1", "host.openshell.internal"
-        )
+        sandbox._rewrite_host_local_url("https://hub.example.test/v1", "host.openshell.internal")
         == "https://hub.example.test/v1"
     )
 
@@ -150,9 +146,7 @@ def test_lease_reconcile_best_effort_uses_hub_lookup(monkeypatch) -> None:
 
     monkeypatch.delenv("MAC_OPENSHELL_RECONCILE_LEASES", raising=False)
     monkeypatch.setattr(hub_io, "_hub_env", lambda: ("http://hub", "token"))
-    monkeypatch.setattr(
-        hub_io, "_hub_get", lambda path: {"task": {"state": "completed"}}
-    )
+    monkeypatch.setattr(hub_io, "_hub_get", lambda path: {"task": {"state": "completed"}})
     monkeypatch.setattr(sandbox, "emit_telemetry", lambda *a, **k: None)
 
     seen = {}
@@ -170,9 +164,7 @@ def test_lease_reconcile_best_effort_uses_hub_lookup(monkeypatch) -> None:
             "failures": [],
         }
 
-    monkeypatch.setattr(
-        gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile
-    )
+    monkeypatch.setattr(gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile)
 
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort("task_1")
 
@@ -194,9 +186,7 @@ def test_lease_reconcile_best_effort_skips_without_hub(monkeypatch) -> None:
         called["count"] += 1
         return {"candidates": [], "deleted": [], "failures": [], "scanned": 0, "protected": 0}
 
-    monkeypatch.setattr(
-        gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile
-    )
+    monkeypatch.setattr(gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile)
 
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
 
@@ -213,9 +203,7 @@ def test_lease_reconcile_best_effort_can_be_disabled(monkeypatch) -> None:
         called["count"] += 1
         return {"candidates": [], "deleted": [], "failures": [], "scanned": 0, "protected": 0}
 
-    monkeypatch.setattr(
-        gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile
-    )
+    monkeypatch.setattr(gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile)
     monkeypatch.setenv("MAC_OPENSHELL_RECONCILE_LEASES", "0")
 
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
@@ -235,9 +223,7 @@ def test_lease_reconcile_best_effort_swallows_errors(monkeypatch) -> None:
     def boom(*_a, **_k):
         raise RuntimeError("openshell exploded")
 
-    monkeypatch.setattr(
-        gc, "reconcile_task_sandboxes_from_lease_authority", boom
-    )
+    monkeypatch.setattr(gc, "reconcile_task_sandboxes_from_lease_authority", boom)
 
     # Best-effort: a reconcile failure must never propagate into the guarded run.
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()

@@ -356,9 +356,7 @@ def _memory_number(name: str, value: Any, *, minimum: float, maximum: float) -> 
     except (TypeError, ValueError) as exc:
         raise ValidationError("%s must be numeric" % name) from exc
     if number != number or not minimum <= number <= maximum:  # NaN or out of range
-        raise ValidationError(
-            "%s must be between %s and %s" % (name, minimum, maximum)
-        )
+        raise ValidationError("%s must be between %s and %s" % (name, minimum, maximum))
     return number
 
 
@@ -629,14 +627,10 @@ def _is_openshell_verifier_infrastructure_failure(text: str) -> bool:
     """Identify verifier launch/transport faults without retrying test failures."""
 
     lowered = text.lower()
-    if any(
-        marker in lowered
-        for marker in _OPENSHELL_VERIFIER_INFRASTRUCTURE_MARKERS
-    ):
+    if any(marker in lowered for marker in _OPENSHELL_VERIFIER_INFRASTRUCTURE_MARKERS):
         return True
     verifier_context = (
-        "openshell repository verifier" in lowered
-        or "sandbox repository verification" in lowered
+        "openshell repository verifier" in lowered or "sandbox repository verification" in lowered
     )
     transport_failure = any(
         marker in lowered
@@ -670,13 +664,8 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
         return "non_retryable"
     if _is_openshell_verifier_infrastructure_failure(blob):
         return "infrastructure_transient"
-    shared_transport = any(
-        marker in blob for marker in _SHARED_TRANSIENT_FAILURE_MARKERS
-    )
-    if shared_transport or (
-        ("mac api" in blob or "/evidence" in blob)
-        and _is_timeout_blob(blob)
-    ):
+    shared_transport = any(marker in blob for marker in _SHARED_TRANSIENT_FAILURE_MARKERS)
+    if shared_transport or (("mac api" in blob or "/evidence" in blob) and _is_timeout_blob(blob)):
         return "shared_transient"
     if _is_timeout_blob(blob) or detail.get("returncode") == 124:
         return "timeout"
@@ -788,17 +777,26 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
     reason = str(detail.get("reason") or "").strip()
     error = str(detail.get("error") or "").strip()
     problems = detail.get("problems") or []
-    problems_text = "; ".join(str(p) for p in problems) if isinstance(problems, list) else str(problems)
+    problems_text = (
+        "; ".join(str(p) for p in problems) if isinstance(problems, list) else str(problems)
+    )
     blob = " ".join([reason, error, problems_text]).lower()
 
     def note(problem: str, remediation: str) -> str:
         return "Problem: %s\nRemediation: %s" % (problem.strip(), remediation.strip())
 
-    if "could not clone" in blob or "authentication failed" in blob or "saml" in blob or (
-        "clone" in blob and ("denied" in blob or "invalid username" in blob or "403" in blob or "sso" in blob)
+    if (
+        "could not clone" in blob
+        or "authentication failed" in blob
+        or "saml" in blob
+        or (
+            "clone" in blob
+            and ("denied" in blob or "invalid username" in blob or "403" in blob or "sso" in blob)
+        )
     ):
         return note(
-            "Repository clone/auth failed — the agent could not fetch the repo (%s)." % (error or reason or "git clone error"),
+            "Repository clone/auth failed — the agent could not fetch the repo (%s)."
+            % (error or reason or "git clone error"),
             "The fleet's git token isn't authorized for this repo/org (often SAML SSO). Provision an SSO-authorized token as GH_TOKEN (deploy with MAC_DEPLOY_GH_TOKEN) or SSO-authorize the deploy key; onboard with the https URL so the token is injected.",
         )
     if "heartbeat_offline" in blob or "lease_expired" in blob or "lease expired" in blob:
@@ -806,12 +804,23 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "Agent went offline mid-task (lease expired / heartbeat lost).",
             "Check agent<->hub connectivity (reverse tunnel), agent process health (crash/restart/OOM), or a long synchronous op (e.g. a large clone during repo-prep) blocking the heartbeat. Often transient during a deploy/restart — retry once agents are idle+healthy.",
         )
-    if "timed out" in blob or "timeout" in blob or "rc=124" in blob or "returncode 124" in blob or "code: 124" in blob:
+    if (
+        "timed out" in blob
+        or "timeout" in blob
+        or "rc=124" in blob
+        or "returncode 124" in blob
+        or "code: 124" in blob
+    ):
         return note(
             "Agent run timed out — the task is likely too large for one run.",
             "Raise MAC_EXECUTOR_AGENT_TIMEOUT for heavier work and/or split into child tasks (add_child_tasks / decompose-on-failure). Pre-bake slow toolchains into the sandbox image so setup doesn't consume the budget.",
         )
-    if reason == "verification_contract_failed" or "refusing to push" in blob or "pushed=true" in blob or "contract" in blob:
+    if (
+        reason == "verification_contract_failed"
+        or "refusing to push" in blob
+        or "pushed=true" in blob
+        or "contract" in blob
+    ):
         # ADR 0022: name the cause. This branch previously returned one
         # sentence for every contract failure -- true of all of them,
         # diagnostic of none -- and a remediation that told the agent to
@@ -827,7 +836,11 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "[%s] %s" % (failure.cause, failure.problem),
             failure.remediation,
         )
-    if "review_retraction_cap_hit" in blob or "review_verdict_wait_cap_hit" in blob or "reviewer" in blob:
+    if (
+        "review_retraction_cap_hit" in blob
+        or "review_verdict_wait_cap_hit" in blob
+        or "reviewer" in blob
+    ):
         return note(
             "Review never completed (reviewer unavailable or timed out).",
             "Ensure a free, fresh reviewer (don't run every agent executing at once); raise MAC_REVIEW_RETRACTION_CAP / MAC_REVIEW_VERDICT_WAIT_CAP / MAC_DEFAULT_REVIEWER_STALE_AFTER_SECONDS. Heavy reviews need the review heartbeat to stay alive.",
@@ -847,8 +860,7 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
         # stuck. `task show` now names the blocking dependencies and their
         # states, so this advice has something to point at.
         return note(
-            "Task %s waiting on a dependency that has not produced its output."
-            % target_state,
+            "Task %s waiting on a dependency that has not produced its output." % target_state,
             "This task is fine; its input is not. `mac task show` lists the "
             "blocking dependencies with their states and the join policy, and "
             "spells out the move for this task specifically. In general: fix "
@@ -1057,7 +1069,7 @@ _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
     "stale generated",
     "regenerate with",
     "contract test failed",
-    " failed, ",         # pytest summary: "3 failed, 40 passed"
+    " failed, ",  # pytest summary: "3 failed, 40 passed"
     "assertionerror",
     "error: process completed with exit code",
 )
@@ -1246,8 +1258,7 @@ class _PublicationBaseMovedError(ValidationError):
         self.observed_sha = str(observed_sha)
         super().__init__(
             "git publication canonical branch moved while the tested candidate "
-            "was being published: expected %s, observed %s"
-            % (self.expected_sha, self.observed_sha)
+            "was being published: expected %s, observed %s" % (self.expected_sha, self.observed_sha)
         )
 
 
@@ -1332,7 +1343,11 @@ def _generate_attestation_key() -> str:
     in a single env var or JSON string without escaping."""
     import secrets as _secrets
 
-    return base64.urlsafe_b64encode(_secrets.token_bytes(ATTESTATION_KEY_BYTES)).decode("ascii").rstrip("=")
+    return (
+        base64.urlsafe_b64encode(_secrets.token_bytes(ATTESTATION_KEY_BYTES))
+        .decode("ascii")
+        .rstrip("=")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1365,9 +1380,7 @@ def _generate_attestation_key() -> str:
 # Optional commit trailer an integration executor may read to correlate a
 # landed commit back to the MAC task that produced it. Absent by default; when
 # present it is surfaced as a raw pointer only (never used to infer precedence).
-_MAC_TASK_TRAILER_RE = re.compile(
-    r"^\s*Mac-Task-Id:\s*(?P<task_id>\S+)\s*$", re.MULTILINE
-)
+_MAC_TASK_TRAILER_RE = re.compile(r"^\s*Mac-Task-Id:\s*(?P<task_id>\S+)\s*$", re.MULTILINE)
 
 
 def _landed_commits_touching_paths(
@@ -1483,29 +1496,19 @@ def build_conflict_integration_payload(
     if not approved_task_id or not str(approved_task_id).strip():
         raise ValidationError("conflict integration payload requires approved_task_id")
     if not accepted_evidence_id or not str(accepted_evidence_id).strip():
-        raise ValidationError(
-            "conflict integration payload requires accepted_evidence_id"
-        )
+        raise ValidationError("conflict integration payload requires accepted_evidence_id")
     if not _GIT_SHA_RE.match(str(reviewed_head_sha).strip()):
-        raise ValidationError(
-            "conflict integration payload requires a git reviewed_head_sha"
-        )
+        raise ValidationError("conflict integration payload requires a git reviewed_head_sha")
     if not _GIT_SHA_RE.match(str(current_main_sha).strip()):
-        raise ValidationError(
-            "conflict integration payload requires a git current_main_sha"
-        )
+        raise ValidationError("conflict integration payload requires a git current_main_sha")
     if not _GIT_SHA_RE.match(str(attempt_base_sha).strip()):
-        raise ValidationError(
-            "conflict integration payload requires a git attempt_base_sha"
-        )
+        raise ValidationError("conflict integration payload requires a git attempt_base_sha")
 
     normalized_paths = coerce_list(
         str(path).strip() for path in (conflicted_paths or []) if str(path).strip()
     )
     if not normalized_paths:
-        raise ValidationError(
-            "conflict integration payload requires at least one conflicted path"
-        )
+        raise ValidationError("conflict integration payload requires at least one conflicted path")
 
     supersession = ensure_json_object(None)
     decision = str(supersession_decision or "undecided").strip() or "undecided"
@@ -1518,9 +1521,7 @@ def build_conflict_integration_payload(
         # Explicit, integration-executor-owned decision. Never inferred from
         # commit timestamps in this builder.
         "decision": decision,
-        "superseded_task_id": (
-            str(superseded_task_id).strip() if superseded_task_id else None
-        ),
+        "superseded_task_id": (str(superseded_task_id).strip() if superseded_task_id else None),
         "superseded_by_task_id": (
             str(superseded_by_task_id).strip() if superseded_by_task_id else None
         ),
@@ -1539,9 +1540,7 @@ def build_conflict_integration_payload(
         if git_runner is not None
         else []
     )
-    landed_task_ids = coerce_list(
-        commit["task_id"] for commit in landed if commit.get("task_id")
-    )
+    landed_task_ids = coerce_list(commit["task_id"] for commit in landed if commit.get("task_id"))
 
     payload: JsonDict = {
         "schema": "mac.conflict_integration_payload.v1",
@@ -1765,7 +1764,9 @@ def _load_repository_contract(repo_path: Path) -> JsonDict:
         try:
             raw = yaml.safe_load(candidate.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
-            raise ValidationError("repository runtime contract is invalid YAML: %s: %s" % (candidate, exc)) from exc
+            raise ValidationError(
+                "repository runtime contract is invalid YAML: %s: %s" % (candidate, exc)
+            ) from exc
         try:
             contract_path = str(candidate.relative_to(root))
         except ValueError:
@@ -1921,7 +1922,9 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             "repository runtime contract.schema must be %s" % REPOSITORY_CONTRACT_SCHEMA
         )
     project = _contract_string(data.get("project"), "repository runtime contract.project")
-    platforms = _contract_string_list(data.get("platforms"), "repository runtime contract.platforms")
+    platforms = _contract_string_list(
+        data.get("platforms"), "repository runtime contract.platforms"
+    )
     toolchain = _contract_mapping(data.get("toolchain"), "repository runtime contract.toolchain")
     bootstrap = _contract_mapping(data.get("bootstrap"), "repository runtime contract.bootstrap")
     test = _contract_mapping(data.get("test"), "repository runtime contract.test")
@@ -1934,23 +1937,18 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             "repository runtime contract.canonical_remote_url",
         )
         try:
-            canonical_remote_url = validate_secret_free_git_remote(
-                canonical_remote_url
-            )
+            canonical_remote_url = validate_secret_free_git_remote(canonical_remote_url)
         except ValueError as exc:
             raise ValidationError(
                 "repository runtime contract.canonical_remote_url must not embed "
-                "credentials and must be a secret-free git URL: %r"
-                % canonical_remote_url
+                "credentials and must be a secret-free git URL: %r" % canonical_remote_url
             ) from exc
     default_branch_raw = data.get("default_branch")
     canonical_branch_raw = data.get("canonical_branch")
     default_branch: Optional[str] = DEFAULT_PROJECT_BRANCH
     if default_branch_raw is not None or canonical_branch_raw is not None:
         default_branch = _contract_string(
-            default_branch_raw
-            if default_branch_raw is not None
-            else canonical_branch_raw,
+            default_branch_raw if default_branch_raw is not None else canonical_branch_raw,
             "repository runtime contract.default_branch",
         )
         if canonical_branch_raw is not None:
@@ -1960,8 +1958,7 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             )
             if canonical_branch != default_branch:
                 raise ValidationError(
-                    "repository runtime contract default_branch and "
-                    "canonical_branch must match"
+                    "repository runtime contract default_branch and canonical_branch must match"
                 )
         try:
             default_branch = validate_git_ref(default_branch)
@@ -1992,7 +1989,9 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             ),
         },
         "test": {
-            "command": _contract_string(test.get("command"), "repository runtime contract.test.command"),
+            "command": _contract_string(
+                test.get("command"), "repository runtime contract.test.command"
+            ),
         },
         "evidence": {
             "required": _contract_string_list(
@@ -2438,11 +2437,16 @@ class ControlPlane:
                 )
                 if dependency_resolution.get("status") == "unsatisfied":
                     continue
-                if dependency_ids and not manual and reason in {
-                    "",
-                    "waiting_on_dependencies",
-                    "dependencies_incomplete",
-                }:
+                if (
+                    dependency_ids
+                    and not manual
+                    and reason
+                    in {
+                        "",
+                        "waiting_on_dependencies",
+                        "dependencies_incomplete",
+                    }
+                ):
                     changed = conn.execute(
                         "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ? AND state = ?",
                         (TaskState.WAITING.value, now, task.id, TaskState.BLOCKED.value),
@@ -2465,12 +2469,16 @@ class ControlPlane:
                     migrated += 1
                     continue
                 existing_diagnosis = history_detail.get("diagnosis")
-                if isinstance(existing_diagnosis, dict) and all(
-                    existing_diagnosis.get(key)
-                    for key in ("actor", "failure", "problem", "remediation")
-                ) and (
-                    existing_diagnosis.get("output_tail")
-                    or existing_diagnosis.get("output_tail_unavailable_reason")
+                if (
+                    isinstance(existing_diagnosis, dict)
+                    and all(
+                        existing_diagnosis.get(key)
+                        for key in ("actor", "failure", "problem", "remediation")
+                    )
+                    and (
+                        existing_diagnosis.get("output_tail")
+                        or existing_diagnosis.get("output_tail_unavailable_reason")
+                    )
                 ):
                     continue
                 repaired_detail = dict(history_detail)
@@ -2491,7 +2499,10 @@ class ControlPlane:
                 activity = metadata.get("activity")
                 if not isinstance(activity, list):
                     activity = []
-                summary = _failure_diagnosis(TaskState.BLOCKED.value, repaired_detail) or diagnosis["problem"]
+                summary = (
+                    _failure_diagnosis(TaskState.BLOCKED.value, repaired_detail)
+                    or diagnosis["problem"]
+                )
                 activity.append(
                     {
                         "phase": "diagnosis",
@@ -2571,17 +2582,13 @@ class ControlPlane:
                 if stop.is_set():
                     break
                 try:
-                    self.advance_default_review_workflow(
-                        task_id, actor="event-driven-review"
-                    )
+                    self.advance_default_review_workflow(task_id, actor="event-driven-review")
                 except Exception:  # noqa: BLE001 - the advancer must never die; the sweep is the fallback.
                     logging.getLogger("mac.review_advance").warning(
                         "event-driven review advance failed for %s", task_id, exc_info=True
                     )
 
-        thread = threading.Thread(
-            target=_consume, name="mac-review-advance", daemon=True
-        )
+        thread = threading.Thread(target=_consume, name="mac-review-advance", daemon=True)
         with self._advance_state_lock:
             self._advance_thread = thread
         thread.start()
@@ -2681,16 +2688,9 @@ class ControlPlane:
         attestation = projected.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
         approval = projected.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
         if (
-            (
-                projected.get("openshell_required") is True
-                or report_repository_executor_attestation_is_host_install(
-                    attestation
-                )
-            )
-            and report_repository_executor_approval_matches_attestation(
-                approval, attestation
-            )
-        ):
+            projected.get("openshell_required") is True
+            or report_repository_executor_attestation_is_host_install(attestation)
+        ) and report_repository_executor_approval_matches_attestation(approval, attestation):
             projected[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = (
                 read_only_report_repository_executor_resource(
                     runtime_image_ref=str(attestation["runtime_image_ref"]),
@@ -2704,9 +2704,7 @@ class ControlPlane:
                     python_path=str(attestation["python_path"]),
                     python_sha256=str(attestation["python_sha256"]),
                     executor_script_path=str(attestation["executor_script_path"]),
-                    executor_script_sha256=str(
-                        attestation["executor_script_sha256"]
-                    ),
+                    executor_script_sha256=str(attestation["executor_script_sha256"]),
                     source_root=str(attestation["source_root"]),
                     source_bundle_sha256=str(attestation["source_bundle_sha256"]),
                 )
@@ -2734,32 +2732,18 @@ class ControlPlane:
         """
         if resources is None:
             row = (
-                conn.execute(
-                    "SELECT resources FROM agents WHERE id = ?", (agent_id,)
-                ).fetchone()
+                conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
                 if conn is not None
-                else self.store.query_one(
-                    "SELECT resources FROM agents WHERE id = ?", (agent_id,)
-                )
+                else self.store.query_one("SELECT resources FROM agents WHERE id = ?", (agent_id,))
             )
-            return ensure_json_object(
-                json_loads(row["resources"], {}) if row is not None else {}
-            )
+            return ensure_json_object(json_loads(row["resources"], {}) if row is not None else {})
         resource_value = ensure_json_object(resources)
         row = (
-            conn.execute(
-                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if conn is not None
-            else self.store.query_one(
-                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
-            )
+            else self.store.query_one("SELECT resources FROM agents WHERE id = ?", (agent_id,))
         )
-        existing = (
-            ensure_json_object(json_loads(row["resources"], {}))
-            if row is not None
-            else {}
-        )
+        existing = ensure_json_object(json_loads(row["resources"], {})) if row is not None else {}
         merged = dict(resource_value)
         if "startup_self_test" not in merged and "startup_self_test" in existing:
             merged["startup_self_test"] = existing["startup_self_test"]
@@ -2784,9 +2768,7 @@ class ControlPlane:
 
         projected = ensure_json_object(requested)
         requested_has_approval = REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in projected
-        requested_approval = projected.pop(
-            REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None
-        )
+        requested_approval = projected.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         projected.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
         approval = (
             requested_approval
@@ -2795,9 +2777,7 @@ class ControlPlane:
         )
         if approval is not None:
             if not valid_read_only_report_repository_executor_approval(approval):
-                raise ValidationError(
-                    "report_repository_executor_approval is malformed"
-                )
+                raise ValidationError("report_repository_executor_approval is malformed")
             projected[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
         return self._project_report_repository_executor_marker(projected)
 
@@ -2845,7 +2825,11 @@ class ControlPlane:
         if not self._startup_self_test_degrades_health(resources):
             return requested_health
         if requested_health is None:
-            return HealthStatus.DEGRADED.value if current_health == HealthStatus.HEALTHY.value else None
+            return (
+                HealthStatus.DEGRADED.value
+                if current_health == HealthStatus.HEALTHY.value
+                else None
+            )
         if requested_health == HealthStatus.HEALTHY.value:
             return HealthStatus.DEGRADED.value
         return requested_health
@@ -2963,9 +2947,7 @@ class ControlPlane:
         *,
         actor: str = "hermes",
     ) -> PersonaInstance:
-        return self.record_hermes_runtime_proof(
-            persona_instance_id, proof, actor=actor
-        )
+        return self.record_hermes_runtime_proof(persona_instance_id, proof, actor=actor)
 
     def hermes_work_context(
         self,
@@ -2994,9 +2976,7 @@ class ControlPlane:
         limited_tasks = visible_tasks[:limit]
         agents = self.list_agents()
         fleets = [
-            fleet.to_dict()
-            for fleet in self.list_fleets()
-            if fleet.tenant_id in (None, tenant_id)
+            fleet.to_dict() for fleet in self.list_fleets() if fleet.tenant_id in (None, tenant_id)
         ]
         project_items = [item.to_dict() for item in self.list_project_items()]
         repositories = [repo.to_dict() for repo in self.list_project_repositories()]
@@ -3027,10 +3007,7 @@ class ControlPlane:
             "task_count": len(visible_tasks),
             "task_limit": limit,
             "task_truncated": len(visible_tasks) > limit,
-            "agents": [
-                self._hermes_agent_context(agent, all_tenant_tasks)
-                for agent in agents
-            ],
+            "agents": [self._hermes_agent_context(agent, all_tenant_tasks) for agent in agents],
             "relationships": self._hermes_work_relationships(all_tenant_tasks, agents),
             "operations": self._hermes_operation_contract(hermes_instance_id),
         }
@@ -3108,13 +3085,17 @@ class ControlPlane:
             "delete_fleet",
         }
         mac_cli_commands = [str(command) for command in operations.get("mac_cli", [])]
-        mac_hermes_commands = [
-            str(command) for command in operations.get("mac_hermes_cli", [])
-        ]
-        expected_api_operations = {
-            "get_work_context",
-            "get_runtime_proof",
-        } | expected_task_api_operations | expected_project_api_operations | expected_agent_api_operations | expected_fleet_api_operations
+        mac_hermes_commands = [str(command) for command in operations.get("mac_hermes_cli", [])]
+        expected_api_operations = (
+            {
+                "get_work_context",
+                "get_runtime_proof",
+            }
+            | expected_task_api_operations
+            | expected_project_api_operations
+            | expected_agent_api_operations
+            | expected_fleet_api_operations
+        )
         expected_cli_fragments = (
             "mac-hermes work-context",
             "mac-hermes runtime-proof",
@@ -3152,9 +3133,7 @@ class ControlPlane:
         )
         authority = work_context.get("authority", {})
         project_contexts = [
-            project
-            for project in work_context.get("projects", [])
-            if isinstance(project, dict)
+            project for project in work_context.get("projects", []) if isinstance(project, dict)
         ]
         tenant_id = instance.get("tenant_id") if isinstance(instance, dict) else None
         live_tenant_tasks = self.list_tasks(tenant_id=tenant_id)
@@ -3165,9 +3144,7 @@ class ControlPlane:
             self._hermes_task_context(task)
             for task in live_visible_tasks[: int(work_context.get("task_limit") or 0)]
         ]
-        context_tasks = [
-            task for task in work_context.get("tasks", []) if isinstance(task, dict)
-        ]
+        context_tasks = [task for task in work_context.get("tasks", []) if isinstance(task, dict)]
         live_task_by_id = {str(task.get("id")): task for task in live_task_contexts}
         context_task_by_id = {str(task.get("id")): task for task in context_tasks}
         task_ids_ready = (
@@ -3181,8 +3158,7 @@ class ControlPlane:
         )
         live_agents = self.list_agents()
         live_agent_contexts = [
-            self._hermes_agent_context(agent, live_tenant_tasks)
-            for agent in live_agents
+            self._hermes_agent_context(agent, live_tenant_tasks) for agent in live_agents
         ]
         context_agents = [
             agent for agent in work_context.get("agents", []) if isinstance(agent, dict)
@@ -3200,14 +3176,8 @@ class ControlPlane:
             "hermes_instance_id",
         )
         agent_fields_ready = all(
-            {
-                field: context_agent_by_id[agent_id].get(field)
-                for field in agent_fields
-            }
-            == {
-                field: live_agent_by_id.get(agent_id, {}).get(field)
-                for field in agent_fields
-            }
+            {field: context_agent_by_id[agent_id].get(field) for field in agent_fields}
+            == {field: live_agent_by_id.get(agent_id, {}).get(field) for field in agent_fields}
             for agent_id in context_agent_by_id
         )
         live_project_contexts = self._hermes_project_contexts(
@@ -3268,16 +3238,10 @@ class ControlPlane:
             tasks=context_tasks,
             projects=project_contexts,
             agents=bound_agents or context_agents,
-            fleets=[
-                fleet
-                for fleet in work_context.get("fleets", [])
-                if isinstance(fleet, dict)
-            ],
+            fleets=[fleet for fleet in work_context.get("fleets", []) if isinstance(fleet, dict)],
         )
         dashboard_operation_contract = (
-            operations.get("dashboard")
-            if isinstance(operations.get("dashboard"), dict)
-            else {}
+            operations.get("dashboard") if isinstance(operations.get("dashboard"), dict) else {}
         )
         dashboard_operation_ready = (
             dashboard_operation_contract.get("entrypoint") == "/ui"
@@ -3301,12 +3265,12 @@ class ControlPlane:
             else {}
         )
         runtime = (
-            hermes_startup.get("task_project_runtime")
-            if isinstance(hermes_startup, dict)
-            else None
+            hermes_startup.get("task_project_runtime") if isinstance(hermes_startup, dict) else None
         )
         runtime = runtime if isinstance(runtime, dict) else {}
-        prompt_bridge = runtime.get("prompt_bridge") if isinstance(runtime.get("prompt_bridge"), dict) else {}
+        prompt_bridge = (
+            runtime.get("prompt_bridge") if isinstance(runtime.get("prompt_bridge"), dict) else {}
+        )
         markdown_contract = (
             runtime.get("markdown_contract")
             if isinstance(runtime.get("markdown_contract"), dict)
@@ -3354,7 +3318,9 @@ class ControlPlane:
 
         def has_all(commands: Iterable[str], fragments: Iterable[str]) -> bool:
             command_list = list(commands)
-            return all(any(fragment in command for command in command_list) for fragment in fragments)
+            return all(
+                any(fragment in command for command in command_list) for fragment in fragments
+            )
 
         runtime_capabilities_ready = (
             expected_session_capabilities <= session_capabilities
@@ -3425,7 +3391,11 @@ class ControlPlane:
                 ),
                 "dashboard_projection": {
                     "state_key": "hermes_work_contexts",
-                    "fields": ["tasks", "relationships.task_dependencies", "operations.task_state_transitions"],
+                    "fields": [
+                        "tasks",
+                        "relationships.task_dependencies",
+                        "operations.task_state_transitions",
+                    ],
                     "urls": dashboard_url_contract["object_deep_links"]["tasks"]["templates"],
                 },
                 "dashboard_ready": (
@@ -3454,7 +3424,9 @@ class ControlPlane:
                 "authority": authority.get("projects"),
                 "api_operations": sorted(api_operation_names & expected_project_api_operations),
                 "api_ready": expected_project_api_operations <= api_operation_names,
-                "mac_cli_commands": matching(mac_cli_commands, ("mac project ", "mac admin bridge ")),
+                "mac_cli_commands": matching(
+                    mac_cli_commands, ("mac project ", "mac admin bridge ")
+                ),
                 "mac_cli_ready": has_all(
                     mac_cli_commands,
                     (
@@ -3489,7 +3461,11 @@ class ControlPlane:
                 ),
                 "dashboard_projection": {
                     "state_key": "hermes_work_contexts",
-                    "fields": ["projects", "projects.bridge_item_count", "projects.repository_count"],
+                    "fields": [
+                        "projects",
+                        "projects.bridge_item_count",
+                        "projects.repository_count",
+                    ],
                     "urls": dashboard_url_contract["object_deep_links"]["projects"]["templates"],
                 },
                 "dashboard_ready": (
@@ -3517,12 +3493,21 @@ class ControlPlane:
                 "api_operations": sorted(api_operation_names & expected_agent_api_operations),
                 "api_ready": expected_agent_api_operations <= api_operation_names,
                 "mac_cli_commands": matching(mac_cli_commands, ("mac agent ",)),
-                "mac_cli_ready": has_all(mac_cli_commands, ("mac agent register", "mac agent list", "mac agent heartbeat")),
-                "mac_hermes_cli_commands": matching(mac_hermes_commands, expected_agent_cli_fragments),
+                "mac_cli_ready": has_all(
+                    mac_cli_commands,
+                    ("mac agent register", "mac agent list", "mac agent heartbeat"),
+                ),
+                "mac_hermes_cli_commands": matching(
+                    mac_hermes_commands, expected_agent_cli_fragments
+                ),
                 "mac_hermes_cli_ready": has_all(mac_hermes_commands, expected_agent_cli_fragments),
                 "dashboard_projection": {
                     "state_key": "hermes_work_contexts",
-                    "fields": ["agents", "relationships.agent_assignments", "agents.active_task_ids"],
+                    "fields": [
+                        "agents",
+                        "relationships.agent_assignments",
+                        "agents.active_task_ids",
+                    ],
                     "urls": dashboard_url_contract["object_deep_links"]["agents"]["templates"],
                 },
                 "dashboard_ready": (
@@ -3572,9 +3557,7 @@ class ControlPlane:
             and has_all(mac_hermes_commands, expected_agent_cli_fragments),
             "agent_bound_to_hermes_instance": bool(bound_agents),
             "runtime_context_ready": (
-                bool(runtime.get("ready"))
-                if runtime_required or runtime
-                else True
+                bool(runtime.get("ready")) if runtime_required or runtime else True
             ),
             "runtime_context_instance_matches": (
                 runtime_instance_id in (None, "", hermes_instance_id)
@@ -3585,9 +3568,7 @@ class ControlPlane:
                 else True
             ),
             "runtime_markdown_contract_present": (
-                bool(markdown_contract.get("ready"))
-                if runtime_required
-                else True
+                bool(markdown_contract.get("ready")) if runtime_required else True
             ),
             "runtime_session_capabilities_declared": runtime_capabilities_ready,
             "runtime_first_class_object_model_declared": (
@@ -3596,9 +3577,7 @@ class ControlPlane:
                 else True
             ),
             "runtime_session_capabilities_available": (
-                bool(session_availability.get("ready"))
-                if session_contract_required
-                else True
+                bool(session_availability.get("ready")) if session_contract_required else True
             ),
             "first_class_object_matrix_ready": all(
                 bool(item.get("ready")) for item in first_class_objects.values()
@@ -3670,12 +3649,10 @@ class ControlPlane:
                     "task_count": work_context.get("task_count"),
                     "project_count": len(project_contexts),
                     "project_bridge_item_count": sum(
-                        int(project.get("bridge_item_count") or 0)
-                        for project in project_contexts
+                        int(project.get("bridge_item_count") or 0) for project in project_contexts
                     ),
                     "project_repository_count": sum(
-                        int(project.get("repository_count") or 0)
-                        for project in project_contexts
+                        int(project.get("repository_count") or 0) for project in project_contexts
                     ),
                     "agent_count": len(work_context.get("agents", [])),
                     "bound_agent_ids": [agent.get("id") for agent in bound_agents],
@@ -3758,8 +3735,7 @@ class ControlPlane:
                     "samples": [self._dashboard_url(view="agents")],
                     "object_addressable": False,
                     "unsupported_reason": (
-                        "the console's Agents view does not read an agent id "
-                        "from the URL"
+                        "the console's Agents view does not read an agent id from the URL"
                     ),
                 },
                 "projects": {
@@ -3769,8 +3745,7 @@ class ControlPlane:
                     "samples": [self._dashboard_url(view="projects")],
                     "object_addressable": False,
                     "unsupported_reason": (
-                        "the console's Projects view does not read a project "
-                        "from the URL"
+                        "the console's Projects view does not read a project from the URL"
                     ),
                 },
                 "fleets": {
@@ -3780,8 +3755,7 @@ class ControlPlane:
                     "samples": [self._dashboard_url(view="agents")],
                     "object_addressable": False,
                     "unsupported_reason": (
-                        "the console has no fleet view; fleet state is read "
-                        "through agents"
+                        "the console has no fleet view; fleet state is read through agents"
                     ),
                 },
             },
@@ -3815,9 +3789,7 @@ class ControlPlane:
     @staticmethod
     def _dashboard_url(**params: str) -> str:
         filtered = {
-            key: value
-            for key, value in params.items()
-            if value is not None and str(value).strip()
+            key: value for key, value in params.items() if value is not None and str(value).strip()
         }
         return "/ui?%s" % urllib.parse.urlencode(filtered)
 
@@ -3938,9 +3910,7 @@ class ControlPlane:
             metadata = record.get("metadata")
             item["metadata"] = metadata if isinstance(metadata, dict) else {}
             item["project_id"] = record.get("id")
-            project_pause_cache[name] = bool(
-                ensure_json_object(metadata).get("dispatch_paused")
-            )
+            project_pause_cache[name] = bool(ensure_json_object(metadata).get("dispatch_paused"))
             if isinstance(metadata, dict) and metadata.get("repository_url"):
                 item["repository_url"] = str(metadata.get("repository_url"))
                 item["default_branch"] = str(
@@ -3948,8 +3918,7 @@ class ControlPlane:
                 )
                 item["repository_registration"] = str(
                     metadata.get("repository_registration")
-                    or "%s#%s"
-                    % (item["repository_url"], item["default_branch"])
+                    or "%s#%s" % (item["repository_url"], item["default_branch"])
                 )
 
         for task in tasks:
@@ -4045,9 +4014,14 @@ class ControlPlane:
             # as a record-less "derived" project after `project unregister`.
             if repository.get("enabled") is False:
                 continue
-            bucket(str(repository.get("project") or repository.get("name") or repository.get("source") or "unassigned"))[
-                "repository_count"
-            ] += 1
+            bucket(
+                str(
+                    repository.get("project")
+                    or repository.get("name")
+                    or repository.get("source")
+                    or "unassigned"
+                )
+            )["repository_count"] += 1
 
         normalized = []
         for item in buckets.values():
@@ -4404,10 +4378,10 @@ class ControlPlane:
                 "mac-hermes claim-review {review_id} {reviewer_agent_id}",
                 "mac-hermes review-decision {review_id} approved {reviewer_agent_id} --evidence-id {evidence_id}",
                 "mac-hermes publish {task_id} {target} {created_by}",
-                "mac-hermes command-audit record {agent_id} --phase started --argv-json '[\"git\",\"status\"]' --cwd /workspace",
+                'mac-hermes command-audit record {agent_id} --phase started --argv-json \'["git","status"]\' --cwd /workspace',
                 "mac-hermes command-audit list --agent-id {agent_id}",
                 "mac-hermes memory-search --content-contains <text> --limit 20",
-                "mac-hermes web-search \"current release notes\" --limit 5",
+                'mac-hermes web-search "current release notes" --limit 5',
                 "mac-hermes web-scrape https://example.com --format markdown",
                 "mac-hermes web-crawl https://example.com --limit 1",
                 "mac-hermes web-crawl-status {crawl_id}",
@@ -4447,8 +4421,7 @@ class ControlPlane:
                 },
             },
             "task_state_transitions": {
-                state: sorted(targets)
-                for state, targets in TASK_TRANSITIONS.items()
+                state: sorted(targets) for state, targets in TASK_TRANSITIONS.items()
             },
         }
 
@@ -4510,9 +4483,7 @@ class ControlPlane:
             try:
                 instance = self.identity.get_persona_instance(agent.persona_instance_id)
                 persona = (
-                    self.identity.get_persona(instance.persona_id)
-                    if instance.persona_id
-                    else None
+                    self.identity.get_persona(instance.persona_id) if instance.persona_id else None
                 )
                 soul = {
                     "hermes_instance": instance.to_dict(),
@@ -4596,9 +4567,7 @@ class ControlPlane:
         tenant_id: Optional[str] = None,
     ) -> JsonDict:
         """Enumerate every human-decision gate in a workflow definition."""
-        return self.workflows.decisions_for_workflow(
-            workflow_id_or_slug, tenant_id=tenant_id
-        )
+        return self.workflows.decisions_for_workflow(workflow_id_or_slug, tenant_id=tenant_id)
 
     def workflow_run_decisions(self, run_id: str) -> JsonDict:
         """Enumerate human-decision gates for a live workflow run."""
@@ -4619,10 +4588,7 @@ class ControlPlane:
             "SELECT state, COUNT(*) AS count FROM workflow_runs GROUP BY state"
         )
         by_state = {row["state"]: int(row["count"]) for row in rows}
-        latest = [
-            run.to_dict()
-            for run in self.workflow_runtime.list_runs(limit=20)
-        ]
+        latest = [run.to_dict() for run in self.workflow_runtime.list_runs(limit=20)]
         return {
             "counts": by_state,
             "total": sum(by_state.values()),
@@ -4875,15 +4841,8 @@ class ControlPlane:
                 "break-glass execution metadata is control-plane-owned; "
                 "use the admin break-glass authorization API"
             )
-        if any(
-            key in metadata
-            for key in (
-                "managed_fast_lane",
-            )
-        ):
-            raise ValidationError(
-                "publication route metadata is control-plane-owned"
-            )
+        if any(key in metadata for key in ("managed_fast_lane",)):
+            raise ValidationError("publication route metadata is control-plane-owned")
 
     def _single_task_fast_lane_shape(
         self,
@@ -4916,12 +4875,14 @@ class ControlPlane:
                 bool(str(contract.get("repository_id") or "").strip()),
                 "registered_repository_required",
             ),
-            (not metadata_declares_report_deliverable(metadata), "report_task_is_not_a_repository_mutation"),
+            (
+                not metadata_declares_report_deliverable(metadata),
+                "report_task_is_not_a_repository_mutation",
+            ),
             (not bool(origin.get("onboarding")), "repository_onboarding_uses_legacy_bootstrap"),
             (
                 not bool(
-                    relationships.get("parent_task_id")
-                    or relationships.get("child_task_ids")
+                    relationships.get("parent_task_id") or relationships.get("child_task_ids")
                 ),
                 "cooperative_task_requires_managed_plan_admission",
             ),
@@ -4932,8 +4893,6 @@ class ControlPlane:
             "blockers": blockers,
             "repository_id": str(contract.get("repository_id") or "").strip(),
         }
-
-
 
     def _reserve_task_create_idempotency(
         self,
@@ -4949,9 +4908,7 @@ class ControlPlane:
         if not exact_key:
             raise ValidationError("task create idempotency key must not be empty")
         if len(exact_key) > 200:
-            raise ValidationError(
-                "task create idempotency key may contain at most 200 characters"
-            )
+            raise ValidationError("task create idempotency key may contain at most 200 characters")
         exact_scope = str(scope or "").strip()
         if not exact_scope:
             raise ValidationError("task create idempotency scope must not be empty")
@@ -4962,16 +4919,15 @@ class ControlPlane:
         scope_digest = hashlib.sha256(exact_scope.encode("utf-8")).hexdigest()
         key_digest = hashlib.sha256(exact_key.encode("utf-8")).hexdigest()
         try:
-            request_digest = hashlib.sha256(
-                json_dumps(dict(request)).encode("utf-8")
-            ).hexdigest()
+            request_digest = hashlib.sha256(json_dumps(dict(request)).encode("utf-8")).hexdigest()
         except (TypeError, ValueError) as exc:
             raise ValidationError(
                 "task create idempotency request must be JSON serializable"
             ) from exc
-        task_id = "task_%s" % hashlib.sha256(
-            (scope_digest + ":" + key_digest).encode("ascii")
-        ).hexdigest()[:32]
+        task_id = (
+            "task_%s"
+            % hashlib.sha256((scope_digest + ":" + key_digest).encode("ascii")).hexdigest()[:32]
+        )
         with self.store.transaction() as conn:
             conn.execute(
                 "INSERT INTO task_create_idempotency ("
@@ -4999,8 +4955,6 @@ class ControlPlane:
                     "task create idempotency key is already bound to a different request"
                 )
             return str(row["task_id"])
-
-
 
     @property
     def generator_yield_gate(self) -> "GeneratorYieldGate":
@@ -5078,8 +5032,7 @@ class ControlPlane:
             raise ValidationError("task title is required")
         supplied_metadata = metadata if isinstance(metadata, Mapping) else {}
         if (
-            normalize_execution_mode(supplied_metadata.get("execution_mode"))
-            == EXECUTION_MODE_SYNC
+            normalize_execution_mode(supplied_metadata.get("execution_mode")) == EXECUTION_MODE_SYNC
             and not str(supplied_metadata.get("target_agent_id") or "").strip()
             and not str(supplied_metadata.get("target_agent_name") or "").strip()
         ):
@@ -5110,14 +5063,12 @@ class ControlPlane:
                         raise ValidationError(
                             "no such human %r: register them first "
                             "(`mac admin user ...`) so task ownership points at "
-                            "a real principal rather than a free-text string"
-                            % requested_human
+                            "a real principal rather than a free-text string" % requested_human
                         ) from None
         dependency_refs = coerce_list(dependencies)
         supplied_task_id = str(_task_id or "").strip()
         if supplied_task_id and any(
-            supplied_task_id == dependency_ref
-            or supplied_task_id.startswith(dependency_ref)
+            supplied_task_id == dependency_ref or supplied_task_id.startswith(dependency_ref)
             for dependency_ref in dependency_refs
         ):
             raise ValidationError("task cannot depend on itself")
@@ -5127,9 +5078,7 @@ class ControlPlane:
         for dep_id in dep_ids:
             self.get_task(dep_id)
         if bool(_workflow_run_id) != bool(_workflow_node_key):
-            raise ValidationError(
-                "workflow-linked task creation requires both run id and node key"
-            )
+            raise ValidationError("workflow-linked task creation requires both run id and node key")
         self._reject_reserved_break_glass_metadata(requested_metadata)
         # An automated generator whose filed work does not complete stops
         # filing. This is the single choke point every generator passes
@@ -5144,10 +5093,7 @@ class ControlPlane:
                 )
             task_id = self._reserve_task_create_idempotency(
                 key=idempotency_key,
-                scope=(
-                    _idempotency_scope
-                    or "control-plane-actor:%s" % str(actor or "human")
-                ),
+                scope=(_idempotency_scope or "control-plane-actor:%s" % str(actor or "human")),
                 request={
                     "schema": "mac.task_create_request.v1",
                     "title": title,
@@ -5164,9 +5110,7 @@ class ControlPlane:
                 },
                 actor=actor,
             )
-            existing_retry = self.store.query_one(
-                "SELECT id FROM tasks WHERE id = ?", (task_id,)
-            )
+            existing_retry = self.store.query_one("SELECT id FROM tasks WHERE id = ?", (task_id,))
             if existing_retry is not None:
                 return self.get_task(task_id)
         else:
@@ -5189,21 +5133,24 @@ class ControlPlane:
             project,
             task_capabilities,
         )
-        task_capabilities, normalized_metadata = self._decouple_repository_commands_from_capabilities(
-            task_capabilities,
-            normalized_metadata,
+        task_capabilities, normalized_metadata = (
+            self._decouple_repository_commands_from_capabilities(
+                task_capabilities,
+                normalized_metadata,
+            )
         )
         if self.directives.enabled:
-            execution_contract = ensure_json_object(
-                normalized_metadata.get("execution_contract")
-            )
+            execution_contract = ensure_json_object(normalized_metadata.get("execution_contract"))
             origin = ensure_json_object(normalized_metadata.get("origin"))
-            repository_id = str(
-                execution_contract.get("repository_id")
-                or origin.get("repository_id")
-                or normalized_metadata.get("repository_id")
-                or ""
-            ).strip() or None
+            repository_id = (
+                str(
+                    execution_contract.get("repository_id")
+                    or origin.get("repository_id")
+                    or normalized_metadata.get("repository_id")
+                    or ""
+                ).strip()
+                or None
+            )
             normalized_metadata["directive_snapshot"] = self.directives.effective_snapshot(
                 repository_id=repository_id,
                 project=project,
@@ -5232,12 +5179,9 @@ class ControlPlane:
             if existing is not None:
                 if _task_id is None and idempotency_key is None:
                     raise ValidationError("task already exists: %s" % task_id)
-                if (
-                    str(existing["workflow_run_id"] or "")
-                    != str(_workflow_run_id or "")
-                    or str(existing["workflow_node_key"] or "")
-                    != str(_workflow_node_key or "")
-                ):
+                if str(existing["workflow_run_id"] or "") != str(_workflow_run_id or "") or str(
+                    existing["workflow_node_key"] or ""
+                ) != str(_workflow_node_key or ""):
                     raise ValidationError(
                         "idempotent workflow task id %s belongs to a different run or node"
                         % task_id
@@ -5277,17 +5221,11 @@ class ControlPlane:
                         "SELECT workflow_run_id, workflow_node_key FROM tasks WHERE id = ?",
                         (task_id,),
                     ).fetchone()
-                    if (
-                        _task_id is None
-                        and idempotency_key is None
-                    ) or existing is None:
+                    if (_task_id is None and idempotency_key is None) or existing is None:
                         raise ValidationError("task already exists: %s" % task_id)
-                    if (
-                        str(existing["workflow_run_id"] or "")
-                        != str(_workflow_run_id or "")
-                        or str(existing["workflow_node_key"] or "")
-                        != str(_workflow_node_key or "")
-                    ):
+                    if str(existing["workflow_run_id"] or "") != str(_workflow_run_id or "") or str(
+                        existing["workflow_node_key"] or ""
+                    ) != str(_workflow_node_key or ""):
                         raise ValidationError(
                             "idempotent workflow task id %s belongs to a different run or node"
                             % task_id
@@ -5378,9 +5316,7 @@ class ControlPlane:
         )
         repo_name = _repository_name_from_url(url)
         default_project = (
-            repo_name
-            if branch == DEFAULT_PROJECT_BRANCH
-            else "%s@%s" % (repo_name, branch)
+            repo_name if branch == DEFAULT_PROJECT_BRANCH else "%s@%s" % (repo_name, branch)
         )
         project = (project or default_project).strip() or default_project
         origin: JsonDict = {
@@ -5407,8 +5343,7 @@ class ControlPlane:
         )
         resolved_title = (
             title
-            or "Register %s: analyze, summarize, and author the repository contract"
-            % repo_name
+            or "Register %s: analyze, summarize, and author the repository contract" % repo_name
         ).strip()
         return self.create_task(
             resolved_title,
@@ -5430,22 +5365,16 @@ class ControlPlane:
         try:
             requested_remote = canonical_git_remote_identity(repository_url)
         except ValueError as exc:
-            raise ValidationError(
-                "repository registration URL is invalid: %s" % exc
-            ) from exc
+            raise ValidationError("repository registration URL is invalid: %s" % exc) from exc
         for record in self.list_project_records():
             if exclude_project_id and record.id == exclude_project_id:
                 continue
-            identity = _project_registration_from_metadata(
-                ensure_json_object(record.metadata)
-            )
+            identity = _project_registration_from_metadata(ensure_json_object(record.metadata))
             if identity is None:
                 continue
             existing_url, existing_branch, existing_registration = identity
             try:
-                same_remote = canonical_git_remote_identity(existing_url) == (
-                    requested_remote
-                )
+                same_remote = canonical_git_remote_identity(existing_url) == (requested_remote)
             except ValueError:
                 continue
             if same_remote and existing_branch == branch:
@@ -5498,9 +5427,7 @@ class ControlPlane:
             )
         md = ensure_json_object(existing.metadata)
         current_url = str(md.get("repository_url") or "").strip()
-        current_branch = str(
-            md.get("default_branch") or DEFAULT_PROJECT_BRANCH
-        ).strip()
+        current_branch = str(md.get("default_branch") or DEFAULT_PROJECT_BRANCH).strip()
         if current_url:
             current_url, current_branch, _ = _normalize_repository_registration(
                 str(md.get("repository_registration") or current_url),
@@ -5572,9 +5499,7 @@ class ControlPlane:
             raise ValidationError("%s must be an object" % field)
         contract = json_loads(json_dumps(dict(value)), {})
         if contract.get("schema") != REPOSITORY_CONTRACT_SCHEMA:
-            raise ValidationError(
-                "%s.schema must be %s" % (field, REPOSITORY_CONTRACT_SCHEMA)
-            )
+            raise ValidationError("%s.schema must be %s" % (field, REPOSITORY_CONTRACT_SCHEMA))
         remote = str(contract.get("canonical_remote_url") or "").strip()
         if not remote:
             raise ValidationError("%s.canonical_remote_url is required" % field)
@@ -5582,9 +5507,7 @@ class ControlPlane:
             remote = validate_secret_free_git_remote(remote)
             canonical_git_remote_identity(remote)
         except ValueError as exc:
-            raise ValidationError(
-                "%s.canonical_remote_url is invalid: %s" % (field, exc)
-            ) from exc
+            raise ValidationError("%s.canonical_remote_url is invalid: %s" % (field, exc)) from exc
         default_branch = str(contract.get("default_branch") or "").strip()
         canonical_branch = str(contract.get("canonical_branch") or "").strip()
         if default_branch and canonical_branch and default_branch != canonical_branch:
@@ -5593,9 +5516,7 @@ class ControlPlane:
             )
         branch = default_branch or canonical_branch
         if not branch:
-            raise ValidationError(
-                "%s.default_branch (or canonical_branch) is required" % field
-            )
+            raise ValidationError("%s.default_branch (or canonical_branch) is required" % field)
         try:
             branch = validate_git_ref(branch)
         except ValueError as exc:
@@ -5661,8 +5582,7 @@ class ControlPlane:
             for field, explicit in explicit_contracts:
                 if json_dumps(explicit) != json_dumps(current):
                     raise ValidationError(
-                        "%s contradicts the current registered repository contract"
-                        % field
+                        "%s contradicts the current registered repository contract" % field
                     )
             if execution.get("repository_id") not in {None, "", repo.id}:
                 raise ValidationError(
@@ -5690,8 +5610,7 @@ class ControlPlane:
             ):
                 if key in origin and str(origin.get(key) or "") != expected:
                     raise ValidationError(
-                        "metadata.origin.%s contradicts the current registered repository"
-                        % key
+                        "metadata.origin.%s contradicts the current registered repository" % key
                     )
             origin.update(
                 {
@@ -5725,8 +5644,7 @@ class ControlPlane:
                 )
                 if json_dumps(comparable) != json_dumps(contract):
                     raise ValidationError(
-                        "%s contradicts the current execution repository contract"
-                        % field
+                        "%s contradicts the current execution repository contract" % field
                     )
             canonical_execution = dict(execution)
             schema = str(canonical_execution.get("schema") or "").strip()
@@ -5856,26 +5774,18 @@ class ControlPlane:
         origin = normalized.get("origin")
         origin_dict = dict(origin) if isinstance(origin, dict) else {}
         existing_contract = normalized.get("execution_contract")
-        non_repository_outcome = declared_non_repository_outcome_evidence_type(
-            normalized
-        )
+        non_repository_outcome = declared_non_repository_outcome_evidence_type(normalized)
         if non_repository_outcome and not report_deliverable:
-            normalized["execution_contract"] = (
-                self._report_context_execution_contract(
-                    normalized,
-                    project,
-                    required_capabilities,
-                    existing_contract=(
-                        existing_contract
-                        if isinstance(existing_contract, dict)
-                        else None
-                    ),
-                    attach_repository_origin=False,
-                )
+            normalized["execution_contract"] = self._report_context_execution_contract(
+                normalized,
+                project,
+                required_capabilities,
+                existing_contract=(
+                    existing_contract if isinstance(existing_contract, dict) else None
+                ),
+                attach_repository_origin=False,
             )
-            normalized["execution_contract"][
-                "reason"
-            ] = "explicit_non_repository_outcome"
+            normalized["execution_contract"]["reason"] = "explicit_non_repository_outcome"
             return normalized
         if isinstance(existing_contract, dict) and existing_contract.get("type"):
             contract_type = str(existing_contract.get("type") or "").strip().lower()
@@ -5902,7 +5812,9 @@ class ControlPlane:
                 merged_contract.setdefault("type", "repository")
                 merged_contract.setdefault("evidence_type", "repo_change")
                 repository_contract = merged_contract.get("repository_contract")
-                if not isinstance(repository_contract, dict) or not repository_contract.get("schema"):
+                if not isinstance(repository_contract, dict) or not repository_contract.get(
+                    "schema"
+                ):
                     origin_contract = origin_dict.get("repository_contract")
                     if isinstance(origin_contract, dict) and origin_contract.get("schema"):
                         merged_contract["repository_contract"] = origin_contract
@@ -5925,8 +5837,12 @@ class ControlPlane:
                                 else {}
                             )
                             acc_metadata.setdefault("workflow_role", "work")
-                            acc_metadata.setdefault("repository_contract_schema", contract["schema"])
-                            acc_metadata.setdefault("repository_contract_project", contract["project"])
+                            acc_metadata.setdefault(
+                                "repository_contract_schema", contract["schema"]
+                            )
+                            acc_metadata.setdefault(
+                                "repository_contract_project", contract["project"]
+                            )
                             normalized["acc_metadata"] = acc_metadata
                             merged_contract.setdefault("quality", "strong")
                             merged_contract.setdefault("source", "registered_project")
@@ -5946,12 +5862,8 @@ class ControlPlane:
                 repository_contract = merged_contract.get("repository_contract")
                 if isinstance(repository_contract, dict):
                     contract_copy = dict(repository_contract)
-                    declared_default = str(
-                        contract_copy.get("default_branch") or ""
-                    ).strip()
-                    declared_canonical = str(
-                        contract_copy.get("canonical_branch") or ""
-                    ).strip()
+                    declared_default = str(contract_copy.get("default_branch") or "").strip()
+                    declared_canonical = str(contract_copy.get("canonical_branch") or "").strip()
                     if (
                         declared_default
                         and declared_canonical
@@ -5974,8 +5886,7 @@ class ControlPlane:
                         branch = validate_git_ref(branch)
                     except ValueError as exc:
                         raise ValidationError(
-                            "repository execution contract branch is invalid: %s"
-                            % exc
+                            "repository execution contract branch is invalid: %s" % exc
                         ) from exc
                     contract_copy["default_branch"] = branch
                     contract_copy.pop("canonical_branch", None)
@@ -6166,11 +6077,7 @@ class ControlPlane:
         never upgraded to repo_change through it.
         """
 
-        policy = (
-            normalized.get("policy")
-            if isinstance(normalized.get("policy"), dict)
-            else {}
-        )
+        policy = normalized.get("policy") if isinstance(normalized.get("policy"), dict) else {}
         candidates = [
             normalized.get("evidence_type"),
             policy.get("evidence_type"),
@@ -6197,9 +6104,7 @@ class ControlPlane:
             raise NotFoundError("task not found: %s" % resolved)
         return self._task_from_row(row)
 
-    def _canonical_dependency_ids(
-        self, dependencies: Optional[Iterable[str]]
-    ) -> List[str]:
+    def _canonical_dependency_ids(self, dependencies: Optional[Iterable[str]]) -> List[str]:
         """Resolve dependency references once at the public write boundary.
 
         Prefixes are accepted through the same git-style resolver as
@@ -6242,7 +6147,7 @@ class ControlPlane:
         prefix = self._TASK_PREFIX
         if not task_id.startswith(prefix):
             return task_id
-        hex_part = task_id[len(prefix):]
+        hex_part = task_id[len(prefix) :]
         # Full id — no lookup needed.
         if len(hex_part) == self._TASK_FULL_HEX_LEN and hex_part.isalnum():
             return task_id
@@ -6303,9 +6208,7 @@ class ControlPlane:
             if isinstance(state, (list, tuple, set, frozenset)):
                 values = [_state_value(item) for item in state]
                 if values:
-                    where.append(
-                        "state IN (%s)" % ",".join("?" for _ in values)
-                    )
+                    where.append("state IN (%s)" % ",".join("?" for _ in values))
                     params.extend(values)
             else:
                 where.append("state = ?")
@@ -6440,9 +6343,7 @@ class ControlPlane:
         description: str = "",
         actor: str = "human",
     ) -> JsonDict:
-        return self.task_groups.save(
-            name, expression, description=description, actor=actor
-        )
+        return self.task_groups.save(name, expression, description=description, actor=actor)
 
     def list_task_groups(self) -> List[JsonDict]:
         return self.task_groups.list()
@@ -6454,7 +6355,9 @@ class ControlPlane:
         self.task_groups.delete(name)
         return {"name": name, "deleted": True}
 
-    def check_sandbox_bom_drift(self, *, actor: str = "hub", project: Optional[str] = None) -> Dict[str, Any]:
+    def check_sandbox_bom_drift(
+        self, *, actor: str = "hub", project: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Has a contract change made the reviewed sandbox manifest stale?
 
         Called when a repository registration appears or a project is deleted,
@@ -6530,9 +6433,7 @@ class ControlPlane:
             # The jsonb equality is also stricter than the string comparison it
             # replaces: json_dumps(...) == json_dumps(...) depended on key
             # ordering; jsonb compares by value.
-            active = tuple(
-                sorted({state.value for state in TaskState} - set(TERMINAL_TASK_STATES))
-            )
+            active = tuple(sorted({state.value for state in TaskState} - set(TERMINAL_TASK_STATES)))
             placeholders = ", ".join("?" for _ in active)
             already_reported = self.store.query_one(
                 "SELECT 1 FROM tasks "
@@ -6552,8 +6453,10 @@ class ControlPlane:
                         "A repository contract changed, so the union of required "
                         "commands no longer matches deploy/openshell/sandbox-bom.json.",
                         "",
-                        "  newly required : %s" % (", ".join(drift.get("added_commands") or []) or "(none)"),
-                        "  no longer required: %s" % (", ".join(drift.get("removed_commands") or []) or "(none)"),
+                        "  newly required : %s"
+                        % (", ".join(drift.get("added_commands") or []) or "(none)"),
+                        "  no longer required: %s"
+                        % (", ".join(drift.get("removed_commands") or []) or "(none)"),
                         "",
                         "A command that is newly required and absent from the image "
                         "means a coding agent on that repo will provision it per task, "
@@ -6874,9 +6777,7 @@ class ControlPlane:
             critical_value = float(critical_seconds)
             refresh_value = int(refresh_limit)
         except (TypeError, ValueError) as exc:
-            raise ValidationError(
-                "task-flow report thresholds and limits must be numeric"
-            ) from exc
+            raise ValidationError("task-flow report thresholds and limits must be numeric") from exc
         if not 0 < since_value <= 24 * 90:
             raise ValidationError("since_hours must be in (0, 2160]")
         if warning_value <= 0:
@@ -6888,11 +6789,7 @@ class ControlPlane:
         if not 0 <= refresh_value <= 500:
             raise ValidationError("refresh_limit must be between 0 and 500")
         agents = self.list_agents()
-        idle_worker_count = sum(
-            1
-            for agent in agents
-            if agent.status == AgentStatus.IDLE.value
-        )
+        idle_worker_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
 
         def explain(task_id: str) -> JsonDict:
             return self.explain_task_dispatch(task_id, agents=agents)
@@ -6906,7 +6803,6 @@ class ControlPlane:
             dispatch_explainer=explain,
             idle_worker_count=idle_worker_count,
         )
-
 
     def update_task(
         self,
@@ -6968,9 +6864,7 @@ class ControlPlane:
             ),
         }
 
-        changes_scope = any(
-            fields.get(name) is not None for name in self.SCOPE_BEARING_TASK_FIELDS
-        )
+        changes_scope = any(fields.get(name) is not None for name in self.SCOPE_BEARING_TASK_FIELDS)
         task = self.get_task(task_id)
         if not changes_scope or task.state not in self.IN_FLIGHT_TASK_STATES:
             return self._update_task_fields(task_id, **fields)
@@ -7029,9 +6923,7 @@ class ControlPlane:
             # is needed for exactly two operator jobs: backfilling a ledger
             # that predates recorded filers, and repairing a mis-filed task.
             owner_value = str(created_by_human).strip()
-            resolved_owner = (
-                self._resolve_agent_owner(owner_value) if owner_value else None
-            )
+            resolved_owner = self._resolve_agent_owner(owner_value) if owner_value else None
             updates.append("created_by_human = ?")
             params.append(resolved_owner)
             detail["created_by_human"] = resolved_owner
@@ -7061,7 +6953,9 @@ class ControlPlane:
                 updates.append("state = ?")
                 params.append(next_state)
                 detail["state"] = next_state
-        should_reconcile_metadata = metadata is not None or project is not None or required_capabilities is not None
+        should_reconcile_metadata = (
+            metadata is not None or project is not None or required_capabilities is not None
+        )
         explicit_required_capabilities_update = required_capabilities is not None
         if required_capabilities is not None:
             new_capabilities = coerce_list(required_capabilities)
@@ -7069,9 +6963,7 @@ class ControlPlane:
             new_metadata = ensure_json_object(metadata)
             if _preserve_control_plane_publication_metadata:
                 persisted_metadata = ensure_json_object(task.metadata)
-                for key in (
-                    "managed_fast_lane",
-                ):
+                for key in ("managed_fast_lane",):
                     # Internal callers may round-trip a task's metadata while
                     # changing an unrelated controller-owned field.  Never
                     # trust the supplied derived value: remove it before the
@@ -7112,7 +7004,9 @@ class ControlPlane:
             )
             if preserved_publication_metadata:
                 new_metadata.update(preserved_publication_metadata)
-            if explicit_required_capabilities_update or new_capabilities != list(task.required_capabilities):
+            if explicit_required_capabilities_update or new_capabilities != list(
+                task.required_capabilities
+            ):
                 updates.append("required_capabilities = ?")
                 params.append(json_dumps(new_capabilities))
                 detail["required_capabilities"] = new_capabilities
@@ -7146,9 +7040,7 @@ class ControlPlane:
                     dependency_ids=dependency_ids,
                 )
                 if cycle is not None:
-                    raise ValidationError(
-                        "task dependency cycle: %s" % " -> ".join(cycle)
-                    )
+                    raise ValidationError("task dependency cycle: %s" % " -> ".join(cycle))
             conn.execute(
                 "UPDATE tasks SET %s WHERE id = ?" % ", ".join(updates),
                 tuple(params),
@@ -7214,11 +7106,14 @@ class ControlPlane:
                 self._require_exact_lease_actor(task, actor, lease_id)
                 fenced_lease_id = str(lease_id or "").strip()
             else:
-                reviewer_authorized = self.store.query_one(
-                    "SELECT 1 FROM reviews WHERE task_id = ? "
-                    "AND reviewer_agent_id = ? AND status = ? LIMIT 1",
-                    (task.id, actor, ReviewStatus.PENDING.value),
-                ) is not None
+                reviewer_authorized = (
+                    self.store.query_one(
+                        "SELECT 1 FROM reviews WHERE task_id = ? "
+                        "AND reviewer_agent_id = ? AND status = ? LIMIT 1",
+                        (task.id, actor, ReviewStatus.PENDING.value),
+                    )
+                    is not None
+                )
                 if not reviewer_authorized:
                     raise AuthorizationError(
                         "activity author is neither the active lease actor nor pending reviewer"
@@ -7409,9 +7304,7 @@ class ControlPlane:
         fenced_lease_id: Optional[str] = None
         if not trusted_internal:
             if parent.state not in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
-                raise AuthorizationError(
-                    "non-admin child creation requires an active task lease"
-                )
+                raise AuthorizationError("non-admin child creation requires an active task lease")
             self._require_exact_lease_actor(parent, actor, lease_id)
             fenced_lease_id = str(lease_id or "").strip()
             # Only now that the caller is proven to hold this task's lease:
@@ -7498,9 +7391,7 @@ class ControlPlane:
             title = str(spec.get("title") or "").strip()
             if not title:
                 raise ValidationError("child task %d title is required" % index)
-            legacy_dependencies = _unique_ordered(
-                _metadata_string_list(spec.get("dependencies"))
-            )
+            legacy_dependencies = _unique_ordered(_metadata_string_list(spec.get("dependencies")))
             symbolic_dependencies = (
                 _unique_ordered(_metadata_string_list(spec.get("depends_on")))
                 if spec.get("depends_on") is not None
@@ -7515,9 +7406,7 @@ class ControlPlane:
                     "child task %d supplies conflicting dependencies and depends_on" % index
                 )
             dependency_refs = (
-                symbolic_dependencies
-                if symbolic_dependencies is not None
-                else legacy_dependencies
+                symbolic_dependencies if symbolic_dependencies is not None else legacy_dependencies
             )
             child_dependencies: List[str] = []
             for dependency_ref in dependency_refs:
@@ -7549,9 +7438,7 @@ class ControlPlane:
                 else list(parent.required_capabilities)
             )
             child_metadata = ensure_json_object(spec.get("metadata"))
-            dependency_policy = ensure_json_object(
-                child_metadata.get("dependency_policy")
-            )
+            dependency_policy = ensure_json_object(child_metadata.get("dependency_policy"))
             dependency_policy.setdefault("on_unsatisfied", "supervise")
             child_metadata["dependency_policy"] = dependency_policy
             # Cooperative children get exactly the existing bounded,
@@ -7587,12 +7474,10 @@ class ControlPlane:
                 child_project,
                 child_capabilities,
             )
-            normalized_metadata, optimizer_assignment = (
-                self.optimizer.prepare_task_assignment(
-                    allocated_child_ids[index - 1],
-                    child_project,
-                    normalized_metadata,
-                )
+            normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
+                allocated_child_ids[index - 1],
+                child_project,
+                normalized_metadata,
             )
             prepared.append(
                 {
@@ -7601,14 +7486,10 @@ class ControlPlane:
                     "description": str(spec.get("description") or ""),
                     "project": child_project,
                     "priority": int(
-                        spec["priority"]
-                        if spec.get("priority") is not None
-                        else parent.priority
+                        spec["priority"] if spec.get("priority") is not None else parent.priority
                     ),
                     "state": (
-                        TaskState.WAITING.value
-                        if child_dependencies
-                        else TaskState.OPEN.value
+                        TaskState.WAITING.value if child_dependencies else TaskState.OPEN.value
                     ),
                     "required_capabilities": child_capabilities,
                     "dependencies": child_dependencies,
@@ -7630,15 +7511,11 @@ class ControlPlane:
             [*self._canonical_task_dependency_ids(parent.id), *child_ids]
         )
         parent_metadata = ensure_json_object(parent.metadata)
-        parent_dependency_policy = ensure_json_object(
-            parent_metadata.get("dependency_policy")
-        )
+        parent_dependency_policy = ensure_json_object(parent_metadata.get("dependency_policy"))
         parent_dependency_policy.setdefault("on_unsatisfied", "supervise")
         parent_dependency_policy.setdefault("join", "all_settled")
         parent_metadata["dependency_policy"] = parent_dependency_policy
-        parent_repair_policy = ensure_json_object(
-            parent_metadata.get("repair_policy")
-        )
+        parent_repair_policy = ensure_json_object(parent_metadata.get("repair_policy"))
         parent_repair_policy.setdefault("environment_prerequisite", True)
         parent_metadata["repair_policy"] = parent_repair_policy
         parent_relationships = ensure_json_object(parent_metadata.get("relationships"))
@@ -7680,9 +7557,8 @@ class ControlPlane:
                 "SELECT updated_at FROM tasks WHERE id = ?",
                 (parent.id,),
             ).fetchone()
-            if (
-                current_parent is None
-                or str(current_parent["updated_at"]) != str(parent.updated_at)
+            if current_parent is None or str(current_parent["updated_at"]) != str(
+                parent.updated_at
             ):
                 raise TransitionError(
                     "parent task changed while decomposition was being prepared; retry"
@@ -7727,9 +7603,7 @@ class ControlPlane:
                     dependency_ids=child["dependencies"],
                 )
                 if cycle is not None:
-                    raise ValidationError(
-                        "task dependency cycle: %s" % " -> ".join(cycle)
-                    )
+                    raise ValidationError("task dependency cycle: %s" % " -> ".join(cycle))
                 replace_task_edges(
                     conn,
                     task_id=child["id"],
@@ -7753,9 +7627,7 @@ class ControlPlane:
                     conn=conn,
                 )
                 if child["optimizer_assignment"] is not None:
-                    self.optimizer.insert_assignment(
-                        conn, child["optimizer_assignment"]
-                    )
+                    self.optimizer.insert_assignment(conn, child["optimizer_assignment"])
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
@@ -7777,7 +7649,8 @@ class ControlPlane:
                 UPDATE tasks
                 SET dependencies = ?, metadata = ?, state = ?, owner_agent_id = NULL,
                     lease_id = NULL, leased_until = NULL, updated_at = ?
-                """ + parent_where,
+                """
+                + parent_where,
                 tuple(
                     [
                         json_dumps(parent_dependencies),
@@ -7796,9 +7669,7 @@ class ControlPlane:
                 dependency_ids=parent_dependencies,
             )
             if cycle is not None:
-                raise ValidationError(
-                    "task dependency cycle: %s" % " -> ".join(cycle)
-                )
+                raise ValidationError("task dependency cycle: %s" % " -> ".join(cycle))
             replace_task_edges(
                 conn,
                 task_id=parent.id,
@@ -7852,9 +7723,7 @@ class ControlPlane:
                 # concurrent update.  Serialize the small dependency-graph
                 # mutation section on PostgreSQL; SQLite transactions are
                 # already single-writer.
-                conn.execute(
-                    "LOCK TABLE tasks, task_edges IN SHARE ROW EXCLUSIVE MODE"
-                )
+                conn.execute("LOCK TABLE tasks, task_edges IN SHARE ROW EXCLUSIVE MODE")
             target_lock = conn.execute(
                 "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
                 (task.id,),
@@ -7866,12 +7735,9 @@ class ControlPlane:
                 (task.id, LeaseStatus.ACTIVE.value),
             ).fetchone()
             if active is not None:
-                raise ValidationError(
-                    "task cannot be deleted while it has an active lease"
-                )
+                raise ValidationError("task cannot be deleted while it has an active lease")
             dependent_rows = conn.execute(
-                "SELECT task_id FROM task_edges WHERE dependency_task_id = ? "
-                "ORDER BY task_id",
+                "SELECT task_id FROM task_edges WHERE dependency_task_id = ? ORDER BY task_id",
                 (task.id,),
             ).fetchall()
             dependent_ids = [str(row["task_id"]) for row in dependent_rows]
@@ -7890,8 +7756,7 @@ class ControlPlane:
                     dependents.append(self._task_from_row(dependent_row))
             if dependents and not force:
                 raise ValidationError(
-                    "task has dependent tasks: %s"
-                    % ", ".join(item.id for item in dependents)
+                    "task has dependent tasks: %s" % ", ".join(item.id for item in dependents)
                 )
             for dependent in dependents:
                 remaining = [
@@ -7976,8 +7841,7 @@ class ControlPlane:
                 "project name looks like a git URL (%r); to register a project "
                 "from a repository URL use `mac project register %s` "
                 "(POST /projects/register), which clones the repo and reads "
-                "its README/AGENTS/PLAN to build the project."
-                % (project_name, project_name)
+                "its README/AGENTS/PLAN to build the project." % (project_name, project_name)
             )
         existing = self.store.query_one(
             "SELECT * FROM projects WHERE name = ?",
@@ -8099,9 +7963,7 @@ class ControlPlane:
         actor: str = "human",
     ) -> ProjectRecord:
         project = self.get_project_record(name_or_id)
-        registration_changed = (
-            repository_registration is not None or default_branch is not None
-        )
+        registration_changed = repository_registration is not None or default_branch is not None
         normalized_registration: Optional[Tuple[str, str, str]] = None
         if registration_changed:
             project_metadata = ensure_json_object(
@@ -8114,8 +7976,7 @@ class ControlPlane:
             if not registration_value:
                 if current_identity is None:
                     raise ValidationError(
-                        "project has no repository registration; provide "
-                        "GIT_URL#BRANCH"
+                        "project has no repository registration; provide GIT_URL#BRANCH"
                     )
                 registration_value = current_identity[0]
             normalized_registration = _normalize_repository_registration(
@@ -8179,34 +8040,28 @@ class ControlPlane:
                     raise ValidationError("project already exists: %s" % new_name) from exc
                 raise
             if new_name != project.name:
-                conn.execute("UPDATE tasks SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
-                conn.execute("UPDATE project_repositories SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
+                conn.execute(
+                    "UPDATE tasks SET project = ?, updated_at = ? WHERE project = ?",
+                    (new_name, now, project.name),
+                )
+                conn.execute(
+                    "UPDATE project_repositories SET project = ?, updated_at = ? WHERE project = ?",
+                    (new_name, now, project.name),
+                )
             if new_name != project.name or normalized_registration is not None:
                 repository_url = (
-                    normalized_registration[0]
-                    if normalized_registration is not None
-                    else None
+                    normalized_registration[0] if normalized_registration is not None else None
                 )
-                branch = (
-                    normalized_registration[1]
-                    if normalized_registration is not None
-                    else None
-                )
+                branch = normalized_registration[1] if normalized_registration is not None else None
                 rows = conn.execute(
                     "SELECT id, metadata FROM project_repositories WHERE project = ?",
                     (new_name,),
                 ).fetchall()
                 for row in rows:
-                    repository_metadata = ensure_json_object(
-                        json_loads(row["metadata"], {})
-                    )
-                    contract = ensure_json_object(
-                        repository_metadata.get("repository_contract")
-                    )
+                    repository_metadata = ensure_json_object(json_loads(row["metadata"], {}))
+                    contract = ensure_json_object(repository_metadata.get("repository_contract"))
                     if repository_url is not None:
-                        contract_remote = str(
-                            contract.get("canonical_remote_url") or ""
-                        ).strip()
+                        contract_remote = str(contract.get("canonical_remote_url") or "").strip()
                         if contract_remote:
                             try:
                                 same_remote = canonical_git_remote_identity(
@@ -8214,8 +8069,7 @@ class ControlPlane:
                                 ) == canonical_git_remote_identity(repository_url)
                             except ValueError as exc:
                                 raise ValidationError(
-                                    "registered repository URL is invalid: %s"
-                                    % exc
+                                    "registered repository URL is invalid: %s" % exc
                                 ) from exc
                             if not same_remote:
                                 raise ValidationError(
@@ -8308,8 +8162,14 @@ class ControlPlane:
         now = utcnow()
         with self.store.transaction() as conn:
             if force:
-                conn.execute("UPDATE tasks SET project = NULL, updated_at = ? WHERE project = ?", (now, project.name))
-                conn.execute("UPDATE project_repositories SET enabled = 0, updated_at = ? WHERE project = ?", (now, project.name))
+                conn.execute(
+                    "UPDATE tasks SET project = NULL, updated_at = ? WHERE project = ?",
+                    (now, project.name),
+                )
+                conn.execute(
+                    "UPDATE project_repositories SET enabled = 0, updated_at = ? WHERE project = ?",
+                    (now, project.name),
+                )
             self._record_project_event(
                 conn,
                 project.id,
@@ -8362,20 +8222,16 @@ class ControlPlane:
                 for item in self.list_evidence(resolved_task_id, limit=evidence_limit)
             ],
             "reviews": [
-                item.to_dict()
-                for item in self.list_reviews(resolved_task_id, limit=review_limit)
+                item.to_dict() for item in self.list_reviews(resolved_task_id, limit=review_limit)
             ],
             "publications": [
                 item.to_dict()
-                for item in self.list_publications(
-                    resolved_task_id, limit=publication_limit
-                )
+                for item in self.list_publications(resolved_task_id, limit=publication_limit)
             ],
             "llm_usage": self.observability.task_llm_usage(resolved_task_id),
         }
         flow_rows = self.store.query_all(
-            "SELECT * FROM task_flow_spans WHERE task_id = ? "
-            "ORDER BY attempt, started_at, stage",
+            "SELECT * FROM task_flow_spans WHERE task_id = ? ORDER BY attempt, started_at, stage",
             (resolved_task_id,),
         )
         if not flow_rows:
@@ -8397,14 +8253,11 @@ class ControlPlane:
             "completions": [
                 {
                     **{key: row[key] for key in row.keys()},
-                    "per_stage_durations": json_loads(
-                        row["per_stage_durations"], {}
-                    ),
+                    "per_stage_durations": json_loads(row["per_stage_durations"], {}),
                     "metadata": json_loads(row["metadata"], {}),
                 }
                 for row in self.store.query_all(
-                    "SELECT * FROM task_completions WHERE task_id = ? "
-                    "ORDER BY attempt",
+                    "SELECT * FROM task_completions WHERE task_id = ? ORDER BY attempt",
                     (resolved_task_id,),
                 )
             ],
@@ -8419,22 +8272,10 @@ class ControlPlane:
         calls a model and never executes an overview query, so operators can
         inspect an over-thinking task without adding more work to it.
         """
-        task = (
-            detail.get("task")
-            if isinstance(detail.get("task"), Mapping)
-            else {}
-        )
+        task = detail.get("task") if isinstance(detail.get("task"), Mapping) else {}
         task_id = str(task.get("id") or "")
-        llm_usage = (
-            detail.get("llm_usage")
-            if isinstance(detail.get("llm_usage"), Mapping)
-            else {}
-        )
-        routes = [
-            item
-            for item in llm_usage.get("routes", [])
-            if isinstance(item, Mapping)
-        ]
+        llm_usage = detail.get("llm_usage") if isinstance(detail.get("llm_usage"), Mapping) else {}
+        routes = [item for item in llm_usage.get("routes", []) if isinstance(item, Mapping)]
         kpis = derive_task_kpis(
             detail,
             routes,
@@ -8459,29 +8300,19 @@ class ControlPlane:
             for row in rows
             if str(row["phase"] or "") in {"completed", "failed", "timeout", "error"}
         ]
-        command_duration_ms = sum(
-            float(row["duration_ms"] or 0.0) for row in terminal_rows
-        )
+        command_duration_ms = sum(float(row["duration_ms"] or 0.0) for row in terminal_rows)
         command_failures = sum(
             1
             for row in terminal_rows
             if str(row["phase"] or "") != "completed"
-            or (
-                row["returncode"] is not None
-                and int(row["returncode"]) != 0
-            )
+            or (row["returncode"] is not None and int(row["returncode"]) != 0)
         )
         command_output_bytes = sum(
-            int(row["stdout_bytes"] or 0) + int(row["stderr_bytes"] or 0)
-            for row in terminal_rows
+            int(row["stdout_bytes"] or 0) + int(row["stderr_bytes"] or 0) for row in terminal_rows
         )
 
         state_dwell_ms: Dict[str, float] = {}
-        history = [
-            item
-            for item in detail.get("history", [])
-            if isinstance(item, Mapping)
-        ]
+        history = [item for item in detail.get("history", []) if isinstance(item, Mapping)]
         current_state = "open"
         cursor = parse_time(str(task.get("created_at") or utcnow()))
         for event in history:
@@ -8499,8 +8330,7 @@ class ControlPlane:
         end = parse_time(str(terminal_at or utcnow()))
         if end >= cursor:
             state_dwell_ms[current_state] = (
-                state_dwell_ms.get(current_state, 0.0)
-                + (end - cursor).total_seconds() * 1000.0
+                state_dwell_ms.get(current_state, 0.0) + (end - cursor).total_seconds() * 1000.0
             )
 
         evidence_count = len(detail.get("evidence", []))
@@ -8508,19 +8338,14 @@ class ControlPlane:
         review_count = len(detail.get("reviews", []))
         route_count = int(kpis.get("route_count") or 0)
         total_tokens = int(kpis.get("total_tokens") or 0)
-        provider_attempts = sum(
-            int(item.get("upstream_attempt_count") or 0) for item in routes
-        )
+        provider_attempts = sum(int(item.get("upstream_attempt_count") or 0) for item in routes)
         signals: List[JsonDict] = []
         if route_count >= 10 and evidence_count + publication_count == 0:
             signals.append(
                 {
                     "code": "model_work_without_durable_output",
                     "severity": "warning",
-                    "detail": (
-                        "%d model routes produced no evidence or publication"
-                        % route_count
-                    ),
+                    "detail": ("%d model routes produced no evidence or publication" % route_count),
                 }
             )
         if provider_attempts > route_count:
@@ -8537,8 +8362,7 @@ class ControlPlane:
                 {
                     "code": "command_failure_churn",
                     "severity": "warning",
-                    "detail": "%d failed terminal command records"
-                    % command_failures,
+                    "detail": "%d failed terminal command records" % command_failures,
                 }
             )
         if total_tokens >= 250_000 and publication_count == 0:
@@ -8563,8 +8387,7 @@ class ControlPlane:
             },
             "provider_attempt_count": provider_attempts,
             "state_dwell_ms": {
-                key: round(value, 3)
-                for key, value in sorted(state_dwell_ms.items())
+                key: round(value, 3) for key, value in sorted(state_dwell_ms.items())
             },
             "progress": {
                 "evidence_count": evidence_count,
@@ -8573,8 +8396,6 @@ class ControlPlane:
             },
             "signals": signals,
         }
-
-
 
     def authorize_task_break_glass(
         self,
@@ -8604,9 +8425,7 @@ class ControlPlane:
                 "read-only repository reports cannot use host break-glass execution"
             )
         if isinstance(ensure_json_object(task.metadata).get("review_context"), dict):
-            raise ValidationError(
-                "review tasks cannot use host break-glass execution"
-            )
+            raise ValidationError("review tasks cannot use host break-glass execution")
         if not reason:
             raise ValidationError("break-glass reason is required")
         if not authorized_by:
@@ -8619,13 +8438,9 @@ class ControlPlane:
             )
         machine = self.get_machine(agent.machine_id)
         if not machine.trusted:
-            raise AuthorizationError(
-                "break-glass host execution requires a trusted machine"
-            )
+            raise AuthorizationError("break-glass host execution requires a trusted machine")
         if agent.health_status != HealthStatus.HEALTHY.value:
-            raise ValidationError(
-                "break-glass target agent must be healthy"
-            )
+            raise ValidationError("break-glass target agent must be healthy")
         authorization_id = new_id("breakglass")
         metadata = {
             "schema": BREAK_GLASS_AUTHORIZATION_SCHEMA,
@@ -8658,9 +8473,7 @@ class ControlPlane:
                 or current_task["state"] != TaskState.OPEN.value
                 or current_task["lease_id"] is not None
             ):
-                raise ValidationError(
-                    "break-glass authorization requires an open unleased task"
-                )
+                raise ValidationError("break-glass authorization requires an open unleased task")
             existing = conn.execute(
                 """
                 SELECT * FROM task_break_glass_authorizations
@@ -8671,8 +8484,7 @@ class ControlPlane:
             ).fetchone()
             if existing is not None:
                 conn.execute(
-                    "UPDATE task_break_glass_authorizations SET status = status "
-                    "WHERE id = ?",
+                    "UPDATE task_break_glass_authorizations SET status = status WHERE id = ?",
                     (existing["id"],),
                 )
                 existing = conn.execute(
@@ -8680,17 +8492,16 @@ class ControlPlane:
                     (existing["id"],),
                 ).fetchone()
             now = self._lease_authority_now_in_transaction(conn)
-            expires_at = (
-                parse_time(now) + timedelta(seconds=ttl)
-            ).isoformat(timespec="microseconds")
+            expires_at = (parse_time(now) + timedelta(seconds=ttl)).isoformat(
+                timespec="microseconds"
+            )
             if (
                 existing is not None
                 and existing["status"] == "active"
                 and self._timestamp_is_after(existing["expires_at"], now)
             ):
                 raise ValidationError(
-                    "task %s already has an active break-glass authorization"
-                    % task.id
+                    "task %s already has an active break-glass authorization" % task.id
                 )
             if existing is not None and existing["status"] == "active":
                 conn.execute(
@@ -8751,17 +8562,13 @@ class ControlPlane:
         )
         return self.get_task_break_glass_authorization(authorization_id)
 
-    def get_task_break_glass_authorization(
-        self, authorization_id: str
-    ) -> BreakGlassAuthorization:
+    def get_task_break_glass_authorization(self, authorization_id: str) -> BreakGlassAuthorization:
         row = self.store.query_one(
             "SELECT * FROM task_break_glass_authorizations WHERE id = ?",
             (authorization_id,),
         )
         if row is None:
-            raise NotFoundError(
-                "break-glass authorization %s not found" % authorization_id
-            )
+            raise NotFoundError("break-glass authorization %s not found" % authorization_id)
         return self._break_glass_authorization_from_row(row)
 
     def list_task_break_glass_authorizations(
@@ -8881,8 +8688,7 @@ class ControlPlane:
                 )
         end_tasks = [task.to_dict() for task in self.list_tasks(project=project)]
         repositories = [
-            repository.to_dict()
-            for repository in self.list_project_repositories(enabled=True)
+            repository.to_dict() for repository in self.list_project_repositories(enabled=True)
         ]
         return build_task_ledger_audit(
             details,
@@ -8895,7 +8701,12 @@ class ControlPlane:
             project=project,
             verify_git=verify_git,
             all_tasks=start_tasks,
-            pagination={"offset": offset_value, "limit": limit_value, "returned": len(page_models), "total": len(start_models)},
+            pagination={
+                "offset": offset_value,
+                "limit": limit_value,
+                "returned": len(page_models),
+                "total": len(start_models),
+            },
         )
 
     def assign_review_experiment(
@@ -9099,49 +8910,35 @@ class ControlPlane:
     def promote_scientific_policy(self, policy_id: str, **kwargs: Any) -> JsonDict:
         return self.optimizer.promote_policy(policy_id, **kwargs)
 
-    def rollback_scientific_policy(
-        self, project: str, policy_id: str, **kwargs: Any
-    ) -> JsonDict:
+    def rollback_scientific_policy(self, project: str, policy_id: str, **kwargs: Any) -> JsonDict:
         return self.optimizer.rollback_policy(project, policy_id, **kwargs)
 
     def create_scientific_experiment(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.optimizer.create_experiment(*args, **kwargs)
 
-    def list_scientific_experiments(
-        self, *args: Any, **kwargs: Any
-    ) -> List[JsonDict]:
+    def list_scientific_experiments(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
         return self.optimizer.list_experiments(*args, **kwargs)
 
     def get_scientific_experiment(self, experiment_id: str) -> JsonDict:
         return self.optimizer.get_experiment(experiment_id)
 
-    def start_scientific_experiment(
-        self, experiment_id: str, **kwargs: Any
-    ) -> JsonDict:
+    def start_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
         return self.optimizer.start_experiment(experiment_id, **kwargs)
 
-    def pause_scientific_experiment(
-        self, experiment_id: str, **kwargs: Any
-    ) -> JsonDict:
+    def pause_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
         return self.optimizer.pause_experiment(experiment_id, **kwargs)
 
-    def promote_scientific_experiment(
-        self, experiment_id: str, **kwargs: Any
-    ) -> JsonDict:
+    def promote_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
         return self.optimizer.promote_experiment(experiment_id, **kwargs)
 
-    def observe_scientific_task(
-        self, experiment_id: str, task_id: str
-    ) -> JsonDict:
+    def observe_scientific_task(self, experiment_id: str, task_id: str) -> JsonDict:
         return self.optimizer.observe_task(experiment_id, task_id)
 
     def analyze_scientific_experiment(self, experiment_id: str) -> JsonDict:
         self.optimizer.refresh_experiment(experiment_id)
         return self.optimizer.analyze_experiment(experiment_id, actor="operator")
 
-    def scientific_experiment_evidence(
-        self, experiment_id: str, *, limit: int = 500
-    ) -> JsonDict:
+    def scientific_experiment_evidence(self, experiment_id: str, *, limit: int = 500) -> JsonDict:
         return self.optimizer.experiment_evidence(experiment_id, limit=limit)
 
     def task_summary(self, task_id: str) -> JsonDict:
@@ -9149,7 +8946,9 @@ class ControlPlane:
         resolved_task_id = str(task["id"])
         evidence = [item.to_dict() for item in self.list_evidence(resolved_task_id)]
         reviews = [item.to_dict() for item in self.list_reviews(resolved_task_id)]
-        approved_reviews = [review for review in reviews if review["status"] == ReviewStatus.APPROVED.value]
+        approved_reviews = [
+            review for review in reviews if review["status"] == ReviewStatus.APPROVED.value
+        ]
         publications = [
             pub.to_dict()
             for pub in self.reviews.list_publications(resolved_task_id)
@@ -9221,14 +9020,10 @@ class ControlPlane:
                 created_at=created_at,
             )
         except Exception as exc:  # noqa: BLE001 - a derived index is not the record
-            logging.getLogger(__name__).warning(
-                "transcript not indexed for %s: %s", task.id, exc
-            )
+            logging.getLogger(__name__).warning("transcript not indexed for %s: %s", task.id, exc)
 
     @classmethod
-    def _compress_transcript(
-        cls, prompt: str, response: str, stderr: str
-    ) -> tuple[bytes, str]:
+    def _compress_transcript(cls, prompt: str, response: str, stderr: str) -> tuple[bytes, str]:
         """The three texts as one compressed stream, plus the codec that made it.
 
         Together rather than separately: prompt and response usually quote the
@@ -9322,8 +9117,7 @@ class ControlPlane:
                 return text, False
             keep = self.TRANSCRIPT_FIELD_LIMIT
             return (
-                text[:keep]
-                + "\n[truncated: %d of %d characters kept]" % (keep, len(text)),
+                text[:keep] + "\n[truncated: %d of %d characters kept]" % (keep, len(text)),
                 True,
             )
 
@@ -9337,9 +9131,7 @@ class ControlPlane:
             "SELECT sequence FROM task_agent_transcripts WHERE task_id = ?",
             (task.id,),
         )
-        sequence = max(
-            (int(row["sequence"] or 0) for row in existing), default=-1
-        ) + 1
+        sequence = max((int(row["sequence"] or 0) for row in existing), default=-1) + 1
         # INDEXED BEFORE COMPRESSION, deliberately. The plaintext is in hand
         # exactly once -- here. Feeding the vector store later would mean
         # reading every row back and inflating it again purely to index it,
@@ -9354,9 +9146,7 @@ class ControlPlane:
             coding_agent=coding_agent,
             created_at=now,
         )
-        payload, codec = self._compress_transcript(
-            prompt_text, response_text, stderr_text
-        )
+        payload, codec = self._compress_transcript(prompt_text, response_text, stderr_text)
         with self.store.transaction() as conn:
             conn.execute(
                 "INSERT INTO task_agent_transcripts "
@@ -9551,9 +9341,7 @@ class ControlPlane:
         )
         for row in task_rows:
             detail = ensure_json_object(json_loads(row["detail"], {}))
-            detail.update(
-                {"from_state": row["from_state"], "to_state": row["to_state"]}
-            )
+            detail.update({"from_state": row["from_state"], "to_state": row["to_state"]})
             add(
                 row["id"],
                 "task",
@@ -9563,7 +9351,6 @@ class ControlPlane:
                 detail,
                 row["created_at"],
             )
-
 
         simple_sources = (
             ("rollout_events", "rollout", "rollout_id"),
@@ -9577,8 +9364,7 @@ class ControlPlane:
         for table, subject_type, subject_column in simple_sources:
             rows = self.store.query_all(
                 "SELECT id, %s AS subject_id, event_type, actor, detail, created_at "
-                "FROM %s ORDER BY created_at DESC, id DESC LIMIT ?"
-                % (subject_column, table),
+                "FROM %s ORDER BY created_at DESC, id DESC LIMIT ?" % (subject_column, table),
                 (limit,),
             )
             for row in rows:
@@ -9809,7 +9595,9 @@ class ControlPlane:
             clauses.append("event_type = ?")
             params.append(event_type)
         if event_type_prefix is not None:
-            escaped = event_type_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            escaped = (
+                event_type_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
             clauses.append("event_type LIKE ? ESCAPE '\\'")
             params.append(escaped + "%")
         if since is not None:
@@ -9818,7 +9606,9 @@ class ControlPlane:
         if until is not None:
             clauses.append("created_at <= ?")
             params.append(until)
-        sql = "SELECT id, subject_type, subject_id, event_type, actor, detail, created_at FROM events"
+        sql = (
+            "SELECT id, subject_type, subject_id, event_type, actor, detail, created_at FROM events"
+        )
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
@@ -9914,7 +9704,12 @@ class ControlPlane:
     RETENTION_HEARTBEAT_SECONDS = 300.0
 
     def _configure_default_retention_policies(self) -> None:
-        if os.environ.get("MAC_RETENTION_TICK_ENABLED", "1").strip() not in {"1", "true", "yes", "on"}:
+        if os.environ.get("MAC_RETENTION_TICK_ENABLED", "1").strip() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
             return
         days = _env_int("MAC_RETENTION_TELEMETRY_DAYS", 7, minimum=1)
         batch = _env_int("MAC_RETENTION_BATCH_SIZE", 2000, minimum=1)
@@ -9999,9 +9794,7 @@ class ControlPlane:
         if last is None or (now - last) >= self.RETENTION_HEARTBEAT_SECONDS:
             self._retention_heartbeat_at = now
             enabled_classes = [
-                rc
-                for rc in self._RETENTION_TICK_CLASSES
-                if self.retention.get_policy(rc).enabled
+                rc for rc in self._RETENTION_TICK_CLASSES if self.retention.get_policy(rc).enabled
             ]
             self.record_log(
                 "retention.tick_ran",
@@ -10257,8 +10050,10 @@ class ControlPlane:
             transition = "reopened" if changed else "refreshed"
         finding = self.get_integration_finding(finding_id)
         if changed:
-            level = "error" if severity_value in {"error", "critical"} else (
-                "warning" if severity_value == "warning" else "info"
+            level = (
+                "error"
+                if severity_value in {"error", "critical"}
+                else ("warning" if severity_value == "warning" else "info")
             )
             self.record_log(
                 "integration.finding.%s" % transition,
@@ -10282,9 +10077,7 @@ class ControlPlane:
         return finding
 
     def get_integration_finding(self, finding_id: str) -> IntegrationFinding:
-        row = self.store.query_one(
-            "SELECT * FROM integration_findings WHERE id = ?", (finding_id,)
-        )
+        row = self.store.query_one("SELECT * FROM integration_findings WHERE id = ?", (finding_id,))
         if row is None:
             raise NotFoundError("integration finding not found: %s" % finding_id)
         return self._integration_finding_from_row(row)
@@ -10420,9 +10213,7 @@ class ControlPlane:
         if status_value not in {"pending", "delivered", "failed", "skipped"}:
             raise ValidationError("unsupported notification status: %s" % status)
         channel_list = [
-            str(item).strip()
-            for item in (channels or ["dashboard"])
-            if str(item).strip()
+            str(item).strip() for item in (channels or ["dashboard"]) if str(item).strip()
         ]
         if not channel_list:
             channel_list = ["dashboard"]
@@ -10488,8 +10279,7 @@ class ControlPlane:
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(min(max(1, int(limit)), 1000))
         return [
-            self._notification_from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
+            self._notification_from_row(row) for row in self.store.query_all(sql, tuple(params))
         ]
 
     def mark_notification_delivered(
@@ -10538,9 +10328,7 @@ class ControlPlane:
 
     # Runtime-neutral human communication ------------------------------
 
-    def configure_communication_identity(
-        self, *args: Any, **kwargs: Any
-    ) -> CommunicationIdentity:
+    def configure_communication_identity(self, *args: Any, **kwargs: Any) -> CommunicationIdentity:
         return self.communication.configure_identity(*args, **kwargs)
 
     def get_communication_identity(self, *args: Any, **kwargs: Any) -> CommunicationIdentity:
@@ -10554,25 +10342,19 @@ class ControlPlane:
     def delete_communication_identity(self, *args: Any, **kwargs: Any) -> None:
         return self.communication.delete_identity(*args, **kwargs)
 
-    def configure_communication_account(
-        self, *args: Any, **kwargs: Any
-    ) -> CommunicationAccount:
+    def configure_communication_account(self, *args: Any, **kwargs: Any) -> CommunicationAccount:
         return self.communication.configure_account(*args, **kwargs)
 
     def get_communication_account(self, *args: Any, **kwargs: Any) -> CommunicationAccount:
         return self.communication.get_account(*args, **kwargs)
 
-    def list_communication_accounts(
-        self, *args: Any, **kwargs: Any
-    ) -> List[CommunicationAccount]:
+    def list_communication_accounts(self, *args: Any, **kwargs: Any) -> List[CommunicationAccount]:
         return self.communication.list_accounts(*args, **kwargs)
 
     def delete_communication_account(self, *args: Any, **kwargs: Any) -> None:
         return self.communication.delete_account(*args, **kwargs)
 
-    def configure_representation_binding(
-        self, *args: Any, **kwargs: Any
-    ) -> RepresentationBinding:
+    def configure_representation_binding(self, *args: Any, **kwargs: Any) -> RepresentationBinding:
         return self.communication.configure_representation(*args, **kwargs)
 
     def get_representation_binding(self, *args: Any, **kwargs: Any) -> RepresentationBinding:
@@ -10595,41 +10377,31 @@ class ControlPlane:
             return kwargs[name]
         return args[index] if len(args) > index else None
 
-    def acquire_gateway_identity_lease(
-        self, *args: Any, **kwargs: Any
-    ) -> GatewayIdentityLease:
+    def acquire_gateway_identity_lease(self, *args: Any, **kwargs: Any) -> GatewayIdentityLease:
         claimant = self._positional_or_kw(args, kwargs, "agent_id", 1)
         if claimant:
             self._require_live_agent(str(claimant))
         return self.communication.acquire_gateway_lease(*args, **kwargs)
 
-    def renew_gateway_identity_lease(
-        self, *args: Any, **kwargs: Any
-    ) -> GatewayIdentityLease:
+    def renew_gateway_identity_lease(self, *args: Any, **kwargs: Any) -> GatewayIdentityLease:
         return self.communication.renew_gateway_lease(*args, **kwargs)
 
     def release_gateway_identity_lease(self, *args: Any, **kwargs: Any) -> None:
         return self.communication.release_gateway_lease(*args, **kwargs)
 
-    def list_gateway_identity_leases(
-        self, *args: Any, **kwargs: Any
-    ) -> List[GatewayIdentityLease]:
+    def list_gateway_identity_leases(self, *args: Any, **kwargs: Any) -> List[GatewayIdentityLease]:
         return self.communication.list_gateway_leases(*args, **kwargs)
 
     def enqueue_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
         return self.communication.enqueue_delivery(*args, **kwargs)
 
-    def claim_human_messages(
-        self, *args: Any, **kwargs: Any
-    ) -> List[HumanMessageDelivery]:
+    def claim_human_messages(self, *args: Any, **kwargs: Any) -> List[HumanMessageDelivery]:
         claimant = self._positional_or_kw(args, kwargs, "agent_id", 0)
         if claimant:
             self._require_live_agent(str(claimant))
         return self.communication.claim_deliveries(*args, **kwargs)
 
-    def acknowledge_human_message(
-        self, *args: Any, **kwargs: Any
-    ) -> HumanMessageDelivery:
+    def acknowledge_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
         return self.communication.acknowledge_delivery(*args, **kwargs)
 
     def fail_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
@@ -10638,9 +10410,7 @@ class ControlPlane:
     def get_human_message(self, *args: Any, **kwargs: Any) -> HumanMessageDelivery:
         return self.communication.get_delivery(*args, **kwargs)
 
-    def list_human_messages(
-        self, *args: Any, **kwargs: Any
-    ) -> List[HumanMessageDelivery]:
+    def list_human_messages(self, *args: Any, **kwargs: Any) -> List[HumanMessageDelivery]:
         return self.communication.list_deliveries(*args, **kwargs)
 
     # Short-retention command audit -------------------------------------
@@ -10686,9 +10456,7 @@ class ControlPlane:
                     out.append("%s=<redacted>" % key_part)
                     continue
             # --foo  <value>: key flag followed by a separate value
-            if item.startswith("-") and any(
-                hint in item.lower() for hint in cls._SECRET_KEY_HINTS
-            ):
+            if item.startswith("-") and any(hint in item.lower() for hint in cls._SECRET_KEY_HINTS):
                 out.append(item)
                 skip_next = True
                 continue
@@ -10744,9 +10512,7 @@ class ControlPlane:
         now = utcnow()
         detail = ensure_json_object(metadata or {})
         retention = self._command_audit_retention_seconds(retention_seconds)
-        cutoff = (
-            parse_time(now) - timedelta(seconds=retention)
-        ).isoformat(timespec="microseconds")
+        cutoff = (parse_time(now) - timedelta(seconds=retention)).isoformat(timespec="microseconds")
         with self.store.transaction() as conn:
             conn.execute(
                 """
@@ -10871,8 +10637,7 @@ class ControlPlane:
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(min(max(1, int(limit)), 1000))
         return [
-            self._command_audit_from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
+            self._command_audit_from_row(row) for row in self.store.query_all(sql, tuple(params))
         ]
 
     def prune_command_audit(self, older_than: Optional[str] = None) -> int:
@@ -10880,12 +10645,10 @@ class ControlPlane:
         if cutoff is None:
             now = utcnow()
             retention = self._command_audit_retention_seconds(None)
-            cutoff = (
-                parse_time(now) - timedelta(seconds=retention)
-            ).isoformat(timespec="microseconds")
-        cursor = self.store.execute(
-            "DELETE FROM command_audit WHERE created_at < ?", (cutoff,)
-        )
+            cutoff = (parse_time(now) - timedelta(seconds=retention)).isoformat(
+                timespec="microseconds"
+            )
+        cursor = self.store.execute("DELETE FROM command_audit WHERE created_at < ?", (cutoff,))
         return int(cursor.rowcount or 0)
 
     def _command_audit_retention_seconds(self, override: Optional[int]) -> int:
@@ -11017,8 +10780,7 @@ class ControlPlane:
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(min(max(1, int(limit)), 1000))
         return [
-            self._evidence_reuse_from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
+            self._evidence_reuse_from_row(row) for row in self.store.query_all(sql, tuple(params))
         ]
 
     def _evidence_reuse_from_row(self, row: Any) -> EvidenceReuseRecord:
@@ -11045,8 +10807,7 @@ class ControlPlane:
         return [
             self._evidence_reuse_from_row(row)
             for row in self.store.query_all(
-                "SELECT * FROM evidence_reuse_records WHERE task_id = ?"
-                " ORDER BY created_at, id",
+                "SELECT * FROM evidence_reuse_records WHERE task_id = ? ORDER BY created_at, id",
                 (task_id,),
             )
         ]
@@ -11093,8 +10854,7 @@ class ControlPlane:
             params.extend([updated_at, updated_at, task_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
-            "ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
+            "SELECT * FROM tasks WHERE %s ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
             tuple(params),
         )
         has_more = len(rows) > limit_value
@@ -11115,9 +10875,9 @@ class ControlPlane:
         }
 
     def _encode_scan_cursor(self, kind: str, position: str, item_id: str) -> str:
-        payload = json_dumps(
-            {"kind": kind, "position": position, "item_id": item_id}
-        ).encode("utf-8")
+        payload = json_dumps({"kind": kind, "position": position, "item_id": item_id}).encode(
+            "utf-8"
+        )
         encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
         return "v1:%s" % encoded
 
@@ -11135,9 +10895,7 @@ class ControlPlane:
         try:
             padding = "=" * (-len(encoded) % 4)
             payload = json_loads(
-                base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode(
-                    "utf-8"
-                ),
+                base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8"),
                 {},
             )
             payload_kind = str(payload["kind"])
@@ -11175,9 +10933,7 @@ class ControlPlane:
             TaskState.COMPLETED.value,
             TaskState.CANCELLED.value,
         }:
-            raise ValidationError(
-                "operator close only supports completed or cancelled"
-            )
+            raise ValidationError("operator close only supports completed or cancelled")
         return self._transition_task_impl(
             task_id,
             target,
@@ -11308,9 +11064,7 @@ class ControlPlane:
             )
         replacement = str(replaced_by or "").strip()
         if replacement and disposition == self.ANSWER_RESUME:
-            raise ValidationError(
-                "replaced_by only applies when the answer closes the task"
-            )
+            raise ValidationError("replaced_by only applies when the answer closes the task")
         if replacement:
             # Fail loudly rather than record a dangling pointer: a superseding
             # id that does not resolve is worse than none.
@@ -11352,17 +11106,13 @@ class ControlPlane:
     def judgement_status(self) -> JsonDict:
         process = getattr(self, "_judgement_process", None)
         if process is None:
-            raise ValidationError(
-                "judgement process is not attached to this control plane"
-            )
+            raise ValidationError("judgement process is not attached to this control plane")
         return process.status()
 
     def judgement_run(self) -> JsonDict:
         process = getattr(self, "_judgement_process", None)
         if process is None:
-            raise ValidationError(
-                "judgement process is not attached to this control plane"
-            )
+            raise ValidationError("judgement process is not attached to this control plane")
         return process.run_once(trigger="operator")
 
     # ------------------------------------------------------------------
@@ -11426,9 +11176,7 @@ class ControlPlane:
         if task.state == TaskState.STOPPED.value:
             return task
         if task.state in TERMINAL_TASK_STATES:
-            raise TransitionError(
-                "cannot stop a %s task; stopping is for live work" % task.state
-            )
+            raise TransitionError("cannot stop a %s task; stopping is for live work" % task.state)
         detail: JsonDict = {
             "reason": str(reason or "").strip() or "operator stopped the task",
             "previous_state": task.state,
@@ -11472,9 +11220,7 @@ class ControlPlane:
 
         task = self.get_task(task_id)
         if task.state != TaskState.STOPPED.value:
-            raise TransitionError(
-                "task is %s, not stopped; nothing to start" % task.state
-            )
+            raise TransitionError("task is %s, not stopped; nothing to start" % task.state)
 
         # Evaluate dependencies at THIS moment. An edit that added a blocker
         # must come back blocked, not claimable.
@@ -11636,9 +11382,7 @@ class ControlPlane:
             try:
                 coerced = int(value)
             except (TypeError, ValueError):
-                raise ValidationError(
-                    "%s must be an integer, got %r" % (name, value)
-                ) from None
+                raise ValidationError("%s must be an integer, got %r" % (name, value)) from None
             return max(1, min(ceiling, coerced))
 
         limit = _bounded("limit", limit, default=500, ceiling=10000)
@@ -11769,9 +11513,7 @@ class ControlPlane:
         detail: Dict[str, Any] = {"via": "operator_reopen"}
         if reason:
             detail["reason"] = reason
-        return self._transition_task_internal(
-            task.id, TaskState.OPEN.value, actor, detail
-        )
+        return self._transition_task_internal(task.id, TaskState.OPEN.value, actor, detail)
 
     def force_complete_task(
         self,
@@ -11933,11 +11675,7 @@ class ControlPlane:
                 and str(integration.get("canonical_ref") or "").strip() == canonical_ref
                 and _GIT_SHA_RE.match(head_sha)
                 and _GIT_SHA_RE.match(proof_sha)
-                and (
-                    head_sha == proof_sha
-                    or proof_carries_reviewed_head
-                    or proof_squash_merged
-                )
+                and (head_sha == proof_sha or proof_carries_reviewed_head or proof_squash_merged)
             ):
                 return
         raise ValidationError(
@@ -12024,26 +11762,20 @@ class ControlPlane:
         # not let a replica-local clock or stale mutable snapshot make the
         # authorization decision. The locked snapshot below is authoritative.
         if not authoritative_allocator_v2:
-            self._agent_available_for(
-                agent, task, allow_cooperative_reuse=allow_cooperative_reuse
-            )
+            self._agent_available_for(agent, task, allow_cooperative_reuse=allow_cooperative_reuse)
         if task.attempt_count >= task.max_attempts:
             target_state, detail = self._exhausted_attempt_terminal_transition(
                 task,
                 {"reason": "max attempts"},
             )
-            self._transition_task_internal(
-                task_id, target_state, "dispatcher", detail
-            )
+            self._transition_task_internal(task_id, target_state, "dispatcher", detail)
             raise TransitionError("task %s exhausted max_attempts" % task_id)
         lease_id = new_id("lease")
         # Distinct cooperative executors are a placement preference in
         # allocator v2, never a lease-denying predicate.  The legacy claim
         # path retains its historical family lock for explicit/manual callers.
         coordination_related_ids = (
-            set()
-            if authoritative_allocator_v2
-            else self._coordination_related_task_ids(task)
+            set() if authoritative_allocator_v2 else self._coordination_related_task_ids(task)
         )
         coordination_lock_task_id: Optional[str] = None
         if coordination_related_ids:
@@ -12062,15 +11794,12 @@ class ControlPlane:
             # both observe one free slot.  Locking the agent row and repeating
             # the count closes that race on both SQLite and PostgreSQL.
             agent_lock = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (agent_id,),
             )
             if agent_lock.rowcount != 1:
                 raise ValidationError("agent %s is unavailable" % agent_id)
-            agent_row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            agent_row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if agent_row is None:
                 raise ValidationError("agent %s is unavailable" % agent_id)
             current_agent = self._agent_from_row(agent_row)
@@ -12084,9 +11813,7 @@ class ControlPlane:
                 """,
                 (agent_id, LeaseStatus.ACTIVE.value, agent_id),
             ).fetchone()
-            active_count = int(
-                active_count_row["count"] if active_count_row is not None else 0
-            )
+            active_count = int(active_count_row["count"] if active_count_row is not None else 0)
             if coordination_lock_task_id:
                 # Serialize family participation across dispatchers.  The
                 # eligibility check above is intentionally repeated while a
@@ -12099,8 +11826,7 @@ class ControlPlane:
                 )
                 if family_lock.rowcount != 1:
                     raise ValidationError(
-                        "cooperative task family lock %s is unavailable"
-                        % coordination_lock_task_id
+                        "cooperative task family lock %s is unavailable" % coordination_lock_task_id
                     )
                 placeholders = ",".join("?" for _ in coordination_related_ids)
                 # Expired leases (crashed attempts) do not count as participation
@@ -12136,16 +11862,11 @@ class ControlPlane:
             )
             if task_lock.rowcount != 1:
                 raise NotFoundError("task not found: %s" % task_id)
-            task_row = conn.execute(
-                "SELECT * FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
+            task_row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if task_row is None:
                 raise NotFoundError("task not found: %s" % task_id)
             current_task = self._task_from_row(task_row)
-            if (
-                current_task.state != TaskState.OPEN.value
-                or current_task.lease_id is not None
-            ):
+            if current_task.state != TaskState.OPEN.value or current_task.lease_id is not None:
                 raise TransitionError("task %s was claimed by another agent" % task_id)
             if not authoritative_allocator_v2:
                 self._assert_current_read_only_report_task_contract(
@@ -12160,17 +11881,12 @@ class ControlPlane:
                 dependency_row = conn.execute(
                     "SELECT state, metadata FROM tasks WHERE id = ?", (dependency_id,)
                 ).fetchone()
-                if (
-                    dependency_row is None
-                    or not self._dependency_state_satisfies_join(
-                        str(dependency_row["state"]),
-                        json_loads(dependency_row["metadata"], {}),
-                        dependency_join,
-                    )
+                if dependency_row is None or not self._dependency_state_satisfies_join(
+                    str(dependency_row["state"]),
+                    json_loads(dependency_row["metadata"], {}),
+                    dependency_join,
                 ):
-                    raise TransitionError(
-                        "task %s dependencies are not complete" % task_id
-                    )
+                    raise TransitionError("task %s dependencies are not complete" % task_id)
             if current_task.attempt_count >= current_task.max_attempts:
                 raise TransitionError("task %s exhausted max_attempts" % task_id)
             project_paused = False
@@ -12181,8 +11897,7 @@ class ControlPlane:
                 # this transaction. Implicit projects have no row and remain
                 # active by design.
                 conn.execute(
-                    "UPDATE projects SET updated_at = updated_at "
-                    "WHERE name = ? OR id = ?",
+                    "UPDATE projects SET updated_at = updated_at WHERE name = ? OR id = ?",
                     (current_task.project, current_task.project),
                 )
                 project_row = conn.execute(
@@ -12192,9 +11907,8 @@ class ControlPlane:
                 if project_row is not None:
                     project_registered = True
                     project_metadata = json_loads(project_row["metadata"], {})
-                    project_paused = (
-                        str(project_row["status"] or "active") != "active"
-                        or bool(project_metadata.get("dispatch_paused"))
+                    project_paused = str(project_row["status"] or "active") != "active" or bool(
+                        project_metadata.get("dispatch_paused")
                     )
             machine_lock = conn.execute(
                 "UPDATE machines SET updated_at = updated_at WHERE id = ?",
@@ -12217,10 +11931,8 @@ class ControlPlane:
                 machine=current_machine,
             )
             if not authoritative_allocator_v2:
-                required_runtime_digest = (
-                    self._task_required_runtime_digest_in_transaction(
-                        conn, current_task
-                    )
+                required_runtime_digest = self._task_required_runtime_digest_in_transaction(
+                    conn, current_task
                 )
             # The task row lock serializes this read with authorization
             # creation. Lock the one ACTIVE record as well so its revoke/claim
@@ -12237,8 +11949,7 @@ class ControlPlane:
             ).fetchone()
             if break_glass_row is not None:
                 conn.execute(
-                    "UPDATE task_break_glass_authorizations SET status = status "
-                    "WHERE id = ?",
+                    "UPDATE task_break_glass_authorizations SET status = status WHERE id = ?",
                     (break_glass_row["id"],),
                 )
                 break_glass_row = conn.execute(
@@ -12251,14 +11962,9 @@ class ControlPlane:
             # waited behind another hub replica.
             now = self._lease_authority_now_in_transaction(conn)
             break_glass: Optional[BreakGlassAuthorization] = None
-            if (
-                break_glass_row is not None
-                and break_glass_row["status"] == "active"
-            ):
+            if break_glass_row is not None and break_glass_row["status"] == "active":
                 if self._timestamp_is_after(break_glass_row["expires_at"], now):
-                    break_glass = self._break_glass_authorization_from_row(
-                        break_glass_row
-                    )
+                    break_glass = self._break_glass_authorization_from_row(break_glass_row)
                 else:
                     conn.execute(
                         "UPDATE task_break_glass_authorizations "
@@ -12272,9 +11978,7 @@ class ControlPlane:
                         % (current_task.id, break_glass.agent_id)
                     )
                 if break_glass.execution_boundary != BREAK_GLASS_EXECUTION_BOUNDARY:
-                    raise AuthorizationError(
-                        "task break-glass execution boundary is invalid"
-                    )
+                    raise AuthorizationError("task break-glass execution boundary is invalid")
                 role_reason = None
             if authoritative_allocator_v2:
                 ineligible_reason = self._claim_snapshot_v2_ineligibility_reason(
@@ -12300,12 +12004,11 @@ class ControlPlane:
                 )
             if ineligible_reason is not None:
                 raise ValidationError(
-                    "agent %s cannot claim task %s: %s"
-                    % (agent_id, task_id, ineligible_reason)
+                    "agent %s cannot claim task %s: %s" % (agent_id, task_id, ineligible_reason)
                 )
-            expires_at = (
-                parse_time(now) + timedelta(seconds=lease_seconds)
-            ).isoformat(timespec="microseconds")
+            expires_at = (parse_time(now) + timedelta(seconds=lease_seconds)).isoformat(
+                timespec="microseconds"
+            )
             # Prepare the lease and, for a linked work-package task, its exact
             # immutable assignment/WIP authority before changing the ordinary
             # task row.  The database claim guard can therefore fail closed for
@@ -12414,7 +12117,6 @@ class ControlPlane:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
         return claimed_task, self.get_lease(lease_id)
 
-
     def list_task_transition_outbox(
         self,
         *,
@@ -12432,9 +12134,7 @@ class ControlPlane:
         task_id: Optional[str] = None,
         limit: int = 100,
     ) -> JsonDict:
-        return self.task_transitions.drain_task_transition_outbox(
-            task_id=task_id, limit=limit
-        )
+        return self.task_transitions.drain_task_transition_outbox(task_id=task_id, limit=limit)
 
     def drain_task_transition_outbox_best_effort(
         self,
@@ -12512,7 +12212,6 @@ class ControlPlane:
         self._nudge_review_workflow(task_id)
         return reviewed
 
-
     def _require_review_ready(self, task: Task) -> Evidence:
         evidence, assessment = self._default_review_evidence(task)
         if evidence is None:
@@ -12523,8 +12222,7 @@ class ControlPlane:
             if not problems:
                 problems = [str(assessment.get("reason") or "no verifiable evidence")]
             raise ValidationError(
-                "task needs verifiable evidence before review: %s"
-                % "; ".join(problems[:8])
+                "task needs verifiable evidence before review: %s" % "; ".join(problems[:8])
             )
         return evidence
 
@@ -12566,9 +12264,7 @@ class ControlPlane:
             fenced_lease_id = str(task.lease_id or "")
         elif task.state == TaskState.REVIEWING.value:
             fenced_review_status = (
-                ReviewStatus.APPROVED.value
-                if kind == "publication"
-                else ReviewStatus.PENDING.value
+                ReviewStatus.APPROVED.value if kind == "publication" else ReviewStatus.PENDING.value
             )
             review_rows = self.store.query_all(
                 "SELECT id FROM reviews WHERE task_id = ? "
@@ -12582,24 +12278,18 @@ class ControlPlane:
                 )
             if fenced_review_status == ReviewStatus.PENDING.value:
                 evidence_metadata = ensure_json_object(metadata)
-                verification = ensure_json_object(
-                    evidence_metadata.get("verification")
-                )
+                verification = ensure_json_object(evidence_metadata.get("verification"))
                 is_review_verdict = (
-                    str(verification.get("evidence_type") or "").strip().lower()
-                    == "review_verdict"
+                    str(verification.get("evidence_type") or "").strip().lower() == "review_verdict"
                 )
                 review_id = str(review_rows[0]["id"])
                 try:
-                    protocol_returncode: Optional[int] = int(
-                        evidence_metadata.get("returncode")
-                    )
+                    protocol_returncode: Optional[int] = int(evidence_metadata.get("returncode"))
                 except (TypeError, ValueError):
                     protocol_returncode = None
                 is_protocol_failure = (
                     kind == "review"
-                    and str(evidence_metadata.get("review_id") or "").strip()
-                    == review_id
+                    and str(evidence_metadata.get("review_id") or "").strip() == review_id
                     and protocol_returncode is not None
                     and protocol_returncode != 0
                 )
@@ -12609,9 +12299,9 @@ class ControlPlane:
                         "or a fenced nonzero review attempt"
                     )
                 current_target = str(
-                    ensure_json_object(
-                        ensure_json_object(task.metadata).get("review_target")
-                    ).get("executor_evidence_id")
+                    ensure_json_object(ensure_json_object(task.metadata).get("review_target")).get(
+                        "executor_evidence_id"
+                    )
                     or ""
                 ).strip()
                 reviewed_target = str(
@@ -12689,9 +12379,7 @@ class ControlPlane:
                     raise AuthorizationError(
                         "review assignment changed before evidence was recorded"
                     )
-                current_metadata = ensure_json_object(
-                    json_loads(current_task_row["metadata"], {})
-                )
+                current_metadata = ensure_json_object(json_loads(current_task_row["metadata"], {}))
                 if fenced_review_status == ReviewStatus.PENDING.value:
                     current_target = str(
                         ensure_json_object(current_metadata.get("review_target")).get(
@@ -12699,9 +12387,7 @@ class ControlPlane:
                         )
                         or ""
                     ).strip()
-                    verification = ensure_json_object(
-                        metadata_obj.get("verification")
-                    )
+                    verification = ensure_json_object(metadata_obj.get("verification"))
                     reviewed_target = str(
                         verification.get("reviewed_evidence_id")
                         or metadata_obj.get("executor_evidence_id")
@@ -12818,14 +12504,10 @@ class ControlPlane:
             except Exception as exc:  # noqa: BLE001
                 raise ValidationError("evidence artifact %d has invalid base64: %s" % (index, exc))
             if len(content) > max_bytes:
-                raise ValidationError(
-                    "evidence artifact %d exceeds %d bytes"
-                    % (index, max_bytes)
-                )
+                raise ValidationError("evidence artifact %d exceeds %d bytes" % (index, max_bytes))
             if total_bytes + len(content) > total_max_bytes:
                 raise ValidationError(
-                    "evidence artifacts exceed aggregate limit of %d bytes"
-                    % total_max_bytes
+                    "evidence artifacts exceed aggregate limit of %d bytes" % total_max_bytes
                 )
             total_bytes += len(content)
             declared_size = item.get("size_bytes")
@@ -12863,7 +12545,9 @@ class ControlPlane:
                     task_id=task_id,
                     name=self._normalize_evidence_artifact_name(item.get("name"), index),
                     artifact_type=(
-                        str(item.get("artifact_type") or item.get("kind") or "artifact").strip()[:64]
+                        str(item.get("artifact_type") or item.get("kind") or "artifact").strip()[
+                            :64
+                        ]
                         or "artifact"
                     ),
                     source_uri=str(item.get("source_uri") or item.get("uri") or "").strip()[:2048],
@@ -12966,7 +12650,9 @@ class ControlPlane:
         metadata = evidence.metadata if isinstance(evidence.metadata, dict) else {}
         verification = metadata.get("verification")
         delta = None
-        if isinstance(verification, dict) and isinstance(verification.get("environment_delta"), dict):
+        if isinstance(verification, dict) and isinstance(
+            verification.get("environment_delta"), dict
+        ):
             delta = verification.get("environment_delta")
         elif isinstance(metadata.get("environment_delta"), dict):
             delta = metadata.get("environment_delta")
@@ -12991,11 +12677,17 @@ class ControlPlane:
                 str(delta.get("reason") or "worker proposed task-local dependency delta"),
                 project=str(delta.get("project") or task.project or "").strip() or None,
                 base_runtime_id=(
-                    str(delta.get("base_runtime_id") or runtime_meta.get("runtime_environment_id") or "").strip()
+                    str(
+                        delta.get("base_runtime_id")
+                        or runtime_meta.get("runtime_environment_id")
+                        or ""
+                    ).strip()
                     or None
                 ),
                 base_runtime_digest=(
-                    str(delta.get("base_runtime_digest") or runtime_meta.get("runtime_digest") or "").strip()
+                    str(
+                        delta.get("base_runtime_digest") or runtime_meta.get("runtime_digest") or ""
+                    ).strip()
                     or None
                 ),
                 lockfile_path=str(delta.get("lockfile_path") or "").strip() or None,
@@ -13052,9 +12744,7 @@ class ControlPlane:
         if evidence_type != "operator_result":
             return
         contract = (
-            task.metadata.get("execution_contract")
-            if isinstance(task.metadata, dict)
-            else None
+            task.metadata.get("execution_contract") if isinstance(task.metadata, dict) else None
         )
         if not isinstance(contract, dict):
             return
@@ -13068,10 +12758,8 @@ class ControlPlane:
             "operator_result evidence cannot be recorded for a repo-coupled "
             "task (execution_contract.type=repository or "
             "repository_required=true); use repo_change / test / documentation "
-            "/ artifact / no_change / review_verdict instead. Task: %s"
-            % task.id
+            "/ artifact / no_change / review_verdict instead. Task: %s" % task.id
         )
-
 
     def get_evidence(self, evidence_id: str) -> Evidence:
         row = self.store.query_one("SELECT * FROM evidence WHERE id = ?", (evidence_id,))
@@ -13118,9 +12806,7 @@ class ControlPlane:
             )
             if lease_lock.rowcount != 1:
                 raise NotFoundError("lease not found: %s" % lease_id)
-            lease_row = conn.execute(
-                "SELECT * FROM leases WHERE id = ?", (lease_id,)
-            ).fetchone()
+            lease_row = conn.execute("SELECT * FROM leases WHERE id = ?", (lease_id,)).fetchone()
             if lease_row is None:
                 raise NotFoundError("lease not found: %s" % lease_id)
             if lease_row["agent_id"] != agent_id:
@@ -13141,8 +12827,7 @@ class ControlPlane:
             if agent_lock.rowcount != 1:
                 raise ValidationError("lease owner no longer exists")
             task_row = conn.execute(
-                "SELECT state, lease_id, owner_agent_id, leased_until "
-                "FROM tasks WHERE id = ?",
+                "SELECT state, lease_id, owner_agent_id, leased_until FROM tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
             now = self._lease_authority_now_in_transaction(conn)
@@ -13152,15 +12837,14 @@ class ControlPlane:
                 task_row is None
                 or task_row["lease_id"] != lease_id
                 or task_row["owner_agent_id"] != agent_id
-                or task_row["state"]
-                not in {TaskState.CLAIMED.value, TaskState.RUNNING.value}
+                or task_row["state"] not in {TaskState.CLAIMED.value, TaskState.RUNNING.value}
                 or not task_row["leased_until"]
                 or not self._timestamp_is_after(task_row["leased_until"], now)
             ):
                 raise ValidationError("lease is no longer attached to an active task")
-            expires_at = (
-                parse_time(now) + timedelta(seconds=lease_seconds)
-            ).isoformat(timespec="microseconds")
+            expires_at = (parse_time(now) + timedelta(seconds=lease_seconds)).isoformat(
+                timespec="microseconds"
+            )
             lease_cursor = conn.execute(
                 """
                 UPDATE leases
@@ -13206,7 +12890,9 @@ class ControlPlane:
                 """,
                 (AgentStatus.BUSY.value, task_id, now, now, agent_id),
             )
-        self._record_history(task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id})
+        self._record_history(
+            task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id}
+        )
         heartbeat_agent = self.get_agent(agent_id)
         self._maybe_advance_reviews_on_heartbeat(heartbeat_agent)
         self._maybe_drain_notifications_on_heartbeat(heartbeat_agent)
@@ -13220,9 +12906,7 @@ class ControlPlane:
             raise ValidationError("lease_seconds must be an integer") from None
         maximum = max(1, _int_env("MAC_MAX_TASK_LEASE_SECONDS", 3600))
         if seconds <= 0 or seconds > maximum:
-            raise ValidationError(
-                "lease_seconds must be between 1 and %d" % maximum
-            )
+            raise ValidationError("lease_seconds must be between 1 and %d" % maximum)
         return seconds
 
     @staticmethod
@@ -13259,9 +12943,7 @@ class ControlPlane:
         if self._lease_clock is not None:
             raw = self._lease_clock()
         elif type(self.store).__module__ == "mac.store_postgres":
-            row = conn.execute(
-                "SELECT clock_timestamp() AS authoritative_now"
-            ).fetchone()
+            row = conn.execute("SELECT clock_timestamp() AS authoritative_now").fetchone()
             if row is None:
                 raise ValidationError("database lease clock is unavailable")
             raw = row["authoritative_now"]
@@ -13300,8 +12982,7 @@ class ControlPlane:
         self.get_agent(to_agent_id)
         with self.store.transaction() as conn:
             target_lock = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (to_agent_id,),
             )
             if target_lock.rowcount != 1:
@@ -13354,8 +13035,7 @@ class ControlPlane:
         except NotFoundError:
             return False
         return lease.agent_id == agent_id or (
-            bool(lease.delegated_agent_id)
-            and lease.delegated_agent_id == agent_id
+            bool(lease.delegated_agent_id) and lease.delegated_agent_id == agent_id
         )
 
     def _lease_actor_allowed(
@@ -13407,9 +13087,7 @@ class ControlPlane:
         """Require an exact current-attempt fence for a public transition."""
         supplied_lease_id = str(lease_id or "").strip()
         if not supplied_lease_id:
-            raise AuthorizationError(
-                "current lease_id is required for active task transitions"
-            )
+            raise AuthorizationError("current lease_id is required for active task transitions")
         if not self._lease_actor_allowed(task, agent_id, supplied_lease_id):
             raise AuthorizationError("agent does not own the current task lease")
 
@@ -13482,10 +13160,7 @@ class ControlPlane:
         now = self._lease_authority_now_in_transaction(conn)
         if not self._timestamp_is_after(row["lease_expires_at"], now):
             raise AuthorizationError("task lease has expired")
-        if (
-            row["lease_agent_id"] != agent_id
-            and row["delegated_agent_id"] != agent_id
-        ):
+        if row["lease_agent_id"] != agent_id and row["delegated_agent_id"] != agent_id:
             raise AuthorizationError("agent does not own the current task lease")
 
     def expire_leases(
@@ -13529,10 +13204,7 @@ class ControlPlane:
         # per-row transaction below re-reads against the authority clock. Also
         # resume a prior crash that durably fenced a lease EXPIRED but did not
         # yet detach its task.
-        clauses = [
-            "((l.status = ? AND l.expires_at <= ?) "
-            "OR (l.status = ? AND t.lease_id = l.id))"
-        ]
+        clauses = ["((l.status = ? AND l.expires_at <= ?) OR (l.status = ? AND t.lease_id = l.id))"]
         params: List[Any] = [
             LeaseStatus.ACTIVE.value,
             cutoff,
@@ -13541,16 +13213,13 @@ class ControlPlane:
         decoded = self._decode_scan_cursor(cursor, "expired-leases")
         if decoded is not None:
             expires_at, lease_id = decoded
-            clauses.append(
-                "(l.expires_at > ? OR (l.expires_at = ? AND l.id > ?))"
-            )
+            clauses.append("(l.expires_at > ? OR (l.expires_at = ? AND l.id > ?))")
             params.extend([expires_at, expires_at, lease_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
             "SELECT l.* FROM leases AS l "
             "LEFT JOIN tasks AS t ON t.lease_id = l.id "
-            "WHERE %s ORDER BY l.expires_at, l.id LIMIT ?"
-            % " AND ".join(clauses),
+            "WHERE %s ORDER BY l.expires_at, l.id LIMIT ?" % " AND ".join(clauses),
             tuple(params),
         )
         has_more = len(rows) > limit_value
@@ -13632,8 +13301,7 @@ class ControlPlane:
                 authority_now = self._lease_authority_now_in_transaction(conn)
                 if not force_expire:
                     cutoff = (
-                        parse_time(authority_now)
-                        - timedelta(seconds=max(0, int(grace_seconds)))
+                        parse_time(authority_now) - timedelta(seconds=max(0, int(grace_seconds)))
                     ).isoformat(timespec="microseconds")
                     if self._timestamp_is_after(lease_row["expires_at"], cutoff):
                         return None
@@ -13673,26 +13341,17 @@ class ControlPlane:
             (lease.id,),
         )
         raw_decision = (
-            decision_row["expiry_finalization_decision"]
-            if decision_row is not None
-            else None
+            decision_row["expiry_finalization_decision"] if decision_row is not None else None
         )
         decision = ensure_json_object(
-            raw_decision
-            if isinstance(raw_decision, Mapping)
-            else json_loads(raw_decision, {})
+            raw_decision if isinstance(raw_decision, Mapping) else json_loads(raw_decision, {})
         )
         if decision.get("schema") == "mac.lease_expiry_decision.v1":
-            if decision_override is not None and decision != ensure_json_object(
-                decision_override
-            ):
+            if decision_override is not None and decision != ensure_json_object(decision_override):
                 raise ValidationError(
                     "stored lease expiry decision conflicts with the requested decision"
                 )
-            if (
-                decision.get("lease_id") != lease.id
-                or decision.get("task_id") != task.id
-            ):
+            if decision.get("lease_id") != lease.id or decision.get("task_id") != task.id:
                 raise ValidationError(
                     "stored lease expiry decision belongs to a different assignment"
                 )
@@ -13708,27 +13367,20 @@ class ControlPlane:
             }:
                 raise ValidationError("stored lease expiry decision is invalid")
             if reset_attempt_count and target_state != TaskState.WAITING.value:
-                raise ValidationError(
-                    "stored lease expiry decision has an invalid attempt reset"
-                )
+                raise ValidationError("stored lease expiry decision has an invalid attempt reset")
             if attempt_count_after is not None and (
                 isinstance(attempt_count_after, bool)
                 or not isinstance(attempt_count_after, int)
                 or attempt_count_after < 0
                 or attempt_count_after > task.attempt_count
             ):
-                raise ValidationError(
-                    "stored lease expiry decision has an invalid attempt count"
-                )
+                raise ValidationError("stored lease expiry decision has an invalid attempt count")
         else:
             override = ensure_json_object(decision_override)
             if override:
                 if override.get("schema") != "mac.lease_expiry_decision.v1":
                     raise ValidationError("lease expiry decision override is invalid")
-                if (
-                    override.get("lease_id") != lease.id
-                    or override.get("task_id") != task.id
-                ):
+                if override.get("lease_id") != lease.id or override.get("task_id") != task.id:
                     raise ValidationError(
                         "lease expiry decision override belongs to another assignment"
                     )
@@ -13759,13 +13411,13 @@ class ControlPlane:
                 decision = dict(override)
             else:
                 is_exhausted = task.attempt_count >= task.max_attempts
-        # When the lease expires and the task has exhausted its retry budget,
-        # call _exhausted_attempt_terminal_transition before the guarded
-        # transaction.  This stamps failure_class on the task metadata,
-        # creates an environment/contract repair task when appropriate, and
-        # returns the real target state (FAILED, WAITING, or CANCELLED).
-        # The call must precede the transaction because FAILED→WAITING is not
-        # a valid post-hoc state transition.
+                # When the lease expires and the task has exhausted its retry budget,
+                # call _exhausted_attempt_terminal_transition before the guarded
+                # transaction.  This stamps failure_class on the task metadata,
+                # creates an environment/contract repair task when appropriate, and
+                # returns the real target state (FAILED, WAITING, or CANCELLED).
+                # The call must precede the transaction because FAILED→WAITING is not
+                # a valid post-hoc state transition.
                 if is_exhausted:
                     target_state, exhausted_detail = self._exhausted_attempt_terminal_transition(
                         task,
@@ -13776,9 +13428,7 @@ class ControlPlane:
                         },
                     )
                     transition_history_detail = exhausted_detail
-                    reset_attempt_count = bool(
-                        transition_history_detail.get("reset_attempt_count")
-                    )
+                    reset_attempt_count = bool(transition_history_detail.get("reset_attempt_count"))
                 else:
                     target_state = TaskState.OPEN.value
                     transition_history_detail = {
@@ -13821,9 +13471,7 @@ class ControlPlane:
                         (lease.id,),
                     ).fetchone()
                     raw_existing = (
-                        current["expiry_finalization_decision"]
-                        if current is not None
-                        else None
+                        current["expiry_finalization_decision"] if current is not None else None
                     )
                     existing = ensure_json_object(
                         raw_existing
@@ -13852,12 +13500,8 @@ class ControlPlane:
                 or finalizer_row["expiry_finalized_at"] is not None
                 or ensure_json_object(
                     finalizer_row["expiry_finalization_decision"]
-                    if isinstance(
-                        finalizer_row["expiry_finalization_decision"], Mapping
-                    )
-                    else json_loads(
-                        finalizer_row["expiry_finalization_decision"], {}
-                    )
+                    if isinstance(finalizer_row["expiry_finalization_decision"], Mapping)
+                    else json_loads(finalizer_row["expiry_finalization_decision"], {})
                 )
                 != decision
             ):
@@ -13971,7 +13615,6 @@ class ControlPlane:
             )
         self.drain_task_transition_outbox(task_id=task.id, limit=20)
         return recovered
-
 
     def _claim_lease_expiry_finalization(self, lease_id: str) -> Optional[str]:
         """Claim the side-effecting half of lease expiry exactly once at a time.
@@ -14151,7 +13794,8 @@ class ControlPlane:
               AND created_at >= ?
             ORDER BY created_at
             LIMIT 1
-            """ % placeholders,
+            """
+            % placeholders,
             tuple([lease.task_id, *actor_ids, lease.created_at]),
         )
         if evidence is not None:
@@ -14389,7 +14033,10 @@ class ControlPlane:
         return self._machine_from_row(row)
 
     def list_machines(self) -> List[Machine]:
-        return [self._machine_from_row(row) for row in self.store.query_all("SELECT * FROM machines ORDER BY hostname")]
+        return [
+            self._machine_from_row(row)
+            for row in self.store.query_all("SELECT * FROM machines ORDER BY hostname")
+        ]
 
     # Fleets are user-facing collections of agents. They intentionally do not
     # own machines or tasks; those remain independent first-class objects.
@@ -14705,7 +14352,9 @@ class ControlPlane:
             self.get_agent(agent_id)
         return normalized
 
-    def _replace_fleet_members(self, conn: Any, fleet_id: str, agent_ids: List[str], now: str) -> None:
+    def _replace_fleet_members(
+        self, conn: Any, fleet_id: str, agent_ids: List[str], now: str
+    ) -> None:
         conn.execute("DELETE FROM fleet_agents WHERE fleet_id = ?", (fleet_id,))
         # Use execute() per row, not executemany(): executemany is not part of
         # the StoreConnection protocol — the Postgres _Transaction has no such
@@ -14785,8 +14434,7 @@ class ControlPlane:
         )
         if resolved_visibility not in self.AGENT_VISIBILITIES:
             raise ValidationError(
-                "agent visibility must be 'private' or 'shared', got %r"
-                % resolved_visibility
+                "agent visibility must be 'private' or 'shared', got %r" % resolved_visibility
             )
         if resolved_visibility == "private" and not resolved_owner:
             raise ValidationError(
@@ -14808,8 +14456,7 @@ class ControlPlane:
         now = utcnow()
         aid = agent_id or new_id("agent")
         existing_agent_row = self.store.query_one(
-            "SELECT id, status, health_status, instance_kind, deleted_at "
-            "FROM agents WHERE id = ?",
+            "SELECT id, status, health_status, instance_kind, deleted_at FROM agents WHERE id = ?",
             (aid,),
         )
         if capabilities is None:
@@ -14845,24 +14492,18 @@ class ControlPlane:
         try:
             AgentInstanceKind(instance_kind_value)
         except ValueError:
-            raise ValidationError(
-                "unsupported agent instance_kind: %s" % instance_kind_value
-            )
+            raise ValidationError("unsupported agent instance_kind: %s" % instance_kind_value)
         resource_value = self._agent_resources_with_preserved_control_plane_fields(aid, resources)
         resources_json = json_dumps(resource_value)
         registration_status = AgentStatus.IDLE.value
         registration_health = HealthStatus.HEALTHY.value
         requested_status = _state_value(status) if status is not None else None
-        requested_health = (
-            _state_value(health_status) if health_status is not None else None
-        )
+        requested_health = _state_value(health_status) if health_status is not None else None
         if requested_status is not None:
             try:
                 AgentStatus(requested_status)
             except ValueError:
-                raise ValidationError(
-                    "unsupported registration status: %s" % requested_status
-                )
+                raise ValidationError("unsupported registration status: %s" % requested_status)
             if requested_status != AgentStatus.DRAINING.value:
                 raise ValidationError(
                     "agent registration may only request the draining barrier state"
@@ -14875,9 +14516,7 @@ class ControlPlane:
                     "unsupported registration health_status: %s" % requested_health
                 )
             if requested_status != AgentStatus.DRAINING.value:
-                raise ValidationError(
-                    "registration health_status requires a draining barrier"
-                )
+                raise ValidationError("registration health_status requires a draining barrier")
         if requested_status == AgentStatus.DRAINING.value:
             registration_status = requested_status
             registration_health = requested_health or HealthStatus.DEGRADED.value
@@ -14894,11 +14533,14 @@ class ControlPlane:
             registration_health = str(
                 existing_agent_row["health_status"] or HealthStatus.DEGRADED.value
             )
-        health_value = self._project_agent_health_for_resources(
-            registration_health,
-            registration_health,
-            resource_value,
-        ) or registration_health
+        health_value = (
+            self._project_agent_health_for_resources(
+                registration_health,
+                registration_health,
+                resource_value,
+            )
+            or registration_health
+        )
         # Preserve hermes_instance_id across re-registrations when the caller
         # didn't pass one, so an ops re-register doesn't accidentally orphan
         # the agent from its soul.
@@ -14938,11 +14580,14 @@ class ControlPlane:
                 aid, resources, conn=conn
             )
             resources_json = json_dumps(resource_value)
-            health_value = self._project_agent_health_for_resources(
-                registration_health,
-                registration_health,
-                resource_value,
-            ) or registration_health
+            health_value = (
+                self._project_agent_health_for_resources(
+                    registration_health,
+                    registration_health,
+                    resource_value,
+                )
+                or registration_health
+            )
             registration_write = conn.execute(
                 """
                 INSERT INTO agents (
@@ -15005,9 +14650,7 @@ class ControlPlane:
                 ),
             )
             if registration_write.rowcount != 1:
-                raise AuthorizationError(
-                    "agent resurrection requires administrative authority"
-                )
+                raise AuthorizationError("agent resurrection requires administrative authority")
             self._record_agent_lifecycle_event(
                 conn,
                 aid,
@@ -15019,16 +14662,16 @@ class ControlPlane:
                     "machine_id": machine_id,
                     "instance_kind": instance_kind_value,
                     "capabilities": json_loads(capabilities_json, []),
-                    "resource_keys": sorted(ensure_json_object(json_loads(resources_json, {})).keys()),
+                    "resource_keys": sorted(
+                        ensure_json_object(json_loads(resources_json, {})).keys()
+                    ),
                     "status": registration_status,
                     "health_status": health_value,
                     "hermes_instance_id": hermes_instance_id,
                 },
                 now,
             )
-            self._mirror_agent_reported_hardware_to_machine(
-                conn, machine_id, resource_value, now
-            )
+            self._mirror_agent_reported_hardware_to_machine(conn, machine_id, resource_value, now)
         agent = self.get_agent(aid)
         self._ensure_agent_nap_schedule(agent.id, actor=actor)
         agent = self.get_agent(aid)
@@ -15184,15 +14827,12 @@ class ControlPlane:
         # against the key that was active at signing time (mac-s2vz followup).
         with self.store.transaction() as conn:
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (agent_id,),
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
-                conn, agent_id
-            )
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             conn.execute(
                 """
                 UPDATE agents
@@ -15204,9 +14844,7 @@ class ControlPlane:
                 WHERE id = ?
                 """,
                 (
-                    self._attestation_history_after_rotation(
-                        agent_id, rotated_at=now, conn=conn
-                    ),
+                    self._attestation_history_after_rotation(agent_id, rotated_at=now, conn=conn),
                     self.secrets._encrypt(key),
                     now,
                     now,
@@ -15287,9 +14925,7 @@ class ControlPlane:
             raise ValidationError("attestation-key recovery challenge is invalid")
         return state, deployment_id, challenge, signature
 
-    def recover_agent_attestation_key(
-        self, agent_id: str, probe: Mapping[str, Any]
-    ) -> str:
+    def recover_agent_attestation_key(self, agent_id: str, probe: Mapping[str, Any]) -> str:
         """Rotate only when the deployment-owned probe is missing or stale.
 
         This is the deployment recovery primitive.  Unlike the historical
@@ -15298,21 +14934,18 @@ class ControlPlane:
         the key rotation.  A valid installed key fails closed without change.
         """
 
-        state, deployment_id, challenge, signature = (
-            self._validated_deployment_attestation_probe(agent_id, probe)
+        state, deployment_id, challenge, signature = self._validated_deployment_attestation_probe(
+            agent_id, probe
         )
         now = utcnow()
         with self.store.transaction() as conn:
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (agent_id,),
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
-                conn, agent_id
-            )
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             row = conn.execute(
                 "SELECT attestation_key_ciphertext FROM agents WHERE id = ?",
                 (agent_id,),
@@ -15320,21 +14953,15 @@ class ControlPlane:
             current_key: Optional[str] = None
             if row is not None and row["attestation_key_ciphertext"]:
                 try:
-                    current_key = self.secrets._decrypt(
-                        row["attestation_key_ciphertext"]
-                    )
+                    current_key = self.secrets._decrypt(row["attestation_key_ciphertext"])
                 except Exception:  # noqa: BLE001 - corrupt authority is stale.
                     current_key = None
             if (
                 state == "present"
                 and current_key is not None
-                and verify_verification_manifest_signature(
-                    current_key, challenge, signature
-                )
+                and verify_verification_manifest_signature(current_key, challenge, signature)
             ):
-                raise ValidationError(
-                    "attestation key is already valid; recovery rotation refused"
-                )
+                raise ValidationError("attestation key is already valid; recovery rotation refused")
             key = _generate_attestation_key()
             conn.execute(
                 """
@@ -15347,9 +14974,7 @@ class ControlPlane:
                 WHERE id = ?
                 """,
                 (
-                    self._attestation_history_after_rotation(
-                        agent_id, rotated_at=now, conn=conn
-                    ),
+                    self._attestation_history_after_rotation(agent_id, rotated_at=now, conn=conn),
                     self.secrets._encrypt(key),
                     now,
                     now,
@@ -15389,21 +15014,14 @@ class ControlPlane:
             and isinstance(checks, Mapping)
             and checks.get("openshell_executor_config") is True
             and checks.get("report_repository_executor_attestation") is True
-            and startup.get("report_repository_executor_attestation")
-            == expected_attestation
+            and startup.get("report_repository_executor_attestation") == expected_attestation
         )
 
     @classmethod
-    def _report_executor_release_ready(
-        cls, agent_id: str, resources: Mapping[str, Any]
-    ) -> bool:
+    def _report_executor_release_ready(cls, agent_id: str, resources: Mapping[str, Any]) -> bool:
         attestation = resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
         startup = resources.get("startup_self_test")
-        timestamp = (
-            str(startup.get("timestamp") or "")
-            if isinstance(startup, Mapping)
-            else ""
-        )
+        timestamp = str(startup.get("timestamp") or "") if isinstance(startup, Mapping) else ""
         return bool(
             agent_has_read_only_report_repository_executor(resources)
             and valid_read_only_report_repository_executor_attestation(attestation)
@@ -15429,9 +15047,7 @@ class ControlPlane:
         later heartbeat reports different artifacts.
         """
 
-        if not valid_read_only_report_repository_executor_attestation(
-            expected_attestation
-        ):
+        if not valid_read_only_report_repository_executor_attestation(expected_attestation):
             raise ValidationError("report executor attestation is malformed")
         timestamp = str(expected_startup_timestamp or "").strip()
         if not timestamp:
@@ -15439,22 +15055,15 @@ class ControlPlane:
         now = utcnow()
         with self.store.transaction() as conn:
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (agent_id,),
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
-                conn, agent_id
-            )
-            row = conn.execute(
-                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
+            row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             resources = ensure_json_object(json_loads(row["resources"], {}))
-            current_attestation = resources.get(
-                REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY
-            )
+            current_attestation = resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
             if current_attestation != expected_attestation:
                 raise ValidationError(
                     "report executor attestation changed before controller approval"
@@ -15475,32 +15084,22 @@ class ControlPlane:
                 runtime_image_ref=str(expected_attestation["runtime_image_ref"]),
                 policy_sha256=str(expected_attestation["policy_sha256"]),
                 openshell_bin_path=str(expected_attestation["openshell_bin_path"]),
-                openshell_bin_sha256=str(
-                    expected_attestation["openshell_bin_sha256"]
-                ),
+                openshell_bin_sha256=str(expected_attestation["openshell_bin_sha256"]),
                 executor_path=str(expected_attestation["executor_path"]),
                 executor_sha256=str(expected_attestation["executor_sha256"]),
                 platform=str(expected_attestation["platform"]),
                 isolation_posture=str(expected_attestation["isolation_posture"]),
                 python_path=str(expected_attestation["python_path"]),
                 python_sha256=str(expected_attestation["python_sha256"]),
-                executor_script_path=str(
-                    expected_attestation["executor_script_path"]
-                ),
-                executor_script_sha256=str(
-                    expected_attestation["executor_script_sha256"]
-                ),
+                executor_script_path=str(expected_attestation["executor_script_path"]),
+                executor_script_sha256=str(expected_attestation["executor_script_sha256"]),
                 source_root=str(expected_attestation["source_root"]),
-                source_bundle_sha256=str(
-                    expected_attestation["source_bundle_sha256"]
-                ),
+                source_bundle_sha256=str(expected_attestation["source_bundle_sha256"]),
             )
             resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
             resources = self._project_report_repository_executor_marker(resources)
             if not agent_has_read_only_report_repository_executor(resources):
-                raise ValidationError(
-                    "report executor controller marker was not derived"
-                )
+                raise ValidationError("report executor controller marker was not derived")
             conn.execute(
                 "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
                 (json_dumps(resources), now, agent_id),
@@ -15515,9 +15114,7 @@ class ControlPlane:
                     "startup_timestamp": timestamp,
                     "runtime_image_ref": expected_attestation["runtime_image_ref"],
                     "policy_sha256": expected_attestation["policy_sha256"],
-                    "source_bundle_sha256": expected_attestation[
-                        "source_bundle_sha256"
-                    ],
+                    "source_bundle_sha256": expected_attestation["source_bundle_sha256"],
                 },
                 now,
             )
@@ -15536,18 +15133,13 @@ class ControlPlane:
         now = utcnow()
         with self.store.transaction() as conn:
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (agent_id,),
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
-                conn, agent_id
-            )
-            row = conn.execute(
-                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
+            row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             resources = ensure_json_object(json_loads(row["resources"], {}))
             resources.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
             resources.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
@@ -15611,13 +15203,9 @@ class ControlPlane:
         except CuriosityCommandError as exc:
             raise ValidationError(str(exc)) from exc
 
-    def list_curiosity_candidates(
-        self, status: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def list_curiosity_candidates(self, status: Optional[str] = None) -> Dict[str, Any]:
         """Quarantined/approved/rejected curiosity candidates for this host."""
-        return self._curiosity_call(
-            lambda: self._curiosity().list_candidates(status)
-        )
+        return self._curiosity_call(lambda: self._curiosity().list_candidates(status))
 
     def decide_curiosity_candidate(
         self,
@@ -15695,15 +15283,11 @@ class ControlPlane:
                 changed_fields.append("capabilities")
         if resources is not None:
             requested_resource_value = ensure_json_object(resources)
-            approval = requested_resource_value.get(
-                REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY
-            )
+            approval = requested_resource_value.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
             if approval is not None and not (
                 valid_read_only_report_repository_executor_approval(approval)
             ):
-                raise ValidationError(
-                    "report_repository_executor_approval is malformed"
-                )
+                raise ValidationError("report_repository_executor_approval is malformed")
             # Final approval preservation/revocation and marker projection are
             # repeated under the agent row lock below. This preliminary value
             # exists only for changed-field reporting.
@@ -15760,9 +15344,7 @@ class ControlPlane:
             try:
                 AgentInstanceKind(instance_kind_value)
             except ValueError:
-                raise ValidationError(
-                    "unsupported agent instance_kind: %s" % instance_kind_value
-                )
+                raise ValidationError("unsupported agent instance_kind: %s" % instance_kind_value)
             updates.append("instance_kind = ?")
             params.append(instance_kind_value)
             next_instance_kind = instance_kind_value
@@ -15798,8 +15380,7 @@ class ControlPlane:
             # nobody and its work would sit undispatched with no explanation.
             if visibility_value == "private" and not next_owner:
                 raise ValidationError(
-                    "an agent cannot be private without an owner; "
-                    "pass --owner as well"
+                    "an agent cannot be private without an owner; pass --owner as well"
                 )
             updates.append("visibility = ?")
             params.append(visibility_value)
@@ -15904,9 +15485,7 @@ class ControlPlane:
         )
 
     @staticmethod
-    def _withdraw_service_claims_for_dispatch_hold(
-        conn: Any, agent_id: str, now: str
-    ) -> None:
+    def _withdraw_service_claims_for_dispatch_hold(conn: Any, agent_id: str, now: str) -> None:
         """Make the dispatch hold and service-routing fence one transaction."""
 
         conn.execute(
@@ -16002,9 +15581,7 @@ class ControlPlane:
                     """,
                     (reason, now, now, agent_id),
                 )
-            row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if row is None:
                 raise NotFoundError("agent not found: %s" % agent_id)
             agent = self._agent_from_row(row)
@@ -16013,9 +15590,7 @@ class ControlPlane:
             # service ownership.  The agent row was updated/read first, so this
             # shares the service sync lock order and closes the arm-phase race.
             if agent.dispatch_hold:
-                self._withdraw_service_claims_for_dispatch_hold(
-                    conn, agent_id, now
-                )
+                self._withdraw_service_claims_for_dispatch_hold(conn, agent_id, now)
         return changed.rowcount == 1, agent
 
     def release_agent_dispatch_hold(
@@ -16045,9 +15620,7 @@ class ControlPlane:
                 """,
                 (now, agent_id, reason),
             )
-            row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if row is None:
                 raise NotFoundError("agent not found: %s" % agent_id)
             agent = self._agent_from_row(row)
@@ -16055,9 +15628,7 @@ class ControlPlane:
 
     @staticmethod
     def _dispatch_hold_epoch_receipt_id(epoch_id: str) -> str:
-        return "alce_epoch_%s" % hashlib.sha256(
-            epoch_id.encode("utf-8")
-        ).hexdigest()[:32]
+        return "alce_epoch_%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
     def _dispatch_hold_epoch_identity_payload(
@@ -16070,12 +15641,9 @@ class ControlPlane:
         return {
             "epoch_id": epoch_id,
             "holds": [
-                {"agent_id": agent_id, "hold_reason": reason}
-                for agent_id, reason in normalized
+                {"agent_id": agent_id, "hold_reason": reason} for agent_id, reason in normalized
             ],
-            "outcome": (
-                "successor_hold" if successor_reason is not None else "released"
-            ),
+            "outcome": ("successor_hold" if successor_reason is not None else "released"),
             "successor_hold_reason": successor_reason,
             "expectations": [dict(item) for item in requested_expectations],
         }
@@ -16083,9 +15651,7 @@ class ControlPlane:
     @staticmethod
     def _dispatch_hold_epoch_identity_sha256(payload: Mapping[str, Any]) -> str:
         return hashlib.sha256(
-            json.dumps(
-                dict(payload), sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
+            json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
     def _replayed_agent_dispatch_hold_epoch_agents(
@@ -16110,9 +15676,7 @@ class ControlPlane:
                 return list(conn.query_all(sql, parameters))
             return list(conn.execute(sql, parameters).fetchall())
 
-        epoch_outcome = (
-            "successor_hold" if successor_reason_value is not None else "released"
-        )
+        epoch_outcome = "successor_hold" if successor_reason_value is not None else "released"
         receipt_event_type = (
             "agent.dispatch_hold_epoch_transitioned"
             if successor_reason_value is not None
@@ -16121,8 +15685,7 @@ class ControlPlane:
         epoch_event_type = "agent.dispatch_hold_epoch_committed"
         epoch_receipt_id = self._dispatch_hold_epoch_receipt_id(epoch_id)
         requested_holds = [
-            {"agent_id": agent_id, "hold_reason": reason}
-            for agent_id, reason in normalized
+            {"agent_id": agent_id, "hold_reason": reason} for agent_id, reason in normalized
         ]
 
         marker = query_one(
@@ -16184,12 +15747,12 @@ class ControlPlane:
                 continue
             if str(receipt_row["event_type"] or "") != receipt_event_type:
                 raise ValidationError(
-                    "fleet release epoch id was already used with a different "
-                    "successor outcome"
+                    "fleet release epoch id was already used with a different successor outcome"
                 )
-            if successor_reason_value is not None and str(
-                detail.get("successor_hold_reason") or ""
-            ) != successor_reason_value:
+            if (
+                successor_reason_value is not None
+                and str(detail.get("successor_hold_reason") or "") != successor_reason_value
+            ):
                 raise ValidationError(
                     "fleet release epoch receipt has a different successor outcome"
                 )
@@ -16209,21 +15772,16 @@ class ControlPlane:
                 "or incomplete hold set or successor outcome"
             )
         if marker is None and requested_expectations:
-            raise ValidationError(
-                "legacy fleet release epoch receipt lacks expectation identity"
-            )
+            raise ValidationError("legacy fleet release epoch receipt lacks expectation identity")
 
         if not require_agent_rows:
             return []
         replayed: List[Agent] = []
         for agent_id, _reason in normalized:
-            row = query_one(
-                "SELECT * FROM agents WHERE id = ?", (agent_id,)
-            )
+            row = query_one("SELECT * FROM agents WHERE id = ?", (agent_id,))
             if row is None:
                 raise NotFoundError(
-                    "fleet release epoch receipt references missing agent: %s"
-                    % agent_id
+                    "fleet release epoch receipt references missing agent: %s" % agent_id
                 )
             replayed.append(self._agent_from_row(row))
         return replayed
@@ -16373,20 +15931,14 @@ class ControlPlane:
             raise ValidationError("fleet release holds must be an iterable") from exc
         for entry in hold_entries:
             if not isinstance(entry, (list, tuple)) or len(entry) != 2:
-                raise ValidationError(
-                    "fleet release entries must be (agent_id, reason) pairs"
-                )
+                raise ValidationError("fleet release entries must be (agent_id, reason) pairs")
             raw_agent_id, raw_reason = entry
             agent_id = str(raw_agent_id or "").strip()
             reason = str(raw_reason or "").strip()
             if not agent_id or not reason:
-                raise ValidationError(
-                    "fleet release entries require agent_id and reason"
-                )
+                raise ValidationError("fleet release entries require agent_id and reason")
             if agent_id in seen:
-                raise ValidationError(
-                    "duplicate agent in fleet release epoch: %s" % agent_id
-                )
+                raise ValidationError("duplicate agent in fleet release epoch: %s" % agent_id)
             seen.add(agent_id)
             normalized.append((agent_id, reason))
         if not normalized:
@@ -16417,30 +15969,23 @@ class ControlPlane:
                     "generation": expected.get("generation"),
                     "baseline_seen": str(expected.get("baseline_seen") or "").strip(),
                     "principal_id": expected.get("principal_id"),
-                    "require_authenticated": bool(
-                        expected.get("require_authenticated")
-                    ),
-                    "require_report_executor": bool(
-                        expected.get("require_report_executor")
-                    ),
+                    "require_authenticated": bool(expected.get("require_authenticated")),
+                    "require_report_executor": bool(expected.get("require_report_executor")),
                 }
             )
 
-        epoch_outcome = (
-            "successor_hold" if successor_reason_value is not None else "released"
-        )
+        epoch_outcome = "successor_hold" if successor_reason_value is not None else "released"
         receipt_event_type = (
             "agent.dispatch_hold_epoch_transitioned"
             if successor_reason_value is not None
             else "agent.dispatch_hold_epoch_released"
         )
         epoch_event_type = "agent.dispatch_hold_epoch_committed"
-        epoch_receipt_id = "alce_epoch_%s" % hashlib.sha256(
-            epoch_id.encode("utf-8")
-        ).hexdigest()[:32]
+        epoch_receipt_id = (
+            "alce_epoch_%s" % hashlib.sha256(epoch_id.encode("utf-8")).hexdigest()[:32]
+        )
         requested_holds = [
-            {"agent_id": agent_id, "hold_reason": reason}
-            for agent_id, reason in normalized
+            {"agent_id": agent_id, "hold_reason": reason} for agent_id, reason in normalized
         ]
 
         def replayed_epoch_agents(conn: Any) -> Optional[List[Agent]]:
@@ -16463,8 +16008,7 @@ class ControlPlane:
             # validation and the hold-clearing UPDATE.
             for agent_id, _reason in normalized:
                 locked = conn.execute(
-                    "UPDATE agents SET updated_at = updated_at "
-                    "WHERE id = ? AND deleted_at IS NULL",
+                    "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                     (agent_id,),
                 )
                 if locked.rowcount != 1:
@@ -16475,9 +16019,7 @@ class ControlPlane:
                     (agent_id,),
                 ).fetchone()
                 if reserved is not None:
-                    raise ValidationError(
-                        "agent belongs to an open prepared fleet release epoch"
-                    )
+                    raise ValidationError("agent belongs to an open prepared fleet release epoch")
             replayed = replayed_epoch_agents(conn)
             if replayed is not None:
                 return replayed
@@ -16516,9 +16058,7 @@ class ControlPlane:
                 replayed = replayed_epoch_agents(conn)
                 if replayed is not None:
                     return replayed
-                raise ValidationError(
-                    "fleet release epoch id could not be claimed"
-                )
+                raise ValidationError("fleet release epoch id could not be claimed")
 
             for agent_id, reason in normalized:
                 row_before = conn.execute(
@@ -16528,8 +16068,7 @@ class ControlPlane:
                 if row_before is None:
                     raise NotFoundError("agent not found: %s" % agent_id)
                 active_task = conn.execute(
-                    "SELECT id FROM tasks WHERE owner_agent_id = ? "
-                    "AND state IN (?, ?) LIMIT 1",
+                    "SELECT id FROM tasks WHERE owner_agent_id = ? AND state IN (?, ?) LIMIT 1",
                     (
                         agent_id,
                         TaskState.CLAIMED.value,
@@ -16537,14 +16076,10 @@ class ControlPlane:
                     ),
                 ).fetchone()
                 if active_task is not None or row_before["current_task_id"] is not None:
-                    raise ValidationError(
-                        "fleet release epoch found active work on %s" % agent_id
-                    )
+                    raise ValidationError("fleet release epoch found active work on %s" % agent_id)
                 expected = ensure_json_object(expected_by_agent.get(agent_id))
                 if expected:
-                    resources = ensure_json_object(
-                        json_loads(row_before["resources"], {})
-                    )
+                    resources = ensure_json_object(json_loads(row_before["resources"], {}))
                     authenticated = ensure_json_object(
                         resources.get("worker_credential_authenticated")
                     )
@@ -16556,27 +16091,23 @@ class ControlPlane:
                         or not baseline_seen
                         or not last_seen
                         or parse_time(last_seen) <= parse_time(baseline_seen)
-                        or resources.get("deployment_generation")
-                        != expected.get("generation")
+                        or resources.get("deployment_generation") != expected.get("generation")
                     ):
                         raise ValidationError(
                             "fleet release epoch lost readiness for %s" % agent_id
                         )
                     if bool(expected.get("require_authenticated")) and not (
                         authenticated.get("agent_id") == agent_id
-                        and authenticated.get("principal_id")
-                        == expected.get("principal_id")
+                        and authenticated.get("principal_id") == expected.get("principal_id")
                     ):
                         raise ValidationError(
-                            "fleet release epoch lost credential proof for %s"
-                            % agent_id
+                            "fleet release epoch lost credential proof for %s" % agent_id
                         )
                     if bool(expected.get("require_report_executor")) and not (
                         self._report_executor_release_ready(agent_id, resources)
                     ):
                         raise ValidationError(
-                            "fleet release epoch lost report executor proof for %s"
-                            % agent_id
+                            "fleet release epoch lost report executor proof for %s" % agent_id
                         )
                 if successor_reason_value is None:
                     committed = conn.execute(
@@ -16612,13 +16143,10 @@ class ControlPlane:
                 ).fetchone()
                 if committed.rowcount != 1:
                     raise ValidationError(
-                        "fleet release epoch lost dispatch-hold ownership for %s"
-                        % agent_id
+                        "fleet release epoch lost dispatch-hold ownership for %s" % agent_id
                     )
                 if successor_reason_value is not None:
-                    self._withdraw_service_claims_for_dispatch_hold(
-                        conn, agent_id, now
-                    )
+                    self._withdraw_service_claims_for_dispatch_hold(conn, agent_id, now)
                 self._record_agent_lifecycle_event(
                     conn,
                     agent_id,
@@ -16646,9 +16174,7 @@ class ControlPlane:
                 (now, agent_id),
             )
         agent = self.get_agent(agent_id)
-        self.agentbus_broadcast.publish_system(
-            "agent.resumed.v1", payload={"agent_id": agent_id}
-        )
+        self.agentbus_broadcast.publish_system("agent.resumed.v1", payload={"agent_id": agent_id})
         return agent
 
     def unconsumed_control_stream_age_seconds(self, agent_id: str) -> Optional[float]:
@@ -16692,9 +16218,7 @@ class ControlPlane:
             )
             if agent_lock.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            agent_row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            agent_row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(agent_row)
             if not agent.deleted_at:
                 active_lease = conn.execute(
@@ -16709,9 +16233,7 @@ class ControlPlane:
                     (agent_id, LeaseStatus.ACTIVE.value, agent_id),
                 ).fetchone()
                 if active_lease is not None:
-                    raise ValidationError(
-                        "agent cannot be deleted while holding an active lease"
-                    )
+                    raise ValidationError("agent cannot be deleted while holding an active lease")
             now = utcnow()
             # Decommissioning is a permanent credential boundary.  Merely
             # hiding credentials behind agents.deleted_at lets an intentional
@@ -16745,12 +16267,8 @@ class ControlPlane:
                         json_dumps(
                             {
                                 "schema": "mac.worker_credential_event.v1",
-                                "credential_version": int(
-                                    credential["credential_version"] or 0
-                                ),
-                                "token_fingerprint": str(
-                                    credential["token_fingerprint"] or ""
-                                ),
+                                "credential_version": int(credential["credential_version"] or 0),
+                                "token_fingerprint": str(credential["token_fingerprint"] or ""),
                                 "state": "revoked",
                                 "reason": "agent_decommissioned",
                             }
@@ -16878,7 +16396,9 @@ class ControlPlane:
             except ValueError:
                 raise ValidationError("unsupported agent health_status: %s" % health_value)
         if resources is not None:
-            resource_value = self._agent_resources_with_preserved_control_plane_fields(agent_id, resources)
+            resource_value = self._agent_resources_with_preserved_control_plane_fields(
+                agent_id, resources
+            )
             updates.append("resources = ?")
             resource_param_index = len(params)
             params.append(json_dumps(resource_value))
@@ -16919,10 +16439,7 @@ class ControlPlane:
                 # claim to the agent's identity so a peer cannot inject
                 # a false digest on another agent's behalf, and the
                 # signature is durable enough to audit later.
-                if (
-                    digest != agent_before.running_digest
-                    and running_digest_signature is not None
-                ):
+                if digest != agent_before.running_digest and running_digest_signature is not None:
                     key = self._agent_attestation_key(agent_id)
                     if key is None:
                         raise ValidationError(
@@ -16934,8 +16451,7 @@ class ControlPlane:
                         key, claim, running_digest_signature
                     ):
                         raise ValidationError(
-                            "running_digest signature does not verify under "
-                            "agent's attestation key"
+                            "running_digest signature does not verify under agent's attestation key"
                         )
                 updates.append("running_digest = ?")
                 params.append(digest)
@@ -16990,10 +16506,8 @@ class ControlPlane:
                     "UPDATE agents SET updated_at = updated_at WHERE id = ?",
                     (agent_id,),
                 )
-                resource_value = (
-                    self._agent_resources_with_preserved_control_plane_fields(
-                        agent_id, resources, conn=conn
-                    )
+                resource_value = self._agent_resources_with_preserved_control_plane_fields(
+                    agent_id, resources, conn=conn
                 )
                 params[resource_param_index] = json_dumps(resource_value)
             conn.execute("UPDATE agents SET %s WHERE id = ?" % ", ".join(updates), tuple(params))
@@ -17046,8 +16560,6 @@ class ControlPlane:
         if self.get_nap_schedule(agent.id) is None:
             self.configure_nap(agent.id, actor=actor or agent.id)
 
-
-
     def _maybe_drain_notifications_on_heartbeat(self, agent: Agent) -> None:
         """Drain ``pending`` operator notifications on hub-agent heartbeat.
 
@@ -17075,9 +16587,7 @@ class ControlPlane:
             return
         try:
             result = self.deliver_pending_notifications(limit=limit)
-            delivered = (
-                int(result.get("delivered", 0)) if isinstance(result, dict) else 0
-            )
+            delivered = int(result.get("delivered", 0)) if isinstance(result, dict) else 0
             if delivered:
                 self.record_log(
                     "notifier.heartbeat_drain",
@@ -17212,10 +16722,7 @@ class ControlPlane:
             """,
             (AgentStatus.OFFLINE.value,),
         )
-        buckets = [
-            {"digest": row["digest"] or None, "count": int(row["count"])}
-            for row in rows
-        ]
+        buckets = [{"digest": row["digest"] or None, "count": int(row["count"])} for row in rows]
         total = sum(bucket["count"] for bucket in buckets) or 1
         for bucket in buckets:
             bucket["percent"] = round(bucket["count"] * 100.0 / total, 2)
@@ -17262,14 +16769,10 @@ class ControlPlane:
 
     # Deploy config + the consolidated per-agent effective view.
 
-    def report_agent_deploy_config(
-        self, *args: Any, **kwargs: Any
-    ) -> Dict[str, Any]:
+    def report_agent_deploy_config(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         return self.agent_state.report_deploy_config(*args, **kwargs)
 
-    def get_agent_deploy_config(
-        self, *args: Any, **kwargs: Any
-    ) -> Optional[Dict[str, Any]]:
+    def get_agent_deploy_config(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.agent_state.get_deploy_config(*args, **kwargs)
 
     def effective_agent_config(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
@@ -17306,9 +16809,7 @@ class ControlPlane:
         *,
         qdrant_url: Optional[str] = None,
         nap_interval_hours: float = 1.0,
-        vector_ingestion_max_age_hours: float = (
-            _DEFAULT_INGESTION_MAX_AGE_HOURS
-        ),
+        vector_ingestion_max_age_hours: float = (_DEFAULT_INGESTION_MAX_AGE_HOURS),
         qdrant_transport: Optional[Any] = None,
         qdrant_scan_limit: Optional[int] = None,
     ) -> JsonDict:
@@ -17361,9 +16862,7 @@ class ControlPlane:
         scan_limit = (
             None
             if qdrant_scan_limit is None
-            else _memory_count(
-                "qdrant_scan_limit", qdrant_scan_limit, maximum=10_000_000
-            )
+            else _memory_count("qdrant_scan_limit", qdrant_scan_limit, maximum=10_000_000)
         )
 
         now = utcnow()
@@ -17902,8 +17401,7 @@ class ControlPlane:
                 raise ValidationError("invalid dream policy: %s" % exc) from exc
         else:
             raise ValidationError(
-                "policy must be a DreamPolicy or mapping, got %s"
-                % type(policy).__name__
+                "policy must be a DreamPolicy or mapping, got %s" % type(policy).__name__
             )
         records = dreaming.load_records(
             self.store, project=project, agent_id=agent_id, since=since, limit=limit
@@ -17986,9 +17484,7 @@ class ControlPlane:
 
         return dreaming.get_run(self.store, run_id)
 
-    def list_dream_runs(
-        self, *, state: Optional[str] = None, limit: int = 20
-    ) -> List[JsonDict]:
+    def list_dream_runs(self, *, state: Optional[str] = None, limit: int = 20) -> List[JsonDict]:
         from mac import dreaming
 
         return dreaming.list_runs(self.store, state=state, limit=limit)
@@ -18029,11 +17525,7 @@ class ControlPlane:
         """
         from datetime import datetime, timedelta, timezone
 
-        as_of_dt = (
-            datetime.fromisoformat(as_of)
-            if as_of
-            else datetime.now(timezone.utc)
-        )
+        as_of_dt = datetime.fromisoformat(as_of) if as_of else datetime.now(timezone.utc)
         if as_of_dt.tzinfo is None:
             as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
         rows = self.store.query_all(
@@ -18048,9 +17540,7 @@ class ControlPlane:
             window = int(row["window_minutes"] or 15)
             day_start = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
             elapsed_minutes = int((as_of_dt - day_start).total_seconds() // 60)
-            cycle_minutes = (
-                elapsed_minutes // NAP_WINDOW_MINUTES
-            ) * NAP_WINDOW_MINUTES
+            cycle_minutes = (elapsed_minutes // NAP_WINDOW_MINUTES) * NAP_WINDOW_MINUTES
             window_start = day_start + timedelta(minutes=cycle_minutes + offset)
             if window_start > as_of_dt:
                 window_start = window_start - timedelta(minutes=NAP_WINDOW_MINUTES)
@@ -18132,8 +17622,7 @@ class ControlPlane:
             ]
             if missing:
                 raise ValidationError(
-                    "%s needs a vector writer providing %s"
-                    % (caller, ", ".join(missing))
+                    "%s needs a vector writer providing %s" % (caller, ", ".join(missing))
                 )
             return vector_writer
         url = _configured_qdrant_url(qdrant_url)
@@ -18171,17 +17660,13 @@ class ControlPlane:
 
         if tier not in MAC_MEMORY_COLLECTIONS:
             raise ValidationError("unknown memory tier: %s" % tier)
-        limit_value = (
-            None if limit is None else _memory_count("limit", limit, maximum=1_000_000)
-        )
+        limit_value = None if limit is None else _memory_count("limit", limit, maximum=1_000_000)
         scan_limit_value = (
             None
             if scan_limit is None
             else _memory_count("scan_limit", scan_limit, maximum=10_000_000)
         )
-        method = (
-            "embedding_space_report" if report_only else "reconcile_embedding_spaces"
-        )
+        method = "embedding_space_report" if report_only else "reconcile_embedding_spaces"
         writer = self._vector_writer_for(
             vector_writer,
             qdrant_url,
@@ -18189,9 +17674,7 @@ class ControlPlane:
             requires=(method,),
         )
         if report_only:
-            return writer.embedding_space_report(
-                tier=tier, scan_limit=scan_limit_value
-            )
+            return writer.embedding_space_report(tier=tier, scan_limit=scan_limit_value)
         return writer.reconcile_embedding_spaces(
             tier=tier,
             limit=limit_value,
@@ -18241,9 +17724,7 @@ class ControlPlane:
             )
         )
         limit_value = (
-            None
-            if limit is None
-            else _memory_count("limit", limit, maximum=MAX_PER_PASS_CEILING)
+            None if limit is None else _memory_count("limit", limit, maximum=MAX_PER_PASS_CEILING)
         )
 
         settings = promotion_settings()
@@ -18265,9 +17746,7 @@ class ControlPlane:
             ),
         )
         report = service.promote(
-            min_age_days=(
-                settings["min_age_days"] if min_age_value is None else min_age_value
-            ),
+            min_age_days=(settings["min_age_days"] if min_age_value is None else min_age_value),
             limit=settings["max_per_pass"] if limit_value is None else limit_value,
             drop_medium=drop_medium,
             dry_run=dry_run,
@@ -18362,9 +17841,7 @@ class ControlPlane:
                 continue
             resources = agent.resources if isinstance(agent.resources, dict) else {}
             hardware = (
-                resources.get("hardware")
-                if isinstance(resources.get("hardware"), dict)
-                else None
+                resources.get("hardware") if isinstance(resources.get("hardware"), dict) else None
             )
             cur = by_owner.get(agent.id)
             members.append(
@@ -18559,8 +18036,7 @@ class ControlPlane:
         if final_message:
             if not final_target:
                 raise ValidationError(
-                    "deregister final_message requires final_target "
-                    "(e.g. channel:C123)"
+                    "deregister final_message requires final_target (e.g. channel:C123)"
                 )
             delivery_id = self.enqueue_human_message(
                 final_target,
@@ -18668,9 +18144,7 @@ class ControlPlane:
                     "score": score,
                     "rationale": rationale,
                     "decision": dict(decision),
-                    "assignment_audit_behavior": (
-                        "routing_observation_only"
-                    ),
+                    "assignment_audit_behavior": ("routing_observation_only"),
                 },
             )
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
@@ -18712,9 +18186,7 @@ class ControlPlane:
                     "task_candidate_rank": candidate_rank,
                     "task_order": task_order,
                     "available_agent_count": available_agent_count,
-                    "assignment_audit_behavior": (
-                        "intentionally_absent_without_exact_lease"
-                    ),
+                    "assignment_audit_behavior": ("intentionally_absent_without_exact_lease"),
                 },
             )
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
@@ -18785,9 +18257,7 @@ class ControlPlane:
         prepared["dispatch_admission"] = {
             "schema": "mac.dispatch_admission.v1",
             "prepared_at": utcnow(),
-            "decision": (
-                "plan_first" if estimate.get("size") == "large" else "execute"
-            ),
+            "decision": ("plan_first" if estimate.get("size") == "large" else "execute"),
             "attempt_count": task.attempt_count,
         }
         return self.update_task(
@@ -18840,7 +18310,6 @@ class ControlPlane:
             capabilities=capabilities,
             sync_beads=sync_beads,
         )
-
 
     def _record_claim_next_log_best_effort(
         self,
@@ -18949,13 +18418,11 @@ class ControlPlane:
         stale_agents = []
         if stale_after_seconds is not None:
             stale_agents = [
-                agent.to_dict()
-                for agent in self.mark_stale_agents_offline(stale_after_seconds)
+                agent.to_dict() for agent in self.mark_stale_agents_offline(stale_after_seconds)
             ]
         try:
             expired_ephemerals = [
-                agent.to_dict()
-                for agent in self.expire_ephemeral_agents(limit=limit_value)
+                agent.to_dict() for agent in self.expire_ephemeral_agents(limit=limit_value)
             ]
         except Exception as exc:  # noqa: BLE001 - expiry must never stop dispatch.
             expired_ephemerals = []
@@ -18990,9 +18457,7 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - reconcile must never break the tick
             pass
         unblocked_page = self._unblock_ready_sweep_page(limit=limit_value)
-        auto_retry_page = self._auto_retry_blocked_attempts_sweep_page(
-            limit=limit_value
-        )
+        auto_retry_page = self._auto_retry_blocked_attempts_sweep_page(limit=limit_value)
         # Retention runs HERE -- before the review sweep -- and not further down,
         # because the sweep below can block this thread for minutes while it
         # clones a repository and runs a contract gate. Retention used to sit
@@ -19088,9 +18553,7 @@ class ControlPlane:
                 limit=limit_value,
                 actor="default-review-workflow",
                 tenant_id=None,
-                allow_blocking_hub_verify=_truthy_env(
-                    "MAC_TICK_BLOCKING_HUB_VERIFY", "1"
-                ),
+                allow_blocking_hub_verify=_truthy_env("MAC_TICK_BLOCKING_HUB_VERIFY", "1"),
             )
         else:
             review_workflows = {"skipped": "runs_on_publication_worker"}
@@ -19183,16 +18646,12 @@ class ControlPlane:
             "stall_nudges": stall_nudges,
             "retention_pruned": retention_pruned,
             "memory_health": memory_health,
-            "auto_reopened": [
-                task.to_dict() for task in auto_retry_page["tasks"]
-            ],
+            "auto_reopened": [task.to_dict() for task in auto_retry_page["tasks"]],
             "auto_retry_exhausted": [
                 task.to_dict() for task in auto_retry_page.get("exhausted", [])
             ],
             "assignments": assignments,
-            "dead_letters": [
-                task.to_dict() for task in dead_letters_page["tasks"]
-            ],
+            "dead_letters": [task.to_dict() for task in dead_letters_page["tasks"]],
             "maintenance": {
                 "expired_leases_has_more": expired_page["has_more"],
                 "blocked_tasks_has_more": unblocked_page["has_more"],
@@ -19516,8 +18975,6 @@ class ControlPlane:
             payload=payload,
         )
 
-
-
     # Transport-shaped directive facade used by LocalDispatch.  Keeping this
     # naming identical to RemoteDispatch lets the CLI exercise one contract.
 
@@ -19569,9 +19026,7 @@ class ControlPlane:
     def acknowledge_directive_activation(
         self, agent_id: str, activation_id: str, *, digest: str
     ) -> JsonDict:
-        return self.directives.acknowledge(
-            activation_id, agent_id=agent_id, digest=digest
-        )
+        return self.directives.acknowledge(activation_id, agent_id=agent_id, digest=digest)
 
     # Human directives: the hub-verified human->agent channel. Authority is
     # attested provenance — the API layer refuses agent-bound tokens on this
@@ -19774,9 +19229,7 @@ class ControlPlane:
         )
 
         payload = None
-        chunks = self.read_agentbus_chunks(
-            self.OPERATOR_PERSONA_AGENT_ID, stream_id, limit=1
-        )
+        chunks = self.read_agentbus_chunks(self.OPERATOR_PERSONA_AGENT_ID, stream_id, limit=1)
         if chunks and isinstance(chunks[0].payload, dict):
             payload = chunks[0].payload
         headers = stream.headers or {}
@@ -19810,9 +19263,7 @@ class ControlPlane:
     def set_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.agentbus.set_consumer_cursor(*args, **kwargs)
 
-    def get_agentbus_consumer_cursor(
-        self, *args: Any, **kwargs: Any
-    ) -> Optional[JsonDict]:
+    def get_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> Optional[JsonDict]:
         return self.agentbus.get_consumer_cursor(*args, **kwargs)
 
     def publish_agentbus_repo_update(
@@ -20126,19 +19577,14 @@ class ControlPlane:
             }
         current_target = self.reviews.current_review_target_evidence_id(task.id)
         if current_target and executor_evidence_id != current_target:
-            raise ValidationError(
-                "review claim must fence the current executor evidence revision"
-            )
-        if isinstance(existing_claim, dict) and existing_claim.get(
-            "reviewer_agent_id"
-        ) not in {
+            raise ValidationError("review claim must fence the current executor evidence revision")
+        if isinstance(existing_claim, dict) and existing_claim.get("reviewer_agent_id") not in {
             None,
             "",
             reviewer_agent_id,
         }:
             raise ValidationError(
-                "review is already claimed by %s"
-                % existing_claim.get("reviewer_agent_id")
+                "review is already claimed by %s" % existing_claim.get("reviewer_agent_id")
             )
         evidence = None
         if executor_evidence_id:
@@ -20158,8 +19604,7 @@ class ControlPlane:
         prior_is_identical = False
         with self.store.transaction() as conn:
             task_lock = conn.execute(
-                "UPDATE tasks SET updated_at = updated_at "
-                "WHERE id = ? AND state = ?",
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ? AND state = ?",
                 (task.id, TaskState.REVIEWING.value),
             )
             review_lock = conn.execute(
@@ -20176,13 +19621,9 @@ class ControlPlane:
                 "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
             ).fetchone()
             current_metadata = ensure_json_object(
-                json_loads(current_task_row["metadata"], {})
-                if current_task_row is not None
-                else {}
+                json_loads(current_task_row["metadata"], {}) if current_task_row is not None else {}
             )
-            current_claims = ensure_json_object(
-                current_metadata.get("review_claims")
-            )
+            current_claims = ensure_json_object(current_metadata.get("review_claims"))
             prior = ensure_json_object(current_claims.get(review.id))
             prior_is_identical = bool(
                 prior
@@ -20246,12 +19687,9 @@ class ControlPlane:
                 if current_agent_row is not None
                 else {}
             )
-            report_reviewer_ineligible = (
-                metadata_declares_read_only_report_repository(current_metadata)
-                and not agent_has_read_only_report_repository_executor(
-                    current_agent_resources
-                )
-            )
+            report_reviewer_ineligible = metadata_declares_read_only_report_repository(
+                current_metadata
+            ) and not agent_has_read_only_report_repository_executor(current_agent_resources)
             locked_target = str(
                 ensure_json_object(current_metadata.get("review_target")).get(
                     "executor_evidence_id"
@@ -20294,7 +19732,6 @@ class ControlPlane:
             result["idempotent"] = True
         return result
 
-
     def _review_claim_detail(
         self,
         task: Task,
@@ -20307,16 +19744,8 @@ class ControlPlane:
             evidence.metadata.get("verification") if evidence is not None else {}
         )
         repo = ensure_json_object(verification.get("repo"))
-        tests = (
-            verification.get("tests")
-            if isinstance(verification.get("tests"), list)
-            else []
-        )
-        checks = (
-            verification.get("checks")
-            if isinstance(verification.get("checks"), list)
-            else []
-        )
+        tests = verification.get("tests") if isinstance(verification.get("tests"), list) else []
+        checks = verification.get("checks") if isinstance(verification.get("checks"), list) else []
         runtime = ensure_json_object(ensure_json_object(task.metadata).get("runtime"))
         return {
             "schema": "mac.review_claim.detail.v1",
@@ -20330,20 +19759,13 @@ class ControlPlane:
             "work_summary": evidence.summary if evidence is not None else "",
             "evidence_type": verification.get("evidence_type"),
             "repository_worktree": (
-                repo.get("path")
-                or runtime.get("repository_worktree")
-                or repo.get("worktree")
-                or ""
+                repo.get("path") or runtime.get("repository_worktree") or repo.get("worktree") or ""
             ),
-            "repository_branch": repo.get("branch")
-            or runtime.get("repository_branch")
-            or "",
+            "repository_branch": repo.get("branch") or runtime.get("repository_branch") or "",
             "repository_head_sha": repo.get("head_sha") or "",
             "repository_remote_ref": repo.get("remote_ref") or "",
             "repository_files_changed": (
-                repo.get("files_changed")
-                if isinstance(repo.get("files_changed"), list)
-                else []
+                repo.get("files_changed") if isinstance(repo.get("files_changed"), list) else []
             ),
             "checks": checks,
             "tests": tests,
@@ -20390,7 +19812,9 @@ class ControlPlane:
 
     def publish_task(self, *args: Any, **kwargs: Any) -> Publication:
         task_id = kwargs.get("task_id") if "task_id" in kwargs else (args[0] if args else None)
-        target = kwargs.get("target") if "target" in kwargs else (args[1] if len(args) >= 2 else None)
+        target = (
+            kwargs.get("target") if "target" in kwargs else (args[1] if len(args) >= 2 else None)
+        )
         evidence_id = kwargs.get("evidence_id")
         if evidence_id is None and len(args) >= 4:
             evidence_id = args[3]
@@ -20463,9 +19887,7 @@ class ControlPlane:
         metadata = ensure_json_object(task.metadata)
         origin = ensure_json_object(metadata.get("origin"))
         repository_url = str(
-            origin.get("repository_url")
-            or git_publication.get("repository_url")
-            or ""
+            origin.get("repository_url") or git_publication.get("repository_url") or ""
         ).strip()
         try:
             monitor.schedule_publication_followup(
@@ -20550,29 +19972,20 @@ class ControlPlane:
                 # so the reviewed commit is intentionally not an ancestor of
                 # the canonical tip. Report what the publication observed
                 # rather than asserting an ancestry squashing destroys.
-                "contains_reviewed_head": bool(
-                    publication.get("contains_reviewed_head", True)
-                ),
+                "contains_reviewed_head": bool(publication.get("contains_reviewed_head", True)),
                 "remote_verified": True,
                 "publication_mode": str(publication.get("publication_mode") or ""),
                 **(
                     {
                         "squash_merged": True,
-                        "merge_serialization": str(
-                            publication.get("merge_serialization") or ""
-                        ),
+                        "merge_serialization": str(publication.get("merge_serialization") or ""),
                         "pull_request_opened_by": str(
                             publication.get("pull_request_opened_by") or ""
                         ),
-                        "pull_request_url": str(
-                            publication.get("pull_request_url") or ""
-                        ),
-                        "pull_request_number": int(
-                            publication.get("pull_request_number") or 0
-                        ),
+                        "pull_request_url": str(publication.get("pull_request_url") or ""),
+                        "pull_request_number": int(publication.get("pull_request_number") or 0),
                     }
-                    if str(publication.get("publication_mode") or "")
-                    == "pull_request_squash"
+                    if str(publication.get("publication_mode") or "") == "pull_request_squash"
                     else {}
                 ),
             },
@@ -20614,23 +20027,17 @@ class ControlPlane:
             return None
         task = self.get_task(task_id)
         if metadata_declares_report_deliverable(task.metadata):
-            raise ValidationError(
-                "report deliverables cannot use Git publication targets"
-            )
+            raise ValidationError("report deliverables cannot use Git publication targets")
         metadata = ensure_json_object(task.metadata)
         origin = ensure_json_object(metadata.get("origin"))
         try:
             canonical_branch = resolve_task_repository_branch(
                 task.to_dict(),
-                legacy_branch=(
-                    origin.get("default_branch") or origin.get("canonical_branch")
-                ),
+                legacy_branch=(origin.get("default_branch") or origin.get("canonical_branch")),
                 default_branch="main",
             )
         except ValueError as exc:
-            raise ValidationError(
-                "git publication canonical branch is invalid: %s" % exc
-            ) from exc
+            raise ValidationError("git publication canonical branch is invalid: %s" % exc) from exc
         repo_path_raw = str(origin.get("repository_path") or "").strip()
         repository_url = str(origin.get("repository_url") or "").strip()
         # mac-k8s: remote-clone tasks (jordanh-gke and any K8s fleet) have no
@@ -20666,22 +20073,19 @@ class ControlPlane:
             candidate = Path(repo_path_raw).expanduser()
             if candidate.exists():
                 local_path = candidate
-        clone_url = repository_url or str(
-            repo.get("remote_url") or repo.get("push_remote") or ""
-        ).strip()
+        clone_url = (
+            repository_url or str(repo.get("remote_url") or repo.get("push_remote") or "").strip()
+        )
         contract = ensure_json_object(origin.get("repository_contract"))
         canonical_remote_url = str(contract.get("canonical_remote_url") or "").strip()
         if local_path is not None:
             top = self._git_output(local_path, ["rev-parse", "--show-toplevel"])
             if top["returncode"] != 0 or not top.get("stdout"):
                 raise ValidationError(
-                    "git publication repository path is not a git worktree: %s"
-                    % local_path
+                    "git publication repository path is not a git worktree: %s" % local_path
                 )
             local_root = Path(str(top["stdout"])).expanduser()
-            origin_url_probe = self._git_output(
-                local_root, ["remote", "get-url", "origin"]
-            )
+            origin_url_probe = self._git_output(local_root, ["remote", "get-url", "origin"])
             if origin_url_probe["returncode"] != 0:
                 raise ValidationError(
                     "git publication could not read worktree origin: %s"
@@ -20704,8 +20108,7 @@ class ControlPlane:
                 if expected is None or actual is None or expected != actual:
                     raise ValidationError(
                         "git publication worktree origin %r does not match the project's "
-                        "registered remote %r"
-                        % (worktree_origin, canonical_remote_url)
+                        "registered remote %r" % (worktree_origin, canonical_remote_url)
                     )
         elif canonical_remote_url and clone_url:
             expected = _canonicalize_git_url(canonical_remote_url)
@@ -20713,8 +20116,7 @@ class ControlPlane:
             if expected is None or actual is None or expected != actual:
                 raise ValidationError(
                     "git publication remote %r does not match the project's "
-                    "registered remote %r"
-                    % (clone_url, canonical_remote_url)
+                    "registered remote %r" % (clone_url, canonical_remote_url)
                 )
 
         if not clone_url:
@@ -20875,9 +20277,7 @@ class ControlPlane:
             self._merge_queue_owner_id = owner
         return owner
 
-    def _resolve_merge_serialization(
-        self, clone_url: str, canonical_branch: str
-    ) -> JsonDict:
+    def _resolve_merge_serialization(self, clone_url: str, canonical_branch: str) -> JsonDict:
         """Decide WHICH mechanism serializes this landing, from stored state.
 
         The capability is a project attribute refreshed by the existing GitHub
@@ -20924,9 +20324,7 @@ class ControlPlane:
             )
             if record is not None:
                 try:
-                    self.record_repository_merge_capability(
-                        record.id, capability.to_dict()
-                    )
+                    self.record_repository_merge_capability(record.id, capability.to_dict())
                 except Exception:  # noqa: BLE001 - caching is best effort
                     pass
         mode = MODE_FORGE_QUEUE if capability.use_forge_queue else MODE_NATIVE_QUEUE
@@ -21000,11 +20398,7 @@ class ControlPlane:
                 # top of this predecessor is worthless; defer rather than
                 # pretend the bare tip is our base.
                 return ""
-            lines = [
-                line
-                for line in str(merged.get("stdout") or "").splitlines()
-                if line.strip()
-            ]
+            lines = [line for line in str(merged.get("stdout") or "").splitlines() if line.strip()]
             if not lines:
                 return ""
             committed = git_step(
@@ -21094,9 +20488,7 @@ class ControlPlane:
             # moved under us fails instead of being overwritten.
             push_args = ["push"]
             if observed_sha:
-                push_args.append(
-                    "--force-with-lease=%s:%s" % (remote_head_ref, observed_sha)
-                )
+                push_args.append("--force-with-lease=%s:%s" % (remote_head_ref, observed_sha))
             push_args += ["origin", "%s:%s" % (head_sha, remote_head_ref)]
             git_step("push_pull_request_branch", push_args, timeout=180)
             confirm = git_step(
@@ -21186,9 +20578,7 @@ class ControlPlane:
         # is an unprotected repository, where the local contract gate above
         # ran instead; the second is a gate that has not run, which defers.
         if required_checks:
-            verdicts = _gitops.required_check_verdicts(
-                api_url, head_sha, tuple(required_checks)
-            )
+            verdicts = _gitops.required_check_verdicts(api_url, head_sha, tuple(required_checks))
             if verdicts.get("failed"):
                 case = "failed"
             elif not verdicts.get("known"):
@@ -21314,8 +20704,7 @@ class ControlPlane:
             if not observed_pr.get("known"):
                 unreadable = ValidationError(
                     "mac merge queue could not read the state of %s before "
-                    "merging; deferring rather than merging blind"
-                    % (pr.url or ("#%d" % pr.number))
+                    "merging; deferring rather than merging blind" % (pr.url or ("#%d" % pr.number))
                 )
                 unreadable.publication_retry_after_seconds = 600
                 unreadable.publication_failure_kind = "merge_queue_unreadable_state"
@@ -21350,9 +20739,7 @@ class ControlPlane:
                     ).get("stdout")
                     or ""
                 ).strip()
-                allowed, why, _entry = queue.may_land(
-                    queue_entry_id, canonical_tip_tree=tip_tree
-                )
+                allowed, why, _entry = queue.may_land(queue_entry_id, canonical_tip_tree=tip_tree)
                 commands.append(
                     {
                         "name": "merge_queue_land_gate",
@@ -21366,8 +20753,7 @@ class ControlPlane:
                 if not allowed:
                     if "front of the queue" in why:
                         waiting = ValidationError(
-                            "mac merge queue is landing an earlier change first: "
-                            "%s" % why
+                            "mac merge queue is landing an earlier change first: %s" % why
                         )
                         waiting.publication_retry_after_seconds = 300
                         waiting.publication_failure_kind = "merge_queue_waiting"
@@ -21381,9 +20767,7 @@ class ControlPlane:
                         ],
                         check=False,
                     )
-                    observed_tip = str(
-                        observed_canonical.get("stdout") or ""
-                    ).split(None, 1)
+                    observed_tip = str(observed_canonical.get("stdout") or "").split(None, 1)
                     observed_tip = observed_tip[0] if observed_tip else ""
                     # The tested projection is stale. Re-project; do NOT merge.
                     raise _PublicationBaseMovedError(base_sha, observed_tip or why)
@@ -21405,9 +20789,7 @@ class ControlPlane:
                 "merge_queue": bool(queue_enabled or native),
                 "mode": mode,
                 "queue_entry_id": queue_entry_id if native else "",
-                "queue": self._merge_queue_snapshot(queue, queue_entry_id)
-                if native
-                else None,
+                "queue": self._merge_queue_snapshot(queue, queue_entry_id) if native else None,
                 "guarantee": (
                     "the forge merge queue tests the projected post-merge tree "
                     "and merges in order: what was tested is what lands"
@@ -21464,8 +20846,7 @@ class ControlPlane:
             # checks use, and observe the merge on a later attempt.
             queued = ValidationError(
                 "git publication placed %s in the %s merge queue; it lands once "
-                "the queue's checks pass"
-                % (pr.url or ("#%d" % pr.number), canonical_branch)
+                "the queue's checks pass" % (pr.url or ("#%d" % pr.number), canonical_branch)
             )
             queued.publication_retry_after_seconds = 600
             queued.publication_failure_kind = "pull_request_queued"
@@ -21485,9 +20866,7 @@ class ControlPlane:
             raise pending
 
         if native:
-            landed = queue.record_landed(
-                queue_entry_id, landed_sha=str(merge.sha or "")
-            )
+            landed = queue.record_landed(queue_entry_id, landed_sha=str(merge.sha or ""))
             commands.append(
                 {
                     "name": "merge_queue_landed",
@@ -21504,8 +20883,7 @@ class ControlPlane:
             [
                 "fetch",
                 "origin",
-                "+refs/heads/%s:refs/remotes/origin/%s"
-                % (canonical_branch, canonical_branch),
+                "+refs/heads/%s:refs/remotes/origin/%s" % (canonical_branch, canonical_branch),
             ],
         )
         verify_remote = git_step(
@@ -21561,9 +20939,7 @@ class ControlPlane:
             "final_sha": final_sha,
             "publication_mode": "pull_request_squash",
             "merge_serialization": (
-                MODE_NATIVE_QUEUE
-                if native
-                else (merge.serialization or mode or MODE_DIRECT_SQUASH)
+                MODE_NATIVE_QUEUE if native else (merge.serialization or mode or MODE_DIRECT_SQUASH)
             ),
             "pull_request_opened_by": opened_by,
             "pull_request_number": pr.number,
@@ -21657,8 +21033,7 @@ class ControlPlane:
                 [
                     "fetch",
                     "origin",
-                    "+refs/heads/%s:refs/remotes/origin/%s"
-                    % (source_branch, source_branch),
+                    "+refs/heads/%s:refs/remotes/origin/%s" % (source_branch, source_branch),
                 ],
             )
             # Typed, because a missing object is PERMANENT: retrying cannot
@@ -21698,9 +21073,7 @@ class ControlPlane:
             # User-owned repository the operator has, `mac_native_queue` is not
             # a fallback -- it is the only path.
             strategy = self._resolve_publication_strategy(clone_url)
-            serialization = self._resolve_merge_serialization(
-                clone_url, canonical_branch
-            )
+            serialization = self._resolve_merge_serialization(clone_url, canonical_branch)
             commands.append(
                 {
                     "name": "merge_serialization_capability",
@@ -21791,13 +21164,9 @@ class ControlPlane:
                     predecessor_entries = [
                         {
                             "head_sha": entry.head_sha,
-                            "source_branch": str(
-                                (entry.detail or {}).get("source_branch") or ""
-                            ),
+                            "source_branch": str((entry.detail or {}).get("source_branch") or ""),
                         }
-                        for entry in queue.live_entries(
-                            queue_repository, canonical_branch
-                        )
+                        for entry in queue.live_entries(queue_repository, canonical_branch)
                         if entry.head_sha in set(decision.predecessors)
                     ]
                     projected_base_sha = self._build_speculative_base(
@@ -21826,9 +21195,7 @@ class ControlPlane:
                             % (task.id, len(decision.predecessors))
                         )
                         stalled.publication_retry_after_seconds = 300
-                        stalled.publication_failure_kind = (
-                            "merge_queue_speculation_unavailable"
-                        )
+                        stalled.publication_failure_kind = "merge_queue_speculation_unavailable"
                         raise stalled
 
             gate = validate_projected_merge(str(root), projected_base_sha, head_sha)
@@ -21856,9 +21223,7 @@ class ControlPlane:
                     "(rebase + resolve + re-verify), do not merge"
                     % (
                         gate.base_sha[:12] or "?",
-                        ", ".join(gate.conflicted_files[:10])
-                        or gate.error
-                        or "unknown",
+                        ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
                     )
                 )
                 merge_gate_error.conflict_integration_context = {
@@ -21958,9 +21323,7 @@ class ControlPlane:
                     }
                 )
             else:
-                publication_test_runner = getattr(
-                    self, "_publication_merge_test_runner", None
-                )
+                publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
                 if publication_test_runner is None:
                     publication_test_runner = self._hub_verify_run_contract_test
                 contract_gate = validate_projected_merge_contract(
@@ -21971,9 +21334,7 @@ class ControlPlane:
                     test_runner=publication_test_runner,
                     merge_gate=gate,
                 )
-                commands.append(
-                    {"name": "publication_contract_gate", **contract_gate.to_dict()}
-                )
+                commands.append({"name": "publication_contract_gate", **contract_gate.to_dict()})
                 if not contract_gate.passed:
                     diagnosis = contract_gate.error or contract_gate.output_tail
                     if queue is not None and queue_entry_id:
@@ -22060,9 +21421,7 @@ class ControlPlane:
                 )
 
             publication_mode = "fast_forward"
-            ff_merge = git_step(
-                "merge_source_ff", ["merge", "--ff-only", head_sha], check=False
-            )
+            ff_merge = git_step("merge_source_ff", ["merge", "--ff-only", head_sha], check=False)
             if ff_merge["returncode"] != 0:
                 already_merged = git_step(
                     "source_already_merged",
@@ -22085,9 +21444,7 @@ class ControlPlane:
                             "git publication merge_source failed: %s"
                             % (merge.get("stderr") or merge.get("stdout") or head_sha)
                         )
-            publication_tree = git_step(
-                "verify_projected_tree", ["rev-parse", "HEAD^{tree}"]
-            )
+            publication_tree = git_step("verify_projected_tree", ["rev-parse", "HEAD^{tree}"])
             actual_tree_sha = str(publication_tree.get("stdout") or "").strip()
             if actual_tree_sha != gate.merged_tree_sha:
                 raise ValidationError(
@@ -22099,8 +21456,7 @@ class ControlPlane:
             final_sha = str(final_head.get("stdout") or "").strip()
             push_args = [
                 "push",
-                "--force-with-lease=refs/heads/%s:%s"
-                % (canonical_branch, base_sha),
+                "--force-with-lease=refs/heads/%s:%s" % (canonical_branch, base_sha),
                 "origin",
                 "HEAD:refs/heads/%s" % canonical_branch,
             ]
@@ -22124,8 +21480,7 @@ class ControlPlane:
                     raise _PublicationBaseMovedError(base_sha, observed_sha)
                 raise ValidationError(
                     "git publication push_main_occ failed without canonical "
-                    "movement: %s"
-                    % (push.get("stderr") or push.get("stdout") or push_args)
+                    "movement: %s" % (push.get("stderr") or push.get("stdout") or push_args)
                 )
             verify_remote = git_step(
                 "verify_remote_canonical",
@@ -22146,8 +21501,7 @@ class ControlPlane:
             if contains_source["returncode"] != 0:
                 raise ValidationError(
                     "git publication final canonical branch %s does not contain "
-                    "reviewed commit %s"
-                    % (final_sha, head_sha)
+                    "reviewed commit %s" % (final_sha, head_sha)
                 )
             return {
                 "status": "published",
@@ -22269,8 +21623,7 @@ class ControlPlane:
             integration = ensure_json_object(metadata.get("conflict_integration"))
             if (
                 str(integration.get("fingerprint") or "") == fingerprint
-                and str(integration.get("approved_task_id") or "")
-                == str(approved_task_id).strip()
+                and str(integration.get("approved_task_id") or "") == str(approved_task_id).strip()
             ):
                 task_id = str(row["id"])
                 if str(row["state"] or "") in TERMINAL_TASK_STATES:
@@ -22324,10 +21677,7 @@ class ControlPlane:
 
         for row in rows:
             candidate_id = str(row["id"])
-            if (
-                candidate_id == keep_task_id
-                or str(row["state"] or "") in TERMINAL_TASK_STATES
-            ):
+            if candidate_id == keep_task_id or str(row["state"] or "") in TERMINAL_TASK_STATES:
                 continue
             try:
                 metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
@@ -22336,8 +21686,7 @@ class ControlPlane:
             integration = ensure_json_object(metadata.get("conflict_integration"))
             if (
                 str(integration.get("role") or "") != "integration_repair"
-                or str(integration.get("approved_task_id") or "")
-                != approved_task_id
+                or str(integration.get("approved_task_id") or "") != approved_task_id
             ):
                 continue
             try:
@@ -22346,10 +21695,7 @@ class ControlPlane:
                     TaskState.CANCELLED.value,
                     "default-review-workflow",
                     {
-                        "reason": (
-                            "superseded by the current integration conflict "
-                            "baseline"
-                        ),
+                        "reason": ("superseded by the current integration conflict baseline"),
                         "disposition": "superseded",
                         "replacement_task_id": keep_task_id,
                         "cleanup_grace_seconds": 0,
@@ -22422,9 +21768,7 @@ class ControlPlane:
 
         # Idempotency backstop: if an integration task already exists for this
         # exact conflict identity, reuse it rather than spawning a duplicate.
-        existing = self._find_linked_conflict_integration_task(
-            approved_task_id, fingerprint
-        )
+        existing = self._find_linked_conflict_integration_task(approved_task_id, fingerprint)
         if existing is not None:
             return existing
 
@@ -22499,9 +21843,7 @@ class ControlPlane:
 
         landed_task_ids = [
             str(tid).strip()
-            for tid in ensure_json_object(payload.get("landed_since_base")).get(
-                "task_ids", []
-            )
+            for tid in ensure_json_object(payload.get("landed_since_base")).get("task_ids", [])
             if str(tid).strip()
         ]
         try:
@@ -22525,8 +21867,7 @@ class ControlPlane:
             }
             self.task_flow.record_contention(
                 resource_class="repository_ref",
-                resource_key="%s:%s:%s"
-                % (str(task.project or ""), target, current_main_sha),
+                resource_key="%s:%s:%s" % (str(task.project or ""), target, current_main_sha),
                 **common_contention,
             )
             self.task_flow.record_contention(
@@ -22571,8 +21912,7 @@ class ControlPlane:
 
         try:
             integration_task = self.create_task(
-                "Integrate conflicting approved task %s onto current main"
-                % approved_task_id,
+                "Integrate conflicting approved task %s onto current main" % approved_task_id,
                 description=description,
                 project=task.project,
                 priority=int(task.priority),
@@ -22590,9 +21930,7 @@ class ControlPlane:
             # A concurrent duplicate conflict event may have won the create
             # race; re-read the linked integration task so both events resolve
             # to the SAME single task.
-            return self._find_linked_conflict_integration_task(
-                approved_task_id, fingerprint
-            )
+            return self._find_linked_conflict_integration_task(approved_task_id, fingerprint)
         self._reconcile_conflict_integration_family(
             approved_task_id=approved_task_id,
             keep_task_id=integration_task.id,
@@ -22614,8 +21952,7 @@ class ControlPlane:
             review_problems = self._publication_review_executor_problems(task_id)
             if review_problems:
                 raise ValidationError(
-                    "publication review evidence is not verifiable: %s"
-                    % ", ".join(review_problems)
+                    "publication review evidence is not verifiable: %s" % ", ".join(review_problems)
                 )
             return
         assessment = self._assess_default_review_evidence(task, evidence)
@@ -22627,8 +21964,7 @@ class ControlPlane:
         review_problems = self._publication_review_problems(task_id, evidence.id)
         if review_problems:
             raise ValidationError(
-                "publication review evidence is not verifiable: %s"
-                % ", ".join(review_problems)
+                "publication review evidence is not verifiable: %s" % ", ".join(review_problems)
             )
 
     def _publication_review_executor_problems(self, task_id: str) -> List[str]:
@@ -22685,9 +22021,7 @@ class ControlPlane:
                     return []
                 problems.append("review %s verdict is not approved" % review.id)
                 continue
-            problems.append(
-                "review %s lacks verifiable signed review_verdict evidence" % review.id
-            )
+            problems.append("review %s lacks verifiable signed review_verdict evidence" % review.id)
             problems.extend(verdict_problems[:5])
         return problems
 
@@ -22713,9 +22047,7 @@ class ControlPlane:
                     return []
                 problems.append("review %s verdict is not approved" % review.id)
                 continue
-            problems.append(
-                "review %s lacks verifiable signed review_verdict evidence" % review.id
-            )
+            problems.append("review %s lacks verifiable signed review_verdict evidence" % review.id)
             problems.extend(verdict_problems[:5])
         return problems
 
@@ -22792,14 +22124,11 @@ class ControlPlane:
                 "(priority = ? AND created_at > ?) OR "
                 "(priority = ? AND created_at = ? AND id > ?))"
             )
-            params.extend(
-                [priority, priority, created_at, priority, created_at, task_id]
-            )
+            params.extend([priority, priority, created_at, priority, created_at, task_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
             "SELECT * FROM tasks INDEXED BY idx_tasks_review_queue WHERE %s "
-            "ORDER BY priority DESC, created_at, id LIMIT ?"
-            % " AND ".join(clauses),
+            "ORDER BY priority DESC, created_at, id LIMIT ?" % " AND ".join(clauses),
             tuple(params),
         )
         has_more = len(rows) > limit_value
@@ -22843,11 +22172,7 @@ class ControlPlane:
                         "error_class": exc.__class__.__name__,
                     }
                 )
-        next_cursor = (
-            self._encode_review_sweep_cursor(tasks[-1])
-            if has_more and tasks
-            else None
-        )
+        next_cursor = self._encode_review_sweep_cursor(tasks[-1]) if has_more and tasks else None
         return {
             "processed": len(results),
             "results": results,
@@ -22874,9 +22199,7 @@ class ControlPlane:
         try:
             padding = "=" * (-len(encoded) % 4)
             payload = json_loads(
-                base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode(
-                    "utf-8"
-                ),
+                base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8"),
                 {},
             )
             priority = int(payload["priority"])
@@ -22979,8 +22302,7 @@ class ControlPlane:
         # the ambiguous state has no clear winner and the autonomous
         # swarm shouldn't silently pick one (mac-d9c).
         pending_reviews = [
-            r for r in self.list_reviews(task_id)
-            if r.status == ReviewStatus.PENDING.value
+            r for r in self.list_reviews(task_id) if r.status == ReviewStatus.PENDING.value
         ]
         pending_reviews = self._dedupe_same_reviewer_pending_reviews(
             pending_reviews,
@@ -23058,9 +22380,7 @@ class ControlPlane:
                 """,
                 (task_id, ReviewStatus.RETRACTED.value, threshold_at),
             )
-            retracted_count = (
-                int(retracted_count_row["n"]) if retracted_count_row else 0
-            )
+            retracted_count = int(retracted_count_row["n"]) if retracted_count_row else 0
             if retracted_count >= retraction_cap:
                 self._record_default_review_observation(
                     task_id,
@@ -23207,9 +22527,7 @@ class ControlPlane:
             assignment_detail = {
                 "review_id": review.id,
                 "reviewer_agent_id": reviewer.id,
-                "reviewer_independence": (
-                    "fallback" if fallback_reason else "independent"
-                ),
+                "reviewer_independence": ("fallback" if fallback_reason else "independent"),
             }
             if fallback_reason:
                 assignment_detail["reviewer_independence_reason"] = fallback_reason
@@ -23274,9 +22592,7 @@ class ControlPlane:
                 # only default gate unless the emergency opt-in is set.
                 if verdict_evidence is None:
                     task_meta = ensure_json_object(task.metadata)
-                    experiment_assignment = ensure_json_object(
-                        task_meta.get("review_experiment")
-                    )
+                    experiment_assignment = ensure_json_object(task_meta.get("review_experiment"))
                     is_experiment = (
                         experiment_assignment.get("schema") == "mac.review_experiment.v1"
                     )
@@ -23286,9 +22602,7 @@ class ControlPlane:
                     # to hub-verify; with the semantic reviewer removed that
                     # path approves from the already-validated executor
                     # evidence instead of nudging an LLM.
-                    hub_verifiable = (
-                        self._hub_verify_repo_info(task, evidence) is not None
-                    )
+                    hub_verifiable = self._hub_verify_repo_info(task, evidence) is not None
                     wait_for_hub = hub_verifiable and (
                         not is_experiment or not _semantic_reviewer_enabled()
                     )
@@ -23314,19 +22628,21 @@ class ControlPlane:
                         }
             if verdict_evidence is None and not _semantic_reviewer_enabled():
                 repo_info = self._hub_verify_repo_info(task, evidence)
-                evidence_type = str(
-                    evidence_assessment.get("evidence_type")
-                    or ensure_json_object(
-                        ensure_json_object(evidence.metadata).get("verification")
-                    ).get("evidence_type")
-                    or ""
-                ).strip().lower()
+                evidence_type = (
+                    str(
+                        evidence_assessment.get("evidence_type")
+                        or ensure_json_object(
+                            ensure_json_object(evidence.metadata).get("verification")
+                        ).get("evidence_type")
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                )
                 # Repo changes are never rubber-stamped. Even when the
                 # verifier cannot resolve a clone target yet, stay pending
                 # rather than approving a pushed branch without a test run.
-                hub_verifiable = (
-                    repo_info is not None or evidence_type == "repo_change"
-                )
+                hub_verifiable = repo_info is not None or evidence_type == "repo_change"
                 if hub_verifiable:
                     self._record_default_review_observation(
                         task_id,
@@ -23388,9 +22704,7 @@ class ControlPlane:
                 # evidence rows, 0 verdict — the live half of the 2026-06
                 # runaway). Past a cap, block the task instead of re-nudging.
                 try:
-                    verdict_wait_cap = int(
-                        os.environ.get("MAC_REVIEW_VERDICT_WAIT_CAP", "6")
-                    )
+                    verdict_wait_cap = int(os.environ.get("MAC_REVIEW_VERDICT_WAIT_CAP", "6"))
                 except ValueError:
                     verdict_wait_cap = 6
                 wait_count_row = self.store.query_one(
@@ -23668,9 +22982,7 @@ class ControlPlane:
             # operator knows exactly why it didn't merge and how to recover.
             # (mac task_51a777c2)
             detail = str(exc)
-            retry_after_seconds = int(
-                getattr(exc, "publication_retry_after_seconds", 0) or 0
-            )
+            retry_after_seconds = int(getattr(exc, "publication_retry_after_seconds", 0) or 0)
             if retry_after_seconds > 0:
                 # Publication may spend minutes cloning and testing. Re-read
                 # metadata before adding controller backoff so a concurrent
@@ -23679,13 +22991,10 @@ class ControlPlane:
                 retry_metadata = ensure_json_object(self.get_task(task_id).metadata)
                 retry_metadata["publication_retry"] = {
                     "schema": "mac.publication_retry.v1",
-                    "failure_kind": str(
-                        getattr(exc, "publication_failure_kind", "transient")
-                    ),
+                    "failure_kind": str(getattr(exc, "publication_failure_kind", "transient")),
                     "failed_at": utcnow(),
                     "not_before": (
-                        parse_time(utcnow())
-                        + timedelta(seconds=max(60, retry_after_seconds))
+                        parse_time(utcnow()) + timedelta(seconds=max(60, retry_after_seconds))
                     ).isoformat(timespec="microseconds"),
                     "retry_after_seconds": max(60, retry_after_seconds),
                     "error": detail[:500],
@@ -23821,9 +23130,7 @@ class ControlPlane:
             "publication_id": publication.id,
         }
 
-    def _record_review_outcome_lesson(
-        self, task_id: str, *, outcome: str, detail: str
-    ) -> None:
+    def _record_review_outcome_lesson(self, task_id: str, *, outcome: str, detail: str) -> None:
         """Distill a review-stage outcome into a ``deployment_learning`` memory
         record (best-effort; never breaks the workflow).
 
@@ -23967,7 +23274,6 @@ class ControlPlane:
 
     # Project bridge
 
-
     def import_project_item(
         self,
         source: str,
@@ -24008,7 +23314,17 @@ class ControlPlane:
             INSERT INTO project_items (id, source, external_id, title, payload, task_id, status, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (item_id, source, external_id, title, json_dumps(payload), task.id, "imported", now, now),
+            (
+                item_id,
+                source,
+                external_id,
+                title,
+                json_dumps(payload),
+                task.id,
+                "imported",
+                now,
+                now,
+            ),
         )
         self.add_memory(
             task.id,
@@ -24061,26 +23377,10 @@ class ControlPlane:
     def record_repository_merge_capability(
         self, repo_id_or_name: str, capability: JsonDict
     ) -> ProjectRepository:
-        return self.project_repositories.record_merge_capability(
-            repo_id_or_name, capability
-        )
+        return self.project_repositories.record_merge_capability(repo_id_or_name, capability)
 
     def _repository_contract_for_repo(self, repo: ProjectRepository) -> JsonDict:
         return self.project_repositories.contract_for(repo)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def _git_output(
         self,
@@ -24106,27 +23406,11 @@ class ControlPlane:
             "stderr": (completed.stderr or "").strip(),
         }
 
-
-
-
-
-
     @staticmethod
     def _strip_control_chars(value: str) -> str:
         """Strip ASCII control chars except \\t/\\n; reject ANSI escape
         sequences. Used by bd import (mac-3xpl)."""
-        return "".join(
-            c
-            for c in value
-            if (c >= " " or c in ("\t", "\n"))
-        )
-
-
-
-
-
-
-
+        return "".join(c for c in value if (c >= " " or c in ("\t", "\n")))
 
     def get_project_item(self, item_id: str) -> ProjectItem:
         row = self.store.query_one("SELECT * FROM project_items WHERE id = ?", (item_id,))
@@ -24292,7 +23576,6 @@ class ControlPlane:
     def rescue_rollout(self, *args: Any, **kwargs: Any) -> Tuple[Rollout, Task]:
         return self.rollouts.rescue_rollout(*args, **kwargs)
 
-
     # Row mapping
 
     def _task_from_row(self, row: Any) -> Task:
@@ -24320,9 +23603,7 @@ class ControlPlane:
             updated_at=row["updated_at"],
         )
 
-    def _break_glass_authorization_from_row(
-        self, row: Any
-    ) -> BreakGlassAuthorization:
+    def _break_glass_authorization_from_row(self, row: Any) -> BreakGlassAuthorization:
         return BreakGlassAuthorization(
             id=row["id"],
             task_id=row["task_id"],
@@ -24522,24 +23803,16 @@ class ControlPlane:
         running_digest = row["running_digest"] if "running_digest" in keys else None
         role_id = row["role_id"] if "role_id" in keys else None
         owner_human_id = row["owner_human_id"] if "owner_human_id" in keys else None
-        visibility = (
-            str(row["visibility"] or "shared") if "visibility" in keys else "shared"
-        )
-        hermes_instance_id = (
-            row["hermes_instance_id"] if "hermes_instance_id" in keys else None
-        )
+        visibility = str(row["visibility"] or "shared") if "visibility" in keys else "shared"
+        hermes_instance_id = row["hermes_instance_id"] if "hermes_instance_id" in keys else None
         installed_packages = (
-            json_loads(row["installed_packages"], {})
-            if "installed_packages" in keys
-            else {}
+            json_loads(row["installed_packages"], {}) if "installed_packages" in keys else {}
         )
         dispatch_hold = bool(row["dispatch_hold"]) if "dispatch_hold" in keys else False
         dispatch_hold_reason = (
             row["dispatch_hold_reason"] if "dispatch_hold_reason" in keys else None
         )
-        dispatch_hold_at = (
-            row["dispatch_hold_at"] if "dispatch_hold_at" in keys else None
-        )
+        dispatch_hold_at = row["dispatch_hold_at"] if "dispatch_hold_at" in keys else None
         consecutive_lease_expiries_no_telemetry = (
             int(row["consecutive_lease_expiries_no_telemetry"])
             if "consecutive_lease_expiries_no_telemetry" in keys
@@ -24556,9 +23829,7 @@ class ControlPlane:
             else None
         )
         instance_kind = (
-            row["instance_kind"]
-            if "instance_kind" in keys
-            else AgentInstanceKind.STATIC.value
+            row["instance_kind"] if "instance_kind" in keys else AgentInstanceKind.STATIC.value
         )
         return Agent(
             row["id"],
@@ -24634,7 +23905,16 @@ class ControlPlane:
             INSERT INTO task_history (id, task_id, event_type, actor, from_state, to_state, detail, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id("hist"), task_id, event_type, actor, from_state, to_state, json_dumps(detail), when),
+            (
+                new_id("hist"),
+                task_id,
+                event_type,
+                actor,
+                from_state,
+                to_state,
+                json_dumps(detail),
+                when,
+            ),
         )
         self.observability.insert_observation(
             writer,
@@ -24829,9 +24109,7 @@ class ControlPlane:
             # third connection.  The direct lookup also sees the transaction's
             # own task writes.
             source = writer if writer is not None else self.store
-            row = source.execute(
-                "SELECT title FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
+            row = source.execute("SELECT title FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is not None and row["title"]:
                 task_title = str(row["title"])
         except Exception:
@@ -24879,8 +24157,7 @@ class ControlPlane:
             return {
                 "event_type": event_type,
                 "title": "Review completed",
-                "body": "Review %s for %s"
-                % (str(detail.get("status") or "completed"), task_title),
+                "body": "Review %s for %s" % (str(detail.get("status") or "completed"), task_title),
                 "channels": ["dashboard", "hermes"],
                 "metadata": metadata,
             }
@@ -24922,31 +24199,26 @@ class ControlPlane:
     @staticmethod
     def _dependency_join_policy(task: Task) -> str:
         metadata = ensure_json_object(task.metadata)
-        dependency_policy = ensure_json_object(
-            metadata.get("dependency_policy")
-        )
+        dependency_policy = ensure_json_object(metadata.get("dependency_policy"))
         coordination = ensure_json_object(metadata.get("coordination"))
         default_join = (
             "all_settled"
             if coordination.get("mode") == "cooperative_integration"
             else "all_success"
         )
-        join = str(
-            dependency_policy.get("join")
-            or coordination.get("join_policy")
-            or default_join
-        ).strip().lower()
+        join = (
+            str(dependency_policy.get("join") or coordination.get("join_policy") or default_join)
+            .strip()
+            .lower()
+        )
         if join not in {"all_success", "all_settled"}:
             raise ValidationError(
-                "unsupported dependency join policy %r for task %s"
-                % (join, task.id)
+                "unsupported dependency join policy %r for task %s" % (join, task.id)
             )
         return join
 
     @staticmethod
-    def _dependency_state_satisfies_join(
-        state: str, metadata: Any, join: str
-    ) -> bool:
+    def _dependency_state_satisfies_join(state: str, metadata: Any, join: str) -> bool:
         if state == TaskState.COMPLETED.value:
             return True
         if join != "all_settled":
@@ -24970,9 +24242,7 @@ class ControlPlane:
 
     @classmethod
     def _dependency_satisfies_join(cls, dependency: Task, join: str) -> bool:
-        return cls._dependency_state_satisfies_join(
-            dependency.state, dependency.metadata, join
-        )
+        return cls._dependency_state_satisfies_join(dependency.state, dependency.metadata, join)
 
     def _dependencies_satisfied(
         self,
@@ -25077,9 +24347,7 @@ class ControlPlane:
         resolution["settlement"] = settlement
         metadata["dependency_resolution"] = resolution
         try:
-            return self.update_task(
-                task.id, metadata=metadata, actor="dependency-reconciliation"
-            )
+            return self.update_task(task.id, metadata=metadata, actor="dependency-reconciliation")
         except Exception:  # noqa: BLE001 - provenance must not block dispatch
             return task
 
@@ -25115,9 +24383,7 @@ class ControlPlane:
         if task.state != TaskState.BLOCKED.value:
             return False
         dependency_resolution = ensure_json_object(
-            ensure_json_object(getattr(task, "metadata", None)).get(
-                "dependency_resolution"
-            )
+            ensure_json_object(getattr(task, "metadata", None)).get("dependency_resolution")
         )
         return dependency_resolution.get("status") == "unsatisfied"
 
@@ -25144,9 +24410,7 @@ class ControlPlane:
         if task.state != TaskState.BLOCKED.value:
             return False
         dependency_resolution = ensure_json_object(
-            ensure_json_object(getattr(task, "metadata", None)).get(
-                "dependency_resolution"
-            )
+            ensure_json_object(getattr(task, "metadata", None)).get("dependency_resolution")
         )
         if dependency_resolution.get("status") == "unsatisfied":
             # This is a supervised, durable branch outcome consumed by an
@@ -25323,9 +24587,7 @@ class ControlPlane:
     ) -> Tuple[str, JsonDict]:
         failure_class, salvage = self._record_attempt_failure_classification(task)
         transition_detail = dict(detail)
-        defer_attempt_reset = bool(
-            transition_detail.pop("_defer_attempt_reset", False)
-        )
+        defer_attempt_reset = bool(transition_detail.pop("_defer_attempt_reset", False))
         suppress_environment_repair = bool(
             transition_detail.pop("_suppress_environment_repair", False)
         )
@@ -25342,16 +24604,13 @@ class ControlPlane:
             "verification_contract_failed" in json_dumps(ensure_json_object(event.detail)).lower()
             for event in recent_history
         )
-        repair_policy = ensure_json_object(
-            ensure_json_object(task.metadata).get("repair_policy")
-        )
+        repair_policy = ensure_json_object(ensure_json_object(task.metadata).get("repair_policy"))
         # Contract failures normally belong to the original task and should
         # fail visibly after its bounded retries.  A repository may explicitly
         # opt into a separate prerequisite only when it has a real independent
         # repair workflow.
         contract_repair = bool(
-            contract_failure
-            and repair_policy.get("contract_prerequisite") is True
+            contract_failure and repair_policy.get("contract_prerequisite") is True
         )
         environment_repair = bool(
             failure_class == "environment"
@@ -25384,15 +24643,9 @@ class ControlPlane:
             # object passed into this method.
             metadata = ensure_json_object(self.get_task(task.id).metadata)
             repair_metadata_key = (
-                "contract_repair_task_id"
-                if contract_repair
-                else "environment_repair_task_id"
+                "contract_repair_task_id" if contract_repair else "environment_repair_task_id"
             )
-            origin_type = (
-                "contract_prerequisite"
-                if contract_repair
-                else "environment_prerequisite"
-            )
+            origin_type = "contract_prerequisite" if contract_repair else "environment_prerequisite"
             repair_id = str(metadata.get(repair_metadata_key) or "").strip()
             if not repair_id:
                 if contract_repair:
@@ -25415,9 +24668,12 @@ class ControlPlane:
                 # but before detaching the expired lease, a recovery sweep (or
                 # an exceptionally stale finalizer takeover) reuses this exact
                 # task instead of manufacturing duplicate prerequisites.
-                repair_id = "task_repair_%s" % hashlib.sha256(
-                    (task.id + ":" + repair_metadata_key).encode("utf-8")
-                ).hexdigest()[:24]
+                repair_id = (
+                    "task_repair_%s"
+                    % hashlib.sha256(
+                        (task.id + ":" + repair_metadata_key).encode("utf-8")
+                    ).hexdigest()[:24]
+                )
                 failure_fingerprint = hashlib.sha256(
                     json_dumps(
                         {
@@ -25453,15 +24709,11 @@ class ControlPlane:
                     repair_origin.get("type") != origin_type
                     or repair_origin.get("parent_task_id") != task.id
                 ):
-                    raise ValidationError(
-                        "deterministic repair id collides with unrelated task"
-                    )
+                    raise ValidationError("deterministic repair id collides with unrelated task")
                 metadata[repair_metadata_key] = repair_id
                 if contract_repair:
                     metadata["contract_repair_status"] = "waiting"
-                canonical_dependencies = self._canonical_task_dependency_ids(
-                    task.id
-                )
+                canonical_dependencies = self._canonical_task_dependency_ids(task.id)
                 # _update_task_fields, not update_task: this is the hub
                 # attaching a repair task to work it is already failing, not an
                 # operator editing scope. Routing it through update_task would
@@ -25484,9 +24736,7 @@ class ControlPlane:
                 repair_origin.get("type") != origin_type
                 or repair_origin.get("parent_task_id") != task.id
             ):
-                raise ValidationError(
-                    "repair prerequisite does not match its parent and origin"
-                )
+                raise ValidationError("repair prerequisite does not match its parent and origin")
             if not defer_attempt_reset:
                 self.store.execute(
                     "UPDATE tasks SET attempt_count = 0, updated_at = ? WHERE id = ?",
@@ -25509,9 +24759,7 @@ class ControlPlane:
             transition_detail["manual_repair_required"] = True
         elif failure_class == "environment" and not environment_repair:
             if transition_detail.get("reason") in (None, "", "max attempts"):
-                transition_detail["reason"] = (
-                    "environment_failure_without_actionable_evidence"
-                )
+                transition_detail["reason"] = "environment_failure_without_actionable_evidence"
             transition_detail["manual_repair_required"] = True
         return TaskState.FAILED.value, transition_detail
 
@@ -25533,9 +24781,9 @@ class ControlPlane:
             if backoff_seconds is not None
             else self._blocked_attempt_retry_backoff_seconds(task)
         )
-        return (
-            parse_time(task.updated_at) + timedelta(seconds=backoff)
-        ).isoformat(timespec="microseconds")
+        return (parse_time(task.updated_at) + timedelta(seconds=backoff)).isoformat(
+            timespec="microseconds"
+        )
 
     def _blocked_attempt_non_retryable_marker(self, task: Task) -> Optional[str]:
         if task.state != TaskState.BLOCKED.value:
@@ -25658,13 +24906,9 @@ class ControlPlane:
             ensure_json_object(incident.metadata).get("failure_fingerprint") or ""
         )
         if incident_fingerprint != fingerprint:
-            raise ValidationError(
-                "deterministic shared incident id collides with unrelated task"
-            )
+            raise ValidationError("deterministic shared incident id collides with unrelated task")
         incident_metadata = ensure_json_object(incident.metadata)
-        affected = _metadata_string_list(
-            incident_metadata.get("affected_task_ids")
-        )
+        affected = _metadata_string_list(incident_metadata.get("affected_task_ids"))
         if task.id not in affected:
             affected.append(task.id)
             incident_metadata["affected_task_ids"] = affected
@@ -25699,9 +24943,7 @@ class ControlPlane:
         ):
             return None, None
         latest_event = self._latest_blocked_attempt_event(task)
-        latest_detail = (
-            ensure_json_object(latest_event.detail) if latest_event is not None else {}
-        )
+        latest_detail = ensure_json_object(latest_event.detail) if latest_event is not None else {}
         retry_generation = _nonnegative_int(
             ensure_json_object(task.metadata).get("retry_generation"),
             default=0,
@@ -25735,10 +24977,7 @@ class ControlPlane:
         repeated_failure = same_failure_count >= 2
         exhausted = task.attempt_count >= task.max_attempts
         must_stop = bool(
-            non_retryable
-            or retry_kind == "non_retryable"
-            or repeated_failure
-            or exhausted
+            non_retryable or retry_kind == "non_retryable" or repeated_failure or exhausted
         )
         if must_stop:
             incident: Optional[Task] = None
@@ -25841,16 +25080,12 @@ class ControlPlane:
             try:
                 child = self.get_task(child_id)
             except NotFoundError:
-                outputs.append(
-                    {"task_id": child_id, "status": "missing_task"}
-                )
+                outputs.append({"task_id": child_id, "status": "missing_task"})
                 continue
             child_target = ensure_json_object(
                 ensure_json_object(child.metadata).get("review_target")
             )
-            evidence_id = str(
-                child_target.get("executor_evidence_id") or ""
-            ).strip()
+            evidence_id = str(child_target.get("executor_evidence_id") or "").strip()
             output: JsonDict = {
                 "task_id": child.id,
                 "title": child.title,
@@ -25926,8 +25161,7 @@ class ControlPlane:
             params.extend([updated_at, updated_at, task_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
-            "ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
+            "SELECT * FROM tasks WHERE %s ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
             tuple(params),
         )
         has_more = len(rows) > limit_value
@@ -25954,9 +25188,7 @@ class ControlPlane:
                     )
                     and (not manual_repair or supervised)
                 ):
-                    settlement = self._dependency_settlement(
-                        task, dependency_ids=dependency_ids
-                    )
+                    settlement = self._dependency_settlement(task, dependency_ids=dependency_ids)
                     if supervised:
                         task = self._clear_dependency_supervision(task)
                     task = self._prepare_cooperative_integration_task(task)
@@ -25967,9 +25199,7 @@ class ControlPlane:
                         # produced nothing. Say so here rather than leaving
                         # "dependencies satisfied" to imply inputs exist.
                         detail["reason"] = "dependencies settled without output"
-                        detail["settled_without_output"] = settlement[
-                            "settled_without_output"
-                        ]
+                        detail["settled_without_output"] = settlement["settled_without_output"]
                         detail["dependency_settlement"] = settlement
                     unblocked.append(
                         self._transition_task_internal(
@@ -25988,19 +25218,13 @@ class ControlPlane:
                                 subject_id=task.id,
                                 detail={
                                     "task_id": task.id,
-                                    "settled_without_output": settlement[
-                                        "settled_without_output"
-                                    ],
+                                    "settled_without_output": settlement["settled_without_output"],
                                     "join": settlement["join"],
                                 },
                             )
                         except Exception:  # noqa: BLE001 - diagnostic only
                             pass
-                elif (
-                    task.state == TaskState.BLOCKED.value
-                    and dependency_ids
-                    and not manual_repair
-                ):
+                elif task.state == TaskState.BLOCKED.value and dependency_ids and not manual_repair:
                     # One-way compatibility migration for ledgers created
                     # before dependency waits had their own state.
                     self._transition_task_internal(
@@ -26077,8 +25301,7 @@ class ControlPlane:
             params.extend([updated_at, updated_at, task_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
-            "ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
+            "SELECT * FROM tasks WHERE %s ORDER BY updated_at, id LIMIT ?" % " AND ".join(clauses),
             tuple(params),
         )
         has_more = len(rows) > limit_value
@@ -26179,7 +25402,6 @@ class ControlPlane:
     # coarser/finer rotation, but never below a floor of 1 character.
     _DISPATCH_PAGE_PREFIX_WIDTH = 2
 
-
     def _dispatch_ordered_tasks(self, *, project: Optional[str] = None) -> List[Task]:
         # Allocator v2 owns ordering.  Feed it the complete OPEN population;
         # the retired priority/oldest dual windows could permanently hide the
@@ -26212,15 +25434,11 @@ class ControlPlane:
             # (priority, age) order within a bucket and is a no-op when only a
             # single prefix bucket is present, so the group head still leads on
             # (priority, age).
-            projects[name] = self._rotate_by_page_prefix(
-                project_tasks, now
-            )
+            projects[name] = self._rotate_by_page_prefix(project_tasks, now)
         project_order = sorted(
             projects,
             key=lambda name: (
-                *self._dispatch_task_sort_key(
-                    projects[name][0], now
-                ),
+                *self._dispatch_task_sort_key(projects[name][0], now),
                 name,
             ),
         )
@@ -26262,28 +25480,24 @@ class ControlPlane:
         bucket exists the output order is identical to the sorted input, so the
         rotation is a no-op for single-prefix groups.
         """
-        prefix_width = width if width is not None else _int_env(
-            "MAC_DISPATCH_PAGE_PREFIX_WIDTH",
-            self._DISPATCH_PAGE_PREFIX_WIDTH,
-            minimum=1,
+        prefix_width = (
+            width
+            if width is not None
+            else _int_env(
+                "MAC_DISPATCH_PAGE_PREFIX_WIDTH",
+                self._DISPATCH_PAGE_PREFIX_WIDTH,
+                minimum=1,
+            )
         )
         buckets: Dict[str, List[Task]] = {}
         for task in tasks:
-            buckets.setdefault(
-                self._page_prefix_key(task, prefix_width), []
-            ).append(task)
+            buckets.setdefault(self._page_prefix_key(task, prefix_width), []).append(task)
         for bucket_tasks in buckets.values():
-            bucket_tasks.sort(
-                key=lambda item: self._dispatch_task_sort_key(
-                    item, now
-                )
-            )
+            bucket_tasks.sort(key=lambda item: self._dispatch_task_sort_key(item, now))
         bucket_order = sorted(
             buckets,
             key=lambda prefix: (
-                *self._dispatch_task_sort_key(
-                    buckets[prefix][0], now
-                ),
+                *self._dispatch_task_sort_key(buckets[prefix][0], now),
                 prefix,
             ),
         )
@@ -26303,8 +25517,7 @@ class ControlPlane:
             params.append(project)
         where_sql = " AND ".join(where)
         rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
-            "ORDER BY priority DESC, created_at, id" % where_sql,
+            "SELECT * FROM tasks WHERE %s ORDER BY priority DESC, created_at, id" % where_sql,
             tuple(params),
         )
         return [self._task_from_row(row) for row in rows]
@@ -26338,17 +25551,11 @@ class ControlPlane:
 
     def _dispatch_due_bonus(self, task: Task, now: str) -> int:
         metadata = ensure_json_object(task.metadata)
-        raw_due_at = str(
-            metadata.get("due_at")
-            or metadata.get("deadline_at")
-            or ""
-        ).strip()
+        raw_due_at = str(metadata.get("due_at") or metadata.get("deadline_at") or "").strip()
         if not raw_due_at:
             return 0
         try:
-            overdue_seconds = (
-                parse_time(now) - parse_time(raw_due_at)
-            ).total_seconds()
+            overdue_seconds = (parse_time(now) - parse_time(raw_due_at)).total_seconds()
         except Exception:  # noqa: BLE001 - malformed hints must not block work.
             return 0
         if overdue_seconds < 0:
@@ -26426,15 +25633,11 @@ class ControlPlane:
         name = str(project or "").strip()
         if not name:
             return {}
-        row = self.store.query_one(
-            "SELECT metadata FROM projects WHERE name = ?", (name,)
-        )
+        row = self.store.query_one("SELECT metadata FROM projects WHERE name = ?", (name,))
         if row is None:
             return {}
         block = ensure_json_object(
-            ensure_json_object(json_loads(row["metadata"], {})).get(
-                "egress_contract"
-            )
+            ensure_json_object(json_loads(row["metadata"], {})).get("egress_contract")
         )
         raw_hosts = block.get("hosts")
         if not isinstance(raw_hosts, list):
@@ -26488,9 +25691,7 @@ class ControlPlane:
         if declared_egress:
             metadata["egress_contract"] = declared_egress
         payload["metadata"] = metadata
-        authorization = self._claimed_break_glass_authorization(
-            task.id, lease.agent_id, lease.id
-        )
+        authorization = self._claimed_break_glass_authorization(task.id, lease.agent_id, lease.id)
         if authorization is None:
             return payload
         runtime = ensure_json_object(metadata.get("runtime"))
@@ -26596,18 +25797,12 @@ class ControlPlane:
             return set()
         relationships = ensure_json_object(metadata.get("relationships"))
         parent_id = str(
-            relationships.get("parent_task_id")
-            or metadata.get("parent_task_id")
-            or task.id
+            relationships.get("parent_task_id") or metadata.get("parent_task_id") or task.id
         ).strip()
         related_ids = {parent_id}
         if parent_id == task.id:
-            related_ids.update(
-                _metadata_string_list(coordination.get("child_task_ids"))
-            )
-            related_ids.update(
-                _metadata_string_list(relationships.get("child_task_ids"))
-            )
+            related_ids.update(_metadata_string_list(coordination.get("child_task_ids")))
+            related_ids.update(_metadata_string_list(relationships.get("child_task_ids")))
         else:
             try:
                 parent = self.get_task(parent_id)
@@ -26615,18 +25810,12 @@ class ControlPlane:
                 parent = None
             if parent is not None:
                 parent_metadata = ensure_json_object(parent.metadata)
-                parent_relationships = ensure_json_object(
-                    parent_metadata.get("relationships")
-                )
-                parent_coordination = ensure_json_object(
-                    parent_metadata.get("coordination")
-                )
+                parent_relationships = ensure_json_object(parent_metadata.get("relationships"))
+                parent_coordination = ensure_json_object(parent_metadata.get("coordination"))
                 related_ids.update(
                     _metadata_string_list(parent_relationships.get("child_task_ids"))
                 )
-                related_ids.update(
-                    _metadata_string_list(parent_coordination.get("child_task_ids"))
-                )
+                related_ids.update(_metadata_string_list(parent_coordination.get("child_task_ids")))
         return related_ids
 
     def _coordination_excluded_agent_ids(self, task: Task) -> set[str]:
@@ -26727,10 +25916,9 @@ class ControlPlane:
             return "machine_untrusted"
         if not self._machine_allows_tenant(machine, self._task_tenant_id(task)):
             return "machine_tenant_not_allowed"
-        if (
-            metadata_declares_read_only_report_repository(task.metadata)
-            and not agent_has_read_only_report_repository_executor(agent.resources)
-        ):
+        if metadata_declares_read_only_report_repository(
+            task.metadata
+        ) and not agent_has_read_only_report_repository_executor(agent.resources):
             return "report_repository_executor_missing"
 
         break_glass_active = break_glass is not None and break_glass.agent_id == agent.id
@@ -26742,11 +25930,11 @@ class ControlPlane:
             return "agent_dispatch_held"
 
         metadata = ensure_json_object(task.metadata)
-        excluded = {
-            str(value)
-            for value in metadata.get("excluded_agent_ids", [])
-            if str(value)
-        } if isinstance(metadata.get("excluded_agent_ids"), list) else set()
+        excluded = (
+            {str(value) for value in metadata.get("excluded_agent_ids", []) if str(value)}
+            if isinstance(metadata.get("excluded_agent_ids"), list)
+            else set()
+        )
         if agent.id in excluded:
             return "explicit_agent_excluded"
         target_agent_id = str(metadata.get("target_agent_id") or "").strip()
@@ -26766,9 +25954,7 @@ class ControlPlane:
             return "repository_source_dirty"
         if not self._agent_has_repository_commands(agent, task):
             return "repository_commands_missing"
-        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(
-            agent, task
-        )
+        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(agent, task)
         if not coding_route_ok:
             return coding_route_reason
         if role_reason is not None:
@@ -26899,9 +26085,7 @@ class ControlPlane:
                 "UPDATE agent_roles SET updated_at = updated_at WHERE id = ?",
                 (role_id,),
             )
-            return conn.execute(
-                "SELECT * FROM agent_roles WHERE id = ?", (role_id,)
-            ).fetchone()
+            return conn.execute("SELECT * FROM agent_roles WHERE id = ?", (role_id,)).fetchone()
 
         def locked_global_role(role_id_or_slug: str) -> Optional[Any]:
             row = conn.execute(
@@ -26910,8 +26094,7 @@ class ControlPlane:
             ).fetchone()
             if row is None:
                 row = conn.execute(
-                    "SELECT id FROM agent_roles "
-                    "WHERE slug = ? AND tenant_id IS NULL",
+                    "SELECT id FROM agent_roles WHERE slug = ? AND tenant_id IS NULL",
                     (role_id_or_slug,),
                 ).fetchone()
             return locked_role_by_id(str(row["id"])) if row is not None else None
@@ -26936,9 +26119,7 @@ class ControlPlane:
 
         role_required_caps: set = set()
         if bound_role is not None:
-            role_required_caps = set(
-                json_loads(bound_role["required_capabilities"], [])
-            )
+            role_required_caps = set(json_loads(bound_role["required_capabilities"], []))
             from mac.roles_service import machine_hardware_satisfies
 
             hardware_ok, _reasons = machine_hardware_satisfies(
@@ -26974,17 +26155,11 @@ class ControlPlane:
             explicit_slugs = persona_metadata.get("role_slugs")
             if isinstance(explicit_slugs, list) and explicit_slugs:
                 allowed_slugs = {
-                    str(value).strip().lower()
-                    for value in explicit_slugs
-                    if str(value).strip()
+                    str(value).strip().lower() for value in explicit_slugs if str(value).strip()
                 }
             else:
                 default_slug = (
-                    str(persona["name"] or "")
-                    .strip()
-                    .lower()
-                    .replace(" ", "-")
-                    .replace("_", "-")
+                    str(persona["name"] or "").strip().lower().replace(" ", "-").replace("_", "-")
                 )
                 allowed_slugs = {default_slug} if default_slug else set()
             if str(bound_role["slug"]) not in allowed_slugs:
@@ -27001,8 +26176,7 @@ class ControlPlane:
         task_authorization = self._active_break_glass_authorization(task.id)
         break_glass = (
             task_authorization
-            if task_authorization is not None
-            and task_authorization.agent_id == agent.id
+            if task_authorization is not None and task_authorization.agent_id == agent.id
             else None
         )
         if task_authorization is not None and break_glass is None:
@@ -27019,10 +26193,9 @@ class ControlPlane:
             self._assert_current_read_only_report_task_contract(task)
         except ValidationError:
             return False, "report_repository_contract_invalid"
-        if (
-            metadata_declares_read_only_report_repository(task.metadata)
-            and not agent_has_read_only_report_repository_executor(agent.resources)
-        ):
+        if metadata_declares_read_only_report_repository(
+            task.metadata
+        ) and not agent_has_read_only_report_repository_executor(agent.resources):
             return False, "report_repository_executor_missing"
         # Hard safety exclusion used by crash-repair tasks: a worker must not
         # diagnose or approve a crash in the same revision that killed it.
@@ -27041,21 +26214,15 @@ class ControlPlane:
         # relaxes it (allow_cooperative_reuse=True) rather than leaving the task
         # permanently undispatchable.  This mirrors the reviewer-independence
         # fallback the review path already has.
-        if not allow_cooperative_reuse and agent.id in self._coordination_excluded_agent_ids(
-            task
-        ):
+        if not allow_cooperative_reuse and agent.id in self._coordination_excluded_agent_ids(task):
             return False, "cooperative_distinct_agent_excluded"
         target_agent_id = (
-            task.metadata.get("target_agent_id")
-            if isinstance(task.metadata, dict)
-            else None
+            task.metadata.get("target_agent_id") if isinstance(task.metadata, dict) else None
         )
         if target_agent_id and agent.id != str(target_agent_id):
             return False, "target_agent_id_mismatch"
         target_agent_name = (
-            task.metadata.get("target_agent_name")
-            if isinstance(task.metadata, dict)
-            else None
+            task.metadata.get("target_agent_name") if isinstance(task.metadata, dict) else None
         )
         if target_agent_name and agent.name != str(target_agent_name):
             return False, "target_agent_name_mismatch"
@@ -27087,18 +26254,14 @@ class ControlPlane:
             return False, "repository_source_dirty"
         if not self._agent_has_repository_commands(agent, task):
             return False, "repository_commands_missing"
-        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(
-            agent, task
-        )
+        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(agent, task)
         if not coding_route_ok:
             return False, coding_route_reason
         # Role + hardware gates. Both no-op when neither the agent nor the
         # task carry role/hardware metadata, so the legacy capability path
         # below stays the dominant matcher for un-roled fleets.
         required_role = (
-            task.metadata.get("required_role")
-            if isinstance(task.metadata, dict)
-            else None
+            task.metadata.get("required_role") if isinstance(task.metadata, dict) else None
         )
         if required_role:
             # Look up the target role first. An unknown role can never be
@@ -27127,9 +26290,7 @@ class ControlPlane:
                 # target role's required_capabilities. The task-level
                 # capabilities are still enforced by the union check at
                 # the end of this method.
-                if not set(target_role.required_capabilities).issubset(
-                    set(agent.capabilities)
-                ):
+                if not set(target_role.required_capabilities).issubset(set(agent.capabilities)):
                     return False, "required_role_capabilities_missing"
         role_required_caps: set = set()
         if agent.role_id is not None:
@@ -27196,9 +26357,7 @@ class ControlPlane:
         available = _agent_resource_command_names(ensure_json_object(agent.resources))
         return set(required_commands).issubset(available)
 
-    def _agent_has_clean_managed_repository_source(
-        self, agent: Agent, task: Task
-    ) -> bool:
+    def _agent_has_clean_managed_repository_source(self, agent: Agent, task: Task) -> bool:
         """Reject work targeting the dirty managed source reported by a worker.
 
         Workers already refuse to prepare a repository worktree from a dirty
@@ -27262,9 +26421,7 @@ class ControlPlane:
             return True
         return source_state.get("dirty") is not True
 
-    def _agent_has_verified_coding_route(
-        self, agent: Agent, task: Task
-    ) -> Tuple[bool, str]:
+    def _agent_has_verified_coding_route(self, agent: Agent, task: Task) -> Tuple[bool, str]:
         """Require a fresh, exact in-sandbox route proof before repo dispatch."""
         if not self._task_is_repo_coupled(task) or not _agent_requires_openshell(agent):
             return True, "not_required"
@@ -27305,9 +26462,7 @@ class ControlPlane:
             saw_fresh_route = True
             if not pinned_model:
                 return True, "verified"
-            verified_model = str(
-                verification.get("model") or item.get("model") or ""
-            ).strip()
+            verified_model = str(verification.get("model") or item.get("model") or "").strip()
             verified_models = {
                 str(value).strip()
                 for value in (verification.get("verified_models") or [])
@@ -27394,11 +26549,7 @@ class ControlPlane:
         evidence = self.list_evidence(task.id)
         if not evidence:
             return None, {"reason": "no_evidence"}
-        successful = [
-            item
-            for item in evidence
-            if self._evidence_returncode(item) == 0
-        ]
+        successful = [item for item in evidence if self._evidence_returncode(item) == 0]
         if not successful:
             return None, {"reason": "no_successful_evidence"}
         rejected: List[JsonDict] = []
@@ -27519,7 +26670,9 @@ class ControlPlane:
                 "valid": False,
                 "reason": "signer_unknown",
                 "evidence_type": evidence_type,
-                "problems": ["verification.signed_by does not match a known agent with an attestation key"],
+                "problems": [
+                    "verification.signed_by does not match a known agent with an attestation key"
+                ],
             }
         if not verify_verification_manifest_signature(signer_key, manifest, signature):
             # Key-rotation tolerance (mac-s2vz, extended): if the signer was
@@ -27549,7 +26702,9 @@ class ControlPlane:
                     "valid": False,
                     "reason": "signature_invalid",
                     "evidence_type": evidence_type,
-                    "problems": ["verification.signature does not verify against signed_by's attestation key"],
+                    "problems": [
+                        "verification.signature does not verify against signed_by's attestation key"
+                    ],
                 }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
@@ -27568,10 +26723,7 @@ class ControlPlane:
             if (
                 _hub_review_verify_enabled()
                 and self._evidence_tests_are_hub_verify_deferred(evidence)
-                and all(
-                    "passing test" in p or "passing check" in p
-                    for p in type_problems
-                )
+                and all("passing test" in p or "passing check" in p for p in type_problems)
             ):
                 return {
                     "valid": True,
@@ -27603,8 +26755,7 @@ class ControlPlane:
     ) -> List[str]:
         if (
             evidence_type == "investigation"
-            and declared_non_repository_outcome_evidence_type(task.metadata)
-            != "investigation"
+            and declared_non_repository_outcome_evidence_type(task.metadata) != "investigation"
         ):
             return [
                 "investigation evidence requires an operator-authored "
@@ -27634,9 +26785,7 @@ class ControlPlane:
         ]
         if not missing:
             return []
-        return [
-            "repo evidence missing required changed files: %s" % ", ".join(missing)
-        ]
+        return ["repo evidence missing required changed files: %s" % ", ".join(missing)]
 
     def _allows_empty_repo_change_evidence(self, task: Task, evidence_type: str) -> bool:
         if str(evidence_type or "").strip().lower() != "repo_change":
@@ -27644,9 +26793,10 @@ class ControlPlane:
         metadata = ensure_json_object(task.metadata)
         origin = ensure_json_object(metadata.get("origin"))
         remediation = ensure_json_object(metadata.get("remediation"))
-        return origin.get("type") == "beads_source_remediation" or remediation.get(
-            "type"
-        ) == "beads_source_refresh"
+        return (
+            origin.get("type") == "beads_source_remediation"
+            or remediation.get("type") == "beads_source_refresh"
+        )
 
     def _task_is_repo_coupled(self, task: Task) -> bool:
         """mem-11: True when the task carries a repository_contract — a code task
@@ -27683,7 +26833,9 @@ class ControlPlane:
             if not isinstance(contract, dict) or not contract:
                 continue
             evidence = ensure_json_object(contract.get("evidence"))
-            required = evidence.get("required") if isinstance(evidence.get("required"), list) else []
+            required = (
+                evidence.get("required") if isinstance(evidence.get("required"), list) else []
+            )
             if any(str(r).strip().lower() in {"tests", "test"} for r in required):
                 return True
         return False
@@ -27827,8 +26979,7 @@ class ControlPlane:
         if not isinstance(tests, list) or not tests:
             return False
         has_deferred = any(
-            isinstance(item, dict)
-            and str(item.get("status") or "").strip().lower() == "deferred"
+            isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "deferred"
             for item in tests
         )
         if not has_deferred:
@@ -27837,8 +26988,14 @@ class ControlPlane:
         # already completed the test and the deferred item is stale/incidental.
         has_passing = any(
             isinstance(item, dict)
-            and str(item.get("status") or "").strip().lower() in {
-                "pass", "passed", "success", "successful", "succeeded", "ok",
+            and str(item.get("status") or "").strip().lower()
+            in {
+                "pass",
+                "passed",
+                "success",
+                "successful",
+                "succeeded",
+                "ok",
             }
             for item in tests
         )
@@ -27885,7 +27042,9 @@ class ControlPlane:
         remote_url = _gitops.strip_git_remote_auth(remote_url)
         head_sha = str(repo.get("head_sha") or "").strip()
         remote_ref = str(repo.get("remote_ref") or "").strip()
-        branch = remote_ref[len("refs/heads/"):] if remote_ref.startswith("refs/heads/") else remote_ref
+        branch = (
+            remote_ref[len("refs/heads/") :] if remote_ref.startswith("refs/heads/") else remote_ref
+        )
         if not remote_url or not _GIT_SHA_RE.match(head_sha) or not branch:
             return None
         if repo.get("pushed") is not True:
@@ -27967,9 +27126,22 @@ class ControlPlane:
                 # Shallow single-branch clone keeps the upload into the sandbox
                 # small (a deep clone's history broke the tar-over-ssh upload
                 # with a broken pipe).
-                ["git", "clone", "--branch", branch, "--depth", "1", "--single-branch",
-                 "--", auth_url, str(tmp / "repo")],
-                capture_output=True, text=True, timeout=300, check=False,
+                [
+                    "git",
+                    "clone",
+                    "--branch",
+                    branch,
+                    "--depth",
+                    "1",
+                    "--single-branch",
+                    "--",
+                    auth_url,
+                    str(tmp / "repo"),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
                 env={**os.environ, **auth_env} if auth_env else None,
                 stdin=subprocess.DEVNULL,
             )
@@ -27984,9 +27156,7 @@ class ControlPlane:
                 timeout=30,
                 check=False,
             )
-            observed_head = (
-                cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
-            )
+            observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
             if observed_head != head_sha:
                 return 1, (
                     "hub verify clone HEAD mismatch: expected %s, observed %s"
@@ -28000,40 +27170,63 @@ class ControlPlane:
             # archive survives any upload path verbatim, .git included.
             tar = subprocess.run(
                 ["tar", "czf", str(tmp / "repo.tgz"), "-C", str(tmp), "repo"],
-                capture_output=True, text=True, timeout=120, check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             )
             if tar.returncode != 0:
-                return 1, "hub verify tar failed: %s" % (
-                    (tar.stderr or tar.stdout or "").strip()
-                )[-800:]
-            subprocess.run([openshell, "sandbox", "delete", name],
-                           capture_output=True, text=True, timeout=60, check=False)
+                return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
+                    -800:
+                ]
+            subprocess.run(
+                [openshell, "sandbox", "delete", name],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
             argv = [openshell, "sandbox", "create", "--no-auto-providers"]
             if policy:
                 argv += ["--policy", policy]
             argv += [
-                "--name", name,
-                "--label", "mac.owner=mac",
-                "--label", "mac.kind=hubverify",
-                "--label", "mac.pid=%d" % os.getpid(),
-                "--label", "mac.keep=false",
-                "--from", image, "--env", "HOME=/tmp",
+                "--name",
+                name,
+                "--label",
+                "mac.owner=mac",
+                "--label",
+                "mac.kind=hubverify",
+                "--label",
+                "mac.pid=%d" % os.getpid(),
+                "--label",
+                "mac.keep=false",
+                "--from",
+                image,
+                "--env",
+                "HOME=/tmp",
                 # OpenShell's supervisor resets PATH on fresh create/exec
                 # commands instead of preserving the image ENV. Pass the
                 # sandbox-owned runtime path explicitly; never inherit the
                 # control-plane host's PATH.
-                "--env", "PATH=%s" % SANDBOX_BASE_PATH,
-                "--upload", "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
-                "--", "/bin/bash", "-c",
+                "--env",
+                "PATH=%s" % SANDBOX_BASE_PATH,
+                "--upload",
+                "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
+                "--",
+                "/bin/bash",
+                "-c",
                 "export PATH=%s; hash -r 2>/dev/null || true; "
-                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s" % (
+                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s"
+                % (
                     SANDBOX_BASE_PATH,
                     _HUB_VERIFY_GIT_PREFLIGHT,
                     test_command or "scripts/run-contract-tests.sh",
                 ),
             ]
             try:
-                proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+                proc = subprocess.run(
+                    argv, capture_output=True, text=True, timeout=timeout, check=False
+                )
                 out = (proc.stdout or "") + (proc.stderr or "")
                 # Head AND tail. A blind tail cannot see the verdict:
                 # run-contract-tests.sh prints the pytest failure first, then
@@ -28046,7 +27239,13 @@ class ControlPlane:
                 # retried forever (six tasks, ~6 hours, 2026-08-20).
                 return int(proc.returncode), _hub_verify_output_excerpt(out)
             finally:
-                subprocess.run([openshell, "sandbox", "delete", name], capture_output=True, text=True, timeout=60, check=False)
+                subprocess.run(
+                    [openshell, "sandbox", "delete", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -28071,9 +27270,7 @@ class ControlPlane:
             return None
         if current_task.state == TaskState.COMPLETED.value:
             return None
-        assignment = ensure_json_object(
-            ensure_json_object(task.metadata).get("review_experiment")
-        )
+        assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
         if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
             # Opt-in only. The default review no longer has a semantic
             # reviewer, so experiments take the same hub-verify path as
@@ -28200,8 +27397,7 @@ class ControlPlane:
         )
         return (
             "if [ -x scripts/run-sanity-tests.sh ]; then "
-            "scripts/run-sanity-tests.sh %s; else %s; fi"
-            % (changed_args, full_command)
+            "scripts/run-sanity-tests.sh %s; else %s; fi" % (changed_args, full_command)
         )
 
     def _matches_hub_review_verification_evidence(
@@ -28325,8 +27521,13 @@ class ControlPlane:
         return matches
 
     def _run_hub_review_verification_locked(
-        self, task: Task, review: Review, executor_evidence: Evidence, actor: str,
-        info: Mapping[str, Any], key: str,
+        self,
+        task: Task,
+        review: Review,
+        executor_evidence: Evidence,
+        actor: str,
+        info: Mapping[str, Any],
+        key: str,
     ) -> Optional[Evidence]:
         # The repository-owned selector combines changed/CodeGraph tests with
         # public and process-E2E canaries, and itself falls back to the full
@@ -28339,8 +27540,11 @@ class ControlPlane:
             )
         except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
             self._record_default_review_observation(
-                task.id, "workflow.default_review.hub_verify_error", "warning",
-                {"review_id": review.id, "error": str(exc)[:300]}, actor,
+                task.id,
+                "workflow.default_review.hub_verify_error",
+                "warning",
+                {"review_id": review.id, "error": str(exc)[:300]},
+                actor,
             )
             return None
         if returncode != 0:
@@ -28449,7 +27653,8 @@ class ControlPlane:
                 # the same commit's files.
                 "files_changed": _nested_json_object(
                     ensure_json_object(executor_evidence.metadata), "verification", "repo"
-                ).get("files_changed") or [],
+                ).get("files_changed")
+                or [],
             },
             "tests": [
                 {
@@ -28495,9 +27700,16 @@ class ControlPlane:
             metadata={"returncode": 0, "verification": manifest, "hub_verified": True},
         )
         self._record_default_review_observation(
-            task.id, "workflow.default_review.hub_verified", "info",
-            {"review_id": review.id, "verdict": verdict, "returncode": returncode,
-             "reviewer_agent_id": review.reviewer_agent_id}, actor,
+            task.id,
+            "workflow.default_review.hub_verified",
+            "info",
+            {
+                "review_id": review.id,
+                "verdict": verdict,
+                "returncode": returncode,
+                "reviewer_agent_id": review.reviewer_agent_id,
+            },
+            actor,
         )
         if verdict == "rejected":
             self._record_review_outcome_lesson(
@@ -28694,9 +27906,7 @@ class ControlPlane:
             if not_before is not None:
                 try:
                     if parse_time(evidence.created_at) < parse_time(not_before):
-                        problems.append(
-                            "verdict %s predates review request" % evidence.id
-                        )
+                        problems.append("verdict %s predates review request" % evidence.id)
                         continue
                 except ValueError:
                     problems.append("verdict %s has invalid created_at" % evidence.id)
@@ -28748,9 +27958,7 @@ class ControlPlane:
                 predates_rotation = False
                 if rotated_at and evidence.created_at:
                     try:
-                        predates_rotation = parse_time(rotated_at) > parse_time(
-                            evidence.created_at
-                        )
+                        predates_rotation = parse_time(rotated_at) > parse_time(evidence.created_at)
                     except ValueError:
                         predates_rotation = False
                 prev_ok = False
@@ -28770,9 +27978,7 @@ class ControlPlane:
                             % (evidence.id, rotated_at, evidence.created_at)
                         )
                     else:
-                        problems.append(
-                            "verdict %s signature does not verify" % evidence.id
-                        )
+                        problems.append("verdict %s signature does not verify" % evidence.id)
                     continue
                 # prev_ok: the signature verifies against the key that was
                 # active at signing time — accept and fall through to the
@@ -28780,7 +27986,9 @@ class ControlPlane:
             executor_evidence = self.get_evidence(executor_evidence_id)
             executor_manifest = executor_evidence.metadata.get("verification") or {}
             if not isinstance(executor_manifest, dict):
-                problems.append("verdict %s cannot resolve executor verification manifest" % evidence.id)
+                problems.append(
+                    "verdict %s cannot resolve executor verification manifest" % evidence.id
+                )
                 continue
             verdict = str(manifest.get("verdict") or "").strip().lower()
             if verdict not in {"approved", "rejected"}:
@@ -28797,8 +28005,7 @@ class ControlPlane:
             )
             if llm_problems:
                 problems.extend(
-                    "verdict %s %s" % (evidence.id, problem)
-                    for problem in llm_problems
+                    "verdict %s %s" % (evidence.id, problem) for problem in llm_problems
                 )
                 continue
             # Deterministic finalization can produce a signed, fail-closed
@@ -28807,32 +28014,23 @@ class ControlPlane:
             # but it is not a code-review decision and must never consume an
             # executor attempt as though a reviewer rejected the patch.
             if "semantic_verdict" in manifest:
-                semantic_verdict = str(
-                    manifest.get("semantic_verdict") or ""
-                ).strip().lower()
+                semantic_verdict = str(manifest.get("semantic_verdict") or "").strip().lower()
                 if semantic_verdict not in {"approved", "rejected"}:
-                    problems.append(
-                        "verdict %s semantic verdict is invalid" % evidence.id
-                    )
+                    problems.append("verdict %s semantic verdict is invalid" % evidence.id)
                     continue
             experiment = manifest.get("review_experiment")
             if isinstance(experiment, dict) and experiment.get("blind"):
                 protocol = experiment.get("protocol")
-                if (
-                    not isinstance(protocol, dict)
-                    or protocol.get("protocol_compliant") is not True
-                ):
+                if not isinstance(protocol, dict) or protocol.get("protocol_compliant") is not True:
                     problems.append(
-                        "verdict %s blind review protocol is noncompliant"
-                        % evidence.id
+                        "verdict %s blind review protocol is noncompliant" % evidence.id
                     )
                     continue
             if verdict == "rejected":
                 feedback_problems = rejected_verdict_feedback_problems(manifest)
                 if feedback_problems:
                     problems.extend(
-                        "verdict %s %s" % (evidence.id, problem)
-                        for problem in feedback_problems
+                        "verdict %s %s" % (evidence.id, problem) for problem in feedback_problems
                     )
                     continue
                 return evidence, []
@@ -28840,7 +28038,9 @@ class ControlPlane:
             if isinstance(executor_repo, dict):
                 repo_problems = self._require_pushed_repo_anchor(manifest)
                 if repo_problems:
-                    problems.extend("verdict %s %s" % (evidence.id, problem) for problem in repo_problems)
+                    problems.extend(
+                        "verdict %s %s" % (evidence.id, problem) for problem in repo_problems
+                    )
                     continue
                 review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
                 executor_changed = _metadata_path_list(executor_repo.get("files_changed"))
@@ -28881,12 +28081,12 @@ class ControlPlane:
                 if repo_local_path and not executor_repo.get("pushed"):
                     from pathlib import Path as _RPath
                     from subprocess import run as _run, PIPE as _PIPE
+
                     candidate = _RPath(repo_local_path).expanduser()
                     if candidate.is_dir() and (candidate / ".git").exists():
                         try:
                             check = _run(
-                                ["git", "rev-parse", "--verify",
-                                 "%s^{commit}" % executor_sha],
+                                ["git", "rev-parse", "--verify", "%s^{commit}" % executor_sha],
                                 cwd=str(candidate),
                                 stdout=_PIPE,
                                 stderr=_PIPE,
@@ -28901,15 +28101,16 @@ class ControlPlane:
                             )
                             continue
             if self._passed_verification_check_count(manifest) < 1:
-                problems.append("verdict %s requires at least one independent passing check" % evidence.id)
+                problems.append(
+                    "verdict %s requires at least one independent passing check" % evidence.id
+                )
                 continue
             integration_problems = self._cooperative_review_integration_problems(
                 reviewed_task, manifest
             )
             if integration_problems:
                 problems.extend(
-                    "verdict %s %s" % (evidence.id, problem)
-                    for problem in integration_problems
+                    "verdict %s %s" % (evidence.id, problem) for problem in integration_problems
                 )
                 continue
             codegraph_manifest = dict(manifest)
@@ -28921,7 +28122,9 @@ class ControlPlane:
                 }
             codegraph_problems = codegraph_audit_manifest_problems(codegraph_manifest)
             if codegraph_problems:
-                problems.extend("verdict %s %s" % (evidence.id, problem) for problem in codegraph_problems)
+                problems.extend(
+                    "verdict %s %s" % (evidence.id, problem) for problem in codegraph_problems
+                )
                 continue
             return evidence, []
         return None, problems
@@ -28951,18 +28154,12 @@ class ControlPlane:
             metadata = ensure_json_object(evidence.metadata)
             if str(metadata.get("review_id") or "").strip() != review.id:
                 continue
-            if (
-                str(metadata.get("executor_evidence_id") or "").strip()
-                != executor_evidence_id
-            ):
+            if str(metadata.get("executor_evidence_id") or "").strip() != executor_evidence_id:
                 continue
             if self._evidence_returncode(evidence) != 0:
                 return evidence, "review_executor_nonzero"
             manifest = ensure_json_object(metadata.get("verification"))
-            if (
-                str(manifest.get("evidence_type") or "").strip().lower()
-                != "review_verdict"
-            ):
+            if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
                 continue
             if str(manifest.get("semantic_verdict") or "").strip().lower() not in {
                 "approved",
@@ -28979,17 +28176,14 @@ class ControlPlane:
     def _cooperative_review_integration_problems(
         self, task: Task, verdict_manifest: JsonDict
     ) -> List[str]:
-        coordination = ensure_json_object(
-            ensure_json_object(task.metadata).get("coordination")
-        )
+        coordination = ensure_json_object(ensure_json_object(task.metadata).get("coordination"))
         if coordination.get("phase") != "integration":
             return []
         child_outputs = coordination.get("child_outputs", [])
         expected = {
             str(item.get("executor_evidence_id") or "").strip()
             for item in child_outputs
-            if isinstance(item, dict)
-            and str(item.get("executor_evidence_id") or "").strip()
+            if isinstance(item, dict) and str(item.get("executor_evidence_id") or "").strip()
         }
         missing_outputs = [
             str(item.get("task_id") or "unknown").strip()
@@ -29000,12 +28194,8 @@ class ControlPlane:
             or not str(ensure_json_object(item.get("repo")).get("head_sha") or "").strip()
         ]
         integration = ensure_json_object(verdict_manifest.get("integration"))
-        required = set(
-            _metadata_string_list(integration.get("required_child_evidence_ids"))
-        )
-        verified = set(
-            _metadata_string_list(integration.get("verified_child_evidence_ids"))
-        )
+        required = set(_metadata_string_list(integration.get("required_child_evidence_ids")))
+        verified = set(_metadata_string_list(integration.get("verified_child_evidence_ids")))
         problems: List[str] = []
         if integration.get("status") != "pass":
             problems.append("cooperative integration verification must pass")
@@ -29176,9 +28366,7 @@ class ControlPlane:
         repo = ensure_json_object(executor_manifest.get("repo"))
         digest = str(executor_manifest.get("worktree_digest") or "").strip()
         if not digest.startswith("sha256:"):
-            digest = "sha256:%s" % hashlib.sha256(
-                executor_evidence.id.encode()
-            ).hexdigest()
+            digest = "sha256:%s" % hashlib.sha256(executor_evidence.id.encode()).hexdigest()
         relevant_files = codegraph_relevant_files(repo.get("files_changed") or [])
         manifest: Dict[str, Any] = {
             "schema": VERIFICATION_SCHEMA,
@@ -29196,8 +28384,7 @@ class ControlPlane:
                 "provider": "hub",
             },
             "summary": (
-                "semantic reviewer removed; executor evidence "
-                "satisfied the verification contract"
+                "semantic reviewer removed; executor evidence satisfied the verification contract"
             ),
             "checks": [
                 {
@@ -29248,9 +28435,7 @@ class ControlPlane:
         )
         return evidence
 
-    def _ensure_hub_review_verifier_agent(
-        self, task: Task, *, actor: str
-    ) -> Optional[Agent]:
+    def _ensure_hub_review_verifier_agent(self, task: Task, *, actor: str) -> Optional[Agent]:
         # The virtual hub-reviewer is the only default reviewer. Register it
         # whenever the semantic reviewer is off, even if hub-verify is off,
         # so non-repo evidence has an approval identity. When the semantic
@@ -29260,21 +28445,15 @@ class ControlPlane:
             return None
         if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
             return None
-        assignment = ensure_json_object(
-            ensure_json_object(task.metadata).get("review_experiment")
-        )
-        if (
-            assignment.get("schema") == "mac.review_experiment.v1"
-            and _semantic_reviewer_enabled()
-        ):
+        assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
+        if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
             return None
         name = (
             os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()
             or DEFAULT_HUB_REVIEWER_AGENT_NAME
         )
         agent_id = (
-            os.environ.get("MAC_HUB_REVIEWER_AGENT_ID", "").strip()
-            or DEFAULT_HUB_REVIEWER_AGENT_ID
+            os.environ.get("MAC_HUB_REVIEWER_AGENT_ID", "").strip() or DEFAULT_HUB_REVIEWER_AGENT_ID
         )
         machine_id = (
             os.environ.get("MAC_HUB_REVIEWER_MACHINE_ID", "").strip()
@@ -29320,9 +28499,7 @@ class ControlPlane:
             return None
 
     def _agent_is_hub_review_verifier(self, agent: Agent) -> bool:
-        marker = ensure_json_object(
-            ensure_json_object(agent.resources).get("hub_review_verifier")
-        )
+        marker = ensure_json_object(ensure_json_object(agent.resources).get("hub_review_verifier"))
         return (
             marker.get("schema") == HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA
             and marker.get("enabled") is not False
@@ -29377,24 +28554,18 @@ class ControlPlane:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
-        if (
-            metadata_declares_read_only_report_repository(task.metadata)
-            and not agent_has_read_only_report_repository_executor(agent.resources)
-        ):
+        if metadata_declares_read_only_report_repository(
+            task.metadata
+        ) and not agent_has_read_only_report_repository_executor(agent.resources):
             return "reviewer_report_repository_executor_missing"
-        hub_review_verifier = (
-            _hub_review_verify_enabled()
-            and self._agent_is_hub_review_verifier(agent)
+        hub_review_verifier = _hub_review_verify_enabled() and self._agent_is_hub_review_verifier(
+            agent
         )
-        if (
-            not hub_review_verifier
-            and not self._agent_seen_recently(agent, self._default_reviewer_stale_after_seconds())
+        if not hub_review_verifier and not self._agent_seen_recently(
+            agent, self._default_reviewer_stale_after_seconds()
         ):
             return "reviewer_stale"
-        if (
-            self.reviews.agent_has_owned_task(task.id, agent.id)
-            and not allow_independence_fallback
-        ):
+        if self.reviews.agent_has_owned_task(task.id, agent.id) and not allow_independence_fallback:
             return "reviewer_previously_owned_task"
         if (
             executor_agent_id is not None
@@ -29406,16 +28577,12 @@ class ControlPlane:
             return "reviewer_missing_capability"
         policy = review_policy if review_policy is not None else self._default_review_policy(task)
         target_agent_id = str(
-            policy.get("target_agent_id")
-            or policy.get("reviewer_agent_id")
-            or ""
+            policy.get("target_agent_id") or policy.get("reviewer_agent_id") or ""
         ).strip()
         if target_agent_id and agent.id != target_agent_id:
             return "reviewer_not_target_agent"
         target_agent_name = str(
-            policy.get("target_agent_name")
-            or policy.get("reviewer_agent_name")
-            or ""
+            policy.get("target_agent_name") or policy.get("reviewer_agent_name") or ""
         ).strip()
         if target_agent_name and agent.name != target_agent_name:
             return "reviewer_not_target_agent"
@@ -29463,9 +28630,7 @@ class ControlPlane:
         access_state, learning = self._reviewer_repository_access_state(task, agent.id)
         if access_state == "failure":
             host = str((learning or {}).get("repository_host") or "unknown")
-            failure_class = str(
-                (learning or {}).get("failure_class") or "authentication"
-            )
+            failure_class = str((learning or {}).get("failure_class") or "authentication")
             return "reviewer_repository_access_%s:%s" % (failure_class, host)
         return None
 
@@ -29517,9 +28682,7 @@ class ControlPlane:
         if not self._reviewer_independence_fallback_enabled(task):
             return None
         effective_excluded = {
-            str(agent_id)
-            for agent_id in (excluded_agent_ids or [])
-            if str(agent_id)
+            str(agent_id) for agent_id in (excluded_agent_ids or []) if str(agent_id)
         }
         evidence, _assessment = self._bound_review_evidence(task)
         if evidence is not None:
@@ -29560,11 +28723,14 @@ class ControlPlane:
         )
         if relaxed_reason is not None:
             return None
-        if self._select_default_reviewer(
-            task,
-            executor_agent_id=resolved_executor,
-            excluded_agent_ids=effective_excluded,
-        ) is not None:
+        if (
+            self._select_default_reviewer(
+                task,
+                executor_agent_id=resolved_executor,
+                excluded_agent_ids=effective_excluded,
+            )
+            is not None
+        ):
             return None
         return strict_reason
 
@@ -29663,9 +28829,7 @@ class ControlPlane:
         slug = persona.name.strip().lower().replace(" ", "-").replace("_", "-") or None
         return instance.tenant_id, slug
 
-    def _reviewer_assignment_problem(
-        self, task: Task, reviewer: Agent
-    ) -> Optional[str]:
+    def _reviewer_assignment_problem(self, task: Task, reviewer: Agent) -> Optional[str]:
         """Apply the same complete eligibility policy to every assignment path."""
         executor_agent_id = self.reviews.latest_executor_evidence_author(task.id)
         reason = self._default_reviewer_unavailable_reason(
@@ -29674,11 +28838,8 @@ class ControlPlane:
             executor_agent_id=executor_agent_id,
             review_policy=self._default_review_policy(task),
         )
-        if (
-            reason in REVIEWER_INDEPENDENCE_REASONS
-            and self._reviewer_independence_fallback_reason(
-                task, reviewer, executor_agent_id=executor_agent_id
-            )
+        if reason in REVIEWER_INDEPENDENCE_REASONS and self._reviewer_independence_fallback_reason(
+            task, reviewer, executor_agent_id=executor_agent_id
         ):
             return None
         if reason is None:
@@ -29695,9 +28856,7 @@ class ControlPlane:
         }
         return readable.get(reason, reason.replace("_", " "))
 
-    def _reviewer_independence_problem(
-        self, task: Task, reviewer: Agent
-    ) -> Optional[str]:
+    def _reviewer_independence_problem(self, task: Task, reviewer: Agent) -> Optional[str]:
         """Compatibility form of the former independence-only policy."""
         if reviewer.id in self._coordination_excluded_agent_ids(task):
             return "reviewer executed another task in the same cooperative work family"
@@ -29917,8 +29076,7 @@ class ControlPlane:
         ``updated_at`` otherwise, so a task keeps its original park time.
         """
         rows = self.store.query_all(
-            "SELECT id FROM tasks WHERE state = ? AND owner_agent_id IS NULL "
-            "ORDER BY updated_at",
+            "SELECT id FROM tasks WHERE state = ? AND owner_agent_id IS NULL ORDER BY updated_at",
             (TaskState.REVIEWING.value,),
         )
         now = parse_time(utcnow())
@@ -29989,14 +29147,9 @@ class ControlPlane:
             ("workflow.default_review.publication_deferred", task_id),
         )
         previous = (
-            ensure_json_object(json_loads(latest["detail"], {}))
-            if latest is not None
-            else {}
+            ensure_json_object(json_loads(latest["detail"], {})) if latest is not None else {}
         )
-        if (
-            str(previous.get("epoch_id") or "")
-            == str(barrier.get("epoch_id") or "")
-        ):
+        if str(previous.get("epoch_id") or "") == str(barrier.get("epoch_id") or ""):
             return
         self._record_default_review_observation(
             task_id,
@@ -30101,8 +29254,7 @@ class ControlPlane:
             status = AgentStatus.BUSY.value
             current_task_id = str(remaining["task_id"])
         writer.execute(
-            "UPDATE agents SET status = ?, current_task_id = ?, updated_at = ? "
-            "WHERE id = ?",
+            "UPDATE agents SET status = ?, current_task_id = ?, updated_at = ? WHERE id = ?",
             (status, current_task_id, now, agent_id),
         )
 
@@ -30206,8 +29358,7 @@ class ControlPlane:
             # BEGIN IMMEDIATE serializes the writer; on PostgreSQL the no-op
             # UPDATE retains a row lock until this transaction commits.
             locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
                 (agent_id,),
             )
             if locked.rowcount != 1:
@@ -30217,18 +29368,14 @@ class ControlPlane:
                 if row is None:
                     raise NotFoundError("agent not found: %s" % agent_id)
                 raise ValidationError(
-                    "agent %s was decommissioned at %s"
-                    % (agent_id, row["deleted_at"])
+                    "agent %s was decommissioned at %s" % (agent_id, row["deleted_at"])
                 )
-            agent_row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent_id,)
-            ).fetchone()
+            agent_row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(agent_row)
             capacity = self._agent_capacity(agent)
 
             role_rows = conn.execute(
-                "SELECT * FROM service_roles "
-                "WHERE enabled = 1 AND tenant_id IS NULL ORDER BY id"
+                "SELECT * FROM service_roles WHERE enabled = 1 AND tenant_id IS NULL ORDER BY id"
             ).fetchall()
             roles_by_op: Dict[str, ServiceRole] = {}
             for row in role_rows:
@@ -30277,12 +29424,7 @@ class ControlPlane:
             now = utcnow()
             for claim in claim_rows:
                 op = str(claim["role_op"] or "")
-                if (
-                    not op
-                    or op in held_ops
-                    or op not in willing
-                    or op not in roles_by_op
-                ):
+                if not op or op in held_ops or op not in willing or op not in roles_by_op:
                     conn.execute(
                         "UPDATE service_claims SET status = ?, updated_at = ? "
                         "WHERE id = ? AND agent_id = ? AND status = ?",
@@ -30297,9 +29439,7 @@ class ControlPlane:
                     continue
                 held_ops[op] = claim
 
-            expires_at = (
-                parse_time(now) + timedelta(seconds=int(lease_seconds))
-            ).isoformat()
+            expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat()
             for op, claim in list(held_ops.items()):
                 renewed = conn.execute(
                     "UPDATE service_claims SET expires_at = ?, updated_at = ? "
@@ -30408,7 +29548,8 @@ class ControlPlane:
         requested: List[str] = []
         for role in self.service_roles.desired_services(tenant_id=None):
             live = [
-                c for c in self.service_roles.list_active_claims(role_id=role.id)
+                c
+                for c in self.service_roles.list_active_claims(role_id=role.id)
                 if self._service_holder_live(c.agent_id)
             ]
             for claim in self.service_roles.list_active_claims(role_id=role.id):

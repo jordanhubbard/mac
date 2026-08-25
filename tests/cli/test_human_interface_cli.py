@@ -58,9 +58,7 @@ def agent_home(tmp_path):
         "# MEMORY\n- search state.db before asking the user to repeat context\n",
         encoding="utf-8",
     )
-    (home / ".mac" / "openclaw" / "workspace" / "SOUL.md").write_text(
-        "# SOUL\n", encoding="utf-8"
-    )
+    (home / ".mac" / "openclaw" / "workspace" / "SOUL.md").write_text("# SOUL\n", encoding="utf-8")
     return home
 
 
@@ -72,7 +70,8 @@ def test_port_is_a_dry_run_unless_apply_is_given(tmp_path, agent_home):
     """The default must not rewrite an agent's identity and credentials."""
     rc, report = _run(
         tmp_path,
-        "admin", "human-interface",
+        "admin",
+        "human-interface",
         "port",
         "--from",
         "openclaw",
@@ -86,15 +85,14 @@ def test_port_is_a_dry_run_unless_apply_is_given(tmp_path, agent_home):
 
     assert rc == 0
     assert report["dry_run"] is True
-    assert not (agent_home / ".hermes" / "MEMORY.md").exists(), (
-        "a dry run wrote to the target"
-    )
+    assert not (agent_home / ".hermes" / "MEMORY.md").exists(), "a dry run wrote to the target"
 
 
 def test_port_with_apply_moves_the_profile(tmp_path, agent_home):
     rc, report = _run(
         tmp_path,
-        "admin", "human-interface",
+        "admin",
+        "human-interface",
         "port",
         "--from",
         "openclaw",
@@ -120,9 +118,19 @@ def test_port_leaves_the_source_untouched(tmp_path, agent_home):
     before = source.read_text(encoding="utf-8")
 
     _run(
-        tmp_path, "admin", "human-interface", "port",
-        "--from", "openclaw", "--to", "hermes",
-        "--home", str(agent_home), "--state-file", _state(agent_home), "--apply",
+        tmp_path,
+        "admin",
+        "human-interface",
+        "port",
+        "--from",
+        "openclaw",
+        "--to",
+        "hermes",
+        "--home",
+        str(agent_home),
+        "--state-file",
+        _state(agent_home),
+        "--apply",
     )
 
     assert source.read_text(encoding="utf-8") == before
@@ -130,9 +138,16 @@ def test_port_leaves_the_source_untouched(tmp_path, agent_home):
 
 def test_check_reports_an_unported_target(tmp_path, agent_home):
     rc, readiness = _run(
-        tmp_path, "admin", "human-interface", "check",
-        "--to", "hermes",
-        "--home", str(agent_home), "--state-file", _state(agent_home),
+        tmp_path,
+        "admin",
+        "human-interface",
+        "check",
+        "--to",
+        "hermes",
+        "--home",
+        str(agent_home),
+        "--state-file",
+        _state(agent_home),
     )
 
     assert rc == 0
@@ -142,15 +157,32 @@ def test_check_reports_an_unported_target(tmp_path, agent_home):
 
 def test_check_reports_readiness_after_a_port(tmp_path, agent_home):
     _run(
-        tmp_path, "admin", "human-interface", "port",
-        "--from", "openclaw", "--to", "hermes",
-        "--home", str(agent_home), "--state-file", _state(agent_home), "--apply",
+        tmp_path,
+        "admin",
+        "human-interface",
+        "port",
+        "--from",
+        "openclaw",
+        "--to",
+        "hermes",
+        "--home",
+        str(agent_home),
+        "--state-file",
+        _state(agent_home),
+        "--apply",
     )
 
     rc, readiness = _run(
-        tmp_path, "admin", "human-interface", "check",
-        "--to", "hermes",
-        "--home", str(agent_home), "--state-file", _state(agent_home),
+        tmp_path,
+        "admin",
+        "human-interface",
+        "check",
+        "--to",
+        "hermes",
+        "--home",
+        str(agent_home),
+        "--state-file",
+        _state(agent_home),
     )
 
     assert rc == 0
@@ -160,9 +192,16 @@ def test_check_reports_readiness_after_a_port(tmp_path, agent_home):
 def test_check_without_assert_ready_does_not_fail(tmp_path, agent_home):
     """Reporting and enforcing are separate, so an operator can look first."""
     rc, readiness = _run(
-        tmp_path, "admin", "human-interface", "check",
-        "--to", "hermes",
-        "--home", str(agent_home), "--state-file", _state(agent_home),
+        tmp_path,
+        "admin",
+        "human-interface",
+        "check",
+        "--to",
+        "hermes",
+        "--home",
+        str(agent_home),
+        "--state-file",
+        _state(agent_home),
     )
 
     assert rc == 0
@@ -173,9 +212,17 @@ def test_assert_ready_raises_when_the_profile_is_not_current(tmp_path, agent_hom
     """The deploy gate's seam. It must not quietly return success."""
     with pytest.raises(ProfilePortError) as excinfo:
         _run(
-            tmp_path, "admin", "human-interface", "check",
-            "--to", "hermes", "--assert-ready",
-            "--home", str(agent_home), "--state-file", _state(agent_home),
+            tmp_path,
+            "admin",
+            "human-interface",
+            "check",
+            "--to",
+            "hermes",
+            "--assert-ready",
+            "--home",
+            str(agent_home),
+            "--state-file",
+            _state(agent_home),
         )
 
     assert "mac admin human-interface port" in str(excinfo.value)
@@ -184,9 +231,18 @@ def test_assert_ready_raises_when_the_profile_is_not_current(tmp_path, agent_hom
 def test_porting_to_the_same_interface_is_refused(tmp_path, agent_home):
     with pytest.raises(ProfilePortError):
         _run(
-            tmp_path, "admin", "human-interface", "port",
-            "--from", "hermes", "--to", "hermes",
-            "--home", str(agent_home), "--state-file", _state(agent_home),
+            tmp_path,
+            "admin",
+            "human-interface",
+            "port",
+            "--from",
+            "hermes",
+            "--to",
+            "hermes",
+            "--home",
+            str(agent_home),
+            "--state-file",
+            _state(agent_home),
         )
 
 
@@ -194,6 +250,12 @@ def test_an_unknown_interface_is_rejected_by_the_parser(tmp_path, agent_home):
     """argparse choices, so a typo fails before touching an agent's home."""
     with pytest.raises(SystemExit):
         _run(
-            tmp_path, "admin", "human-interface", "port",
-            "--from", "slack", "--to", "hermes",
+            tmp_path,
+            "admin",
+            "human-interface",
+            "port",
+            "--from",
+            "slack",
+            "--to",
+            "hermes",
         )

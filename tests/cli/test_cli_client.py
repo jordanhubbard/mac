@@ -27,7 +27,8 @@ def test_client_enroll_renew_list_and_revoke_cli(tmp_path):
 
     rc, manifest, _ = _run(
         tmp_path,
-        "admin", "client",
+        "admin",
+        "client",
         "enroll",
         "laptop",
         "--fleet",
@@ -56,9 +57,7 @@ def test_client_enroll_requires_json_before_minting(tmp_path, capsys):
     registry = tmp_path / "principals.json"
     cli._set_output_json(False)
 
-    rc = main(
-        ["admin", "client", "enroll", "lost-token", "--registry", str(registry)]
-    )
+    rc = main(["admin", "client", "enroll", "lost-token", "--registry", str(registry)])
 
     assert rc == 1
     assert "one-time credential" in capsys.readouterr().err
@@ -91,9 +90,7 @@ def test_client_profile_cli_and_fleet_ssh_spec(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    rc, installed, _ = _run(
-        tmp_path, "admin", "client", "profile", "install", str(manifest_path)
-    )
+    rc, installed, _ = _run(tmp_path, "admin", "client", "profile", "install", str(manifest_path))
     assert rc == 0 and installed["profile"] == "rocky"
     rc, shown, _ = _run(tmp_path, "admin", "client", "profile", "show", "rocky")
     assert rc == 0 and shown["credential"]["stored"] is True
@@ -105,7 +102,8 @@ def test_client_profile_cli_and_fleet_ssh_spec(tmp_path, monkeypatch):
     )
     rc, spec, _ = _run(
         tmp_path,
-        "admin", "fleet",
+        "admin",
+        "fleet",
         "ssh-spec",
         "--fleet",
         "rocky",

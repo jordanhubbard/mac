@@ -21,8 +21,16 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 DEFAULT_COLLECTIONS: Sequence[str] = ("mac_memory_medium", "mac_memory_long")
 
 # Payload fields worth surfacing for vetting (see the live Qdrant schema).
-_VET_FIELDS = ("memory_id", "agent_id", "summary", "tags", "tier", "subject_type",
-               "subject_id", "created_at")
+_VET_FIELDS = (
+    "memory_id",
+    "agent_id",
+    "summary",
+    "tags",
+    "tier",
+    "subject_type",
+    "subject_id",
+    "created_at",
+)
 
 
 def export_memory_records(
@@ -100,7 +108,9 @@ class QdrantClient:
             body: Dict[str, Any] = {"limit": self.page, "with_payload": True, "with_vector": False}
             if offset is not None:
                 body["offset"] = offset
-            result = self._post("/collections/%s/points/scroll" % collection, body).get("result", {})
+            result = self._post("/collections/%s/points/scroll" % collection, body).get(
+                "result", {}
+            )
             points = result.get("points", []) or []
             for p in points:
                 yield p

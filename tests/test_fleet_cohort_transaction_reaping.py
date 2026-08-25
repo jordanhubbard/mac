@@ -36,18 +36,14 @@ SOURCE_COMMIT = "a" * 40
 
 @pytest.fixture
 def journal_module() -> Any:
-    spec = importlib.util.spec_from_file_location(
-        "mac_fleet_cohort_transaction_reaping", SCRIPT
-    )
+    spec = importlib.util.spec_from_file_location("mac_fleet_cohort_transaction_reaping", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def run_cli(
-    directory: Path, *args: str, check: bool = True
-) -> dict[str, Any]:
+def run_cli(directory: Path, *args: str, check: bool = True) -> dict[str, Any]:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--directory", str(directory), *args],
         text=True,
@@ -163,9 +159,7 @@ def clone_journal(module: Any, directory: Path, source: str, epoch: str) -> Path
     a directory holding two live epochs is a state only a crash can produce --
     and the state diagnosis has to survive.
     """
-    payload = json.loads(
-        journal_path(module, directory, source).read_text(encoding="utf-8")
-    )
+    payload = json.loads(journal_path(module, directory, source).read_text(encoding="utf-8"))
     payload["epoch_id"] = epoch
     payload["binding_sha256"] = module._sha256(module._binding_projection(payload))
     target = journal_path(module, directory, epoch)
@@ -268,9 +262,7 @@ def test_diagnose_survives_an_unreadable_journal_and_multiple_live_epochs(
     assert failed["ok"] is False
 
     payload = run_cli(directory, "diagnose")
-    assert sorted(item["epoch_id"] for item in payload["stuck"]) == sorted(
-        [first, second]
-    )
+    assert sorted(item["epoch_id"] for item in payload["stuck"]) == sorted([first, second])
     assert [entry["file"] for entry in payload["unreadable"]] == [corrupt.name]
     assert payload["unreadable"][0]["code"] == "invalid_schema"
 
@@ -340,9 +332,7 @@ def test_reap_dry_run_removes_nothing_and_orphan_plans_are_collected(
     plan.write_text('{"schema":"mac.test_plan.v1"}\n', encoding="utf-8")
     plan.chmod(0o600)
 
-    preview = run_cli(
-        directory, "reap", "--max-age-days", "14", "--keep", "0", "--dry-run"
-    )
+    preview = run_cli(directory, "reap", "--max-age-days", "14", "--keep", "0", "--dry-run")
     assert [item["epoch_id"] for item in preview["removed"]] == [epoch]
     assert preview["removed_plans"] == [plan.name]
     assert preview["dry_run"] is True

@@ -73,10 +73,7 @@ def test_script_job_artefacts_share_one_home(clean_home):
     assert mac_paths.script_jobs_scripts_dir() == home / "scripts"
     assert mac_paths.script_jobs_output_dir() == home / "output"
     # The whole point: input and output share a parent.
-    assert (
-        mac_paths.script_jobs_scripts_dir().parent
-        == mac_paths.script_jobs_output_dir().parent
-    )
+    assert mac_paths.script_jobs_scripts_dir().parent == mac_paths.script_jobs_output_dir().parent
 
 
 def test_script_job_home_relocates_with_its_root(clean_home, monkeypatch):
@@ -107,8 +104,9 @@ def test_no_live_runner_path_resolves_into_a_hermes_home(clean_home):
         assert legacy_gateway not in path.parents and path != legacy_gateway, (
             "%s still resolves into the Hermes home: %s" % (label, path)
         )
-        assert mac_paths.mac_home() in path.parents, (
-            "%s must live under the MAC root: %s" % (label, path)
+        assert mac_paths.mac_home() in path.parents, "%s must live under the MAC root: %s" % (
+            label,
+            path,
         )
 
 
@@ -136,7 +134,10 @@ def test_installer_schedules_the_openclaw_scripts_home_not_hermes():
         '${MAC_HERMES_SCRIPTS_DIR:-$OPENCLAW_HOST_DIR/script-jobs/scripts}}"'
     ) in installer
     # The pre-untangle default is gone from the scheduling path.
-    assert 'scripts_dir="${MAC_HERMES_SCRIPTS_DIR:-${HERMES_HOME:-$HOME/.hermes}/scripts}"' not in installer
+    assert (
+        'scripts_dir="${MAC_HERMES_SCRIPTS_DIR:-${HERMES_HOME:-$HOME/.hermes}/scripts}"'
+        not in installer
+    )
     # The units no longer teach the split by exporting the Hermes-named var.
     assert "Environment=MAC_HERMES_SCRIPTS_DIR=" not in installer
     assert "<key>MAC_HERMES_SCRIPTS_DIR</key>" not in installer
@@ -184,9 +185,7 @@ def test_sanctioned_home_wins_over_the_legacy_home(tmp_path):
     legacy.mkdir()
     (primary / "dream_cycle.py").write_text("print('new')\n", encoding="utf-8")
     (legacy / "dream_cycle.py").write_text("print('old')\n", encoding="utf-8")
-    chosen, used_legacy = runner.select_scripts_dir(
-        str(primary), "dream_cycle.py", str(legacy)
-    )
+    chosen, used_legacy = runner.select_scripts_dir(str(primary), "dream_cycle.py", str(legacy))
     assert Path(chosen) == primary
     assert used_legacy is False
 
@@ -197,9 +196,7 @@ def test_legacy_home_serves_only_what_the_new_home_lacks(tmp_path):
     primary.mkdir()
     legacy.mkdir()
     (legacy / "dream_cycle.py").write_text("print('old')\n", encoding="utf-8")
-    chosen, used_legacy = runner.select_scripts_dir(
-        str(primary), "dream_cycle.py", str(legacy)
-    )
+    chosen, used_legacy = runner.select_scripts_dir(str(primary), "dream_cycle.py", str(legacy))
     assert Path(chosen) == legacy
     assert used_legacy is True
 
@@ -219,9 +216,7 @@ def test_fallback_can_be_switched_off(clean_home):
     args = runner.parser().parse_args(["--name", "j", "--legacy-scripts-dir", ""])
     assert runner._resolve_legacy_scripts_dir(args) == ""
     args = runner.parser().parse_args(["--name", "j"])
-    assert runner._resolve_legacy_scripts_dir(args) == str(
-        mac_paths.legacy_gateway_scripts_dir()
-    )
+    assert runner._resolve_legacy_scripts_dir(args) == str(mac_paths.legacy_gateway_scripts_dir())
 
 
 def test_fallback_env_opt_out(clean_home, monkeypatch):

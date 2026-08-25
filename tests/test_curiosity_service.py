@@ -64,9 +64,7 @@ def _service(tmp_path: Path, result=None, calls=None, raises=None):
             raise raises
         return result if result is not None else _Result(stdout="[]")
 
-    return CuriosityService(
-        CuriosityConfig(wrapper_path=_wrapper(tmp_path)), runner=runner
-    )
+    return CuriosityService(CuriosityConfig(wrapper_path=_wrapper(tmp_path)), runner=runner)
 
 
 # -- availability ----------------------------------------------------------
@@ -101,9 +99,7 @@ def test_listing_returns_the_candidates_verbatim(tmp_path):
         {"id": "cur_2", "confidence": "low", "hypothesis": "h2"},
     ]
     calls = []
-    service = _service(
-        tmp_path, result=_Result(stdout=json.dumps(payload)), calls=calls
-    )
+    service = _service(tmp_path, result=_Result(stdout=json.dumps(payload)), calls=calls)
 
     out = service.list_candidates("quarantined")
 
@@ -194,9 +190,7 @@ def test_an_unknown_decision_is_refused(tmp_path):
     calls = []
     service = _service(tmp_path, calls=calls)
     with pytest.raises(ValueError):
-        service.decide(
-            "delete", "cur_abc", actor="a", reason="r", approval_id="t"
-        )
+        service.decide("delete", "cur_abc", actor="a", reason="r", approval_id="t")
     assert not calls, "only approve/reject may be proxied"
 
 
@@ -222,20 +216,14 @@ def test_an_empty_candidate_id_is_refused(tmp_path):
 
 
 def test_a_failing_command_carries_the_cli_stderr(tmp_path):
-    service = _service(
-        tmp_path, result=_Result(returncode=2, stderr="candidate not found")
-    )
+    service = _service(tmp_path, result=_Result(returncode=2, stderr="candidate not found"))
     with pytest.raises(CuriosityCommandError) as excinfo:
-        service.decide(
-            "approve", "cur_missing", actor="a", reason="r", approval_id="t"
-        )
+        service.decide("approve", "cur_missing", actor="a", reason="r", approval_id="t")
     assert "candidate not found" in str(excinfo.value)
 
 
 def test_a_hung_sandbox_exec_times_out_rather_than_pinning_the_hub(tmp_path):
-    service = _service(
-        tmp_path, raises=subprocess.TimeoutExpired(cmd="curiosity", timeout=60)
-    )
+    service = _service(tmp_path, raises=subprocess.TimeoutExpired(cmd="curiosity", timeout=60))
     with pytest.raises(CuriosityCommandError) as excinfo:
         service.list_candidates()
     assert "timed out" in str(excinfo.value)
@@ -267,15 +255,15 @@ def test_the_default_wrapper_follows_mac_home(tmp_path):
 
 def test_the_timeout_is_clamped(tmp_path):
     """A hung exec must not hold a hub request open indefinitely."""
-    assert CuriosityConfig.from_env(
-        {"MAC_CURIOSITY_TIMEOUT_SECONDS": "99999"}
-    ).timeout_seconds == 600.0
-    assert CuriosityConfig.from_env(
-        {"MAC_CURIOSITY_TIMEOUT_SECONDS": "0"}
-    ).timeout_seconds == 1.0
-    assert CuriosityConfig.from_env(
-        {"MAC_CURIOSITY_TIMEOUT_SECONDS": "not-a-number"}
-    ).timeout_seconds == 60.0
+    assert (
+        CuriosityConfig.from_env({"MAC_CURIOSITY_TIMEOUT_SECONDS": "99999"}).timeout_seconds
+        == 600.0
+    )
+    assert CuriosityConfig.from_env({"MAC_CURIOSITY_TIMEOUT_SECONDS": "0"}).timeout_seconds == 1.0
+    assert (
+        CuriosityConfig.from_env({"MAC_CURIOSITY_TIMEOUT_SECONDS": "not-a-number"}).timeout_seconds
+        == 60.0
+    )
 
 
 def test_statuses_match_the_sidecar_cli():

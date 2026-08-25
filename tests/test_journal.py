@@ -1,5 +1,6 @@
 """Agent memory journaling: snapshot soul+memory state, run a backup hook, and
 restore — the guard against irreversible soul loss."""
+
 from __future__ import annotations
 
 import json
@@ -42,7 +43,9 @@ def test_backup_hook_runs_with_env(tmp_path, monkeypatch):
     root = tmp_path / ".mac" / "journal"
     _make_agent_home(home)
     marker = tmp_path / "uploaded.txt"
-    monkeypatch.setenv("MAC_JOURNAL_BACKUP_HOOK", 'echo "$MAC_JOURNAL_AGENT $MAC_JOURNAL_DATE" > "%s"' % marker)
+    monkeypatch.setenv(
+        "MAC_JOURNAL_BACKUP_HOOK", 'echo "$MAC_JOURNAL_AGENT $MAC_JOURNAL_DATE" > "%s"' % marker
+    )
 
     m = journal.snapshot(home=home, root=root, date="2026-06-04", agent_id="natasha")
 
@@ -89,6 +92,8 @@ def test_restore_reverts_state_and_keeps_safety_backup(tmp_path):
     assert "generic default" in (home / "SOUL.md").read_text()
 
     res = journal.restore("2026-06-04", home=home, root=root)
-    assert "I'm Rocky." in (home / "SOUL.md").read_text()      # restored
-    assert res["safety_backup"].startswith("pre-restore-")     # current state saved first
-    assert (root / res["safety_backup"] / "SOUL.md").read_text().startswith("# SOUL\ngeneric default")
+    assert "I'm Rocky." in (home / "SOUL.md").read_text()  # restored
+    assert res["safety_backup"].startswith("pre-restore-")  # current state saved first
+    assert (
+        (root / res["safety_backup"] / "SOUL.md").read_text().startswith("# SOUL\ngeneric default")
+    )

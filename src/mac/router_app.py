@@ -97,7 +97,9 @@ RouteObserver = Callable[[Dict[str, Any]], None]
 _SECRET_PREFIX = "secret:"
 
 
-def resolve_provider_key(provider: Provider, secret_resolver: Optional[SecretResolver] = None) -> str:
+def resolve_provider_key(
+    provider: Provider, secret_resolver: Optional[SecretResolver] = None
+) -> str:
     """Resolve a provider's bearer key. ``provider.api_key_env`` is either an env
     var name (``NVIDIA_API_KEY``) or, for escrowed upstream keys, ``secret:<name>``
     which is fetched from the in-mac encrypted key store (SecretsService) via the
@@ -109,7 +111,7 @@ def resolve_provider_key(provider: Provider, secret_resolver: Optional[SecretRes
     if spec.startswith(_SECRET_PREFIX):
         if secret_resolver is None:
             return ""
-        return secret_resolver(spec[len(_SECRET_PREFIX):]) or ""
+        return secret_resolver(spec[len(_SECRET_PREFIX) :]) or ""
     return os.environ.get(spec, "")
 
 
@@ -165,9 +167,7 @@ def _strong_wildcard_default(env: Dict[str, str]) -> str:
 
 def _wildcard_models_from_env(env: Dict[str, str]) -> Tuple[str, ...]:
     raw_models = [
-        m.strip()
-        for m in (env.get("MAC_ROUTER_WILDCARD_MODELS") or "").split("|")
-        if m.strip()
+        m.strip() for m in (env.get("MAC_ROUTER_WILDCARD_MODELS") or "").split("|") if m.strip()
     ]
     models = [model for model in raw_models if not _forbidden_wildcard_model(model)]
     if raw_models and not models:
@@ -231,6 +231,7 @@ _CONTEXT_HEADER_NAMES = {
     "fleet": "x-mac-fleet",
 }
 _CONTEXT_BODY_KEYS = ("_mac_context", "mac_context")
+
 
 def _string_value(value: Any) -> str:
     text = str(value or "").strip()
@@ -413,9 +414,7 @@ def mac_route_context_headers(
         "x-mac-agent-id": _pick(agent_id, "MAC_AGENT_ID"),
         "x-mac-task-id": _pick(task_id, "MAC_TASK_ID"),
         "x-mac-lease-id": _pick(lease_id, "MAC_LEASE_ID"),
-        "x-mac-persona-instance-id": _pick(
-            persona_instance_id, "MAC_PERSONA_INSTANCE_ID"
-        ),
+        "x-mac-persona-instance-id": _pick(persona_instance_id, "MAC_PERSONA_INSTANCE_ID"),
         "x-mac-command-id": _pick(command_id, "MAC_COMMAND_ID"),
         "x-mac-fleet": _pick(fleet, "MAC_FLEET"),
         "x-mac-request-id": _pick(request_id, ""),
@@ -504,7 +503,12 @@ class ProviderProxy:
                     self._router.record_failure(provider.name)
                     attempts.append({"provider": provider.name, "status": status})
                     route_attempts[-1]["outcome"] = "provider_failure"
-                    logger.info("route model=%s provider=%s status=%s failover", model, provider.name, status)
+                    logger.info(
+                        "route model=%s provider=%s status=%s failover",
+                        model,
+                        provider.name,
+                        status,
+                    )
                     continue
                 # The provider answered (healthy), so close its breaker.
                 self._router.record_success(provider.name)
@@ -518,7 +522,11 @@ class ProviderProxy:
                 # bad key 401s again and is returned. Bounded to a single retry.
                 if int(status) == 401 and not retried_401:
                     retried_401 = True
-                    logger.info("route model=%s provider=%s status=401 transient-retry", model, provider.name)
+                    logger.info(
+                        "route model=%s provider=%s status=401 transient-retry",
+                        model,
+                        provider.name,
+                    )
                     status, obj = forward(provider, path, outgoing, timeout=timeout)
                     route_attempts.append(
                         {
@@ -532,7 +540,12 @@ class ProviderProxy:
                         self._router.record_failure(provider.name)
                         attempts.append({"provider": provider.name, "status": status})
                         route_attempts[-1]["outcome"] = "provider_failure_after_retry"
-                        logger.info("route model=%s provider=%s status=%s failover", model, provider.name, status)
+                        logger.info(
+                            "route model=%s provider=%s status=%s failover",
+                            model,
+                            provider.name,
+                            status,
+                        )
                         continue
                 if int(status) in _MODEL_RETRY_CODES and not is_last:
                     last = (int(status), obj)  # this model is unusable; substitute the next
@@ -804,16 +817,23 @@ def _encode_multipart(spec: Dict[str, Any]) -> tuple:
     parts: List[bytes] = []
     for key, value in (spec.get("fields") or {}).items():
         parts.append(
-            ('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s'
-             % (boundary, key, value)).encode("utf-8") + crlf
+            (
+                '--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s'
+                % (boundary, key, value)
+            ).encode("utf-8")
+            + crlf
         )
     f = spec.get("file")
     if isinstance(f, dict):
         header = (
             '--%s\r\nContent-Disposition: form-data; name="%s"; filename="%s"\r\n'
-            'Content-Type: %s\r\n\r\n'
-            % (boundary, f.get("name", "file"), f.get("filename", "upload.bin"),
-               f.get("content_type", "application/octet-stream"))
+            "Content-Type: %s\r\n\r\n"
+            % (
+                boundary,
+                f.get("name", "file"),
+                f.get("filename", "upload.bin"),
+                f.get("content_type", "application/octet-stream"),
+            )
         ).encode("utf-8")
         parts.append(header + base64.b64decode(f.get("b64") or "") + crlf)
     parts.append(("--%s--\r\n" % boundary).encode("utf-8"))
@@ -857,7 +877,8 @@ def urllib_forwarder(
 
                     return resp.status, {
                         "__media_bytes__": base64.b64encode(raw_bytes).decode("ascii"),
-                        "content_type": ctype.split(";", 1)[0].strip() or "application/octet-stream",
+                        "content_type": ctype.split(";", 1)[0].strip()
+                        or "application/octet-stream",
                         "bytes": len(raw_bytes),
                     }
                 raw = raw_bytes.decode("utf-8", "replace")
@@ -948,10 +969,14 @@ def build_proxy_from_env(
             return default
 
     def _fwd(provider, path, payload, *, timeout=60.0):
-        return urllib_forwarder(provider, path, payload, timeout=timeout, secret_resolver=secret_resolver)
+        return urllib_forwarder(
+            provider, path, payload, timeout=timeout, secret_resolver=secret_resolver
+        )
 
     def _sfwd(provider, path, payload, *, timeout=300.0):
-        return urllib_stream_forwarder(provider, path, payload, timeout=timeout, secret_resolver=secret_resolver)
+        return urllib_stream_forwarder(
+            provider, path, payload, timeout=timeout, secret_resolver=secret_resolver
+        )
 
     router = ProviderRouter(
         providers,
@@ -986,9 +1011,30 @@ def build_proxy_from_env(
 # cluster init (distinct from the chat/OpenAI key), since hosted paths differ by
 # account/NIM. (name, route_prefix, upstream_env, key_env, timeout_env, default_timeout)
 _MODALITY_PROXIES = (
-    ("image", "/v1/genai", "MAC_ROUTER_IMAGE_UPSTREAM", "MAC_ROUTER_IMAGE_KEY", "MAC_ROUTER_IMAGE_TIMEOUT", 180.0),
-    ("audio", "/v1/audio", "MAC_ROUTER_AUDIO_UPSTREAM", "MAC_ROUTER_AUDIO_KEY", "MAC_ROUTER_AUDIO_TIMEOUT", 120.0),
-    ("video", "/v1/video", "MAC_ROUTER_VIDEO_UPSTREAM", "MAC_ROUTER_VIDEO_KEY", "MAC_ROUTER_VIDEO_TIMEOUT", 600.0),
+    (
+        "image",
+        "/v1/genai",
+        "MAC_ROUTER_IMAGE_UPSTREAM",
+        "MAC_ROUTER_IMAGE_KEY",
+        "MAC_ROUTER_IMAGE_TIMEOUT",
+        180.0,
+    ),
+    (
+        "audio",
+        "/v1/audio",
+        "MAC_ROUTER_AUDIO_UPSTREAM",
+        "MAC_ROUTER_AUDIO_KEY",
+        "MAC_ROUTER_AUDIO_TIMEOUT",
+        120.0,
+    ),
+    (
+        "video",
+        "/v1/video",
+        "MAC_ROUTER_VIDEO_UPSTREAM",
+        "MAC_ROUTER_VIDEO_KEY",
+        "MAC_ROUTER_VIDEO_TIMEOUT",
+        600.0,
+    ),
 )
 
 
@@ -1041,7 +1087,14 @@ def mount_image_proxy(
     mounted. Kept named for back-compat; each modality is independently gated."""
     env = os.environ if env is None else env
     mounted = False
-    for name, route_prefix, upstream_env, key_env, timeout_env, default_timeout in _MODALITY_PROXIES:
+    for (
+        name,
+        route_prefix,
+        upstream_env,
+        key_env,
+        timeout_env,
+        default_timeout,
+    ) in _MODALITY_PROXIES:
         if _mount_one_modality_proxy(
             app,
             name=name,
@@ -1110,7 +1163,12 @@ def mount_media_router(
     agent that announces a capability is used with zero operator config, and a
     down one falls over automatically. No-op when neither side can bind anything."""
     from mac.media_routing import (
-        ADAPTERS, build_media_table, compose_media_table, dispatch_order, op_is_async, op_is_binary,
+        ADAPTERS,
+        build_media_table,
+        compose_media_table,
+        dispatch_order,
+        op_is_async,
+        op_is_binary,
     )
 
     env = os.environ if env is None else env
@@ -1139,8 +1197,12 @@ def mount_media_router(
         bindings = compose_media_table(static_table, agent_table, op)
         if not bindings:
             return JSONResponse(
-                {"error": {"message": "no provider bound for media op %r" % op,
-                           "type": "not_configured"}},
+                {
+                    "error": {
+                        "message": "no provider bound for media op %r" % op,
+                        "type": "not_configured",
+                    }
+                },
                 status_code=404,
             )
         # Least-loaded across the top accelerator tier (snapshot in-flight under
@@ -1160,13 +1222,19 @@ def mount_media_router(
             to_provider, from_provider = ADAPTERS.get(binding.adapter, ADAPTERS["passthrough"])
             model = requested_model or binding.model
             path, provider_body = to_provider(op, body, model)
-            provider = Provider(name=binding.provider, base_url=binding.base_url, api_key_env=binding.key_spec)
+            provider = Provider(
+                name=binding.provider, base_url=binding.base_url, api_key_env=binding.key_spec
+            )
             with inflight_lock:
                 inflight[binding.base_url] = inflight.get(binding.base_url, 0) + 1
             try:
                 status, resp = urllib_forwarder(
-                    provider, path, provider_body, timeout=binding.timeout,
-                    secret_resolver=secret_resolver, auth_scheme=binding.auth_scheme,
+                    provider,
+                    path,
+                    provider_body,
+                    timeout=binding.timeout,
+                    secret_resolver=secret_resolver,
+                    auth_scheme=binding.auth_scheme,
                     binary_ok=op_is_binary(op),
                 )
             finally:
@@ -1182,20 +1250,30 @@ def mount_media_router(
                     hub_job_id = "mjob_" + _secrets.token_hex(8)
                     with media_jobs_lock:
                         media_jobs[hub_job_id] = {
-                            "base_url": binding.base_url, "provider": binding.provider,
-                            "key_spec": binding.key_spec, "auth_scheme": binding.auth_scheme,
-                            "timeout": binding.timeout, "upstream_job_id": str(canonical["job_id"]),
+                            "base_url": binding.base_url,
+                            "provider": binding.provider,
+                            "key_spec": binding.key_spec,
+                            "auth_scheme": binding.auth_scheme,
+                            "timeout": binding.timeout,
+                            "upstream_job_id": str(canonical["job_id"]),
                         }
                     return JSONResponse(
-                        {"job_id": hub_job_id, "status": canonical.get("status", "running"),
-                         "provider": binding.provider, "model": model},
+                        {
+                            "job_id": hub_job_id,
+                            "status": canonical.get("status", "running"),
+                            "provider": binding.provider,
+                            "model": model,
+                        },
                         status_code=status,
                     )
                 return JSONResponse(
                     {**canonical, "provider": binding.provider, "model": model},
                     status_code=status,
                 )
-            last_status, last_body = (status or 502), (canonical if isinstance(canonical, dict) else {})
+            last_status, last_body = (
+                (status or 502),
+                (canonical if isinstance(canonical, dict) else {}),
+            )
             # non-2xx / unreachable -> try the next binding (priority failover)
         return JSONResponse(last_body, status_code=last_status)
 
@@ -1205,16 +1283,25 @@ def mount_media_router(
         with media_jobs_lock:
             job = media_jobs.get(job_id)
         if not job:
-            return JSONResponse({"error": {"message": "unknown media job %r" % job_id}}, status_code=404)
+            return JSONResponse(
+                {"error": {"message": "unknown media job %r" % job_id}}, status_code=404
+            )
         from urllib.parse import quote as _quote
 
-        provider = Provider(name=job["provider"], base_url=job["base_url"], api_key_env=job["key_spec"])
+        provider = Provider(
+            name=job["provider"], base_url=job["base_url"], api_key_env=job["key_spec"]
+        )
         status, resp = urllib_get_json(
-            provider, "/video/jobs/" + _quote(job["upstream_job_id"], safe=""),
-            timeout=job.get("timeout", 60.0), secret_resolver=secret_resolver, auth_scheme=job["auth_scheme"],
+            provider,
+            "/video/jobs/" + _quote(job["upstream_job_id"], safe=""),
+            timeout=job.get("timeout", 60.0),
+            secret_resolver=secret_resolver,
+            auth_scheme=job["auth_scheme"],
         )
         out = resp if isinstance(resp, dict) else {}
-        return JSONResponse({**out, "job_id": job_id, "provider": job["provider"]}, status_code=status or 502)
+        return JSONResponse(
+            {**out, "job_id": job_id, "provider": job["provider"]}, status_code=status or 502
+        )
 
     return True
 
@@ -1248,11 +1335,15 @@ def mount_router(
     # media-01: operation-keyed canonical media routing (POST /v1/media/{op}),
     # layered above the flat /v1/genai proxy. Independent of chat providers.
     if mount_media_router(
-        app, env=env, secret_resolver=secret_resolver,
+        app,
+        env=env,
+        secret_resolver=secret_resolver,
         agent_table_provider=media_agent_table_provider,
     ):
         mounted = True
-    proxy = proxy or build_proxy_from_env(env, secret_resolver=secret_resolver, route_observer=route_observer)
+    proxy = proxy or build_proxy_from_env(
+        env, secret_resolver=secret_resolver, route_observer=route_observer
+    )
     if proxy is None:
         return mounted
     from fastapi.responses import JSONResponse, StreamingResponse
@@ -1295,7 +1386,9 @@ def mount_router(
             return mismatch
         body = _strip_internal_route_context(body)
         if body.get("stream"):
-            status, obj = proxy.stream_complete("/chat/completions", body, route_context=route_context)
+            status, obj = proxy.stream_complete(
+                "/chat/completions", body, route_context=route_context
+            )
             if status == 200 and not isinstance(obj, dict):
                 return StreamingResponse(obj, media_type="text/event-stream")
             return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
@@ -1321,9 +1414,7 @@ def mount_router(
                     stream = chat_stream_to_responses(obj, responses_body)
                 return StreamingResponse(stream, media_type="text/event-stream")
             return JSONResponse(obj if isinstance(obj, dict) else {}, status_code=status)
-        status, out = proxy.complete(
-            "/chat/completions", chat_body, route_context=route_context
-        )
+        status, out = proxy.complete("/chat/completions", chat_body, route_context=route_context)
         if 200 <= status < 300 and isinstance(out, dict):
             out = chat_response_to_responses(out, responses_body)
         return JSONResponse(out if isinstance(out, dict) else {}, status_code=status)

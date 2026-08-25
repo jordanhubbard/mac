@@ -37,7 +37,12 @@ def test_convert_ticketing_source_shim_delegates(tmp_path):
     cp.ticketing.convert_ticketing_source = _fake  # type: ignore[assignment]
     out = cp.convert_ticketing_source(str(tmp_path), project="mac", dry_run=True)
     assert out == {"status": "ok"}
-    assert captured == {"repo_path": str(tmp_path), "project": "mac", "actor": "hermes", "dry_run": True}
+    assert captured == {
+        "repo_path": str(tmp_path),
+        "project": "mac",
+        "actor": "hermes",
+        "dry_run": True,
+    }
 
 
 def test_convert_no_conversion_needed_on_empty_repo(tmp_path):

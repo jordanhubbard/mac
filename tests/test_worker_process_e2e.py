@@ -99,9 +99,7 @@ def test_real_hub_and_mac_agent_process_obeys_authoritative_assignment(
     hub_env = os.environ.copy()
     hub_env.update(
         {
-            "PYTHONPATH": str(root / "src")
-            + os.pathsep
-            + hub_env.get("PYTHONPATH", ""),
+            "PYTHONPATH": str(root / "src") + os.pathsep + hub_env.get("PYTHONPATH", ""),
             # A real DSN, not a file: the hub subprocess opens the control-plane
             # authority itself, and SQLite is no longer a supported backend.
             "MAC_DB": ephemeral_dsn(),
@@ -209,8 +207,7 @@ def test_real_hub_and_mac_agent_process_obeys_authoritative_assignment(
         assert dry_run["assignment"]["lease"] is None
 
         after_dry_run = {
-            task["id"]: task
-            for task in _json_request(base_url, token, "GET", "/tasks")
+            task["id"]: task for task in _json_request(base_url, token, "GET", "/tasks")
         }
         assert after_dry_run[normal["id"]]["state"] == "open"
         assert after_dry_run[canary["id"]]["state"] == "open"
@@ -274,10 +271,7 @@ print("executor completed " + task["id"])
         assert run[0]["status"] == "submitted_for_review", run
         assert run[0]["task"]["id"] == normal["id"]
 
-        final_tasks = {
-            task["id"]: task
-            for task in _json_request(base_url, token, "GET", "/tasks")
-        }
+        final_tasks = {task["id"]: task for task in _json_request(base_url, token, "GET", "/tasks")}
         assert final_tasks[normal["id"]]["state"] in {"needs_review", "reviewing"}
         assert final_tasks[canary["id"]]["state"] == "open"
         assert final_tasks[canary["id"]]["lease_id"] is None

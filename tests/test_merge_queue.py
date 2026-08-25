@@ -20,7 +20,9 @@ from mac.merge_queue import (
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
 
 
@@ -172,9 +174,7 @@ def test_full_contract_never_runs_for_conflict_or_empty_command(repo: Path):
     conflict = validate_projected_merge_contract(
         str(repo), "main", "topic", "full-test", test_runner=runner
     )
-    empty = validate_projected_merge_contract(
-        str(repo), "main", "main", "", test_runner=runner
-    )
+    empty = validate_projected_merge_contract(str(repo), "main", "main", "", test_runner=runner)
 
     assert conflict.passed is False
     assert empty.passed is False

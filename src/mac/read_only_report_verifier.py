@@ -195,9 +195,7 @@ def raw_git_control_digest(worktree: Path) -> str:
             digest.update(b"M\0" + relative_bytes + b"\0")
             return
         if stat.S_ISLNK(info.st_mode):
-            payload = os.readlink(name, dir_fd=parent_fd).encode(
-                "utf-8", "surrogateescape"
-            )
+            payload = os.readlink(name, dir_fd=parent_fd).encode("utf-8", "surrogateescape")
             digest.update(b"L\0" + relative_bytes + b"\0")
             digest.update(hashlib.sha256(payload).digest())
             return
@@ -294,13 +292,9 @@ def exact_identity(worktree: Path) -> dict[str, str]:
     for name, args in commands.items():
         result = _git(worktree, args)
         if result.returncode != 0:
-            raise VerificationError(
-                "trusted Git %s failed: %s" % (name, _clip(result.stderr, 500))
-            )
+            raise VerificationError("trusted Git %s failed: %s" % (name, _clip(result.stderr, 500)))
         observed[name] = result.stdout
-    observed["refs_digest"] = hashlib.sha256(
-        observed["refs"].encode("utf-8")
-    ).hexdigest()
+    observed["refs_digest"] = hashlib.sha256(observed["refs"].encode("utf-8")).hexdigest()
     observed["content_digest"] = read_only_repository_content_digest(worktree)
     return observed
 
@@ -370,9 +364,7 @@ class ProtectedInputMonitor:
         # to expected-but-currently-absent names.  Individual inode watches catch
         # mutation through an attacker-created hard link whose event name would
         # otherwise appear to be an ignored output.
-        for current, dirs, files in os.walk(
-            self.workspace, topdown=True, followlinks=False
-        ):
+        for current, dirs, files in os.walk(self.workspace, topdown=True, followlinks=False):
             current_path = Path(current)
             relative = current_path.relative_to(self.workspace).as_posix()
             if relative == ".":
@@ -431,8 +423,7 @@ class ProtectedInputMonitor:
                     rel = "/".join(part for part in (base, name) if part)
                     if protected_file or self._is_protected(rel):
                         violations.append(
-                            "protected input mutation observed: %s (mask=0x%x)"
-                            % (rel or ".", mask)
+                            "protected input mutation observed: %s (mask=0x%x)" % (rel or ".", mask)
                         )
             deadline = time.monotonic() + max(0.0, settle_seconds)
         return sorted(set(violations))
@@ -590,19 +581,13 @@ def _run_bounded(command: str, worktree: Path, timeout: float) -> dict[str, Any]
                 process.wait(timeout=max(1.0, timeout))
             except subprocess.TimeoutExpired:
                 timed_out = True
-                with contextlib.suppress(
-                    ProcessLookupError, PermissionError, OSError
-                ):
+                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                     os.killpg(process.pid, signal.SIGKILL)
-                with contextlib.suppress(
-                    ProcessLookupError, PermissionError, OSError
-                ):
+                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                     process.kill()
                 process.wait()
             else:
-                with contextlib.suppress(
-                    ProcessLookupError, PermissionError, OSError
-                ):
+                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                     os.killpg(process.pid, signal.SIGKILL)
             stdout_file.seek(0)
             stderr_file.seek(0)
@@ -613,19 +598,21 @@ def _run_bounded(command: str, worktree: Path, timeout: float) -> dict[str, Any]
                 "stdout": _clip(stdout_file.read()),
                 "stderr": _clip(stderr_file.read()),
                 "duration_ms": int((time.time() - started) * 1000),
-                **(
-                    {"error": "command timed out after %ss" % timeout}
-                    if timed_out
-                    else {}
-                ),
+                **({"error": "command timed out after %ss" % timeout} if timed_out else {}),
             }
+
+
 def _normalized_output_paths(raw: str) -> list[str]:
     outputs = [item.strip() for item in raw.splitlines() if item.strip()]
     outputs.append(".codegraph")
     normalized: list[str] = []
     for item in outputs:
         path = PurePosixPath(item)
-        if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+        if (
+            path.is_absolute()
+            or not path.parts
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
             raise VerificationError("unsafe declared verifier output path: %s" % item)
         text = path.as_posix()
         if text == ".git" or text.startswith(".git/"):
@@ -734,9 +721,7 @@ def _expected_from_environment() -> dict[str, str]:
         "tree": os.environ.get("MAC_TASK_REPO_BASE_TREE", "").strip(),
         "refs_digest": os.environ.get("MAC_TASK_REPO_REFS_DIGEST", "").strip(),
         "content_digest": os.environ.get("MAC_TASK_REPO_CONTENT_DIGEST", "").strip(),
-        "git_control_digest": os.environ.get(
-            "MAC_TASK_REPO_GIT_CONTROL_DIGEST", ""
-        ).strip(),
+        "git_control_digest": os.environ.get("MAC_TASK_REPO_GIT_CONTROL_DIGEST", "").strip(),
     }
     if not all(expected.values()):
         raise VerificationError("authoritative verifier exact-base context is incomplete")
@@ -769,10 +754,7 @@ def revalidate_and_write(control: Mapping[str, Any]) -> int:
             .decode("utf-8", "surrogateescape")
         ).resolve(strict=True)
     result_path = workspace / RESULT_NAME
-    expected = {
-        str(key): str(value)
-        for key, value in dict(control.get("expected") or {}).items()
-    }
+    expected = {str(key): str(value) for key, value in dict(control.get("expected") or {}).items()}
     problems = [str(item) for item in control.get("problems") or []]
     try:
         # No Git may precede this raw comparison in the fresh process.
@@ -816,8 +798,7 @@ def revalidate_and_write(control: Mapping[str, Any]) -> int:
         "integrity": {
             "schema": INTEGRITY_SCHEMA,
             "immutable_inputs": not mutation_problems
-            and observed.get("git_control_digest", "")
-            == expected.get("git_control_digest", ""),
+            and observed.get("git_control_digest", "") == expected.get("git_control_digest", ""),
             "cgroup_quiescent": bool(control.get("cgroup_quiescent")),
             "fresh_control_process": True,
             "raw_git_control_first": True,
@@ -834,20 +815,14 @@ def revalidate_and_write(control: Mapping[str, Any]) -> int:
 
 
 def orchestrate() -> int:
-    workspace = Path(os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()).resolve(
-        strict=True
-    )
-    worktree = Path(
-        os.environ.get("MAC_TASK_REPO_WORKTREE") or str(workspace)
-    ).resolve(strict=True)
+    workspace = Path(os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()).resolve(strict=True)
+    worktree = Path(os.environ.get("MAC_TASK_REPO_WORKTREE") or str(workspace)).resolve(strict=True)
     worktree.relative_to(workspace)
     expected = _expected_from_environment()
     command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
     bootstrap_command = os.environ.get("MAC_REPO_BOOTSTRAP_COMMAND", "").strip()
     bootstrap_creates_raw = os.environ.get("MAC_REPO_BOOTSTRAP_CREATES", "")
-    declared_outputs = [
-        item.strip() for item in bootstrap_creates_raw.splitlines() if item.strip()
-    ]
+    declared_outputs = [item.strip() for item in bootstrap_creates_raw.splitlines() if item.strip()]
     allowed_outputs = _normalized_output_paths(bootstrap_creates_raw)
     timeout_raw = os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800")
     try:
@@ -883,27 +858,19 @@ def orchestrate() -> int:
             ]
             if missing or not declared_outputs:
                 bootstrap = _run_bounded(bootstrap_command, worktree, timeout)
-                bootstrap["creates"] = [
-                    item for item in allowed_outputs if item != ".codegraph"
-                ]
+                bootstrap["creates"] = [item for item in allowed_outputs if item != ".codegraph"]
                 missing_after = [
-                    item
-                    for item in declared_outputs
-                    if not (worktree / item).exists()
+                    item for item in declared_outputs if not (worktree / item).exists()
                 ]
                 if bootstrap.get("returncode") == 0 and missing_after:
                     bootstrap["returncode"] = 1
                     bootstrap["status"] = "fail"
                     bootstrap["missing_after"] = missing_after
-                    bootstrap["error"] = (
-                        "bootstrap command did not create declared outputs"
-                    )
+                    bootstrap["error"] = "bootstrap command did not create declared outputs"
             else:
                 bootstrap = {
                     "command": bootstrap_command,
-                    "creates": [
-                        item for item in allowed_outputs if item != ".codegraph"
-                    ],
+                    "creates": [item for item in allowed_outputs if item != ".codegraph"],
                     "returncode": 0,
                     "status": "skipped",
                     "reason": "declared bootstrap outputs already exist",

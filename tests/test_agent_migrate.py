@@ -88,22 +88,42 @@ def test_spoke_plan_is_soul_only():
     """A non-hub (spoke) migration must NOT touch the DB/Qdrant/secrets — those
     live on the shared hub and stay put."""
     steps = dict(am.migration_plan("x", src_target="a@b", dst_target="a@c", fleet="rocky"))
-    for hub_step in ("backup-db-source", "backup-qdrant-source", "transfer-db",
-                     "transfer-qdrant", "seed-hub-secrets", "stage-db-dest", "stage-qdrant-dest"):
+    for hub_step in (
+        "backup-db-source",
+        "backup-qdrant-source",
+        "transfer-db",
+        "transfer-qdrant",
+        "seed-hub-secrets",
+        "stage-db-dest",
+        "stage-qdrant-dest",
+    ):
         assert hub_step not in steps
 
 
 def test_hub_plan_moves_db_qdrant_and_secrets_before_deploy():
     steps = am.migration_plan(
-        "rocky", src_target="jkh@do-host1", dst_target="jkh@puck.local",
-        fleet="mac", fleet_name="mac", to_os="darwin", src_os="linux", hub=True,
+        "rocky",
+        src_target="jkh@do-host1",
+        dst_target="jkh@puck.local",
+        fleet="mac",
+        fleet_name="mac",
+        to_os="darwin",
+        src_os="linux",
+        hub=True,
     )
     order = [s for s, _ in steps]
     cmds = dict(steps)
     # the full-fidelity hub artifacts are present
-    for step in ("stop-source-hub", "backup-db-source", "backup-qdrant-source",
-                 "transfer-db", "transfer-qdrant", "seed-hub-secrets",
-                 "stage-db-dest", "stage-qdrant-dest"):
+    for step in (
+        "stop-source-hub",
+        "backup-db-source",
+        "backup-qdrant-source",
+        "transfer-db",
+        "transfer-qdrant",
+        "seed-hub-secrets",
+        "stage-db-dest",
+        "stage-qdrant-dest",
+    ):
         assert step in order, step
     # staged on the destination BEFORE the deploy (so the deploy sees the vault)
     assert order.index("seed-hub-secrets") < order.index("deploy")
@@ -123,10 +143,18 @@ def test_hub_plan_moves_db_qdrant_and_secrets_before_deploy():
 
 def test_hub_plan_darwin_source_qdrant_user_path():
     """A darwin->linux hub move reads the macOS user qdrant dir on the source."""
-    steps = dict(am.migration_plan(
-        "x", src_target="a@b", dst_target="a@c", fleet="mac", fleet_name="mac",
-        to_os="linux", src_os="darwin", hub=True,
-    ))
+    steps = dict(
+        am.migration_plan(
+            "x",
+            src_target="a@b",
+            dst_target="a@c",
+            fleet="mac",
+            fleet_name="mac",
+            to_os="linux",
+            src_os="darwin",
+            hub=True,
+        )
+    )
     assert "~/.mac/qdrant" in steps["backup-qdrant-source"]
     assert "/var/lib/mac/qdrant" in steps["stage-qdrant-dest"]
 
@@ -134,8 +162,11 @@ def test_hub_plan_darwin_source_qdrant_user_path():
 def test_darwin_restore_uses_bootstrap_not_only_kickstart():
     """bootout unloads the service from the launchd domain, so restore must
     bootstrap it back (kickstart alone can't start an unloaded job)."""
-    steps = dict(am.migration_plan(
-        "x", src_target="a@b", dst_target="a@c", fleet="mac", fleet_name="mac", to_os="darwin"))
+    steps = dict(
+        am.migration_plan(
+            "x", src_target="a@b", dst_target="a@c", fleet="mac", fleet_name="mac", to_os="darwin"
+        )
+    )
     rc = steps["restore-soul"]
     assert "launchctl bootout" in rc
     assert "launchctl bootstrap gui/$uid" in rc
@@ -146,7 +177,8 @@ def test_reconcile_identity_runs_after_restore_and_sets_agent_name():
     migrated agent (re-hosting onto a box that ran a different agent leaves a
     stale AGENT_NAME that the deploy doesn't reset)."""
     steps = am.migration_plan(
-        "rocky", src_target="a@b", dst_target="a@c", fleet="rocky", fleet_name="mac", to_os="darwin")
+        "rocky", src_target="a@b", dst_target="a@c", fleet="rocky", fleet_name="mac", to_os="darwin"
+    )
     order = [s for s, _ in steps]
     assert order.index("restore-soul") < order.index("reconcile-identity") < order.index("verify")
     cmd = dict(steps)["reconcile-identity"]
@@ -160,10 +192,19 @@ def test_python_over_ssh_steps_are_shell_safe():
     snippet's ; ( ) unquoted -> a shell syntax error that execute_migration
     would hit at runtime. bash -n parses without executing."""
     import subprocess
-    steps = dict(am.migration_plan(
-        "rocky", src_target="jkh@do-host1", dst_target="jkh@puck.local",
-        fleet="rocky", fleet_name="mac", to_os="darwin", src_os="linux", hub=True,
-    ))
+
+    steps = dict(
+        am.migration_plan(
+            "rocky",
+            src_target="jkh@do-host1",
+            dst_target="jkh@puck.local",
+            fleet="rocky",
+            fleet_name="mac",
+            to_os="darwin",
+            src_os="linux",
+            hub=True,
+        )
+    )
     for s in ("backup-db-source", "seed-hub-secrets", "reconcile-identity"):
         r = subprocess.run(["bash", "-nc", steps[s]], capture_output=True, text=True)
         assert r.returncode == 0, "%s is not shell-safe: %s" % (s, r.stderr)

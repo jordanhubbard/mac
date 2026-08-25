@@ -104,19 +104,13 @@ class HgxCapacityPolicy:
         if self.min_ready > self.max_sessions:
             raise ValidationError("min_ready must not exceed max_sessions")
         cluster = str(self.cluster or "").strip()
-        allowed_cluster_chars = (
-            "abcdefghijklmnopqrstuvwxyz"
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "0123456789-_"
-        )
+        allowed_cluster_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
         if (
             not cluster
             or len(cluster) > 64
             or any(ch not in allowed_cluster_chars for ch in cluster)
         ):
-            raise ValidationError(
-                "cluster must be 1..64 letters, digits, '-' or '_'"
-            )
+            raise ValidationError("cluster must be 1..64 letters, digits, '-' or '_'")
         object.__setattr__(self, "cluster", cluster)
         for name, minimum, maximum in (
             ("gpu_count", 0, 8),
@@ -127,9 +121,7 @@ class HgxCapacityPolicy:
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValidationError("%s must be an integer" % name)
             if not minimum <= value <= maximum:
-                raise ValidationError(
-                    "%s must be within %d..%d" % (name, minimum, maximum)
-                )
+                raise ValidationError("%s must be within %d..%d" % (name, minimum, maximum))
         for name in (
             "cooldown_seconds",
             "wait_timeout_seconds",
@@ -247,9 +239,7 @@ def _iter_registered_agent_records(
             session_id = getattr(record, "session_id", None) or getattr(
                 record, "hgx_session_id", None
             )
-            agent_id = getattr(record, "agent_id", None) or getattr(
-                record, "agent", None
-            )
+            agent_id = getattr(record, "agent_id", None) or getattr(record, "agent", None)
         yield session_id, agent_id
 
 
@@ -270,15 +260,9 @@ class HgxElasticCapacityController:
         self.policy = policy or HgxCapacityPolicy()
         self.state_path = Path(state_path).expanduser()
         prefix = str(name_prefix or "").strip()
-        allowed_name_chars = (
-            "abcdefghijklmnopqrstuvwxyz"
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "0123456789-_"
-        )
+        allowed_name_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
         if not prefix or any(ch not in allowed_name_chars for ch in prefix):
-            raise ValidationError(
-                "name_prefix must contain only letters, digits, '-' or '_'"
-            )
+            raise ValidationError("name_prefix must contain only letters, digits, '-' or '_'")
         self.name_prefix = prefix
         self._clock = clock
         self._sleep = sleeper
@@ -394,9 +378,7 @@ class HgxElasticCapacityController:
                 registered_agents=indexed_agents,
             )
 
-    def mark_onboarded(
-        self, session_id: str, *, agent_id: str
-    ) -> Dict[str, Any]:
+    def mark_onboarded(self, session_id: str, *, agent_id: str) -> Dict[str, Any]:
         """Consume attested supply after it becomes a registered MAC agent."""
 
         immutable_id = str(session_id or "").strip()
@@ -409,22 +391,17 @@ class HgxElasticCapacityController:
             state = self._load_state()
             record = state["sessions"].get(immutable_id)
             if not isinstance(record, dict):
-                raise HgxCapacityError(
-                    "session %s has no controller receipt" % immutable_id
-                )
+                raise HgxCapacityError("session %s has no controller receipt" % immutable_id)
             if record.get("created_by_controller") is not True:
                 raise HgxCapacityError(
                     "session %s is not controller-created capacity" % immutable_id
                 )
             if record.get("attestation_status") != "passed":
-                raise HgxCapacityError(
-                    "session %s has not passed SSH attestation" % immutable_id
-                )
+                raise HgxCapacityError("session %s has not passed SSH attestation" % immutable_id)
             prior_agent_id = str(record.get("onboarded_agent_id") or "").strip()
             if prior_agent_id and prior_agent_id != registered_agent_id:
                 raise HgxCapacityError(
-                    "session %s is already consumed by agent %s"
-                    % (immutable_id, prior_agent_id)
+                    "session %s is already consumed by agent %s" % (immutable_id, prior_agent_id)
                 )
             now = self._clock()
             record.update(
@@ -464,9 +441,7 @@ class HgxElasticCapacityController:
         """
 
         pending = _pending_count(pending_request_count)
-        if isinstance(min_age_seconds, bool) or not isinstance(
-            min_age_seconds, (int, float)
-        ):
+        if isinstance(min_age_seconds, bool) or not isinstance(min_age_seconds, (int, float)):
             raise ValidationError("min_age_seconds must be a number")
         if min_age_seconds < 0:
             raise ValidationError("min_age_seconds must be non-negative")
@@ -511,12 +486,8 @@ class HgxElasticCapacityController:
                 age = max(0.0, now - created_epoch) if created_epoch is not None else 0.0
                 spare_rows.append((session, record, age))
 
-            unhealthy = [
-                row for row in spare_rows if row[1].get("attestation_status") != "passed"
-            ]
-            healthy = [
-                row for row in spare_rows if row[1].get("attestation_status") == "passed"
-            ]
+            unhealthy = [row for row in spare_rows if row[1].get("attestation_status") != "passed"]
+            healthy = [row for row in spare_rows if row[1].get("attestation_status") == "passed"]
             oldest_first = lambda row: (  # noqa: E731 - compact deterministic key
                 _record_epoch(row[1], "created_at") or now,
                 row[0].session_id,
@@ -608,8 +579,7 @@ class HgxElasticCapacityController:
             (
                 item
                 for item in inventory
-                if self._is_available_capacity_session(item, state)
-                and not _is_terminal(item.state)
+                if self._is_available_capacity_session(item, state) and not _is_terminal(item.state)
             ),
             key=lambda item: item.session_id,
         ):
@@ -634,9 +604,7 @@ class HgxElasticCapacityController:
         cooldown_remaining = self._cooldown_remaining(state, self._clock())
         create_failure_class: Optional[str] = None
         initial_live_count = sum(
-            1
-            for session in inventory_by_id.values()
-            if self._session_is_live(session, state)
+            1 for session in inventory_by_id.values() if self._session_is_live(session, state)
         )
         create_budget = min(
             self.policy.max_create_per_run,
@@ -707,9 +675,7 @@ class HgxElasticCapacityController:
 
         desired_gap = max(0, target - len(ready_ids))
         final_live_count = sum(
-            1
-            for session in inventory_by_id.values()
-            if self._session_is_live(session, state)
+            1 for session in inventory_by_id.values() if self._session_is_live(session, state)
         )
         capacity_bound_reached = final_live_count >= self.policy.max_sessions
         next_actions = self._next_actions(
@@ -731,11 +697,7 @@ class HgxElasticCapacityController:
         self._write_state(state)
 
         if desired_gap == 0:
-            outcome = (
-                "attested_capacity_requires_onboarding"
-                if ready_ids
-                else "capacity_satisfied"
-            )
+            outcome = "attested_capacity_requires_onboarding" if ready_ids else "capacity_satisfied"
         elif create_failure_class:
             outcome = create_failure_class
         elif capacity_bound_reached:
@@ -778,13 +740,10 @@ class HgxElasticCapacityController:
         ids: set[str] = set()
         for session in sessions:
             if not session.session_id:
-                raise HgxCapacityError(
-                    "HGX inventory included a session without an immutable ID"
-                )
+                raise HgxCapacityError("HGX inventory included a session without an immutable ID")
             if session.session_id in ids:
                 raise HgxCapacityError(
-                    "HGX inventory repeated immutable session ID %s"
-                    % session.session_id
+                    "HGX inventory repeated immutable session ID %s" % session.session_id
                 )
             ids.add(session.session_id)
         return sessions
@@ -802,18 +761,12 @@ class HgxElasticCapacityController:
             session = self.provider.status(session_id)
             record["provider_state"] = session.state or None
             if _is_terminal(session.state):
-                return self._record_attestation_failure(
-                    record, now, "terminal_provider_state"
-                )
+                return self._record_attestation_failure(record, now, "terminal_provider_state")
             proven_id = self.provider.attest_ssh(session_id)
             if proven_id != session_id:
-                return self._record_attestation_failure(
-                    record, now, "immutable_id_mismatch"
-                )
+                return self._record_attestation_failure(record, now, "immutable_id_mismatch")
         except HgxError:
-            return self._record_attestation_failure(
-                record, now, "ssh_attestation_failed"
-            )
+            return self._record_attestation_failure(record, now, "ssh_attestation_failed")
         record.update(
             {
                 "attestation_status": "passed",
@@ -824,9 +777,7 @@ class HgxElasticCapacityController:
         )
         return True
 
-    def _wait_for_attestation(
-        self, session_id: str, state: Dict[str, Any]
-    ) -> bool:
+    def _wait_for_attestation(self, session_id: str, state: Dict[str, Any]) -> bool:
         deadline = self._clock() + self.policy.wait_timeout_seconds
         while True:
             if self._attest_once(session_id, state):
@@ -846,14 +797,10 @@ class HgxElasticCapacityController:
                     "automatic_deletion": False,
                 }
                 return False
-            self._sleep(
-                min(self.policy.poll_interval_seconds, max(0.0, deadline - now))
-            )
+            self._sleep(min(self.policy.poll_interval_seconds, max(0.0, deadline - now)))
 
     @staticmethod
-    def _record_attestation_failure(
-        record: Dict[str, Any], now: float, failure_class: str
-    ) -> bool:
+    def _record_attestation_failure(record: Dict[str, Any], now: float, failure_class: str) -> bool:
         record.update(
             {
                 "attestation_status": "failed",
@@ -923,9 +870,7 @@ class HgxElasticCapacityController:
         return sorted(reconciled)
 
     @staticmethod
-    def _registry_onboarded_live_ids(
-        state: Mapping[str, Any], live_ids: set[str]
-    ) -> List[str]:
+    def _registry_onboarded_live_ids(state: Mapping[str, Any], live_ids: set[str]) -> List[str]:
         """Immutable IDs of healthy, registry-reconciled onboarded sessions.
 
         Only sessions still present in live provider inventory count as healthy
@@ -954,9 +899,7 @@ class HgxElasticCapacityController:
         state_sessions = state.get("sessions", {})
         live = [item for item in inventory if not _is_terminal(item.state)]
         available_capacity = [
-            item
-            for item in live
-            if self._is_available_capacity_session(item, state)
+            item for item in live if self._is_available_capacity_session(item, state)
         ]
         known_attested = [
             item.session_id
@@ -972,20 +915,15 @@ class HgxElasticCapacityController:
         slots = max(0, self.policy.max_sessions - len(live))
         cooldown = self._cooldown_remaining(state, now)
         unattested = sorted(
-            item.session_id
-            for item in available_capacity
-            if item.session_id not in known_attested
+            item.session_id for item in available_capacity if item.session_id not in known_attested
         )
         tracked_ids = {
             str(session_id)
             for session_id, record in state_sessions.items()
-            if isinstance(record, Mapping)
-            and record.get("created_by_controller") is True
+            if isinstance(record, Mapping) and record.get("created_by_controller") is True
         }
         untracked_live_ids = sorted(
-            item.session_id
-            for item in live
-            if item.session_id not in tracked_ids
+            item.session_id for item in live if item.session_id not in tracked_ids
         )
         onboarded_ids = sorted(
             str(session_id)
@@ -1007,16 +945,12 @@ class HgxElasticCapacityController:
             "available_session_slots": slots,
             "cooldown_remaining_seconds": cooldown,
             "create_count": (
-                0
-                if cooldown > 0
-                else min(create_gap, slots, self.policy.max_create_per_run)
+                0 if cooldown > 0 else min(create_gap, slots, self.policy.max_create_per_run)
             ),
         }
 
     @staticmethod
-    def _is_available_capacity_session(
-        session: HgxSession, state: Mapping[str, Any]
-    ) -> bool:
+    def _is_available_capacity_session(session: HgxSession, state: Mapping[str, Any]) -> bool:
         record = state.get("sessions", {}).get(session.session_id, {})
         return bool(
             isinstance(record, Mapping)
@@ -1025,20 +959,12 @@ class HgxElasticCapacityController:
         )
 
     @staticmethod
-    def _session_is_live(
-        session: HgxSession, state: Mapping[str, Any]
-    ) -> bool:
+    def _session_is_live(session: HgxSession, state: Mapping[str, Any]) -> bool:
         record = state.get("sessions", {}).get(session.session_id, {})
-        observed_state = (
-            record.get("provider_state")
-            if isinstance(record, Mapping)
-            else None
-        )
+        observed_state = record.get("provider_state") if isinstance(record, Mapping) else None
         return not _is_terminal(observed_state or session.state)
 
-    def _cooldown_remaining(
-        self, state: Mapping[str, Any], now: float
-    ) -> float:
+    def _cooldown_remaining(self, state: Mapping[str, Any], now: float) -> float:
         last_create = state.get("last_create_at")
         if not isinstance(last_create, (int, float)):
             return 0.0
@@ -1048,9 +974,7 @@ class HgxElasticCapacityController:
         )
 
     def _new_session_name(self, ordinal: int) -> str:
-        stamp = datetime.fromtimestamp(
-            self._clock(), tz=timezone.utc
-        ).strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.fromtimestamp(self._clock(), tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
         return "%s-%s-%02d" % (self.name_prefix, stamp, ordinal)
 
     def _load_state(self) -> Dict[str, Any]:
@@ -1068,13 +992,10 @@ class HgxElasticCapacityController:
             ) from exc
         if not isinstance(payload, dict) or payload.get("schema") != CAPACITY_SCHEMA:
             raise HgxCapacityError(
-                "HGX capacity state has an unsupported schema: %s"
-                % self.state_path
+                "HGX capacity state has an unsupported schema: %s" % self.state_path
             )
         if not isinstance(payload.get("sessions"), dict):
-            raise HgxCapacityError(
-                "HGX capacity state has invalid sessions: %s" % self.state_path
-            )
+            raise HgxCapacityError("HGX capacity state has invalid sessions: %s" % self.state_path)
         return payload
 
     def _write_state(self, state: Mapping[str, Any]) -> None:
@@ -1084,9 +1005,7 @@ class HgxElasticCapacityController:
         payload["schema"] = CAPACITY_SCHEMA
         payload["updated_at"] = _timestamp(self._clock())
         encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-        fd, temporary = tempfile.mkstemp(
-            dir=str(parent), prefix=".%s." % self.state_path.name
-        )
+        fd, temporary = tempfile.mkstemp(dir=str(parent), prefix=".%s." % self.state_path.name)
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -1209,8 +1128,7 @@ def _is_onboarded(record: Any) -> bool:
     if not isinstance(record, Mapping):
         return False
     return bool(
-        str(record.get("onboarding_status") or "").strip().lower()
-        in {"consumed", "onboarded"}
+        str(record.get("onboarding_status") or "").strip().lower() in {"consumed", "onboarded"}
         or str(record.get("onboarded_agent_id") or "").strip()
     )
 
@@ -1237,8 +1155,7 @@ def _onboarding_action(session_id: str) -> Dict[str, Any]:
         "action": "prepare_fungible_onboarding",
         "session_id": session_id,
         "reason": (
-            "nonce SSH attestation passed, but an HGX session is not yet a "
-            "registered MAC agent"
+            "nonce SSH attestation passed, but an HGX session is not yet a registered MAC agent"
         ),
         "required_inputs": [
             "fleet_agent_name",

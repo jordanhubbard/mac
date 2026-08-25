@@ -53,7 +53,10 @@ def test_missing_unreadable_invalid_yaml_and_non_mapping(monkeypatch, tmp_path) 
         (lambda d: d.update(capability_role_aliases=["bad"]), "capability_role_aliases"),
         (lambda d: d.update(projects={"x": 1}), "projects must be a list"),
         (lambda d: d.update(projects=["bad"]), r"projects\[0\]"),
-        (lambda d: d.update(projects=[{"name": "one", "metadata": ["bad"]}]), "metadata must be a mapping"),
+        (
+            lambda d: d.update(projects=[{"name": "one", "metadata": ["bad"]}]),
+            "metadata must be a mapping",
+        ),
         (lambda d: d.update(attestation_keys=[]), "attestation_keys must be a mapping"),
         (lambda d: d.update(attestation_keys={}), "attestation_keys requires"),
         (lambda d: d.update(fleet=[]), "fleet must be a mapping"),
@@ -75,11 +78,19 @@ def test_top_level_schema_rejections(tmp_path, mutate, message) -> None:
         ({"capabilities": []}, "capabilities must be non-empty"),
         ({"capabilities": "bad"}, "requires a list"),
         ({"capabilities": ["python"], "attestation_key_secret": {}}, "attestation_key_secret"),
-        ({
-            "capabilities": ["python"], "attestation_key_secret": {"name": "s", "key": "k"},
-            "agent_id": "a", "name": "A", "machine_id": "m", "image": "i", "executor": "e",
-            "required_capabilities": "bad",
-        }, "required_capabilities"),
+        (
+            {
+                "capabilities": ["python"],
+                "attestation_key_secret": {"name": "s", "key": "k"},
+                "agent_id": "a",
+                "name": "A",
+                "machine_id": "m",
+                "image": "i",
+                "executor": "e",
+                "required_capabilities": "bad",
+            },
+            "required_capabilities",
+        ),
     ],
 )
 def test_role_schema_rejections(raw, message) -> None:
@@ -92,7 +103,10 @@ def test_role_schema_rejections(raw, message) -> None:
     [
         ("bad", "must be a mapping"),
         ({"name": "n", "channel_type": "email"}, "channel_type must be one"),
-        ({"name": "n", "channel_type": "slack", "event_types": "bad"}, "event_types must be a list"),
+        (
+            {"name": "n", "channel_type": "slack", "event_types": "bad"},
+            "event_types must be a list",
+        ),
         ({"name": "n", "channel_type": "slack", "target": ["bad"]}, "target must be a mapping"),
         ({"name": "n", "channel_type": "slack", "metadata": ["bad"]}, "metadata must be a mapping"),
     ],
@@ -104,12 +118,14 @@ def test_notifier_schema_rejections(raw, message) -> None:
 
 def test_full_optional_config_loads(tmp_path) -> None:
     data = _valid()
-    data.update({
-        "attestation_keys": {"namespace": "ns", "secret_name": "secret"},
-        "fleet": {"name": "fleet", "description": "d"},
-        "projects": [{"name": "project", "metadata": {"x": 1}}],
-        "notifier_channels": [{"name": "alerts", "channel_type": "slack", "enabled": False}],
-    })
+    data.update(
+        {
+            "attestation_keys": {"namespace": "ns", "secret_name": "secret"},
+            "fleet": {"name": "fleet", "description": "d"},
+            "projects": [{"name": "project", "metadata": {"x": 1}}],
+            "notifier_channels": [{"name": "alerts", "channel_type": "slack", "enabled": False}],
+        }
+    )
     loaded = config_loader.load_config_file(str(_write(tmp_path, data)))
     assert loaded.mac_url == "http://mac"
     assert loaded.fleet["name"] == "fleet"

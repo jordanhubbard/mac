@@ -112,16 +112,14 @@ def move_agent_in_registry(
 
     # Remove from source fleet.
     src_fleet["agents"] = [
-        a for a in src_agents
-        if not (isinstance(a, dict) and a.get("name") == agent_name)
+        a for a in src_agents if not (isinstance(a, dict) and a.get("name") == agent_name)
     ]
 
     # Add to target fleet (de-duplicate: remove any stale existing entry first).
     dst_fleet = fleets[to_fleet]
     dst_agents: List[Dict[str, Any]] = list(dst_fleet.get("agents") or [])
     dst_agents = [
-        a for a in dst_agents
-        if not (isinstance(a, dict) and a.get("name") == agent_name)
+        a for a in dst_agents if not (isinstance(a, dict) and a.get("name") == agent_name)
     ]
 
     # Inherit the target fleet's hub_url so the agent redeploys to the right hub.
@@ -174,29 +172,38 @@ def plan_fleet_move(
     target = (agent_entry or {}).get("target") or "<agent-target>"
 
     steps: List[Tuple[str, str]] = [
-        ("validate",
-         "assert agent %r present in fleet %r; assert fleet %r exists"
-         % (agent_name, from_fleet, to_fleet)),
-        ("backup-registry",
-         "cp fleets.yaml fleets.yaml.bak.<timestamp>"),
-        ("update-registry",
-         "remove %r from fleets.%s.agents; add to fleets.%s.agents "
-         "inheriting hub_url=%s" % (agent_name, from_fleet, to_fleet, dst_hub_url)),
-        ("redeploy",
-         "%s --hub %s --hub-os %s %s" % (deploy_cmd, to_fleet, to_os, agent_name)),
+        (
+            "validate",
+            "assert agent %r present in fleet %r; assert fleet %r exists"
+            % (agent_name, from_fleet, to_fleet),
+        ),
+        ("backup-registry", "cp fleets.yaml fleets.yaml.bak.<timestamp>"),
+        (
+            "update-registry",
+            "remove %r from fleets.%s.agents; add to fleets.%s.agents "
+            "inheriting hub_url=%s" % (agent_name, from_fleet, to_fleet, dst_hub_url),
+        ),
+        ("redeploy", "%s --hub %s --hub-os %s %s" % (deploy_cmd, to_fleet, to_os, agent_name)),
     ]
 
     if reconcile_db:
         steps.append(
-            ("reconcile-db",
-             "DB fleet membership auto-reconciles when agent_%s re-registers to "
-             "fleet %r after redeploy (worker._ensure_worker_fleet_membership); the "
-             "stale %r observation is historical (no single-agent remove API)"
-             % (agent_name, to_fleet, from_fleet)))
+            (
+                "reconcile-db",
+                "DB fleet membership auto-reconciles when agent_%s re-registers to "
+                "fleet %r after redeploy (worker._ensure_worker_fleet_membership); the "
+                "stale %r observation is historical (no single-agent remove API)"
+                % (agent_name, to_fleet, from_fleet),
+            )
+        )
 
-    steps.append(("verify",
-                  "mac admin fleet list; confirm agent_%s is ONLY in fleet %r; "
-                  "mac agent list --fleet %s" % (agent_name, to_fleet, to_fleet)))
+    steps.append(
+        (
+            "verify",
+            "mac admin fleet list; confirm agent_%s is ONLY in fleet %r; "
+            "mac agent list --fleet %s" % (agent_name, to_fleet, to_fleet),
+        )
+    )
 
     return steps
 
@@ -308,7 +315,10 @@ def execute_fleet_move(
 
     fleets = registry.get("fleets") or {}
     if from_fleet not in fleets:
-        return {"ok": False, "error": "source fleet %r not found in %s" % (from_fleet, fleets_config)}
+        return {
+            "ok": False,
+            "error": "source fleet %r not found in %s" % (from_fleet, fleets_config),
+        }
     if to_fleet not in fleets:
         return {"ok": False, "error": "target fleet %r not found in %s" % (to_fleet, fleets_config)}
 
@@ -319,7 +329,7 @@ def execute_fleet_move(
         return {
             "ok": False,
             "error": "target fleet %r has no hub_url (pass --hub-url to override); "
-                     "refusing to move" % to_fleet,
+            "refusing to move" % to_fleet,
         }
 
     # Validate agent is in source fleet.
@@ -340,9 +350,7 @@ def execute_fleet_move(
         }
 
     # Build the new registry.
-    new_registry, agent_entry = move_agent_in_registry(
-        registry, agent_name, from_fleet, to_fleet
-    )
+    new_registry, agent_entry = move_agent_in_registry(registry, agent_name, from_fleet, to_fleet)
 
     # Override hub_url if explicitly provided.
     if hub_url:
@@ -351,9 +359,7 @@ def execute_fleet_move(
                 a["hub_url"] = hub_url
 
     effective_hub_url = (
-        hub_url
-        or agent_entry.get("hub_url")
-        or (fleets[to_fleet].get("hub_url") or "")
+        hub_url or agent_entry.get("hub_url") or (fleets[to_fleet].get("hub_url") or "")
     )
 
     result: Dict[str, Any] = {
@@ -373,14 +379,16 @@ def execute_fleet_move(
             "fleets.%s.agents" % from_fleet: new_registry["fleets"][from_fleet].get("agents"),
             "fleets.%s.agents" % to_fleet: new_registry["fleets"][to_fleet].get("agents"),
         }
-        result["redeploy_cmd"] = (
-            "%s --hub %s --hub-os %s %s" % (deploy_cmd, to_fleet, to_os, agent_name)
+        result["redeploy_cmd"] = "%s --hub %s --hub-os %s %s" % (
+            deploy_cmd,
+            to_fleet,
+            to_os,
+            agent_name,
         )
         result["redeploy_will_run"] = run_redeploy
         if reconcile_db:
             result["db_reconcile"] = (
-                "auto via re-registration to fleet %r after redeploy "
-                "(no manual command)" % to_fleet
+                "auto via re-registration to fleet %r after redeploy (no manual command)" % to_fleet
             )
         return result
 
@@ -393,15 +401,17 @@ def execute_fleet_move(
     fleets_config.write_text(new_content, encoding="utf-8")
     result["registry_written"] = str(fleets_config)
 
-    redeploy_cmd = (
-        "%s --hub %s --hub-os %s %s" % (deploy_cmd, to_fleet, to_os, agent_name)
-    )
+    redeploy_cmd = "%s --hub %s --hub-os %s %s" % (deploy_cmd, to_fleet, to_os, agent_name)
     result["redeploy_cmd"] = redeploy_cmd
 
     if run_redeploy:
         rc, detail = _invoke_redeploy(
-            deploy_cmd, to_fleet, to_os, agent_name,
-            repo_root=repo_root, runner=runner,
+            deploy_cmd,
+            to_fleet,
+            to_os,
+            agent_name,
+            repo_root=repo_root,
+            runner=runner,
         )
         result["redeployed"] = rc == 0
         result["redeploy_returncode"] = rc

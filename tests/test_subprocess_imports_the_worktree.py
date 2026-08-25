@@ -79,16 +79,11 @@ def test_the_worktree_source_is_what_a_subprocess_gets():
 def test_pythonpath_carries_the_ini_entry():
     """conftest re-exports pythonpath so children inherit it."""
 
-    entries = [
-        Path(p).resolve()
-        for p in os.environ.get("PYTHONPATH", "").split(os.pathsep)
-        if p
-    ]
+    entries = [Path(p).resolve() for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
 
     assert (ROOT / "src").resolve() in entries, (
-        "src/ is missing from PYTHONPATH=%r; pythonpath=[\"src\"] in "
-        "pyproject.toml only edits this process's sys.path"
-        % os.environ.get("PYTHONPATH", "")
+        'src/ is missing from PYTHONPATH=%r; pythonpath=["src"] in '
+        "pyproject.toml only edits this process's sys.path" % os.environ.get("PYTHONPATH", "")
     )
 
 

@@ -9,6 +9,7 @@ counts, and the scratch database is dropped afterward.
 Run with: MAC_TEST_PG_URL=postgresql://postgres:test@127.0.0.1:55432/mac \
           uv run --extra dev pytest -q -m postgres tests/test_pg_backup_live.py
 """
+
 from __future__ import annotations
 
 import os
@@ -51,9 +52,9 @@ def drill_database():
 
     def run(dsn, sql):
         return subprocess.run(
-            ["psql", "--no-psqlrc", "--tuples-only", "--no-align",
-             "--command", sql, dsn],
-            capture_output=True, text=True,
+            ["psql", "--no-psqlrc", "--tuples-only", "--no-align", "--command", sql, dsn],
+            capture_output=True,
+            text=True,
         )
 
     created = run(admin, 'CREATE DATABASE "%s"' % name)
@@ -72,9 +73,9 @@ def test_dump_and_restore_drill_round_trips(tmp_path, drill_database):
 
     def psql(dsn, sql):
         return subprocess.run(
-            ["psql", "--no-psqlrc", "--tuples-only", "--no-align",
-             "--command", sql, dsn],
-            capture_output=True, text=True,
+            ["psql", "--no-psqlrc", "--tuples-only", "--no-align", "--command", sql, dsn],
+            capture_output=True,
+            text=True,
         )
 
     psql(url, "CREATE TABLE IF NOT EXISTS pg_backup_probe (id INT PRIMARY KEY, v TEXT)")
@@ -82,7 +83,10 @@ def test_dump_and_restore_drill_round_trips(tmp_path, drill_database):
     psql(url, "INSERT INTO pg_backup_probe VALUES (1,'a'),(2,'b'),(3,'c')")
 
     res = pg_backup.dump(
-        url, tmp_path, verify=True, verify_tables=("pg_backup_probe",),
+        url,
+        tmp_path,
+        verify=True,
+        verify_tables=("pg_backup_probe",),
     )
     assert res.path.is_file()
     assert res.verified is True

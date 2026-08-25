@@ -146,9 +146,9 @@ class AgentStateService:
         if ttl_seconds is not None:
             if int(ttl_seconds) <= 0:
                 raise ValidationError("mood ttl_seconds must be > 0 when provided")
-            expires_at = (
-                parse_time(now) + timedelta(seconds=int(ttl_seconds))
-            ).isoformat(timespec="microseconds")
+            expires_at = (parse_time(now) + timedelta(seconds=int(ttl_seconds))).isoformat(
+                timespec="microseconds"
+            )
         overlay_id = new_id("mood")
         metadata_json = json_dumps(ensure_json_object(metadata))
         with self.store.transaction() as conn:
@@ -242,9 +242,7 @@ class AgentStateService:
         return self.get_mood_overlay(overlay_id)
 
     def get_mood_overlay(self, overlay_id: str) -> MoodOverlay:
-        row = self.store.query_one(
-            "SELECT * FROM mood_overlays WHERE id = ?", (overlay_id,)
-        )
+        row = self.store.query_one("SELECT * FROM mood_overlays WHERE id = ?", (overlay_id,))
         if row is None:
             raise NotFoundError("mood overlay not found: %s" % overlay_id)
         return self._mood_from_row(row)
@@ -469,8 +467,7 @@ class AgentStateService:
                 where = "%s.%s" % (path, key) if path else str(key)
                 if any(marker in key_text for marker in cls._SECRETISH_KEY_MARKERS):
                     raise ValidationError(
-                        "deploy config must not contain secret-like keys: %s"
-                        % where
+                        "deploy config must not contain secret-like keys: %s" % where
                     )
                 cls._reject_secretish_keys(value, where)
         elif isinstance(document, list):
@@ -493,8 +490,7 @@ class AgentStateService:
         encoded = json_dumps(doc)
         if len(encoded.encode("utf-8")) > self.DEPLOY_CONFIG_MAX_BYTES:
             raise ValidationError(
-                "deploy config document exceeds %d bytes"
-                % self.DEPLOY_CONFIG_MAX_BYTES
+                "deploy config document exceeds %d bytes" % self.DEPLOY_CONFIG_MAX_BYTES
             )
         actor = (reported_by or agent.id).strip() or agent.id
         now = utcnow()
@@ -595,9 +591,7 @@ class AgentStateService:
             offset_minutes = _deterministic_nap_offset(agent.name)
         offset_minutes = int(offset_minutes)
         if not 0 <= offset_minutes < NAP_WINDOW_MINUTES:
-            raise ValidationError(
-                "nap offset_minutes must be in [0, %d)" % NAP_WINDOW_MINUTES
-            )
+            raise ValidationError("nap offset_minutes must be in [0, %d)" % NAP_WINDOW_MINUTES)
         window_minutes = int(window_minutes)
         if window_minutes <= 0 or window_minutes > 120:
             raise ValidationError("nap window_minutes must be in (0, 120]")
@@ -647,15 +641,11 @@ class AgentStateService:
 
     def get_nap_schedule(self, agent_id: str) -> Optional[NapSchedule]:
         agent = self._get_agent(agent_id)
-        row = self.store.query_one(
-            "SELECT * FROM nap_schedules WHERE agent_id = ?", (agent.id,)
-        )
+        row = self.store.query_one("SELECT * FROM nap_schedules WHERE agent_id = ?", (agent.id,))
         return self._schedule_from_row(row) if row is not None else None
 
     def list_nap_schedules(self) -> List[NapSchedule]:
-        rows = self.store.query_all(
-            "SELECT * FROM nap_schedules ORDER BY offset_minutes, agent_id"
-        )
+        rows = self.store.query_all("SELECT * FROM nap_schedules ORDER BY offset_minutes, agent_id")
         return [self._schedule_from_row(row) for row in rows]
 
     def next_nap_window(
@@ -758,9 +748,7 @@ class AgentStateService:
     ) -> NapRun:
         run = self.get_nap_run(run_id)
         if run.status != NapStatus.RUNNING.value:
-            raise TransitionError(
-                "nap_run %s is %s, not running" % (run_id, run.status)
-            )
+            raise TransitionError("nap_run %s is %s, not running" % (run_id, run.status))
         if summary_evidence_id is not None:
             evidence = self._get_evidence(summary_evidence_id)
             if evidence.kind != "log":
@@ -827,9 +815,7 @@ class AgentStateService:
     ) -> NapRun:
         run = self.get_nap_run(run_id)
         if run.status != NapStatus.RUNNING.value:
-            raise TransitionError(
-                "nap_run %s is %s, not running" % (run_id, run.status)
-            )
+            raise TransitionError("nap_run %s is %s, not running" % (run_id, run.status))
         agent = self._get_agent(run.agent_id)
         actor_value = (actor or agent.id).strip() or agent.id
         if not reason:
@@ -871,9 +857,7 @@ class AgentStateService:
         return self.get_nap_run(run_id)
 
     def get_nap_run(self, run_id: str) -> NapRun:
-        row = self.store.query_one(
-            "SELECT * FROM nap_runs WHERE id = ?", (run_id,)
-        )
+        row = self.store.query_one("SELECT * FROM nap_runs WHERE id = ?", (run_id,))
         if row is None:
             raise NotFoundError("nap_run not found: %s" % run_id)
         return self._run_from_row(row)
@@ -886,9 +870,7 @@ class AgentStateService:
                 (agent.id,),
             )
         else:
-            rows = self.store.query_all(
-                "SELECT * FROM nap_runs ORDER BY started_at DESC, id DESC"
-            )
+            rows = self.store.query_all("SELECT * FROM nap_runs ORDER BY started_at DESC, id DESC")
         return [self._run_from_row(row) for row in rows]
 
     # Agent-event audit trail (shared by moods, naps, future overlays) -

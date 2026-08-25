@@ -73,8 +73,7 @@ def candidate(
         kind=kind,
         statement=statement,
         sources=[
-            SourceRef(kind="session", id="%s_%d" % (source_prefix, i))
-            for i in range(sources)
+            SourceRef(kind="session", id="%s_%d" % (source_prefix, i)) for i in range(sources)
         ],
     )
 
@@ -102,9 +101,7 @@ class SqliteStore:
             " subject_type TEXT, subject_id TEXT, record_type TEXT,"
             " content TEXT, evidence_id TEXT, created_by TEXT, created_at TEXT)"
         )
-        self.conn.execute(
-            "CREATE TABLE vector_refs (id TEXT PRIMARY KEY, memory_id TEXT)"
-        )
+        self.conn.execute("CREATE TABLE vector_refs (id TEXT PRIMARY KEY, memory_id TEXT)")
 
     def execute(self, sql: str, params: Any = ()) -> Any:
         cur = self.conn.execute(sql, tuple(params))
@@ -210,9 +207,7 @@ def test_model_reply_wrapped_in_fence_is_parsed() -> None:
             1,
         )
 
-    result = dreaming.dream(
-        [], [InputSession(id="s1")], model="m", model_caller=caller
-    )
+    result = dreaming.dream([], [InputSession(id="s1")], model="m", model_caller=caller)
     assert result.reflections[0].outcome is SessionOutcome.ABANDONED
 
 
@@ -220,9 +215,7 @@ def test_model_failure_falls_back_without_losing_the_run() -> None:
     def caller(model: str, prompt: str, context: str):
         raise RuntimeError("router down")
 
-    result = dreaming.dream(
-        [learning_record("mem_a", "success")], model="m", model_caller=caller
-    )
+    result = dreaming.dream([learning_record("mem_a", "success")], model="m", model_caller=caller)
     assert result.extractor.startswith("heuristic(after-model-error")
     assert result.candidates
 
@@ -343,7 +336,9 @@ def test_contradictory_output_fails() -> None:
 
     pair = [
         candidate(MemoryKind.PRACTICE, "always rebase before publishing the branch"),
-        candidate(MemoryKind.PITFALL, "always rebase before publishing the branch", source_prefix="b"),
+        candidate(
+            MemoryKind.PITFALL, "always rebase before publishing the branch", source_prefix="b"
+        ),
     ]
     gate = contradiction_gate(pair, DreamPolicy())
     assert not gate.passed
@@ -384,9 +379,13 @@ def test_dream_never_writes_to_live_memory(store: SqliteStore) -> None:
     """Copy-on-write: running and saving a dream leaves memory_records alone."""
 
     store.execute(
-        "INSERT INTO memory_records (id, record_type, content, created_at)"
-        " VALUES (?, ?, ?, ?)",
-        ("mem_a", "deployment_learning:mac", learning_record("mem_a", "success").content, "2026-07-01"),
+        "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "mem_a",
+            "deployment_learning:mac",
+            learning_record("mem_a", "success").content,
+            "2026-07-01",
+        ),
     )
     before = store.query_all("SELECT id FROM memory_records")
     records = dreaming.load_records(store)
@@ -401,8 +400,7 @@ def test_promotion_shrinks_the_store(store: SqliteStore) -> None:
 
     for i in range(3):
         store.execute(
-            "INSERT INTO memory_records (id, record_type, content, created_at)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
             (
                 "mem_%d" % i,
                 "deployment_learning:mac",
@@ -458,13 +456,11 @@ def test_dream_output_is_excluded_from_its_own_input(store: SqliteStore) -> None
 
     for record_type in ("dream:failure_pattern", "nap_summary", "dream_memory:practice"):
         store.execute(
-            "INSERT INTO memory_records (id, record_type, content, created_at)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
             ("mem_" + record_type.replace(":", "_"), record_type, "{}", "2026-07-01"),
         )
     store.execute(
-        "INSERT INTO memory_records (id, record_type, content, created_at)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
         ("mem_real", "deployment_learning:mac", "{}", "2026-07-01"),
     )
     records = dreaming.load_records(store)
@@ -519,7 +515,10 @@ def test_prior_memories_can_be_superseded(store: SqliteStore) -> None:
         )
 
     result = dreaming.dream(
-        [], existing=existing, model="m", model_caller=caller,
+        [],
+        existing=existing,
+        model="m",
+        model_caller=caller,
         policy=DreamPolicy(max_output_ratio=1.0),
     )
     assert result.candidates[0].supersedes == ["mem_old_dream"]
@@ -569,9 +568,7 @@ def test_agent_scoping_follows_task_ownership(store: SqliteStore) -> None:
     nothing and the first five production runs produced 0 candidates.
     """
 
-    store.execute(
-        "CREATE TABLE tasks (id TEXT PRIMARY KEY, owner_agent_id TEXT, project TEXT)"
-    )
+    store.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, owner_agent_id TEXT, project TEXT)")
     store.execute("CREATE TABLE task_history (task_id TEXT, actor TEXT)")
     store.execute(
         "INSERT INTO tasks (id, owner_agent_id, project) VALUES (?, ?, ?)",
@@ -583,10 +580,10 @@ def test_agent_scoping_follows_task_ownership(store: SqliteStore) -> None:
         (
             "mem_owned",
             "task_1",
-            "mac",                       # project, not the agent
+            "mac",  # project, not the agent
             "deployment_learning:mac",
             "{}",
-            "mac-task-executor",         # service actor, not the agent
+            "mac-task-executor",  # service actor, not the agent
             "2026-07-01",
         ),
     )
@@ -598,7 +595,15 @@ def test_agent_scoping_follows_task_ownership(store: SqliteStore) -> None:
     store.execute(
         "INSERT INTO memory_records (id, task_id, subject_id, record_type,"
         " content, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("mem_other", "task_other", "mac", "deployment_learning:mac", "{}", "mac-task-executor", "2026-07-01"),
+        (
+            "mem_other",
+            "task_other",
+            "mac",
+            "deployment_learning:mac",
+            "{}",
+            "mac-task-executor",
+            "2026-07-01",
+        ),
     )
 
     records = dreaming.load_records(store, agent_id="agent_worker1")
@@ -708,8 +713,7 @@ def test_retirement_is_capped(store: SqliteStore) -> None:
 
     for i in range(6):
         store.execute(
-            "INSERT INTO memory_records (id, record_type, content, created_at)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO memory_records (id, record_type, content, created_at) VALUES (?, ?, ?, ?)",
             (
                 "mem_%d" % i,
                 "deployment_learning:mac",
@@ -721,9 +725,7 @@ def test_retirement_is_capped(store: SqliteStore) -> None:
     result = dreaming.dream(records, policy=DreamPolicy(max_output_ratio=1.0))
     dreaming.save_run(store, result, DreamPolicy())
 
-    report = dreaming.promote_run(
-        store, FakeMemoryService(), result.run_id, max_retire=2
-    )
+    report = dreaming.promote_run(store, FakeMemoryService(), result.run_id, max_retire=2)
     assert report["status"] == "promoted"
     assert report["retired_count"] == 2
     assert report["retire_capped"] is True

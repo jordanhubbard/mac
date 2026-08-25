@@ -6,6 +6,7 @@ This is intentionally not a Python packaging ``setup()`` file. The project uses
 Bash orchestration with Python so first-run fleet setup works on macOS systems
 that still ship old Bash.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,11 @@ def parse_setup_args(argv: Sequence[str]) -> Tuple[List[str], bool, bool, bool]:
             continue
         if arg == "--deploy":
             continue
-        if arg in {"--hub", "--new-hub"} or arg.startswith("--hub=") or arg.startswith("--new-hub="):
+        if (
+            arg in {"--hub", "--new-hub"}
+            or arg.startswith("--hub=")
+            or arg.startswith("--new-hub=")
+        ):
             deploy_direct = True
         forwarded.append(arg)
     return forwarded, config_only, dry_run, deploy_direct

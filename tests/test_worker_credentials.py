@@ -141,9 +141,7 @@ def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
 
-    row = cp.store.query_one(
-        "SELECT * FROM worker_credentials WHERE id = ?", (issue.record["id"],)
-    )
+    row = cp.store.query_one("SELECT * FROM worker_credentials WHERE id = ?", (issue.record["id"],))
     events = cp.store.query_all("SELECT detail FROM worker_credential_events")
     assert row["token_hash"].startswith("sha256:")
     assert issue.token not in json.dumps(dict(row))
@@ -193,15 +191,11 @@ def test_recovery_discards_only_exact_unreserved_pending_issuance(
     assert states[orphan.record["id"]] == "revoked"
     assert states[unrelated.record["id"]] == "pending_install"
     assert (
-        lifecycle.discard_unreserved_pending(
-            "agent_alpha", created_by="fleet-release:epoch-a"
-        )
+        lifecycle.discard_unreserved_pending("agent_alpha", created_by="fleet-release:epoch-a")
         == []
     )
     assert (
-        lifecycle.discard_unreserved_pending(
-            "agent_new_worker", created_by="fleet-release:epoch-a"
-        )
+        lifecycle.discard_unreserved_pending("agent_new_worker", created_by="fleet-release:epoch-a")
         == []
     )
 
@@ -282,9 +276,7 @@ def test_activation_requires_destination_readback_and_live_authenticated_heartbe
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
     manifest = installation_manifest(issue)
-    receipt = install_vm_manifest(
-        manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha"
-    )
+    receipt = install_vm_manifest(manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha")
     assert receipt["destination_verification"]["schema"] == DESTINATION_VERIFICATION_SCHEMA
 
     with pytest.raises(WorkerCredentialError, match="authenticated heartbeat"):
@@ -397,9 +389,7 @@ def test_vm_install_removes_shared_hub_bearer_aliases_without_touching_upstream_
         encoding="utf-8",
     )
 
-    install_vm_manifest(
-        installation_manifest(issue), env_path, expected_agent_id="agent_alpha"
-    )
+    install_vm_manifest(installation_manifest(issue), env_path, expected_agent_id="agent_alpha")
     values = read_env_file(env_path)
     assert values["MAC_WORKER_TOKEN"] == issue.token
     assert values["OPENAI_API_KEY"] == issue.token
@@ -555,41 +545,48 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
     manifest_path = tmp_path / "manifest.json"
     receipt_path = tmp_path / "receipt.json"
     env_path = tmp_path / "mac.env"
-    assert main(
-        [
-            "--db", dsn_for(db),
-            "issue",
-            "--agent-id",
-            "agent_alpha",
-            "--environment",
-            "vm",
-            "--expected-source-commit",
-            "a" * 40,
-            "--expected-runtime-digest",
-            "sha256:runtime-a",
-            "--capability",
-            PACKAGE_CAPABILITY,
-            "--capability",
-            "python",
-            "--package-capable",
-            "--manifest-out",
-            str(manifest_path),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--db",
+                dsn_for(db),
+                "issue",
+                "--agent-id",
+                "agent_alpha",
+                "--environment",
+                "vm",
+                "--expected-source-commit",
+                "a" * 40,
+                "--expected-runtime-digest",
+                "sha256:runtime-a",
+                "--capability",
+                PACKAGE_CAPABILITY,
+                "--capability",
+                "python",
+                "--package-capable",
+                "--manifest-out",
+                str(manifest_path),
+            ]
+        )
+        == 0
+    )
     manifest = json.loads(manifest_path.read_text())
-    assert main(
-        [
-            "install-vm",
-            "--manifest",
-            str(manifest_path),
-            "--agent-id",
-            "agent_alpha",
-            "--env-file",
-            str(env_path),
-            "--receipt-out",
-            str(receipt_path),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "install-vm",
+                "--manifest",
+                str(manifest_path),
+                "--agent-id",
+                "agent_alpha",
+                "--env-file",
+                str(env_path),
+                "--receipt-out",
+                str(receipt_path),
+            ]
+        )
+        == 0
+    )
     issue = SimpleNamespace(
         record={
             "id": manifest["principal_id"],
@@ -599,7 +596,8 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
         worker_version=manifest["worker_credential_version"],
     )
     activation_args = [
-        "--db", dsn_for(db),
+        "--db",
+        dsn_for(db),
         "activate",
         "--agent-id",
         "agent_alpha",
@@ -617,14 +615,18 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
     _observe(cp, issue, read_env_file(env_path))
     assert main(activation_args) == 0
     assert not manifest_path.exists()
-    assert main(
-        [
-            "--db", dsn_for(db),
-            "set-mode",
-            MODE_COMPATIBILITY,
-            "--review-live",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--db",
+                dsn_for(db),
+                "set-mode",
+                MODE_COMPATIBILITY,
+                "--review-live",
+            ]
+        )
+        == 0
+    )
     assert read_policy_state(store=cp.store)["ready_agent_ids"] == ["agent_alpha"]
     output = capsys.readouterr().out
     assert manifest["credential"]["token"] not in output
@@ -679,9 +681,7 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     )
 
     main_body = script.split("main() {", 1)[1]
-    typed = script.split("run_typed_cohort() {", 1)[1].split(
-        "\n}\n\nmain()", 1
-    )[0]
+    typed = script.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
     hub_open = script.split("build_and_open_hub_epoch() {", 1)[1].split(
         "\n}\n\nprove_and_commit_hub_epoch", 1
     )[0]
@@ -725,10 +725,13 @@ def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
     assert second == {**first, "created": False}
     assert len(first["runtime_digest"]) == 64
     assert first["runtime_digest"] == normal_runtime.digest
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
-        (first["runtime_name"],),
-    )["count"] == 1
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
+            (first["runtime_name"],),
+        )["count"]
+        == 1
+    )
     row = cp.store.query_one(
         "SELECT manifest, digest FROM runtime_environments WHERE id = ?",
         (first["runtime_id"],),
@@ -795,10 +798,13 @@ def test_fleet_source_runtime_concurrent_replays_create_one_row(
     assert [result["created"] for result in results].count(True) == 1
     assert len({result["runtime_id"] for result in results}) == 1
     assert len({result["runtime_digest"] for result in results}) == 1
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
-        (results[0]["runtime_name"],),
-    )["count"] == 1
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
+            (results[0]["runtime_name"],),
+        )["count"]
+        == 1
+    )
 
 
 @pytest.mark.parametrize("source_commit", ["", "A" * 40, "a" * 39, "g" * 40])
@@ -819,16 +825,20 @@ def test_ensure_runtime_cli_emits_only_registered_runtime_receipt(
     _plane(db).store.close()
     source_commit = "c" * 40
 
-    assert main(
-        [
-            "--db", dsn_for(db),
-            "ensure-runtime",
-            "--source-commit",
-            source_commit,
-            "--created-by",
-            "test-deploy",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--db",
+                dsn_for(db),
+                "ensure-runtime",
+                "--source-commit",
+                source_commit,
+                "--created-by",
+                "test-deploy",
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == FLEET_SOURCE_RUNTIME_SCHEMA
@@ -873,15 +883,18 @@ def test_credential_cli_attaches_without_replaying_schema(
     monkeypatch.setattr(credentials, "make_store_from_env", existing_authority)
     monkeypatch.setattr(credentials, "ensure_fleet_source_runtime", register_runtime)
 
-    assert credentials.main(
-        [
-            "ensure-runtime",
-            "--source-commit",
-            "c" * 40,
-            "--created-by",
-            "test-deploy",
-        ]
-    ) == 0
+    assert (
+        credentials.main(
+            [
+                "ensure-runtime",
+                "--source-commit",
+                "c" * 40,
+                "--created-by",
+                "test-deploy",
+            ]
+        )
+        == 0
+    )
 
     assert calls == [False]
     assert json.loads(capsys.readouterr().out)["status"] == "ready"
@@ -903,9 +916,7 @@ def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_act
         package_capable=True,
     )
     manifest = installation_manifest(issue)
-    receipt = install_vm_manifest(
-        manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha"
-    )
+    receipt = install_vm_manifest(manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha")
     values = read_env_file(tmp_path / "mac.env")
     app = create_app(
         control_plane=cp,
@@ -923,17 +934,13 @@ def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_act
                         "commit_sha": "a" * 40,
                         "dirty": False,
                     },
-                    "worker_credential": credential_resource_from_env(
-                        "agent_alpha", values
-                    ),
+                    "worker_credential": credential_resource_from_env("agent_alpha", values),
                 },
             },
         )
         assert heartbeat.status_code == 200
         assert heartbeat.json()["running_digest"] == runtime["runtime_digest"]
-        authenticated = heartbeat.json()["resources"][
-            "worker_credential_authenticated"
-        ]
+        authenticated = heartbeat.json()["resources"]["worker_credential_authenticated"]
         assert authenticated["principal_id"] == issue.record["id"]
 
         lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)

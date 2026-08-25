@@ -102,9 +102,7 @@ def parse_fields(raw: bytes) -> list[WireField]:
         key_end = offset
         if wire_type == 0:
             value, offset = read_varint(raw, offset)
-            fields.append(
-                WireField(number, wire_type, start, key_end, key_end, offset, value)
-            )
+            fields.append(WireField(number, wire_type, start, key_end, key_end, offset, value))
         elif wire_type == 1:
             end = offset + 8
             if end > len(raw):
@@ -116,9 +114,7 @@ def parse_fields(raw: bytes) -> list[WireField]:
             end = value_start + length
             if end > len(raw):
                 raise CompatibilityError("truncated length-delimited protobuf field")
-            fields.append(
-                WireField(number, wire_type, start, key_end, value_start, end)
-            )
+            fields.append(WireField(number, wire_type, start, key_end, value_start, end))
             offset = end
         elif wire_type == 5:
             end = offset + 4
@@ -166,9 +162,7 @@ def sandbox_lifecycle_phase(raw: bytes) -> str:
     def label_for(number: int) -> str:
         return SANDBOX_PHASE_LABELS.get(number, f"phase_{number}")
 
-    statuses = [
-        field for field in parse_fields(raw) if field.number == SANDBOX_STATUS_FIELD
-    ]
+    statuses = [field for field in parse_fields(raw) if field.number == SANDBOX_STATUS_FIELD]
     if len(statuses) != 1:
         return UNKNOWN_PHASE
     status = statuses[0]
@@ -200,9 +194,7 @@ def rewrite_sandbox_payload(raw: bytes) -> tuple[bytes, bool]:
     rewritten, changed = rewrite_sandbox_spec(raw[spec.value_start : spec.end])
     if not changed:
         return raw, False
-    replacement = (
-        encode_varint((2 << 3) | 2) + encode_varint(len(rewritten)) + rewritten
-    )
+    replacement = encode_varint((2 << 3) | 2) + encode_varint(len(rewritten)) + rewritten
     return raw[: spec.start] + replacement + raw[spec.end :], True
 
 
@@ -212,9 +204,7 @@ def payload_has_spec(raw: bytes) -> bool:
     return any(field.number == 2 for field in parse_fields(raw))
 
 
-def require_private_regular(
-    path: Path, *, exact_mode: int | None = None
-) -> os.stat_result:
+def require_private_regular(path: Path, *, exact_mode: int | None = None) -> os.stat_result:
     try:
         metadata = path.lstat()
     except OSError as exc:
@@ -259,15 +249,12 @@ def open_database(path: Path, *, readonly: bool) -> sqlite3.Connection:
 
 
 def sandbox_rows(connection: sqlite3.Connection) -> list[tuple[str, str, bytes]]:
-    columns = {
-        row[1] for row in connection.execute("PRAGMA table_info(objects)").fetchall()
-    }
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(objects)").fetchall()}
     if not {"id", "name", "object_type", "payload"}.issubset(columns):
         raise CompatibilityError("OpenShell objects table has an unsupported schema")
     values: list[tuple[str, str, bytes]] = []
     for object_id, name, payload in connection.execute(
-        "SELECT id, name, payload FROM objects "
-        "WHERE object_type = 'sandbox' ORDER BY id"
+        "SELECT id, name, payload FROM objects WHERE object_type = 'sandbox' ORDER BY id"
     ):
         if not isinstance(object_id, str) or not isinstance(name, str):
             raise CompatibilityError("OpenShell sandbox identity is malformed")
@@ -311,9 +298,7 @@ def inspect_database(path: Path) -> dict[str, object]:
         return inspect_rows(sandbox_rows(connection))
 
 
-def run_command(
-    argv: list[str], *, timeout: int = 30
-) -> subprocess.CompletedProcess[str]:
+def run_command(argv: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             argv,
@@ -345,8 +330,7 @@ class GatewayManager:
             result = run_command(self.command + ["status", "openshell-gateway"])
             return result.returncode == 0 and "RUNNING" in result.stdout
         result = run_command(
-            self.command
-            + ["ps", "--filter", "name=^/openshell-gw$", "--format", "{{.Status}}"]
+            self.command + ["ps", "--filter", "name=^/openshell-gw$", "--format", "{{.Status}}"]
         )
         return result.returncode == 0 and any(
             line.startswith("Up ") for line in result.stdout.splitlines()
@@ -354,11 +338,7 @@ class GatewayManager:
 
     def stop(self) -> None:
         action = "stop"
-        target = (
-            "openshell-gateway.service"
-            if self.kind == "systemd-user"
-            else "openshell-gateway"
-        )
+        target = "openshell-gateway.service" if self.kind == "systemd-user" else "openshell-gateway"
         if self.kind == "docker":
             target = "openshell-gw"
         result = run_command(self.command + [action, target], timeout=45)
@@ -371,11 +351,7 @@ class GatewayManager:
             raise CompatibilityError("reviewed OpenShell gateway did not stop")
 
     def start(self) -> None:
-        target = (
-            "openshell-gateway.service"
-            if self.kind == "systemd-user"
-            else "openshell-gateway"
-        )
+        target = "openshell-gateway.service" if self.kind == "systemd-user" else "openshell-gateway"
         if self.kind == "docker":
             target = "openshell-gw"
         result = run_command(self.command + ["start", target], timeout=45)
@@ -391,12 +367,12 @@ class GatewayManager:
 def require_gateway_wrapper(home: Path) -> Path:
     wrapper = home / ".mac/openshell/run-gateway.sh"
     require_private_regular(wrapper, exact_mode=0o700)
-    expected = f'exec "{home}/.local/bin/openshell-gateway" --config "{home}/.mac/openshell/gateway.toml"'
+    expected = (
+        f'exec "{home}/.local/bin/openshell-gateway" --config "{home}/.mac/openshell/gateway.toml"'
+    )
     text = wrapper.read_text(encoding="utf-8", errors="strict")
     if expected not in text:
-        raise CompatibilityError(
-            "OpenShell gateway wrapper is not the reviewed MAC identity"
-        )
+        raise CompatibilityError("OpenShell gateway wrapper is not the reviewed MAC identity")
     return wrapper
 
 
@@ -415,9 +391,7 @@ def detect_gateway_manager(home: Path, expected_os: str) -> GatewayManager:
             ]
         )
         if inspect.returncode != 0 or inspect.stdout.strip() != "mac:openshell-gateway":
-            raise CompatibilityError(
-                "Docker gateway does not have the reviewed MAC identity"
-            )
+            raise CompatibilityError("Docker gateway does not have the reviewed MAC identity")
         return GatewayManager("docker", [docker], home)
 
     wrapper = require_gateway_wrapper(home)
@@ -429,9 +403,7 @@ def detect_gateway_manager(home: Path, expected_os: str) -> GatewayManager:
             "ExecStart=%h/.mac/openshell/run-gateway.sh" not in text
             and f"ExecStart={wrapper}" not in text
         ):
-            raise CompatibilityError(
-                "systemd gateway unit does not select the reviewed wrapper"
-            )
+            raise CompatibilityError("systemd gateway unit does not select the reviewed wrapper")
         systemctl = shutil.which("systemctl")
         if not systemctl:
             raise CompatibilityError("systemctl is unavailable for the managed gateway")
@@ -440,20 +412,11 @@ def detect_gateway_manager(home: Path, expected_os: str) -> GatewayManager:
     config = Path("/etc/supervisor/conf.d/openshell-gateway.conf")
     if config.exists() or config.is_symlink():
         metadata = config.lstat()
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or config.is_symlink()
-            or metadata.st_uid != 0
-        ):
+        if not stat.S_ISREG(metadata.st_mode) or config.is_symlink() or metadata.st_uid != 0:
             raise CompatibilityError("supervisord gateway configuration is untrusted")
         text = config.read_text(encoding="utf-8", errors="strict")
-        if (
-            f"command={wrapper}" not in text
-            or 'MAC_OPENSH_GATEWAY_OWNER="mac"' not in text
-        ):
-            raise CompatibilityError(
-                "supervisord gateway does not select the reviewed wrapper"
-            )
+        if f"command={wrapper}" not in text or 'MAC_OPENSH_GATEWAY_OWNER="mac"' not in text:
+            raise CompatibilityError("supervisord gateway does not select the reviewed wrapper")
         sudo = shutil.which("sudo")
         supervisorctl = shutil.which("supervisorctl")
         if not sudo or not supervisorctl:
@@ -562,23 +525,15 @@ def prove_inventory(home: Path) -> int:
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise CompatibilityError(
-                "reviewed OpenShell inventory proof could not run"
-            ) from exc
+            raise CompatibilityError("reviewed OpenShell inventory proof could not run") from exc
         if result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_OUTPUT:
             raise CompatibilityError("reviewed OpenShell inventory proof failed")
         try:
             value = json.loads(result.stdout)
         except (TypeError, ValueError) as exc:
-            raise CompatibilityError(
-                "reviewed OpenShell inventory proof is malformed"
-            ) from exc
-        if not isinstance(value, list) or any(
-            not isinstance(item, dict) for item in value
-        ):
-            raise CompatibilityError(
-                "reviewed OpenShell inventory proof is not a list of objects"
-            )
+            raise CompatibilityError("reviewed OpenShell inventory proof is malformed") from exc
+        if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+            raise CompatibilityError("reviewed OpenShell inventory proof is not a list of objects")
         count += len(value)
         if len(value) < 1000:
             return count
@@ -630,9 +585,7 @@ def current_receipt_is_valid(home: Path) -> bool:
     try:
         value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, ValueError) as exc:
-        raise CompatibilityError(
-            "OpenShell storage migration receipt is malformed"
-        ) from exc
+        raise CompatibilityError("OpenShell storage migration receipt is malformed") from exc
     if not isinstance(value, dict):
         raise CompatibilityError("OpenShell storage migration receipt is malformed")
     return (
@@ -665,10 +618,7 @@ def pending_migration_backup(
         require_private_regular(backup, exact_mode=0o600)
         before = inspect_database(backup)
         before.pop("legacy")
-        if (
-            int(before["legacy_count"]) > 0
-            and before["sandbox_count"] == current["sandbox_count"]
-        ):
+        if int(before["legacy_count"]) > 0 and before["sandbox_count"] == current["sandbox_count"]:
             return backup, hashlib.sha256(backup.read_bytes()).hexdigest(), before
     return None
 
@@ -742,9 +692,7 @@ def migrate(
         raise CompatibilityError("migration-required storage is unavailable")
     manager = detect_gateway_manager(home, expected_os)
     if not manager.active():
-        raise CompatibilityError(
-            "reviewed OpenShell gateway is not active before migration"
-        )
+        raise CompatibilityError("reviewed OpenShell gateway is not active before migration")
     if initial["status"] == "proof_required":
         # A prior attempt can commit the database rewrite, publish a newer
         # gateway binary, and then fail before proving inventory.  The running
@@ -785,9 +733,7 @@ def migrate(
             except Exception as exc:  # keep the migrated generation for in-place repair
                 start_error = exc
     if start_error is not None:
-        raise CompatibilityError(
-            "storage migrated but the gateway restart failed"
-        ) from start_error
+        raise CompatibilityError("storage migrated but the gateway restart failed") from start_error
     wait_for_gateway_endpoint()
     inventory_count = prove_inventory(home)
     completed = {

@@ -125,10 +125,7 @@ def build_report(
 ) -> dict:
     signatures = coverage_signatures(impact_map)
     timing = durations(timings)
-    every = [
-        cluster_report(members, timing, sig)
-        for sig, members in _grouped(signatures).items()
-    ]
+    every = [cluster_report(members, timing, sig) for sig, members in _grouped(signatures).items()]
     found = [c for c in every if c["covered_lines"] >= min_lines]
     # Rank same-file clusters first at equal value: those are the ones a
     # reviewer can actually adjudicate quickly.
@@ -177,9 +174,7 @@ def main(argv: list[str] | None = None) -> int:
 
     impact_map = load_json(args.map)
     timings = load_json(args.timings) if args.timings.exists() else {"tests": []}
-    report = build_report(
-        impact_map, timings, limit=args.limit, min_lines=args.min_lines
-    )
+    report = build_report(impact_map, timings, limit=args.limit, min_lines=args.min_lines)
     text = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
         args.output.write_text(text + "\n", encoding="utf-8")

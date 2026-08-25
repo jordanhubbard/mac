@@ -43,9 +43,7 @@ SAFE_ERROR_DETAIL_PREFIXES = (
     "staged ",
     "worker ",
 )
-SAFE_ERROR_DETAIL_CHARACTERS = frozenset(
-    string.ascii_letters + string.digits + " ._:-;"
-)
+SAFE_ERROR_DETAIL_CHARACTERS = frozenset(string.ascii_letters + string.digits + " ._:-;")
 
 
 class ClientError(ValueError):
@@ -84,9 +82,7 @@ def _read_private(path: Path, label: str) -> bytes:
             raise ClientError(f"{label} identity changed while opening")
         raw = bytearray()
         while len(raw) < observed.st_size:
-            chunk = os.read(
-                descriptor, min(64 * 1024, observed.st_size - len(raw))
-            )
+            chunk = os.read(descriptor, min(64 * 1024, observed.st_size - len(raw)))
             if not chunk:
                 raise ClientError(f"{label} was truncated")
             raw.extend(chunk)
@@ -242,9 +238,7 @@ def _request(
         # opaque because they can contain request fragments or credentials.
         detail = _safe_http_error_detail(exc.read(4096))
         suffix = f": {detail}" if detail else ""
-        raise ClientError(
-            f"hub API {method} request failed with HTTP {exc.code}{suffix}"
-        ) from exc
+        raise ClientError(f"hub API {method} request failed with HTTP {exc.code}{suffix}") from exc
     except urllib.error.URLError as exc:
         raise ClientError(f"hub API {method} request failed before a response") from exc
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -298,7 +292,12 @@ def _participant_state(value: Mapping[str, Any], expected_agent_id: str) -> dict
     reason = value.get("dispatch_hold_reason")
     held_at = value.get("dispatch_hold_at")
     if held:
-        if not isinstance(reason, str) or not reason.strip() or not isinstance(held_at, str) or not held_at.strip():
+        if (
+            not isinstance(reason, str)
+            or not reason.strip()
+            or not isinstance(held_at, str)
+            or not held_at.strip()
+        ):
             raise ClientError("held hub participant lacks exact ownership")
     elif reason is not None or held_at is not None:
         raise ClientError("unheld hub participant has stray hold ownership")
@@ -470,9 +469,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 + query,
             )
             validator = _readiness if args.command == "readiness" else _status
-            result = validator(
-                response, expected_epoch=epoch, expected_identity=identity
-            )
+            result = validator(response, expected_epoch=epoch, expected_identity=identity)
         else:
             epoch = _epoch(args.epoch)
             request_body = _json_private(Path(args.request_file), "request file")
@@ -482,9 +479,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 path = "/agents/dispatch-hold/epochs/open"
                 expected_identity = ""
             else:
-                expected_identity = _digest(
-                    request_body.get("identity_sha256"), "request identity"
-                )
+                expected_identity = _digest(request_body.get("identity_sha256"), "request identity")
                 path = (
                     "/agents/dispatch-hold/epochs/"
                     + urllib.parse.quote(epoch, safe="")
@@ -494,11 +489,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             result = _receipt(
                 _request(hub, token, "POST", path, request_body),
                 expected_epoch=epoch,
-                expected_status={"open": "open", "prove": "proved", "commit": "committed", "abort": "aborted"}[args.command],
+                expected_status={
+                    "open": "open",
+                    "prove": "proved",
+                    "commit": "committed",
+                    "abort": "aborted",
+                }[args.command],
                 expected_identity=expected_identity,
             )
         _atomic_private_json(Path(args.output), result)
-        print(json.dumps({"status": result.get("status", "ready"), "receipt_written": True}, sort_keys=True))
+        print(
+            json.dumps(
+                {"status": result.get("status", "ready"), "receipt_written": True}, sort_keys=True
+            )
+        )
         return 0
     except ClientError as exc:
         print(f"fleet release epoch client error: {exc}", file=os.sys.stderr)

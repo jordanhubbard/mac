@@ -120,15 +120,21 @@ def test_reviewer_protocol_failure_does_not_increment_executor_attempt_count(cp)
     worker = _register_agent(cp, "worker", ["python"])
     _register_agent(cp, "reviewer-a", ["review"])
     _register_agent(cp, "reviewer-b", ["review"])
-    task = cp.create_task("Protocol rejection invariant", required_capabilities=["python"], max_attempts=3)
+    task = cp.create_task(
+        "Protocol rejection invariant", required_capabilities=["python"], max_attempts=3
+    )
 
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     assert cp.get_task(task.id).attempt_count == 1
 
     executor_ev = cp.add_evidence(
-        task.id, "test", "file://repo", "executor finished",
-        worker.id, metadata=_verified_repo_metadata(cp, worker.id),
+        task.id,
+        "test",
+        "file://repo",
+        "executor finished",
+        worker.id,
+        metadata=_verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
 
@@ -140,7 +146,9 @@ def test_reviewer_protocol_failure_does_not_increment_executor_attempt_count(cp)
 
     # Reviewer produces a protocol-failure evidence (nonzero returncode)
     cp.add_evidence(
-        task.id, "review", "file://review-failed",
+        task.id,
+        "review",
+        "file://review-failed",
         "reviewer harness crashed",
         reviewer_a_id,
         metadata={
@@ -188,8 +196,12 @@ def test_multiple_reviewer_protocol_failures_do_not_create_divergent_branches(cp
     cp.start_task(task.id, worker.id)
 
     executor_ev = cp.add_evidence(
-        task.id, "test", "file://repo-1", "executor done",
-        worker.id, metadata=_verified_repo_metadata(cp, worker.id),
+        task.id,
+        "test",
+        "file://repo-1",
+        "executor done",
+        worker.id,
+        metadata=_verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
 
@@ -199,15 +211,14 @@ def test_multiple_reviewer_protocol_failures_do_not_create_divergent_branches(cp
         """Advance, find the pending review, inject a protocol-failure evidence,
         advance again to trigger retraction.  Returns the advance result."""
         cp.advance_default_review_workflow(task.id)
-        pending = [
-            r for r in cp.list_reviews(task.id)
-            if r.status == ReviewStatus.PENDING.value
-        ]
+        pending = [r for r in cp.list_reviews(task.id) if r.status == ReviewStatus.PENDING.value]
         if not pending:
             return None
         review = pending[0]
         cp.add_evidence(
-            task.id, "review", "file://fail-%s" % reviewer_id,
+            task.id,
+            "review",
+            "file://fail-%s" % reviewer_id,
             "protocol failure",
             reviewer_id,
             metadata={
@@ -224,8 +235,7 @@ def test_multiple_reviewer_protocol_failures_do_not_create_divergent_branches(cp
     # After first reviewer failure: task MUST NOT be OPEN
     task_mid = cp.get_task(task.id)
     assert task_mid.state != TaskState.OPEN.value, (
-        "task must not go to OPEN after first reviewer protocol failure; "
-        "state=%s" % task_mid.state
+        "task must not go to OPEN after first reviewer protocol failure; state=%s" % task_mid.state
     )
     assert task_mid.attempt_count == attempt_count_after_executor, (
         "attempt_count must not change after reviewer protocol failure; "
@@ -260,8 +270,12 @@ def test_protocol_failure_retries_reviewer_not_executor(cp):
     cp.start_task(task.id, worker.id)
 
     executor_ev = cp.add_evidence(
-        task.id, "test", "file://repo", "executor done",
-        worker.id, metadata=_verified_repo_metadata(cp, worker.id),
+        task.id,
+        "test",
+        "file://repo",
+        "executor done",
+        worker.id,
+        metadata=_verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
 
@@ -273,7 +287,9 @@ def test_protocol_failure_retries_reviewer_not_executor(cp):
 
     # reviewer-a protocol fails
     cp.add_evidence(
-        task.id, "review", "file://fail",
+        task.id,
+        "review",
+        "file://fail",
         "reviewer crashed",
         reviewer_a.id,
         metadata={
@@ -303,7 +319,8 @@ def test_protocol_failure_retries_reviewer_not_executor(cp):
     # Executor evidence is unchanged — same ID, not re-submitted
     all_evidence = cp.list_evidence(task.id)
     executor_evidence_items = [
-        e for e in all_evidence
+        e
+        for e in all_evidence
         if (e.metadata.get("verification") or {}).get("evidence_type") == "repo_change"
     ]
     assert len(executor_evidence_items) == 1, (
@@ -325,13 +342,19 @@ def test_semantic_verdict_missing_triggers_protocol_failure_not_executor_retry(c
     worker = _register_agent(cp, "worker", ["python"])
     reviewer = _register_agent(cp, "reviewer", ["review"])
 
-    task = cp.create_task("Semantic verdict missing", required_capabilities=["python"], max_attempts=3)
+    task = cp.create_task(
+        "Semantic verdict missing", required_capabilities=["python"], max_attempts=3
+    )
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
 
     executor_ev = cp.add_evidence(
-        task.id, "test", "file://repo", "done",
-        worker.id, metadata=_verified_repo_metadata(cp, worker.id),
+        task.id,
+        "test",
+        "file://repo",
+        "done",
+        worker.id,
+        metadata=_verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
 
@@ -355,7 +378,9 @@ def test_semantic_verdict_missing_triggers_protocol_failure_not_executor_retry(c
         bad_manifest["signature"] = sign_verification_manifest(key, bad_manifest)
 
     cp.add_evidence(
-        task.id, "review", "file://bad-verdict",
+        task.id,
+        "review",
+        "file://bad-verdict",
         "invalid semantic_verdict",
         reviewer.id,
         metadata={
@@ -440,10 +465,17 @@ def test_build_observation_records_separate_executor_and_review_attempt_counts()
                         "verdict": "approved",
                         "semantic_verdict": "approved",
                         "review_id": "r_approved",
-                        "llm": {"model": "claude-sonnet-4.5", "family": "claude", "provider": "anthropic"},
+                        "llm": {
+                            "model": "claude-sonnet-4.5",
+                            "family": "claude",
+                            "provider": "anthropic",
+                        },
                         "review_experiment": {
                             **assignment,
-                            "protocol": {"schema": "mac.review_protocol.v1", "protocol_compliant": True},
+                            "protocol": {
+                                "schema": "mac.review_protocol.v1",
+                                "protocol_compliant": True,
+                            },
                         },
                     }
                 },
@@ -451,13 +483,26 @@ def test_build_observation_records_separate_executor_and_review_attempt_counts()
         ],
         "reviews": [
             # Two retracted reviews (protocol failures)
-            {"id": "r_fail_1", "reviewer_agent_id": "agent_a", "status": "retracted",
-             "created_at": "2026-07-05T09:00:00+00:00"},
-            {"id": "r_fail_2", "reviewer_agent_id": "agent_b", "status": "retracted",
-             "created_at": "2026-07-05T09:30:00+00:00"},
+            {
+                "id": "r_fail_1",
+                "reviewer_agent_id": "agent_a",
+                "status": "retracted",
+                "created_at": "2026-07-05T09:00:00+00:00",
+            },
+            {
+                "id": "r_fail_2",
+                "reviewer_agent_id": "agent_b",
+                "status": "retracted",
+                "created_at": "2026-07-05T09:30:00+00:00",
+            },
             # Approved review
-            {"id": "r_approved", "reviewer_agent_id": "agent_c", "status": "approved",
-             "evidence_id": "ev_verdict", "created_at": "2026-07-05T09:45:00+00:00"},
+            {
+                "id": "r_approved",
+                "reviewer_agent_id": "agent_c",
+                "status": "approved",
+                "evidence_id": "ev_verdict",
+                "created_at": "2026-07-05T09:45:00+00:00",
+            },
         ],
         "publications": [],
     }
@@ -496,15 +541,11 @@ def test_build_observation_falls_back_to_evidence_count_when_attempt_count_missi
         "evidence": [
             {
                 "id": "ev_exec_1",
-                "metadata": {
-                    "verification": {"evidence_type": "repo_change"}
-                },
+                "metadata": {"verification": {"evidence_type": "repo_change"}},
             },
             {
                 "id": "ev_exec_2",
-                "metadata": {
-                    "verification": {"evidence_type": "repo_change"}
-                },
+                "metadata": {"verification": {"evidence_type": "repo_change"}},
             },
             {
                 "id": "ev_verdict",
@@ -516,18 +557,30 @@ def test_build_observation_falls_back_to_evidence_count_when_attempt_count_missi
                         "verdict": "approved",
                         "semantic_verdict": "approved",
                         "review_id": "r1",
-                        "llm": {"model": "claude-sonnet", "family": "claude", "provider": "anthropic"},
+                        "llm": {
+                            "model": "claude-sonnet",
+                            "family": "claude",
+                            "provider": "anthropic",
+                        },
                         "review_experiment": {
                             **assignment,
-                            "protocol": {"schema": "mac.review_protocol.v1", "protocol_compliant": True},
+                            "protocol": {
+                                "schema": "mac.review_protocol.v1",
+                                "protocol_compliant": True,
+                            },
                         },
                     }
                 },
             },
         ],
         "reviews": [
-            {"id": "r1", "reviewer_agent_id": "agent_r", "status": "approved",
-             "evidence_id": "ev_verdict", "created_at": "2026-07-05T10:00:00+00:00"},
+            {
+                "id": "r1",
+                "reviewer_agent_id": "agent_r",
+                "status": "approved",
+                "evidence_id": "ev_verdict",
+                "created_at": "2026-07-05T10:00:00+00:00",
+            },
         ],
         "publications": [],
     }
@@ -584,13 +637,15 @@ def test_build_report_aggregates_executor_and_review_attempt_counts():
         _obs("t2", executor_count=2, review_count=2),
     ]
 
-    report = build_report("exp-agg", observations, min_tasks_per_arm=1, min_validated_outcomes_per_arm=0)
+    report = build_report(
+        "exp-agg", observations, min_tasks_per_arm=1, min_validated_outcomes_per_arm=0
+    )
     arms = {arm["arm"]: arm for arm in report["arms"]}
     assert "blind" in arms
     blind_arm = arms["blind"]
 
     assert blind_arm["executor_attempt_count"] == 3  # 1+2
-    assert blind_arm["review_attempt_count"] == 5    # 3+2
+    assert blind_arm["review_attempt_count"] == 5  # 3+2
 
 
 # ---------------------------------------------------------------------------

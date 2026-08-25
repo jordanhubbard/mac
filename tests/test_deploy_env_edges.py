@@ -13,8 +13,12 @@ def _cfg(tmp_path: Path, *, agent="hub", manager="hub"):
     return deploy_env.DeployEnvConfig(
         paths=deploy_env.DeployPaths(tmp_path / "mac.env", tmp_path / ".mac", tmp_path),
         control=deploy_env.ControlConfig(
-            port="8789", hub_url="https://hub.example:8789", hub_token="hub-token",
-            bind_host="127.0.0.1", supervisor_kind="systemd", network_provider="tailscale",
+            port="8789",
+            hub_url="https://hub.example:8789",
+            hub_token="hub-token",
+            bind_host="127.0.0.1",
+            supervisor_kind="systemd",
+            network_provider="tailscale",
         ),
         gateway=deploy_env.GatewayConfig("home", "model", "provider", "https://llm"),
         worker=deploy_env.WorkerConfig("loop", "python", "", "", "1"),
@@ -38,18 +42,36 @@ def test_env_assignment_parser_fallbacks_and_file_io(tmp_path) -> None:
 
 
 def test_service_url_configured_invalid_ipv6_and_offset() -> None:
-    assert deploy_env._service_url(
-        configured_url="https://service/", hub_url="", configured_port="1", native_port="2"
-    ) == "https://service"
-    assert deploy_env._service_url(
-        configured_url="", hub_url="not-a-url", configured_port="6333", native_port="8789"
-    ) == ""
-    assert deploy_env._service_url(
-        configured_url="", hub_url="http://[::1]:8789", configured_port="6333", native_port="8789"
-    ) == "http://[::1]:6333"
-    assert deploy_env._service_url(
-        configured_url="", hub_url="http://hub:18789", configured_port="6333", native_port="8789"
-    ) == "http://hub:16333"
+    assert (
+        deploy_env._service_url(
+            configured_url="https://service/", hub_url="", configured_port="1", native_port="2"
+        )
+        == "https://service"
+    )
+    assert (
+        deploy_env._service_url(
+            configured_url="", hub_url="not-a-url", configured_port="6333", native_port="8789"
+        )
+        == ""
+    )
+    assert (
+        deploy_env._service_url(
+            configured_url="",
+            hub_url="http://[::1]:8789",
+            configured_port="6333",
+            native_port="8789",
+        )
+        == "http://[::1]:6333"
+    )
+    assert (
+        deploy_env._service_url(
+            configured_url="",
+            hub_url="http://hub:18789",
+            configured_port="6333",
+            native_port="8789",
+        )
+        == "http://hub:16333"
+    )
 
 
 def test_inproc_hub_validation_and_modality_configuration(tmp_path) -> None:
@@ -58,19 +80,32 @@ def test_inproc_hub_validation_and_modality_configuration(tmp_path) -> None:
     with pytest.raises(ValueError, match="requires MAC_DEPLOY_ROUTER_PROVIDERS"):
         deploy_env._apply_inproc_router(values, cfg, {"MAC_DEPLOY_ROUTER_BACKEND": "inproc"})
     with pytest.raises(ValueError, match="key=secret"):
-        deploy_env._apply_inproc_router(values, cfg, {
-            "MAC_DEPLOY_ROUTER_BACKEND": "inproc", "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://x,key=raw"
-        })
+        deploy_env._apply_inproc_router(
+            values,
+            cfg,
+            {
+                "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+                "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://x,key=raw",
+            },
+        )
     with pytest.raises(ValueError, match="private endpoint"):
-        deploy_env._apply_inproc_router(values, cfg, {
-            "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
-            "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://api.example.com,key=none",
-        })
+        deploy_env._apply_inproc_router(
+            values,
+            cfg,
+            {
+                "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+                "MAC_DEPLOY_ROUTER_PROVIDERS": "p=https://api.example.com,key=none",
+            },
+        )
     private_values = {"MAC_API_TOKEN": "local"}
-    deploy_env._apply_inproc_router(private_values, cfg, {
-        "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
-        "MAC_DEPLOY_ROUTER_PROVIDERS": "madmax=http://100.121.27.109:8000/v1,0,models=x",
-    })
+    deploy_env._apply_inproc_router(
+        private_values,
+        cfg,
+        {
+            "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
+            "MAC_DEPLOY_ROUTER_PROVIDERS": "madmax=http://100.121.27.109:8000/v1,0,models=x",
+        },
+    )
     assert private_values["MAC_ROUTER_PROVIDERS"].endswith(",key=none")
     env = {
         "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
@@ -93,7 +128,10 @@ def test_inproc_spoke_validation_and_configuration(tmp_path) -> None:
     cfg = deploy_env.DeployEnvConfig(
         cfg.paths,
         deploy_env.ControlConfig("8789", "", "", "127.0.0.1", "systemd", "tailscale"),
-        cfg.gateway, cfg.worker, cfg.services, cfg.identity,
+        cfg.gateway,
+        cfg.worker,
+        cfg.services,
+        cfg.identity,
     )
     env = {"MAC_DEPLOY_ROUTER_BACKEND": "inproc"}
     with pytest.raises(ValueError, match="requires MAC_HUB_URL"):
@@ -112,12 +150,15 @@ def test_inproc_spoke_validation_and_configuration(tmp_path) -> None:
 
 def test_non_inproc_router_copies_all_optional_values() -> None:
     values = {}
-    deploy_env._apply_non_inproc_router(values, {
-        "MAC_DEPLOY_ROUTER_BACKEND": "tokenhub",
-        "MAC_DEPLOY_ROUTER_PROVIDERS": "providers",
-        "MAC_DEPLOY_ROUTER_DEFAULT_MODEL": "model",
-        "MAC_DEPLOY_ROUTER_WILDCARD_MODELS": "one|two",
-    })
+    deploy_env._apply_non_inproc_router(
+        values,
+        {
+            "MAC_DEPLOY_ROUTER_BACKEND": "tokenhub",
+            "MAC_DEPLOY_ROUTER_PROVIDERS": "providers",
+            "MAC_DEPLOY_ROUTER_DEFAULT_MODEL": "model",
+            "MAC_DEPLOY_ROUTER_WILDCARD_MODELS": "one|two",
+        },
+    )
     assert values == {
         "MAC_ROUTER_BACKEND": "tokenhub",
         "MAC_ROUTER_PROVIDERS": "providers",
@@ -233,9 +274,7 @@ def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> N
         environ={"MAC_CHAT_GATEWAY_IMPL": "none"},
     )
     assert reverted["MAC_CHAT_GATEWAY_IMPL"] == "none"
-    assert reverted["MAC_WORKER_RESOURCES_FILE"] == str(
-        tmp_path / ".mac" / "worker-resources.json"
-    )
+    assert reverted["MAC_WORKER_RESOURCES_FILE"] == str(tmp_path / ".mac" / "worker-resources.json")
 
 
 def test_gateway_impl_none_is_a_pure_worker_no_openclaw(tmp_path) -> None:
@@ -244,12 +283,12 @@ def test_gateway_impl_none_is_a_pure_worker_no_openclaw(tmp_path) -> None:
     # so its startup health verdict is present in first registration.
     cfg = _cfg(tmp_path)
     worker = deploy_env.build_mac_env(
-        {}, cfg, environ={"MAC_CHAT_GATEWAY_IMPL": "none"},
+        {},
+        cfg,
+        environ={"MAC_CHAT_GATEWAY_IMPL": "none"},
     )
     assert worker["MAC_CHAT_GATEWAY_IMPL"] == "none"
-    assert worker["MAC_WORKER_RESOURCES_FILE"] == str(
-        tmp_path / ".mac" / "worker-resources.json"
-    )
+    assert worker["MAC_WORKER_RESOURCES_FILE"] == str(tmp_path / ".mac" / "worker-resources.json")
     assert not any(k.startswith("MAC_OPENCLAW_") for k in worker)
 
 
@@ -358,9 +397,7 @@ def test_required_worker_cannot_be_weakened_by_explicit_openshell_disable(tmp_pa
     )
 
     assert values["MAC_OPENSHELL_REQUIRED"] == "true"
-    assert values["MAC_OPENSHELL_BIN"] == str(
-        tmp_path / ".mac" / "bin" / "openshell"
-    )
+    assert values["MAC_OPENSHELL_BIN"] == str(tmp_path / ".mac" / "bin" / "openshell")
     for name, expected in stale.items():
         if name == "MAC_OPENSHELL_BIN":
             continue
@@ -397,9 +434,7 @@ def test_deploy_generation_is_projected_to_exact_worker_barrier(tmp_path):
         {"MAC_CHAT_GATEWAY_IMPL": "openclaw"},
     ),
 )
-def test_active_openshell_rebinds_stale_runtime_cli_to_reviewed_path(
-    tmp_path, environ
-):
+def test_active_openshell_rebinds_stale_runtime_cli_to_reviewed_path(tmp_path, environ):
     cfg = _cfg(tmp_path)
     values = deploy_env.build_mac_env(
         {"MAC_OPENSHELL_BIN": str(tmp_path / ".local/bin/openshell")},
@@ -407,9 +442,7 @@ def test_active_openshell_rebinds_stale_runtime_cli_to_reviewed_path(
         environ=environ,
     )
 
-    assert values["MAC_OPENSHELL_BIN"] == str(
-        cfg.paths.mac_home / "bin" / "openshell"
-    )
+    assert values["MAC_OPENSHELL_BIN"] == str(cfg.paths.mac_home / "bin" / "openshell")
 
 
 def test_explicit_openshell_teardown_clears_stale_runtime_cli(tmp_path):
@@ -430,10 +463,36 @@ def test_legacy_argument_arity_defaults_and_main(monkeypatch, tmp_path) -> None:
     with pytest.raises(SystemExit, match="expects 30"):
         deploy_env.LegacyDeployArgs.from_argv([])
     args = [
-        str(tmp_path / "env"), str(tmp_path / ".mac"), str(tmp_path), "8789",
-        "#home", "*", "provider", "https://base", "", "heartbeat", "", "", "", "",
-        "6333", "", "3002", "1", "hub", "hub", "", "", "127.0.0.1", "systemd",
-        "1", "", "80", "", "/artifacts/", "token",
+        str(tmp_path / "env"),
+        str(tmp_path / ".mac"),
+        str(tmp_path),
+        "8789",
+        "#home",
+        "*",
+        "provider",
+        "https://base",
+        "",
+        "heartbeat",
+        "",
+        "",
+        "",
+        "",
+        "6333",
+        "",
+        "3002",
+        "1",
+        "hub",
+        "hub",
+        "",
+        "",
+        "127.0.0.1",
+        "systemd",
+        "1",
+        "",
+        "80",
+        "",
+        "/artifacts/",
+        "token",
     ]
     assert len(args) == 30
     cfg = deploy_env.config_from_legacy_args(args, {"FLEET_NAME": "fleet"})

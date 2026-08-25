@@ -65,9 +65,7 @@ def _state(home: Path) -> Path:
 
 
 def _port(home: Path, source="openclaw", target="hermes", **kw):
-    return port_profile(
-        source, target, home=home, state_file=_state(home), dry_run=False, **kw
-    )
+    return port_profile(source, target, home=home, state_file=_state(home), dry_run=False, **kw)
 
 
 def _readiness(home: Path, target="hermes", **kw):
@@ -126,9 +124,7 @@ def test_a_dry_run_does_not_satisfy_the_gate(home):
     Porting is dry-run by default, so a gate that accepted a dry run would be
     satisfied by the safe, read-only invocation an operator reaches for first.
     """
-    port_profile(
-        "openclaw", "hermes", home=home, state_file=_state(home), dry_run=True
-    )
+    port_profile("openclaw", "hermes", home=home, state_file=_state(home), dry_run=True)
 
     assert _readiness(home)["reason"] == "never_ported"
 
@@ -257,11 +253,7 @@ def test_the_cli_exposes_port_and_check():
         for action in admin._actions
         if "human-interface" in (getattr(action, "choices", None) or {})
     )
-    names = {
-        name
-        for action in sub._actions
-        for name in (getattr(action, "choices", None) or {})
-    }
+    names = {name for action in sub._actions for name in (getattr(action, "choices", None) or {})}
     assert {"port", "check"} <= names
 
 

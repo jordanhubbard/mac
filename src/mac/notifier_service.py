@@ -209,7 +209,9 @@ class NotifierService:
                     subject_id=notification.subject_id,
                     detail={"notification_id": notification.id, "error": str(exc)},
                 )
-                results.append({"notification_id": notification.id, "status": "failed", "error": str(exc)})
+                results.append(
+                    {"notification_id": notification.id, "status": "failed", "error": str(exc)}
+                )
                 continue
             if message_ids:
                 delivered += 1
@@ -235,8 +237,7 @@ class NotifierService:
 
     def _claim_stale_before(self) -> str:
         return (
-            datetime.now(timezone.utc)
-            - timedelta(seconds=self.DELIVERY_CLAIM_TIMEOUT_SECONDS)
+            datetime.now(timezone.utc) - timedelta(seconds=self.DELIVERY_CLAIM_TIMEOUT_SECONDS)
         ).isoformat(timespec="microseconds")
 
     def _claim_notification(self, notification_id: str) -> bool:
@@ -286,13 +287,11 @@ class NotifierService:
             agent_id = str(target.get("agent_id") or "").strip()
             if not agent_id:
                 continue
-            target_channel = str(
-                target.get("channel_type") or target.get("platform") or ""
-            ).strip().lower()
+            target_channel = (
+                str(target.get("channel_type") or target.get("platform") or "").strip().lower()
+            )
             if use_openclaw_outbox and target_channel in {"slack", "telegram"}:
-                delivery_id = self._enqueue_openclaw_delivery(
-                    notification, target, agent_id
-                )
+                delivery_id = self._enqueue_openclaw_delivery(notification, target, agent_id)
                 if delivery_id:
                     message_ids.append(delivery_id)
                 continue
@@ -335,9 +334,7 @@ class NotifierService:
         operator repair instead of silently changing the speaking identity.
         """
 
-        channel = str(
-            target.get("channel_type") or target.get("platform") or ""
-        ).strip().lower()
+        channel = str(target.get("channel_type") or target.get("platform") or "").strip().lower()
         if channel not in {"slack", "telegram"}:
             return None
         try:
@@ -381,11 +378,7 @@ class NotifierService:
                 origin_agent_id=agent_id,
                 identity_id=identity["id"],
                 channel=channel,
-                task_id=(
-                    notification.subject_id
-                    if notification.subject_type == "task"
-                    else None
-                ),
+                task_id=(notification.subject_id if notification.subject_type == "task" else None),
                 idempotency_key="notifier:%s:%s:%s:%s"
                 % (notification.id, identity["id"], channel, external_id),
                 metadata={
@@ -417,7 +410,10 @@ class NotifierService:
         for channel in self.list_channels(enabled=True):
             if not self._event_matches(channel.event_types, notification.event_type):
                 continue
-            if channel.channel_type not in notification.channels and "hermes" not in notification.channels:
+            if (
+                channel.channel_type not in notification.channels
+                and "hermes" not in notification.channels
+            ):
                 continue
             targets.extend(self._targets_for_channel(channel, notification))
         return self._dedupe_targets(targets)
@@ -441,9 +437,7 @@ class NotifierService:
             target.setdefault("external_id", binding.external_id)
             return [
                 {**target, "agent_id": agent.id}
-                for agent in self._agents_for_persona_instance(
-                    binding.persona_instance_id
-                )
+                for agent in self._agents_for_persona_instance(binding.persona_instance_id)
             ]
         persona_instance_id = str(
             target.get("persona_instance_id")
@@ -463,18 +457,14 @@ class NotifierService:
             return self._platform_targets(str(platform), target)
         return []
 
-    def _auto_persona_instance_targets(
-        self, notification: OperatorNotification
-    ) -> List[JsonDict]:
+    def _auto_persona_instance_targets(self, notification: OperatorNotification) -> List[JsonDict]:
         metadata = ensure_json_object(notification.metadata)
         actor = str(metadata.get("actor") or "").strip()
         if actor:
             try:
                 agent = self._get_agent(actor)
                 if agent.persona_instance_id:
-                    return self._platform_targets_for_persona_instance(
-                        agent.persona_instance_id
-                    )
+                    return self._platform_targets_for_persona_instance(agent.persona_instance_id)
             except NotFoundError:
                 pass
         return self._platform_targets("slack", {}) + self._platform_targets("telegram", {})
@@ -484,9 +474,7 @@ class NotifierService:
         for binding in self._list_platform_bindings():
             if binding.platform != platform:
                 continue
-            for agent in self._agents_for_persona_instance(
-                binding.persona_instance_id
-            ):
+            for agent in self._agents_for_persona_instance(binding.persona_instance_id):
                 targets.append(
                     {
                         **base,
@@ -500,9 +488,7 @@ class NotifierService:
                 )
         return targets
 
-    def _platform_targets_for_persona_instance(
-        self, persona_instance_id: str
-    ) -> List[JsonDict]:
+    def _platform_targets_for_persona_instance(self, persona_instance_id: str) -> List[JsonDict]:
         targets: List[JsonDict] = []
         for binding in self._list_platform_bindings():
             if binding.persona_instance_id != persona_instance_id:
@@ -522,9 +508,7 @@ class NotifierService:
                 )
         return targets
 
-    def _agents_for_persona_instance(
-        self, persona_instance_id: str
-    ) -> List[Agent]:
+    def _agents_for_persona_instance(self, persona_instance_id: str) -> List[Agent]:
         return [
             agent
             for agent in self._list_agents()

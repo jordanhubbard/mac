@@ -39,7 +39,9 @@ def env_str(name: str, default: str = "", *, environ: Optional[Mapping[str, str]
     return default
 
 
-def env_bool(name: str, default: bool = False, *, environ: Optional[Mapping[str, str]] = None) -> bool:
+def env_bool(
+    name: str, default: bool = False, *, environ: Optional[Mapping[str, str]] = None
+) -> bool:
     """Parse a boolean flag. Unset/blank → ``default``; unrecognized → ``default``."""
     raw = _env(environ).get(name)
     if raw is None or not str(raw).strip():
@@ -203,11 +205,7 @@ globals().update(ENV_VARS)
 
 def environment_catalog(*, include_retired: bool = True) -> list[EnvVar]:
     """Return the stable, name-sorted registry for API/docs/tooling consumers."""
-    return [
-        item
-        for item in ENV_VARS.values()
-        if include_retired or not item.retired
-    ]
+    return [item for item in ENV_VARS.values() if include_retired or not item.retired]
 
 
 __all__ = [

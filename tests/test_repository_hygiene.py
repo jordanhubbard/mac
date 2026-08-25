@@ -154,9 +154,7 @@ def test_cancellation_detail_defaults_to_preserve():
 @pytest.mark.parametrize("disposition", ["duplicate", "superseded"])
 def test_replacement_dispositions_require_replacement_task(disposition):
     with pytest.raises(ValidationError, match="replacement_task_id"):
-        normalize_cancellation_detail(
-            {"disposition": disposition, "reason": "replaced"}
-        )
+        normalize_cancellation_detail({"disposition": disposition, "reason": "replaced"})
 
 
 def test_auto_cleanup_disposition_requires_reason_and_valid_values():
@@ -238,9 +236,7 @@ def test_transition_lifecycle_covers_completed_failed_and_reopened():
     )
     assert cancelled_failure["status"] == "quarantined"
     assert cancelled_failure["eligible_after"] is None
-    assert repository_ref_lifecycle_for_transition(
-        "unexpected", {}, now=NOW.isoformat()
-    ) is None
+    assert repository_ref_lifecycle_for_transition("unexpected", {}, now=NOW.isoformat()) is None
 
 
 def test_lifecycle_rejects_bad_timestamps_and_completed_grace():
@@ -274,7 +270,8 @@ def test_list_managed_remote_refs_filters_unsafe_namespaces(tmp_path):
             "%s\trefs/heads/%s" % (SHA, BRANCH),
             "malformed",
             "%s\trefs/tags/not-a-branch" % ("f" * 40),
-            "%s\trefs/heads/mac/not-an-agent/%s-%s" % (
+            "%s\trefs/heads/mac/not-an-agent/%s-%s"
+            % (
                 "e" * 40,
                 TASK_ID,
                 LEASE_ID,
@@ -321,9 +318,7 @@ def test_default_runner_normalizes_tool_failures(tmp_path, monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            subprocess.TimeoutExpired("git", 1)
-        ),
+        lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired("git", 1)),
     )
     with pytest.raises(RepositoryHygieneError, match="timed out"):
         rh._run(tmp_path, ["git", "status"])
@@ -346,15 +341,16 @@ def test_time_and_detail_normalization_edges():
     assert task["state"] == "open"
     assert history == []
     assert rh._task_parts("invalid") == ({}, [])
-    assert rh._last_cancellation_disposition(
-        [
-            {"to_state": "open", "detail": {}},
-            {"to_state": "cancelled", "detail": {"disposition": "deferred"}},
-        ]
-    ) == "deferred"
-    assert rh._last_cancellation_disposition(
-        [{"to_state": "cancelled", "detail": "bad"}]
-    ) == ""
+    assert (
+        rh._last_cancellation_disposition(
+            [
+                {"to_state": "open", "detail": {}},
+                {"to_state": "cancelled", "detail": {"disposition": "deferred"}},
+            ]
+        )
+        == "deferred"
+    )
+    assert rh._last_cancellation_disposition([{"to_state": "cancelled", "detail": "bad"}]) == ""
     assert rh._is_ancestor(Path("."), SHA, "", runner=lambda *_a, **_k: _cp([])) is False
 
 
@@ -368,9 +364,7 @@ def test_time_and_detail_normalization_edges():
         (_detail("running", lease_id="lease_live"), "active", False),
     ],
 )
-def test_audit_preserves_non_terminal_and_ambiguous_refs(
-    detail, classification, eligible
-):
+def test_audit_preserves_non_terminal_and_ambiguous_refs(detail, classification, eligible):
     result = _audit(detail)
     assert result.classification == classification
     assert result.eligible is eligible
@@ -397,8 +391,10 @@ def test_audit_requires_completed_replacement_for_superseded_work():
     }
 
     def load(task_id):
-        return _detail("open") if task_id == REPLACEMENT_ID else _detail(
-            "cancelled", lifecycle=lifecycle
+        return (
+            _detail("open")
+            if task_id == REPLACEMENT_ID
+            else _detail("cancelled", lifecycle=lifecycle)
         )
 
     result = audit_repository_refs(
@@ -563,13 +559,9 @@ def test_execute_with_no_candidates_is_a_noop(tmp_path):
 
 
 def test_prune_refuses_multiple_remotes(tmp_path):
-    second = RepositoryRefAudit(
-        **{**_eligible_audit().to_dict(), "remote": "upstream"}
-    )
+    second = RepositoryRefAudit(**{**_eligible_audit().to_dict(), "remote": "upstream"})
     with pytest.raises(RepositoryHygieneError, match="span git remotes"):
-        prune_repository_refs(
-            tmp_path, [_eligible_audit(), second], execute=True
-        )
+        prune_repository_refs(tmp_path, [_eligible_audit(), second], execute=True)
 
 
 def test_prune_revalidates_sha_and_uses_atomic_force_with_lease(tmp_path):
@@ -598,9 +590,7 @@ def test_prune_revalidates_sha_and_uses_atomic_force_with_lease(tmp_path):
         [_eligible_audit()],
         execute=True,
         runner=runner,
-        recorder=lambda item, action, error: recorded.append(
-            (item.branch, action, error)
-        ),
+        recorder=lambda item, action, error: recorded.append((item.branch, action, error)),
     )
     assert result["count"] == 1
     assert recorded == [(BRANCH, "requested", ""), (BRANCH, "deleted", "")]
@@ -668,10 +658,7 @@ def test_prune_normalizes_remote_revalidation_failure(tmp_path):
 
 
 def test_query_open_pull_requests_uses_distinct_failure_state(tmp_path):
-    payload = (
-        '[{"headRefName":"branch","number":7,'
-        '"url":"https://example.invalid/pull/7"}]'
-    )
+    payload = '[{"headRefName":"branch","number":7,"url":"https://example.invalid/pull/7"}]'
 
     def success(argv, **kwargs):
         assert argv[:4] == ["gh", "pr", "list", "--state"]
@@ -761,17 +748,23 @@ def test_resolve_and_refresh_base_ref_fail_closed(tmp_path):
             return _cp(argv)
         raise AssertionError(argv)
 
-    assert resolve_remote_base_ref(
-        tmp_path,
-        configured="origin/main",
-        runner=checked,
-    ) == "origin/main"
-    assert refresh_remote_base_ref(
-        tmp_path,
-        "origin",
-        "origin/main",
-        runner=checked,
-    ) == "origin/main"
+    assert (
+        resolve_remote_base_ref(
+            tmp_path,
+            configured="origin/main",
+            runner=checked,
+        )
+        == "origin/main"
+    )
+    assert (
+        refresh_remote_base_ref(
+            tmp_path,
+            "origin",
+            "origin/main",
+            runner=checked,
+        )
+        == "origin/main"
+    )
 
     with pytest.raises(RepositoryHygieneError, match="belong to remote"):
         resolve_remote_base_ref(

@@ -238,8 +238,7 @@ class RolloutService:
             raise ValidationError("artifact_uri is required")
         self._validate_artifact_hash(artifact_hash)
         artifact_changed = (
-            artifact_uri != rollout.artifact_uri
-            or artifact_hash != rollout.artifact_hash
+            artifact_uri != rollout.artifact_uri or artifact_hash != rollout.artifact_hash
         )
         now = utcnow()
         self.store.execute(
@@ -368,7 +367,13 @@ class RolloutService:
                 if not bool(run_row["passed"]):
                     raise ValidationError(
                         "rollout %s blocked: latest eval_run %s did not pass (score=%s delta=%s threshold=%s)"
-                        % (action, run_row["id"], run_row["score"], run_row["delta"], run_row["threshold"])
+                        % (
+                            action,
+                            run_row["id"],
+                            run_row["score"],
+                            run_row["delta"],
+                            run_row["threshold"],
+                        )
                     )
                 detail.setdefault("eval_run_id", run_row["id"])
                 detail.setdefault("eval_score", run_row["score"])
@@ -438,11 +443,7 @@ class RolloutService:
         rollout = self.get_rollout(rollout_id)
         checks_obj = ensure_json_object(checks)
         required = self._required_checks(rollout, checks_obj)
-        failed = [
-            check
-            for check in required
-            if not self._check_passed(checks_obj.get(check))
-        ]
+        failed = [check for check in required if not self._check_passed(checks_obj.get(check))]
         detail = {
             "checks": checks_obj,
             "required_checks": required,
@@ -560,16 +561,16 @@ class RolloutService:
             return
         try:
             artifact = self._get_artifact_by_digest(rollout.artifact_hash)
-            deployment = self._deploy_artifact(
-                rollout.deploy_environment_id, artifact.id, actor
-            )
+            deployment = self._deploy_artifact(rollout.deploy_environment_id, artifact.id, actor)
             self._record_event(
                 rollout.id,
                 "rollout.deployed",
                 actor,
                 {
                     "deploy_environment_id": rollout.deploy_environment_id,
-                    "deployment_id": deployment.id if hasattr(deployment, "id") else str(deployment),
+                    "deployment_id": deployment.id
+                    if hasattr(deployment, "id")
+                    else str(deployment),
                     "artifact_id": artifact.id,
                     "artifact_hash": rollout.artifact_hash,
                 },
@@ -638,7 +639,9 @@ class RolloutService:
                 actor,
                 {
                     "deploy_environment_id": rollout.deploy_environment_id,
-                    "deployment_id": deployment.id if hasattr(deployment, "id") else str(deployment),
+                    "deployment_id": deployment.id
+                    if hasattr(deployment, "id")
+                    else str(deployment),
                     "prior_artifact_id": prior_artifact_id,
                 },
             )

@@ -48,9 +48,12 @@ def test_recall_deployment_lessons_returns_empty_without_hub(monkeypatch) -> Non
 
 def test_record_deployment_learning_returns_false_without_hub(monkeypatch) -> None:
     monkeypatch.setattr(memory, "_hub_post", lambda *_args, **_kwargs: False)
-    assert memory.record_deployment_learning(
-        {"id": "task_test", "project": "mac"}, {"outcome": "success"}
-    ) is False
+    assert (
+        memory.record_deployment_learning(
+            {"id": "task_test", "project": "mac"}, {"outcome": "success"}
+        )
+        is False
+    )
 
 
 def test_append_lesson_enforces_budget(monkeypatch) -> None:

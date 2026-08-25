@@ -76,9 +76,7 @@ def _read_private_inputs(command_file: Path, prompt_file: Path) -> tuple[list[st
 def _run_external_with_stdin(argv: list[str], prompt: str) -> int:
     sentinel_index = argv.index(PROMPT_SENTINEL)
     executable = Path(argv[0]).name.lower()
-    is_codex = executable in {"codex", "codex.exe"} or (
-        len(argv) > 1 and argv[1] == "exec"
-    )
+    is_codex = executable in {"codex", "codex.exe"} or (len(argv) > 1 and argv[1] == "exec")
     if is_codex:
         argv[sentinel_index] = "-"
     else:
@@ -124,9 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--command-file", required=True)
     parser.add_argument("--prompt-file", required=True)
     args = parser.parse_args(argv)
-    command, prompt = _read_private_inputs(
-        Path(args.command_file), Path(args.prompt_file)
-    )
+    command, prompt = _read_private_inputs(Path(args.command_file), Path(args.prompt_file))
     # The `python -m hermes_cli.main` in-process branch was removed with the
     # vendored Hermes tree on 2026-08-17. Every coding agent now runs through
     # the external path, which keeps the prompt off the command line by feeding

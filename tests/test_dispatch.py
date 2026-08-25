@@ -195,9 +195,9 @@ def test_remote_dispatch_repository_ref_reconciler_calls():
     assert dispatch.repository_ref_reconciler_status().to_dict() == {
         "echo": "/repository-refs/reconciler"
     }
-    assert dispatch.reconcile_repository_refs(
-        mode="prune", actor="operator"
-    ).to_dict() == {"echo": "/repository-refs/reconcile"}
+    assert dispatch.reconcile_repository_refs(mode="prune", actor="operator").to_dict() == {
+        "echo": "/repository-refs/reconcile"
+    }
     assert client.calls == [
         ("GET", "/repository-refs/reconciler", None),
         (
@@ -361,13 +361,13 @@ def test_resolve_dispatch_explicit_db_wins_over_hub(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("selector", ["hub_url", "fleet", "profile"])
-def test_resolve_dispatch_rejects_conflicting_explicit_authorities(
-    tmp_path, monkeypatch, selector
-):
+def test_resolve_dispatch_rejects_conflicting_explicit_authorities(tmp_path, monkeypatch, selector):
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     value = "http://hub.example:8789" if selector == "hub_url" else "production"
     with pytest.raises(DispatchError, match="Choose exactly one"):
         resolve_dispatch(_ns(db=dsn_for(tmp_path), **{selector: value}))
+
+
 def test_resolve_dispatch_refuses_live_hub_database_maintenance(tmp_path, monkeypatch):
     import mac.dispatch as dispatch_mod
 
@@ -384,9 +384,7 @@ def test_resolve_dispatch_refuses_live_hub_database_maintenance(tmp_path, monkey
         resolve_dispatch(_ns(local_authority=True))
 
 
-def test_resolve_dispatch_opens_existing_db_without_schema_initialization(
-    tmp_path, monkeypatch
-):
+def test_resolve_dispatch_opens_existing_db_without_schema_initialization(tmp_path, monkeypatch):
     import mac.store as store_mod
 
     db_path = dsn_for(tmp_path)
@@ -551,14 +549,10 @@ def test_remote_dispatch_review_experiment_surface_hits_hub_authority():
             ("POST", "/tasks/task_1/review-experiment"): {"arm": "blind"},
             ("GET", "/tasks/task_1/review-observation"): {"task_id": "task_1"},
             ("POST", "/tasks/task_1/review-outcomes"): {"status": "confirmed"},
-            ("GET", "/review-experiments/exp_1"): {
-                "experiment_id": "exp_1"
-            },
+            ("GET", "/review-experiments/exp_1"): {"experiment_id": "exp_1"},
         }
     )
-    dispatch = RemoteDispatch(
-        HubClient("http://hub:8789", token="tok", transport=fake)
-    )
+    dispatch = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
 
     assert dispatch.assign_review_experiment(
         "task_1", experiment_id="exp_1", arm="blind", blind=True
@@ -567,9 +561,9 @@ def test_remote_dispatch_review_experiment_surface_hits_hub_authority():
     assert dispatch.record_review_outcome(
         "task_1", kind="clean_window", status="confirmed", severity_weight=0
     ).to_dict() == {"status": "confirmed"}
-    assert dispatch.review_experiment_report(
-        "exp_1", project="demo"
-    ).to_dict() == {"experiment_id": "exp_1"}
+    assert dispatch.review_experiment_report("exp_1", project="demo").to_dict() == {
+        "experiment_id": "exp_1"
+    }
 
     method, url, body, token = fake.calls[0]
     assert (method, url, token) == (
@@ -592,9 +586,7 @@ def test_remote_dispatch_fleet_snapshot_reads_hub_authority():
             }
         }
     )
-    dispatch = RemoteDispatch(
-        HubClient("http://hub:8789", token="tok", transport=fake)
-    )
+    dispatch = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
 
     snapshot = dispatch.fleet_snapshot(exclude_agent_id="agent_self", limit=12)
 
@@ -610,7 +602,9 @@ def test_remote_dispatch_secret_access_uses_api_body_shape():
     """`mac secret access` in hub mode must use SecretAccessRequest's field names."""
     from mac.http_client import HubClient
 
-    fake = _FakeTransport(response_for={("POST", "/secrets/github.token/access"): {"granted": True}})
+    fake = _FakeTransport(
+        response_for={("POST", "/secrets/github.token/access"): {"granted": True}}
+    )
     disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
 
     assert disp.request_secret("github.token", "agent_rocky", "git-clone").to_dict() == {
@@ -971,9 +965,7 @@ def test_remote_observability_prune_via_cli_uses_hub(monkeypatch):
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
 
-    fake = _FakeTransport(
-        response_for={("POST", "/observability/prune"): {"removed": 7}}
-    )
+    fake = _FakeTransport(response_for={("POST", "/observability/prune"): {"removed": 7}})
     original_init = HubClient.__init__
     monkeypatch.setattr(
         HubClient,
@@ -1027,15 +1019,15 @@ def test_remote_dispatch_task_show_via_cli(monkeypatch):
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
 
     fake = _FakeTransport(
-        response_for={
-            ("GET", "/tasks/task_xyz"): {"id": "task_xyz", "state": "reviewing"}
-        }
+        response_for={("GET", "/tasks/task_xyz"): {"id": "task_xyz", "state": "reviewing"}}
     )
     orig_init = HubClient.__init__
     monkeypatch.setattr(
         HubClient,
         "__init__",
-        lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
     )
 
     out = io.StringIO()
@@ -1075,7 +1067,9 @@ def test_remote_dispatch_task_claim_returns_task_and_lease(monkeypatch):
     monkeypatch.setattr(
         HubClient,
         "__init__",
-        lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
     )
 
     out = io.StringIO()
@@ -1363,7 +1357,9 @@ def test_remote_dispatch_task_close_uses_api_transition_shape(monkeypatch):
     monkeypatch.setattr(
         HubClient,
         "__init__",
-        lambda self, base_url, *, token=None, transport=None: orig_init(self, base_url, token=token, transport=fake),
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
     )
 
     out = io.StringIO()

@@ -17,6 +17,7 @@ fleet (CLI ``--fleet``, ``MAC_FLEET`` env, or hub-derived). When the
 scoped form is missing the resolver falls back to the legacy flat form
 and emits a one-time deprecation warning per (var, fleet).
 """
+
 from __future__ import annotations
 
 import logging
@@ -151,7 +152,7 @@ def parse_env_file(path: Path) -> Dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):]
+            line = line[len("export ") :]
         if "=" not in line:
             continue
         key, _, raw_value = line.partition("=")
@@ -187,10 +188,10 @@ def set_env_key(path: Path, key: str, value: str, *, backup: bool = True) -> boo
     existing = path.read_text(encoding="utf-8") if path.is_file() else None
     out: list = []
     found = False
-    for raw_line in (existing.splitlines() if existing is not None else []):
+    for raw_line in existing.splitlines() if existing is not None else []:
         stripped = raw_line.strip()
         is_export = stripped.startswith("export ")
-        candidate = stripped[len("export "):] if is_export else stripped
+        candidate = stripped[len("export ") :] if is_export else stripped
         cur_key = candidate.split("=", 1)[0].strip() if "=" in candidate else None
         if cur_key == key and not found:
             out.append(_render_assignment(key, value, export=is_export))
@@ -262,7 +263,7 @@ def migrate_env_file(
             if not stripped or stripped.startswith("#"):
                 lines.append(raw_line)
                 continue
-            check = stripped[len("export "):] if stripped.startswith("export ") else stripped
+            check = stripped[len("export ") :] if stripped.startswith("export ") else stripped
             key_part, sep, _ = check.partition("=")
             key_part = key_part.strip()
             if sep and not keep_legacy and key_part in FLEET_SCOPED_VARS:
@@ -271,7 +272,9 @@ def migrate_env_file(
             existing_keys.add(key_part)
             lines.append(raw_line)
     lines.append("")
-    lines.append("# Added by `mac admin config migrate-env-namespace --fleet %s` (mac-g55y)" % fleet)
+    lines.append(
+        "# Added by `mac admin config migrate-env-namespace --fleet %s` (mac-g55y)" % fleet
+    )
     for new_key, new_value in added.items():
         # Quote values containing spaces or shell meta chars.
         if re.search(r"[\s\"'$`\\]", new_value):

@@ -71,26 +71,20 @@ def test_a_project_is_not_rendered_as_a_key_value_dump():
 def test_the_repository_is_named_once_not_twice():
     """`repository_url` and `repository_registration` are the same URL; the
     dump printed both, each truncated mid-hostname."""
-    line = cli._one_liner(
-        _rec(repository_registration="git@github.com:jordanhubbard/mac.git#main")
-    )
+    line = cli._one_liner(_rec(repository_registration="git@github.com:jordanhubbard/mac.git#main"))
 
     assert line.count("jordanhubbard/mac.git") == 1
 
 
 def test_the_counts_that_describe_live_work_are_all_present():
-    line = cli._one_liner(
-        _rec(active_count=98, ready_count=0, blocked_count=84, review_count=7)
-    )
+    line = cli._one_liner(_rec(active_count=98, ready_count=0, blocked_count=84, review_count=7))
 
     for value in ("98", "84", "7"):
         assert value in line, "count %s is missing from the rendered line" % value
 
 
 def test_a_project_without_a_repository_still_renders():
-    line = cli._one_liner(
-        _rec(project="fleet-maintenance", repository_url="", default_branch="")
-    )
+    line = cli._one_liner(_rec(project="fleet-maintenance", repository_url="", default_branch=""))
 
     assert line.startswith("fleet-maintenance")
     assert "#" not in line, "an empty repo must not render as a bare '#branch'"
@@ -99,9 +93,7 @@ def test_a_project_without_a_repository_still_renders():
 def test_a_task_is_still_rendered_as_a_task():
     """The project branch keys off `task_count`; a task record must not match
     it. Tasks carry `project` too."""
-    line = cli._one_liner(
-        {"id": "task_d95bcaee", "state": "open", "project": "mac", "title": "x"}
-    )
+    line = cli._one_liner({"id": "task_d95bcaee", "state": "open", "project": "mac", "title": "x"})
 
     assert "open" in line and "x" in line
     assert "act" not in line
@@ -160,9 +152,7 @@ def test_a_subdirectory_of_a_worktree_also_resolves(repo_with_worktree, monkeypa
     assert cli._default_project_from_cwd() == "mac"
 
 
-def test_outside_a_repository_it_still_falls_back_to_the_directory(
-    tmp_path, monkeypatch
-):
+def test_outside_a_repository_it_still_falls_back_to_the_directory(tmp_path, monkeypatch):
     """Non-git directories keep bd parity; only the worktree case changes."""
     plain = tmp_path / "somewhere"
     plain.mkdir()

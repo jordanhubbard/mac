@@ -462,7 +462,9 @@ def build_checkpoint(
 
 def read_carried_forward(path: Path) -> set[str]:
     try:
-        return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+        return {
+            line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+        }
     except OSError:
         return set()
 

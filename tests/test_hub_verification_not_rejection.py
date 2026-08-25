@@ -105,6 +105,6 @@ def test_feedback_leads_with_the_command_and_exit_status():
     from mac import services
 
     source = inspect.getsource(services.ControlPlane._run_hub_review_verification_locked)
-    assert 'hub contract verification failed (rc=%d): %s' in source, (
+    assert "hub contract verification failed (rc=%d): %s" in source, (
         "rejection feedback must lead with the failing command and its exit status"
     )

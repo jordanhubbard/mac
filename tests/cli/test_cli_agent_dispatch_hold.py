@@ -87,7 +87,8 @@ def test_agent_list_health_surfaces_hold_and_unconsumed_control_age(tmp_path):
     recipient = _register_agent(tmp_path, "health-recipient")
     rc, _ = _run(
         tmp_path,
-        "admin", "agentbus",
+        "admin",
+        "agentbus",
         "repo-update",
         sender["id"],
         "--recipient-agent-id",

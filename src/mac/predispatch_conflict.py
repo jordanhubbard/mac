@@ -115,9 +115,7 @@ def check_predispatch_conflict(
     an error is treated as a predicted conflict (``would_conflict=True``),
     mirroring the land-time gate.
     """
-    base_verdict = validate_projected_merge(
-        repo_dir, base_ref, topic_ref, git_runner=git_runner
-    )
+    base_verdict = validate_projected_merge(repo_dir, base_ref, topic_ref, git_runner=git_runner)
     if base_verdict.error:
         return PredispatchVerdict(
             would_conflict=not advisory,

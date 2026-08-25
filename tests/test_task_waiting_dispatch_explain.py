@@ -188,10 +188,7 @@ def test_dispatch_explanation_uses_exact_task_and_agent_gates():
     # one that cannot run the task at all until something changes.
     assert missing_capability["unclaimed_reasons"][0]["code"] == "no_capable_agent"
     assert missing_capability["requirement_eligibility"]["verdict"] == "unsatisfiable"
-    assert (
-        missing_capability["candidates"][0]["reasons"][0]["code"]
-        == "agent_capabilities_missing"
-    )
+    assert missing_capability["candidates"][0]["reasons"][0]["code"] == "agent_capabilities_missing"
 
     cp.update_agent(agent.id, capabilities=["python"])
     ready = cp.explain_task_dispatch(task.id)

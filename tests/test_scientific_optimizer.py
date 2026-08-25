@@ -50,9 +50,7 @@ def _completed_experiment() -> tuple[ControlPlane, dict, dict, dict]:
         task = cp.create_task(
             "experiment task %d" % index,
             project="demo",
-            metadata={
-                "execution_contract": {"type": "repository", "quality": "strong"}
-            },
+            metadata={"execution_contract": {"type": "repository", "quality": "strong"}},
         )
         assignment = cp.store.query_one(
             "SELECT arm FROM scientific_assignments WHERE task_id = ?", (task.id,)
@@ -71,9 +69,7 @@ def _completed_experiment() -> tuple[ControlPlane, dict, dict, dict]:
     return cp, control, treatment, experiment
 
 
-def _running_experiment(
-    cp: ControlPlane, project: str = "demo"
-) -> tuple[dict, dict, dict]:
+def _running_experiment(cp: ControlPlane, project: str = "demo") -> tuple[dict, dict, dict]:
     optimizer = cp.optimizer
     control = optimizer.create_policy("baseline", project, {})
     optimizer.promote_policy(control["id"], actor="test")
@@ -122,10 +118,7 @@ def test_decomposed_children_receive_policy_and_atomic_experiment_assignment() -
 
     child = result["children"][0]
     optimizer_metadata = child["metadata"]["scientific_optimizer"]
-    assert (
-        child["metadata"]["scientific_policy"]["policy_id"]
-        == optimizer_metadata["policy_id"]
-    )
+    assert child["metadata"]["scientific_policy"]["policy_id"] == optimizer_metadata["policy_id"]
     assert optimizer_metadata["experiment_id"] == experiment["id"]
     assignment = cp.store.query_one(
         "SELECT * FROM scientific_assignments WHERE task_id = ?", (child["id"],)
@@ -166,10 +159,7 @@ def test_decomposed_child_and_assignment_roll_back_together(monkeypatch) -> None
         )
 
     assert (
-        cp.store.query_one(
-            "SELECT id FROM tasks WHERE title = ?", ("rolled-back child",)
-        )
-        is None
+        cp.store.query_one("SELECT id FROM tasks WHERE title = ?", ("rolled-back child",)) is None
     )
     unchanged_parent = cp.get_task(parent.id)
     assert unchanged_parent.state == "open"
@@ -236,9 +226,7 @@ def test_kpis_capture_quality_cycles_latency_tokens_and_known_cost() -> None:
             "attempt_count": 2,
             "created_at": "2026-01-01T00:00:00+00:00",
             "completed_at": "2026-01-01T00:00:02+00:00",
-            "metadata": {
-                "review_outcomes": [{"kind": "clean_window", "status": "confirmed"}]
-            },
+            "metadata": {"review_outcomes": [{"kind": "clean_window", "status": "confirmed"}]},
         },
         "reviews": [{"status": "rejected"}, {"status": "approved"}],
         "publications": [{}],
@@ -329,8 +317,7 @@ def test_experiment_assigns_tasks_and_requires_evidence_before_promotion() -> No
     assert evidence["observations"]
     assert evidence["decisions"][-1]["status"] == "promote"
     assert any(
-        event["event_type"] == "experiment.promoted_to_monitoring"
-        for event in evidence["events"]
+        event["event_type"] == "experiment.promoted_to_monitoring" for event in evidence["events"]
     )
 
 
@@ -388,9 +375,7 @@ def test_cost_experiment_does_not_treat_unknown_price_as_zero() -> None:
     assert min(decision["validated_sample_counts"].values()) >= 2
 
 
-def test_optimizer_api_and_cli_expose_durable_policy_crud(
-    tmp_path, capsys, monkeypatch
-) -> None:
+def test_optimizer_api_and_cli_expose_durable_policy_crud(tmp_path, capsys, monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     with TestClient(create_app(control_plane=cp)) as client:
         created = client.post(
@@ -417,7 +402,8 @@ def test_optimizer_api_and_cli_expose_durable_policy_crud(
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-that-is-long-enough-1234")
     exit_code = main(
         [
-            "--db", dsn_for(db_path),
+            "--db",
+            dsn_for(db_path),
             "admin",
             "optimizer",
             "policy",
@@ -484,9 +470,7 @@ def test_autonomous_hypothesis_uses_measured_cost_and_strength_ladder(
         task = cp.create_task(
             "baseline %d" % index,
             project="demo",
-            metadata={
-                "execution_contract": {"type": "repository", "quality": "strong"}
-            },
+            metadata={"execution_contract": {"type": "repository", "quality": "strong"}},
         )
         cp.store.execute(
             "UPDATE tasks SET state = 'completed', attempt_count = 1, "
@@ -525,17 +509,13 @@ def test_autonomous_hypothesis_uses_measured_cost_and_strength_ladder(
     assert treatment["parameters"] == {"model_strength": 9}
 
 
-def test_autonomous_optimizer_files_deduplicated_dispatchable_improvement_work() -> (
-    None
-):
+def test_autonomous_optimizer_files_deduplicated_dispatchable_improvement_work() -> None:
     cp = ControlPlane.in_memory()
     for index in range(2):
         task = cp.create_task(
             "rework baseline %d" % index,
             project="demo",
-            metadata={
-                "execution_contract": {"type": "repository", "quality": "strong"}
-            },
+            metadata={"execution_contract": {"type": "repository", "quality": "strong"}},
         )
         cp.store.execute(
             "UPDATE tasks SET state = 'completed', attempt_count = 3, "
@@ -566,8 +546,7 @@ def test_autonomous_optimizer_files_deduplicated_dispatchable_improvement_work()
     assert "no_dispatch" not in created["metadata"]
     assert optimizer.propose_improvement_task("demo") is None
     cp.store.execute(
-        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? "
-        "WHERE id = ?",
+        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
         (utcnow(), utcnow(), created["id"]),
     )
     assert optimizer.propose_improvement_task("demo") is None
@@ -582,9 +561,7 @@ def test_optimizer_validation_and_kpi_failure_edges() -> None:
             _bounded_int(value, "value", 1, 10)
     with pytest.raises(ValidationError, match="must be an object"):
         validate_policy_parameters([])
-    assert validate_policy_parameters({"model": "provider/model"}) == {
-        "model": "provider/model"
-    }
+    assert validate_policy_parameters({"model": "provider/model"}) == {"model": "provider/model"}
     for parameters in (
         {"model": ""},
         {"review_model": "x" * 257},
@@ -711,9 +688,7 @@ def test_policy_and_experiment_lifecycle_rejects_invalid_protocols() -> None:
 def test_assignment_exclusions_and_active_blind_policy() -> None:
     cp = ControlPlane.in_memory()
     optimizer = cp.optimizer
-    active = optimizer.create_policy(
-        "blind", "demo", {"review_mode": "blind", "plan_first": True}
-    )
+    active = optimizer.create_policy("blind", "demo", {"review_mode": "blind", "plan_first": True})
     optimizer.promote_policy(active["id"])
     unchanged, assignment = optimizer.prepare_task_assignment("task_1", None, {})
     assert unchanged == {}
@@ -763,8 +738,7 @@ def test_assignment_exclusions_and_active_blind_policy() -> None:
     unsampled_task_id = next(
         task_id
         for task_id in ("not-sampled-%d" % index for index in range(100))
-        if _stable_point(experiment["id"], task_id, "sample", "experiment")
-        >= 0.01
+        if _stable_point(experiment["id"], task_id, "sample", "experiment") >= 0.01
     )
     _applied, assignment = optimizer.prepare_task_assignment(
         unsampled_task_id,
@@ -948,9 +922,7 @@ def test_autonomous_policy_hypothesis_branches(
         "total_tokens": 100.0,
         **baseline,
     }
-    monkeypatch.setattr(
-        optimizer, "_project_baseline", lambda _project: [sample, sample]
-    )
+    monkeypatch.setattr(optimizer, "_project_baseline", lambda _project: [sample, sample])
     experiment = optimizer.propose_next_experiment(project)
     assert experiment["primary_metric"] == expected_metric
     treatment = optimizer.get_policy(experiment["treatment_policy_id"])
@@ -962,8 +934,7 @@ def test_tick_discovers_projects_and_improvement_early_exits(monkeypatch) -> Non
     cp = ControlPlane.in_memory()
     task = cp.create_task("project signal", project="demo")
     cp.store.execute(
-        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? "
-        "WHERE id = ?",
+        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
         (utcnow(), utcnow(), task.id),
     )
     service = ScientificOptimizerService(
@@ -1005,9 +976,7 @@ def test_tick_discovers_projects_and_improvement_early_exits(monkeypatch) -> Non
         "total_tokens": 1.0,
         "cost_usd": 0.0,
     }
-    monkeypatch.setattr(
-        with_callback, "_project_baseline", lambda _project: [low_cycle, low_cycle]
-    )
+    monkeypatch.setattr(with_callback, "_project_baseline", lambda _project: [low_cycle, low_cycle])
     assert with_callback.propose_improvement_task("demo") is None
 
 
@@ -1019,8 +988,7 @@ def test_project_baseline_cache_avoids_reloading_unchanged_task_details() -> Non
         metadata={"execution_contract": {"type": "repository"}},
     )
     cp.store.execute(
-        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? "
-        "WHERE id = ?",
+        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
         (utcnow(), utcnow(), task.id),
     )
     detail_calls = 0
@@ -1106,7 +1074,11 @@ def _bucket_cases(
     control: list[str] = []
 
     for i in range(100_000):
-        if len(outside) >= n_outside and len(treatment) >= n_treatment and len(control) >= n_control:
+        if (
+            len(outside) >= n_outside
+            and len(treatment) >= n_treatment
+            and len(control) >= n_control
+        ):
             break
         task_id = "task_bucket_%06d" % i
         sample_point = _stable_point(experiment_id, task_id, "sample", _HARNESS_PHASE)
@@ -1189,9 +1161,7 @@ def test_sampling_bucket_harness_drives_prepare_task_assignment() -> None:
     optimizer = cp.optimizer
     control_policy = optimizer.create_policy("baseline", "demo", {})
     optimizer.promote_policy(control_policy["id"], actor="test")
-    treatment_policy = optimizer.create_policy(
-        "plan-first", "demo", {"plan_first": True}
-    )
+    treatment_policy = optimizer.create_policy("plan-first", "demo", {"plan_first": True})
     experiment = optimizer.create_experiment(
         "bucket-harness-exp",
         "demo",
@@ -1227,9 +1197,7 @@ def test_sampling_bucket_harness_drives_prepare_task_assignment() -> None:
         assert sp >= _HARNESS_EXPLORATION_FRACTION, (
             "harness pre-condition failed for outside key %r: sample=%.6f" % (task_id, sp)
         )
-        _applied, assignment = optimizer.prepare_task_assignment(
-            task_id, "demo", contract_meta
-        )
+        _applied, assignment = optimizer.prepare_task_assignment(task_id, "demo", contract_meta)
         assert assignment is None, (
             "task %r (sample_point=%.6f) should NOT be sampled into the 0.01 "
             "exploration bucket but prepare_task_assignment returned an assignment" % (task_id, sp)
@@ -1243,12 +1211,11 @@ def test_sampling_bucket_harness_drives_prepare_task_assignment() -> None:
         assert sp < _HARNESS_EXPLORATION_FRACTION, (
             "harness pre-condition failed for treatment key %r: sample=%.6f" % (task_id, sp)
         )
-        assert ap < 0.5, (
-            "harness pre-condition failed for treatment key %r: arm=%.6f" % (task_id, ap)
+        assert ap < 0.5, "harness pre-condition failed for treatment key %r: arm=%.6f" % (
+            task_id,
+            ap,
         )
-        _applied, assignment = optimizer.prepare_task_assignment(
-            task_id, "demo", contract_meta
-        )
+        _applied, assignment = optimizer.prepare_task_assignment(task_id, "demo", contract_meta)
         assert assignment is not None, (
             "task %r (sample=%.6f) IS inside the 0.01 bucket but got no assignment" % (task_id, sp)
         )
@@ -1266,12 +1233,11 @@ def test_sampling_bucket_harness_drives_prepare_task_assignment() -> None:
         assert sp < _HARNESS_EXPLORATION_FRACTION, (
             "harness pre-condition failed for control key %r: sample=%.6f" % (task_id, sp)
         )
-        assert ap >= 0.5, (
-            "harness pre-condition failed for control key %r: arm=%.6f" % (task_id, ap)
+        assert ap >= 0.5, "harness pre-condition failed for control key %r: arm=%.6f" % (
+            task_id,
+            ap,
         )
-        _applied, assignment = optimizer.prepare_task_assignment(
-            task_id, "demo", contract_meta
-        )
+        _applied, assignment = optimizer.prepare_task_assignment(task_id, "demo", contract_meta)
         assert assignment is not None, (
             "task %r (sample=%.6f) IS inside the 0.01 bucket but got no assignment" % (task_id, sp)
         )

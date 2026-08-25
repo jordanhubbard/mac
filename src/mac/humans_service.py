@@ -93,8 +93,7 @@ class HumansService:
             if github_login and not GITHUB_LOGIN_RE.match(github_login):
                 raise ValidationError(
                     "github_login %r is invalid: must be 1-39 alphanumeric "
-                    "characters or hyphens, not starting or ending with a hyphen"
-                    % github_login
+                    "characters or hyphens, not starting or ending with a hyphen" % github_login
                 )
             github_login = github_login or None
 
@@ -200,22 +199,16 @@ class HumansService:
             return self._human_from_row(row)
 
         # 3. Try as an email address.
-        row = self.store.query_one(
-            "SELECT * FROM humans WHERE email = ?", (anchor,)
-        )
+        row = self.store.query_one("SELECT * FROM humans WHERE email = ?", (anchor,))
         if row is not None:
             return self._human_from_row(row)
 
         # 4. Try as a GitHub login.
-        row = self.store.query_one(
-            "SELECT * FROM humans WHERE github_login = ?", (anchor,)
-        )
+        row = self.store.query_one("SELECT * FROM humans WHERE github_login = ?", (anchor,))
         if row is not None:
             return self._human_from_row(row)
 
-        raise NotFoundError(
-            "no human found for identity anchor: %s" % anchor
-        )
+        raise NotFoundError("no human found for identity anchor: %s" % anchor)
 
     # ------------------------------------------------------------------
     # Row hydration

@@ -30,11 +30,15 @@ def _env_enabled(name: str, default: bool) -> bool:
 
 def _home_channel_name() -> str:
     return (
-        os.environ.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME")
-        or os.environ.get("ACC_SLACK_HOME_CHANNEL_NAME")
-        or os.environ.get("SLACK_HOME_CHANNEL_NAME")
-        or ""
-    ).strip().lstrip("#")
+        (
+            os.environ.get("MAC_HERMES_SLACK_HOME_CHANNEL_NAME")
+            or os.environ.get("ACC_SLACK_HOME_CHANNEL_NAME")
+            or os.environ.get("SLACK_HOME_CHANNEL_NAME")
+            or ""
+        )
+        .strip()
+        .lstrip("#")
+    )
 
 
 def _normalize_workspace(name: str) -> str:
@@ -163,7 +167,9 @@ def _slack_api(bot_token: str, method: str, params: Dict[str, str]) -> Dict[str,
     return body
 
 
-def _discover_home_channels(accounts: List[Dict[str, str]], channel_name: str) -> List[Dict[str, str]]:
+def _discover_home_channels(
+    accounts: List[Dict[str, str]], channel_name: str
+) -> List[Dict[str, str]]:
     wanted = channel_name.lower()
     homes: List[Dict[str, str]] = []
     for account in accounts:

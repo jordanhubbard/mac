@@ -26,9 +26,7 @@ SYSTEMD_NAMES = {
     "nemoclaw": "mac-nemoclaw-gateway.service",
     "agent": "mac-agent.service",
 }
-SUPERVISORD_NAMES = {
-    key: value.removesuffix(".service") for key, value in SYSTEMD_NAMES.items()
-}
+SUPERVISORD_NAMES = {key: value.removesuffix(".service") for key, value in SYSTEMD_NAMES.items()}
 LAUNCHD_NAMES = {
     "control": "com.mac.control-plane",
     "hermes": "com.mac.hermes-gateway",
@@ -395,9 +393,7 @@ def _base_command(
     return command, receipt
 
 
-def _run(
-    command: List[str], *, timeout: float = 60.0
-) -> subprocess.CompletedProcess[str]:
+def _run(command: List[str], *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     # coverage.py's ``patch = ["subprocess"]`` propagates measurement into every
     # Python child via these vars + a site .pth hook. The helper and the fake
@@ -432,9 +428,7 @@ def _replace_option(command: List[str], option: str, value: str) -> None:
     command[command.index(option) + 1] = value
 
 
-def _assert_passed_receipt(
-    receipt: Path, action: str, supervisor: str
-) -> Mapping[str, object]:
+def _assert_passed_receipt(receipt: Path, action: str, supervisor: str) -> Mapping[str, object]:
     payload = json.loads(receipt.read_text(encoding="utf-8"))
     assert payload["schema"] == "mac.fleet_node_rollback_supervisor.v1"
     assert payload["status"] == "passed"
@@ -450,9 +444,7 @@ def test_systemd_quiesce_proves_all_services_inactive_and_scrubs_selectors(
 ) -> None:
     systemctl = _write_manager(tmp_path, "systemctl")
     _write_state(tmp_path, _loaded_systemd_state())
-    command, receipt = _base_command(
-        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
     command.extend(["--systemctl", str(systemctl)])
 
     result = _run(command)
@@ -481,12 +473,8 @@ def test_systemd_quiesce_stops_explicit_auxiliary_media_before_restore(
         "enabled": "enabled",
     }
     _write_state(tmp_path, state)
-    command, receipt = _base_command(
-        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
-    command.extend(
-        ["--systemctl", str(systemctl), "--auxiliary-service", media]
-    )
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
+    command.extend(["--systemctl", str(systemctl), "--auxiliary-service", media])
 
     result = _run(command)
 
@@ -508,9 +496,7 @@ def test_systemd_quiesce_rejects_fail_open_stop_without_leaking_output(
     state["fail_open_stop"] = [SYSTEMD_NAMES["agent"]]
     state["secret_output_on_stop"] = True
     _write_state(tmp_path, state)
-    command, receipt = _base_command(
-        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
     command.extend(
         [
             "--systemctl",
@@ -534,9 +520,7 @@ def test_systemd_restore_proves_exact_healthy_topology(tmp_path: Path) -> None:
     systemctl = _write_manager(tmp_path, "systemctl")
     _write_state(tmp_path, _stopped_systemd_state())
     with _healthy_server() as port:
-        command, receipt = _base_command(
-            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
-        )
+        command, receipt = _base_command(tmp_path, "restore", "systemd", port, SYSTEMD_NAMES)
         command.extend(["--systemctl", str(systemctl)])
         result = _run(command)
 
@@ -569,12 +553,8 @@ def test_systemd_restore_keeps_indirect_auxiliary_media_safely_inactive(
     state["preserve_indirect_disable"] = [media]
     _write_state(tmp_path, state)
     with _healthy_server() as port:
-        command, receipt = _base_command(
-            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
-        )
-        command.extend(
-            ["--systemctl", str(systemctl), "--auxiliary-service", media]
-        )
+        command, receipt = _base_command(tmp_path, "restore", "systemd", port, SYSTEMD_NAMES)
+        command.extend(["--systemctl", str(systemctl), "--auxiliary-service", media])
         result = _run(command)
 
     assert result.returncode == 0, result.stderr
@@ -593,12 +573,8 @@ def test_systemd_quiesce_records_prior_absent_auxiliary_as_absent(
     # fake ``show`` reports the systemd ``not-found`` load state.
     _write_state(tmp_path, _loaded_systemd_state())
     media = "mac-gen-server.service"
-    command, receipt = _base_command(
-        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
-    command.extend(
-        ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
-    )
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
+    command.extend(["--systemctl", str(systemctl), "--absent-auxiliary-service", media])
 
     result = _run(command)
 
@@ -629,12 +605,8 @@ def test_systemd_quiesce_rejects_present_prior_absent_auxiliary(
         "enabled": "disabled",
     }
     _write_state(tmp_path, state)
-    command, receipt = _base_command(
-        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
-    command.extend(
-        ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
-    )
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
+    command.extend(["--systemctl", str(systemctl), "--absent-auxiliary-service", media])
 
     result = _run(command)
 
@@ -651,12 +623,8 @@ def test_systemd_restore_proves_prior_absent_auxiliary_absent(
     _write_state(tmp_path, _stopped_systemd_state())
     media = "mac-gen-server.service"
     with _healthy_server() as port:
-        command, receipt = _base_command(
-            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
-        )
-        command.extend(
-            ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
-        )
+        command, receipt = _base_command(tmp_path, "restore", "systemd", port, SYSTEMD_NAMES)
+        command.extend(["--systemctl", str(systemctl), "--absent-auxiliary-service", media])
         result = _run(command)
 
     assert result.returncode == 0, result.stderr
@@ -689,12 +657,8 @@ def test_systemd_restore_rejects_prior_absent_auxiliary_that_remains_defined(
     }
     _write_state(tmp_path, state)
     with _healthy_server() as port:
-        command, receipt = _base_command(
-            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
-        )
-        command.extend(
-            ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
-        )
+        command, receipt = _base_command(tmp_path, "restore", "systemd", port, SYSTEMD_NAMES)
+        command.extend(["--systemctl", str(systemctl), "--absent-auxiliary-service", media])
         result = _run(command)
 
     assert result.returncode == 1
@@ -731,9 +695,7 @@ def test_systemd_restore_requiesces_a_partial_start_failure(tmp_path: Path) -> N
     # stop both already-started identities, not merely withhold the receipt.
     state["fail_open_start"] = [SYSTEMD_NAMES["agent"]]
     _write_state(tmp_path, state)
-    command, receipt = _base_command(
-        tmp_path, "restore", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
+    command, receipt = _base_command(tmp_path, "restore", "systemd", _closed_port(), SYSTEMD_NAMES)
     command.extend(
         [
             "--systemctl",
@@ -761,9 +723,7 @@ def test_systemd_restore_reports_sanitized_compensation_failure(
     state["fail_open_stop"] = [SYSTEMD_NAMES["control"]]
     state["secret_output_on_stop"] = True
     _write_state(tmp_path, state)
-    command, receipt = _base_command(
-        tmp_path, "restore", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
+    command, receipt = _base_command(tmp_path, "restore", "systemd", _closed_port(), SYSTEMD_NAMES)
     command.extend(
         [
             "--systemctl",
@@ -879,10 +839,7 @@ def test_supervisord_quiesce_accepts_stable_process_free_states(
     inactive_state: str,
 ) -> None:
     supervisorctl = _write_manager(tmp_path, "supervisorctl")
-    programs = {
-        identity: {"state": "STOPPED", "pid": 0}
-        for identity in SUPERVISORD_NAMES.values()
-    }
+    programs = {identity: {"state": "STOPPED", "pid": 0} for identity in SUPERVISORD_NAMES.values()}
     programs[SUPERVISORD_NAMES["hermes"]] = {
         "state": inactive_state,
         "pid": 0,
@@ -907,10 +864,7 @@ def test_supervisord_restore_proves_successors_stopped_and_active_pids_stable(
     tmp_path: Path,
 ) -> None:
     supervisorctl = _write_manager(tmp_path, "supervisorctl")
-    programs = {
-        identity: {"state": "STOPPED", "pid": 0}
-        for identity in SUPERVISORD_NAMES.values()
-    }
+    programs = {identity: {"state": "STOPPED", "pid": 0} for identity in SUPERVISORD_NAMES.values()}
     _write_state(tmp_path, {"programs": programs})
     with _healthy_server() as port:
         command, receipt = _base_command(
@@ -933,10 +887,7 @@ def test_supervisord_restore_requiesces_a_partial_start_failure(
     tmp_path: Path,
 ) -> None:
     supervisorctl = _write_manager(tmp_path, "supervisorctl")
-    programs = {
-        identity: {"state": "STOPPED", "pid": 0}
-        for identity in SUPERVISORD_NAMES.values()
-    }
+    programs = {identity: {"state": "STOPPED", "pid": 0} for identity in SUPERVISORD_NAMES.values()}
     _write_state(
         tmp_path,
         {
@@ -973,10 +924,7 @@ def test_supervisord_spoke_restore_keeps_control_plane_and_port_inactive(
     tmp_path: Path,
 ) -> None:
     supervisorctl = _write_manager(tmp_path, "supervisorctl")
-    programs = {
-        identity: {"state": "STOPPED", "pid": 0}
-        for identity in SUPERVISORD_NAMES.values()
-    }
+    programs = {identity: {"state": "STOPPED", "pid": 0} for identity in SUPERVISORD_NAMES.values()}
     _write_state(tmp_path, {"programs": programs})
     command, receipt = _base_command(
         tmp_path,
@@ -1004,10 +952,7 @@ def test_supervisord_restore_recreates_openclaw_without_an_agent(
     tmp_path: Path,
 ) -> None:
     supervisorctl = _write_manager(tmp_path, "supervisorctl")
-    programs = {
-        identity: {"state": "STOPPED", "pid": 0}
-        for identity in SUPERVISORD_NAMES.values()
-    }
+    programs = {identity: {"state": "STOPPED", "pid": 0} for identity in SUPERVISORD_NAMES.values()}
     _write_state(tmp_path, {"programs": programs})
     command, receipt = _base_command(
         tmp_path,
@@ -1211,9 +1156,7 @@ def test_launchd_accepts_canonical_macos_two_line_absent_state(
     launchctl = _write_manager(tmp_path, "launchctl")
     target = "gui/501/" + LAUNCHD_NAMES["agent"]
     _write_state(tmp_path, {"jobs": {}, "canonical_macos_absent": target})
-    command, receipt = _launchd_args(
-        tmp_path, "quiesce", _closed_port(), launchctl
-    )
+    command, receipt = _launchd_args(tmp_path, "quiesce", _closed_port(), launchctl)
 
     result = _run(command)
 
@@ -1227,9 +1170,7 @@ def test_launchd_rejects_noncanonical_multiline_absent_state(
     launchctl = _write_manager(tmp_path, "launchctl")
     target = "gui/501/" + LAUNCHD_NAMES["agent"]
     _write_state(tmp_path, {"jobs": {}, "ambiguous_absent": target})
-    command, receipt = _launchd_args(
-        tmp_path, "quiesce", _closed_port(), launchctl
-    )
+    command, receipt = _launchd_args(tmp_path, "quiesce", _closed_port(), launchctl)
 
     result = _run(command)
 
@@ -1243,9 +1184,7 @@ def test_manager_timeout_terminates_descendant_process_group(tmp_path: Path) -> 
     state = _loaded_systemd_state()
     state["timeout_command"] = "show"
     _write_state(tmp_path, state)
-    command, receipt = _base_command(
-        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
-    )
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
     command.extend(
         [
             "--systemctl",

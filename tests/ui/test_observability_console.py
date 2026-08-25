@@ -107,9 +107,7 @@ def test_snapshot_of_an_empty_hub_is_all_zeros_and_no_degradation(cp: ControlPla
     # dream_runs is created lazily by mac.dreaming.store, not by schema.sql, so
     # its absence is the true statement "dreaming has never run here" and must
     # be reported as such rather than as zero dream runs.
-    assert {entry["section"] for entry in snap["degraded"]} <= {"dreams"}, snap[
-        "degraded"
-    ]
+    assert {entry["section"] for entry in snap["degraded"]} <= {"dreams"}, snap["degraded"]
     assert snap["tasks"]["total"] == 0
     assert snap["tasks"]["by_state"] == {}
     assert snap["agents"]["rows"] == []
@@ -136,9 +134,7 @@ def test_snapshot_surfaces_the_oldest_stuck_work_first(cp: ControlPlane):
     old = cp.create_task(title="ancient", description="")
     cp.create_task(title="fresh", description="")
     long_ago = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
-    cp.store.execute(
-        "UPDATE tasks SET updated_at = ? WHERE id = ?", (long_ago, old.id)
-    )
+    cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (long_ago, old.id))
     snap = build_console_snapshot(cp)
     assert snap["stuck"][0]["id"] == old.id
     assert snap["stuck"][0]["dwell_seconds"] > 8 * 86400
@@ -172,9 +168,7 @@ def test_snapshot_flags_agents_whose_reported_status_is_not_believable(
     cp: ControlPlane,
 ):
     machine = cp.register_machine(hostname="m1")
-    agent = cp.register_agent(
-        machine_id=machine.id, name="ghost", capabilities=["python"]
-    )
+    agent = cp.register_agent(machine_id=machine.id, name="ghost", capabilities=["python"])
     stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     cp.store.execute(
         "UPDATE agents SET status = 'busy', last_seen_at = ? WHERE id = ?",
@@ -379,8 +373,7 @@ def test_missing_attribution_is_reported_as_absent_not_blank(cp: ControlPlane):
     task = cp.create_task(title="anon", description="")
     _record_transcript(cp, task.id, prompt="p", response="r", stderr="")
     cp.store.execute(
-        "UPDATE task_agent_transcripts SET coding_agent = '', model = NULL "
-        "WHERE task_id = ?",
+        "UPDATE task_agent_transcripts SET coding_agent = '', model = NULL WHERE task_id = ?",
         (task.id,),
     )
     out = build_task_drilldown(cp, task.id)
@@ -466,10 +459,7 @@ def test_drilldown_endpoints_are_get_only_and_answer(cp: ControlPlane):
     assert resp.status_code == 200
     assert resp.json()["found"] is True
     for method in ("post", "put", "patch", "delete"):
-        assert (
-            getattr(client, method)("/dashboard/observe/tasks/%s" % task.id).status_code
-            == 405
-        )
+        assert getattr(client, method)("/dashboard/observe/tasks/%s" % task.id).status_code == 405
     assert client.get("/dashboard/observe/tasks/nope").json()["found"] is False
     assert client.get("/dashboard/observe/transcripts/nope").json()["found"] is False
 
@@ -634,7 +624,7 @@ def test_the_section_degrades_honestly(cp: ControlPlane, monkeypatch):
 
     def explode(sql, params=()):
         if "merge_queue" in sql:
-            raise RuntimeError('relation merge_queue_entries does not exist')
+            raise RuntimeError("relation merge_queue_entries does not exist")
         return real(sql, params)
 
     monkeypatch.setattr(cp.store, "query_all", explode)

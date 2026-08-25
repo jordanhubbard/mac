@@ -75,7 +75,11 @@ class WebDAVHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         print(
             "%s %s - %s"
-            % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), self.address_string(), fmt % args),
+            % (
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                self.address_string(),
+                fmt % args,
+            ),
             flush=True,
         )
 
@@ -247,7 +251,7 @@ class WebDAVHandler(BaseHTTPRequestHandler):
         if not request_path.startswith(prefix):
             self._send_status(HTTPStatus.NOT_FOUND)
             return
-        relative = request_path[len(prefix):].strip("/")
+        relative = request_path[len(prefix) :].strip("/")
         candidate = (self.server.root / relative).resolve()
         try:
             candidate.relative_to(self.server.root)
@@ -311,7 +315,7 @@ class WebDAVHandler(BaseHTTPRequestHandler):
         if not request_path.startswith(prefix):
             self._send_status(HTTPStatus.NOT_FOUND)
             return
-        relative = request_path[len(prefix):].strip("/")
+        relative = request_path[len(prefix) :].strip("/")
         target = (self.server.root / relative).resolve() if relative else self.server.root
         try:
             target.relative_to(self.server.root)
@@ -354,11 +358,18 @@ class WebDAVHandler(BaseHTTPRequestHandler):
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Serve public-read MAC artifacts from a hub publish directory.")
+    parser = argparse.ArgumentParser(
+        description="Serve public-read MAC artifacts from a hub publish directory."
+    )
     parser.add_argument("--host", default=os.environ.get("MAC_WEBDAV_BIND_ADDR", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("MAC_WEBDAV_PORT", "80")))
-    parser.add_argument("--root", default=os.environ.get("MAC_WEBDAV_ROOT", str(mac_paths.mac_home() / "public-artifacts")))
-    parser.add_argument("--public-prefix", default=os.environ.get("MAC_WEBDAV_PUBLIC_PATH", DEFAULT_PUBLIC_PREFIX))
+    parser.add_argument(
+        "--root",
+        default=os.environ.get("MAC_WEBDAV_ROOT", str(mac_paths.mac_home() / "public-artifacts")),
+    )
+    parser.add_argument(
+        "--public-prefix", default=os.environ.get("MAC_WEBDAV_PUBLIC_PATH", DEFAULT_PUBLIC_PREFIX)
+    )
     parser.add_argument(
         "--max-upload-bytes",
         type=int,

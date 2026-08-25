@@ -111,9 +111,7 @@ def _changed_event(sequence, *, to_text, restricts=True, to_version=2, policy_id
 
 
 def _published_event(sequence, *, to_text, to_version=2, policy_id="ospol_1"):
-    event = _changed_event(
-        sequence, to_text=to_text, to_version=to_version, policy_id=policy_id
-    )
+    event = _changed_event(sequence, to_text=to_text, to_version=to_version, policy_id=policy_id)
     event["event_type"] = "sandbox.policy_published"
     return event
 
@@ -192,12 +190,8 @@ def test_the_hold_reaches_the_outer_loop_and_no_task_is_claimed(mac_home, tmp_pa
         ("_observe_policy_once", None),
         ("_maybe_hub_load_shed", None),
     ):
-        monkeypatch.setattr(
-            instance, name, (lambda _r=result: (lambda *_a, **_k: _r))()
-        )
-    monkeypatch.setattr(
-        instance, "_claim_next_for_agent", lambda *_a, **_k: claims.append(1)
-    )
+        monkeypatch.setattr(instance, name, (lambda _r=result: lambda *_a, **_k: _r)())
+    monkeypatch.setattr(instance, "_claim_next_for_agent", lambda *_a, **_k: claims.append(1))
 
     outcome = instance.run_once()
 

@@ -262,13 +262,12 @@ def run_c26_project_inception_proof(
         "review_modifications_applied": revised.metadata.get("modifications") == C26_REVIEW_NOTES,
         "parallel_fanout_claimed": len({item["agent_id"] for item in running_fanout}) >= 3
         and all(item["state"] == TaskState.RUNNING.value for item in running_fanout),
-        "all_project_tasks_done": all(task.state == TaskState.COMPLETED.value for task in all_tasks),
+        "all_project_tasks_done": all(
+            task.state == TaskState.COMPLETED.value for task in all_tasks
+        ),
         "slack_notifier_configured": notifier.channel_type == "slack" and notifier.enabled,
         "slack_progress_delivered": delivery["delivered"] > 0
-        and any(
-            message.get("payload", {}).get("channel_type") == "slack"
-            for message in messages
-        ),
+        and any(message.get("payload", {}).get("channel_type") == "slack" for message in messages),
         "demo_story_has_build_and_feedback_instructions": all(
             fragment in implementation_tasks["demo_story"].description
             for fragment in ("make smoke", "make run", "Slack", "feedback")
@@ -289,9 +288,7 @@ def run_c26_project_inception_proof(
         "plan_task_id": plan.id,
         "review_task_id": review.id,
         "revised_plan_task_id": revised.id,
-        "implementation_task_ids": {
-            key: task.id for key, task in implementation_tasks.items()
-        },
+        "implementation_task_ids": {key: task.id for key, task in implementation_tasks.items()},
         "parallel_fanout": running_fanout,
         "slack": {
             "notifier_channel_id": notifier.id,
@@ -306,7 +303,9 @@ def run_c26_project_inception_proof(
             "build_commands": _build_commands(project_path),
         },
         "task_count": len(all_tasks),
-        "completed_task_count": sum(1 for task in all_tasks if task.state == TaskState.COMPLETED.value),
+        "completed_task_count": sum(
+            1 for task in all_tasks if task.state == TaskState.COMPLETED.value
+        ),
     }
 
 
@@ -314,9 +313,7 @@ def _register_c26_agents(cp: ControlPlane, persona_instance_id: str) -> Dict[str
     machine = cp.register_machine("c26-proof-host")
     base_instance = cp.identity.get_persona_instance(persona_instance_id)
 
-    def agent(
-        name: str, capabilities: Iterable[str], *, use_base_instance: bool = False
-    ):
+    def agent(name: str, capabilities: Iterable[str], *, use_base_instance: bool = False):
         instance_id = persona_instance_id
         if not use_base_instance:
             persona = cp.register_persona(
@@ -350,9 +347,7 @@ def _register_c26_agents(cp: ControlPlane, persona_instance_id: str) -> Dict[str
         "media": agent("c26-media-engineer", ["c", "graphics", "audio"]),
         "robot": agent("c26-robotics-engineer", ["c", "robotics"]),
         "integrator": agent("c26-integrator", ["c", "asm", "qemu", "demo"]),
-        "reporter": agent(
-            "c26-slack-reporter", ["slack", "demo"], use_base_instance=True
-        ),
+        "reporter": agent("c26-slack-reporter", ["slack", "demo"], use_base_instance=True),
     }
 
 
@@ -373,16 +368,56 @@ def _epic_description(project_path: str) -> str:
 
 def _initial_plan(project_path: str) -> List[JsonDict]:
     return [
-        {"node_key": "architecture", "depends_on": [], "acceptance": "memory map and QEMU target documented"},
-        {"node_key": "build_harness", "depends_on": [], "acceptance": "fresh checkout builds ELF and smoke boots QEMU"},
-        {"node_key": "kernel_runtime", "depends_on": ["architecture", "build_harness"], "acceptance": "assembly entry and C kernel print boot banner"},
-        {"node_key": "basic", "depends_on": ["kernel_runtime"], "acceptance": "scripted BASIC program can run"},
-        {"node_key": "graphics_audio", "depends_on": ["architecture"], "acceptance": "HAL APIs and demo output exist"},
-        {"node_key": "retro_desktop", "depends_on": ["graphics_audio"], "acceptance": "desktop shell renders in demo"},
-        {"node_key": "device_api", "depends_on": ["architecture"], "acceptance": "USB/I2C/CAN/TCP/IP API stubs compile"},
-        {"node_key": "robot_sdk", "depends_on": ["device_api"], "acceptance": "robot example uses SDK APIs"},
-        {"node_key": "integration_demo", "depends_on": ["basic", "retro_desktop", "robot_sdk", "build_harness"], "acceptance": "QEMU demo exercises the vertical slice"},
-        {"node_key": "demo_story", "depends_on": ["integration_demo"], "acceptance": "Slack demo ask includes build and feedback instructions"},
+        {
+            "node_key": "architecture",
+            "depends_on": [],
+            "acceptance": "memory map and QEMU target documented",
+        },
+        {
+            "node_key": "build_harness",
+            "depends_on": [],
+            "acceptance": "fresh checkout builds ELF and smoke boots QEMU",
+        },
+        {
+            "node_key": "kernel_runtime",
+            "depends_on": ["architecture", "build_harness"],
+            "acceptance": "assembly entry and C kernel print boot banner",
+        },
+        {
+            "node_key": "basic",
+            "depends_on": ["kernel_runtime"],
+            "acceptance": "scripted BASIC program can run",
+        },
+        {
+            "node_key": "graphics_audio",
+            "depends_on": ["architecture"],
+            "acceptance": "HAL APIs and demo output exist",
+        },
+        {
+            "node_key": "retro_desktop",
+            "depends_on": ["graphics_audio"],
+            "acceptance": "desktop shell renders in demo",
+        },
+        {
+            "node_key": "device_api",
+            "depends_on": ["architecture"],
+            "acceptance": "USB/I2C/CAN/TCP/IP API stubs compile",
+        },
+        {
+            "node_key": "robot_sdk",
+            "depends_on": ["device_api"],
+            "acceptance": "robot example uses SDK APIs",
+        },
+        {
+            "node_key": "integration_demo",
+            "depends_on": ["basic", "retro_desktop", "robot_sdk", "build_harness"],
+            "acceptance": "QEMU demo exercises the vertical slice",
+        },
+        {
+            "node_key": "demo_story",
+            "depends_on": ["integration_demo"],
+            "acceptance": "Slack demo ask includes build and feedback instructions",
+        },
     ]
 
 
@@ -405,15 +440,35 @@ def _create_implementation_tasks(
     project_path: str,
 ) -> Dict[str, Task]:
     specs = {
-        "architecture": ("c26 architecture contract", ["c", "asm", "riscv"], [revised_plan_task_id]),
-        "build_harness": ("c26 build and QEMU smoke harness", ["c", "asm", "qemu"], [revised_plan_task_id]),
+        "architecture": (
+            "c26 architecture contract",
+            ["c", "asm", "riscv"],
+            [revised_plan_task_id],
+        ),
+        "build_harness": (
+            "c26 build and QEMU smoke harness",
+            ["c", "asm", "qemu"],
+            [revised_plan_task_id],
+        ),
         "device_api": ("c26 2026 peripheral API contracts", ["c"], [revised_plan_task_id]),
-        "kernel_runtime": ("c26 kernel/runtime vertical slice", ["c", "asm", "riscv"], ["architecture", "build_harness"]),
+        "kernel_runtime": (
+            "c26 kernel/runtime vertical slice",
+            ["c", "asm", "riscv"],
+            ["architecture", "build_harness"],
+        ),
         "basic": ("c26 BASIC interpreter vertical slice", ["c"], ["kernel_runtime"]),
-        "graphics_audio": ("c26 graphics and audio HAL", ["c", "graphics", "audio"], ["architecture"]),
+        "graphics_audio": (
+            "c26 graphics and audio HAL",
+            ["c", "graphics", "audio"],
+            ["architecture"],
+        ),
         "retro_desktop": ("c26 retro desktop shell", ["c", "graphics"], ["graphics_audio"]),
         "robot_sdk": ("c26 robot SDK and example", ["c", "robotics"], ["device_api"]),
-        "integration_demo": ("c26 integrated QEMU demo", ["c", "asm", "qemu", "demo"], ["basic", "retro_desktop", "robot_sdk", "build_harness"]),
+        "integration_demo": (
+            "c26 integrated QEMU demo",
+            ["c", "asm", "qemu", "demo"],
+            ["basic", "retro_desktop", "robot_sdk", "build_harness"],
+        ),
         "demo_story": ("c26 final Slack demo story", ["demo", "slack"], ["integration_demo"]),
     }
     tasks: Dict[str, Task] = {}
@@ -468,7 +523,9 @@ def _acceptance(key: str) -> List[str]:
         "architecture": ["docs/architecture.md explains QEMU virt, memory map, and device model"],
         "build_harness": ["make smoke builds and boots under qemu-system-riscv64"],
         "device_api": ["include/c26_devices.h defines USB/I2C/CAN/TCP/IP abstractions"],
-        "kernel_runtime": ["src/boot.S and src/kernel.c provide standalone startup and UART output"],
+        "kernel_runtime": [
+            "src/boot.S and src/kernel.c provide standalone startup and UART output"
+        ],
         "basic": ["BASIC demo emits deterministic interpreter output"],
         "graphics_audio": ["graphics/audio APIs are callable from the integrated demo"],
         "retro_desktop": ["demo renders a c26 retro desktop launcher"],
@@ -655,7 +712,9 @@ def _project_repo_state(project_path: str) -> JsonDict:
     head = _git_output(repo_path, ["rev-parse", "HEAD"])
     status = _git_output(repo_path, ["status", "--porcelain"])
     tracked_files = _git_output(repo_path, ["ls-tree", "-r", "--name-only", "HEAD"]).splitlines()
-    last_commit_files = _git_output(repo_path, ["show", "--format=", "--name-only", "HEAD"]).splitlines()
+    last_commit_files = _git_output(
+        repo_path, ["show", "--format=", "--name-only", "HEAD"]
+    ).splitlines()
     remotes = _git_output(repo_path, ["remote", "-v"]).splitlines()
     upstream_ref = _git_output(
         repo_path,

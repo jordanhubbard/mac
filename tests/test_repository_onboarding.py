@@ -38,20 +38,19 @@ def test_normalize_onboarding_remote_url_rejects_junk():
     for bad in ["", "   ", "-oProxyCommand=evil", "not-a-url", "ftp://x/y"]:
         with pytest.raises(ValidationError):
             _normalize_onboarding_remote_url(bad)
-    assert _normalize_onboarding_remote_url("https://github.com/o/r.git") == "https://github.com/o/r.git"
+    assert (
+        _normalize_onboarding_remote_url("https://github.com/o/r.git")
+        == "https://github.com/o/r.git"
+    )
 
 
 def test_repository_registration_uses_url_fragment_and_defaults_to_main():
-    assert _normalize_repository_registration(
-        "https://github.com/o/r.git"
-    ) == (
+    assert _normalize_repository_registration("https://github.com/o/r.git") == (
         "https://github.com/o/r.git",
         "main",
         "https://github.com/o/r.git#main",
     )
-    assert _normalize_repository_registration(
-        "git@github.com:o/r.git#feature/one"
-    ) == (
+    assert _normalize_repository_registration("git@github.com:o/r.git#feature/one") == (
         "git@github.com:o/r.git",
         "feature/one",
         "git@github.com:o/r.git#feature/one",
@@ -68,9 +67,7 @@ def test_register_project_shapes_origin_for_worktree(cp):
     origin = task.metadata["origin"]
     assert origin["type"] == "direct_task"
     assert origin["repository_url"] == "https://github.com/NVIDIA-dev/taskbrain.git"
-    assert origin["repository_registration"] == (
-        "https://github.com/NVIDIA-dev/taskbrain.git#main"
-    )
+    assert origin["repository_registration"] == ("https://github.com/NVIDIA-dev/taskbrain.git#main")
     assert origin["default_branch"] == "main"
     assert origin["repository_name"] == "taskbrain"
     assert origin["onboarding"] is True
@@ -159,12 +156,14 @@ def test_branch_qualified_registrations_are_distinct_internal_projects(cp):
         "https://github.com/o/widget.git#feature/one",
         project="widget-feature",
     )
-    assert cp.get_project_record("widget-main").metadata[
-        "repository_registration"
-    ].endswith("#main")
-    assert cp.get_project_record("widget-feature").metadata[
-        "repository_registration"
-    ].endswith("#feature/one")
+    assert (
+        cp.get_project_record("widget-main").metadata["repository_registration"].endswith("#main")
+    )
+    assert (
+        cp.get_project_record("widget-feature")
+        .metadata["repository_registration"]
+        .endswith("#feature/one")
+    )
 
 
 def test_duplicate_url_and_branch_registration_is_rejected(cp):

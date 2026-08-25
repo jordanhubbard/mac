@@ -35,14 +35,19 @@ def run_sync(tmp_path, monkeypatch, accounts=None):
 
 
 def test_home_channel_static_json_writes_home_and_route_files(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAC_HERMES_SLACK_HOME_CHANNELS_JSON", json.dumps([
-        {
-            "name": "omgjkh",
-            "team_id": "T123",
-            "channel_id": "C456",
-            "channel_name": "#ops",
-        }
-    ]))
+    monkeypatch.setenv(
+        "MAC_HERMES_SLACK_HOME_CHANNELS_JSON",
+        json.dumps(
+            [
+                {
+                    "name": "omgjkh",
+                    "team_id": "T123",
+                    "channel_id": "C456",
+                    "channel_name": "#ops",
+                }
+            ]
+        ),
+    )
 
     result, home_path, routes_path, report_path = run_sync(tmp_path, monkeypatch)
 
@@ -74,14 +79,19 @@ def test_home_channel_sync_removes_legacy_direct_home_env(monkeypatch, tmp_path)
         + "\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("MAC_HERMES_SLACK_HOME_CHANNELS_JSON", json.dumps([
-        {
-            "name": "omgjkh",
-            "team_id": "T123",
-            "channel_id": "C456",
-            "channel_name": "#ops",
-        }
-    ]))
+    monkeypatch.setenv(
+        "MAC_HERMES_SLACK_HOME_CHANNELS_JSON",
+        json.dumps(
+            [
+                {
+                    "name": "omgjkh",
+                    "team_id": "T123",
+                    "channel_id": "C456",
+                    "channel_name": "#ops",
+                }
+            ]
+        ),
+    )
 
     result, _home_path, _routes_path, report_path = run_sync(tmp_path, monkeypatch)
 

@@ -80,9 +80,7 @@ def test_the_hash_describes_what_the_cli_produced_not_what_was_stored(cp, task):
 
     stored = cp.task_transcript(task.id)[0]
 
-    assert stored["prompt_sha256"] == (
-        "sha256:" + hashlib.sha256(huge.encode("utf-8")).hexdigest()
-    )
+    assert stored["prompt_sha256"] == ("sha256:" + hashlib.sha256(huge.encode("utf-8")).hexdigest())
 
 
 def test_the_export_carries_the_session(cp, task):
@@ -125,9 +123,7 @@ def test_transcripts_die_with_their_task(cp, task):
     with cp.store.transaction() as conn:
         conn.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
 
-    rows = cp.store.query_all(
-        "SELECT id FROM task_agent_transcripts WHERE task_id = ?", (task.id,)
-    )
+    rows = cp.store.query_all("SELECT id FROM task_agent_transcripts WHERE task_id = ?", (task.id,))
 
     assert rows == []
 
@@ -151,7 +147,7 @@ def test_recording_against_an_unknown_task_is_refused(cp):
 
 def test_a_round_trip_returns_exactly_what_went_in(cp, task):
     """The one property that matters: compression must not alter the text."""
-    prompt = "fix the bug\n\twith tabs, ünicode, and \"quotes\"\n" * 50
+    prompt = 'fix the bug\n\twith tabs, ünicode, and "quotes"\n' * 50
     response = "I changed evaluate_pair.\n" * 200
 
     cp.record_task_transcript(task.id, prompt=prompt, response=response, stderr="warn")
@@ -166,9 +162,7 @@ def test_what_lands_on_disk_is_smaller_than_the_text(cp, task):
     """Otherwise the compression is decorative."""
     import zlib
 
-    text = (
-        "def evaluate_pair(task, agent):\n    return PairEvaluation(task.id)\n" * 400
-    )
+    text = "def evaluate_pair(task, agent):\n    return PairEvaluation(task.id)\n" * 400
     cp.record_task_transcript(task.id, prompt=text, response=text)
 
     row = cp.store.query_one(
@@ -233,9 +227,7 @@ def test_the_digest_still_describes_the_original_text(cp, task):
 
     stored = cp.task_transcript(task.id)[0]
 
-    assert stored["prompt_sha256"] == (
-        "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-    )
+    assert stored["prompt_sha256"] == ("sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest())
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +255,7 @@ def test_a_turn_is_indexed_with_the_plaintext(cp, task):
     writer = _RecordingWriter()
     cp.vector_writer = writer
 
-    cp.record_task_transcript(
-        task.id, prompt="why is dispatch stuck", response="the gate refused"
-    )
+    cp.record_task_transcript(task.id, prompt="why is dispatch stuck", response="the gate refused")
 
     assert len(writer.calls) == 1
     call = writer.calls[0]
@@ -356,9 +346,7 @@ def _drive_executor_transcript(monkeypatch, opts: dict) -> dict:
         ),
     )
 
-    executor_sandbox.run_audited_command(
-        ["claude", "-p", "fix the bug"], Path("."), "task_1", opts
-    )
+    executor_sandbox.run_audited_command(["claude", "-p", "fix the bug"], Path("."), "task_1", opts)
     assert posted, "run_audited_command posted no transcript at all"
     return posted
 

@@ -9,6 +9,7 @@ Checks cover:
   - RUNBOOK.md completeness (Node install, Slack setup, coexistence).
   - No operator identity in checked-in files (role/placeholder only).
 """
+
 from __future__ import annotations
 
 import json
@@ -53,9 +54,7 @@ def test_install_script_installs_node_22_locally():
     # Must not use sudo for Node install.
     # The only allowed sudo usage would be for service install, not Node.
     node_install_section = text.split("install_node_local")[1].split("install_nemoclaw_cli")[0]
-    assert "sudo" not in node_install_section, (
-        "Node install must not use sudo"
-    )
+    assert "sudo" not in node_install_section, "Node install must not use sudo"
 
 
 def test_install_script_installs_node_task_local_not_global():
@@ -125,7 +124,9 @@ def test_install_script_injects_mac_runtime_context():
     ctx_section = text.split("write_runtime_context")[1].split("install_openshell_policy")[0]
     assert "Agent:" in ctx_section, "runtime context must include Agent field"
     assert "Fleet:" in ctx_section, "runtime context must include Fleet field"
-    assert "Role: nemoclaw-gateway" in ctx_section, "runtime context must declare nemoclaw-gateway role"
+    assert "Role: nemoclaw-gateway" in ctx_section, (
+        "runtime context must declare nemoclaw-gateway role"
+    )
     assert "Hub:" in ctx_section, "runtime context must include Hub field"
 
 
@@ -307,9 +308,7 @@ def test_docker_compose_sets_mac_router_env():
     assert "MAC_HERMES_GATEWAY_BASE_URL" in text or "OPENAI_BASE_URL" in text, (
         "docker-compose.yaml must set the MAC router base URL env var"
     )
-    assert "MAC_HERMES_INSTANCE_ID" in text, (
-        "docker-compose.yaml must set MAC_HERMES_INSTANCE_ID"
-    )
+    assert "MAC_HERMES_INSTANCE_ID" in text, "docker-compose.yaml must set MAC_HERMES_INSTANCE_ID"
 
 
 def test_docker_compose_sets_runtime_context_env():
@@ -411,9 +410,7 @@ def test_agents_md_explains_coexistence():
     assert "hermes gateway" in text.lower(), (
         "AGENTS.md must mention coexistence with the existing hermes gateway"
     )
-    assert "18765" in text, (
-        "AGENTS.md must mention the NemoClaw pilot port (18765)"
-    )
+    assert "18765" in text, "AGENTS.md must mention the NemoClaw pilot port (18765)"
 
 
 # ---------------------------------------------------------------------------

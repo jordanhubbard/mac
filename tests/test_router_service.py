@@ -1,4 +1,5 @@
 """Standalone router service (mac.router_service): auth, mounting, isolation."""
+
 from __future__ import annotations
 
 import pytest
@@ -49,7 +50,12 @@ def test_accepts_any_configured_token():
         _env(MAC_ROUTER_TOKENS="replica-token-a, replica-token-b")
     )
     client = TestClient(app)
-    for token in ("hub-local-token", "hub-facing-worker-token", "replica-token-a", "replica-token-b"):
+    for token in (
+        "hub-local-token",
+        "hub-facing-worker-token",
+        "replica-token-a",
+        "replica-token-b",
+    ):
         response = client.post(
             "/v1/chat/completions",
             json={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
@@ -77,9 +83,7 @@ def test_hub_api_does_not_mount_v1_when_backend_standalone():
 
 def test_no_providers_fails_closed():
     with pytest.raises(RuntimeError, match="no router routes mounted"):
-        router_service.build_router_app(
-            {"MAC_ROUTER_BACKEND": "standalone", "MAC_API_TOKEN": "t"}
-        )
+        router_service.build_router_app({"MAC_ROUTER_BACKEND": "standalone", "MAC_API_TOKEN": "t"})
 
 
 def test_router_attaches_to_existing_authority_without_schema_ddl(monkeypatch):

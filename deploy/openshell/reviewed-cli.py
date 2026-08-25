@@ -237,9 +237,7 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
     if gateway is not None:
         canonical_gateway = mac_home.parent / ".local" / "bin" / "openshell-gateway"
         try:
-            gateway_raw = stable_bytes(
-                canonical_gateway, private=False, limit=MAX_BINARY_BYTES
-            )
+            gateway_raw = stable_bytes(canonical_gateway, private=False, limit=MAX_BINARY_BYTES)
         except FileNotFoundError:
             return {
                 **base,
@@ -265,9 +263,7 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
                 "status": "migration_required",
                 "reason": "canonical_gateway_digest_mismatch",
             }
-        base.update(
-            gateway_path=str(canonical_gateway), gateway_sha256=gateway_sha
-        )
+        base.update(gateway_path=str(canonical_gateway), gateway_sha256=gateway_sha)
     try:
         receipt_raw = stable_bytes(receipt_path, private=True, limit=1024 * 1024)
         receipt = json.loads(receipt_raw)
@@ -379,9 +375,7 @@ def atomic_publish_gateway(args: argparse.Namespace, source: Path) -> None:
     _asset, _asset_sha, expected_gateway_sha = gateway
     source_raw = stable_bytes(source, private=False, limit=MAX_BINARY_BYTES)
     if sha256(source_raw) != expected_gateway_sha:
-        raise ValueError(
-            "reviewed OpenShell gateway digest differs from its reviewed archive"
-        )
+        raise ValueError("reviewed OpenShell gateway digest differs from its reviewed archive")
     canonical_dir = mac_home.parent / ".local" / "bin"
     canonical_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     metadata = canonical_dir.lstat()
@@ -392,9 +386,7 @@ def atomic_publish_gateway(args: argparse.Namespace, source: Path) -> None:
     ):
         raise ValueError("reviewed OpenShell gateway directory is not owner-controlled")
     canonical = canonical_dir / "openshell-gateway"
-    descriptor, temporary_raw = tempfile.mkstemp(
-        prefix=".openshell-gateway.", dir=canonical_dir
-    )
+    descriptor, temporary_raw = tempfile.mkstemp(prefix=".openshell-gateway.", dir=canonical_dir)
     temporary = Path(temporary_raw)
     try:
         os.fchmod(descriptor, 0o700)
@@ -435,8 +427,7 @@ def extract_reviewed_archive(
                 item
                 for item in members
                 if item.isfile()
-                and Path(item.name).name
-                == ("openshell-gateway" if gateway else "openshell")
+                and Path(item.name).name == ("openshell-gateway" if gateway else "openshell")
             ]
             if len(members) > 256 or len(candidates) != 1:
                 raise ValueError("reviewed OpenShell archive shape is invalid")
@@ -482,7 +473,9 @@ def download_and_extract(args: argparse.Namespace, *, gateway: bool = False) -> 
         else parse_specs(args.asset_spec)
     )
     asset, _expected_sha, _expected_binary_sha = specs[(os_kind, arch)]
-    if not re.fullmatch(r"https://github\.com/NVIDIA/OpenShell/releases/download/v[0-9.]+", args.base_url):
+    if not re.fullmatch(
+        r"https://github\.com/NVIDIA/OpenShell/releases/download/v[0-9.]+", args.base_url
+    ):
         raise ValueError("reviewed OpenShell base URL is not allowed")
     temporary_dir = Path(tempfile.mkdtemp(prefix="mac-reviewed-openshell-"))
     archive = temporary_dir / asset
@@ -559,9 +552,12 @@ def main() -> int:
                 atomic_publish(args, binary)
             finally:
                 shutil.rmtree(binary.parent, ignore_errors=True)
-            if gateway_spec(
-                args, normalized_os(args.expected_os), normalized_arch(platform.machine())
-            ) is not None:
+            if (
+                gateway_spec(
+                    args, normalized_os(args.expected_os), normalized_arch(platform.machine())
+                )
+                is not None
+            ):
                 gateway_binary = download_and_extract(args, gateway=True)
                 try:
                     atomic_publish_gateway(args, gateway_binary)

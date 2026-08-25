@@ -1,4 +1,5 @@
 """Failure transitions should self-document on the task (problem + remediation)."""
+
 from mac.models import TaskState
 from mac.services import _failure_diagnosis
 
@@ -32,7 +33,10 @@ def test_empty_detail_returns_actionable_generic_diagnosis():
 def test_clone_auth_diagnosis():
     out = _failure_diagnosis(
         TaskState.BLOCKED.value,
-        _d(reason="worker_exception", error="could not clone repository for K8s task: authentication failed"),
+        _d(
+            reason="worker_exception",
+            error="could not clone repository for K8s task: authentication failed",
+        ),
     )
     assert out and "Remediation:" in out
     assert "clone" in out.lower() and "GH_TOKEN" in out
@@ -51,7 +55,10 @@ def test_timeout_diagnosis():
 def test_contract_failed_diagnosis():
     out = _failure_diagnosis(
         TaskState.BLOCKED.value,
-        _d(reason="verification_contract_failed", problems=["repo evidence requires pushed=true with remote_ref, or pr_url"]),
+        _d(
+            reason="verification_contract_failed",
+            problems=["repo evidence requires pushed=true with remote_ref, or pr_url"],
+        ),
     )
     assert out and "contract" in out.lower() and "push" in out.lower()
 

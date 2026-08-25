@@ -5,6 +5,7 @@ the same diagnosis — a sentence true of every contract failure and diagnostic
 of none, with a remediation ("commit and push everything") that was correct for
 one cause and misleading for the rest.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,9 +29,7 @@ REAL_HUB_DENIED = (
 
 def test_the_dominant_real_failure_is_named(tmp_path=None):
     """The 24-of-24 case: an agent that planned instead of implementing."""
-    assert classify_contract_failure(REAL_PLANNED).cause == (
-        Cause.PLANNED_INSTEAD_OF_IMPLEMENTING
-    )
+    assert classify_contract_failure(REAL_PLANNED).cause == (Cause.PLANNED_INSTEAD_OF_IMPLEMENTING)
 
 
 def test_planning_failure_does_not_advise_committing_harder():
@@ -84,15 +83,19 @@ def test_earlier_causes_win_when_signals_overlap():
     earliest stopping point is the real one."""
     both = REAL_PLANNED + " also there were untracked files and refusing to push"
 
-    assert classify_contract_failure(both).cause == (
-        Cause.PLANNED_INSTEAD_OF_IMPLEMENTING
-    )
+    assert classify_contract_failure(both).cause == (Cause.PLANNED_INSTEAD_OF_IMPLEMENTING)
 
 
 @pytest.mark.parametrize(
     "text",
-    [REAL_PLANNED, REAL_HUB_DENIED, "untracked", "refusing to push",
-     "rejected push non-fast-forward", "unknown"],
+    [
+        REAL_PLANNED,
+        REAL_HUB_DENIED,
+        "untracked",
+        "refusing to push",
+        "rejected push non-fast-forward",
+        "unknown",
+    ],
 )
 def test_every_cause_carries_a_distinct_problem_and_remediation(text):
     """The point of naming a cause is that the advice differs. A classifier
@@ -106,8 +109,14 @@ def test_every_cause_carries_a_distinct_problem_and_remediation(text):
 
 
 def test_the_causes_are_not_all_the_same_advice():
-    texts = [REAL_PLANNED, REAL_HUB_DENIED, "untracked", "refusing to push",
-             "rejected push non-fast-forward", "unknown"]
+    texts = [
+        REAL_PLANNED,
+        REAL_HUB_DENIED,
+        "untracked",
+        "refusing to push",
+        "rejected push non-fast-forward",
+        "unknown",
+    ]
     remediations = {classify_contract_failure(t).remediation for t in texts}
 
     assert len(remediations) == len(texts), "causes must give distinct advice"

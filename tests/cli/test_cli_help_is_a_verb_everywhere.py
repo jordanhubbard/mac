@@ -8,6 +8,7 @@ to add it -- and `help` became just another positional value.
 exploring the CLI wrote junk into the ledger and learned nothing. That is worse
 than an error, because it succeeds.
 """
+
 from __future__ import annotations
 
 import io

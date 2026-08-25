@@ -104,9 +104,7 @@ def test_a_fleet_directive_carries_no_target():
 
 
 def test_a_targeted_directive_carries_its_target():
-    payload = lifecycle_payload(
-        verb=LIFECYCLE_PAUSE, scope="agent", target="agent_rocky"
-    )
+    payload = lifecycle_payload(verb=LIFECYCLE_PAUSE, scope="agent", target="agent_rocky")
 
     assert payload["target"] == "agent_rocky"
     assert payload["scope"] == "agent"
@@ -184,9 +182,9 @@ def test_every_verb_and_scope_builds():
         assert lifecycle_payload(verb=verb)["verb"] == verb
     for scope in LIFECYCLE_SCOPES:
         target = None if scope == "fleet" else "x"
-        assert lifecycle_payload(
-            verb=LIFECYCLE_STATUS, scope=scope, target=target
-        )["scope"] == scope
+        assert (
+            lifecycle_payload(verb=LIFECYCLE_STATUS, scope=scope, target=target)["scope"] == scope
+        )
 
 
 def test_the_issuer_is_recorded():
@@ -213,9 +211,7 @@ def test_a_directive_can_name_one_task():
     to act: the scopes were fleet / project / agent, all of which answer "who
     is working", and the runaway was task-shaped.
     """
-    payload = lifecycle_payload(
-        verb=LIFECYCLE_STAND_DOWN, scope="task", target="task_739ff150"
-    )
+    payload = lifecycle_payload(verb=LIFECYCLE_STAND_DOWN, scope="task", target="task_739ff150")
 
     assert payload["scope"] == "task"
     assert payload["target"] == "task_739ff150"
@@ -242,7 +238,7 @@ def test_stopping_one_task_is_not_stopping_the_agent():
 
 
 def test_every_verb_has_a_written_task_meaning():
-    """"Stand down" is unambiguous about an agent and ambiguous about a task. A
+    """ "Stand down" is unambiguous about an agent and ambiguous about a task. A
     directive whose meaning is inferred is one every implementation infers
     differently."""
     from mac.agentbus_control import LIFECYCLE_TASK_SEMANTICS

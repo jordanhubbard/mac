@@ -6,6 +6,7 @@ the executor still discarded finished work whenever the agent created new files
 times as verification_contract_failed). finalize_with_new_file_recovery is the
 wiring: finalize -> attempt recovery (fail-closed) -> re-finalize on success.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,7 +20,9 @@ def calls(monkeypatch):
     log = {"finalize": 0, "recover": 0, "telemetry": []}
 
     monkeypatch.setattr(
-        es, "run_deterministic_git_finalizer", lambda ws, task: log.__setitem__("finalize", log["finalize"] + 1)
+        es,
+        "run_deterministic_git_finalizer",
+        lambda ws, task: log.__setitem__("finalize", log["finalize"] + 1),
     )
     monkeypatch.setattr(
         es, "emit_telemetry", lambda name, **kw: log["telemetry"].append((name, kw))
@@ -34,9 +37,9 @@ def test_non_new_file_refusal_leaves_single_finalize(calls, monkeypatch):
 
     monkeypatch.setattr(es, "recover_from_new_file_refusal", refuse)
     es.finalize_with_new_file_recovery("/ws", {"id": "task_x"}, "task_x")
-    assert calls["finalize"] == 1     # no second finalize
-    assert calls["recover"] == 1      # recovery attempted, fail-closed
-    assert calls["telemetry"] == []   # no recovery event
+    assert calls["finalize"] == 1  # no second finalize
+    assert calls["recover"] == 1  # recovery attempted, fail-closed
+    assert calls["telemetry"] == []  # no recovery event
 
 
 def test_successful_recovery_refinalizes_and_emits(calls, monkeypatch):
@@ -46,7 +49,7 @@ def test_successful_recovery_refinalizes_and_emits(calls, monkeypatch):
         lambda ws, task: {"recovered_files": ["src/new.py", "tests/test_new.py"]},
     )
     es.finalize_with_new_file_recovery("/ws", {"id": "task_x"}, "task_x")
-    assert calls["finalize"] == 2     # refusal recovered -> finalizer re-run
+    assert calls["finalize"] == 2  # refusal recovered -> finalizer re-run
     names = [n for n, _ in calls["telemetry"]]
     assert "new_file_refusal_recovered" in names
     _, kw = calls["telemetry"][0]

@@ -50,6 +50,8 @@ from mac.repository_hygiene import (
     prune_repository_refs,
     query_open_pull_requests,
 )
+
+
 def _json_arg(value: Optional[str], default: Any) -> Any:
     if value is None:
         return default
@@ -99,6 +101,7 @@ def _read_text_arg(
     from stdin so pipes and heredocs work without quoting.
     """
     import sys
+
     if inline is not None and inline != "":
         return inline
     if file_path:
@@ -282,9 +285,7 @@ def _render_task_table(
     terminal_width = width or shutil.get_terminal_size((120, 24)).columns
     terminal_width = max(60, int(terminal_width))
     display_ids = [
-        str(task.get("id") or "")
-        if _FULL_IDS
-        else _short_task_id(str(task.get("id") or ""))
+        str(task.get("id") or "") if _FULL_IDS else _short_task_id(str(task.get("id") or ""))
         for task in records
     ]
     id_width = max(len("TASK"), max(len(task_id) for task_id in display_ids))
@@ -306,9 +307,7 @@ def _render_task_table(
         dependency_cells.append(
             "["
             + ",".join(
-                dependency_id
-                if _FULL_IDS
-                else _short_task_id(dependency_id)
+                dependency_id if _FULL_IDS else _short_task_id(dependency_id)
                 for dependency_id in map(str, dependencies)
             )
             + "]"
@@ -324,17 +323,8 @@ def _render_task_table(
         len("DEPENDENCIES"),
         min(MAX_DEPENDENCIES_WIDTH, max(len(cell) for cell in dependency_cells)),
     )
-    dependency_cells = [
-        _elide_dependencies(cell, dependencies_width) for cell in dependency_cells
-    ]
-    fixed_width = (
-        id_width
-        + 2
-        + state_width
-        + 2
-        + dependencies_width
-        + 2
-    )
+    dependency_cells = [_elide_dependencies(cell, dependencies_width) for cell in dependency_cells]
+    fixed_width = id_width + 2 + state_width + 2 + dependencies_width + 2
     if show_project:
         fixed_width += project_width + 2
     title_width = max(1, terminal_width - fixed_width)
@@ -399,9 +389,7 @@ def _render_task_table(
     )
     for state in ordered_states:
         icon, code = _TASK_STATE_STYLES.get(state, ("·", "37"))
-        summary.append(
-            _ansi("%s %d %s" % (icon, counts[state], state), code, enabled=use_color)
-        )
+        summary.append(_ansi("%s %d %s" % (icon, counts[state], state), code, enabled=use_color))
     lines.extend(("", "  ".join(summary)))
     return "\n".join(lines)
 
@@ -415,7 +403,7 @@ def _short_task_id(task_id: str) -> str:
     """
     if not task_id.startswith(_TASK_ID_PREFIX):
         return task_id
-    hex_part = task_id[len(_TASK_ID_PREFIX):]
+    hex_part = task_id[len(_TASK_ID_PREFIX) :]
     if len(hex_part) <= _SHORT_HEX_LEN:
         return task_id  # already short enough; preserve as-is
     return _TASK_ID_PREFIX + hex_part[:_SHORT_HEX_LEN]
@@ -510,7 +498,11 @@ def _blocking_dependency_lines(
         title = titles.get(dep_id, "")
         lines.append(
             "    %s  %s%s"
-            % (dep_id if _FULL_IDS else _short_task_id(dep_id), state or "unknown state", ("  " + title[:52]) if title else "")
+            % (
+                dep_id if _FULL_IDS else _short_task_id(dep_id),
+                state or "unknown state",
+                ("  " + title[:52]) if title else "",
+            )
         )
     # The next step, computed from THIS task's join policy and the blocker's
     # actual state -- not generic prose.
@@ -538,15 +530,11 @@ def _blocking_dependency_lines(
         )
 
     terminal = [
-        dep_id
-        for dep_id in sorted(unsatisfied)
-        if states.get(dep_id) in {"failed", "cancelled"}
+        dep_id for dep_id in sorted(unsatisfied) if states.get(dep_id) in {"failed", "cancelled"}
     ]
     lines.append("    join: %s" % join)
     if terminal and join != "all_settled":
-        lines.append(
-            "    -> under %s only a COMPLETED dependency releases this task." % join
-        )
+        lines.append("    -> under %s only a COMPLETED dependency releases this task." % join)
         blocker = terminal[0]
         blocker_state = states.get(blocker, "terminal")
         lines.append(
@@ -556,19 +544,13 @@ def _blocking_dependency_lines(
                 blocker_state,
             )
         )
-        lines.append(
-            "       legal move). If it can never succeed, this task cannot run"
-        )
+        lines.append("       legal move). If it can never succeed, this task cannot run")
         lines.append("       either -- cancel this task rather than the blocker.")
     elif terminal:
-        lines.append(
-            "    -> under all_settled a terminal dependency already satisfies the"
-        )
+        lines.append("    -> under all_settled a terminal dependency already satisfies the")
         lines.append("       join; if this task is still blocked, reopen it.")
     else:
-        lines.append(
-            "    -> fix the dependency above; this task dispatches when it completes"
-        )
+        lines.append("    -> fix the dependency above; this task dispatches when it completes")
         lines.append("       (`mac task show <id>` for the blocker)")
     return lines
 
@@ -584,20 +566,18 @@ def _one_liner(value: Any) -> str:
     if not isinstance(d, dict):
         return str(d)
     ident = d.get("id") or d.get("name") or d.get("key") or ""
-    is_task = str(d.get("id", "")).startswith("task_") or (
-        "state" in d and "status" not in d
-    )
+    is_task = str(d.get("id", "")).startswith("task_") or ("state" in d and "status" not in d)
     if is_task:
         raw_id = str(ident)
         display_id = raw_id if _FULL_IDS else _short_task_id(raw_id)
         id_width = 36 if _FULL_IDS else 13
-        return ("%-*s %-12s %-10s %s" % (
+        return "%-*s %-12s %-10s %s" % (
             id_width,
             display_id,
             d.get("state", "?"),
             (d.get("project") or "-"),
             _trunc(d.get("title", "")),
-        ))
+        )
     if "status" in d and ("name" in d or "current_task_id" in d or "capabilities" in d):
         cur = d.get("current_task_id")
         held = bool(d.get("dispatch_hold"))
@@ -605,7 +585,9 @@ def _one_liner(value: Any) -> str:
         activity = (
             "hold: " + _trunc(d.get("dispatch_hold_reason", ""), 60)
             if held
-            else ("▶ " + str(cur)) if cur else "idle"
+            else ("▶ " + str(cur))
+            if cur
+            else "idle"
         )
         return "%-16s %-9s %-8s %-28s %s" % (
             d.get("name") or ident,
@@ -655,8 +637,7 @@ def _task_activity_lines(
             return []
         return [
             "",
-            "(no activity recorded yet — use `mac --json task show` for "
-            "structured evidence/logs)",
+            "(no activity recorded yet — use `mac --json task show` for structured evidence/logs)",
         ]
 
     lines = ["", "Activity:"]
@@ -664,11 +645,7 @@ def _task_activity_lines(
         phase = str(entry.get("phase") or "note")
         actor = str(entry.get("actor") or "")
         at = str(entry.get("at") or "")[:19]
-        label = (
-            phase
-            + ((" / " + actor) if actor else "")
-            + ((" @ " + at) if at else "")
-        )
+        label = phase + ((" / " + actor) if actor else "") + ((" @ " + at) if at else "")
         lines.append("  • %s" % label)
         for line in str(entry.get("summary") or "").splitlines():
             lines.append("      %s" % line)
@@ -699,9 +676,7 @@ def _render_text(value: Any) -> str:
             # "dependencies: 1" -- while the record carried the id and the
             # state all along, and the reader was then advised to run `mac task
             # show`, the page they were already reading. Name the blockers.
-            lines.extend(
-                _blocking_dependency_lines(t, value, live_state=_LIVE_TASK_STATE)
-            )
+            lines.extend(_blocking_dependency_lines(t, value, live_state=_LIVE_TASK_STATE))
             llm_usage = value.get("llm_usage")
             if isinstance(llm_usage, dict):
                 route_count = int(llm_usage.get("observed_route_count") or 0)
@@ -752,8 +727,10 @@ def _render_text(value: Any) -> str:
                             )
             lines.extend(_task_activity_lines(t))
             return "\n".join(lines)
-        if str(value.get("id", "")).startswith("task_") or "state" in value or (
-            "status" in value and ("name" in value or "current_task_id" in value)
+        if (
+            str(value.get("id", "")).startswith("task_")
+            or "state" in value
+            or ("status" in value and ("name" in value or "current_task_id" in value))
         ):
             return _one_liner(value)
         out = []
@@ -780,9 +757,7 @@ def _print(value: Any) -> None:
         to_dict = getattr(obj, "to_dict", None)
         if callable(to_dict):
             return to_dict()
-        raise TypeError(
-            "Object of type %s is not JSON serializable" % type(obj).__name__
-        )
+        raise TypeError("Object of type %s is not JSON serializable" % type(obj).__name__)
 
     if _OUTPUT_JSON:
         print(json.dumps(value, indent=2, sort_keys=True, default=_to_serializable))
@@ -1122,16 +1097,21 @@ def cmd_task_transcript(args: argparse.Namespace) -> None:
     if getattr(args, "text", False):
         for turn in turns:
             record = turn if isinstance(turn, dict) else turn.to_dict()
-            print("=== turn %s  %s  rc=%s ===" % (
-                record.get("sequence"), record.get("coding_agent") or "?",
-                record.get("returncode"),
-            ))
+            print(
+                "=== turn %s  %s  rc=%s ==="
+                % (
+                    record.get("sequence"),
+                    record.get("coding_agent") or "?",
+                    record.get("returncode"),
+                )
+            )
             print("--- prompt ---")
             print(record.get("prompt") or "")
             print("--- response ---")
             print(record.get("response") or "")
         return
     _print(turns)
+
 
 def cmd_task_preflight(args: argparse.Namespace) -> None:
     """Would a task with these requirements ever be claimed?
@@ -1170,9 +1150,7 @@ def cmd_task_reassign(args: argparse.Namespace) -> None:
     human = cp.get_human_by_username(args.human) if args.human else None
     if human is None:
         raise MACError("--human is required: name who these tasks belong to")
-    tasks = cp.list_tasks(
-        args.state, project=args.project, limit=args.limit or 100000
-    )
+    tasks = cp.list_tasks(args.state, project=args.project, limit=args.limit or 100000)
     targets = []
     for task in tasks:
         record = task.to_dict() if hasattr(task, "to_dict") else dict(task)
@@ -1183,12 +1161,14 @@ def cmd_task_reassign(args: argparse.Namespace) -> None:
             continue
         targets.append(record["id"])
     if args.dry_run:
-        _print({
-            "schema": "mac.task_reassign.v1",
-            "human": human.id,
-            "would_reassign": len(targets),
-            "examined": len(tasks),
-        })
+        _print(
+            {
+                "schema": "mac.task_reassign.v1",
+                "human": human.id,
+                "would_reassign": len(targets),
+                "examined": len(tasks),
+            }
+        )
         return
     reassigned, failed = [], []
     for task_id in targets:
@@ -1199,13 +1179,15 @@ def cmd_task_reassign(args: argparse.Namespace) -> None:
             # Reported, never swallowed: a partial backfill that looks total
             # leaves tasks that will quietly never run on a private agent.
             failed.append({"task_id": task_id, "error": str(exc)})
-    _print({
-        "schema": "mac.task_reassign.v1",
-        "human": human.id,
-        "reassigned": len(reassigned),
-        "failed": failed[:20],
-        "failed_count": len(failed),
-    })
+    _print(
+        {
+            "schema": "mac.task_reassign.v1",
+            "human": human.id,
+            "reassigned": len(reassigned),
+            "failed": failed[:20],
+            "failed_count": len(failed),
+        }
+    )
 
 
 def cmd_client_renew(args: argparse.Namespace) -> None:
@@ -1688,20 +1670,20 @@ def cmd_fleet_connect(args: argparse.Namespace) -> None:
     # disk.
     token = (
         resolve_fleet_env("MAC_API_TOKEN", fleet_key)
-        or _env_file_values(mac_paths.deploy_env_file()).get(
-            scoped_var("MAC_API_TOKEN", fleet_key)
-        )
+        or _env_file_values(mac_paths.deploy_env_file()).get(scoped_var("MAC_API_TOKEN", fleet_key))
         or ""
     )
 
     if _OUTPUT_JSON:
-        _print({
-            "fleet": fleet_key,
-            "url": url,
-            "token": token if args.show_token else None,
-            "token_var": scoped_var("MAC_API_TOKEN", fleet_key),
-            "token_present": bool(token),
-        })
+        _print(
+            {
+                "fleet": fleet_key,
+                "url": url,
+                "token": token if args.show_token else None,
+                "token_var": scoped_var("MAC_API_TOKEN", fleet_key),
+                "token_present": bool(token),
+            }
+        )
         return
 
     if not url:
@@ -1737,7 +1719,7 @@ def _env_file_values(path: "Path") -> Dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         key, _, raw = line.partition("=")
         values[key.strip()] = raw.strip().strip("'\"")
     return values
@@ -1770,12 +1752,16 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
         name = str(agent.get("name") or "")
         status = agent_cli_status(agent.get("resources") or {})
         if not status:
-            rows.append({"agent": name, "status": "(no coding_clis report yet — worker predates this feature or has not refreshed)"})
+            rows.append(
+                {
+                    "agent": name,
+                    "status": "(no coding_clis report yet — worker predates this feature or has not refreshed)",
+                }
+            )
             continue
         summary = {}
         report_schema = str(
-            ((agent.get("resources") or {}).get("coding_clis") or {}).get("schema")
-            or ""
+            ((agent.get("resources") or {}).get("coding_clis") or {}).get("schema") or ""
         )
         is_v2 = report_schema == "mac.coding_clis.v2"
         for cli in KNOWN_CLIS:
@@ -1788,7 +1774,7 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
             elif is_v2 and info.get("configured"):
                 # On PATH + credentialed but no same-environment executable
                 # proof: the sandbox cannot (yet) launch it, so it is never "ok".
-                failure = ((info.get("verification") or {}).get("failure_class") or "unverified")
+                failure = (info.get("verification") or {}).get("failure_class") or "unverified"
                 summary[cli] = "ROUTE UNAVAILABLE (%s)" % failure
             elif not is_v2 and info.get("available"):
                 # Legacy v1 report: "available" was inventory-only. v2 workers
@@ -1911,7 +1897,11 @@ def cmd_fleet_creds_sync(args: argparse.Namespace) -> None:
         # but unauthenticated. Credentials are never pushed where not needed.
         # Hub resolution: honor an explicit authority (--db/--hub-url/global
         # --fleet); otherwise reach the hub of the fleet being synced.
-        if not (getattr(args, "db", None) or getattr(args, "hub_url", None) or getattr(args, "fleet", None)):
+        if not (
+            getattr(args, "db", None)
+            or getattr(args, "hub_url", None)
+            or getattr(args, "fleet", None)
+        ):
             args.fleet = args.creds_fleet
         cp = _plane(args)
         agents = [a.to_dict() if hasattr(a, "to_dict") else dict(a) for a in cp.list_agents()]
@@ -1947,7 +1937,11 @@ def cmd_fleet_creds_sync(args: argparse.Namespace) -> None:
                 args.creds_fleet, agent, manifest, fleets_config=args.fleets_config
             )
             results[agent] = {
-                cli: ("ok" if (verdict.get(cli) or {}).get("available") else str((verdict.get(cli) or {}).get("detail") or "unverified"))
+                cli: (
+                    "ok"
+                    if (verdict.get(cli) or {}).get("available")
+                    else str((verdict.get(cli) or {}).get("detail") or "unverified")
+                )
                 for cli in sorted(portable)
             }
         except Exception as exc:  # noqa: BLE001 - report per-agent, keep going
@@ -2054,9 +2048,7 @@ def cmd_human_interface_port(args: argparse.Namespace) -> None:
             args.target,
             home=Path(args.home) if getattr(args, "home", None) else None,
             dry_run=not args.apply,
-            state_file=(
-                Path(args.state_file) if getattr(args, "state_file", None) else None
-            ),
+            state_file=(Path(args.state_file) if getattr(args, "state_file", None) else None),
         )
     )
 
@@ -2089,9 +2081,7 @@ def cmd_human_interface_check(args: argparse.Namespace) -> None:
             assert_switch_ported(
                 args.target,
                 home=Path(args.home) if getattr(args, "home", None) else None,
-                state_file=(
-                    Path(args.state_file) if getattr(args, "state_file", None) else None
-                ),
+                state_file=(Path(args.state_file) if getattr(args, "state_file", None) else None),
                 max_age_seconds=args.max_age_seconds,
             )
         )
@@ -2100,9 +2090,7 @@ def cmd_human_interface_check(args: argparse.Namespace) -> None:
         switch_readiness(
             args.target,
             home=Path(args.home) if getattr(args, "home", None) else None,
-            state_file=(
-                Path(args.state_file) if getattr(args, "state_file", None) else None
-            ),
+            state_file=(Path(args.state_file) if getattr(args, "state_file", None) else None),
             max_age_seconds=args.max_age_seconds,
         )
     )
@@ -2419,9 +2407,7 @@ def cmd_task_create(args: argparse.Namespace) -> None:
     create_kwargs = {}
     if kwargs_human:
         create_kwargs["created_by_human"] = kwargs_human
-    idempotency_key = str(
-        getattr(args, "idempotency_key", "") or ""
-    ).strip()
+    idempotency_key = str(getattr(args, "idempotency_key", "") or "").strip()
     if idempotency_key:
         create_kwargs["idempotency_key"] = idempotency_key
     created = cp.create_task(
@@ -2594,12 +2580,7 @@ def cmd_database_migrate_sqlite_postgres(args: argparse.Namespace) -> None:
         )
     dsn = str(args.postgres_url or "").strip()
     if args.postgres_url_file:
-        dsn = (
-            Path(args.postgres_url_file)
-            .expanduser()
-            .read_text(encoding="utf-8")
-            .strip()
-        )
+        dsn = Path(args.postgres_url_file).expanduser().read_text(encoding="utf-8").strip()
     if not dsn:
         dsn = (
             os.environ.get("MAC_MIGRATION_DATABASE_URL", "").strip()
@@ -2708,10 +2689,7 @@ def _render_why_unclaimed(payload: Mapping[str, Any]) -> str:
     task = _obj(payload.get("task"))
     lines: List[str] = []
     task_id = str(task.get("id") or payload.get("task_id") or "?")
-    lines.append(
-        "%s  state=%s  priority=%s"
-        % (task_id, task.get("state"), task.get("priority"))
-    )
+    lines.append("%s  state=%s  priority=%s" % (task_id, task.get("state"), task.get("priority")))
     title = str(task.get("title") or "").strip()
     if title:
         lines.append("  %s" % title[:96])
@@ -2725,8 +2703,7 @@ def _render_why_unclaimed(payload: Mapping[str, Any]) -> str:
         return str(reason)
 
     task_reasons = [
-        _code(r)
-        for r in (payload.get("task_reasons") or payload.get("unclaimed_reasons") or [])
+        _code(r) for r in (payload.get("task_reasons") or payload.get("unclaimed_reasons") or [])
     ]
     if task_reasons:
         lines.append("")
@@ -2754,18 +2731,14 @@ def _render_why_unclaimed(payload: Mapping[str, Any]) -> str:
         names = ", ".join(str(c.get("agent_name") or c.get("agent_id")) for c in eligible)
         lines.append("%d of %d agents ELIGIBLE: %s" % (len(eligible), len(candidates), names))
         if not task_reasons:
-            lines.append(
-                "  No gate is closed. If this task is still unclaimed the fault is in"
-            )
+            lines.append("  No gate is closed. If this task is still unclaimed the fault is in")
             lines.append("  dispatch itself, not in the task or the agents.")
     else:
         lines.append("NO agent can take this task (%d evaluated):" % len(candidates))
         for codes, names in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
             hints = [_WHY_UNCLAIMED_HINTS.get(c.strip()) for c in codes.split(",")]
             hint = next((h for h in hints if h), None)
-            lines.append(
-                "  %-44s %s" % (codes, ", ".join(sorted(names)))
-            )
+            lines.append("  %-44s %s" % (codes, ", ".join(sorted(names))))
             if hint:
                 lines.append("      %s" % hint)
 
@@ -2863,9 +2836,7 @@ def cmd_task_ask(args: argparse.Namespace) -> None:
     """
     cp = _plane(args)
     questions = [{"question": q} for q in (args.question or []) if str(q or "").strip()]
-    result = cp.request_task_input(
-        args.task_id, questions, args.actor, why=args.why or ""
-    )
+    result = cp.request_task_input(args.task_id, questions, args.actor, why=args.why or "")
     _print(result)
 
 
@@ -2897,9 +2868,7 @@ def cmd_task_needs_input(args: argparse.Namespace) -> None:
                 "project": record.get("project"),
                 "asked_by": payload.get("asked_by"),
                 "asked_at": payload.get("asked_at"),
-                "questions": [
-                    q.get("question") for q in (payload.get("questions") or [])
-                ],
+                "questions": [q.get("question") for q in (payload.get("questions") or [])],
             }
         )
     _print(rows)
@@ -2920,7 +2889,10 @@ def _needs_input_buffer(record: Dict[str, Any]) -> str:
     ]
     questions = payload.get("questions") or []
     if questions:
-        lines.append("# --- Asked by %s at %s ---" % (payload.get("asked_by") or "?", payload.get("asked_at") or "?"))
+        lines.append(
+            "# --- Asked by %s at %s ---"
+            % (payload.get("asked_by") or "?", payload.get("asked_at") or "?")
+        )
         for index, question in enumerate(questions, start=1):
             lines.append("# %d. %s" % (index, question.get("question") or ""))
             why = str(question.get("why") or "").strip()
@@ -2998,13 +2970,9 @@ def cmd_task_edit(args: argparse.Namespace) -> None:
     before = _parse_needs_input_buffer(original)
     answer = fields["answer"]
     if not answer:
-        raise ValidationError(
-            "no answer supplied under '## Answer'; nothing was submitted"
-        )
+        raise ValidationError("no answer supplied under '## Answer'; nothing was submitted")
     if fields["description"] != before["description"]:
-        cp.update_task(
-            record["id"], description=fields["description"], actor=args.actor
-        )
+        cp.update_task(record["id"], description=fields["description"], actor=args.actor)
     _print(
         cp.answer_task_input(
             record["id"],
@@ -3044,9 +3012,7 @@ def _cancel_one_task(cp: Any, task_id: str, args: argparse.Namespace, reason: st
     detail = {
         "reason": reason,
         "disposition": args.disposition or "preserve",
-        "cleanup_grace_seconds": int(
-            max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60
-        ),
+        "cleanup_grace_seconds": int(max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60),
     }
     if getattr(args, "replacement_task", None):
         detail["replacement_task_id"] = args.replacement_task
@@ -3055,10 +3021,7 @@ def _cancel_one_task(cp: Any, task_id: str, args: argparse.Namespace, reason: st
     if current == TaskState.CANCELLED.value:
         return cp.get_task(task_id)
     if current == TaskState.COMPLETED.value:
-        raise MACError(
-            "task %s is completed; cancelling would discard a finished result"
-            % task_id
-        )
+        raise MACError("task %s is completed; cancelling would discard a finished result" % task_id)
     if current == TaskState.FAILED.value:
         cp.reopen_task(task_id, args.actor, "reopened only to cancel: %s" % reason)
     return cp.close_task(task_id, TaskState.CANCELLED.value, args.actor, detail)
@@ -3113,9 +3076,7 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     detail = {
         "reason": reason,
         "disposition": args.disposition or "preserve",
-        "cleanup_grace_seconds": int(
-            max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60
-        ),
+        "cleanup_grace_seconds": int(max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60),
     }
     if args.replacement_task:
         detail["replacement_task_id"] = args.replacement_task
@@ -3306,20 +3267,14 @@ def _repository_ref_report(
 def cmd_repo_refs_audit(args: argparse.Namespace) -> None:
     """Audit repository refs and report their status."""
     _cp, audits, warning, timed_out = _repository_ref_audit(args)
-    _print(
-        _repository_ref_report(
-            audits, pr_warning=warning, timed_out_task_ids=timed_out
-        )
-    )
+    _print(_repository_ref_report(audits, pr_warning=warning, timed_out_task_ids=timed_out))
 
 
 def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
     """Prune stale repository refs."""
     cp, audits, warning, timed_out = _repository_ref_audit(args)
     if args.execute and warning:
-        raise RepositoryHygieneError(
-            "%s; refusing executable cleanup" % warning
-        )
+        raise RepositoryHygieneError("%s; refusing executable cleanup" % warning)
 
     def record(item: RepositoryRefAudit, action: str, error: str) -> None:
         metadata = cleanup_evidence_metadata(item, action, error=error)
@@ -3328,8 +3283,7 @@ def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
             "artifact",
             "urn:mac:repository-ref-cleanup:%s:%s:%s:%s"
             % (item.task_id, item.lease_id, item.sha, action),
-            "managed repository ref cleanup %s for %s at %s"
-            % (action, item.branch, item.sha),
+            "managed repository ref cleanup %s for %s at %s" % (action, item.branch, item.sha),
             args.actor,
             metadata=metadata,
             _trusted_internal=True,
@@ -3391,9 +3345,7 @@ def _selector_options(args: argparse.Namespace) -> Dict[str, Any]:
             options[name] = json.loads(raw)
     unset = getattr(args, "metadata_unset", None)
     if unset:
-        options["metadata_unset"] = [
-            path.strip() for path in unset.split(",") if path.strip()
-        ]
+        options["metadata_unset"] = [path.strip() for path in unset.split(",") if path.strip()]
     return options
 
 
@@ -3458,7 +3410,9 @@ def cmd_task_search(args: argparse.Namespace) -> None:
     """Search tasks matching a query."""
     cp = _plane(args)
     project = _effective_read_project(args)
-    _print([t.to_dict() for t in cp.search_tasks(args.query, project=project, limit=int(args.limit))])
+    _print(
+        [t.to_dict() for t in cp.search_tasks(args.query, project=project, limit=int(args.limit))]
+    )
 
 
 def cmd_diagnostics(args: argparse.Namespace) -> None:
@@ -3537,8 +3491,7 @@ def cmd_task_audit(args: argparse.Namespace) -> None:
     unresolved = [
         row
         for row in report.get("tasks") or []
-        if ((row.get("assessment") or {}).get("verdict"))
-        in {"contradiction", "needs_review"}
+        if ((row.get("assessment") or {}).get("verdict")) in {"contradiction", "needs_review"}
     ]
     if unresolved:
         print("\nUnresolved:")
@@ -3636,13 +3589,9 @@ def _project_register_git(
             timeout=10,
         )
     except subprocess.TimeoutExpired as exc:
-        raise MACError(
-            "timed out while inspecting Git checkout %s" % checkout
-        ) from exc
+        raise MACError("timed out while inspecting Git checkout %s" % checkout) from exc
     except OSError as exc:
-        raise MACError(
-            "failed to inspect Git checkout %s: %s" % (checkout, exc)
-        ) from exc
+        raise MACError("failed to inspect Git checkout %s: %s" % (checkout, exc)) from exc
     value = result.stdout.strip()
     if result.returncode == 0 and value:
         return value
@@ -3651,8 +3600,7 @@ def _project_register_git(
     detail = result.stderr.strip()
     suffix = ": %s" % detail if detail else ""
     raise MACError(
-        "cannot inspect Git checkout %s with `git %s`%s"
-        % (checkout, " ".join(git_args), suffix)
+        "cannot inspect Git checkout %s with `git %s`%s" % (checkout, " ".join(git_args), suffix)
     )
 
 
@@ -3707,9 +3655,7 @@ def _local_project_registration(
                 or ""
             )
     if not branch:
-        raise MACError(
-            "cannot infer a branch from checkout %s; pass --branch BRANCH" % root
-        )
+        raise MACError("cannot infer a branch from checkout %s; pass --branch BRANCH" % root)
     return repository_url, branch, root
 
 
@@ -3736,8 +3682,7 @@ def cmd_project_register(args: argparse.Namespace) -> None:
     )
     if checkout is not None:
         print(
-            "mac: registering checkout %s (branch %s)"
-            % (checkout, default_branch),
+            "mac: registering checkout %s (branch %s)" % (checkout, default_branch),
             file=sys.stderr,
         )
     capabilities = list(_csv(args.required_capabilities)) or None
@@ -3773,11 +3718,7 @@ def cmd_project_update(args: argparse.Namespace) -> None:
             args.project,
             name=args.name,
             description=args.description,
-            metadata=(
-                _json_arg(args.metadata, {})
-                if args.metadata is not None
-                else None
-            ),
+            metadata=(_json_arg(args.metadata, {}) if args.metadata is not None else None),
             status=args.status,
             repository_registration=args.repository_registration,
             default_branch=args.default_branch,
@@ -3869,11 +3810,7 @@ def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
     bom = {}
     if args.manifest:
         bom = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    _print(
-        cp.roll_out_sandbox_image(
-            args.image, bom=bom, actor=args.actor, project=args.project
-        )
-    )
+    _print(cp.roll_out_sandbox_image(args.image, bom=bom, actor=args.actor, project=args.project))
 
 
 def cmd_task_stop(args: argparse.Namespace) -> None:
@@ -3984,13 +3921,16 @@ def cmd_machine_list(args: argparse.Namespace) -> None:
         trusted_flag = "trusted" if d.get("trusted") else "untrusted"
         last_seen = str(d.get("last_seen_at") or "-")[:19]
         hw = _machine_hw_summary(d)
-        print("%-36s  %-36s  %-9s  %-19s  %s" % (
-            d.get("id", ""),
-            d.get("hostname", ""),
-            trusted_flag,
-            last_seen,
-            hw,
-        ))
+        print(
+            "%-36s  %-36s  %-9s  %-19s  %s"
+            % (
+                d.get("id", ""),
+                d.get("hostname", ""),
+                trusted_flag,
+                last_seen,
+                hw,
+            )
+        )
 
 
 def cmd_machine_show(args: argparse.Namespace) -> None:
@@ -4267,18 +4207,19 @@ def cmd_task_wait(args: argparse.Namespace) -> None:
         # people back to polling by hand.
         if time.monotonic() - last_rescan >= args.rescan_interval:
             last_rescan = time.monotonic()
-            for update in wait.rescan(
-                cp.list_tasks(project=project), project=project
-            ):
+            for update in wait.rescan(cp.list_tasks(project=project), project=project):
                 emit(update)
 
     emit(wait.summary())
 
+
 def _project_egress_block(cp: Any, project: str) -> Dict[str, Any]:
     """The project's operator-declared egress contract, as a plain dict."""
-    row = cp.store.query_one(
-        "SELECT metadata FROM projects WHERE name = ?", (project,)
-    ) if hasattr(cp, "store") else None
+    row = (
+        cp.store.query_one("SELECT metadata FROM projects WHERE name = ?", (project,))
+        if hasattr(cp, "store")
+        else None
+    )
     if row is None:
         return {}
     import json as _json
@@ -4291,9 +4232,7 @@ def _project_egress_block(cp: Any, project: str) -> Dict[str, Any]:
     return dict(block) if isinstance(block, dict) else {}
 
 
-def _write_project_egress(
-    cp: Any, project: str, hosts: List[str], reason: str
-) -> Dict[str, Any]:
+def _write_project_egress(cp: Any, project: str, hosts: List[str], reason: str) -> Dict[str, Any]:
     """Persist the host list at projects.metadata.egress_contract.
 
     PROJECT level, not task level, and that is the point. A repository has one
@@ -4360,8 +4299,7 @@ def cmd_project_egress_grant(args: argparse.Namespace) -> None:
         raise SystemExit(
             "%r is not a plain DNS hostname. Policy YAML is assembled by "
             "concatenation, so globs, ports, schemes and anything with YAML "
-            "significance are refused here rather than in the renderer."
-            % args.host
+            "significance are refused here rather than in the renderer." % args.host
         )
     cp = _plane(args)
     hosts = list(_project_egress_block(cp, args.project).get("hosts") or [])
@@ -4374,9 +4312,7 @@ def cmd_project_egress_revoke(args: argparse.Namespace) -> None:
     """Withdraw one host from a project's declared egress."""
     cp = _plane(args)
     hosts = [
-        h
-        for h in (_project_egress_block(cp, args.project).get("hosts") or [])
-        if h != args.host
+        h for h in (_project_egress_block(cp, args.project).get("hosts") or []) if h != args.host
     ]
     _print(_write_project_egress(cp, args.project, hosts, ""))
 
@@ -4409,8 +4345,7 @@ def cmd_task_egress_grant(args: argparse.Namespace) -> None:
         # where the operator would see a host they granted simply not work.
         raise MACError(
             "%r is not a plain DNS hostname. Schemes, ports, paths, globs and "
-            "IP literals are refused: egress policy is keyed on the DNS name."
-            % args.host
+            "IP literals are refused: egress policy is keyed on the DNS name." % args.host
         )
     block = _egress_contract_block(cp.get_task(args.task_id))
     hosts = list(block.get("hosts") or [])
@@ -4430,9 +4365,7 @@ def cmd_task_egress_revoke(args: argparse.Namespace) -> None:
     block = _egress_contract_block(cp.get_task(args.task_id))
     hosts = [h for h in (block.get("hosts") or []) if h != normalized]
     if len(hosts) == len(block.get("hosts") or []):
-        raise MACError(
-            "%s is not in the task's declared egress contract" % normalized
-        )
+        raise MACError("%s is not in the task's declared egress contract" % normalized)
     _print(_write_egress_hosts(cp, args.task_id, hosts, args, block.get("reason") or ""))
 
 
@@ -4489,9 +4422,7 @@ def cmd_task_update(args: argparse.Namespace) -> None:
             "nothing to update: supply at least one of --title, --description, "
             "--project, --priority, --max-attempts, --capabilities, --metadata"
         )
-    _print(
-        _plane(args).update_task(args.task_id, actor=args.actor, **supplied)
-    )
+    _print(_plane(args).update_task(args.task_id, actor=args.actor, **supplied))
 
 
 def cmd_agent_show(args: argparse.Namespace) -> None:
@@ -4516,7 +4447,9 @@ def cmd_agent_show(args: argparse.Namespace) -> None:
 
 def cmd_agent_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
-    rows = [agent.to_dict() if hasattr(agent, "to_dict") else dict(agent) for agent in cp.list_agents()]
+    rows = [
+        agent.to_dict() if hasattr(agent, "to_dict") else dict(agent) for agent in cp.list_agents()
+    ]
     if getattr(args, "inbox", False):
         # Opt-in: one hub round-trip per agent. `show` carries it for free
         # because it is already reading exactly one agent.
@@ -4574,9 +4507,7 @@ def cmd_agent_attestation_recover(args: argparse.Namespace) -> None:
 
 
 def cmd_agent_report_executor_approve(args: argparse.Namespace) -> None:
-    attestation = json.loads(
-        Path(args.attestation_file).expanduser().read_text(encoding="utf-8")
-    )
+    attestation = json.loads(Path(args.attestation_file).expanduser().read_text(encoding="utf-8"))
     if not isinstance(attestation, dict):
         raise MACError("report executor attestation must be a JSON object")
     _print(
@@ -4651,8 +4582,11 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     registry = yaml.safe_load(reg_path.read_text(encoding="utf-8")) or {}
     fleets = registry.get("fleets") or {}
     fleet = args.fleet or next(
-        (f for f, d in fleets.items()
-         if any((a or {}).get("name") == args.name for a in (d.get("agents") or []))),
+        (
+            f
+            for f, d in fleets.items()
+            if any((a or {}).get("name") == args.name for a in (d.get("agents") or []))
+        ),
         None,
     )
     if not fleet or fleet not in fleets:
@@ -4681,9 +4615,7 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
     try:
         src_route = resolve_fleet_ssh(registry, fleet, args.name)
         parsed_src = parse_ssh_target(str(src), port=src_route.port)
-        src_route = replace(
-            src_route, target=parsed_src.user_host, port=parsed_src.port
-        )
+        src_route = replace(src_route, target=parsed_src.user_host, port=parsed_src.port)
         dst_target = canonicalize_mesh_ssh_target(
             args.to_target,
             provider=network_provider,
@@ -4700,9 +4632,7 @@ def cmd_agent_migrate(args: argparse.Namespace) -> None:
                 else src_route.identity_file
             ),
             proxy_jump=(
-                args.to_proxy_jump
-                if args.to_proxy_jump is not None
-                else src_route.proxy_jump
+                args.to_proxy_jump if args.to_proxy_jump is not None else src_route.proxy_jump
             ),
             known_hosts_file=(
                 str(Path(args.to_known_hosts_file).expanduser())
@@ -4761,14 +4691,26 @@ def cmd_agent_hardware(args: argparse.Namespace) -> None:
         serving = bool(isinstance(resources, dict) and resources.get("media_routes"))
         capable = is_gen_capable(hardware) if isinstance(hardware, dict) else False
         # Routable-today (image) catalog models this agent's hardware can run.
-        runnable = [m.id for m in models_for_hardware(hardware) if m.routable] if isinstance(hardware, dict) else []
-        rows.append({
-            "agent": data.get("name") or data.get("id"),
-            "accelerator": (hardware or {}).get("accelerator", "unknown") if isinstance(hardware, dict) else "unreported",
-            "gen": ("serving" if serving else "capable") if capable else ("serving(cpu)" if serving else "no"),
-            "runnable_models": runnable,
-            "hardware": summarize(hardware) if isinstance(hardware, dict) else "(no hardware reported — agent predates self-reporting; redeploy to populate)",
-        })
+        runnable = (
+            [m.id for m in models_for_hardware(hardware) if m.routable]
+            if isinstance(hardware, dict)
+            else []
+        )
+        rows.append(
+            {
+                "agent": data.get("name") or data.get("id"),
+                "accelerator": (hardware or {}).get("accelerator", "unknown")
+                if isinstance(hardware, dict)
+                else "unreported",
+                "gen": ("serving" if serving else "capable")
+                if capable
+                else ("serving(cpu)" if serving else "no"),
+                "runnable_models": runnable,
+                "hardware": summarize(hardware)
+                if isinstance(hardware, dict)
+                else "(no hardware reported — agent predates self-reporting; redeploy to populate)",
+            }
+        )
     _print(rows)
 
 
@@ -4842,8 +4784,7 @@ def _resolve_agent_id(cp: Any, agent: str) -> str:
         return candidates[0]
     if len(candidates) > 1:
         raise SystemExit(
-            "agent name %r is ambiguous (%s); pass the agent id"
-            % (agent, ", ".join(candidates))
+            "agent name %r is ambiguous (%s); pass the agent id" % (agent, ", ".join(candidates))
         )
     return agent
 
@@ -4882,17 +4823,11 @@ def cmd_fleet_target_set(args: argparse.Namespace) -> None:
     openclaw = None
     if args.openclaw_version or args.openclaw_revision:
         if not (args.openclaw_version and args.openclaw_revision):
-            raise MACError(
-                "--openclaw-version and --openclaw-revision must be set together"
-            )
-        openclaw = ft.OpenClawTrack(
-            version=args.openclaw_version, revision=args.openclaw_revision
-        )
+            raise MACError("--openclaw-version and --openclaw-revision must be set together")
+        openclaw = ft.OpenClawTrack(version=args.openclaw_version, revision=args.openclaw_revision)
     manifest.set_role(
         args.role,
-        ft.RoleTarget(
-            source=ft.normalize_commit(args.source), openclaw=openclaw
-        ),
+        ft.RoleTarget(source=ft.normalize_commit(args.source), openclaw=openclaw),
     )
     ft.save_manifest(manifest, path)
     _print({"role": args.role, "target": manifest.get_role(args.role).to_dict()})
@@ -4924,7 +4859,6 @@ def cmd_fleet_target_list(args: argparse.Namespace) -> None:
             for name in sorted(manifest.roles)
         ]
     )
-
 
 
 def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
@@ -4980,16 +4914,15 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
             % (args.to_fleet, reg_path)
         )
     if not ((args.hub_url or "").strip() or fleet_hub_url(registry, to_fleet)):
-        raise SystemExit(
-            "target fleet %r has no hub_url (pass --hub-url to override)" % to_fleet
-        )
+        raise SystemExit("target fleet %r has no hub_url (pass --hub-url to override)" % to_fleet)
     if args.from_fleet not in (None, from_fleet) or args.to_fleet != to_fleet:
         print("resolved fleets: %s -> %s" % (from_fleet, to_fleet))
 
     if not args.execute:
         # Dry-run: print the plan and the proposed registry diff.
-        steps = plan_fleet_move(agent_name, from_fleet, to_fleet, registry,
-                                reconcile_db=not args.no_db_reconcile)
+        steps = plan_fleet_move(
+            agent_name, from_fleet, to_fleet, registry, reconcile_db=not args.no_db_reconcile
+        )
         print(render_move_plan(agent_name, from_fleet, to_fleet, steps))
         return
 
@@ -5009,10 +4942,14 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
         if result.get("registry_written"):
             # The move landed in fleets.yaml but the live redeploy failed —
             # surface both so the operator can re-run or revert from the backup.
-            print("registry moved (%s -> %s); backup: %s"
-                  % (from_fleet, to_fleet, result.get("backup")))
-            print("redeploy FAILED (rc=%s); re-run: %s"
-                  % (result.get("redeploy_returncode"), result.get("redeploy_cmd")))
+            print(
+                "registry moved (%s -> %s); backup: %s"
+                % (from_fleet, to_fleet, result.get("backup"))
+            )
+            print(
+                "redeploy FAILED (rc=%s); re-run: %s"
+                % (result.get("redeploy_returncode"), result.get("redeploy_cmd"))
+            )
         raise SystemExit("fleet move-agent failed: %s" % result.get("error"))
 
     if result.get("idempotent"):
@@ -5025,8 +4962,7 @@ def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
     if result.get("registry_written"):
         print("registry written to %s" % result["registry_written"])
     if result.get("redeployed"):
-        print("redeployed at hub %s (--hub %s)"
-              % (result.get("target_hub_url"), to_fleet))
+        print("redeployed at hub %s (--hub %s)" % (result.get("target_hub_url"), to_fleet))
     if result.get("db_reconcile"):
         print("DB: %s" % result["db_reconcile"])
     for step in result.get("next_steps") or []:
@@ -5102,11 +5038,7 @@ def cmd_directive_versions(args: argparse.Namespace) -> None:
 
 
 def cmd_directive_check(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).check_directive(
-            args.directive, version=args.version, actor=args.actor
-        )
-    )
+    _print(_plane(args).check_directive(args.directive, version=args.version, actor=args.actor))
 
 
 def cmd_directive_impact(args: argparse.Namespace) -> None:
@@ -5140,11 +5072,7 @@ def cmd_directive_deactivate(args: argparse.Namespace) -> None:
     reason = _read_text_arg(args.reason, args.reason_file, label="reason")
     if not reason.strip():
         raise SystemExit("directive deactivate requires --reason or --reason-file")
-    _print(
-        _plane(args).deactivate_directive(
-            args.directive, reason=reason, actor=args.actor
-        )
-    )
+    _print(_plane(args).deactivate_directive(args.directive, reason=reason, actor=args.actor))
 
 
 def cmd_directive_effective(args: argparse.Namespace) -> None:
@@ -5211,11 +5139,7 @@ def cmd_directive_waiver_revoke(args: argparse.Namespace) -> None:
     reason = _read_text_arg(args.reason, args.reason_file, label="waiver revoke reason")
     if not reason.strip():
         raise SystemExit("directive waiver revoke requires --reason or --reason-file")
-    _print(
-        _plane(args).revoke_directive_waiver(
-            args.waiver, actor=args.actor, reason=reason
-        )
-    )
+    _print(_plane(args).revoke_directive_waiver(args.waiver, actor=args.actor, reason=reason))
 
 
 def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
@@ -5252,7 +5176,9 @@ def cmd_openshell_policy_create(args: argparse.Namespace) -> None:
             args.name,
             policy_text,
             description=args.description or "",
-            metadata=_read_json_arg(args.metadata, args.metadata_file, label="metadata", default={}),
+            metadata=_read_json_arg(
+                args.metadata, args.metadata_file, label="metadata", default={}
+            ),
             created_by=args.created_by,
             policy_id=args.policy_id,
         )
@@ -5263,9 +5189,7 @@ def cmd_openshell_policy_list(args: argparse.Namespace) -> None:
     _print(
         [
             policy.to_dict() if hasattr(policy, "to_dict") else policy
-            for policy in _plane(args).list_openshell_policies(
-                include_deleted=args.include_deleted
-            )
+            for policy in _plane(args).list_openshell_policies(include_deleted=args.include_deleted)
         ]
     )
 
@@ -5306,7 +5230,9 @@ def cmd_openshell_policy_delete(args: argparse.Namespace) -> None:
 
 
 def cmd_openshell_policy_render(args: argparse.Namespace) -> None:
-    shared = _read_json_arg(args.shared_services, args.shared_services_file, label="shared_services", default={})
+    shared = _read_json_arg(
+        args.shared_services, args.shared_services_file, label="shared_services", default={}
+    )
     rendered = _plane(args).render_openshell_policy(
         args.policy,
         agent_user=args.agent_user,
@@ -5383,7 +5309,9 @@ def cmd_openshell_reconcile(args: argparse.Namespace) -> None:
     selected_agents = list(args.agent or [])
     explicit_agents = bool(selected_agents)
     if not selected_agents:
-        cfg_path = Path(args.fleet_config).expanduser() if args.fleet_config else default_fleets_path()
+        cfg_path = (
+            Path(args.fleet_config).expanduser() if args.fleet_config else default_fleets_path()
+        )
         cfg = load_fleet_config(cfg_path)
         selected_agents = fleet_agent_names(cfg, args.target_fleet or args.fleet)
     if args.apply and not args.no_report_status and args.status == "active" and not args.validated:
@@ -5448,10 +5376,7 @@ def _soul_snapshot_setup(args):
     from mac.fleet_ssh import FleetSshError, resolve_fleet_ssh
 
     try:
-        routes = {
-            target: resolve_fleet_ssh(cfg, fleet_name, name)
-            for name, target in agents
-        }
+        routes = {target: resolve_fleet_ssh(cfg, fleet_name, name) for name, target in agents}
     except FleetSshError as exc:
         raise SystemExit(str(exc)) from exc
     return fleet_name, agents, _ss.SSHTransport(routes=routes)
@@ -5467,7 +5392,11 @@ def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
     dest = Path(args.into).expanduser()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     manifest = _ss.pull_snapshot(
-        agents, dest, transport, fleet=fleet_name, pulled_at=stamp,
+        agents,
+        dest,
+        transport,
+        fleet=fleet_name,
+        pulled_at=stamp,
         memory_checksum=getattr(args, "memory_checksum", False),
     )
     # Phase 3: also capture hub-stored persona + mood (resolve agent ids by name).
@@ -5484,21 +5413,28 @@ def cmd_fleet_soul_pull(args: argparse.Namespace) -> None:
         ids = [(n, by_name.get(n) or "agent_%s" % n) for n, _t in agents]
         hub_section = _ss.capture_hub_state(hub, ids, dest, pulled_at=stamp)
         manifest["hub"] = hub_section
-    (dest / "manifest.yaml").write_text(_yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    (dest / "manifest.yaml").write_text(
+        _yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
     summary = {
-        "fleet": fleet_name, "into": str(dest), "pulled_at": stamp,
+        "fleet": fleet_name,
+        "into": str(dest),
+        "pulled_at": stamp,
         "agents": {
             n: {
                 "soul": {f: m.get("present") for f, m in a["files"].items()},
-                "memory_refs": {f: m.get("bytes") for f, m in a.get("memory", {}).items()
-                                if m.get("present")},
+                "memory_refs": {
+                    f: m.get("bytes") for f, m in a.get("memory", {}).items() if m.get("present")
+                },
             }
             for n, a in manifest["agents"].items()
         },
     }
     if "hub" in manifest:
-        summary["hub"] = {n: {"persona": s["persona"].get("present"), "mood": s["mood"].get("present")}
-                          for n, s in manifest["hub"]["agents"].items()}
+        summary["hub"] = {
+            n: {"persona": s["persona"].get("present"), "mood": s["mood"].get("present")}
+            for n, s in manifest["hub"]["agents"].items()
+        }
     _print(summary)
 
 
@@ -5512,9 +5448,7 @@ def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
     manifest = _yaml.safe_load((src / "manifest.yaml").read_text(encoding="utf-8"))
     # Resolve current targets from the authoritative registry instead of using
     # snapshot-era hostnames, then route every SSH call through FleetSshSpec.
-    cfg = _yaml.safe_load(
-        Path(args.fleets_config).expanduser().read_text(encoding="utf-8")
-    ) or {}
+    cfg = _yaml.safe_load(Path(args.fleets_config).expanduser().read_text(encoding="utf-8")) or {}
     fleet_name = args.fleet or manifest.get("fleet")
     if not fleet_name:
         raise SystemExit("snapshot has no fleet; pass --fleet")
@@ -5536,19 +5470,29 @@ def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
     transport = _ss.SSHTransport(routes=routes)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     res = _ss.plan_and_push(
-        src, manifest, transport, stamp=stamp,
-        dry_run=args.dry_run, only_agents=(args.agent or None),
+        src,
+        manifest,
+        transport,
+        stamp=stamp,
+        dry_run=args.dry_run,
+        only_agents=(args.agent or None),
     )
-    _print({
-        "dry_run": res.dry_run,
-        "changes": [
-            {"agent": c.agent, "file": c.relpath, "status": c.status,
-             "applied": c.applied, "backup": c.backup_path}
-            for c in res.changes
-        ],
-        "to_apply": [f"{c.agent}/{c.relpath}" for c in res.to_apply],
-    })
-
+    _print(
+        {
+            "dry_run": res.dry_run,
+            "changes": [
+                {
+                    "agent": c.agent,
+                    "file": c.relpath,
+                    "status": c.status,
+                    "applied": c.applied,
+                    "backup": c.backup_path,
+                }
+                for c in res.changes
+            ],
+            "to_apply": [f"{c.agent}/{c.relpath}" for c in res.to_apply],
+        }
+    )
 
 
 def cmd_fleet_soul_audit(args: argparse.Namespace) -> None:
@@ -5584,9 +5528,18 @@ def cmd_fleet_memory_export(args: argparse.Namespace) -> None:
         records = _mv.search_records(records, args.search)
     if args.into:
         dest = Path(args.into).expanduser()
-        dest.write_text("\n".join(_json.dumps(r, default=str) for r in records) + "\n", encoding="utf-8")
-        _print({"qdrant": args.qdrant_url, "collections": collections, "records": len(records),
-                "into": str(dest), "search": args.search})
+        dest.write_text(
+            "\n".join(_json.dumps(r, default=str) for r in records) + "\n", encoding="utf-8"
+        )
+        _print(
+            {
+                "qdrant": args.qdrant_url,
+                "collections": collections,
+                "records": len(records),
+                "into": str(dest),
+                "search": args.search,
+            }
+        )
     else:
         for r in records:
             sys.stdout.write(_json.dumps(r, default=str) + "\n")
@@ -5664,9 +5617,11 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     plane = _plane(args)
     agent = getattr(args, "agent", None)
     snapshot = plane.fleet_snapshot(exclude_agent_id=agent)
-    markdown = getattr(args, "markdown", None) or _os.environ.get(
-        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"
-    ) or str(mac_paths.gateway_home() / "mac-runtime-context.md")
+    markdown = (
+        getattr(args, "markdown", None)
+        or _os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN")
+        or str(mac_paths.gateway_home() / "mac-runtime-context.md")
+    )
     path = _Path(markdown)
     refresh_fleet_section(path, render_fleet_section(snapshot))
 
@@ -5728,9 +5683,7 @@ def cmd_journal_restore(args: argparse.Namespace) -> None:
     root = _Path(args.dir).expanduser() if getattr(args, "dir", None) else None
     home = _Path(args.home).expanduser() if getattr(args, "home", None) else None
     _print(
-        _journal.restore(
-            args.date, home=home, root=root, dry_run=getattr(args, "dry_run", False)
-        )
+        _journal.restore(args.date, home=home, root=root, dry_run=getattr(args, "dry_run", False))
     )
 
 
@@ -5793,9 +5746,7 @@ def cmd_mood_show(args: argparse.Namespace) -> None:
 
 
 def cmd_mood_clear(args: argparse.Namespace) -> None:
-    cleared = _plane(args).clear_mood(
-        args.agent_id, cleared_by=args.cleared_by, reason=args.reason
-    )
+    cleared = _plane(args).clear_mood(args.agent_id, cleared_by=args.cleared_by, reason=args.reason)
     _print(cleared.to_dict() if cleared is not None else None)
 
 
@@ -5905,7 +5856,9 @@ def cmd_message_send(args: argparse.Namespace) -> None:
 
 
 def cmd_message_inbox(args: argparse.Namespace) -> None:
-    _print([message.to_dict() for message in _plane(args).deliver_messages(args.agent_id, args.limit)])
+    _print(
+        [message.to_dict() for message in _plane(args).deliver_messages(args.agent_id, args.limit)]
+    )
 
 
 def _agentbus_payload_arg(args: argparse.Namespace) -> Any:
@@ -6291,7 +6244,11 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
 
 
 def cmd_publish(args: argparse.Namespace) -> None:
-    _print(_plane(args).publish_task(args.task_id, args.target, args.created_by, evidence_id=args.evidence_id))
+    _print(
+        _plane(args).publish_task(
+            args.task_id, args.target, args.created_by, evidence_id=args.evidence_id
+        )
+    )
 
 
 def cmd_pull_request_open(args: argparse.Namespace) -> None:
@@ -6340,7 +6297,9 @@ def cmd_pull_request_open(args: argparse.Namespace) -> None:
 
 def cmd_secret_set(args: argparse.Namespace) -> None:
     value = _resolve_secret_value(args)
-    _print(_plane(args).create_secret(args.name, value, _json_arg(args.scopes, {}), args.created_by))
+    _print(
+        _plane(args).create_secret(args.name, value, _json_arg(args.scopes, {}), args.created_by)
+    )
 
 
 def _resolve_secret_value(args: argparse.Namespace) -> str:
@@ -6431,11 +6390,13 @@ def cmd_runtime_delta_reject(args: argparse.Namespace) -> None:
 
 def cmd_runtime_delta_promote(args: argparse.Namespace) -> None:
     _print(
-        _plane(args).promote_runtime_delta(
+        _plane(args)
+        .promote_runtime_delta(
             args.delta,
             args.actor,
             runtime_name=args.runtime_name,
-        ).to_dict()
+        )
+        .to_dict()
     )
 
 
@@ -6551,10 +6512,7 @@ def cmd_bridge_repository_register(args: argparse.Namespace) -> None:
 
 def cmd_bridge_repository_list(args: argparse.Namespace) -> None:
     _print(
-        [
-            repo.to_dict()
-            for repo in _plane(args).list_project_repositories(enabled=args.enabled)
-        ]
+        [repo.to_dict() for repo in _plane(args).list_project_repositories(enabled=args.enabled)]
     )
 
 
@@ -7153,9 +7111,7 @@ def cmd_workflow_start(args: argparse.Namespace) -> None:
     pre_decisions: Dict[str, str] = {}
     for spec in args.pre_decision or []:
         if "=" not in spec:
-            raise MACError(
-                "--pre-decision expects <node_key>=approved|rejected (got %r)" % spec
-            )
+            raise MACError("--pre-decision expects <node_key>=approved|rejected (got %r)" % spec)
         key, _, value = spec.partition("=")
         pre_decisions[key.strip()] = value.strip().lower()
     input_obj = _json_arg(args.input, {})
@@ -7223,12 +7179,7 @@ def cmd_communication_identity_configure(args: argparse.Namespace) -> None:
 
 
 def cmd_communication_identity_list(args: argparse.Namespace) -> None:
-    _print(
-        [
-            item.to_dict()
-            for item in _plane(args).list_communication_identities(args.enabled)
-        ]
-    )
+    _print([item.to_dict() for item in _plane(args).list_communication_identities(args.enabled)])
 
 
 def cmd_communication_identity_show(args: argparse.Namespace) -> None:
@@ -7352,9 +7303,7 @@ def cmd_communication_lease_renew(args: argparse.Namespace) -> None:
 
 
 def cmd_communication_lease_release(args: argparse.Namespace) -> None:
-    _plane(args).release_gateway_identity_lease(
-        args.lease_id, args.agent_id, args.fencing_token
-    )
+    _plane(args).release_gateway_identity_lease(args.lease_id, args.agent_id, args.fencing_token)
     _print({"released": args.lease_id})
 
 
@@ -7393,11 +7342,17 @@ def cmd_communication_deliveries(args: argparse.Namespace) -> None:
 
 
 def cmd_rollout_list(args: argparse.Namespace) -> None:
-    _print([rollout.to_dict() for rollout in _plane(args).list_rollouts(args.tenant_id, args.channel)])
+    _print(
+        [rollout.to_dict() for rollout in _plane(args).list_rollouts(args.tenant_id, args.channel)]
+    )
 
 
 def cmd_rollout_advance(args: argparse.Namespace) -> None:
-    _print(_plane(args).advance_rollout(args.rollout_id, args.action, args.actor, _json_arg(args.detail, {})))
+    _print(
+        _plane(args).advance_rollout(
+            args.rollout_id, args.action, args.actor, _json_arg(args.detail, {})
+        )
+    )
 
 
 def cmd_rollout_rescue(args: argparse.Namespace) -> None:
@@ -7536,9 +7491,7 @@ def cmd_hgx_capacity_mark_onboarded(args: argparse.Namespace) -> None:
     from mac.hgx_elastic_capacity import HgxElasticCapacityController
 
     _print(
-        HgxElasticCapacityController(
-            state_path=args.state_file
-        ).mark_onboarded(
+        HgxElasticCapacityController(state_path=args.state_file).mark_onboarded(
             args.session_id,
             agent_id=args.agent_id,
         )
@@ -7620,7 +7573,9 @@ def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentPa
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mac", description="Multi-agent coordinator control plane")
+    parser = argparse.ArgumentParser(
+        prog="mac", description="Multi-agent coordinator control plane"
+    )
     # `mac --version` prints and exits BEFORE the required SUBCOMMAND is
     # enforced -- argparse runs a `version` action the moment it consumes the
     # flag, so the missing positional is never reached. Without this, asking
@@ -7670,8 +7625,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fleet",
         default=None,
-        help="Fleet name; selects MAC_API_TOKEN__<FLEET> and "
-        "~/.mac/fleets.yaml entry.",
+        help="Fleet name; selects MAC_API_TOKEN__<FLEET> and ~/.mac/fleets.yaml entry.",
     )
     parser.add_argument(
         "--profile",
@@ -7697,9 +7651,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _set(
         cmd_init,
-        sub.add_parser(
-            "init", help="create the control-plane schema in the --db PostgreSQL store"
-        ),
+        sub.add_parser("init", help="create the control-plane schema in the --db PostgreSQL store"),
     )
 
     database = sub.add_parser(
@@ -7819,9 +7771,7 @@ def build_parser() -> argparse.ArgumentParser:
     login_parser.add_argument("--profile", dest="login_profile")
     login_parser.add_argument("--client-id")
     login_parser.add_argument("--name")
-    login_parser.add_argument(
-        "--scopes", default=",".join(("read", "write", "dispatch"))
-    )
+    login_parser.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
     login_parser.add_argument("--capabilities")
     login_parser.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
     login_parser.add_argument("--local-port", type=int)
@@ -7943,7 +7893,9 @@ def build_parser() -> argparse.ArgumentParser:
     profile_migrate.add_argument("--no-activate", action="store_true")
     _set(cmd_client_profile_migrate_legacy, profile_migrate)
 
-    tenant = sub.add_parser("tenant", help="tenant boundary commands").add_subparsers(dest="tenant_command", required=True)
+    tenant = sub.add_parser("tenant", help="tenant boundary commands").add_subparsers(
+        dest="tenant_command", required=True
+    )
     tenant_register = tenant.add_parser("register")
     tenant_register.add_argument("name")
     tenant_register.add_argument("--metadata")
@@ -7952,7 +7904,9 @@ def build_parser() -> argparse.ArgumentParser:
     tenant_list = tenant.add_parser("list")
     _set(cmd_tenant_list, tenant_list)
 
-    user = sub.add_parser("user", help="human user identity commands").add_subparsers(dest="user_command", required=True)
+    user = sub.add_parser("user", help="human user identity commands").add_subparsers(
+        dest="user_command", required=True
+    )
     user_register = user.add_parser("register")
     user_register.add_argument("tenant_id")
     user_register.add_argument("handle")
@@ -7961,7 +7915,9 @@ def build_parser() -> argparse.ArgumentParser:
     user_register.add_argument("--user-id")
     _set(cmd_user_register, user_register)
 
-    persona = sub.add_parser("persona", help="Hermes persona and memory-scope commands").add_subparsers(dest="persona_command", required=True)
+    persona = sub.add_parser(
+        "persona", help="Hermes persona and memory-scope commands"
+    ).add_subparsers(dest="persona_command", required=True)
     persona_register = persona.add_parser("register")
     persona_register.add_argument("tenant_id")
     persona_register.add_argument("name")
@@ -8013,8 +7969,7 @@ def build_parser() -> argparse.ArgumentParser:
         "coverage",
         help="what a switch would carry: every artefact, and whether it arrives",
     )
-    hi_cov.add_argument("--from", dest="source", required=True,
-                        choices=("hermes", "openclaw"))
+    hi_cov.add_argument("--from", dest="source", required=True, choices=("hermes", "openclaw"))
     hi_cov.add_argument("--to", required=True, choices=("hermes", "openclaw"))
     hi_cov.add_argument("--home")
     _set(cmd_human_interface_coverage, hi_cov)
@@ -8052,7 +8007,9 @@ def build_parser() -> argparse.ArgumentParser:
     hermes_runtime_proof.add_argument("--skip-startup-report", action="store_true")
     _set(cmd_hermes_runtime_proof, hermes_runtime_proof)
 
-    binding = sub.add_parser("binding", help="Hermes platform binding commands").add_subparsers(dest="binding_command", required=True)
+    binding = sub.add_parser("binding", help="Hermes platform binding commands").add_subparsers(
+        dest="binding_command", required=True
+    )
     binding_register = binding.add_parser("register")
     binding_register.add_argument("tenant_id")
     binding_register.add_argument("persona_instance_id")
@@ -8064,7 +8021,9 @@ def build_parser() -> argparse.ArgumentParser:
     binding_register.add_argument("--binding-id")
     _set(cmd_binding_register, binding_register)
 
-    interaction = sub.add_parser("interaction", help="create durable work from Hermes conversation context").add_subparsers(dest="interaction_command", required=True)
+    interaction = sub.add_parser(
+        "interaction", help="create durable work from Hermes conversation context"
+    ).add_subparsers(dest="interaction_command", required=True)
     interaction_task = interaction.add_parser("task")
     interaction_task.add_argument("persona_instance_id")
     interaction_task.add_argument("title")
@@ -8081,15 +8040,21 @@ def build_parser() -> argparse.ArgumentParser:
     interaction_task.add_argument("--actor", default="hermes")
     _set(cmd_interaction_task, interaction_task)
 
-    task = sub.add_parser("task", help="task ledger commands").add_subparsers(dest="task_command", required=True)
-    create = task.add_parser(
-        "create", help="file a new task into the ledger"
+    task = sub.add_parser("task", help="task ledger commands").add_subparsers(
+        dest="task_command", required=True
     )
+    create = task.add_parser("create", help="file a new task into the ledger")
     create.add_argument("title")
-    create.add_argument("--description", default="",
-                        help="task description (use --description-file for multi-line / shell-hostile content)")
-    create.add_argument("--description-file", dest="description_file",
-                        help="read description from file path (or '-' for stdin); avoids shell-quoting hazards")
+    create.add_argument(
+        "--description",
+        default="",
+        help="task description (use --description-file for multi-line / shell-hostile content)",
+    )
+    create.add_argument(
+        "--description-file",
+        dest="description_file",
+        help="read description from file path (or '-' for stdin); avoids shell-quoting hazards",
+    )
     create.add_argument(
         "--project",
         help="project to tag the task with; defaults to the working directory's "
@@ -8098,10 +8063,14 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--priority", type=int, default=0)
     create.add_argument("--required-capabilities")
     create.add_argument("--dependencies")
-    create.add_argument("--metadata",
-                        help="JSON metadata (use --metadata-file for shell-hostile content)")
-    create.add_argument("--metadata-file", dest="metadata_file",
-                        help="read JSON metadata from file path (or '-' for stdin)")
+    create.add_argument(
+        "--metadata", help="JSON metadata (use --metadata-file for shell-hostile content)"
+    )
+    create.add_argument(
+        "--metadata-file",
+        dest="metadata_file",
+        help="read JSON metadata from file path (or '-' for stdin)",
+    )
     create.add_argument("--max-attempts", type=int, default=3)
     create.add_argument(
         "--kind",
@@ -8132,23 +8101,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--idempotency-key",
         default="",
         help="retry-safe create key (max 200 characters); the hub binds it "
-             "durably to one request and task identity",
+        "durably to one request and task identity",
     )
-    create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
-                        help="don't write the .tickets/<id>.md mirror for this task")
-    create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
-                        help="BREAK-GLASS human hold: stage the task so the loop-mode fleet won't "
-                             "auto-claim it (hidden from `task ready`) until started "
-                             "explicitly. Not the normal path; auto-dispatch is.")
+    create.add_argument(
+        "--no-ticket",
+        dest="no_ticket",
+        action="store_true",
+        help="don't write the .tickets/<id>.md mirror for this task",
+    )
+    create.add_argument(
+        "--no-dispatch",
+        dest="no_dispatch",
+        action="store_true",
+        help="BREAK-GLASS human hold: stage the task so the loop-mode fleet won't "
+        "auto-claim it (hidden from `task ready`) until started "
+        "explicitly. Not the normal path; auto-dispatch is.",
+    )
     create.add_argument(
         "--sync",
         dest="sync",
         action="store_true",
         help="run this task as a BARRIER on one worker: it starts only after "
-             "that worker drains, nothing else runs while it does, and the "
-             "worker accepts no new async work from the moment it is queued. "
-             "Requires --target-agent. For work that mutates the worker "
-             "itself, such as a sandbox image rollout.",
+        "that worker drains, nothing else runs while it does, and the "
+        "worker accepts no new async work from the moment it is queued. "
+        "Requires --target-agent. For work that mutates the worker "
+        "itself, such as a sandbox image rollout.",
     )
     create.add_argument(
         "--target-agent",
@@ -8184,23 +8161,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=60.0,
         help="seconds between reconciliations against authoritative task state, "
-             "which recover any events the feed missed (default: 60)",
+        "which recover any events the feed missed (default: 60)",
     )
     wait.add_argument(
         "--no-stream",
         dest="no_stream",
         action="store_true",
         help="poll instead of following the hub's event stream (the fallback "
-             "used automatically against a hub that predates /events/stream)",
+        "used automatically against a hub that predates /events/stream)",
     )
     wait.add_argument(
         "--no-follow-new",
         dest="no_follow_new",
         action="store_true",
         help="freeze the wait set at the tasks present when it started. By "
-             "default a task created while waiting joins the set, so a task "
-             "that decomposes into children does not let the wait return while "
-             "its children are still running.",
+        "default a task created while waiting joins the set, so a task "
+        "that decomposes into children does not let the wait return while "
+        "its children are still running.",
     )
     _set(cmd_task_wait, wait)
 
@@ -8213,7 +8190,8 @@ def build_parser() -> argparse.ArgumentParser:
     reassign.add_argument("--state", default=None)
     reassign.add_argument("--limit", type=int, default=None)
     reassign.add_argument(
-        "--overwrite", action="store_true",
+        "--overwrite",
+        action="store_true",
         help="also re-file tasks that already record a different person",
     )
     reassign.add_argument("--dry-run", action="store_true")
@@ -8226,29 +8204,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument("task_id")
     export.add_argument(
-        "--no-transcript", action="store_true",
+        "--no-transcript",
+        action="store_true",
         help="omit the coding-CLI session (it is included by default)",
     )
     export.add_argument("--output", help="write to this file instead of stdout")
     _set(cmd_task_export, export)
 
-    transcript = task.add_parser(
-        "transcript", help="the coding-CLI session for a task, in order"
-    )
+    transcript = task.add_parser("transcript", help="the coding-CLI session for a task, in order")
     transcript.add_argument("task_id")
     transcript.add_argument("--limit", type=int, default=None)
-    transcript.add_argument(
-        "--text", action="store_true", help="readable turns instead of JSON"
-    )
+    transcript.add_argument("--text", action="store_true", help="readable turns instead of JSON")
     _set(cmd_task_transcript, transcript)
 
     preflight_parser = task.add_parser(
         "preflight",
         help="would a task with these requirements ever be claimed?",
     )
-    preflight_parser.add_argument(
-        "--capabilities", help="comma-separated required capabilities"
-    )
+    preflight_parser.add_argument("--capabilities", help="comma-separated required capabilities")
     preflight_parser.add_argument(
         "--hardware",
         help='required hardware as JSON, e.g. \'{"os": ["linux"], "cpu_arch": ["x86_64"]}\'',
@@ -8258,7 +8231,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="accepted and ignored: visibility no longer gates dispatch",
     )
     preflight_parser.add_argument(
-        "--strict", action="store_true",
+        "--strict",
+        action="store_true",
         help="exit non-zero when nothing in the fleet could claim it",
     )
     _set(cmd_task_preflight, preflight_parser)
@@ -8268,28 +8242,32 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         help="AUTHORISE this task to be split into at most N child tasks. "
-             "Without this, the task is atomic and the executor is told not to "
-             "create children -- decomposition is the submitter's call, not the "
-             "framework's.",
+        "Without this, the task is atomic and the executor is told not to "
+        "create children -- decomposition is the submitter's call, not the "
+        "framework's.",
     )
     create.add_argument(
         "--decompose-kind",
         dest="decompose_kind",
         metavar="TEXT",
         help="how the children should be divided (e.g. 'one per subsystem'); "
-             "only meaningful with --decompose",
+        "only meaningful with --decompose",
     )
     create.add_argument(
         "--as-human",
         dest="as_human",
         metavar="USERNAME",
         help="record WHO filed this task (a registered human's username or id). "
-             "The ledger otherwise records only which AGENT ran it, so it can "
-             "say who is running a task but not whose task it is.",
+        "The ledger otherwise records only which AGENT ran it, so it can "
+        "say who is running a task but not whose task it is.",
     )
-    create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
-                        help="handoff/plan-note guard: the executor will not auto-decompose "
-                             "this task into child tasks")
+    create.add_argument(
+        "--no-decompose",
+        dest="no_decompose",
+        action="store_true",
+        help="handoff/plan-note guard: the executor will not auto-decompose "
+        "this task into child tasks",
+    )
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser(
@@ -8332,7 +8310,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     list_tasks.add_argument("--project", help="filter to this project (default: the cwd's project)")
-    list_tasks.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
+    list_tasks.add_argument(
+        "--all", action="store_true", help="every project (disable cwd scoping)"
+    )
     list_tasks.add_argument(
         "--limit",
         type=int,
@@ -8433,15 +8413,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="audit reason (required with --cancelled)",
     )
     close.add_argument("--actor", default="human")
-    close.add_argument("--no-ticket", dest="no_ticket", action="store_true",
-                       help="don't update the .tickets/<id>.md mirror on close")
-    close.add_argument("--cancelled", dest="success", action="store_false",
-                       help="close as CANCELLED instead of COMPLETED")
+    close.add_argument(
+        "--no-ticket",
+        dest="no_ticket",
+        action="store_true",
+        help="don't update the .tickets/<id>.md mirror on close",
+    )
+    close.add_argument(
+        "--cancelled",
+        dest="success",
+        action="store_false",
+        help="close as CANCELLED instead of COMPLETED",
+    )
     close.add_argument(
         "--disposition",
         choices=CANCELLATION_DISPOSITIONS,
-        help="why cancelled work should be preserved or eventually cleaned up "
-        "(default: preserve)",
+        help="why cancelled work should be preserved or eventually cleaned up (default: preserve)",
     )
     close.add_argument(
         "--replacement-task",
@@ -8476,8 +8463,7 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument(
         "--disposition",
         choices=CANCELLATION_DISPOSITIONS,
-        help="why cancelled work should be preserved or eventually cleaned up "
-        "(default: preserve)",
+        help="why cancelled work should be preserved or eventually cleaned up (default: preserve)",
     )
     cancel.add_argument(
         "--replacement-task",
@@ -8522,9 +8508,7 @@ def build_parser() -> argparse.ArgumentParser:
         "needs-input",
         help="list tasks parked on an unanswered human question (the operator inbox)",
     )
-    needs_input.add_argument(
-        "--all", action="store_true", help="every project, not just the cwd's"
-    )
+    needs_input.add_argument("--all", action="store_true", help="every project, not just the cwd's")
     needs_input.add_argument("--limit", type=int, default=None)
     _set(cmd_task_needs_input, needs_input)
 
@@ -8574,8 +8558,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     recover_stranded = task.add_parser(
         "recover-stranded",
-        help="re-supervise tasks left waiting on a terminal dependency "
-        "(dry-run unless --apply)",
+        help="re-supervise tasks left waiting on a terminal dependency (dry-run unless --apply)",
     )
     recover_stranded.add_argument(
         "--limit",
@@ -8890,13 +8873,18 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_beads.add_argument("--project", required=True)
     migrate_beads.add_argument("--actor", default="beads-migrator")
     migrate_beads.add_argument("--dry-run", action="store_true")
-    migrate_beads.add_argument("--no-tickets", action="store_true",
-                               help="skip writing .tickets/<id>.md files")
-    migrate_beads.add_argument("--no-memories", action="store_true",
-                               help="skip importing bd memories")
-    migrate_beads.add_argument("--tickets-only", action="store_true",
-                               help="write .tickets/<id>.md mirror only; skip MAC db writes "
-                                    "(useful for repos not registered with a MAC hub)")
+    migrate_beads.add_argument(
+        "--no-tickets", action="store_true", help="skip writing .tickets/<id>.md files"
+    )
+    migrate_beads.add_argument(
+        "--no-memories", action="store_true", help="skip importing bd memories"
+    )
+    migrate_beads.add_argument(
+        "--tickets-only",
+        action="store_true",
+        help="write .tickets/<id>.md mirror only; skip MAC db writes "
+        "(useful for repos not registered with a MAC hub)",
+    )
     _set(cmd_task_migrate_beads, migrate_beads)
 
     # Connector-aware (preferred): works for any future ticketing system, not
@@ -8989,7 +8977,9 @@ def build_parser() -> argparse.ArgumentParser:
     refs_reconcile.add_argument("--actor", default="human")
     _set(cmd_repo_refs_reconcile, refs_reconcile)
 
-    project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
+    project = sub.add_parser("project", help="project summary commands").add_subparsers(
+        dest="project_command", required=True
+    )
     project_egress = project.add_parser(
         "egress",
         help="hosts every task in this project may reach from its sandbox",
@@ -9017,9 +9007,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_egress_revoke.add_argument("host")
     _set(cmd_project_egress_revoke, project_egress_revoke)
 
-    project_create = project.add_parser(
-        "create", help="create a project and its dispatch policy"
-    )
+    project_create = project.add_parser("create", help="create a project and its dispatch policy")
     project_create.add_argument("name")
     project_create.add_argument("--description", default="")
     project_create.add_argument("--metadata", default="{}")
@@ -9064,9 +9052,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="working branch override; local checkouts otherwise use origin/HEAD "
         "then the current branch, while URLs default to main",
     )
-    project_register.add_argument(
-        "--title", help="override the contract-authoring task title"
-    )
+    project_register.add_argument("--title", help="override the contract-authoring task title")
     project_register.add_argument("--priority", type=int, default=0)
     project_register.add_argument(
         "--required-capabilities",
@@ -9080,9 +9066,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_pause.add_argument("project")
     project_pause.add_argument("--actor", default="human")
     _set(cmd_project_pause, project_pause)
-    project_activate = project.add_parser(
-        "activate", help="open a project to autonomous dispatch"
-    )
+    project_activate = project.add_parser("activate", help="open a project to autonomous dispatch")
     project_activate.add_argument("project")
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
@@ -9137,9 +9121,7 @@ def build_parser() -> argparse.ArgumentParser:
     sandbox_rollout_cmd.add_argument("--project", default=None)
     sandbox_rollout_cmd.add_argument("--actor", default="human")
     _set(cmd_sandbox_rollout, sandbox_rollout_cmd)
-    project_list = project.add_parser(
-        "list", help="list projects with live work or a registration"
-    )
+    project_list = project.add_parser("list", help="list projects with live work or a registration")
     project_list.add_argument(
         "--all",
         action="store_true",
@@ -9193,9 +9175,7 @@ def build_parser() -> argparse.ArgumentParser:
     directive = sub.add_parser(
         "directive",
         help="versioned fleet rules, conditional bindings, and held workflow macros",
-    ).add_subparsers(
-        dest="directive_command", required=True
-    )
+    ).add_subparsers(dest="directive_command", required=True)
     directive_propose = directive.add_parser(
         "propose", help="validate and create an immutable directive version"
     )
@@ -9272,9 +9252,7 @@ def build_parser() -> argparse.ArgumentParser:
     directive_binding_set.add_argument("target_id")
     directive_binding_set.add_argument("key")
     directive_binding_set.add_argument("--value", help="inline JSON value")
-    directive_binding_set.add_argument(
-        "--value-file", help="JSON value path, or '-' for stdin"
-    )
+    directive_binding_set.add_argument("--value-file", help="JSON value path, or '-' for stdin")
     directive_binding_set.add_argument("--actor", default="human")
     _set(cmd_directive_binding_set, directive_binding_set)
     directive_binding_list = directive_binding.add_parser("list")
@@ -9289,7 +9267,9 @@ def build_parser() -> argparse.ArgumentParser:
     directive_waiver_create = directive_waiver.add_parser("create")
     directive_waiver_create.add_argument("directive")
     directive_waiver_create.add_argument("--version", required=True, type=int)
-    directive_waiver_create.add_argument("--target-type", required=True, choices=("project", "repository"))
+    directive_waiver_create.add_argument(
+        "--target-type", required=True, choices=("project", "repository")
+    )
     directive_waiver_create.add_argument("--target-id", required=True)
     directive_waiver_create.add_argument("--reason")
     directive_waiver_create.add_argument("--reason-file")
@@ -9356,9 +9336,7 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser(
         "mcp", help="Model Context Protocol server for coding agents"
     ).add_subparsers(dest="mcp_command", required=True)
-    mcp_serve = mcp.add_parser(
-        "serve", help="serve the mac ledger to a coding agent over stdio"
-    )
+    mcp_serve = mcp.add_parser("serve", help="serve the mac ledger to a coding agent over stdio")
     _set(cmd_mcp_serve, mcp_serve)
     plugin = sub.add_parser(
         "plugin",
@@ -9401,7 +9379,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the user home used to find harness config directories",
     )
     _set(cmd_plugin_uninstall, plugin_uninstall)
-    openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
+    openshell = sub.add_parser(
+        "openshell", help="OpenShell sandbox guardrail commands"
+    ).add_subparsers(dest="openshell_command", required=True)
     osh_reconcile = openshell.add_parser(
         "reconcile",
         help="reconcile fleet OpenShell required/policy/deployment status after host validation",
@@ -9452,7 +9432,9 @@ def build_parser() -> argparse.ArgumentParser:
     osh_reconcile.add_argument("--sandbox-id")
     osh_reconcile.add_argument("--validation-summary")
     osh_reconcile.add_argument("--detail", help="JSON status detail object")
-    osh_reconcile.add_argument("--detail-file", help="read JSON status detail from file path or '-'")
+    osh_reconcile.add_argument(
+        "--detail-file", help="read JSON status detail from file path or '-'"
+    )
     osh_reconcile.add_argument(
         "--no-report-status",
         action="store_true",
@@ -9506,7 +9488,9 @@ def build_parser() -> argparse.ArgumentParser:
         "render-policy",
         help="render the OpenShell guardrail policy from the operator template for this fleet",
     )
-    osh_render.add_argument("--agent-user", required=True, help="home owner on the agent host (e.g. jkh)")
+    osh_render.add_argument(
+        "--agent-user", required=True, help="home owner on the agent host (e.g. jkh)"
+    )
     osh_render.add_argument("--hub-host", required=True, help="MAC hub host (e.g. 100.125.137.89)")
     osh_render.add_argument("--hub-port", type=int, default=8789)
     osh_render.add_argument("--model-gateway-host", help="LLM gateway host (default: hub host)")
@@ -9519,15 +9503,17 @@ def build_parser() -> argparse.ArgumentParser:
     osh_render.add_argument("--firecrawl-port", type=int, default=3002)
     osh_render.add_argument(
         "--template",
-        default=str(Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"),
+        default=str(
+            Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"
+        ),
         help="operator policy template path",
     )
     osh_render.add_argument("--into", help="write the rendered policy here (default: stdout)")
     _set(cmd_openshell_render_policy, osh_render)
 
-    osh_policy = openshell.add_parser("policy", help="MAC-managed OpenShell policies").add_subparsers(
-        dest="openshell_policy_command", required=True
-    )
+    osh_policy = openshell.add_parser(
+        "policy", help="MAC-managed OpenShell policies"
+    ).add_subparsers(dest="openshell_policy_command", required=True)
     osh_policy_create = osh_policy.add_parser("create")
     osh_policy_create.add_argument("name")
     osh_policy_create.add_argument("--policy-text")
@@ -9600,7 +9586,9 @@ def build_parser() -> argparse.ArgumentParser:
     osh_status.add_argument("--agent", required=True)
     _set(cmd_openshell_status, osh_status)
 
-    machine = sub.add_parser("machine", help="machine registry commands").add_subparsers(dest="machine_command", required=True)
+    machine = sub.add_parser("machine", help="machine registry commands").add_subparsers(
+        dest="machine_command", required=True
+    )
     machine_register = machine.add_parser("register")
     machine_register.add_argument("hostname")
     machine_register.add_argument("--labels")
@@ -9616,12 +9604,10 @@ def build_parser() -> argparse.ArgumentParser:
     machine_show.add_argument("machine_id")
     _set(cmd_machine_show, machine_show)
 
-    human = sub.add_parser(
-        "human", help="people who own agents and file tasks"
-    ).add_subparsers(dest="human_command", required=True)
-    human_register = human.add_parser(
-        "register", help="create or update a person"
+    human = sub.add_parser("human", help="people who own agents and file tasks").add_subparsers(
+        dest="human_command", required=True
     )
+    human_register = human.add_parser("register", help="create or update a person")
     human_register.add_argument("username")
     human_register.add_argument("--display-name")
     human_register.add_argument("--email")
@@ -9635,10 +9621,10 @@ def build_parser() -> argparse.ArgumentParser:
     human_show.add_argument("human")
     _set(cmd_human_show, human_show)
 
-    agent = sub.add_parser("agent", help="agent registry commands").add_subparsers(dest="agent_command", required=True)
-    agent_register = agent.add_parser(
-        "register", help="register a new agent onto a machine"
+    agent = sub.add_parser("agent", help="agent registry commands").add_subparsers(
+        dest="agent_command", required=True
     )
+    agent_register = agent.add_parser("register", help="register a new agent onto a machine")
     agent_register.add_argument("machine_id")
     agent_register.add_argument("name")
     agent_register.add_argument("--capabilities")
@@ -9649,9 +9635,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="persona_instance_id",
         help="Persona instance id to link this agent to.",
     )
-    agent_register.add_argument(
-        "--instance-kind", choices=("static", "fungible"), default=None
-    )
+    agent_register.add_argument("--instance-kind", choices=("static", "fungible"), default=None)
     agent_register.add_argument(
         "--owner",
         help=(
@@ -9660,7 +9644,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     agent_register.add_argument(
-        "--visibility", choices=("private", "shared"),
+        "--visibility",
+        choices=("private", "shared"),
         help=(
             "who the HUB may talk to about this agent, not what it may work "
             "on (default: private when --owner is given)"
@@ -9672,19 +9657,19 @@ def build_parser() -> argparse.ArgumentParser:
         "update", help="change an agent's capabilities, status or metadata"
     )
     agent_update.add_argument("agent_id")
-    agent_update.add_argument(
-        "--instance-kind", choices=("static", "fungible"), required=False
-    )
+    agent_update.add_argument("--instance-kind", choices=("static", "fungible"), required=False)
     agent_update.add_argument(
         "--capabilities",
         help="comma-separated capability list, replacing the current set",
     )
     agent_update.add_argument(
-        "--add-capability", action="append",
+        "--add-capability",
+        action="append",
         help="add one capability, keeping the rest (repeatable)",
     )
     agent_update.add_argument(
-        "--remove-capability", action="append",
+        "--remove-capability",
+        action="append",
         help="remove one capability, keeping the rest (repeatable)",
     )
     agent_update.add_argument(
@@ -9703,7 +9688,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _set(cmd_agent_update, agent_update)
-
 
     egress = task.add_parser(
         "egress",
@@ -9863,9 +9847,7 @@ def build_parser() -> argparse.ArgumentParser:
         "the hub verifies the agent owns a current lease and routes the "
         "directive to the active task executor (not a persona chat turn)",
     )
-    agent_tell.add_argument(
-        "--wait", type=float, help="wait up to N seconds for the agent's reply"
-    )
+    agent_tell.add_argument("--wait", type=float, help="wait up to N seconds for the agent's reply")
     _set(cmd_agent_tell, agent_tell)
 
     agent_deregister = agent.add_parser(
@@ -9926,29 +9908,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="move an agent (soul + memory) to a new host; dry-run unless --execute",
     )
     agent_migrate.add_argument("name")
-    agent_migrate.add_argument("--to", dest="to_target", required=True, help="destination user@host")
-    agent_migrate.add_argument("--from", dest="from_target", help="source user@host (default: current fleets.yaml target)")
+    agent_migrate.add_argument(
+        "--to", dest="to_target", required=True, help="destination user@host"
+    )
+    agent_migrate.add_argument(
+        "--from", dest="from_target", help="source user@host (default: current fleets.yaml target)"
+    )
     agent_migrate.add_argument("--to-os", default="linux")
-    agent_migrate.add_argument("--fleet", help="fleet name (default: auto-resolve from fleets.yaml)")
-    agent_migrate.add_argument("--execute", action="store_true", help="run it (default: print the plan)")
-    agent_migrate.add_argument("--keep-source", action="store_true", help="don't decommission the source host")
-    agent_migrate.add_argument("--retire-source-agent", help="agent_id to `mac agent delete` after migration")
+    agent_migrate.add_argument(
+        "--fleet", help="fleet name (default: auto-resolve from fleets.yaml)"
+    )
+    agent_migrate.add_argument(
+        "--execute", action="store_true", help="run it (default: print the plan)"
+    )
+    agent_migrate.add_argument(
+        "--keep-source", action="store_true", help="don't decommission the source host"
+    )
+    agent_migrate.add_argument(
+        "--retire-source-agent", help="agent_id to `mac agent delete` after migration"
+    )
     hub_grp = agent_migrate.add_mutually_exclusive_group()
     hub_grp.add_argument(
-        "--hub", dest="hub", action="store_true", default=None,
+        "--hub",
+        dest="hub",
+        action="store_true",
+        default=None,
         help="full-fidelity HUB migration: also move mac.db + Qdrant + MAC_SECRET_KEY "
-             "(auto-detected when the agent is the fleet's hub_agent/shared_services_manager)")
+        "(auto-detected when the agent is the fleet's hub_agent/shared_services_manager)",
+    )
     hub_grp.add_argument(
-        "--no-hub", dest="hub", action="store_false",
-        help="force soul-only (spoke) migration even if the agent looks like the hub")
-    agent_migrate.add_argument("--src-os", help="source service manager (default: from fleets.yaml, else linux)")
+        "--no-hub",
+        dest="hub",
+        action="store_false",
+        help="force soul-only (spoke) migration even if the agent looks like the hub",
+    )
+    agent_migrate.add_argument(
+        "--src-os", help="source service manager (default: from fleets.yaml, else linux)"
+    )
     agent_migrate.add_argument("--to-ssh-port", type=int)
     agent_migrate.add_argument("--to-identity-file")
     agent_migrate.add_argument("--to-proxy-jump")
     agent_migrate.add_argument("--to-known-hosts-file")
-    agent_migrate.add_argument(
-        "--to-host-key-policy", choices=("strict", "accept-new", "insecure")
-    )
+    agent_migrate.add_argument("--to-host-key-policy", choices=("strict", "accept-new", "insecure"))
     _set(cmd_agent_migrate, agent_migrate)
 
     fleet = sub.add_parser("fleet", help="fleet-wide queries").add_subparsers(
@@ -9979,7 +9980,9 @@ def build_parser() -> argparse.ArgumentParser:
     ft_set.add_argument(
         "--openclaw-revision", help="OpenClaw image REVISION (numeric build id or commit hash)"
     )
-    ft_set.add_argument("--manifest", help="override manifest path (defaults to the checked-in file)")
+    ft_set.add_argument(
+        "--manifest", help="override manifest path (defaults to the checked-in file)"
+    )
     _set(cmd_fleet_target_set, ft_set)
 
     ft_get = fleet_target.add_parser("get", help="show the pinned target for one role")
@@ -10003,18 +10006,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     groom_sub = fleet_groom.add_subparsers(dest="backlog_groom_command")
     groom_sub.required = True
-    _set(cmd_fleet_backlog_groom_status, groom_sub.add_parser(
-        "status", help="show groomer config + last run report (hub read)"))
-    _set(cmd_fleet_backlog_groom_run, groom_sub.add_parser(
-        "run", help="trigger one immediate grooming pass across opted-in idle repos"))
+    _set(
+        cmd_fleet_backlog_groom_status,
+        groom_sub.add_parser("status", help="show groomer config + last run report (hub read)"),
+    )
+    _set(
+        cmd_fleet_backlog_groom_run,
+        groom_sub.add_parser(
+            "run", help="trigger one immediate grooming pass across opted-in idle repos"
+        ),
+    )
     groom_enable = groom_sub.add_parser("enable", help="opt a project into backlog grooming")
     groom_enable.add_argument("project", help="project name (must be onboarded)")
-    groom_enable.add_argument("--backlog-size", type=int, default=None,
-                              help="number of backlog items to request per grooming pass")
-    groom_enable.add_argument("--min-ready", type=int, default=None,
-                              help="only groom when the project has fewer than N pending tasks")
-    groom_enable.add_argument("--capability", action="append", default=None,
-                              help="required capability to stamp on the grooming task; repeatable")
+    groom_enable.add_argument(
+        "--backlog-size",
+        type=int,
+        default=None,
+        help="number of backlog items to request per grooming pass",
+    )
+    groom_enable.add_argument(
+        "--min-ready",
+        type=int,
+        default=None,
+        help="only groom when the project has fewer than N pending tasks",
+    )
+    groom_enable.add_argument(
+        "--capability",
+        action="append",
+        default=None,
+        help="required capability to stamp on the grooming task; repeatable",
+    )
     _set(cmd_fleet_backlog_groom_enable, groom_enable)
     groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
     groom_disable.add_argument("project", help="project name")
@@ -10047,12 +10068,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     msel_sub = fleet_msel.add_subparsers(dest="model_selection_command")
     msel_sub.required = True
-    _set(cmd_fleet_model_selection_status, msel_sub.add_parser(
-        "status", help="show active + pending selection and last refresh"))
-    _set(cmd_fleet_model_selection_refresh, msel_sub.add_parser(
-        "refresh", help="refresh now (a swap is recorded pending, not adopted)"))
-    _set(cmd_fleet_model_selection_promote, msel_sub.add_parser(
-        "promote", help="promote the pending swap to active (routing changes here)"))
+    _set(
+        cmd_fleet_model_selection_status,
+        msel_sub.add_parser("status", help="show active + pending selection and last refresh"),
+    )
+    _set(
+        cmd_fleet_model_selection_refresh,
+        msel_sub.add_parser(
+            "refresh", help="refresh now (a swap is recorded pending, not adopted)"
+        ),
+    )
+    _set(
+        cmd_fleet_model_selection_promote,
+        msel_sub.add_parser(
+            "promote", help="promote the pending swap to active (routing changes here)"
+        ),
+    )
 
     fleet_ssh_spec = fleet.add_parser(
         "ssh-spec",
@@ -10062,9 +10093,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fleet", dest="fleet_name", help="fleet key/name (defaults like global --fleet)"
     )
     fleet_ssh_spec.add_argument("--agent", help="agent name (default: fleet hub_agent)")
-    fleet_ssh_spec.add_argument(
-        "--fleets-config", default=str(mac_paths.fleets_config())
-    )
+    fleet_ssh_spec.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
     fleet_ssh_spec.add_argument("--ssh-port", type=int)
     fleet_ssh_spec.add_argument(
         "--portable",
@@ -10077,8 +10106,7 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-source",
         aliases=["refresh"],
         help=(
-            "ask fleet agents to pull their self-update repo and restart "
-            "themselves if HEAD changes"
+            "ask fleet agents to pull their self-update repo and restart themselves if HEAD changes"
         ),
     )
     fleet_refresh.add_argument(
@@ -10119,16 +10147,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="pull each agent's editable soul text (SOUL/USER/MEMORY.md) into a local tree",
     )
     fleet_soul_pull.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
-    fleet_soul_pull.add_argument("--into", required=True, help="destination directory for the snapshot")
     fleet_soul_pull.add_argument(
-        "--fleets-config", default=str(mac_paths.fleets_config())
+        "--into", required=True, help="destination directory for the snapshot"
     )
+    fleet_soul_pull.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
     fleet_soul_pull.add_argument(
-        "--memory-checksum", action="store_true",
+        "--memory-checksum",
+        action="store_true",
         help="also sha256 the binary memory blobs (reads them remotely; slower)",
     )
     fleet_soul_pull.add_argument(
-        "--with-hub", action="store_true",
+        "--with-hub",
+        action="store_true",
         help="also capture hub-stored persona + current mood per agent (needs hub access)",
     )
     _set(cmd_fleet_soul_pull, fleet_soul_pull)
@@ -10137,7 +10167,9 @@ def build_parser() -> argparse.ArgumentParser:
         "soul-push",
         help="diff an edited soul snapshot vs live and write changes (backup-before-replace)",
     )
-    fleet_soul_push.add_argument("--from", dest="from_dir", required=True, help="snapshot directory")
+    fleet_soul_push.add_argument(
+        "--from", dest="from_dir", required=True, help="snapshot directory"
+    )
     fleet_soul_push.add_argument(
         "--dry-run", action="store_true", help="show the plan; write nothing (default off)"
     )
@@ -10145,9 +10177,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent", action="append", help="limit to this agent (repeatable)"
     )
     fleet_soul_push.add_argument("--fleet", help="fleet name (default: snapshot manifest)")
-    fleet_soul_push.add_argument(
-        "--fleets-config", default=str(mac_paths.fleets_config())
-    )
+    fleet_soul_push.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
     _set(cmd_fleet_soul_push, fleet_soul_push)
 
     fleet_soul_audit = fleet.add_parser(
@@ -10156,21 +10186,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_soul_audit.add_argument("--agent", required=True, help="agent name to audit")
     fleet_soul_audit.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
-    fleet_soul_audit.add_argument(
-        "--fleets-config", default=str(mac_paths.fleets_config())
-    )
+    fleet_soul_audit.add_argument("--fleets-config", default=str(mac_paths.fleets_config()))
     _set(cmd_fleet_soul_audit, fleet_soul_audit)
-
 
     # Phase 2b: export/vet the fleet's Qdrant vector memory.
     fleet_mem_export = fleet.add_parser(
         "memory-export",
         help="export Qdrant vector memory to greppable JSONL for vetting",
     )
-    fleet_mem_export.add_argument("--qdrant-url", required=True, help="e.g. http://100.125.137.89:6333")
+    fleet_mem_export.add_argument(
+        "--qdrant-url", required=True, help="e.g. http://100.125.137.89:6333"
+    )
     fleet_mem_export.add_argument("--agent", help="filter to this agent_id")
-    fleet_mem_export.add_argument("--collections", help="CSV of collections (default: mac_memory_medium,mac_memory_long)")
-    fleet_mem_export.add_argument("--search", help="case-insensitive substring filter (e.g. a stale name)")
+    fleet_mem_export.add_argument(
+        "--collections", help="CSV of collections (default: mac_memory_medium,mac_memory_long)"
+    )
+    fleet_mem_export.add_argument(
+        "--search", help="case-insensitive substring filter (e.g. a stale name)"
+    )
     fleet_mem_export.add_argument("--into", help="write JSONL here (default: stdout)")
     _set(cmd_fleet_memory_export, fleet_mem_export)
 
@@ -10225,8 +10258,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="snapshot SOUL/USER/MEMORY/memories/mood/config to $HOME/.mac/journal/<date>/ "
         "and run MAC_JOURNAL_BACKUP_HOOK if set",
     )
-    journal_snap.add_argument("--dir", help="journal root (default $MAC_JOURNAL_DIR or ~/.mac/journal)")
-    journal_snap.add_argument("--home", help="agent HERMES_HOME (default $HERMES_HOME or ~/.hermes)")
+    journal_snap.add_argument(
+        "--dir", help="journal root (default $MAC_JOURNAL_DIR or ~/.mac/journal)"
+    )
+    journal_snap.add_argument(
+        "--home", help="agent HERMES_HOME (default $HERMES_HOME or ~/.hermes)"
+    )
     journal_snap.add_argument("--date", help="snapshot date label (default today, UTC)")
     journal_snap.add_argument("--agent", help="agent id label (default $MAC_AGENT_ID)")
     journal_snap.add_argument("--no-hook", action="store_true", help="skip the backup hook")
@@ -10243,7 +10280,9 @@ def build_parser() -> argparse.ArgumentParser:
     journal_restore.add_argument("date", help="journal date to restore (e.g. 2026-06-04)")
     journal_restore.add_argument("--dir", help="journal root (default ~/.mac/journal)")
     journal_restore.add_argument("--home", help="agent HERMES_HOME to restore into")
-    journal_restore.add_argument("--dry-run", action="store_true", help="show what would be restored, change nothing")
+    journal_restore.add_argument(
+        "--dry-run", action="store_true", help="show what would be restored, change nothing"
+    )
     _set(cmd_journal_restore, journal_restore)
 
     fleet_doctor = fleet.add_parser(
@@ -10471,8 +10510,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--hub-url",
         default="",
         help=(
-            "override the hub_url written into the agent entry "
-            "(default: inherit from target fleet)"
+            "override the hub_url written into the agent entry (default: inherit from target fleet)"
         ),
     )
     fleet_move.add_argument(
@@ -10504,8 +10542,14 @@ def build_parser() -> argparse.ArgumentParser:
             "and promote only statistically superior, quality-noninferior treatments."
         ),
     ).add_subparsers(dest="optimizer_command", required=True)
-    _set(cmd_optimizer_status, optimizer.add_parser("status", help="show scheduler and active experiments"))
-    _set(cmd_optimizer_tick, optimizer.add_parser("tick", help="run one observation, decision, and hypothesis pass now"))
+    _set(
+        cmd_optimizer_status,
+        optimizer.add_parser("status", help="show scheduler and active experiments"),
+    )
+    _set(
+        cmd_optimizer_tick,
+        optimizer.add_parser("tick", help="run one observation, decision, and hypothesis pass now"),
+    )
 
     optimizer_policy = optimizer.add_parser(
         "policy", help="versioned execution-policy lifecycle"
@@ -10523,16 +10567,12 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_optimizer_policy_create, optimizer_policy_create)
     optimizer_policy_list = optimizer_policy.add_parser("list", help="list policies")
     optimizer_policy_list.add_argument("--project")
-    optimizer_policy_list.add_argument(
-        "--status", choices=("candidate", "active", "retired")
-    )
+    optimizer_policy_list.add_argument("--status", choices=("candidate", "active", "retired"))
     _set(cmd_optimizer_policy_list, optimizer_policy_list)
     optimizer_policy_show = optimizer_policy.add_parser("show", help="show one policy")
     optimizer_policy_show.add_argument("policy_id")
     _set(cmd_optimizer_policy_show, optimizer_policy_show)
-    optimizer_policy_promote = optimizer_policy.add_parser(
-        "promote", help="make a policy active"
-    )
+    optimizer_policy_promote = optimizer_policy.add_parser("promote", help="make a policy active")
     optimizer_policy_promote.add_argument("policy_id")
     optimizer_policy_promote.add_argument("--actor", default="operator")
     optimizer_policy_promote.add_argument("--reason")
@@ -10578,9 +10618,7 @@ def build_parser() -> argparse.ArgumentParser:
             "escaped_defect_severity",
         ),
     )
-    optimizer_experiment_create.add_argument(
-        "--direction", choices=("maximize", "minimize")
-    )
+    optimizer_experiment_create.add_argument("--direction", choices=("maximize", "minimize"))
     optimizer_experiment_create.add_argument("--min-effect", type=float, default=0.0)
     optimizer_experiment_create.add_argument("--quality-margin", type=float, default=0.05)
     optimizer_experiment_create.add_argument("--min-samples-per-arm", type=int)
@@ -10599,9 +10637,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     optimizer_experiment_create.add_argument("--actor", default="human")
     _set(cmd_optimizer_experiment_create, optimizer_experiment_create)
-    optimizer_experiment_list = optimizer_experiment.add_parser(
-        "list", help="list experiments"
-    )
+    optimizer_experiment_list = optimizer_experiment.add_parser("list", help="list experiments")
     optimizer_experiment_list.add_argument("--project")
     optimizer_experiment_list.add_argument(
         "--state",
@@ -10617,9 +10653,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _set(cmd_optimizer_experiment_list, optimizer_experiment_list)
-    optimizer_experiment_show = optimizer_experiment.add_parser(
-        "show", help="show one experiment"
-    )
+    optimizer_experiment_show = optimizer_experiment.add_parser("show", help="show one experiment")
     optimizer_experiment_show.add_argument("experiment_id")
     _set(cmd_optimizer_experiment_show, optimizer_experiment_show)
     optimizer_experiment_evidence = optimizer_experiment.add_parser(
@@ -10698,18 +10732,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="dream-cycle learning maintenance",
     ).add_subparsers(dest="dream_command", required=True)
 
-    dream_run = dream.add_parser(
-        "run", help="curate memory into a reviewable candidate store"
-    )
+    dream_run = dream.add_parser("run", help="curate memory into a reviewable candidate store")
     dream_run.add_argument("--agent-id", default=None)
     dream_run.add_argument("--project", default=None)
     dream_run.add_argument(
         "--since", default="", help="only read memory written after this timestamp"
     )
     dream_run.add_argument("--limit", type=int, default=2000)
-    dream_run.add_argument(
-        "--instructions", default="", help="steer what the dream synthesises"
-    )
+    dream_run.add_argument("--instructions", default="", help="steer what the dream synthesises")
     dream_run.add_argument(
         "--max-output-ratio",
         type=float,
@@ -10732,9 +10762,7 @@ def build_parser() -> argparse.ArgumentParser:
     dream_show.add_argument("run_id")
     _set(cmd_dream_show, dream_show)
 
-    dream_promote = dream.add_parser(
-        "promote", help="adopt a reviewed run into live memory"
-    )
+    dream_promote = dream.add_parser("promote", help="adopt a reviewed run into live memory")
     dream_promote.add_argument("run_id")
     dream_promote.add_argument(
         "--keep-superseded",
@@ -10875,8 +10903,7 @@ def build_parser() -> argparse.ArgumentParser:
     nap_consolidate.add_argument(
         "--no-embed",
         action="store_true",
-        help="skip the vector-writer handoff (summary-only mode; useful "
-        "when Qdrant is offline)",
+        help="skip the vector-writer handoff (summary-only mode; useful when Qdrant is offline)",
     )
     nap_consolidate.add_argument(
         "--no-dreams",
@@ -10889,7 +10916,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_nap_consolidate, nap_consolidate)
 
-    dispatch = sub.add_parser("dispatch", help="dispatcher commands").add_subparsers(dest="dispatch_command", required=True)
+    dispatch = sub.add_parser("dispatch", help="dispatcher commands").add_subparsers(
+        dest="dispatch_command", required=True
+    )
     assign = dispatch.add_parser("assign")
     assign.add_argument("--lease-seconds", type=int, default=900)
     _set(cmd_dispatch_once, assign)
@@ -10912,7 +10941,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_dispatch_submit, submit)
 
-    message = sub.add_parser("message", help="structured message bus commands").add_subparsers(dest="message_command", required=True)
+    message = sub.add_parser("message", help="structured message bus commands").add_subparsers(
+        dest="message_command", required=True
+    )
     send = message.add_parser("send")
     send.add_argument("sender_agent_id")
     send.add_argument("--recipient-agent-id")
@@ -11100,7 +11131,9 @@ def build_parser() -> argparse.ArgumentParser:
     bus_artifact_publish.add_argument("--request-id")
     _set(cmd_agentbus_artifact_publish, bus_artifact_publish)
 
-    review = sub.add_parser("review", help="review pipeline commands").add_subparsers(dest="review_command", required=True)
+    review = sub.add_parser("review", help="review pipeline commands").add_subparsers(
+        dest="review_command", required=True
+    )
     request = review.add_parser("request")
     request.add_argument("task_id")
     request.add_argument("reviewer_agent_id")
@@ -11122,9 +11155,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     auto_land.add_argument("target", help="task id or branch/ref to auto-land")
-    auto_land.add_argument(
-        "--repo-dir", default=".", help="repository directory (default: cwd)"
-    )
+    auto_land.add_argument("--repo-dir", default=".", help="repository directory (default: cwd)")
     auto_land.add_argument(
         "--base-ref",
         default="main",
@@ -11205,9 +11236,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     experiment_outcome.add_argument("task_id")
     experiment_outcome.add_argument("kind")
-    experiment_outcome.add_argument(
-        "status", choices=("confirmed", "refuted", "pending")
-    )
+    experiment_outcome.add_argument("status", choices=("confirmed", "refuted", "pending"))
     experiment_outcome.add_argument("--finding-id", default="")
     experiment_outcome.add_argument("--severity-weight", type=float, default=1.0)
     experiment_outcome.add_argument("--source", default="operator")
@@ -11223,9 +11252,7 @@ def build_parser() -> argparse.ArgumentParser:
     experiment_report.add_argument("experiment_id")
     experiment_report.add_argument("--project")
     experiment_report.add_argument("--min-tasks-per-arm", type=int, default=5)
-    experiment_report.add_argument(
-        "--min-validated-outcomes-per-arm", type=int, default=3
-    )
+    experiment_report.add_argument("--min-validated-outcomes-per-arm", type=int, default=3)
     _set(cmd_review_experiment_report, experiment_report)
 
     publish = sub.add_parser("publish")
@@ -11242,7 +11269,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr_open = pr.add_parser("open", help="open a PR/MR on github or gitea")
     pr_open.add_argument("--repo-url", required=True, help="https URL of the git repository")
     pr_open.add_argument("--head", required=True, help="branch name with the change")
-    pr_open.add_argument("--base", default=None, help="target branch (default: repo default branch)")
+    pr_open.add_argument(
+        "--base", default=None, help="target branch (default: repo default branch)"
+    )
     pr_open.add_argument("--title", default=None)
     pr_open.add_argument("--body", default="")
     pr_open.add_argument(
@@ -11252,10 +11281,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_pull_request_open, pr_open)
 
-    secret = sub.add_parser("secret", help="secret boundary commands").add_subparsers(dest="secret_command", required=True)
+    secret = sub.add_parser("secret", help="secret boundary commands").add_subparsers(
+        dest="secret_command", required=True
+    )
     secret_set = secret.add_parser("set")
     secret_set.add_argument("name")
-    secret_set.add_argument("value", nargs="?", default=None, help="secret value (avoid; prefer --from-stdin)")
+    secret_set.add_argument(
+        "value", nargs="?", default=None, help="secret value (avoid; prefer --from-stdin)"
+    )
     secret_set.add_argument("--from-stdin", action="store_true", help="read value from stdin")
     secret_set.add_argument("--from-file", help="read value from file path")
     secret_set.add_argument("--scopes", required=True)
@@ -11269,8 +11302,15 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_secret_delete, secret_delete)
     secret_rotate = secret.add_parser("rotate", help="rotate a secret's value in place (audited)")
     secret_rotate.add_argument("name", help="secret id or name")
-    secret_rotate.add_argument("value", nargs="?", default=None, help="new value (avoid; prefer --from-stdin / --from-file)")
-    secret_rotate.add_argument("--from-stdin", action="store_true", help="read the new value from stdin")
+    secret_rotate.add_argument(
+        "value",
+        nargs="?",
+        default=None,
+        help="new value (avoid; prefer --from-stdin / --from-file)",
+    )
+    secret_rotate.add_argument(
+        "--from-stdin", action="store_true", help="read the new value from stdin"
+    )
     secret_rotate.add_argument("--from-file", help="read the new value from a file path")
     secret_rotate.add_argument("--actor", default="operator")
     _set(cmd_secret_rotate, secret_rotate)
@@ -11283,7 +11323,9 @@ def build_parser() -> argparse.ArgumentParser:
     audits.add_argument("--secret-id")
     _set(cmd_secret_audits, audits)
 
-    runtime = sub.add_parser("runtime", help="runtime boundary commands").add_subparsers(dest="runtime_command", required=True)
+    runtime = sub.add_parser("runtime", help="runtime boundary commands").add_subparsers(
+        dest="runtime_command", required=True
+    )
     runtime_create = runtime.add_parser("create")
     runtime_create.add_argument("name")
     runtime_create.add_argument("--manifest", required=True)
@@ -11291,13 +11333,21 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_runtime_create, runtime_create)
     runtime_list = runtime.add_parser("list")
     _set(cmd_runtime_list, runtime_list)
-    runtime_delta = runtime.add_parser("delta", help="runtime environment delta lifecycle").add_subparsers(dest="runtime_delta_command", required=True)
+    runtime_delta = runtime.add_parser(
+        "delta", help="runtime environment delta lifecycle"
+    ).add_subparsers(dest="runtime_delta_command", required=True)
     runtime_delta_propose = runtime_delta.add_parser("propose")
     runtime_delta_propose.add_argument("task_id")
     runtime_delta_propose.add_argument("agent_id")
-    runtime_delta_propose.add_argument("--package-manager", required=True, choices=("pip", "uv", "npm", "pnpm"))
-    runtime_delta_propose.add_argument("--commands", required=True, help="JSON list of install commands")
-    runtime_delta_propose.add_argument("--dependencies", required=True, help="JSON list of added dependencies")
+    runtime_delta_propose.add_argument(
+        "--package-manager", required=True, choices=("pip", "uv", "npm", "pnpm")
+    )
+    runtime_delta_propose.add_argument(
+        "--commands", required=True, help="JSON list of install commands"
+    )
+    runtime_delta_propose.add_argument(
+        "--dependencies", required=True, help="JSON list of added dependencies"
+    )
     runtime_delta_propose.add_argument("--reason", required=True)
     runtime_delta_propose.add_argument("--project")
     runtime_delta_propose.add_argument("--base-runtime", help="base runtime id or name")
@@ -11307,7 +11357,9 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_delta_propose.add_argument("--evidence-id")
     _set(cmd_runtime_delta_propose, runtime_delta_propose)
     runtime_delta_list = runtime_delta.add_parser("list")
-    runtime_delta_list.add_argument("--status", choices=("proposed", "validated", "rejected", "promoted"))
+    runtime_delta_list.add_argument(
+        "--status", choices=("proposed", "validated", "rejected", "promoted")
+    )
     runtime_delta_list.add_argument("--task-id")
     runtime_delta_list.add_argument("--project")
     runtime_delta_list.add_argument("--limit", type=int, default=200)
@@ -11389,7 +11441,9 @@ def build_parser() -> argparse.ArgumentParser:
     env_deployments.add_argument("environment")
     _set(cmd_env_deployments, env_deployments)
 
-    bridge = sub.add_parser("bridge", help="external project bridge commands").add_subparsers(dest="bridge_command", required=True)
+    bridge = sub.add_parser("bridge", help="external project bridge commands").add_subparsers(
+        dest="bridge_command", required=True
+    )
     bridge_import = bridge.add_parser("import")
     bridge_import.add_argument("source")
     bridge_import.add_argument("external_id")
@@ -11405,7 +11459,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_bridge_import, bridge_import)
     bridge_list = bridge.add_parser("list")
     _set(cmd_bridge_list, bridge_list)
-    bridge_repository = bridge.add_parser("repository", help="registered project repository").add_subparsers(dest="bridge_repository_command", required=True)
+    bridge_repository = bridge.add_parser(
+        "repository", help="registered project repository"
+    ).add_subparsers(dest="bridge_repository_command", required=True)
     bridge_repository_register = bridge_repository.add_parser("register")
     bridge_repository_register.add_argument("name")
     bridge_repository_register.add_argument("path")
@@ -11420,7 +11476,9 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_repository_list = bridge_repository.add_parser("repos")
     bridge_repository_list.add_argument("--enabled", action="store_true", default=None)
     _set(cmd_bridge_repository_list, bridge_repository_list)
-    integrations = sub.add_parser("integrations", help="integration authority observations and findings").add_subparsers(dest="integrations_command", required=True)
+    integrations = sub.add_parser(
+        "integrations", help="integration authority observations and findings"
+    ).add_subparsers(dest="integrations_command", required=True)
     integrations_findings = integrations.add_parser("findings")
     integrations_findings.add_argument("--source-kind")
     integrations_findings.add_argument("--source-id")
@@ -11449,9 +11507,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_curiosity_list, curiosity_list)
     for _decision in ("approve", "reject"):
-        _parser = curiosity.add_parser(
-            _decision, help="%s a quarantined candidate" % _decision
-        )
+        _parser = curiosity.add_parser(_decision, help="%s a quarantined candidate" % _decision)
         _parser.add_argument("candidate_id")
         _parser.add_argument("--actor", required=True)
         _parser.add_argument("--reason", required=True)
@@ -11463,7 +11519,9 @@ def build_parser() -> argparse.ArgumentParser:
         )
         _parser.set_defaults(decision=_decision)
         _set(cmd_curiosity_decide, _parser)
-    memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(dest="memory_command", required=True)
+    memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(
+        dest="memory_command", required=True
+    )
     memory_decay = memory.add_parser(
         "decay",
         help="dream-04: forget stale, low-salience memory records (dry-run unless --apply); "
@@ -11471,7 +11529,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_decay.add_argument("--ttl-days", type=float, default=90.0)
     memory_decay.add_argument("--limit", type=int, default=500)
-    memory_decay.add_argument("--apply", action="store_true", help="actually delete (default: dry-run report)")
+    memory_decay.add_argument(
+        "--apply", action="store_true", help="actually delete (default: dry-run report)"
+    )
     _set(cmd_memory_decay, memory_decay)
     memory_add = memory.add_parser("add")
     memory_add.add_argument("--task-id")
@@ -11564,9 +11624,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="embed one memory_record into the vector tier (mem-07)",
     )
     memory_embed.add_argument("memory_id")
-    memory_embed.add_argument(
-        "--tier", choices=("medium", "long"), default="medium"
-    )
+    memory_embed.add_argument("--tier", choices=("medium", "long"), default="medium")
     memory_embed.add_argument(
         "--qdrant-url",
         help="override the default Qdrant URL (MAC_QDRANT_URL/QDRANT_URL env cascade or 127.0.0.1:6333)",
@@ -11577,12 +11635,8 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill",
         help="embed every memory_record not yet in the target Qdrant collection (mem-07)",
     )
-    memory_backfill.add_argument(
-        "--tier", choices=("medium", "long"), default="medium"
-    )
-    memory_backfill.add_argument(
-        "--limit", type=int, help="cap embeddings this pass (None = all)"
-    )
+    memory_backfill.add_argument("--tier", choices=("medium", "long"), default="medium")
+    memory_backfill.add_argument("--limit", type=int, help="cap embeddings this pass (None = all)")
     memory_backfill.add_argument("--qdrant-url")
     _set(cmd_memory_backfill, memory_backfill)
 
@@ -11592,21 +11646,25 @@ def build_parser() -> argparse.ArgumentParser:
         "(the writer the long tier never had)",
     )
     memory_promote.add_argument(
-        "--min-age-days", type=float,
+        "--min-age-days",
+        type=float,
         help="how long a medium-tier ref must have sat before it is "
         "considered settled (default 30, or MAC_MEMORY_PROMOTION_MIN_AGE_DAYS)",
     )
     memory_promote.add_argument(
-        "--limit", type=int,
+        "--limit",
+        type=int,
         help="cap promotions this pass (default MAC_MEMORY_PROMOTION_MAX_PER_PASS)",
     )
     memory_promote.add_argument(
-        "--drop-medium", action="store_true",
+        "--drop-medium",
+        action="store_true",
         help="retire the medium point once the long-tier write succeeded; "
         "off by default so promotion is a copy until the tier is proven",
     )
     memory_promote.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="report what would be promoted without writing",
     )
     memory_promote.add_argument("--qdrant-url")
@@ -11617,22 +11675,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-embed points left behind by a model switch so one "
         "collection holds one embedding space",
     )
-    memory_reconcile.add_argument(
-        "--tier", choices=("medium", "long"), default="medium"
-    )
+    memory_reconcile.add_argument("--tier", choices=("medium", "long"), default="medium")
     memory_reconcile.add_argument(
         "--limit", type=int, help="cap re-embeddings this pass (None = all)"
     )
     memory_reconcile.add_argument(
-        "--scan-limit", type=int,
+        "--scan-limit",
+        type=int,
         help="cap the payload scan (None = the whole collection)",
     )
     memory_reconcile.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="list the mismatched memories without re-embedding them",
     )
     memory_reconcile.add_argument(
-        "--report-only", action="store_true",
+        "--report-only",
+        action="store_true",
         help="just count the models present; makes no writes at all",
     )
     memory_reconcile.add_argument("--qdrant-url")
@@ -11645,11 +11704,15 @@ def build_parser() -> argparse.ArgumentParser:
         "ingestion / unwritten tier / mixed embedding spaces / disk bloat)",
     )
     memory_health.add_argument(
-        "--nap-interval-hours", type=float, default=1.0,
+        "--nap-interval-hours",
+        type=float,
+        default=1.0,
         help="2× this value is the stalled-consolidator alert threshold",
     )
     memory_health.add_argument(
-        "--vector-ingestion-max-age-hours", type=float, default=24.0,
+        "--vector-ingestion-max-age-hours",
+        type=float,
+        default=24.0,
         help="a Qdrant collection whose newest embedded_at is older than "
         "this raises stalled_vector_ingestion",
     )
@@ -11662,12 +11725,11 @@ def build_parser() -> argparse.ArgumentParser:
         "ranked memory hits with their summaries",
     )
     memory_recall.add_argument("query")
-    memory_recall.add_argument(
-        "--tier", choices=("medium", "long"), default="medium"
-    )
+    memory_recall.add_argument("--tier", choices=("medium", "long"), default="medium")
     memory_recall.add_argument("--limit", type=int, default=5)
     memory_recall.add_argument(
-        "--min-score", type=float,
+        "--min-score",
+        type=float,
         help="drop hits below this cosine score (0.0–1.0)",
     )
     memory_recall.add_argument(
@@ -11690,9 +11752,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="recall typed dream artifacts with scope/kind/confidence filters",
     )
     memory_recall_dreams.add_argument("query")
-    memory_recall_dreams.add_argument(
-        "--tier", choices=("medium", "long"), default="medium"
-    )
+    memory_recall_dreams.add_argument("--tier", choices=("medium", "long"), default="medium")
     memory_recall_dreams.add_argument("--limit", type=int, default=5)
     memory_recall_dreams.add_argument(
         "--min-score",
@@ -11701,9 +11761,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_recall_dreams.add_argument("--project")
     memory_recall_dreams.add_argument("--agent-id")
-    memory_recall_dreams.add_argument(
-        "--scope", choices=("agent", "project", "fleet")
-    )
+    memory_recall_dreams.add_argument("--scope", choices=("agent", "project", "fleet"))
     memory_recall_dreams.add_argument(
         "--kind",
         choices=(
@@ -11714,9 +11772,7 @@ def build_parser() -> argparse.ArgumentParser:
             "routing_signal",
         ),
     )
-    memory_recall_dreams.add_argument(
-        "--min-confidence", choices=("low", "medium", "high")
-    )
+    memory_recall_dreams.add_argument("--min-confidence", choices=("low", "medium", "high"))
     memory_recall_dreams.add_argument("--tenant-id")
     memory_recall_dreams.add_argument(
         "--qdrant-url",
@@ -11725,7 +11781,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_memory_recall_dreams, memory_recall_dreams)
 
-    rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(dest="rollout_command", required=True)
+    rollout = sub.add_parser("rollout", help="rollout and rescue commands").add_subparsers(
+        dest="rollout_command", required=True
+    )
     rollout_create = rollout.add_parser("create")
     rollout_create.add_argument("version")
     rollout_create.add_argument("strategy")
@@ -11923,9 +11981,7 @@ def build_parser() -> argparse.ArgumentParser:
     communication_identity_configure.add_argument("--metadata", default="{}")
     _set(cmd_communication_identity_configure, communication_identity_configure)
     communication_identity_list = communication_identity.add_parser("list")
-    communication_identity_list.add_argument(
-        "--enabled", action=argparse.BooleanOptionalAction
-    )
+    communication_identity_list.add_argument("--enabled", action=argparse.BooleanOptionalAction)
     _set(cmd_communication_identity_list, communication_identity_list)
     communication_identity_show = communication_identity.add_parser("show")
     communication_identity_show.add_argument("identity")
@@ -11948,9 +12004,7 @@ def build_parser() -> argparse.ArgumentParser:
     communication_account_list = communication_account.add_parser("list")
     communication_account_list.add_argument("--identity")
     communication_account_list.add_argument("--channel")
-    communication_account_list.add_argument(
-        "--enabled", action=argparse.BooleanOptionalAction
-    )
+    communication_account_list.add_argument("--enabled", action=argparse.BooleanOptionalAction)
     _set(cmd_communication_account_list, communication_account_list)
     communication_account_show = communication_account.add_parser("show")
     communication_account_show.add_argument("account")
@@ -11962,9 +12016,7 @@ def build_parser() -> argparse.ArgumentParser:
     communication_representation = communication.add_parser(
         "representation", help="map internal agents/roles/projects to public identities"
     ).add_subparsers(dest="communication_representation_command", required=True)
-    communication_representation_configure = communication_representation.add_parser(
-        "configure"
-    )
+    communication_representation_configure = communication_representation.add_parser("configure")
     communication_representation_configure.add_argument(
         "subject_kind", choices=("agent", "role", "project", "fleet")
     )
@@ -12237,9 +12289,7 @@ def _transition_hint(detail: str) -> str:
     still leaves the reader guessing. The legal moves are in TASK_TRANSITIONS,
     so name them rather than making someone read the state machine.
     """
-    match = re.search(
-        r"cannot transition task from (\w+) to (\w+)", detail or ""
-    )
+    match = re.search(r"cannot transition task from (\w+) to (\w+)", detail or "")
     if not match:
         return ""
     current = match.group(1)
@@ -12252,8 +12302,10 @@ def _transition_hint(detail: str) -> str:
     if not allowed:
         return "\n  %s is terminal; nothing can move it." % current
     verbs = {"open": "`mac task reopen <id>`"}
-    routes = ", ".join("%s (%s)" % (state, verbs.get(state, state)) if state in verbs else state
-                       for state in allowed)
+    routes = ", ".join(
+        "%s (%s)" % (state, verbs.get(state, state)) if state in verbs else state
+        for state in allowed
+    )
     extra = ""
     if current == "failed" and "open" in allowed:
         extra = (

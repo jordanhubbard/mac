@@ -11,6 +11,7 @@ credential recovery, deploy, soul snapshots, migration, the desktop bridge,
 and the SSH-first login flow.  Private key *references* may appear in the
 registry; private key bytes never do.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,11 +58,7 @@ def _local_path(value: Any) -> Optional[str]:
 
 def _normalize_agents(raw: Any) -> Dict[str, Dict[str, Any]]:
     if isinstance(raw, Mapping):
-        return {
-            str(name): dict(value)
-            for name, value in raw.items()
-            if isinstance(value, Mapping)
-        }
+        return {str(name): dict(value) for name, value in raw.items() if isinstance(value, Mapping)}
     result: Dict[str, Dict[str, Any]] = {}
     if isinstance(raw, list):
         for value in raw:
@@ -82,11 +79,7 @@ def fleet_entries(config: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
     raw = (config or {}).get("fleets")
     if isinstance(raw, Mapping):
-        return {
-            str(name): dict(value)
-            for name, value in raw.items()
-            if isinstance(value, Mapping)
-        }
+        return {str(name): dict(value) for name, value in raw.items() if isinstance(value, Mapping)}
     result: Dict[str, Dict[str, Any]] = {}
     if isinstance(raw, list):
         for value in raw:
@@ -120,9 +113,7 @@ def resolve_fleet_key(config: Mapping[str, Any], requested: Optional[str]) -> st
         raise FleetSshError("fleet %r not found (known: %s)" % (requested, known))
     if len(fleets) == 1:
         return next(iter(fleets))
-    defaults = [
-        key for key, fleet in fleets.items() if fleet.get("default") is True
-    ]
+    defaults = [key for key, fleet in fleets.items() if fleet.get("default") is True]
     if len(defaults) == 1:
         return defaults[0]
     raise FleetSshError("multiple fleets are configured; select one explicitly")
@@ -182,8 +173,7 @@ class FleetSshSpec:
         ):
             raise FleetSshError(
                 "fleet %r agent %r uses strict host-key checking without an "
-                "explicit known_hosts file, fingerprint, or host CA"
-                % (self.fleet, self.agent)
+                "explicit known_hosts file, fingerprint, or host CA" % (self.fleet, self.agent)
             )
 
 
@@ -240,8 +230,7 @@ def resolve_fleet_ssh(
         raw_policy = "accept-new" if strict is False else "strict"
     if raw_policy not in HOST_KEY_POLICIES:
         raise FleetSshError(
-            "ssh_host_key_policy must be one of: %s"
-            % ", ".join(sorted(HOST_KEY_POLICIES))
+            "ssh_host_key_policy must be one of: %s" % ", ".join(sorted(HOST_KEY_POLICIES))
         )
 
     identity_ref = _text(inherited("identity_ref")) or None
@@ -258,22 +247,16 @@ def resolve_fleet_ssh(
         proxy_jump=_text(inherited("ssh_jump", "proxy_jump")) or None,
         identity_file=identity_file,
         identity_ref=identity_ref,
-        known_hosts_file=_local_path(
-            inherited("ssh_known_hosts_file", "known_hosts_file")
-        ),
+        known_hosts_file=_local_path(inherited("ssh_known_hosts_file", "known_hosts_file")),
         host_key_policy=raw_policy,
-        host_key_fingerprint=_text(
-            inherited("ssh_host_key_fingerprint", "host_key_fingerprint")
-        )
+        host_key_fingerprint=_text(inherited("ssh_host_key_fingerprint", "host_key_fingerprint"))
         or None,
         # ``host_ca`` is a client-local known_hosts-format file containing one
         # or more ``@cert-authority`` entries, not CA key material.
         host_ca=_local_path(inherited("ssh_host_ca", "host_ca")),
         supervisor=_text(inherited("supervisor")) or "auto",
         os_kind=_text(agent_cfg.get("os")) or "linux",
-        control_port=_optional_int(
-            fleet_cfg.get("control_port") or 8789, field="control_port"
-        )
+        control_port=_optional_int(fleet_cfg.get("control_port") or 8789, field="control_port")
         or 8789,
     )
     if portable:
@@ -284,9 +267,7 @@ def resolve_fleet_ssh(
 def load_fleet_config(path: Optional[str] = None) -> Dict[str, Any]:
     """Load and parse the fleets config mapping from disk."""
     target = Path(
-        path
-        or os.environ.get("MAC_FLEETS_CONFIG")
-        or mac_paths.fleets_config()
+        path or os.environ.get("MAC_FLEETS_CONFIG") or mac_paths.fleets_config()
     ).expanduser()
     if not target.is_file():
         raise FleetSshError("fleets config not found: %s" % target)
@@ -329,8 +310,7 @@ def _route_options(
         argv += ["-o", "IdentitiesOnly=yes", "-i", spec.identity_file]
     elif spec.identity_ref and not spec.identity_ref.startswith("file:"):
         raise FleetSshError(
-            "identity_ref %r cannot be converted to OpenSSH argv on this client"
-            % spec.identity_ref
+            "identity_ref %r cannot be converted to OpenSSH argv on this client" % spec.identity_ref
         )
     if spec.proxy_jump:
         argv += ["-o", "ProxyJump=%s" % spec.proxy_jump]

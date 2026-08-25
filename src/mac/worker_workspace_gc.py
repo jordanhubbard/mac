@@ -19,6 +19,7 @@ protects the active task and the N most-recent workspaces, prunes the rest
 (aggressively when the disk is low), and escalates loudly when the disk stays
 low after a sweep.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 JsonDict = Dict[str, Any]
-_GB = 1024 ** 3
+_GB = 1024**3
 
 
 def _env_float(name: str, default: float) -> float:
@@ -77,9 +78,7 @@ class WorkspaceGCMixin:
             thread = self._workspace_gc_thread
             if thread is not None and thread.is_alive():
                 return
-            interval = max(
-                30.0, _env_float("MAC_WORKER_WORKSPACE_GC_INTERVAL_SECONDS", 600.0)
-            )
+            interval = max(30.0, _env_float("MAC_WORKER_WORKSPACE_GC_INTERVAL_SECONDS", 600.0))
             now = time.monotonic()
             if self._last_workspace_gc_at and now - self._last_workspace_gc_at < interval:
                 return

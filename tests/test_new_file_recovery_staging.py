@@ -24,6 +24,7 @@ The publish seam (``push_runner``) is stubbed so the tests exercise real staging
 and commit without a live remote, while ``sync_worktree_with_canonical`` and
 ``resolve_canonical_publication_target`` run against a real bare canonical repo.
 """
+
 from __future__ import annotations
 
 import json

@@ -178,9 +178,7 @@ def test_host_only_hub_credentials_are_stripped_from_the_sandbox(monkeypatch) ->
 def test_default_passthrough_alone_would_leak_without_the_strip() -> None:
     """The strip is not belt-and-braces — the default list names these bearers."""
     default_names = {
-        item.strip()
-        for item in te._DEFAULT_OPENSHELL_ENV_PASSTHROUGH.split(",")
-        if item.strip()
+        item.strip() for item in te._DEFAULT_OPENSHELL_ENV_PASSTHROUGH.split(",") if item.strip()
     }
     assert default_names & _EXPECTED_HOST_ONLY_HUB_CREDENTIALS
 
@@ -188,9 +186,7 @@ def test_default_passthrough_alone_would_leak_without_the_strip() -> None:
 def test_custom_passthrough_cannot_reintroduce_a_hub_credential(monkeypatch) -> None:
     values = _sandbox_env(
         monkeypatch,
-        MAC_OPENSHELL_ENV_PASSTHROUGH=",".join(
-            sorted(_EXPECTED_HOST_ONLY_HUB_CREDENTIALS)
-        ),
+        MAC_OPENSHELL_ENV_PASSTHROUGH=",".join(sorted(_EXPECTED_HOST_ONLY_HUB_CREDENTIALS)),
         **{name: "secret-%s" % name for name in _EXPECTED_HOST_ONLY_HUB_CREDENTIALS},
     )
     assert values == {}

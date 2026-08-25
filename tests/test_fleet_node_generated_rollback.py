@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE_INSTALL = ROOT / "deploy" / "fleet-node-install.sh"
 
 
-FAKE_SUPERVISOR_HELPER = r'''from __future__ import annotations
+FAKE_SUPERVISOR_HELPER = r"""from __future__ import annotations
 
 import json
 import os
@@ -144,10 +144,10 @@ receipt.write_text(json.dumps({
     ),
 }) + "\n")
 receipt.chmod(stat.S_IRUSR | stat.S_IWUSR)
-'''
+"""
 
 
-FAKE_ATOMIC_ARTIFACT_HELPER = r'''#!/usr/bin/env bash
+FAKE_ATOMIC_ARTIFACT_HELPER = r"""#!/usr/bin/env bash
 
 mac_launchd_artifact_timeout() {
   printf '%s\n' 10
@@ -241,7 +241,7 @@ PY
 mac_launchd_fsync_directory() {
   : "$1" "${2:-user}"
 }
-'''
+"""
 
 
 def _rollback_function() -> str:
@@ -310,33 +310,27 @@ def _generate_rollback(
     revision_backup.chmod(0o600)
     env_file = mac_home / "mac.env"
     env_backup = backup_root / "mac.env.old"
-    env_file.write_text(
-        f"MAC_WORKER_DEPLOY_GENERATION={successor_generation}\n", encoding="utf-8"
-    )
+    env_file.write_text(f"MAC_WORKER_DEPLOY_GENERATION={successor_generation}\n", encoding="utf-8")
     env_file.chmod(0o600)
-    env_backup.write_text(
-        f"MAC_WORKER_DEPLOY_GENERATION={prior_generation}\n", encoding="utf-8"
-    )
+    env_backup.write_text(f"MAC_WORKER_DEPLOY_GENERATION={prior_generation}\n", encoding="utf-8")
     env_backup.chmod(0o600)
     openclaw_home = mac_home / "openclaw"
     _write_generation(openclaw_home, "current")
     (openclaw_home / "managed").mkdir()
-    (openclaw_home / "managed" / "sandbox-name").write_text(
-        "successor-sandbox\n", encoding="utf-8"
-    )
+    (openclaw_home / "managed" / "sandbox-name").write_text("successor-sandbox\n", encoding="utf-8")
     (openclaw_home / "sandbox-live").touch()
     installer = source / "deploy" / "openclaw" / "install-openclaw-gateway.sh"
     installer.parent.mkdir(parents=True)
     installer.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        "[ \"${1:-}\" = withdraw ]\n"
-        "[ \"$(<\"$MAC_SRC/generation\")\" = current ]\n"
-        "[ \"$(<\"$MAC_HOME/openclaw/generation\")\" = current ]\n"
-        "[ -f \"$MAC_HOME/openclaw/sandbox-live\" ]\n"
-        "[ \"${ROLLBACK_TEST_FAIL_WITHDRAW:-0}\" != 1 ]\n"
-        "rm -f \"$MAC_HOME/openclaw/sandbox-live\"\n"
-        ": > \"$ROLLBACK_TEST_WITHDRAW_MARKER\"\n",
+        '[ "${1:-}" = withdraw ]\n'
+        '[ "$(<"$MAC_SRC/generation")" = current ]\n'
+        '[ "$(<"$MAC_HOME/openclaw/generation")" = current ]\n'
+        '[ -f "$MAC_HOME/openclaw/sandbox-live" ]\n'
+        '[ "${ROLLBACK_TEST_FAIL_WITHDRAW:-0}" != 1 ]\n'
+        'rm -f "$MAC_HOME/openclaw/sandbox-live"\n'
+        ': > "$ROLLBACK_TEST_WITHDRAW_MARKER"\n',
         encoding="utf-8",
     )
     installer.chmod(0o700)
@@ -399,13 +393,9 @@ def _generate_rollback(
         "MAC_AGENT_PLIST_BACKUP": "",
         "MAC_AGENT_PLIST_MUTATED": "0",
         "ROLLBACK_SUPERVISOR_HELPER": str(helper),
-        "ROLLBACK_SUPERVISOR_HELPER_SHA256": hashlib.sha256(
-            helper.read_bytes()
-        ).hexdigest(),
+        "ROLLBACK_SUPERVISOR_HELPER_SHA256": hashlib.sha256(helper.read_bytes()).hexdigest(),
         "ROLLBACK_LAUNCHD_LIFECYCLE": str(lifecycle),
-        "ROLLBACK_LAUNCHD_LIFECYCLE_SHA256": hashlib.sha256(
-            lifecycle.read_bytes()
-        ).hexdigest(),
+        "ROLLBACK_LAUNCHD_LIFECYCLE_SHA256": hashlib.sha256(lifecycle.read_bytes()).hexdigest(),
         "MAC_SERVICE_NAME": "mac.service",
         "HERMES_SERVICE_NAME": "mac-hermes-gateway.service",
         "OPENCLAW_SERVICE_NAME": "mac-openclaw-gateway.service",
@@ -559,9 +549,7 @@ def _make_prior_interruption_state(
     prior_revision = str(paths["prior_revision"])
     prior_generation = str(paths["prior_generation"])
     paths["revision"].write_text(prior_revision + "\n", encoding="utf-8")
-    paths["env"].write_text(
-        f"MAC_WORKER_DEPLOY_GENERATION={prior_generation}\n", encoding="utf-8"
-    )
+    paths["env"].write_text(f"MAC_WORKER_DEPLOY_GENERATION={prior_generation}\n", encoding="utf-8")
     paths["bin"].joinpath("generation").write_text("restored", encoding="utf-8")
     paths["config"].write_text("restored", encoding="utf-8")
     subprocess.run(["/bin/rm", "-rf", str(paths["openclaw_home"])], check=True)
@@ -659,19 +647,15 @@ def test_generated_rollback_has_one_bounded_supervisor_protocol_and_ordered_barr
         'SRC_ROLLBACK_STATE="$(rollback_directory_state "$SRC_BACKUP" "$SRC_DIR")"'
     )
     quiesce = script.index(
-        'python "$ROLLBACK_SUPERVISOR_HELPER" '
-        '"$ROLLBACK_SUPERVISOR_HELPER_SHA256" quiesce'
+        'python "$ROLLBACK_SUPERVISOR_HELPER" "$ROLLBACK_SUPERVISOR_HELPER_SHA256" quiesce'
     )
-    sandbox_withdraw = script.index(
-        'mac_run_bounded 360 "$current_openclaw_installer" withdraw'
-    )
+    sandbox_withdraw = script.index('mac_run_bounded 360 "$current_openclaw_installer" withdraw')
     source_restore = script.index(
         'restore_dir_or_keep_prior "$SRC_BACKUP" "$SRC_DIR" "$SRC_ROLLBACK_STATE"'
     )
     service_restore = script.index('restore_file_or_remove "$MAC_UNIT_BACKUP"')
     supervisor_restore = script.index(
-        'python "$ROLLBACK_SUPERVISOR_HELPER" '
-        '"$ROLLBACK_SUPERVISOR_HELPER_SHA256" restore'
+        'python "$ROLLBACK_SUPERVISOR_HELPER" "$ROLLBACK_SUPERVISOR_HELPER_SHA256" restore'
     )
     assert (
         preflight
@@ -685,10 +669,13 @@ def test_generated_rollback_has_one_bounded_supervisor_protocol_and_ordered_barr
     assert script.count('--supervisor "$rollback_supervisor"') == 2
     assert 'rollback_supervisor="${SUPERVISOR_KIND:-$OS_KIND}"' in script
     assert '*) echo "rollback failed: unsupported supervisor"' in script
-    assert re.search(
-        r"(?m)^\s*(?:sudo\s+-n\s+)?(?:systemctl|supervisorctl|launchctl)\b",
-        script,
-    ) is None
+    assert (
+        re.search(
+            r"(?m)^\s*(?:sudo\s+-n\s+)?(?:systemctl|supervisorctl|launchctl)\b",
+            script,
+        )
+        is None
+    )
     assert "SECONDS" not in script
     # Fixed-count reverse journal walks are local artifact compensation, not
     # unbounded supervisor polling.
@@ -745,9 +732,7 @@ def test_generated_rollback_recovers_after_sigkill_at_intent_boundary_without_po
     assert paths["source"].joinpath("generation").read_text() == "restored"
     assert paths["venv"].joinpath("generation").read_text() == "restored"
     receipt = json.loads(paths["completion_receipt"].read_text(encoding="utf-8"))
-    assert receipt["intent_sha256"] == hashlib.sha256(
-        paths["intent"].read_bytes()
-    ).hexdigest()
+    assert receipt["intent_sha256"] == hashlib.sha256(paths["intent"].read_bytes()).hexdigest()
 
 
 def test_generated_rollback_recovers_after_sigkill_between_source_and_venv_rename(
@@ -841,12 +826,13 @@ def test_finalize_is_idempotent_and_binds_post_evidence_to_pre_mutation_intent(
     receipt = json.loads(receipt_raw)
     assert receipt["schema"] == "mac.fleet_node_finalize.v1"
     assert receipt["status"] == "finalized"
-    assert receipt["post_manifest"]["sha256"] == hashlib.sha256(
-        paths["post"].read_bytes()
-    ).hexdigest()
-    assert receipt["rollback_intent"]["sha256"] == hashlib.sha256(
-        paths["intent"].read_bytes()
-    ).hexdigest()
+    assert (
+        receipt["post_manifest"]["sha256"] == hashlib.sha256(paths["post"].read_bytes()).hexdigest()
+    )
+    assert (
+        receipt["rollback_intent"]["sha256"]
+        == hashlib.sha256(paths["intent"].read_bytes()).hexdigest()
+    )
 
     replay = subprocess.run(
         ["/bin/bash", str(harness)],
@@ -863,9 +849,7 @@ def test_finalize_rejects_tampered_post_manifest_and_preserves_receipt(
     tmp_path: Path,
 ) -> None:
     harness, paths = _finalize_case(tmp_path)
-    first = subprocess.run(
-        ["/bin/bash", str(harness)], capture_output=True, text=True, check=False
-    )
+    first = subprocess.run(["/bin/bash", str(harness)], capture_output=True, text=True, check=False)
     assert first.returncode == 0, first.stderr
     receipt_raw = paths["receipt"].read_bytes()
     post = json.loads(paths["post"].read_text(encoding="utf-8"))
@@ -880,12 +864,14 @@ def test_finalize_rejects_tampered_post_manifest_and_preserves_receipt(
     assert paths["receipt"].read_bytes() == receipt_raw
 
 
-def test_installer_snapshots_complete_entrypoint_and_generation_metadata_before_bootstrap_mutation() -> None:
+def test_installer_snapshots_complete_entrypoint_and_generation_metadata_before_bootstrap_mutation() -> (
+    None
+):
     source = NODE_INSTALL.read_text(encoding="utf-8")
     arm_call = source.index("\narm_phase2_rollback\n")
     pre_manifest = source.index('\nwrite_deploy_manifest "pre" "$MANIFEST_PRE"\n')
     artifact_backup = source.index("\nbackup_existing_artifacts\n", arm_call)
-    source_replace = source.index("\nlog \"installing mac source\"\n")
+    source_replace = source.index('\nlog "installing mac source"\n')
     assert arm_call < pre_manifest < artifact_backup < source_replace
 
     capture = source.split("capture_auxiliary_rollback_artifacts() {", 1)[1].split(
@@ -910,9 +896,9 @@ def test_typed_supervisord_install_uses_sealed_auxiliary_baseline_only() -> None
     install = source.split("install_supervisord_service() {", 1)[1].split(
         "\n}\n\ninstall_darwin_service() {", 1
     )[0]
-    armed, legacy = install.split(
-        'if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ]; then', 1
-    )[1].split("\n  else\n", 1)
+    armed, legacy = install.split('if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ]; then', 1)[1].split(
+        "\n  else\n", 1
+    )
 
     assert "snapshot_rollback_file" not in armed
     assert "MAC_UNIT_MUTATED" not in armed
@@ -935,13 +921,7 @@ def test_installer_arms_rollback_only_after_mutable_snapshots_and_durable_regene
     rollback_publish = arm_body.index("write_rollback_script")
     intent_publish = arm_body.index("write_phase2_rollback_intent")
     rollback_arm = arm_body.rindex("DEPLOY_ROLLBACK_ARMED=1")
-    assert (
-        mutable_snapshot
-        < auxiliary_snapshot
-        < rollback_publish
-        < intent_publish
-        < rollback_arm
-    )
+    assert mutable_snapshot < auxiliary_snapshot < rollback_publish < intent_publish < rollback_arm
     sealed_load = arm_body.index("verify_existing_phase2_sealed_state")
     existing_verify = arm_body.index("verify_phase2_rollback_intent", sealed_load)
     assert sealed_load < existing_verify
@@ -955,13 +935,9 @@ def test_installer_arms_rollback_only_after_mutable_snapshots_and_durable_regene
     backup_body = source.split("backup_existing_artifacts() {", 1)[1].split(
         "\n}\n\ncapture_darwin_launchd_prestate() {", 1
     )[0]
-    backup_fsync = backup_body.index(
-        'mac_launchd_fsync_directory "$MAC_HOME/backups" user'
-    )
+    backup_fsync = backup_body.index('mac_launchd_fsync_directory "$MAC_HOME/backups" user')
     backup_state_verify = backup_body.index("verify_existing_phase2_sealed_state")
-    backup_intent_verify = backup_body.index(
-        "verify_phase2_rollback_intent sealed-replay"
-    )
+    backup_intent_verify = backup_body.index("verify_phase2_rollback_intent sealed-replay")
     assert backup_fsync < backup_state_verify < backup_intent_verify
     assert "write_rollback_script" not in backup_body
     rollback_body = source.split("write_rollback_script() {", 1)[1].split(
@@ -999,9 +975,9 @@ def test_phase2_replay_revalidates_the_sealed_intent_without_field_transport() -
     verifier = source.split("verify_phase2_rollback_intent() {", 1)[1].split(
         "\n}\n\nwrite_phase2_rollback_intent() {", 1
     )[0]
-    sealed_verifier = source.split(
-        "verify_existing_phase2_sealed_state() {", 1
-    )[1].split("\n}\n\narm_phase2_rollback() {", 1)[0]
+    sealed_verifier = source.split("verify_existing_phase2_sealed_state() {", 1)[1].split(
+        "\n}\n\narm_phase2_rollback() {", 1
+    )[0]
     assert "verify_existing_phase2_sealed_state >/dev/null" in arm_body
     assert "verify_phase2_rollback_intent sealed-replay" in arm_body
     assert "ROLLBACK_SEALED_STATE_JSON" not in arm_body
@@ -1277,14 +1253,10 @@ def test_generated_rollback_restores_artifacts_before_exact_prior_topology(
     assert completion["prior_generation"] == "prior-generation-rocky-000"
     assert completion["prior_revision"] == str(paths["prior_revision"])
     assert len(completion["intent_sha256"]) == 64
-    assert completion["intent_sha256"] == hashlib.sha256(
-        paths["intent"].read_bytes()
-    ).hexdigest()
+    assert completion["intent_sha256"] == hashlib.sha256(paths["intent"].read_bytes()).hexdigest()
     assert len(completion["prior_topology_proof"]["sha256"]) == 64
     assert not list((tmp_path / "mac-home" / "backups").glob("rollback-current.*"))
-    assert not list(
-        (tmp_path / "mac-home" / "backups").glob("rollback-current-file.*")
-    )
+    assert not list((tmp_path / "mac-home" / "backups").glob("rollback-current-file.*"))
 
 
 def test_generated_rollback_removes_supervisord_config_absent_from_prior_generation(
@@ -1461,9 +1433,7 @@ def test_generated_rollback_cleanup_residue_does_not_invalidate_a_restored_gener
     assert paths["revision"].read_text().strip() == str(paths["prior_revision"])
     assert not paths["openclaw_home"].exists()
     assert paths["config"].read_text() == "restored"
-    assert list(
-        (tmp_path / "mac-home" / "backups").glob("rollback-current-file.*")
-    )
+    assert list((tmp_path / "mac-home" / "backups").glob("rollback-current-file.*"))
 
 
 def test_generated_rollback_compensates_bin_metadata_and_service_files_when_restore_fails(
@@ -1505,18 +1475,18 @@ def test_generated_rollback_compensates_a_failed_directory_swap_and_prior_swaps(
     fake_mv.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        "args=(\"$@\")\n"
+        'args=("$@")\n'
         "source_index=0\n"
-        "[ \"${args[0]:-}\" != -f ] || source_index=1\n"
+        '[ "${args[0]:-}" != -f ] || source_index=1\n'
         "source=${args[$source_index]}\n"
         "destination=${args[$((source_index + 1))]}\n"
         "if [[ \"$source\" == *'.rollback-stage.'* ]] "
-        "&& [ \"$destination\" = \"$ROLLBACK_TEST_FAIL_DEST\" ] "
-        "&& [ ! -e \"$ROLLBACK_TEST_FAIL_MARKER\" ]; then\n"
-        "  : > \"$ROLLBACK_TEST_FAIL_MARKER\"\n"
+        '&& [ "$destination" = "$ROLLBACK_TEST_FAIL_DEST" ] '
+        '&& [ ! -e "$ROLLBACK_TEST_FAIL_MARKER" ]; then\n'
+        '  : > "$ROLLBACK_TEST_FAIL_MARKER"\n'
         "  exit 73\n"
         "fi\n"
-        "exec /bin/mv \"$@\"\n",
+        'exec /bin/mv "$@"\n',
         encoding="utf-8",
     )
     fake_mv.chmod(0o755)

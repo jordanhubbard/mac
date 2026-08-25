@@ -99,7 +99,9 @@ def main() -> int:
 
     report = []
     seen_token_values = {}  # canonicalize: same token contents -> store once
-    file_pattern = re.compile(r"^(?P<agent>[A-Za-z0-9_-]+)-(?P<kind>bot|app|signing|client|uauth)(?:-token|-secret)?\.txt$")
+    file_pattern = re.compile(
+        r"^(?P<agent>[A-Za-z0-9_-]+)-(?P<kind>bot|app|signing|client|uauth)(?:-token|-secret)?\.txt$"
+    )
 
     for workspace_dir in sorted(SLACK_APPS_DIR.iterdir()):
         if not workspace_dir.is_dir():
@@ -170,16 +172,20 @@ def main() -> int:
             try:
                 resp = vault_put(key, value)
             except Exception as exc:
-                report.append({"file": str(f), "key": key, "verify": verification, "put_error": str(exc)})
+                report.append(
+                    {"file": str(f), "key": key, "verify": verification, "put_error": str(exc)}
+                )
                 continue
             seen_token_values[value] = key
-            report.append({
-                "file": str(f),
-                "key": key,
-                "verify": verification,
-                "stored": resp.get("ok") is True,
-                "duplicate_of": existing_key,
-            })
+            report.append(
+                {
+                    "file": str(f),
+                    "key": key,
+                    "verify": verification,
+                    "stored": resp.get("ok") is True,
+                    "duplicate_of": existing_key,
+                }
+            )
 
     print(json.dumps({"report": report, "vault_secrets": vault_list()}, indent=2))
     return 0

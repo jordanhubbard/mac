@@ -4,6 +4,7 @@ The ledger row keeps digest/size/metadata + content_uri; bytes live in the
 hub-local content-addressed blob store. Reads materialize content through the
 existing secret-scoped path so callers see the identical response shape.
 """
+
 from __future__ import annotations
 
 import base64
@@ -102,7 +103,11 @@ def test_large_artifact_externalizes_and_reads_back(cp, tmp_path, monkeypatch):
     content = b"x" * 4096
 
     evidence = cp.add_evidence(
-        task.id, "log", "file:///tmp/result.json", "done", "agent",
+        task.id,
+        "log",
+        "file:///tmp/result.json",
+        "done",
+        "agent",
         artifacts=[_artifact(content)],
         _trusted_internal=True,
     )
@@ -130,7 +135,11 @@ def test_small_artifact_stays_inline(cp, tmp_path, monkeypatch):
     content = b"short output"
 
     evidence = cp.add_evidence(
-        task.id, "log", "file:///tmp/result.json", "done", "agent",
+        task.id,
+        "log",
+        "file:///tmp/result.json",
+        "done",
+        "agent",
         artifacts=[_artifact(content)],
         _trusted_internal=True,
     )
@@ -148,7 +157,11 @@ def test_unconfigured_blob_store_keeps_inline_behavior(cp, monkeypatch):
     content = b"y" * 200000
 
     evidence = cp.add_evidence(
-        task.id, "log", "file:///tmp/result.json", "done", "agent",
+        task.id,
+        "log",
+        "file:///tmp/result.json",
+        "done",
+        "agent",
         artifacts=[_artifact(content)],
         _trusted_internal=True,
     )
@@ -163,7 +176,11 @@ def test_missing_blob_fails_closed_with_clear_error(cp, tmp_path, monkeypatch):
     task = cp.create_task("missing blob")
     content = b"z" * 1024
     evidence = cp.add_evidence(
-        task.id, "log", "file:///tmp/result.json", "done", "agent",
+        task.id,
+        "log",
+        "file:///tmp/result.json",
+        "done",
+        "agent",
         artifacts=[_artifact(content)],
         _trusted_internal=True,
     )
@@ -183,7 +200,11 @@ def test_corrupted_blob_fails_closed_on_read(cp, tmp_path, monkeypatch):
     task = cp.create_task("corrupted blob")
     content = b"w" * 1024
     evidence = cp.add_evidence(
-        task.id, "log", "file:///tmp/result.json", "done", "agent",
+        task.id,
+        "log",
+        "file:///tmp/result.json",
+        "done",
+        "agent",
         artifacts=[_artifact(content)],
         _trusted_internal=True,
     )
@@ -205,7 +226,11 @@ def test_identical_content_across_evidence_deduplicates(cp, tmp_path, monkeypatc
     for title in ("first", "second"):
         task = cp.create_task(title)
         cp.add_evidence(
-            task.id, "log", "file:///tmp/result.json", "done", "agent",
+            task.id,
+            "log",
+            "file:///tmp/result.json",
+            "done",
+            "agent",
             artifacts=[_artifact(content)],
             _trusted_internal=True,
         )

@@ -4,6 +4,7 @@ A suite that proves permitted operations succeed cannot detect fail-open, and
 fail-open is the entire risk this model carries. So most of these assert that
 something is REFUSED.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -42,6 +43,7 @@ def sandbox_evaluator():
 
 # --- deny by default -------------------------------------------------------
 
+
 def test_a_resource_with_no_entry_is_refused():
     acl = AclEvaluator([])
     grant = acl.check("nobody", TASK_A, Permission.READ)
@@ -55,6 +57,7 @@ def test_an_unknown_principal_is_refused_even_where_others_are_allowed():
 
 
 # --- the motivating case: what the sandbox may and may not do --------------
+
 
 def test_the_sandbox_may_work_its_own_task():
     acl = sandbox_evaluator()
@@ -89,18 +92,21 @@ def test_the_sandbox_cannot_widen_its_own_grants():
 
 # --- no permission implies another ----------------------------------------
 
+
 def test_no_permission_implies_any_other():
     """The defect that made the old `write` scope mean three domains."""
     for held in sorted(PERMISSIONS):
         acl = AclEvaluator([ACE("p", TASK_A, held)])
         for other in sorted(PERMISSIONS):
             expected = held == other
-            assert acl.allows("p", TASK_A, other) is expected, (
-                "holding %s must not confer %s" % (held, other)
+            assert acl.allows("p", TASK_A, other) is expected, "holding %s must not confer %s" % (
+                held,
+                other,
             )
 
 
 # --- inheritance -----------------------------------------------------------
+
 
 def test_a_project_grant_reaches_tasks_created_later():
     """The property that makes this usable at 6,849-task scale."""
@@ -124,6 +130,7 @@ def test_a_grant_does_not_leak_upward():
 
 
 # --- longest path wins, deterministically ---------------------------------
+
 
 def test_explicit_deny_carves_one_task_out_of_a_project_grant():
     acl = AclEvaluator(
@@ -181,6 +188,7 @@ def test_the_decision_does_not_depend_on_entry_order(rotation):
 
 # --- roles are groups ------------------------------------------------------
 
+
 def test_a_principal_inherits_through_a_role():
     acl = AclEvaluator(
         [ACE("role_reviewers", PROJECT, Permission.READ)],
@@ -208,6 +216,7 @@ def test_admin_is_not_magic_it_is_grant_at_the_fleet_root():
 
 
 # --- paths -----------------------------------------------------------------
+
 
 def test_paths_are_canonical_regardless_of_spelling():
     assert normalize_path("/fleet/project/mac/") == "/fleet/project/mac"
@@ -242,6 +251,7 @@ def test_an_unknown_permission_is_an_error_not_a_denial():
 
 # --- tooling ---------------------------------------------------------------
 
+
 def test_effective_permissions_answers_what_can_this_principal_do():
     acl = sandbox_evaluator()
     eff = acl.effective_permissions(SANDBOX, TASK_A)
@@ -261,6 +271,7 @@ def test_who_can_reach_expands_roles():
 
 
 # --- update / stop / start (ADR 0020) -------------------------------------
+
 
 def test_update_does_not_confer_delete():
     """`update` is split out of `write` so a principal can correct a task's
@@ -290,8 +301,9 @@ def test_stop_and_start_are_not_control():
     """`control` is what an EXECUTOR needs -- claim, heartbeat, lease. Folding
     the operator's edit cycle into it would mean letting someone halt a bad
     task also let them claim work and impersonate a worker's lifecycle."""
-    acl = AclEvaluator([ACE("operator", TASK_A, Permission.STOP),
-                        ACE("operator", TASK_A, Permission.START)])
+    acl = AclEvaluator(
+        [ACE("operator", TASK_A, Permission.STOP), ACE("operator", TASK_A, Permission.START)]
+    )
     assert acl.allows("operator", TASK_A, Permission.CONTROL) is False
 
 
@@ -299,19 +311,27 @@ def test_the_sandbox_credential_gains_none_of_them():
     """ADR 0020: an agent must not be able to stop its own task to escape a
     gate, nor rewrite the criteria it is being judged against."""
     acl = sandbox_evaluator()
-    for perm in (Permission.UPDATE, Permission.STOP, Permission.START,
-                 Permission.CONTROL, Permission.WRITE, Permission.GRANT):
+    for perm in (
+        Permission.UPDATE,
+        Permission.STOP,
+        Permission.START,
+        Permission.CONTROL,
+        Permission.WRITE,
+        Permission.GRANT,
+    ):
         assert acl.allows(SANDBOX, TASK_A, perm) is False
 
 
 def test_an_operator_edit_grant_is_expressible_without_lifecycle_authority():
     """The grant ADR 0020 actually wants for a human correcting scope."""
-    acl = AclEvaluator([
-        ACE("human_jkh", PROJECT, Permission.READ),
-        ACE("human_jkh", PROJECT, Permission.UPDATE),
-        ACE("human_jkh", PROJECT, Permission.STOP),
-        ACE("human_jkh", PROJECT, Permission.START),
-    ])
+    acl = AclEvaluator(
+        [
+            ACE("human_jkh", PROJECT, Permission.READ),
+            ACE("human_jkh", PROJECT, Permission.UPDATE),
+            ACE("human_jkh", PROJECT, Permission.STOP),
+            ACE("human_jkh", PROJECT, Permission.START),
+        ]
+    )
     for perm in (Permission.READ, Permission.UPDATE, Permission.STOP, Permission.START):
         assert acl.allows("human_jkh", TASK_A, perm) is True
     # ...and still cannot delete a task or claim work as an agent.

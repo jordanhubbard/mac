@@ -108,8 +108,7 @@ def test_a_fully_excluded_head_does_not_block_the_rows_behind_it():
         "prune found nothing eligible. The first %d rows are excluded, so a "
         "window filled with raw candidates is 100%% waste and the 4,750 "
         "eligible rows behind them are never reached -- exactly the live "
-        "failure (eligible=0 deleted=0 excluded=2000 on every tick)."
-        % store.excluded_head
+        "failure (eligible=0 deleted=0 excluded=2000 on every tick)." % store.excluded_head
     )
     assert report.eligible_rows == 100, (
         "expected a full batch of eligible rows, got %d" % report.eligible_rows
@@ -156,8 +155,7 @@ def test_no_excluded_head_still_takes_exactly_one_window():
 
     assert report.eligible_rows == 100
     assert store.windows_fetched == [100], (
-        "with nothing excluded prune must read exactly one window, got %s"
-        % store.windows_fetched
+        "with nothing excluded prune must read exactly one window, got %s" % store.windows_fetched
     )
 
 

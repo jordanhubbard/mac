@@ -60,9 +60,7 @@ def cohort_journal_source() -> str:
 
 
 def stable_id_source() -> str:
-    return extract(
-        "stable_worker_agent_id", "\npersist_bounded_phase_failure_evidence() {"
-    )
+    return extract("stable_worker_agent_id", "\npersist_bounded_phase_failure_evidence() {")
 
 
 def run_journal(directory: Path, *args: str) -> dict:
@@ -207,10 +205,7 @@ def test_stuck_epoch_is_reported_by_epoch_before_any_ssh(
 ) -> None:
     directory, pid = make_stuck_journal(tmp_path)
     snippet = (
-        preamble(directory)
-        + "\n"
-        + diagnostics_source()
-        + "\nreport_stuck_cohort_transactions\n"
+        preamble(directory) + "\n" + diagnostics_source() + "\nreport_stuck_cohort_transactions\n"
     )
     result = run_snippet(snippet, path_prefix=ssh_tripwire)
     # A cohort pinning a name the registry no longer has cannot be replayed, so
@@ -240,10 +235,7 @@ def test_stuck_epoch_is_reported_by_epoch_before_any_ssh(
 def test_cohort_members_absent_from_the_registry_are_named(tmp_path: Path) -> None:
     directory, _pid = make_stuck_journal(tmp_path)
     snippet = (
-        preamble(directory)
-        + "\n"
-        + diagnostics_source()
-        + "\nreport_stuck_cohort_transactions\n"
+        preamble(directory) + "\n" + diagnostics_source() + "\nreport_stuck_cohort_transactions\n"
     )
     result = run_snippet(snippet)
     assert result.returncode == 1
@@ -252,9 +244,7 @@ def test_cohort_members_absent_from_the_registry_are_named(tmp_path: Path) -> No
     assert "NOT an enabled agent in /frozen/fleets.yaml (1)" in report
     assert "jordanh-worker5 (agent_jordanh-worker5)" in report
     # The two surviving members are not accused of being missing.
-    absent_line = next(
-        line for line in report.splitlines() if "NOT an enabled agent" in line
-    )
+    absent_line = next(line for line in report.splitlines() if "NOT an enabled agent" in line)
     assert "natasha" not in absent_line
     assert "bullwinkle" not in absent_line
     # The three failed remedies are named so they are not attempted again.
@@ -326,10 +316,7 @@ def test_a_live_or_terminal_epoch_produces_no_stuck_report(tmp_path: Path) -> No
         str(os.getpid()),
     )
     snippet = (
-        preamble(directory)
-        + "\n"
-        + diagnostics_source()
-        + "\nreport_stuck_cohort_transactions\n"
+        preamble(directory) + "\n" + diagnostics_source() + "\nreport_stuck_cohort_transactions\n"
     )
     result = run_snippet(snippet)
     assert result.returncode == 0, result.stderr
@@ -365,10 +352,7 @@ def test_registered_agent_with_no_route_is_not_blamed_on_the_registry(
 ) -> None:
     directory, _pid = make_stuck_journal(tmp_path)
     snippet = (
-        preamble(directory)
-        + "\n"
-        + route_report_source()
-        + "\nreport_absent_ssh_route natasha\n"
+        preamble(directory) + "\n" + route_report_source() + "\nreport_absent_ssh_route natasha\n"
     )
     result = run_snippet(snippet)
     assert result.returncode == 0, result.stderr
@@ -468,9 +452,7 @@ def test_deploy_reports_and_reaps_before_it_replays_a_pinned_cohort() -> None:
     """Order matters: the diagnostic must precede discover/adopt/recover."""
     entry = SOURCE.index("recover_incomplete_cohort_transaction_before_deploy() {")
     body = SOURCE[entry : SOURCE.index("\ncommit_fleet_release_epoch() {", entry)]
-    assert body.index("report_stuck_cohort_transactions") < body.index(
-        "cohort_journal discover"
-    )
+    assert body.index("report_stuck_cohort_transactions") < body.index("cohort_journal discover")
     # And the refusal short-circuits before adopt/recover, never after.
     assert body.index("refusing to replay a stuck cohort epoch") < body.index(
         "cohort_journal adopt"

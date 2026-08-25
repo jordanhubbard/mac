@@ -19,9 +19,7 @@ def _agent(cp: ControlPlane, name: str):
 def test_default_hive_represents_many_agents_without_per_agent_accounts(cp: ControlPlane) -> None:
     first = _agent(cp, "first")
     second = _agent(cp, "second")
-    hive = cp.configure_communication_identity(
-        "mac-hive", display_name="MAC Hive", is_default=True
-    )
+    hive = cp.configure_communication_identity("mac-hive", display_name="MAC Hive", is_default=True)
     account = cp.configure_communication_account(
         hive.id,
         "slack",
@@ -85,9 +83,7 @@ def test_outbox_claim_ack_retry_and_idempotency(cp: ControlPlane) -> None:
     origin = _agent(cp, "origin")
     gateway = _agent(cp, "gateway")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
-    account = cp.configure_communication_account(
-        hive.id, "slack", config={"default": True}
-    )
+    account = cp.configure_communication_account(hive.id, "slack", config={"default": True})
     cp.acquire_gateway_identity_lease(account.id, gateway.id)
 
     delivery = cp.enqueue_human_message(
@@ -134,9 +130,7 @@ def test_delivery_from_deleted_ephemeral_origin_still_delivers(cp: ControlPlane)
     ephemeral = _agent(cp, "ephemeral")
     gateway = _agent(cp, "gateway")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
-    account = cp.configure_communication_account(
-        hive.id, "slack", config={"default": True}
-    )
+    account = cp.configure_communication_account(hive.id, "slack", config={"default": True})
     cp.acquire_gateway_identity_lease(account.id, gateway.id)
 
     delivery = cp.enqueue_human_message(
@@ -164,9 +158,7 @@ def test_pending_delivery_prevents_identity_and_account_deletion(cp: ControlPlan
     origin = _agent(cp, "origin")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
     account = cp.configure_communication_account(hive.id, "slack")
-    cp.enqueue_human_message(
-        "channel:C123", "Queued", origin_agent_id=origin.id, channel="slack"
-    )
+    cp.enqueue_human_message("channel:C123", "Queued", origin_agent_id=origin.id, channel="slack")
     with pytest.raises(TransitionError, match="delivery history"):
         cp.delete_communication_account(account.id)
     with pytest.raises(TransitionError, match="delivery history"):
@@ -196,9 +188,7 @@ def test_delivered_history_and_active_leases_block_destructive_deletion(
     unused_lease = cp.acquire_gateway_identity_lease(unused.id, gateway.id)
     with pytest.raises(TransitionError, match="active gateway lease"):
         cp.delete_communication_account(unused.id)
-    cp.release_gateway_identity_lease(
-        unused_lease.id, gateway.id, unused_lease.fencing_token
-    )
+    cp.release_gateway_identity_lease(unused_lease.id, gateway.id, unused_lease.fencing_token)
     cp.delete_communication_account(unused.id)
 
     cp.release_gateway_identity_lease(lease.id, gateway.id, lease.fencing_token)
@@ -209,9 +199,7 @@ def test_notifier_uses_representative_openclaw_outbox_instead_of_agent_message(
 ) -> None:
     worker = _agent(cp, "worker")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
-    cp.configure_communication_account(
-        hive.id, "slack", config={"default": True}
-    )
+    cp.configure_communication_account(hive.id, "slack", config={"default": True})
     cp.configure_notifier_channel(
         "hive-status",
         "slack",

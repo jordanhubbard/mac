@@ -7,6 +7,7 @@ Contains:
 These are imported back into worker.py; callers that import from mac.worker
 see no change.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -61,16 +62,8 @@ def _current_read_only_repository_contract(task: JsonDict) -> JsonDict:
     """
 
     metadata = task.get("metadata") if isinstance(task, dict) else None
-    execution = (
-        metadata.get("execution_contract")
-        if isinstance(metadata, dict)
-        else None
-    )
-    contract = (
-        execution.get("repository_contract")
-        if isinstance(execution, dict)
-        else None
-    )
+    execution = metadata.get("execution_contract") if isinstance(metadata, dict) else None
+    contract = execution.get("repository_contract") if isinstance(execution, dict) else None
     if not isinstance(contract, dict):
         raise RuntimeError(
             "read-only repository report requires the current "
@@ -81,9 +74,7 @@ def _current_read_only_repository_contract(task: JsonDict) -> JsonDict:
 
 def _read_only_contract_default_branch(task: JsonDict, _origin: JsonDict) -> str:
     contract = _current_read_only_repository_contract(task)
-    branch = str(
-        contract.get("default_branch") or contract.get("canonical_branch") or ""
-    ).strip()
+    branch = str(contract.get("default_branch") or contract.get("canonical_branch") or "").strip()
     if not branch:
         raise RuntimeError(
             "read-only repository report current "
@@ -106,9 +97,7 @@ def _scrub_read_only_git_transport_residue(
         git_dir / "objects" / "info" / "alternates",
     ]
     forbidden = [
-        value.encode("utf-8", errors="surrogateescape")
-        for value in forbidden_values
-        if value
+        value.encode("utf-8", errors="surrogateescape") for value in forbidden_values if value
     ]
     for path in candidates:
         try:
@@ -116,13 +105,9 @@ def _scrub_read_only_git_transport_residue(
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise RuntimeError(
-                "could not inspect isolated read-only Git metadata"
-            ) from exc
+            raise RuntimeError("could not inspect isolated read-only Git metadata") from exc
         if any(value in payload for value in forbidden):
-            raise RuntimeError(
-                "isolated read-only Git metadata retained transport identity"
-            )
+            raise RuntimeError("isolated read-only Git metadata retained transport identity")
 
 
 def _finish_read_only_checkout(
@@ -142,27 +127,21 @@ def _finish_read_only_checkout(
     deleted = _run_git(worktree, ["update-ref", "-d", temporary_ref])
     if deleted.returncode != 0:
         raise RuntimeError("could not erase isolated read-only temporary ref")
-    _scrub_read_only_git_transport_residue(
-        worktree, forbidden_values=forbidden_values
-    )
+    _scrub_read_only_git_transport_residue(worktree, forbidden_values=forbidden_values)
     remotes = _run_git(worktree, ["remote"])
     if remotes.returncode != 0 or remotes.stdout.strip():
         raise RuntimeError("isolated read-only repository unexpectedly has a remote")
     tree = _run_git(worktree, ["rev-parse", "HEAD^{tree}"])
     if tree.returncode != 0 or not tree.stdout.strip():
         raise RuntimeError("could not resolve isolated read-only repository base tree")
-    refs = _run_git(
-        worktree, ["for-each-ref", "--format=%(refname) %(objectname)"]
-    )
+    refs = _run_git(worktree, ["for-each-ref", "--format=%(refname) %(objectname)"])
     if refs.returncode != 0 or refs.stdout.strip():
         raise RuntimeError("isolated read-only repository unexpectedly contains refs")
     exclude = worktree / ".git" / "info" / "exclude"
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
     if ".codegraph/" not in existing.splitlines():
-        exclude.write_text(
-            existing.rstrip("\n") + "\n.codegraph/\n", encoding="utf-8"
-        )
+        exclude.write_text(existing.rstrip("\n") + "\n.codegraph/\n", encoding="utf-8")
     return (
         tree.stdout.strip(),
         hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest(),
@@ -210,9 +189,7 @@ class RepoPrepMixin:
             _validate_git_remote_url,
         )
 
-        read_only_report = metadata_declares_read_only_report_repository(
-            task.get("metadata")
-        )
+        read_only_report = metadata_declares_read_only_report_repository(task.get("metadata"))
         origin = _repository_task_origin(task)
         if read_only_report:
             # Report inspection is deliberately independent of every registered
@@ -228,8 +205,7 @@ class RepoPrepMixin:
             remote_url = self._resolve_repository_remote_url(task, report_origin)
             if not remote_url:
                 raise RuntimeError(
-                    "read-only repository report requires an authoritative "
-                    "canonical remote URL"
+                    "read-only repository report requires an authoritative canonical remote URL"
                 )
             return self._prepare_repository_worktree_from_remote(
                 task, lease, task_dir, report_origin, remote_url
@@ -273,15 +249,11 @@ class RepoPrepMixin:
 
         top_level = _run_git(source, ["rev-parse", "--show-toplevel"])
         if top_level.returncode != 0 or not top_level.stdout.strip():
-            raise RuntimeError(
-                "repository source path is not a git worktree: %s" % source
-            )
+            raise RuntimeError("repository source path is not a git worktree: %s" % source)
         source_root = Path(top_level.stdout.strip()).resolve()
         inside = _run_git(source_root, ["rev-parse", "--is-inside-work-tree"])
         if inside.returncode != 0 or inside.stdout.strip() != "true":
-            raise RuntimeError(
-                "repository source path is not a git worktree: %s" % source_root
-            )
+            raise RuntimeError("repository source path is not a git worktree: %s" % source_root)
 
         dirty = _run_git(source_root, ["status", "--porcelain"])
         if dirty.returncode != 0:
@@ -337,11 +309,8 @@ class RepoPrepMixin:
             if metadata_declares_read_only_report_repository(task.get("metadata"))
             else resolve_task_repository_branch(
                 task,
-                legacy_branch=origin.get("default_branch")
-                or origin.get("canonical_branch"),
-                environment_branch=os.environ.get(
-                    "MAC_TASK_REPO_DEFAULT_BRANCH", ""
-                ),
+                legacy_branch=origin.get("default_branch") or origin.get("canonical_branch"),
+                environment_branch=os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", ""),
                 default_branch="main",
             )
         )
@@ -373,7 +342,8 @@ class RepoPrepMixin:
         )
         if not _gcd.exists():
             raise RuntimeError(
-                "git common directory %r does not exist for repository %s" % (str(_gcd), source_root)
+                "git common directory %r does not exist for repository %s"
+                % (str(_gcd), source_root)
             )
         # Correction 1: require the resolved common git path to be a directory.
         # A path that exists but is a file must fail closed; we must never lock
@@ -411,19 +381,21 @@ class RepoPrepMixin:
             # sharing FETCH_HEAD across concurrent preparations.
             fetch = _run_git(
                 source_root,
-                ["fetch", "--no-write-fetch-head", "--no-tags", fetch_remote,
-                 "+refs/heads/%s:%s" % (canonical_branch, tmp_ref)],
+                [
+                    "fetch",
+                    "--no-write-fetch-head",
+                    "--no-tags",
+                    fetch_remote,
+                    "+refs/heads/%s:%s" % (canonical_branch, tmp_ref),
+                ],
             )
             _fetch_ok = fetch.returncode == 0
             if not _fetch_ok:
-                if metadata_declares_read_only_report_repository(
-                    task.get("metadata")
-                ):
+                if metadata_declares_read_only_report_repository(task.get("metadata")):
                     raise RuntimeError(
                         "could not fetch canonical base for read-only repository report: %s"
                         % _redact_git_remote_auth_in_text(
-                            (fetch.stderr or fetch.stdout or "").strip()
-                            or canonical_remote_display
+                            (fetch.stderr or fetch.stdout or "").strip() or canonical_remote_display
                         )
                     )
                 # Fetch failed — network may be unavailable (offline node) or
@@ -440,7 +412,8 @@ class RepoPrepMixin:
                     detail={
                         "canonical_remote": canonical_remote_display,
                         "canonical_branch": canonical_branch,
-                        "fetch_error": (fetch.stderr or fetch.stdout or "").strip() or str(source_root),
+                        "fetch_error": (fetch.stderr or fetch.stdout or "").strip()
+                        or str(source_root),
                         "fallback": "local_head",
                         "local_prior_sha": local_prior_sha,
                     },
@@ -484,8 +457,7 @@ class RepoPrepMixin:
             # a hard error — evidence must never emit null counts.
             ahead_behind_result = _run_git(
                 source_root,
-                ["rev-list", "--left-right", "--count",
-                 "%s...%s" % (local_prior_sha, base_sha)],
+                ["rev-list", "--left-right", "--count", "%s...%s" % (local_prior_sha, base_sha)],
             )
             if ahead_behind_result.returncode != 0 or not ahead_behind_result.stdout.strip():
                 raise RuntimeError(
@@ -513,7 +485,8 @@ class RepoPrepMixin:
             if ahead_count < 0 or behind_count < 0:
                 raise RuntimeError(
                     "rev-list --left-right --count produced negative counts %r; "
-                    "this is unexpected and indicates a corrupt result" % ahead_behind_result.stdout.strip()
+                    "this is unexpected and indicates a corrupt result"
+                    % ahead_behind_result.stdout.strip()
                 )
 
             self._observe_log(
@@ -531,7 +504,9 @@ class RepoPrepMixin:
                 },
             )
 
-            worktree_dir = task_dir / ("repo-" + _safe_path_component(str(lease.get("id") or "lease")))
+            worktree_dir = task_dir / (
+                "repo-" + _safe_path_component(str(lease.get("id") or "lease"))
+            )
             if worktree_dir.exists():
                 # The directory is lease-scoped and leases are exclusive, so an
                 # existing dir here is OUR OWN debris from an interrupted prior
@@ -571,10 +546,7 @@ class RepoPrepMixin:
                 if initialize.returncode != 0:
                     raise RuntimeError(
                         "could not initialize isolated read-only repository clone: %s"
-                        % (
-                            (initialize.stderr or initialize.stdout or "").strip()
-                            or worktree_dir
-                        )
+                        % ((initialize.stderr or initialize.stdout or "").strip() or worktree_dir)
                     )
                 clone_tmp_ref = "refs/mac/read-only/base"
                 fetch_base = _run_git(
@@ -596,10 +568,7 @@ class RepoPrepMixin:
                 fetched_base = _run_git(
                     worktree_dir, ["rev-parse", "--verify", "%s^{commit}" % clone_tmp_ref]
                 )
-                if (
-                    fetched_base.returncode != 0
-                    or fetched_base.stdout.strip() != base_sha
-                ):
+                if fetched_base.returncode != 0 or fetched_base.stdout.strip() != base_sha:
                     raise RuntimeError(
                         "isolated read-only repository fetch did not resolve the exact prepared base"
                     )
@@ -639,7 +608,9 @@ class RepoPrepMixin:
                 )
                 return context
 
-            branch = _task_worktree_branch(self.agent_id, str(task.get("id") or ""), str(lease.get("id") or ""))
+            branch = _task_worktree_branch(
+                self.agent_id, str(task.get("id") or ""), str(lease.get("id") or "")
+            )
             # mac-3qv6: prune any orphaned worktree registration in
             # source_root/.git/worktrees that points at the now-deleted
             # directory. Without this, `git worktree add` below fails with
@@ -817,16 +788,11 @@ class RepoPrepMixin:
             _validate_git_remote_url,
         )
 
-        read_only_report = metadata_declares_read_only_report_repository(
-            task.get("metadata")
-        )
+        read_only_report = metadata_declares_read_only_report_repository(task.get("metadata"))
         if read_only_report:
             contract = _current_read_only_repository_contract(task)
             raw = str(contract.get("canonical_remote_url") or "").strip()
-            source = (
-                "current execution_contract.repository_contract "
-                "canonical_remote_url"
-            )
+            source = "current execution_contract.repository_contract canonical_remote_url"
             if not raw:
                 raise RuntimeError(
                     "read-only repository report current "
@@ -881,26 +847,19 @@ class RepoPrepMixin:
             _validate_git_ref,
         )
 
-        worktree_dir = task_dir / (
-            "repo-" + _safe_path_component(str(lease.get("id") or "lease"))
-        )
+        worktree_dir = task_dir / ("repo-" + _safe_path_component(str(lease.get("id") or "lease")))
         if worktree_dir.exists():
             shutil.rmtree(worktree_dir)
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        read_only_report = metadata_declares_read_only_report_repository(
-            task.get("metadata")
-        )
+        read_only_report = metadata_declares_read_only_report_repository(task.get("metadata"))
         default_branch = (
             _read_only_contract_default_branch(task, origin)
             if read_only_report
             else resolve_task_repository_branch(
                 task,
-                legacy_branch=origin.get("default_branch")
-                or origin.get("canonical_branch"),
-                environment_branch=os.environ.get(
-                    "MAC_TASK_REPO_DEFAULT_BRANCH", ""
-                ),
+                legacy_branch=origin.get("default_branch") or origin.get("canonical_branch"),
+                environment_branch=os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", ""),
                 default_branch="main",
             )
         )
@@ -909,16 +868,11 @@ class RepoPrepMixin:
         auth_url = _inject_git_remote_auth(remote_url)
         remote_display = _redact_git_remote_auth(auth_url)
         if read_only_report:
-            initialize = _run_git_in(
-                task_dir, ["init", "--quiet", "--", str(worktree_dir)]
-            )
+            initialize = _run_git_in(task_dir, ["init", "--quiet", "--", str(worktree_dir)])
             if initialize.returncode != 0:
                 raise RuntimeError(
                     "could not initialize isolated read-only repository clone: %s"
-                    % (
-                        (initialize.stderr or initialize.stdout or "").strip()
-                        or worktree_dir
-                    )
+                    % ((initialize.stderr or initialize.stdout or "").strip() or worktree_dir)
                 )
             temporary_ref = "refs/mac/read-only/base"
             fetch = _run_git(
@@ -937,8 +891,7 @@ class RepoPrepMixin:
                 raise RuntimeError(
                     "could not fetch canonical base for read-only repository report: %s"
                     % _redact_git_remote_auth_in_text(
-                        (fetch.stderr or fetch.stdout or "").strip()
-                        or remote_display
+                        (fetch.stderr or fetch.stdout or "").strip() or remote_display
                     )
                 )
             fetched_base = _run_git(
@@ -949,8 +902,7 @@ class RepoPrepMixin:
                 raise RuntimeError(
                     "could not resolve read-only repository clone canonical base: %s"
                     % _redact_git_remote_auth_in_text(
-                        (fetched_base.stderr or fetched_base.stdout or "").strip()
-                        or worktree_dir
+                        (fetched_base.stderr or fetched_base.stdout or "").strip() or worktree_dir
                     )
                 )
             fetched_sha = fetched_base.stdout.strip()
@@ -1100,11 +1052,7 @@ class RepoPrepMixin:
             json.dumps(executor_evidence, indent=2, sort_keys=True),
             encoding="utf-8",
         )
-        original_task = (
-            task_detail.get("task")
-            if isinstance(task_detail.get("task"), dict)
-            else {}
-        )
+        original_task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
         review_input_task = _review_input_task(original_task)
         (task_dir / "executor-task.json").write_text(
             json.dumps(review_input_task, indent=2, sort_keys=True),
@@ -1116,9 +1064,7 @@ class RepoPrepMixin:
             "executor_evidence_id": executor_evidence_id,
             "nudge_message_id": message.get("id"),
             "review_claim": _review_claim_identity(
-                claim.get("claim")
-                if isinstance(claim.get("claim"), dict)
-                else {}
+                claim.get("claim") if isinstance(claim.get("claim"), dict) else {}
             ),
         }
         if review_repository_context is not None:
@@ -1170,14 +1116,8 @@ class RepoPrepMixin:
         manifest = ensure_json_object(
             ensure_json_object(evidence.get("metadata")).get("verification")
         )
-        original_task = (
-            task_detail.get("task")
-            if isinstance(task_detail.get("task"), dict)
-            else {}
-        )
-        if metadata_declares_read_only_report_repository(
-            original_task.get("metadata")
-        ):
+        original_task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
+        if metadata_declares_read_only_report_repository(original_task.get("metadata")):
             return self._prepare_read_only_review_repository_worktree(
                 task_dir=task_dir,
                 task_detail=task_detail,
@@ -1205,10 +1145,7 @@ class RepoPrepMixin:
         remote_url = _task_detail_canonical_remote_url(task_detail)
         if not remote_url:
             remote_url = str(
-                repo.get("remote_url")
-                or repo.get("origin_url")
-                or repo.get("clone_url")
-                or ""
+                repo.get("remote_url") or repo.get("origin_url") or repo.get("clone_url") or ""
             ).strip()
         if not remote_url:
             repo_path_raw = str(repo.get("path") or "").strip()
@@ -1299,7 +1236,9 @@ class RepoPrepMixin:
         else:
             fetch = _run_git(review_repo, ["fetch", access.remote])
         if fetch.returncode != 0:
-            fail_repository_access("could not fetch reviewed ref %s from" % (remote_ref or "origin"), fetch)
+            fail_repository_access(
+                "could not fetch reviewed ref %s from" % (remote_ref or "origin"), fetch
+            )
 
         checkout = _run_git(review_repo, ["checkout", "--detach", head_sha])
         if checkout.returncode != 0:
@@ -1371,18 +1310,10 @@ class RepoPrepMixin:
         base_tree = str(access_manifest.get("base_tree") or "").strip()
         refs_digest = str(access_manifest.get("refs_digest") or "").strip()
         content_digest = str(access_manifest.get("content_digest") or "").strip()
-        if not GIT_SHA_RE.match(base_sha) or not all(
-            (base_tree, refs_digest, content_digest)
-        ):
-            raise RuntimeError(
-                "read-only report review repository_access proof is incomplete"
-            )
+        if not GIT_SHA_RE.match(base_sha) or not all((base_tree, refs_digest, content_digest)):
+            raise RuntimeError("read-only report review repository_access proof is incomplete")
 
-        original_task = (
-            task_detail.get("task")
-            if isinstance(task_detail.get("task"), dict)
-            else {}
-        )
+        original_task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
         task_id = str(original_task.get("id") or "").strip()
         project = str(original_task.get("project") or "default").strip() or "default"
         contract = _current_read_only_repository_contract(original_task)
@@ -1398,23 +1329,14 @@ class RepoPrepMixin:
             canonical_branch = _validate_git_ref(canonical_branch)
         except ValueError as exc:
             raise RuntimeError(
-                "read-only report review current execution contract has an "
-                "invalid canonical branch"
+                "read-only report review current execution contract has an invalid canonical branch"
             ) from exc
-        evidence_remote = str(
-            access_manifest.get("canonical_remote_url") or ""
-        ).strip()
-        if (
-            not evidence_remote
-            or strip_git_remote_auth(evidence_remote) != remote_url
-        ):
+        evidence_remote = str(access_manifest.get("canonical_remote_url") or "").strip()
+        if not evidence_remote or strip_git_remote_auth(evidence_remote) != remote_url:
             raise RuntimeError(
                 "read-only report repository_access remote does not match current contract"
             )
-        if (
-            str(access_manifest.get("canonical_branch") or "").strip()
-            != canonical_branch
-        ):
+        if str(access_manifest.get("canonical_branch") or "").strip() != canonical_branch:
             raise RuntimeError(
                 "read-only report repository_access branch does not match current contract"
             )
@@ -1442,9 +1364,7 @@ class RepoPrepMixin:
             )
             raise RepositoryAccessError(message, failure_class=failure_class)
 
-        initialize = _run_git_in(
-            task_dir, ["init", "--quiet", "--", str(review_repo)]
-        )
+        initialize = _run_git_in(task_dir, ["init", "--quiet", "--", str(review_repo)])
         if initialize.returncode != 0:
             fail("could not initialize read-only review repository", initialize)
         temporary_ref = "refs/mac/read-only/review-base"
@@ -1461,9 +1381,7 @@ class RepoPrepMixin:
         )
         if fetch.returncode != 0:
             fail("could not fetch exact read-only report base", fetch)
-        fetched = _run_git(
-            review_repo, ["rev-parse", "--verify", "%s^{commit}" % temporary_ref]
-        )
+        fetched = _run_git(review_repo, ["rev-parse", "--verify", "%s^{commit}" % temporary_ref])
         if fetched.returncode != 0 or fetched.stdout.strip() != base_sha:
             fail("read-only review fetch did not resolve exact executor base", fetched)
         observed_tree, observed_refs, observed_content = _finish_read_only_checkout(

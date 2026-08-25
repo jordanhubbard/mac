@@ -36,9 +36,7 @@ def test_role_crud_round_trip_through_http():
     assert fetched["id"] == role_id
     assert set(fetched["default_capabilities"]) == {"python", "review"}
 
-    update = client.put(
-        "/roles/%s" % role_id, json={"description": "Reviews patches."}
-    ).json()
+    update = client.put("/roles/%s" % role_id, json={"description": "Reviews patches."}).json()
     assert update["description"] == "Reviews patches."
     assert set(update["default_capabilities"]) == {"python", "review"}  # preserved
 
@@ -91,9 +89,7 @@ def test_role_assignment_routes_through_agents_endpoint():
     ).json()
     client.post("/roles", json=_role_body(slug="qa")).json()
 
-    assigned = client.post(
-        "/agents/%s/role" % agent["id"], json={"role_id_or_slug": "qa"}
-    ).json()
+    assigned = client.post("/agents/%s/role" % agent["id"], json={"role_id_or_slug": "qa"}).json()
     assert assigned["role_id"] is not None
     assert "review" in assigned["capabilities"]
 
@@ -141,9 +137,7 @@ def test_agent_identity_endpoint_returns_layered_view():
         },
     ).json()
     client.post("/roles", json=_role_body(slug="qa"))
-    client.post(
-        "/agents/%s/role" % agent["id"], json={"role_id_or_slug": "qa"}
-    )
+    client.post("/agents/%s/role" % agent["id"], json={"role_id_or_slug": "qa"})
     # Mood is self-reported by the agent.
     client.post(
         "/agents/%s/mood" % agent["id"],
