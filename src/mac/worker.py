@@ -356,6 +356,35 @@ class WorkerRunResult:
         return asdict(self)
 
 
+def _emit_task_progress(
+    worker: Any,
+    task: JsonDict,
+    phase: str,
+    **payload: Any,
+) -> None:
+    """Emit a coarse progress boundary when the host supports AgentBus.
+
+    ``execute_assignment`` is intentionally reusable by small harnesses in
+    tests and K8s adapters. Those hosts implement the execution contract but
+    do not necessarily mix in worker observability, so progress remains
+    best-effort rather than becoming a new execution prerequisite.
+    """
+
+    emit = getattr(worker, "_emit_bus_event", None)
+    if not callable(emit):
+        return
+    emit(
+        "task.progress",
+        task_id=str(task.get("id") or "") or None,
+        project=str(task.get("project") or "") or None,
+        payload={
+            "schema": "mac.agent_inner_loop.progress.v1",
+            "phase": phase,
+            **payload,
+        },
+    )
+
+
 def _build_willing_media_routes(host: str, hardware: Optional[JsonDict]) -> List[JsonDict]:
     """All media routes this host is configured (willing) to serve: catalog-
     derived + GPU-gated (advertised_media_routes returns [] off-GPU). One server
@@ -1537,15 +1566,11 @@ class MacWorker(
                     task_dir = self._prepare_task_workspace(task, lease)
                 else:
                     raise
-            self._emit_bus_event(
-                "task.progress",
-                task_id=task_id,
-                project=str(task.get("project") or "") or None,
-                payload={
-                    "schema": "mac.agent_inner_loop.progress.v1",
-                    "phase": "execution_started",
-                    "continuation": "local",
-                },
+            _emit_task_progress(
+                self,
+                task,
+                "execution_started",
+                continuation="local",
             )
             started = time.monotonic()
             execution = self._execute_with_lease_renewal(task, lease, task_dir)
@@ -1565,16 +1590,12 @@ class MacWorker(
                 subject_id=task_id,
                 detail={"returncode": execution.returncode, "summary": execution.summary},
             )
-            self._emit_bus_event(
-                "task.progress",
-                task_id=task_id,
-                project=str(task.get("project") or "") or None,
-                payload={
-                    "schema": "mac.agent_inner_loop.progress.v1",
-                    "phase": "execution_finished",
-                    "returncode": execution.returncode,
-                    "duration_ms": round(duration_ms, 3),
-                },
+            _emit_task_progress(
+                self,
+                task,
+                "execution_finished",
+                returncode=execution.returncode,
+                duration_ms=round(duration_ms, 3),
             )
             if not self._assignment_is_current(task_id, lease_id):
                 return self._stale_result(
