@@ -39,6 +39,7 @@ to their retained sources.
 - [ADR 0029: The coding-route search path is a fleet contract, not per-worker environment](../adr/0029-the-route-search-path-is-a-fleet-contract.md) — `adr/0029-the-route-search-path-is-a-fleet-contract.md`
 - [ADR 0030: LangChain extracts meaning on the agent; hub Qdrant only stores the extract](../adr/0030-langchain-extracts-before-qdrant.md) — `adr/0030-langchain-extracts-before-qdrant.md`
 - [ADR 0031: CodeGraph is a hint when the tool and `.codegraph/` exist, not a hard gate](../adr/0031-codegraph-is-a-hint.md) — `adr/0031-codegraph-is-a-hint.md`
+- [ADR 0032: CLI sessions use each harness's hooks, not tmux, for recording and AgentBus injection](../adr/0032-cli-session-hooks-not-tmux.md) — `adr/0032-cli-session-hooks-not-tmux.md`
 - [Autonomous Project Routing and Review/Fix Loop Implementation Plan](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) — `superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`
 - [Autonomous Project Routing and Review/Fix Loop Design](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) — `superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`
 - [K8s bootstrap fleet registration — design](../superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md) — `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md`
