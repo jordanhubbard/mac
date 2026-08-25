@@ -3,14 +3,14 @@
 The normal worker finalizer deliberately refuses untracked or staged-new files:
 an unattended process must not decide that arbitrary new files are intended
 deliverables.  This module is the bounded operator path for the narrower case
-where executor work was harvested, its repository contract test and CodeGraph
-audit passed, and publication failed only because the coding agent forgot to
+where executor work was harvested, its repository contract test passed, and
+publication failed only because the coding agent forgot to
 commit named new files.
 
 Recovery never invokes an executor or model.  It validates the preserved
 workspace, requires an exact allow-list of every new file, commits with
-provenance, rebases onto the canonical branch, reruns the contract and
-CodeGraph gates, and uses the shared guarded-push primitive.
+provenance, rebases onto the canonical branch, reruns the contract gate, and
+uses the shared guarded-push primitive.
 
 Preserved test evidence is validated by gate *semantics*, not by argv spelling:
 an approved repository-owned runner, bound to this task's prepared base, that
@@ -27,10 +27,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence
 
-from mac.codegraph_audit import (
-    codegraph_audit_manifest_problems,
-    run_codegraph_audit,
-)
 from mac.gitops import (
     guarded_push,
     resolve_canonical_publication_target,
@@ -536,7 +532,6 @@ def recover_finalizer_worktree(
     original_evidence_id: str,
     execute: bool = False,
     test_runner: Callable[[str, Path], subprocess.CompletedProcess[str]] = _default_test_runner,
-    codegraph_runner: Callable[[Path, Sequence[str]], JsonDict] = run_codegraph_audit,
     canonical_syncer: Callable[[Path, str, str], JsonDict] = sync_worktree_with_canonical,
     publisher: Callable[[Any], Any] = guarded_push,
 ) -> JsonDict:
@@ -628,15 +623,6 @@ def recover_finalizer_worktree(
         ).splitlines()
         if line.strip()
     ]
-    codegraph = codegraph_runner(worktree, changed)
-    codegraph_problems = codegraph_audit_manifest_problems(
-        {"codegraph": codegraph, "repo": {"files_changed": changed}}
-    )
-    if codegraph_problems:
-        raise RepositoryRecoveryError(
-            "recovery CodeGraph audit failed: %s" % "; ".join(codegraph_problems)
-        )
-
     target = resolve_canonical_publication_target(
         worktree=worktree,
         canonical_remote=remote,
@@ -665,7 +651,6 @@ def recover_finalizer_worktree(
             "stdout_sha256": _sha256(root / "recovery-test.stdout.txt"),
             "stderr_sha256": _sha256(root / "recovery-test.stderr.txt"),
         },
-        "codegraph": codegraph,
     }
     (root / "recovery-evidence.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -803,7 +788,6 @@ def recover_stalled_finalizer(
     approved_new_files: Iterable[str] = (),
     execute: bool = False,
     test_runner: Callable[[str, Path], subprocess.CompletedProcess[str]] = _default_test_runner,
-    codegraph_runner: Callable[[Path, Sequence[str]], JsonDict] = run_codegraph_audit,
     canonical_syncer: Callable[[Path, str, str], JsonDict] = sync_worktree_with_canonical,
     publisher: Callable[[Any], Any] = guarded_push,
 ) -> JsonDict:
@@ -811,7 +795,7 @@ def recover_stalled_finalizer(
 
     Stages tracked changes and every approved new file, commits any pending work
     with stalled-finalizer provenance, rebases onto the canonical branch, reruns
-    the contract test and CodeGraph audit, and performs the shared guarded push.
+    the contract test, and performs the shared guarded push.
     """
 
     plan = inspect_stalled_finalizer_recovery(
@@ -906,15 +890,6 @@ def recover_stalled_finalizer(
         ).splitlines()
         if line.strip()
     ]
-    codegraph = codegraph_runner(worktree, changed)
-    codegraph_problems = codegraph_audit_manifest_problems(
-        {"codegraph": codegraph, "repo": {"files_changed": changed}}
-    )
-    if codegraph_problems:
-        raise RepositoryRecoveryError(
-            "recovery CodeGraph audit failed: %s" % "; ".join(codegraph_problems)
-        )
-
     target = resolve_canonical_publication_target(
         worktree=worktree,
         canonical_remote=remote,
@@ -943,7 +918,6 @@ def recover_stalled_finalizer(
             "stdout_sha256": _sha256(root / "stalled-recovery-test.stdout.txt"),
             "stderr_sha256": _sha256(root / "stalled-recovery-test.stderr.txt"),
         },
-        "codegraph": codegraph,
     }
     (root / "stalled-recovery-evidence.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n",

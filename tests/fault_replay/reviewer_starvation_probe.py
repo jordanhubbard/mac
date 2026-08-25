@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 
-from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA
 from mac.services import ControlPlane, sign_verification_manifest
 
 
@@ -46,16 +45,6 @@ def main() -> int:
             "files_changed": ["src/example.py"],
         },
         "tests": [{"command": "pytest tests/test_example.py", "returncode": 0}],
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "historical_fault_probe",
-            "relevant_files": ["src/example.py"],
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
-        },
         "signed_by": agent.id,
     }
     manifest["signature"] = sign_verification_manifest(

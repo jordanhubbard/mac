@@ -33,8 +33,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   each with `command -v <basename>` plus a pinned `--version` so a missing
 #   install, a dangling symlink, or a non-PATH binary fails the build closed
 #   instead of shipping an image the in-sandbox probe later rejects as
-#   agent_binary_missing. codegraph: local codebase indexing and inspection
-#   baseline for agent work.
+#   agent_binary_missing.
 # opencode: installed from npm, but two details are load-bearing. Its platform
 #   binary arrives through an optionalDependency placed by the package's
 #   postinstall, and npm >=11 blocks install scripts unless the package is
@@ -89,7 +88,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # .profile for exactly this reason; the image that task sandboxes actually run
 # in did not.
 ARG GH_VERSION="2.95.0"
-ARG CODEGRAPH_VERSION="v1.5.0"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"
 ARG CODEX_VERSION="0.140.0"
@@ -127,8 +125,8 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && rm -f /tmp/mac-riscv-probe.c /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin /tmp/mac-qemu-devices \
     && (cd /tmp/mac-openshell-build-assets && sha256sum -c SHA256SUMS) \
     && case "$TARGETARCH" in \
-         amd64) asset_arch=amd64; gh_arch=amd64; codegraph_arch=amd64 ;; \
-         arm64) asset_arch=arm64; gh_arch=arm64; codegraph_arch=arm64 ;; \
+         amd64) asset_arch=amd64; gh_arch=amd64 ;; \
+         arm64) asset_arch=arm64; gh_arch=arm64 ;; \
          *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 2 ;; \
        esac \
     && install -d -m0755 /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins \
@@ -168,15 +166,6 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && pi --version | grep -F "${PI_VERSION}" \
     && test "$(pnpm --version)" = "$PNPM_VERSION" \
     && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
-    && CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}" \
-    && mkdir -p "$CG_HOME" \
-    && tar -xzf "/tmp/mac-openshell-build-assets/codegraph-${codegraph_arch}.tgz" -C "$CG_HOME" --strip-components=1 \
-    && ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current \
-    && printf '#!/bin/sh\nexec "%s/node" --liftoff-only "%s/lib/dist/bin/codegraph.js" "$@"\n' "$CG_HOME" "$CG_HOME" > /usr/local/bin/codegraph \
-    && chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph \
-    && chmod -R a+rX /usr/local/lib/codegraph \
-    && chmod 0755 /usr/local/bin/codegraph \
-    && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
     && install -m 0644 -o sandbox -g sandbox /dev/null /home/sandbox/.profile \
     && chmod 0755 /home/sandbox \

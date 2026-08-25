@@ -24,14 +24,13 @@ candidate_requires_zero_unique_arcs = true
 
 [selection]
 # Impact-based test selection (scripts/resolve-impacted-tests.py). A test is
-# selected only when the code it actually exercises changed. The engine is
-# hybrid + union + fail-closed: dynamic per-test coverage map first, CodeGraph
-# static reachability second, full-suite fallback whenever a changed file
-# cannot be safely mapped.
+# selected only when the code it actually exercises changed. The engine uses
+# the dynamic per-test coverage map and falls back to the full suite whenever a
+# changed file cannot be safely mapped.
 #
 # Committed map produced post-merge on main by scripts/build-test-impact-map.py.
-# A missing or stale map is always SAFE: every source file then falls through
-# to CodeGraph and finally to a full run, which is the pre-selection behavior.
+# A missing or stale map is always SAFE: every unresolved source file forces a
+# full run, which is the pre-selection behavior.
 impact_map = "src/mac/data/test_impact_map.json"
 
 # Files that invalidate the whole map or test collection when they change, so a

@@ -214,7 +214,7 @@ ensure_openclaw_image() {
     [ -f "${MAC_SRC}/deploy/openshell/mac-hermes.Containerfile" ] \
       || die "Containerfile not found at ${MAC_SRC}/deploy/openshell/mac-hermes.Containerfile"
 
-    # Pre-fetch build assets (Node 22 setup, gh, codegraph).
+    # Pre-fetch build assets (Node 22 setup and gh).
     if [ -f "${MAC_SRC}/deploy/openshell/bootstrap-openshell.sh" ]; then
       log "pre-fetching image build assets via bootstrap-openshell.sh --skip-image"
       # Call prepare_image_build_assets function path indirectly; the bootstrap

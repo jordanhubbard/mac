@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Review-verdict executor that delegates semantic review to opencode's
 # `review` agent, then passes the result through MAC's canonical deterministic
-# finalizer for exact-checkout tests, CodeGraph, integration checks, and signing.
+# finalizer for exact-checkout tests, integration checks, and signing.
 set -euo pipefail
 
 MAC_TASK_ID="${MAC_TASK_ID:-}"

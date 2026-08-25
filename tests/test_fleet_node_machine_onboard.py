@@ -63,13 +63,12 @@ def _route(module, path: Path) -> Path:
 
 def _fake_toolchain(module, stage: Path):
     uv = stage / "tools" / "uv"
-    codegraph = stage / "tools" / "codegraph"
     python = stage / "python" / "cpython-3.12.11-test" / "bin" / "python3.12"
-    for executable in (uv, codegraph / "bin" / "codegraph", codegraph / "node", python):
+    for executable in (uv, python):
         executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         executable.chmod(0o755)
-    return uv, codegraph, python
+    return uv, python
 
 
 @pytest.fixture()
@@ -176,7 +175,6 @@ def test_prepare_is_generation_scoped_and_does_not_publish(module, tmp_path, mon
     assert receipt["versions"] == {
         "uv": "0.8.22",
         "python": "3.12.11",
-        "codegraph": "v1.5.0",
     }
     assert (stage / "source" / "pyproject.toml").is_file()
     assert stat.S_IMODE((stage / "stage.json").stat().st_mode) == 0o600
@@ -247,8 +245,6 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
                 executable.chmod(0o755)
         if args[0].endswith("/python") and "-c" in args:
             return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
-        if args[0].endswith("/codegraph"):
-            return subprocess.CompletedProcess(args, 0, "1.5.0\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -267,7 +263,6 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
     assert layout.source.is_dir() and not layout.source.is_symlink()
     assert layout.venv.is_dir() and not layout.venv.is_symlink()
     assert layout.mac_bin.readlink() == layout.venv / "bin" / "mac"
-    assert layout.codegraph_bin.is_symlink()
     assert layout.gh_bin.is_symlink()
     assert stat.S_IMODE(layout.receipt.stat().st_mode) == 0o600
     assert all("start" not in command and "restart" not in command for command in commands)
@@ -332,8 +327,6 @@ def test_aborted_cohort_journal_is_preserved_while_precohort_receipt_commits(
                 executable.chmod(0o755)
         if args[0].endswith("/python") and "-c" in args:
             return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
-        if args[0].endswith("/codegraph"):
-            return subprocess.CompletedProcess(args, 0, "1.5.0\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)

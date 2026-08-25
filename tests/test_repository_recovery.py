@@ -109,32 +109,12 @@ def _recovery_fixture(
             "files_changed": ["README.md"],
         },
         "tests": [{"command": test_command, "returncode": 0, "status": "pass"}],
-        "codegraph": {
-            "schema": "mac.codegraph_audit.v1",
-            "status": "pass",
-            "reason": "affected_computed",
-            "relevant_files": ["README.md"],
-            "commands": [],
-        },
     }
     (workspace / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
     (workspace / "worker-result.json").write_text(
         json.dumps({"returncode": 0, "summary": "done"}), encoding="utf-8"
     )
     return workspace, worktree, remote, base
-
-
-def _passing_codegraph(_worktree: Path, files: list[str]):
-    return {
-        "schema": "mac.codegraph_audit.v1",
-        "status": "pass",
-        "reason": "affected_computed",
-        "relevant_files": files,
-        "commands": [
-            {"argv": ["codegraph", "sync"], "returncode": 0},
-            {"argv": ["codegraph", "affected"], "returncode": 0},
-        ],
-    }
 
 
 def test_inspect_finalizer_recovery_is_read_only_and_lists_exact_new_files(tmp_path: Path):
@@ -194,7 +174,6 @@ def test_execute_revalidates_commits_with_provenance_and_pushes(tmp_path: Path):
         original_evidence_id="ev_original",
         execute=True,
         test_runner=passing_test,
-        codegraph_runner=_passing_codegraph,
     )
 
     assert result["status"] == "complete"
@@ -302,7 +281,6 @@ def test_sanity_wrapper_recovery_still_reruns_the_full_contract_gate(tmp_path: P
         original_evidence_id="ev_sanity",
         execute=True,
         test_runner=passing_test,
-        codegraph_runner=_passing_codegraph,
     )
 
     assert result["status"] == "complete"
@@ -572,7 +550,6 @@ def test_stalled_recovery_execute_commits_and_pushes(tmp_path: Path):
         original_evidence_id="ev_stalled",
         execute=True,
         test_runner=passing_test,
-        codegraph_runner=_passing_codegraph,
     )
 
     assert result["status"] == "complete"
@@ -610,7 +587,6 @@ def test_stalled_recovery_execute_commits_uncommitted_new_file(tmp_path: Path):
         approved_new_files=["new_module.py"],
         execute=True,
         test_runner=passing_test,
-        codegraph_runner=_passing_codegraph,
     )
 
     assert result["status"] == "complete"

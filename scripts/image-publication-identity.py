@@ -69,7 +69,6 @@ IMAGE_SPECS = {
         "trees": ("src",),
         "build_args": {
             "BUILDX_VERSION": "0.30.1",
-            "CODEGRAPH_VERSION": "v1.5.0",
             "CODEX_VERSION": "0.140.0",
             "CLAUDE_VERSION": "2.1.220",
             "CURSOR_VERSION": "2026.07.23-e383d2b",
@@ -125,7 +124,6 @@ def _ignored_copied_path(relative: Path) -> bool:
             ".ssh",
             ".codex",
             ".tickets",
-            ".codegraph",
             ".test-portfolio",
             "htmlcov",
             ".ruff_cache",
@@ -600,7 +598,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "codex --version | grep -E '(^| )0\\.140\\.0$'; "
         "claude --version | grep -F '2.1.220'; "
         "cursor-agent --version | grep -F '2026.07.23-e383d2b'; "
-        "codegraph --version | grep -Fx '1.5.0'; clang --version; "
+        "clang --version; "
         "clang --print-targets | grep -F riscv64; llvm-objcopy --version; "
         "ld.lld --version; qemu-system-riscv64 --version; "
         "qemu-system-riscv64 -machine help | grep -F virt; python3 --version; "

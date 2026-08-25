@@ -50,8 +50,8 @@ For every task, `mac.review_observation.v1` derives:
 
 The existing integrity rules still apply. A reviewer must be a different
 agent/persona and an approval for model-generated executor evidence must name a
-different model. Experimentation cannot weaken signature, test, CodeGraph,
-publication, or reviewer-eligibility gates.
+different model. Experimentation cannot weaken signature, test, publication,
+or reviewer-eligibility gates.
 
 ## Evidence-withheld discovery
 

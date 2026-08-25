@@ -1,6 +1,6 @@
 """The mac-agent-terminal-timeout skill teaches fleet agents to pass an explicit
 `terminal()` timeout for long MAC-repo operations (contract tests, bootstrap,
-codegraph, large git) and documents the CARGO_HOME/Rust toolchain pitfall where
+large git) and documents the CARGO_HOME/Rust toolchain pitfall where
 `cargo` is not on PATH inside the task sandbox until `mac_sandbox_toolchain_setup`
 symlinks it into MAC_TOOLCHAIN_BIN. These guards fail loudly if the skill is
 removed, malformed, or loses the Rust-toolchain diagnostic guidance a blocked

@@ -42,13 +42,8 @@ Measured in the task-owned worktree with the bootstrapped `.venv`
   `reason=test_or_shared_runtime_infrastructure_changed`. Fail-closed.
 - `README.md` / non-code, non-broad → `mode=focused`, `reason=non_code_change`,
   `tests=[]` (no executable tests required).
-- `src/mac/planning.py` in this worktree (CodeGraph present but not initialized,
-  so `codegraph affected` exits non-zero) → `mode=focused`,
-  `reason=direct_codegraph_and_canary_scope`,
-  `codegraph_problem=codegraph_affected_failed`, and a non-empty focused scope
-  built from module-mapped tests plus the five canary tests. The CodeGraph
-  degradation is captured, not swallowed, and the selector still widens to a
-  safe canary-backed focused scope rather than under-selecting.
+- `src/mac/planning.py` in this worktree → `mode=focused`, with a non-empty
+  scope built from module-mapped tests plus the five canary tests.
 
 None of the representative inputs crashed or produced an empty/under-scoped
 selection for a real code change. `main()` additionally wraps `select()` in a
@@ -74,45 +69,22 @@ this baseline: pytest green, coverage safety floors met
   changed-file set? **No.** Every path either widens to `full` or produces a
   canary-backed focused scope; errors fail closed to `full`.
 - (b) Do any `reason`/`mode` outcomes surface as an unhelpful "failure pattern"
-  lacking actionable diagnostics? **No.** `codegraph_unavailable`,
-  `codegraph_affected_failed`, `codegraph_affected_invalid_json`,
-  `no_trustworthy_changed_file_scope`, and `selection_error` all carry an
-  explicit machine-readable `reason` (and `selection_error` carries `error`).
-  These are diagnostics, not defects.
+  lacking actionable diagnostics? **No.** `no_trustworthy_changed_file_scope`
+  and `selection_error` carry explicit machine-readable reasons, and
+  `selection_error` carries the underlying error. These are diagnostics, not
+  defects.
 - (c) Is there a coverage gap in `tests/test_select_sanity_tests.py` for the
   suspected pattern? **No meaningful gap.** The module already asserts
-  `no_trustworthy_changed_file_scope`, `codegraph_unavailable`,
-  `codegraph_affected_failed`, `codegraph_affected_invalid_json`,
-  `selection_error`, and the focused canary scope.
+  `no_trustworthy_changed_file_scope`, `selection_error`, and the focused
+  canary scope.
 
 **Conclusion: NOT ACTIONABLE as a correctness repair. Recommend closing the
 dream finding.**
-
-## Optional, Low-Severity Follow-ups (not required; out of scope here)
-
-1. On the `direct_codegraph_and_canary_scope` focused branch, the populated
-   `codegraph_problem` field is not asserted by
-   `test_code_change_focused_scope_includes_canaries`
-   (`tests/test_select_sanity_tests.py`). A one-line assertion would close that
-   observational gap. Precise target: add
-   `assert result["codegraph_problem"] is None` (and a monkeypatched variant
-   asserting the propagated value) in that test.
-2. `_codegraph_affected` collapses distinct CodeGraph failures to short reason
-   codes and drops the underlying stderr; surfacing it in the returned document
-   would aid debugging. Precise target:
-   `scripts/select-sanity-tests.py:_codegraph_affected`.
-
-Both are cosmetic; neither changes selection outcomes and neither is required to
-"repair" the reported pattern.
 
 ## Closure (repair node)
 
 The dream finding is closed as NOT actionable: `scripts/select-sanity-tests.py`
 is a correctly functioning, fail-closed selector with machine-readable
 diagnostics, so no production correctness change is warranted. To pin the
-intended fail-closed behavior and close the single observational gap noted
-above, `tests/test_select_sanity_tests.py` now asserts that the focused
-`direct_codegraph_and_canary_scope` branch reports `codegraph_problem is None`
-when CodeGraph is healthy and propagates the CodeGraph failure code when
-CodeGraph is degraded. This locks in that a degraded CodeGraph is surfaced, not
-swallowed, while the selector still emits a canary-backed focused scope.
+intended fail-closed behavior, `tests/test_select_sanity_tests.py` asserts that
+the selector emits a canary-backed focused scope for mapped source changes.

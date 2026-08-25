@@ -28,9 +28,7 @@ import pytest
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane
 from tests.test_control_plane import (
-    CODEGRAPH_AUDIT_SCHEMA,
     _sign,
-    codegraph_relevant_files,
     register_agent,
     verified_repo_metadata,
 )
@@ -79,16 +77,6 @@ def _verdict(cp, reviewer, task, review, evidence, *, status, verification):
                 "files_changed": ["src/example.py"],
             },
             "tests": [{"command": "pytest tests/test_example.py", "returncode": 0}],
-            "codegraph": {
-                "schema": CODEGRAPH_AUDIT_SCHEMA,
-                "status": "pass",
-                "reason": "test_fixture",
-                "relevant_files": codegraph_relevant_files(["src/example.py"]),
-                "commands": [
-                    {"argv": ["codegraph", "sync"], "returncode": 0},
-                    {"argv": ["codegraph", "affected"], "returncode": 0},
-                ],
-            },
             **verification,
         },
     )

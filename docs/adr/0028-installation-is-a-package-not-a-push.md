@@ -47,13 +47,10 @@ Three consecutive deploy blockers were reported this session on nodes that were
 themselves fine:
 
 1. a vestigial container runtime that failed daemon-resource quiescence;
-2. reviewed CodeGraph `v1.5.0` missing while nodes carried `v1.1.6`, with
-   stale caches whose checksums no longer matched;
-3. a dangling `src/mac/_hermes` path left behind by an earlier merge.
+2. a dangling `src/mac/_hermes` path left behind by an earlier merge.
 
-The repository corroborates the shape of each: `deploy/reviewed-tool-assets.sh`
-does pin CodeGraph at `v1.5.0` with per-platform SHA-256 digests;
-`deploy/install-qdrant-service.sh` does probe `podman` before `docker` as a
+The repository corroborates the shape of each:
+`deploy/install-qdrant-service.sh` probes `podman` before `docker` as a
 container runtime; `src/mac` carries `hermes_*.py` modules with no `_hermes`
 directory. The failures were not verified first-hand here, and the point does
 not depend on their details.
@@ -158,8 +155,8 @@ machines the fleet owner does not administer possible at all.
 The release publishes a manifest — name, version, os, arch, size, SHA-256 per
 artifact — and signs it. `install.sh` verifies the manifest signature, then
 verifies the package digest before extraction, and caches verified packages
-under `~/.mac/cache/reviewed-assets` beside the existing reviewed `uv`, Python
-and CodeGraph archives. Verification is repeated on cache reuse, because the
+under `~/.mac/cache/reviewed-assets` beside the existing reviewed `uv` and
+Python archives. Verification is repeated on cache reuse, because the
 existing onboarding checklist already learned that a cached asset is not a
 trusted one.
 

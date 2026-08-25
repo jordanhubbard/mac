@@ -1068,7 +1068,7 @@ def test_a_corrupt_resolved_at_is_stale_rather_than_trusted():
 
 
 def test_recording_a_capability_keeps_the_rest_of_the_repository_metadata(cp, tmp_path):
-    """The contract and codegraph status must survive a capability write.
+    """The repository contract must survive a capability write.
 
     `record_merge_capability` reads-modifies-writes the whole `metadata` blob.
     If it replaced it instead, a repository would lose its runtime contract the
@@ -1101,7 +1101,6 @@ def test_recording_a_capability_keeps_the_rest_of_the_repository_metadata(cp, tm
     assert stored_capability(updated.metadata) == capability
     # Everything else is still there.
     assert updated.metadata["repository_contract"] == (registered.metadata["repository_contract"])
-    assert updated.metadata["codegraph"] == registered.metadata["codegraph"]
     # And it is durable, not just returned.
     assert stored_capability(cp.get_project_repository(registered.id).metadata) == (capability)
 

@@ -45,7 +45,6 @@ BASE_REQUEST = {
     "specification_identity": "sha256:" + "d" * 64,
     "flavor_identity": "sha256:" + "e" * 64,
     "toolchain_identity": "sha256:" + "f" * 64,
-    "codegraph_identity": "sha256:" + "0" * 64,
     "artifact_reference": None,
     "timeout_seconds": 3600,
 }

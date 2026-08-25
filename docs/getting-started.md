@@ -186,13 +186,8 @@ uv run mac --db "$TUTORIAL_DB" project register git@github.com:ORG/REPO.git#main
 # After onboarding, register the hub-visible checkout that contains the contract.
 uv run mac --db "$TUTORIAL_DB" admin bridge repository register my-project /srv/repos/my-project --project my-project
 
-Registration validates `.mac/project.yaml` and, when CodeGraph is installed on
-the registering host, initializes a local CodeGraph index for the checkout.
-The generated `.codegraph/` directory is excluded through `.git/info/exclude`
-and is not part of the repository contract or task deliverables.
-Deployed fleet agents may rely on CodeGraph as a baseline analysis aid for
-understanding APIs, code behavior, call relationships, and code-aware skills,
-while still verifying findings against source files and tests.
+Registration validates `.mac/project.yaml` before the repository becomes
+available to project-scoped tasks.
 
 # Or create a manual project. New projects default to paused, so pass --active
 # when the fleet should be allowed to claim its tasks immediately.

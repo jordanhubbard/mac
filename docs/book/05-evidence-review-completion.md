@@ -14,8 +14,7 @@ for independent review. A reviewer decides against that evidence. Completion
 then records the accepted outcome.
 
 This report task avoids repository publication so the entire lifecycle remains
-local. Code tasks add test, CodeGraph, push, review, and canonical-integration
-requirements.
+local. Code tasks add test, push, review, and canonical-integration requirements.
 
 ```bash
 mac --db "$DOCS_DB" admin init

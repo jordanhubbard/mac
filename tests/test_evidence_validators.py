@@ -2,7 +2,6 @@ import subprocess
 
 import pytest
 
-from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA
 from mac.evidence_validators import (
     normalize_manifest_tests,
     registered_evidence_types,
@@ -21,16 +20,6 @@ def _repo_manifest(**overrides):
             "pushed": True,
             "remote_ref": "origin/main",
             "files_changed": ["src/mac/services.py"],
-        },
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "affected_computed",
-            "relevant_files": ["src/mac/services.py"],
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
         },
         "checks": [{"name": "pytest", "returncode": 0}],
     }
@@ -147,67 +136,6 @@ def test_plan_decomposed_requires_routable_children_and_rationale():
     assert "plan_decomposed child 1 requires a title" in problems
     assert "plan_decomposed evidence requires ordering_rationale" in problems
     assert "plan_decomposed evidence requires coverage_claim" in problems
-
-
-def test_repo_change_requires_codegraph_for_source_changes():
-    manifest = _repo_manifest()
-    manifest.pop("codegraph")
-    problems = validate_evidence_type(
-        "repo_change",
-        manifest,
-        passed_check_count=_passed_check_count,
-    )
-    assert problems == []
-
-    docs_only = _repo_manifest(
-        repo={
-            **_repo_manifest()["repo"],
-            "files_changed": ["README.md"],
-        }
-    )
-    docs_only.pop("codegraph")
-    assert (
-        validate_evidence_type(
-            "repo_change",
-            docs_only,
-            passed_check_count=_passed_check_count,
-        )
-        == []
-    )
-
-
-def test_repo_change_rejects_faked_codegraph_pass_without_command_records():
-    manifest = _repo_manifest(
-        codegraph={
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "relevant_files": ["src/mac/services.py"],
-        }
-    )
-
-    problems = validate_evidence_type(
-        "repo_change",
-        manifest,
-        passed_check_count=_passed_check_count,
-    )
-
-    assert problems == []
-
-
-def test_artifact_validator_requires_codegraph_for_source_changes():
-    manifest = _repo_manifest(
-        evidence_type="artifact",
-        artifacts=["artifact://build"],
-    )
-    manifest.pop("codegraph")
-
-    problems = validate_evidence_type(
-        "artifact",
-        manifest,
-        passed_check_count=_passed_check_count,
-    )
-
-    assert problems == []
 
 
 def test_operator_result_rejected_for_repo_coupled_task():
@@ -838,11 +766,6 @@ def _adr_task_style_manifest():
             "remote_ref": "refs/heads/mac/agent/task-adr",
             "files_changed": ["docs/adr/0001-example.md"],
         },
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "skipped",
-            "reason": "non_code_change",
-        },
         "tests": {
             "command": "scripts/run-contract-tests.sh",
             "returncode": 0,
@@ -883,16 +806,6 @@ def test_dag_schema_task_evidence_with_dict_tests_passes_require_tests():
             "pushed": True,
             "remote_ref": "refs/heads/mac/agent/task-dag-schema",
             "files_changed": ["src/mac/dag_schema.py"],
-        },
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "affected_computed",
-            "relevant_files": ["src/mac/dag_schema.py"],
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
         },
         "tests": {
             "command": "scripts/run-contract-tests.sh",

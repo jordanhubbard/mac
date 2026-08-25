@@ -1355,7 +1355,6 @@ class DirectiveService:
                 "set": {
                     "executor.host_package_install_allowed": False,
                     "verification.tests_required": True,
-                    "verification.codegraph_required_for_code_change": True,
                     "review.required": True,
                     "secrets.exposure_allowed": False,
                     "publication.owner": "hub",

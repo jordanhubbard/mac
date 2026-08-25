@@ -128,7 +128,6 @@ def _make_fake_bin(
     seed_unknown_test_cmd: Optional[str] = None,
     record_provision_agent: bool = False,
     changed_files: Optional[List[str]] = None,
-    codegraph_rc: Optional[int] = None,
     git_base_sha: Optional[str] = None,
     git_head_sha: Optional[str] = None,
     remote_readback_sha: Optional[str] = None,
@@ -356,18 +355,6 @@ def _make_fake_bin(
         "esac\n"
         "exit 0\n",
     )
-
-    if codegraph_rc is not None:
-        _write_exec(
-            bindir / "codegraph",
-            "#!/usr/bin/env bash\n"
-            'case "$1" in\n'
-            '  init|sync) mkdir -p "${2:-.}/.codegraph"; echo "indexed" ;;\n'
-            '  affected) cat >/dev/null; echo "{\\"affected\\":[]}" ;;\n'
-            "  *) : ;;\n"
-            "esac\n"
-            f"exit {codegraph_rc}\n",
-        )
 
     # curl: the script fetches task + project JSON. Return a task carrying
     # an origin repository_url so the workdir branch is exercised.
@@ -910,41 +897,6 @@ def test_gate_blocks_when_no_test_command_detected(tmp_path: Path) -> None:
     items = _evidence_items(manifest)
     assert items[2]["status"] == "not_detected"
     assert "could not detect test command" in items[3]["reason"]
-
-
-def test_gate_blocks_push_and_mr_when_codegraph_fails_for_source_change(tmp_path: Path) -> None:
-    bindir = tmp_path / "bin"
-    stdout = json.dumps({"type": "step_finish", "reason": "stop"}) + "\n"
-    _make_fake_bin(
-        bindir,
-        opencode_stdout=stdout,
-        opencode_rc=0,
-        make_change=True,
-        push_rc=0,
-        pr_rc=0,
-        seed_test_command="pytest",
-        test_rc=0,
-        changed_files=["src/app.py"],
-        codegraph_rc=7,
-    )
-    manifest_path = tmp_path / "mac-evidence.json"
-    result = _run_build(bindir=bindir, manifest_path=manifest_path)
-
-    assert result.returncode != 0
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["gate_blocked"] is True
-    assert manifest["gate_verdict"] == "fail"
-    assert manifest["codegraph"]["status"] == "fail"
-    assert manifest["codegraph"]["relevant_files"] == ["src/app.py"]
-    assert manifest["checks"][1]["name"] == "pre_push_test_gate"
-    assert manifest["checks"][1]["status"] == "pass"
-    repo = _findings_by_kind(manifest)["repo_change_summary"]
-    assert repo["pushed"] is False
-    assert repo.get("pr_opened") is False
-    items = _evidence_items(manifest)
-    assert items[2]["status"] == "pass"
-    assert items[3]["label"] == "CodeGraph Failures"
-    assert "codegraph audit failed" in items[3]["reason"]
 
 
 def test_gate_detects_js_project_in_subdirectory(tmp_path: Path) -> None:

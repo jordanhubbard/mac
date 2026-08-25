@@ -27,8 +27,8 @@ mac admin publish --help >/dev/null
 
 When reviewed work diverges from current `main`, the correct method is guarded
 reconciliation: replay or merge the reviewed head onto the observed canonical
-tip, rerun required tests and CodeGraph analysis, push with a compare-and-swap
-guard, then record the remotely verified final SHA. Divergence is expected in a
+tip, rerun required tests, push with a compare-and-swap guard, then record the
+remotely verified final SHA. Divergence is expected in a
 parallel system; unverified publication is not.
 
 Use `mac admin repo refs status` during session closeout. Manual pruning is appropriate

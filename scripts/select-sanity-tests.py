@@ -7,9 +7,9 @@ convention and escalated to a full run on any change under broad prefixes
 ...). That over-escalation is exactly why rollouts ran the whole suite.
 
 Selection now delegates to scripts/resolve-impacted-tests.py, which maps a
-source change to the tests whose COVERAGE actually touched it (dynamic map),
-unions CodeGraph static reachability, and only falls back to a full run when a
-changed file cannot be safely attributed. The only categorical full-run
+source change to the tests whose COVERAGE actually touched it (dynamic map)
+and falls back to a full run when a changed file cannot be safely attributed.
+The only categorical full-run
 triggers now live in the resolver's `[selection].global_full_paths` (files that
 invalidate the whole map or collection) plus genuinely opaque non-code files.
 
@@ -24,7 +24,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "mac.sanity_selection.v1"
@@ -68,20 +68,16 @@ def select(
     *,
     base: str | None = None,
     policy=None,
-    codegraph: Callable | None = None,
 ) -> dict[str, object]:
     """Impact-based selection for an explicit change set."""
     resolver = _resolver()
     scope = sorted({path for path in changed if path})
-    kwargs: dict[str, object] = {
-        "base": base,
-        "repo_root": ROOT,
-        "changed": scope,
-        "policy": policy if policy is not None else resolver.load_policy(),
-    }
-    if codegraph is not None:
-        kwargs["codegraph"] = codegraph
-    return resolver.select_from_git(**kwargs)
+    return resolver.select_from_git(
+        base=base,
+        repo_root=ROOT,
+        changed=scope,
+        policy=policy if policy is not None else resolver.load_policy(),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

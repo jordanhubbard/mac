@@ -58,9 +58,7 @@ attack-surface decision, recorded as such.
 
 ### 2. Environment contract (static, at onboarding)
 
-Onboarding derives an **environment contract** by static analysis of the repo
-(alongside, not inside, the codegraph index — codegraph indexes source symbols,
-not build/dep manifests):
+Onboarding derives an **environment contract** by static analysis of the repo:
 
 - `runtime_floors` — `node_min`/`python_min`/etc. from `engines`,
   `packageManager`, `.nvmrc`, `.node-version`, `go.mod`, lockfiles.

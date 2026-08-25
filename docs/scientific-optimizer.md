@@ -10,7 +10,7 @@ quality endpoints are non-inferior.
 It optimizes policy, not safety. The only mutable task fields are `model`,
 `review_model`, `model_strength`, `review_model_strength`, `max_iterations`,
 `review_max_iterations`, `plan_first`, and `review_mode`. Sandbox policy,
-required tests, CodeGraph, review eligibility, signatures, publication,
+required tests, review eligibility, signatures, publication,
 authorization, and deployment gates are not policy parameters and are rejected
 by validation.
 
@@ -98,7 +98,7 @@ When measured rework remains high after the safe parameter treatments are
 exhausted, `AUTO_IMPROVE` creates a normal, dispatchable repository task with
 the baseline task IDs and KPI means. That task must identify a causal mechanism,
 add missing instrumentation if needed, and pre-register a bounded treatment.
-It runs through the ordinary executor, test, CodeGraph, independent review, and
+It runs through the ordinary executor, test, independent review, and
 publication path; optimizer-origin work is excluded from its own baseline. An
 open-task check plus `MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS`
 prevents repeated task generation.

@@ -15,7 +15,7 @@ Repository tasks currently have two verification paths.
 The worker prepares a task-owned repository worktree and the executor runs the
 repository contract from `.mac/project.yaml`. For the MAC repository, that
 explicit sanity contract is `scripts/run-sanity-tests.sh`. It selects changed,
-CodeGraph-affected, public-contract, and process-E2E tests and falls back to
+public-contract, and process-E2E tests and falls back to
 `scripts/run-contract-tests.sh` whenever the scope is broad or uncertain.
 
 The sandbox writes `mac-sandbox-verification.json` with the command, return code,
@@ -32,7 +32,7 @@ test itself from the task worktree. In both cases the pre-push gate uses
 - a valid `head_sha`;
 - a non-empty `files_changed` list for normal repository work;
 - at least one passing test/check;
-- a passing CodeGraph audit for source/build/dependency/runtime changes.
+- all required checks passing for source/build/dependency/runtime changes.
 
 Only after those local checks pass does the finalizer publish the task branch.
 This means Option A is the proportional publication gate for the task-owned
@@ -91,16 +91,13 @@ directly coupled to the changed files still pass in the hub-controlled sandbox,
 not to duplicate the publication gate.
 
 The affected-test scope should be derived from the reviewed `files_changed`
-set. For source/build/dependency/runtime changes, the selector should also use
-the recorded CodeGraph affected-file audit. Directly changed test files are
-included. If the selector cannot produce a reliable affected scope, the hub
-verifier must fall back to the full repository contract command.
+set and the committed impact map. Directly changed test files are included. If
+the selector cannot produce a reliable affected scope, the hub verifier must
+fall back to the full repository contract command.
 
 Fallback to the full suite is required when:
 
 - `files_changed` is missing or cannot be trusted;
-- CodeGraph was historically required for the change and the executor evidence lacks a passing
-  audit;
 - the changes touch test selection, coverage configuration, repository contract
   configuration, bootstrap/runtime/dependency files, or broad shared
   infrastructure where affected tests cannot be bounded confidently;
@@ -130,7 +127,7 @@ integration point, not one full run per branch and another per review.
   mismatch blocks the push.
 - The review verdict manifest must record the selected test scope, the command
   that ran, and any fallback reason. It should continue to carry the executor's
-  CodeGraph audit because the hub verifies the same commit.
+  required check results because the hub verifies the same commit.
 - Full-suite coverage remains valuable at mainline integration, scheduled
   audits, and explicit fallback points, not as an unconditional duplicate in
   every task and review sandbox.
@@ -141,6 +138,5 @@ integration point, not one full run per branch and another per review.
 
 ## Non-goals
 
-This ADR does not prescribe a particular CodeGraph implementation. The selector
-and its fail-closed rules are implemented by `scripts/select-sanity-tests.py`
-and `scripts/run-sanity-tests.sh`.
+The selector and its fail-closed rules are implemented by
+`scripts/select-sanity-tests.py` and `scripts/run-sanity-tests.sh`.

@@ -27,11 +27,7 @@ so rather than assuming it will not happen.
 make install
 ```
 
-This links `mac` into `~/.local/bin`, builds the Fleet IDE, and installs
-CodeGraph if it is missing. CodeGraph is not needed to build or test mac, but
-`litai init`, the skills and the coding-CLI paths expect it, so `install`
-provisions it rather than leaving you to discover the gap later. Decline with
-`MAC_SKIP_CODEGRAPH_INSTALL=1`.
+This links `mac` into `~/.local/bin` and builds the Fleet IDE.
 
 ```console
 mac --version

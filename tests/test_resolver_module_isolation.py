@@ -12,7 +12,7 @@ resolved against a temp directory that had already been deleted:
 
     tests/test_select_sanity_tests.py::test_opaque_non_code_forces_full
         assert 'global_infrastructure_changed' == 'unmappable_non_code_change'
-    tests/test_select_sanity_tests.py::test_source_change_uses_codegraph_and_canaries
+    tests/test_select_sanity_tests.py::test_source_change_uses_map_and_canaries
         assert '...public_contract.py' in ['tests/test_guard.py', 'tests/test_mapped.py']
 
 Each file passes alone. It only fails when `-n 8` puts them in one worker, which
@@ -94,7 +94,7 @@ def test_the_selector_reads_its_own_policy_after_a_foreign_load(foreign_repo):
     tc.load_resolver(foreign_repo)
 
     selector = _load_selector()
-    result = selector.select(["Makefile"], codegraph=lambda _s, _r: ([], None))
+    result = selector.select(["Makefile"])
 
     assert result["reason"] == "unmappable_non_code_change", (
         "Makefile is global infrastructure ONLY in the synthetic policy; the "

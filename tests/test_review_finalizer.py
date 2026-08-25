@@ -152,7 +152,7 @@ def test_review_verdict_finalizer_does_not_touch_new_files_in_review_checkout(
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
 
     # Make the heavy independent checks hermetic + passing so the finalizer
-    # reaches its verdict without running real bootstrap/tests/CodeGraph.
+    # reaches its verdict without running real bootstrap/tests.
     class _Proc:
         returncode = 0
         stdout = ""
@@ -162,17 +162,6 @@ def test_review_verdict_finalizer_does_not_touch_new_files_in_review_checkout(
         executor_finalizer, "_run_repository_bootstrap_if_needed", lambda *a, **k: None
     )
     monkeypatch.setattr(executor_finalizer, "run_with_stall_watchdog", lambda *a, **k: _Proc())
-    monkeypatch.setattr(
-        executor_finalizer,
-        "run_codegraph_audit",
-        lambda *a, **k: {"status": "pass"},
-    )
-    monkeypatch.setattr(executor_finalizer, "codegraph_audit_passed", lambda *a, **k: True)
-    monkeypatch.setattr(
-        executor_finalizer,
-        "codegraph_audit_check",
-        lambda *a, **k: {"name": "codegraph_audit", "returncode": 0, "status": "pass"},
-    )
     monkeypatch.setattr(executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None)
     monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
 

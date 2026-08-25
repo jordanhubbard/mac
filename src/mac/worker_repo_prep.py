@@ -137,11 +137,6 @@ def _finish_read_only_checkout(
     refs = _run_git(worktree, ["for-each-ref", "--format=%(refname) %(objectname)"])
     if refs.returncode != 0 or refs.stdout.strip():
         raise RuntimeError("isolated read-only repository unexpectedly contains refs")
-    exclude = worktree / ".git" / "info" / "exclude"
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-    if ".codegraph/" not in existing.splitlines():
-        exclude.write_text(existing.rstrip("\n") + "\n.codegraph/\n", encoding="utf-8")
     return (
         tree.stdout.strip(),
         hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest(),

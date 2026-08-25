@@ -7,7 +7,7 @@ contract:
 1. ``~/.mac`` is provisioned owner-only (no group/other bits).
 2. A supported Python is exposed via an exec wrapper, NOT a base_prefix-breaking
    symlink.
-3. mac / codegraph / gh links exist before deployment.
+3. mac / gh links exist before deployment.
 4. The OpenShell storage layout invariants are validated.
 5. A failure yields a precise remediation receipt, never a partial venv.
 6. The whole flow runs from a fresh persistent volume.
@@ -165,7 +165,7 @@ def test_tool_links_present_after_provision(mod, tmp_path):
     layout = mod.VolumeLayout.for_home(home)
     mod.provision(layout, interpreter=interp, apply_ownership=False)
 
-    for link in (layout.mac_bin, layout.codegraph_bin, layout.gh_bin):
+    for link in (layout.mac_bin, layout.gh_bin):
         assert link.exists() or link.is_symlink(), link
 
 
@@ -256,7 +256,6 @@ def test_layout_mirrors_hgx_provision_paths(mod, tmp_path):
     assert layout.mac_home == home / ".mac"
     assert layout.venv == home / ".mac" / "venv"
     assert layout.source == home / ".mac" / "src" / "mac"
-    assert layout.codegraph_bin == home / ".mac" / "bin" / "codegraph"
     assert layout.gh_bin == home / ".mac" / "bin" / "gh"
     assert layout.mac_bin == home / ".local" / "bin" / "mac"
 
@@ -264,7 +263,6 @@ def test_layout_mirrors_hgx_provision_paths(mod, tmp_path):
 def test_toolchain_pins_match_onboarding_contract(mod):
     assert mod.UV_VERSION == "0.8.22"
     assert mod.PYTHON_VERSION == "3.12.11"
-    assert mod.CODEGRAPH_VERSION == "v1.5.0"
 
 
 def test_cli_provision_then_validate_from_fresh_volume(tmp_path):

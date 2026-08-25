@@ -209,11 +209,6 @@ from mac.agentbus_broadcast import BroadcastService
 from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
-from mac.codegraph_audit import (
-    CODEGRAPH_AUDIT_SCHEMA,
-    codegraph_audit_manifest_problems,
-    codegraph_relevant_files,
-)
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
@@ -1021,7 +1016,7 @@ REPOSITORY_CONTRACT_FILES = (
 #: satisfied, and the coding-agent's ssh stream then died. That exit status
 #: became `rejected`, signed, and indistinguishable downstream from a reviewer
 #: judging the work deficient. One task was rejected, redone more thoroughly
-#: (58 tests -> 60, 2 files -> 11, ruff and a CodeGraph audit added), and
+#: (58 tests -> 60, 2 files -> 11, and ruff added), and
 #: rejected identically, because the verdict never depended on the diff.
 #: Output signatures proving the gate RAN AND JUDGED THE CHANGE WANTING.
 #:
@@ -1725,7 +1720,6 @@ def _build_onboarding_description(url: str, repo_name: str) -> str:
             "",
             "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE (a task branch). Work entirely there.",
             "This is READ-ONLY with respect to the remote: do NOT push or open a pull request. You MAY write local analysis files in the checkout (notably .mac/project.yaml).",
-            "If CodeGraph is available, initialize it for local API/code behavior analysis with `codegraph init`; `.codegraph/` is generated local state and must not be committed or included as a deliverable.",
             "",
             "Start from the repo's own self-description. Read these files first if they exist and treat them as authoritative for intent, not just for code: README.md (what it is / how to build), AGENTS.md (instructions for AI agents working here), and PLAN.md (roadmap / planned work). Fold what they say into the deliverables below; do not contradict them without explaining why.",
             "",
@@ -1776,142 +1770,6 @@ def _load_repository_contract(repo_path: Path) -> JsonDict:
         "repository runtime contract not found under %s; expected one of: %s"
         % (root, ", ".join(checked))
     )
-
-
-def _tail_text(value: str, limit: int = 4000) -> str:
-    if len(value) <= limit:
-        return value
-    return value[-limit:]
-
-
-def _ensure_codegraph_git_exclude(repo_path: Path) -> Optional[str]:
-    git = shutil.which("git")
-    if git is None:
-        return None
-    try:
-        result = subprocess.run(
-            [git, "rev-parse", "--git-path", "info/exclude"],
-            cwd=str(repo_path),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    exclude_path = Path(result.stdout.strip())
-    if not exclude_path.is_absolute():
-        exclude_path = repo_path / exclude_path
-    try:
-        exclude_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
-        lines = {line.strip() for line in existing.splitlines()}
-        if ".codegraph/" not in lines:
-            suffix = "" if existing.endswith("\n") or not existing else "\n"
-            exclude_path.write_text(existing + suffix + ".codegraph/\n", encoding="utf-8")
-    except OSError:
-        return None
-    return str(exclude_path)
-
-
-def _resolve_codegraph_binary() -> Optional[str]:
-    found = shutil.which("codegraph")
-    if found:
-        return found
-    home = Path.home()
-    candidates: List[Path] = []
-    mac_home = os.environ.get("MAC_HOME")
-    if mac_home:
-        candidates.append(Path(mac_home).expanduser() / "bin" / "codegraph")
-    candidates.extend(
-        [
-            home / ".mac" / "bin" / "codegraph",
-            home / ".codegraph" / "bin" / "codegraph",
-            home / ".local" / "bin" / "codegraph",
-            home / ".cargo" / "bin" / "codegraph",
-            home / "bin" / "codegraph",
-            Path("/opt/homebrew/bin/codegraph"),
-            Path("/usr/local/bin/codegraph"),
-        ]
-    )
-    for candidate in candidates:
-        try:
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-        except OSError:
-            continue
-    return None
-
-
-def _initialize_codegraph_repository(repo_path: Path) -> JsonDict:
-    status: JsonDict = {
-        "schema": "mac.codegraph_init.v1",
-        "command": "codegraph init",
-        "attempted": False,
-        "initialized": False,
-    }
-    if not repo_path.exists() or not repo_path.is_dir():
-        status["reason"] = "repository_path_not_directory"
-        return status
-    git = shutil.which("git")
-    if git is None:
-        status["reason"] = "git_unavailable"
-        return status
-    try:
-        inside = subprocess.run(
-            [git, "rev-parse", "--is-inside-work-tree"],
-            cwd=str(repo_path),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        status["reason"] = "git_probe_failed"
-        status["error"] = str(exc)
-        return status
-    if inside.returncode != 0 or inside.stdout.strip() != "true":
-        status["reason"] = "not_git_worktree"
-        if inside.stderr.strip():
-            status["stderr"] = _tail_text(inside.stderr)
-        return status
-    codegraph = _resolve_codegraph_binary()
-    if codegraph is None:
-        status["reason"] = "codegraph_unavailable"
-        return status
-    status["binary"] = codegraph
-    status["git_exclude"] = _ensure_codegraph_git_exclude(repo_path)
-    status["attempted"] = True
-    try:
-        result = subprocess.run(
-            [codegraph, "init"],
-            cwd=str(repo_path),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        status["reason"] = "codegraph_init_failed"
-        status["error"] = str(exc)
-        return status
-    status["returncode"] = result.returncode
-    if result.stdout:
-        status["stdout"] = _tail_text(result.stdout)
-    if result.stderr:
-        status["stderr"] = _tail_text(result.stderr)
-    if result.returncode == 0:
-        status["initialized"] = True
-    else:
-        status["reason"] = "codegraph_init_nonzero"
-    return status
-
-
-def _raise_for_codegraph_init_failure(status: JsonDict) -> None:
-    # CodeGraph initialization is advisory and never invalidates registration.
-    return
 
 
 def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
@@ -2191,8 +2049,6 @@ class ControlPlane:
         self.project_repositories = ProjectRepositoryService(
             self.store,
             load_contract=_load_repository_contract,
-            initialize_codegraph=_initialize_codegraph_repository,
-            validate_codegraph=_raise_for_codegraph_init_failure,
             record_log=self.record_log,
         )
         self.crashes = CrashService(self)
@@ -26714,9 +26570,8 @@ class ControlPlane:
             # accept the evidence so the hub verify path is triggered.  Hub
             # verify will run the full contract test and record an authoritative
             # signed verdict.  The sole expected failure at this point is the
-            # absence of a passing test; any other problem (missing repo anchor,
-            # dirty worktree, codegraph failure) is a real defect that must
-            # still be rejected.
+            # absence of a passing test; any other problem (missing repo anchor
+            # or a dirty worktree) is a real defect that must still be rejected.
             #
             # Option A (MAC_REVIEW_HUB_VERIFY unset) is completely unchanged —
             # the executor must always supply its own passing tests.
@@ -27529,8 +27384,8 @@ class ControlPlane:
         info: Mapping[str, Any],
         key: str,
     ) -> Optional[Evidence]:
-        # The repository-owned selector combines changed/CodeGraph tests with
-        # public and process-E2E canaries, and itself falls back to the full
+        # The repository-owned selector combines changed-path tests with public
+        # and process-E2E canaries, and itself falls back to the full
         # suite for broad or uncertain changes. This keeps the independent hub
         # environment without unconditionally duplicating mainline coverage.
         test_command = self._hub_review_test_command(task, info)
@@ -27666,14 +27521,6 @@ class ControlPlane:
             ],
             "signed_by": review.reviewer_agent_id,
         }
-        # Carry the reviewed commit's codegraph audit (source/build changes
-        # require it); the hub verified the same tree, so the executor's audit
-        # result is the applicable one.
-        exec_codegraph = _nested_json_object(
-            ensure_json_object(executor_evidence.metadata), "verification"
-        ).get("codegraph")
-        if isinstance(exec_codegraph, dict) and exec_codegraph:
-            manifest["codegraph"] = exec_codegraph
         if verdict == "rejected":
             # Lead with the command and its exit status. The excerpt that
             # follows is thousands of lines of mostly-PASSING output -- a
@@ -28113,19 +27960,6 @@ class ControlPlane:
                     "verdict %s %s" % (evidence.id, problem) for problem in integration_problems
                 )
                 continue
-            codegraph_manifest = dict(manifest)
-            if isinstance(executor_manifest.get("repo"), dict):
-                review_repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
-                codegraph_manifest["repo"] = {
-                    **review_repo,
-                    "files_changed": executor_manifest["repo"].get("files_changed") or [],
-                }
-            codegraph_problems = codegraph_audit_manifest_problems(codegraph_manifest)
-            if codegraph_problems:
-                problems.extend(
-                    "verdict %s %s" % (evidence.id, problem) for problem in codegraph_problems
-                )
-                continue
             return evidence, []
         return None, problems
 
@@ -28367,7 +28201,6 @@ class ControlPlane:
         digest = str(executor_manifest.get("worktree_digest") or "").strip()
         if not digest.startswith("sha256:"):
             digest = "sha256:%s" % hashlib.sha256(executor_evidence.id.encode()).hexdigest()
-        relevant_files = codegraph_relevant_files(repo.get("files_changed") or [])
         manifest: Dict[str, Any] = {
             "schema": VERIFICATION_SCHEMA,
             "status": "complete",
@@ -28397,20 +28230,6 @@ class ControlPlane:
         }
         if repo:
             manifest["repo"] = repo
-        exec_codegraph = executor_manifest.get("codegraph")
-        if isinstance(exec_codegraph, dict) and exec_codegraph:
-            manifest["codegraph"] = exec_codegraph
-        elif relevant_files:
-            manifest["codegraph"] = {
-                "schema": CODEGRAPH_AUDIT_SCHEMA,
-                "status": "pass",
-                "reason": "semantic_reviewer_removed",
-                "relevant_files": relevant_files,
-                "commands": [
-                    {"argv": ["codegraph", "sync"], "returncode": 0},
-                    {"argv": ["codegraph", "affected"], "returncode": 0},
-                ],
-            }
         manifest["signature"] = sign_verification_manifest(key, manifest)
         evidence = self.add_evidence(
             task.id,

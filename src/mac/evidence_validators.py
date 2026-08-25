@@ -1,8 +1,8 @@
 """Validation of task evidence and verification manifests.
 
 Defines the dataclasses and checks that normalize and validate submitted
-evidence, including verification-manifest anchors, remote-ref resolution, and the
-CodeGraph and git-remote consistency rules enforced before publication.
+evidence, including verification-manifest anchors, remote-ref resolution, and
+git-remote consistency rules enforced before publication.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from mac.codegraph_audit import codegraph_audit_manifest_problems
 from mac.fleet_learning import (
     AUTH_FAILURE_CLASSES,
     classify_repository_access_failure,
@@ -249,7 +248,6 @@ class RepoChangeValidator(EvidenceValidator):
                 "this task's contract requires tests, but verification.tests is "
                 "null/missing — run the repository test command and record results"
             )
-        problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 
@@ -264,7 +262,6 @@ class DocumentationValidator(RepoChangeValidator):
         problems = self.require_pushed_repo_anchor(manifest)
         if manifest.repo is not None and not manifest.repo.files_changed:
             problems.append("repo evidence requires changed files")
-        problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 
@@ -285,7 +282,6 @@ class DeploymentValidator(EvidenceValidator):
             or _manifest_list(manifest.raw.get("artifacts"))
         ):
             problems.append("deployment evidence requires targets, services, or artifacts")
-        problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 
@@ -300,7 +296,6 @@ class TestValidator(EvidenceValidator):
         problems = self.require_pushed_repo_anchor(manifest)
         if self.passed_checks(manifest, context) < 1:
             problems.append("test evidence requires at least one passing check or test")
-        problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 
@@ -317,7 +312,6 @@ class ArtifactValidator(TestValidator):
             problems.append("artifact evidence requires at least one passing check or test")
         if not _manifest_list(manifest.raw.get("artifacts")):
             problems.append("artifact evidence requires artifacts")
-        problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 
@@ -339,7 +333,6 @@ class NoChangeValidator(EvidenceValidator):
             problems.append("no_change evidence requires a reason")
         if self.passed_checks(manifest, context) < 1:
             problems.append("no_change evidence requires at least one passing check")
-        problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 
@@ -379,7 +372,6 @@ class ReviewVerdictValidator(EvidenceValidator):
                 problems.append(
                     "review_verdict evidence requires at least one independent passing check"
                 )
-            problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
 

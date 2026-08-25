@@ -118,8 +118,8 @@ mac task create "triage the failing GKE deploy"    --kind report
 `--kind report` (aliases: `answer`, `analysis`, `investigation`, `question`,
 `triage`) writes `metadata.deliverable = "report"`. API callers set the same
 field on task creation. A report task gets no managed worktree/branch and the
-repository finalizer never runs for it; the agent still has the `mac` CLI,
-codegraph, and git to read whatever it needs. The declaration is an
+repository finalizer never runs for it; the agent still has the `mac` CLI and
+git to read whatever it needs. The declaration is an
 operator/workflow-author decision at creation — an executing agent cannot set
 it for itself, so it is not a way to dodge the substance gate (it is the
 opposite of the `task_d7c51a0b` incident, where an executor *implicitly*

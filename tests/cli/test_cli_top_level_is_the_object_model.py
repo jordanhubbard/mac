@@ -72,6 +72,13 @@ def test_the_administrative_commands_are_reachable_under_admin():
         assert name in _subparsers_of(admin).choices
 
 
+def test_repository_topology_plan_command_is_absent():
+    parser = build_parser()
+    admin = _subparsers_of(parser).choices["admin"]
+
+    assert "plan" not in _subparsers_of(admin).choices
+
+
 def test_the_original_spelling_is_gone_from_the_top_level():
     """A real re-parenting, not a presentational one.
 

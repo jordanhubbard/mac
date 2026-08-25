@@ -11,9 +11,8 @@ no "untracked files present at finalize time" refusal occurs, while gitignored
 generated artifacts stay out of the commit.
 
 Each finalizer scenario uses a real temporary git worktree plus a real local
-bare origin and a fake ``codegraph`` binary, mirroring the fixtures already used
-by the finalizer tests. ``test.command`` is ``true`` so the publication path is
-exercised without invoking the full suite.
+bare origin. ``test.command`` is ``true`` so the publication path is exercised
+without invoking the full suite.
 """
 
 from __future__ import annotations
@@ -30,45 +29,6 @@ from mac import task_executor as te
 
 def _git(cwd, *args):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
-
-
-def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
-    bin_dir = tmp_path / "fake-bin"
-    bin_dir.mkdir(exist_ok=True)
-    script = bin_dir / "codegraph"
-    script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'case "${1:-}" in',
-                "  init)",
-                '    mkdir -p "$2/.codegraph"',
-                '    echo "indexed $2"',
-                "    ;;",
-                "  sync)",
-                '    mkdir -p "$2/.codegraph"',
-                '    echo "synced $2"',
-                "    ;;",
-                "  affected)",
-                "    cat >/dev/null",
-                "    echo '{\"affected\":[]}'",
-                "    ;;",
-                "  unlock)",
-                "    ;;",
-                "  *)",
-                '    echo "unexpected codegraph command: $*" >&2',
-                "    exit 2",
-                "    ;;",
-                "esac",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    monkeypatch.setenv("MAC_CODEGRAPH_BIN", str(script))
-    return script
 
 
 def _prepare_repository_context(work: Path, monkeypatch) -> None:
@@ -119,7 +79,6 @@ def _finalizer_task(task_id: str, origin: Path) -> dict:
 
 
 def _run_finalizer(tmp_path, monkeypatch, work: Path, task: dict):
-    _install_fake_codegraph(tmp_path, monkeypatch)
     _prepare_repository_context(work, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     ws = tmp_path / "ws"

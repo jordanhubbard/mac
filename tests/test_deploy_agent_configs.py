@@ -286,19 +286,6 @@ def test_supervisord_resource_health_uses_long_running_loop():
     assert 'sleep "$interval"' in watchdog
 
 
-def test_codegraph_init_is_asynchronous_bounded_and_observable():
-    script = deploy_script_text()
-
-    assert "MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300" in script
-    assert 'nohup "$PY"' in script
-    assert 'status_file="$LOG_DIR/codegraph-init-source.json"' in script
-    assert '"schema": "mac.codegraph_background_init.v1"' in script
-    assert 'write_status("completed"' in script
-    assert "start_new_session=True" in script
-    assert "os.killpg(process.pid, signal.SIGTERM)" in script
-    assert "os.killpg(process.pid, signal.SIGKILL)" in script
-
-
 def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     # The Hermes runtime reads ~/.hermes/.env + config.yaml (not mac.env) for its
     # chat provider; the deploy must sync those from mac.env or agents dial the
@@ -501,7 +488,7 @@ def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
 
 def test_fleet_deploy_verifies_onboarded_github_cli_before_phase2_mutation():
     installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-    function = _deploy_function(installer, "install_github_cli", "install_codegraph_cli")
+    function = _deploy_function(installer, "install_github_cli", "normalize_hermes_redaction_env")
     pre_mutation = installer.split(
         'if [ "$NODE_ACTION" = arm-phase2 ] || [ "$NODE_ACTION" = apply-phase2 ]; then',
         1,
@@ -547,48 +534,6 @@ def test_fleet_deploy_never_forces_an_unverified_github_review_key():
     assert 'ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")' in installer
 
 
-def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
-    script = deploy_script_text()
-    assets = (ROOT / "deploy" / "reviewed-tool-assets.sh").read_text(encoding="utf-8")
-    install_window = script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
-        'log "creating/updating mac environment file"', 1
-    )[0]
-
-    assert "install_codegraph_cli()" in script
-    assert "initialize_codegraph_repository()" in script
-    assert "mac_install_reviewed_codegraph" in assets
-    assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"' in assets
-    for name in (
-        "codegraph-linux-x64.tar.gz",
-        "codegraph-linux-arm64.tar.gz",
-        "codegraph-darwin-x64.tar.gz",
-        "codegraph-darwin-arm64.tar.gz",
-    ):
-        assert name in assets
-    assert "codegraph/main/install.sh" not in script
-    assert "astral.sh/uv/install.sh" not in script
-    assert "| sh" not in assets
-    assert 'env -i PATH="${PATH:-/usr/bin:/bin}"' in assets
-    assert "GH_TOKEN=" not in assets
-    assert "MAC_DEPLOY_HUB_TOKEN=" not in assets
-    assert 'ln -s "$bundle/bin/codegraph"' in assets
-    assert "run_without_deploy_credentials" in script
-    assert "codegraph init" in script
-    assert 'initialize_codegraph_repository "$SRC_DIR"' in install_window
-    assert "typed phase 2 defers CodeGraph indexing to post-commit maintenance" in install_window
-    assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in install_window
-    verifier = _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude")
-    assert "reviewed CodeGraph bundle is missing" in verifier
-    assert "onboarded CodeGraph version differs" in verifier
-    assert 'bundle="$MAC_HOME/lib/codegraph/versions/$MAC_REVIEWED_CODEGRAPH_VERSION"' in verifier
-    assert '"$(readlink "$target" 2>/dev/null || true)" = "$binary"' in verifier
-    assert '[ -x "$node" ] && [ ! -L "$node" ]' in verifier
-    assert "mac_install_reviewed_codegraph" not in verifier
-    assert "mac.codegraph_background_init.v1" in script
-    assert "CodeGraph index initialization queued" in script
-    assert 'grep -qxF ".codegraph/"' in script
-
-
 def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
     driver = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
@@ -614,95 +559,6 @@ def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
 def _deploy_function(script: str, name: str, next_name: str) -> str:
     body = script.split(f"{name}() {{", 1)[1].split(f"\n{next_name}() {{", 1)[0]
     return f"{name}() {{{body}\n"
-
-
-def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
-    script = deploy_script_text()
-    runner = tmp_path / "run-install.sh"
-    runner.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'MAC_HOME="$PWD/mac-home"',
-                'HOME="$PWD/home"',
-                'LOG_DIR="$PWD/logs"',
-                'bundle="$MAC_HOME/lib/codegraph/versions/v1.5.0"',
-                'mkdir -p "$MAC_HOME/bin" "$bundle/bin" "$HOME" "$LOG_DIR"',
-                'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
-                'die() { printf "%s\\n" "$*" >&2; return 1; }',
-                'run_without_deploy_credentials() { "$@"; }',
-                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"',
-                "cat > \"$bundle/bin/codegraph\" <<'EOF'",
-                "#!/bin/sh",
-                '[ "$1" = --version ] && echo 1.5.0',
-                "EOF",
-                "cat > \"$bundle/node\" <<'EOF'",
-                "#!/bin/sh",
-                "exit 0",
-                "EOF",
-                'chmod +x "$bundle/bin/codegraph" "$bundle/node"',
-                'ln -s "$bundle/bin/codegraph" "$MAC_HOME/bin/codegraph"',
-                _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
-                "install_codegraph_cli",
-                'test -L "$MAC_HOME/bin/codegraph"',
-                'grep -q "verified onboarded CodeGraph" "$LOG_DIR/log.txt"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    runner.chmod(0o755)
-
-    result = subprocess.run(
-        [str(runner)],
-        cwd=tmp_path,
-        env={**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "verified onboarded CodeGraph v1.5.0" in (tmp_path / "logs" / "log.txt").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_codegraph_phase2_verifier_fails_when_onboarding_is_missing(tmp_path):
-    script = deploy_script_text()
-    runner = tmp_path / "run-install-fail.sh"
-    runner.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'MAC_HOME="$PWD/mac-home"',
-                'HOME="$PWD/home"',
-                'LOG_DIR="$PWD/logs"',
-                'mkdir -p "$MAC_HOME" "$HOME" "$LOG_DIR"',
-                'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
-                'die() { printf "%s\\n" "$*" >&2; return 1; }',
-                'run_without_deploy_credentials() { "$@"; }',
-                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"',
-                _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
-                "install_codegraph_cli",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    runner.chmod(0o755)
-
-    result = subprocess.run(
-        [str(runner)],
-        cwd=tmp_path,
-        env={**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert "reviewed CodeGraph bundle is missing" in result.stderr
 
 
 def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
@@ -736,10 +592,6 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
         ("uv", "Linux", "aarch64", "uv-aarch64-unknown-linux-gnu.tar.gz"),
         ("uv", "Darwin", "x86_64", "uv-x86_64-apple-darwin.tar.gz"),
         ("uv", "Darwin", "arm64", "uv-aarch64-apple-darwin.tar.gz"),
-        ("codegraph", "Linux", "x86_64", "codegraph-linux-x64.tar.gz"),
-        ("codegraph", "Linux", "aarch64", "codegraph-linux-arm64.tar.gz"),
-        ("codegraph", "Darwin", "x86_64", "codegraph-darwin-x64.tar.gz"),
-        ("codegraph", "Darwin", "arm64", "codegraph-darwin-arm64.tar.gz"),
     ],
 )
 def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, architecture, filename):
@@ -770,7 +622,7 @@ def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, archit
 
 @pytest.mark.parametrize(
     ("tool", "os_name", "architecture"),
-    [("uv", "Plan9", "x86_64"), ("codegraph", "Linux", "riscv64")],
+    [("uv", "Plan9", "x86_64")],
 )
 def test_reviewed_tool_asset_unsupported_platform_fails_closed(tool, os_name, architecture):
     assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
@@ -792,54 +644,6 @@ def test_reviewed_tool_asset_unsupported_platform_fails_closed(tool, os_name, ar
 
     assert result.returncode == 2
     assert "unsupported reviewed-tool" in result.stderr
-
-
-def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_path):
-    script = deploy_script_text()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    codegraph = bin_dir / "codegraph"
-    codegraph.write_text(
-        "#!/bin/sh\necho codegraph init should not run >&2\nexit 99\n", encoding="utf-8"
-    )
-    codegraph.chmod(0o755)
-    source_dir = tmp_path / "archive-source"
-    source_dir.mkdir()
-    runner = tmp_path / "run-init-non-git.sh"
-    runner.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'MAC_HOME="$PWD/mac-home"',
-                'HOME="$PWD/home"',
-                'LOG_DIR="$PWD/logs"',
-                'mkdir -p "$MAC_HOME" "$HOME" "$LOG_DIR"',
-                'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
-                _deploy_function(
-                    script, "ensure_codegraph_git_exclude", "initialize_codegraph_repository"
-                ),
-                _deploy_function(
-                    script, "initialize_codegraph_repository", "normalize_hermes_redaction_env"
-                ),
-                f"initialize_codegraph_repository {source_dir}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    runner.chmod(0o755)
-
-    result = subprocess.run(
-        [str(runner)],
-        cwd=tmp_path,
-        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"},
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "not a git worktree" in (tmp_path / "logs" / "log.txt").read_text(encoding="utf-8")
 
 
 def test_fleet_deploy_does_not_print_worker_token_in_systemd_status():

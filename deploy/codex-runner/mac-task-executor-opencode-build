@@ -341,7 +341,7 @@ authed_url() {
 #
 # Before ANY branch push or MR is created, the worker MUST run the project's lint/format and test suites. This gate lives in the executor (the lowest layer that performs the push + MR), so it CANNOT be bypassed by task-level instructions or per-project config. It applies uniformly to every repo (mac, ivan-plugin, hermes-agent-custom, and any future repo).
 #
-# Contract:   * Step A — detect the test command from the repo (package.json/pyproject/     Makefile/README...). If it cannot be detected, the gate FAILS (we never     silently skip — the task is routed to needs_review for manual     verification).   * Step B — run lint/format with an auto-fix attempt; lint failures are     recorded as evidence but do NOT block (tests are the hard gate).   * Step C — run the detected test command, capturing full stdout+stderr.   * Step D — when source/build files changed and tests pass, run CodeGraph     init/sync + affected before push.   * Step E — gate decision: tests + required CodeGraph audit pass -> allow     push+MR; failures -> block push+MR and surface evidence.
+# Contract:   * Step A — detect the test command from the repo (package.json/pyproject/     Makefile/README...). If it cannot be detected, the gate FAILS (we never     silently skip — the task is routed to needs_review for manual     verification).   * Step B — run lint/format with an auto-fix attempt; lint failures are     recorded as evidence but do NOT block (tests are the hard gate).   * Step C — run the detected test command, capturing full stdout+stderr.   * Step D — gate decision: tests pass -> allow push+MR; failures -> block push+MR and surface evidence.
 #
 # These functions write their results into the GATE_* globals consumed when building the evidence manifest below.
 # ---------------------------------------------------------------------------
@@ -360,11 +360,6 @@ GATE_TEST_OUTPUT=""
 GATE_TEST_DURATION_S=""
 GATE_TEST_FAILING=""            # newline-joined failing test names/files
 GATE_TEST_SUGGESTION=""
-GATE_CODEGRAPH_COMMAND=""
-GATE_CODEGRAPH_STATUS="not_run" # pass | fail | skipped | not_run
-GATE_CODEGRAPH_REASON=""
-GATE_CODEGRAPH_OUTPUT=""
-GATE_CODEGRAPH_RELEVANT_FILES=""
 # Overall gate verdict: "pass" allows push+MR; anything else blocks.
 GATE_VERDICT="not_run"          # pass | fail
 GATE_REASON=""
@@ -1142,97 +1137,6 @@ gate_run_tests() {
     rm -f "${out}"
 }
 
-_codegraph_relevant_file() {
-    local f="$1" base
-    base="${f##*/}"
-    case "${base}" in
-        BUILD|BUILD.bazel|Cargo.toml|CMakeLists.txt|Containerfile|Dockerfile|Gemfile|Gemfile.lock|MODULE.bazel|Makefile|Pipfile|Pipfile.lock|Rakefile|WORKSPACE|WORKSPACE.bazel|bun.lock|bun.lockb|compose.yaml|compose.yml|deno.json|docker-compose.yaml|docker-compose.yml|go.mod|go.sum|go.work|go.work.sum|package-lock.json|package.json|poetry.lock|pnpm-lock.yaml|pom.xml|pyproject.toml|requirements.txt|setup.cfg|setup.py|tsconfig.json|turbo.json|uv.lock|yarn.lock)
-            return 0
-            ;;
-        *.bash|*.bazel|*.bzl|*.c|*.cc|*.cfg|*.clj|*.cljs|*.cpp|*.cs|*.csproj|*.css|*.dart|*.erl|*.ex|*.exs|*.fish|*.fs|*.fsproj|*.fsx|*.go|*.gradle|*.h|*.hcl|*.hpp|*.hrl|*.html|*.ini|*.java|*.jl|*.js|*.jsx|*.kt|*.kts|*.lock|*.lua|*.m|*.mjs|*.ml|*.mli|*.mm|*.php|*.props|*.py|*.r|*.rb|*.rs|*.scala|*.scss|*.sh|*.svelte|*.swift|*.targets|*.tf|*.tfvars|*.toml|*.ts|*.tsx|*.vcxproj|*.vue|*.yaml|*.yml|*.zsh)
-            return 0
-            ;;
-    esac
-    return 1
-}
-
-gate_run_codegraph() {
-    local d="$1" files_csv="$2" relevant="" f out rc
-    GATE_CODEGRAPH_STATUS="skipped"
-    GATE_CODEGRAPH_REASON="non_code_change"
-    GATE_CODEGRAPH_COMMAND=""
-    GATE_CODEGRAPH_OUTPUT=""
-    GATE_CODEGRAPH_RELEVANT_FILES=""
-    IFS=',' read -r -a changed_files <<< "${files_csv}"
-    for f in "${changed_files[@]}"; do
-        f="${f#./}"
-        [ -n "${f}" ] || continue
-        if _codegraph_relevant_file "${f}"; then
-            if [ -n "${relevant}" ]; then
-                relevant="${relevant},${f}"
-            else
-                relevant="${f}"
-            fi
-        fi
-    done
-    GATE_CODEGRAPH_RELEVANT_FILES="${relevant}"
-    if [ -z "${relevant}" ]; then
-        echo "[opencode-build] codegraph: skipped (non-code change)"
-        return 0
-    fi
-    if ! command -v codegraph >/dev/null 2>&1; then
-        GATE_CODEGRAPH_STATUS="fail"
-        GATE_CODEGRAPH_REASON="codegraph_not_available"
-        GATE_CODEGRAPH_OUTPUT="codegraph is required for source/build changes but was not found on PATH"
-        echo "[opencode-build] codegraph: ${GATE_CODEGRAPH_OUTPUT}"
-        return 0
-    fi
-    mkdir -p "${d}/.git/info" 2>/dev/null || true
-    if [ -f "${d}/.git/info/exclude" ]; then
-        grep -qxF ".codegraph/" "${d}/.git/info/exclude" 2>/dev/null || printf "\n.codegraph/\n" >> "${d}/.git/info/exclude"
-    else
-        printf ".codegraph/\n" > "${d}/.git/info/exclude" 2>/dev/null || true
-    fi
-    out="$(mktemp)"
-    if [ -d "${d}/.codegraph" ]; then
-        GATE_CODEGRAPH_COMMAND="codegraph sync ${d}"
-        set +e
-        codegraph sync "${d}" > "${out}" 2>&1
-        rc=$?
-        set -e
-    else
-        GATE_CODEGRAPH_COMMAND="codegraph init ${d}"
-        set +e
-        codegraph init "${d}" > "${out}" 2>&1
-        rc=$?
-        set -e
-    fi
-    if [ "${rc}" -ne 0 ]; then
-        GATE_CODEGRAPH_STATUS="fail"
-        GATE_CODEGRAPH_REASON="index_failed"
-        GATE_CODEGRAPH_OUTPUT="$(_gate_tail_output "${out}" 200)"
-        rm -f "${out}"
-        echo "[opencode-build] codegraph: index FAILED rc=${rc}"
-        return 0
-    fi
-    GATE_CODEGRAPH_COMMAND="${GATE_CODEGRAPH_COMMAND}; codegraph affected --path ${d} --stdin --json"
-    set +e
-    printf '%s' "${relevant}" | tr ',' '\n' | codegraph affected --path "${d}" --stdin --json >> "${out}" 2>&1
-    rc=$?
-    set -e
-    GATE_CODEGRAPH_OUTPUT="$(_gate_tail_output "${out}" 200)"
-    rm -f "${out}"
-    if [ "${rc}" -ne 0 ]; then
-        GATE_CODEGRAPH_STATUS="fail"
-        GATE_CODEGRAPH_REASON="affected_failed"
-        echo "[opencode-build] codegraph: affected FAILED rc=${rc}"
-        return 0
-    fi
-    GATE_CODEGRAPH_STATUS="pass"
-    GATE_CODEGRAPH_REASON="affected_computed"
-    echo "[opencode-build] codegraph: PASSED for ${relevant}"
-}
-
 WORKDIR=""
 TASK_BRANCH="mac/${MAC_AGENT_ID}/${MAC_TASK_ID}"
 CHECKOUT_BRANCH="${CHECKOUT_BRANCH:-}"
@@ -1275,8 +1179,6 @@ opencode_stderr="$(mktemp)"
 set +e
 if [ -n "${WORKDIR}" ]; then
     FULL_PROMPT="You are working in the git repository at \`${WORKDIR}\` (current directory). Use your edit tools to make the code changes requested below, then stop. Do not just describe the changes — actually edit the files.
-
-For source, build, dependency, or runtime config changes, use CodeGraph during analysis where it helps: codegraph init or sync, codegraph affected for changed files, and impact/callers/callees for changed public APIs. Do not commit .codegraph/.
 
 ${PROMPT}"
 else
@@ -1368,14 +1270,6 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
         git checkout -q "${WORK_REF}" 2>/dev/null || git checkout -q "${TASK_BRANCH}" 2>/dev/null || true
         gate_run_lint "${WORKDIR}"
         gate_run_tests "${WORKDIR}"
-        if [ "${GATE_VERDICT}" = "pass" ]; then
-            gate_run_codegraph "${WORKDIR}" "${FILES_CHANGED}"
-            if [ "${GATE_CODEGRAPH_STATUS}" = "fail" ]; then
-                GATE_VERDICT="fail"
-                GATE_REASON="codegraph audit failed (${GATE_CODEGRAPH_REASON}) — push and MR blocked"
-            fi
-        fi
-
         if [ "${GATE_VERDICT}" != "pass" ]; then
             # Tests failed (or no test command could be detected). Do NOT push and do NOT open an MR. Surface the failure as evidence and mark the run failed so it transitions to needs_review/retry instead of being submitted as complete.
             echo "[opencode-build] PRE-PUSH GATE BLOCKED: ${GATE_REASON}"
@@ -1448,8 +1342,6 @@ export REMOTE_REF REMOTE_READBACK_SHA BASE_SHA
 export GATE_LINT_COMMAND GATE_LINT_STATUS GATE_LINT_AUTOFIXED GATE_LINT_OUTPUT
 export GATE_TEST_COMMAND GATE_TEST_STATUS GATE_TEST_RC GATE_TEST_OUTPUT
 export GATE_TEST_DURATION_S GATE_TEST_FAILING GATE_TEST_SUGGESTION
-export GATE_CODEGRAPH_COMMAND GATE_CODEGRAPH_STATUS GATE_CODEGRAPH_REASON
-export GATE_CODEGRAPH_OUTPUT GATE_CODEGRAPH_RELEVANT_FILES
 export GATE_VERDICT GATE_REASON
 
 # If we had a working tree but produced no pushed+MR'd change, force a non-zero effective return code. job_executor.py keys submit-for-review off returncode==0, so a clean-tree "plan only" run (or a push without a PR) would otherwise be recorded as complete. Only override a successful opencode rc — a real opencode failure already carries its own non-zero code.
@@ -1595,37 +1487,6 @@ gate_test_rc_env = os.environ.get("GATE_TEST_RC", "")
 gate_verdict = os.environ.get("GATE_VERDICT", "not_run")
 gate_passed = gate_verdict == "pass"
 tests_passed = gate_test_status == "pass"
-codegraph_status = os.environ.get("GATE_CODEGRAPH_STATUS", "not_run")
-codegraph_relevant_files = [
-    f for f in (os.environ.get("GATE_CODEGRAPH_RELEVANT_FILES", "") or "").split(",") if f
-]
-codegraph_commands = []
-codegraph_command = os.environ.get("GATE_CODEGRAPH_COMMAND", "")
-if codegraph_status not in {"not_run", "skipped"} and codegraph_command:
-    parts = [part.strip() for part in codegraph_command.split(";") if part.strip()]
-    for index, part in enumerate(parts):
-        returncode = 0
-        if codegraph_status == "fail":
-            reason = os.environ.get("GATE_CODEGRAPH_REASON", "")
-            if (reason == "index_failed" and index == 0) or (reason == "affected_failed" and " affected " in (" " + part + " ")):
-                returncode = 1
-        codegraph_commands.append(
-            {
-                "argv": part.split(),
-                "returncode": returncode,
-                "status": "pass" if returncode == 0 else "fail",
-            }
-        )
-codegraph_audit = {
-    "schema": "mac.codegraph_audit.v1",
-    "status": codegraph_status,
-    "reason": os.environ.get("GATE_CODEGRAPH_REASON", ""),
-    "command": os.environ.get("GATE_CODEGRAPH_COMMAND", ""),
-    "output": os.environ.get("GATE_CODEGRAPH_OUTPUT", "")[:64000],
-    "relevant_files": codegraph_relevant_files,
-    "commands": codegraph_commands,
-}
-
 evidence_items = []
 
 # 1 | Lint/Format — command run, pass/fail, auto-fixed, output summary.
@@ -1687,28 +1548,23 @@ if gate_passed:
         }
     )
 else:
-    # 3 | Test Failures / CodeGraph Failures — full output and suggested fix.
+    # 3 | Test Failures — full output and suggested fix.
     # Replaces the Push + MR items because nothing was pushed.
     failing = [
         f.strip()
         for f in (os.environ.get("GATE_TEST_FAILING", "") or "").splitlines()
         if f.strip()
     ]
-    codegraph_failed = tests_passed and codegraph_status == "fail"
     evidence_items.append(
         {
             "kind": "evidence_item",
             "item": 3,
-            "label": "CodeGraph Failures" if codegraph_failed else "Test Failures",
+            "label": "Test Failures",
             "reason": os.environ.get("GATE_REASON", ""),
-            "command": codegraph_audit["command"] if codegraph_failed else os.environ.get("GATE_TEST_COMMAND", ""),
-            "output": codegraph_audit["output"] if codegraph_failed else os.environ.get("GATE_TEST_OUTPUT", "")[:64000],
-            "failing_tests": [] if codegraph_failed else failing,
-            "suggested_fix": (
-                "Run codegraph init/sync and codegraph affected for the changed files; fix indexing or dependency issues, then rerun the task."
-                if codegraph_failed
-                else os.environ.get("GATE_TEST_SUGGESTION", "")
-            ),
+            "command": os.environ.get("GATE_TEST_COMMAND", ""),
+            "output": os.environ.get("GATE_TEST_OUTPUT", "")[:64000],
+            "failing_tests": failing,
+            "suggested_fix": os.environ.get("GATE_TEST_SUGGESTION", ""),
         }
     )
 
@@ -1738,12 +1594,10 @@ manifest = {
     },
     "gate_blocked": os.environ.get("GATE_BLOCKED", "false") == "true",
     "gate_verdict": gate_verdict,
-    "codegraph": codegraph_audit,
     "started_at": os.environ.get("started_at", ""),
     "finished_at": os.environ.get("finished_at", ""),
     "executed_at": os.environ.get("finished_at", ""),
     "findings": evidence_items + [
-        dict(codegraph_audit, kind="codegraph_audit"),
         stream_finding("opencode_stdout", stdout_raw),
         stream_finding("opencode_stderr", stderr_raw),
         dict(event_summary(stdout_raw), kind="opencode_event_summary"),
@@ -1779,13 +1633,6 @@ manifest = {
             "name": "lint_format",
             "status": gate_lint_status,
             "lint_command": os.environ.get("GATE_LINT_COMMAND", ""),
-        },
-        {
-            "name": "codegraph_audit",
-            "status": "pass" if codegraph_status in {"pass", "skipped"} else "fail",
-            "returncode": 0 if codegraph_status in {"pass", "skipped"} else 1,
-            "reason": codegraph_audit["reason"],
-            "relevant_files": codegraph_relevant_files,
         },
     ],
     "notes": "opencode build executor; signing handled by mac-evidence sign.",

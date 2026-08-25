@@ -2,25 +2,22 @@
 """Resolve the impact-based test scope for a change set.
 
 A test is selected only when the code it actually exercises changed. The engine
-is hybrid, union, and fail-closed:
+uses reviewed coverage data and fails closed:
 
 1. Dynamic per-test coverage map (scripts/build-test-impact-map.py): for a fresh
    map, select tests whose executed lines intersect the changed lines of a
    source file (line-level), falling back to every test that touched the file
    when only additions are present.
-2. Optional CodeGraph static reachability: union in `codegraph affected` so a change that
-   makes a test reach NEW code is still covered even though the map (built at the
-   base revision) could not know about it.
-3. Reviewed path contracts: generated data, shell entrypoints, and CI files
+2. Reviewed path contracts: generated data, shell entrypoints, and CI files
    select the repository tests that own their behavior. The mapping is kept in
    this executable so changing the selector itself also has an explicit test.
-4. Full-suite fallback: any changed file that none of those layers can safely
-   map (stale/missing map entry plus unusable CodeGraph, an unknown opaque infra
-   file, or a globally invalidating file) forces a full run.
+3. Full-suite fallback: any changed file that neither layer can safely map
+   (including a stale/missing map entry, unknown opaque infrastructure file, or
+   globally invalidating file) forces a full run.
 
 `resolve()` is a pure function (no git, no IO) so the safety matrix is fully
-unit-tested; `select_from_git()` gathers the git diff, map, and CodeGraph and
-delegates to it. Output is the existing ``mac.sanity_selection.v1`` document so
+unit-tested; `select_from_git()` gathers the git diff and map and delegates to
+it. Output is the existing ``mac.sanity_selection.v1`` document so
 it drops straight into scripts/run-sanity-tests.sh.
 """
 
@@ -30,12 +27,11 @@ import argparse
 import json
 import ast
 import re
-import shutil
 import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "mac.sanity_selection.v1"
@@ -57,7 +53,7 @@ DEFAULT_POLICY = ROOT / "test-policy.toml"
 DEFAULT_MAP = ROOT / "src" / "mac" / "data" / "test_impact_map.json"
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
-# Exact contracts for non-source paths that coverage and CodeGraph cannot map.
+# Exact contracts for non-source paths that coverage cannot map.
 # This list is intentionally code-reviewed and exact-path only: unknown shell,
 # CI, data, and configuration files must continue to force a full run. Map both
 # sides of generated artifacts so a generator or generated-output-only change
@@ -76,7 +72,6 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         # never becomes another reader of the dispatch-readiness rule; it scans
         # every deploy/scripts shell file for inline copies.
         "tests/test_agent_health_is_one_check.py",
-        "tests/test_codegraph_runtime_baseline.py",
         "tests/test_declared_extras_exist.py",
         "tests/test_container_runtime_declaration.py",
         "tests/test_crash_observer.py",
@@ -393,18 +388,16 @@ def resolve(
     fresh_map_files: Iterable[str] | None,
     policy: SelectionPolicy,
     impact_map: dict | None,
-    codegraph_tests: Iterable[str],
-    codegraph_problem: str | None,
     repo_root: Path = ROOT,
 ) -> dict[str, object]:
-    """Pure hybrid resolution. Returns a ``mac.sanity_selection.v1`` document.
+    """Pure impact resolution. Returns a ``mac.sanity_selection.v1`` document.
 
     ``fresh_map_files`` is the set of mapped source files whose line/file index
     is trustworthy for THIS selection base — computed by the IO layer
     (``_fresh_map_files``): every mapped file on an exact base match, the subset
     unchanged since the map's ``base_sha`` on an ancestor base, or empty when the
-    map is stale/divergent. A source file outside this set falls through to
-    CodeGraph/full, so the map is used per-file, never all-or-nothing."""
+    map is stale/divergent. A source file outside this set forces a full run,
+    so the map is used per-file, never all-or-nothing."""
     changed = sorted({path for path in changed_files if path})
     if not changed:
         return _full("no_changed_file_scope", changed)
@@ -529,14 +522,7 @@ def resolve(
         # Drifted, and no scope index to fall back on.
         unresolved_source.append(path)
 
-    # CodeGraph is unioned in for every source change: it is the safety net for
-    # newly-reachable code the base-revision map cannot know about.
-    selected.update(codegraph_tests)
-
-    # CodeGraph may widen selection, but its failure is not itself a gate. An
-    # unresolved source file still fails closed because the authoritative map
-    # and path contracts cannot prove a focused scope.
-    if unresolved_source and not list(codegraph_tests):
+    if unresolved_source:
         return _full(
             "unresolved_source_without_reliable_affected_tests",
             changed,
@@ -583,7 +569,6 @@ def resolve(
         "changed_files": changed,
         "tests": resolvable,
         "map_fresh": map_fresh,
-        "codegraph_problem": codegraph_problem,
         "stale_tests": sorted(unresolvable),
         "provenance": {
             "always_run": sorted(t for t in resolvable if t in always_set),
@@ -697,35 +682,6 @@ def changed_base_lines(
     return lines, additions
 
 
-def codegraph_affected(source_changes: list[str], repo_root: Path) -> tuple[list[str], str | None]:
-    codegraph = shutil.which("codegraph")
-    if not codegraph:
-        return [], "hint_unavailable"
-    if not source_changes:
-        return [], None
-    if not (repo_root / ".codegraph").is_dir():
-        return [], "hint_unavailable"
-    completed = subprocess.run(
-        [codegraph, "affected", "--json", *source_changes],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return [], "hint_untrusted"
-    try:
-        document = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        return [], "hint_untrusted"
-    tests = [
-        str(path)
-        for path in document.get("affectedTests", [])
-        if str(path).startswith(("tests/", "plugin/")) and (repo_root / str(path)).is_file()
-    ]
-    return sorted(set(tests)), None
-
-
 def load_map(map_path: Path) -> dict | None:
     try:
         document = json.loads(map_path.read_text(encoding="utf-8"))
@@ -773,7 +729,7 @@ def _fresh_map_files(
     if changed is None:
         return frozenset()
     # A mapped file changed since base_sha => its base-side line numbers no
-    # longer align with the map; drop it (it falls through to CodeGraph/full).
+    # longer align with the map; drop it so selection fails closed to full.
     return frozenset(mapped - changed)
 
 
@@ -783,7 +739,6 @@ def select_from_git(
     repo_root: Path = ROOT,
     policy: SelectionPolicy | None = None,
     changed: list[str] | None = None,
-    codegraph: Callable[[list[str], Path], tuple[list[str], str | None]] = codegraph_affected,
 ) -> dict[str, object]:
     policy = policy or load_policy()
     try:
@@ -791,8 +746,6 @@ def select_from_git(
         base_lines, addition_points = changed_base_lines(base, repo_root)
     except (OSError, RuntimeError) as exc:
         return _full("selection_error", [], error=str(exc))
-    source_changes = [path for path in changed_files if _is_source_code(path)]
-    cg_tests, cg_problem = codegraph(source_changes, repo_root)
     impact_map = load_map(policy.map_path)
     return resolve(
         changed_files,
@@ -802,8 +755,6 @@ def select_from_git(
         fresh_map_files=_fresh_map_files(impact_map, _resolve_sha(base, repo_root), repo_root),
         policy=policy,
         impact_map=impact_map,
-        codegraph_tests=cg_tests,
-        codegraph_problem=cg_problem,
         repo_root=repo_root,
     )
 

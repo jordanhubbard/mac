@@ -47,7 +47,7 @@ The initial inventory is:
 | Source, virtualenv, executables, runtime environment, service definitions, supervisor topology, managed gateway state | `transactional`, node participant |
 | Worker principals, attestation candidate, report-executor approval, identity policy revision | `commit_staged`, hub epoch authority |
 | Dispatch holds, service-claim withdrawal, release marker | `commit_staged`, hub epoch authority |
-| Package installation, CodeGraph installation, image pulls/caches, schema-compatible migrations | `monotonic_prerequisite`, onboarding or preflight |
+| Package installation, image pulls/caches, schema-compatible migrations | `monotonic_prerequisite`, onboarding or preflight |
 | Reverse tunnels, SSH authorization, shared Qdrant/Firecrawl/WebDAV services | separate infrastructure prerequisite unless represented by a typed transactional participant |
 | Fleet registry route | `external`; route adapter proves it reaches the journal-bound resource identity |
 | Logs, test output, temporary relays and control sockets | `ephemeral` or retained audit evidence |
@@ -364,7 +364,7 @@ The protocol is eligible for image publication only when:
 1. the hub, node, route, and coordinator contracts pass independently;
 2. the composed fault matrix passes without ambient fleet credentials;
 3. every synchronized mutator appears in the classified resource inventory;
-4. CodeGraph affected analysis and the complete repository contract suite pass;
+4. the complete repository contract suite passes;
 5. a hostile security review finds no unjournaled mutation, credential-bearing
    journal field, unsafe private-file read, or ambiguous recovery branch; and
 6. source, runtime image, and publication receipts bind one immutable commit.

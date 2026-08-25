@@ -15,7 +15,7 @@ and then the coding agent's ssh stream died. That exit status became
 judging the work deficient.
 
 The cost was not abstract: task_832c4d72 was rejected, redone more thoroughly
-(58 tests -> 60, 2 files -> 11, ruff and a CodeGraph audit added), and rejected
+(58 tests -> 60, 2 files -> 11, and ruff added), and rejected
 identically. Four cycles, 7.9M tokens, against a verdict that never depended on
 the diff.
 """

@@ -373,11 +373,8 @@ def build_planning_prompt(
             [
                 "PLANNING PHASE INSTRUCTIONS:",
                 "  1. Analyse the task description to identify ALL independent deliverables and phases.",
-                "  2. Use the topology primitive to derive ordering:",
-                "     Run: mac admin plan order <changed-files or key-modules> --repo $MAC_TASK_REPO_WORKTREE",
-                "     (or call mac.planning.order_layers() directly). Use the layer ordering to set",
-                "     dependencies[] on child tasks so leaves run before cores.",
-                "     If topology information is unavailable, use logical dependency ordering.",
+                "  2. Derive logical dependency ordering from the task requirements and repository.",
+                "     Set dependencies[] on child tasks so prerequisites run before dependents.",
                 "  3. Create 2-10 child tasks. Each child MUST:",
                 "     a. Be completable and verifiable by ONE agent in a single run.",
                 "     b. Have a clear title and description.",

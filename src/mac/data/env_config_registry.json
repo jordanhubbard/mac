@@ -1079,30 +1079,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: codegraph bin.",
-    "family": "core",
-    "name": "MAC_CODEGRAPH_BIN",
-    "retired": false,
-    "sources": [
-      "scripts/install-codegraph.sh",
-      "scripts/sync-codegraph.sh",
-      "src/mac/codegraph_audit.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: codegraph installer url.",
-    "family": "core",
-    "name": "MAC_CODEGRAPH_INSTALLER_URL",
-    "retired": false,
-    "sources": [
-      "scripts/install-codegraph.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: codex base url.",
     "family": "core",
     "name": "MAC_CODEX_BASE_URL",
@@ -2096,17 +2072,6 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy codegraph init timeout seconds.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "int"
   },
   {
     "default": null,
@@ -6095,8 +6060,7 @@
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
-      "src/mac/pg_backup_scheduler.py",
-      "src/mac/services.py"
+      "src/mac/pg_backup_scheduler.py"
     ],
     "type": "str"
   },
@@ -9449,18 +9413,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: phase1 codegraph version.",
-    "family": "core",
-    "name": "MAC_PHASE1_CODEGRAPH_VERSION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-phase1-quiesce.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: phase1 command timeout seconds.",
     "family": "core",
     "name": "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS",
@@ -10024,17 +9976,6 @@
     "description": "Core setting: prereq agent id.",
     "family": "core",
     "name": "MAC_PREREQ_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: prereq codegraph version.",
-    "family": "core",
-    "name": "MAC_PREREQ_CODEGRAPH_VERSION",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"
@@ -10928,17 +10869,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: require codegraph.",
-    "family": "core",
-    "name": "MAC_REQUIRE_CODEGRAPH",
-    "retired": false,
-    "sources": [
-      "scripts/sync-codegraph.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Core setting: require firecrawl.",
     "family": "core",
     "name": "MAC_REQUIRE_FIRECRAWL",
@@ -11052,20 +10982,6 @@
       "src/mac/services.py"
     ],
     "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: reviewed codegraph version.",
-    "family": "core",
-    "name": "MAC_REVIEWED_CODEGRAPH_VERSION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "deploy/openshell/prepare-runtime-image-assets.sh",
-      "deploy/reviewed-tool-assets.sh"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -12602,17 +12518,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: skip codegraph install.",
-    "family": "core",
-    "name": "MAC_SKIP_CODEGRAPH_INSTALL",
-    "retired": false,
-    "sources": [
-      "scripts/install-codegraph.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Core setting: skip slack verify.",
     "family": "core",
     "name": "MAC_SKIP_SLACK_VERIFY",
@@ -13197,7 +13102,6 @@
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/read_only_report_verifier.py",
       "src/mac/services.py",

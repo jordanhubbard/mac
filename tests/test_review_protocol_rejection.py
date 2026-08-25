@@ -67,10 +67,8 @@ def _register_agent(cp, name, capabilities=None):
 
 def _verified_repo_metadata(cp, agent_id, head_sha="abcdef1234567890abcdef1234567890abcdef12"):
     from mac.services import sign_verification_manifest
-    from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 
     files = ["src/mac/example.py"]
-    relevant = codegraph_relevant_files(files)
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -84,16 +82,6 @@ def _verified_repo_metadata(cp, agent_id, head_sha="abcdef1234567890abcdef123456
         },
         "tests": [{"name": "contract", "returncode": 0}],
         "llm": {"model": "test-executor-model", "family": "test", "provider": "test"},
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test",
-            "relevant_files": relevant,
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected", "src/mac/example.py"], "returncode": 0},
-            ],
-        },
     }
     key = cp._agent_attestation_key(agent_id)
     if key:

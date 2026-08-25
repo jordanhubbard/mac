@@ -122,8 +122,6 @@ def test_repository_content_digest_covers_links_regular_and_special_files(
     root.mkdir()
     (root / ".git").mkdir()
     (root / ".git" / "secret").write_text("ignored", encoding="utf-8")
-    (root / ".codegraph").mkdir()
-    (root / ".codegraph" / "index").write_text("ignored", encoding="utf-8")
     (root / "regular").write_text("content", encoding="utf-8")
     (root / "file-link").symlink_to("regular")
     target_dir = root / "target-dir"

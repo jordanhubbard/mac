@@ -7384,18 +7384,6 @@ def cmd_rollout_health(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_plan_order(args: argparse.Namespace) -> None:
-    """Handler for ``mac admin plan order <paths...>``."""
-    from mac.planning import order_layers
-
-    repo = getattr(args, "repo", None) or "."
-    mode = "core-first" if getattr(args, "core_first", False) else "leaf-first"
-    paths: List[str] = list(args.paths or [])
-
-    result = order_layers(paths, repo_root=repo, mode=mode)
-    _print(result.to_dict())
-
-
 def _hgx_registered_agents(args: argparse.Namespace) -> Any:
     """Load the immutable-session -> registered-agent map for reconciliation.
 
@@ -12220,32 +12208,6 @@ def build_parser() -> argparse.ArgumentParser:
     eval_run_list.add_argument("--eval-set", dest="eval_set")
     eval_run_list.add_argument("--target-id")
     _set(cmd_eval_run_list, eval_run_list)
-
-    plan = sub.add_parser(
-        "plan",
-        help="planning helpers (topology ordering, blast radius, etc.)",
-    ).add_subparsers(dest="plan_command", required=True)
-    plan_order = plan.add_parser(
-        "order",
-        help="order files/modules by import/call topology (leaf-first or core-first layers)",
-    )
-    plan_order.add_argument(
-        "paths",
-        nargs="+",
-        help="file or module paths to order (relative to --repo)",
-    )
-    plan_order.add_argument(
-        "--repo",
-        default=".",
-        help="repository root where .codegraph/ lives (default: .)",
-    )
-    plan_order.add_argument(
-        "--core-first",
-        action="store_true",
-        dest="core_first",
-        help="reverse the default leaf-first ordering so core (highest fan-in) comes first",
-    )
-    _set(cmd_plan_order, plan_order)
 
     # Discoverability layer, applied over the fully-built tree rather than
     # at 265 registration sites: `help` as a verb at every level, the full

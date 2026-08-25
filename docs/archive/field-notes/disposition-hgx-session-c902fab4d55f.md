@@ -62,8 +62,8 @@ caller could rewrite. `flavor` is immutable per-session in this model, so a
 the reviewed onboarding baseline creates and owns under the account home:
 
 - `~/.mac` (mac home), `~/.mac/src/mac` (source checkout),
-  `~/.mac/venv` (bootstrapped interpreter), `~/.mac/bin/codegraph`,
-  `~/.mac/bin/gh`, `~/.local/bin/mac` (launcher),
+  `~/.mac/venv` (bootstrapped interpreter), `~/.mac/bin/gh`,
+  `~/.local/bin/mac` (launcher),
   `~/.mac/machine-onboarding-receipt.json`, and the
   `~/.mac/.machine-onboarding.lock` guard.
 

@@ -13,7 +13,6 @@ managed runtime is pinned by deploy/reviewed-tool-assets.sh:
 
 * uv 0.8.22
 * CPython 3.12.11 installed by that reviewed uv
-* CodeGraph v1.5.0
 
 Publication is receipt-atomic: every canonical path is created while an
 exclusive owner lock is held, exact readback is performed, and an owner-only,
@@ -49,7 +48,6 @@ STATUS_SCHEMA = "mac.fleet_machine_onboarding_status.v1"
 ROUTE_SCHEMA = "mac.fleet_endpoint_identity.v1"
 UV_VERSION = "0.8.22"
 PYTHON_VERSION = "3.12.11"
-CODEGRAPH_VERSION = "v1.5.0"
 MAX_JSON_BYTES = 1024 * 1024
 SAFE_GENERATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,511}$")
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -67,7 +65,6 @@ class Layout:
     venv: Path
     local_bin: Path
     mac_bin: Path
-    codegraph_bin: Path
     gh_bin: Path
     receipt: Path
     lock: Path
@@ -83,7 +80,6 @@ class Layout:
             venv=root / "venv",
             local_bin=home / ".local" / "bin",
             mac_bin=home / ".local" / "bin" / "mac",
-            codegraph_bin=root / "bin" / "codegraph",
             gh_bin=root / "bin" / "gh",
             receipt=root / "machine-onboarding-receipt.json",
             lock=root / ".machine-onboarding.lock",
@@ -450,20 +446,14 @@ def install_reviewed_toolchain(
     stage: Path,
     reviewed_assets: Path,
     cache_root: Path,
-) -> tuple[Path, Path, Path]:
-    """Install reviewed uv, CodeGraph, and exact managed CPython into stage."""
+) -> tuple[Path, Path]:
+    """Install reviewed uv and exact managed CPython into stage."""
 
     if not reviewed_assets.is_file() or reviewed_assets.is_symlink():
         raise OnboardingError("reviewed tool asset registry is unsafe")
     uv = stage / "tools" / "uv"
-    codegraph_bundle = stage / "tools" / "codegraph"
-    codegraph_link = stage / "tools" / "codegraph-link"
     cache_root.mkdir(parents=True, exist_ok=True)
-    command = (
-        'set -euo pipefail; . "$1"; '
-        'mac_install_reviewed_uv "$2" "$3"; '
-        'mac_install_reviewed_codegraph "$4" "$5" "$3"'
-    )
+    command = 'set -euo pipefail; . "$1"; mac_install_reviewed_uv "$2" "$3"'
     clean_env = {
         "HOME": str(Path.home()),
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -482,18 +472,12 @@ def install_reviewed_toolchain(
             str(reviewed_assets),
             str(uv),
             str(cache_root),
-            str(codegraph_bundle),
-            str(codegraph_link),
         ),
         env=clean_env,
     )
     uv_report = _run((str(uv), "--version"), env=clean_env).stdout.strip()
     if re.fullmatch(rf"uv {re.escape(UV_VERSION)}(?: .*)?", uv_report) is None:
         raise OnboardingError("reviewed uv version differs")
-    if _run(
-        (str(codegraph_bundle / "bin" / "codegraph"), "--version"), env=clean_env
-    ).stdout.strip() != CODEGRAPH_VERSION.removeprefix("v"):
-        raise OnboardingError("reviewed CodeGraph version differs")
     python_root = stage / "python"
     python_env = dict(clean_env)
     python_env["UV_PYTHON_INSTALL_DIR"] = str(python_root)
@@ -523,7 +507,7 @@ def install_reviewed_toolchain(
     ).stdout.strip()
     if version != PYTHON_VERSION:
         raise OnboardingError("reviewed Python version differs")
-    return uv, codegraph_bundle, candidates[0]
+    return uv, candidates[0]
 
 
 def _trusted_gh() -> Path:
@@ -574,7 +558,7 @@ def prepare(
             _extract_source_archive(staged_archive, staged_source)
             cache = layout.mac_home / "cache" / "reviewed-assets"
             _ensure_private_directory(cache)
-            uv, codegraph, python = install_reviewed_toolchain(stage, reviewed_assets, cache)
+            uv, python = install_reviewed_toolchain(stage, reviewed_assets, cache)
             gh = _trusted_gh()
             marker_value = {
                 "schema": STAGE_SCHEMA,
@@ -589,11 +573,9 @@ def prepare(
                 "versions": {
                     "uv": UV_VERSION,
                     "python": PYTHON_VERSION,
-                    "codegraph": CODEGRAPH_VERSION,
                 },
                 "paths": {
                     "uv": str(uv.relative_to(stage)),
-                    "codegraph": str(codegraph.relative_to(stage)),
                     "python": str(python.relative_to(stage)),
                     "gh": str(gh),
                 },
@@ -708,7 +690,6 @@ def commit(
         if not isinstance(paths, dict):
             raise OnboardingError("onboarding stage paths are invalid")
         staged_uv = stage / str(paths["uv"])
-        staged_codegraph = stage / str(paths["codegraph"])
         staged_python = stage / str(paths["python"])
         staged_python_root = stage / "python"
         staged_source = stage / "source"
@@ -717,7 +698,6 @@ def commit(
         relative_python = staged_python.relative_to(staged_python_root)
         final_python = final_python_root / relative_python
         final_uv = layout.mac_home / "lib" / "uv" / "versions" / UV_VERSION / "uv"
-        final_codegraph = layout.mac_home / "lib" / "codegraph" / "versions" / CODEGRAPH_VERSION
         staged_venv = stage / "venv"
         created: list[Path] = []
         try:
@@ -760,16 +740,11 @@ def commit(
             _rewrite_venv_prefix(staged_venv, layout.venv)
             _publish_path(staged_source, layout.source, created)
             _publish_path(staged_venv, layout.venv, created)
-            _publish_path(staged_codegraph, final_codegraph, created)
             _publish_path(staged_uv, final_uv, created)
             links = (
                 (
                     _link_in_stage(stage, "mac", layout.venv / "bin" / "mac"),
                     layout.mac_bin,
-                ),
-                (
-                    _link_in_stage(stage, "codegraph", final_codegraph / "bin" / "codegraph"),
-                    layout.codegraph_bin,
                 ),
                 (_link_in_stage(stage, "gh", gh), layout.gh_bin),
             )
@@ -788,10 +763,6 @@ def commit(
             if python_version != PYTHON_VERSION:
                 raise OnboardingError("published venv Python version differs")
             _run((str(layout.venv / "bin" / "mac"), "--help"), env=python_env)
-            if _run(
-                (str(layout.codegraph_bin), "--version"), env=python_env
-            ).stdout.strip() != CODEGRAPH_VERSION.removeprefix("v"):
-                raise OnboardingError("published CodeGraph version differs")
             _run((str(layout.gh_bin), "--version"), env=python_env)
             receipt = {
                 "schema": RECEIPT_SCHEMA,
@@ -810,9 +781,7 @@ def commit(
                     "venv": str(layout.venv),
                     "python": str(final_python),
                     "uv": str(final_uv),
-                    "codegraph": str(final_codegraph),
                     "mac_link": str(layout.mac_bin),
-                    "codegraph_link": str(layout.codegraph_bin),
                     "gh_link": str(layout.gh_bin),
                 },
                 "services_started": False,

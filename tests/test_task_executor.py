@@ -210,7 +210,7 @@ def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
     prompt = te.build_task_prompt(task, Path("/tmp/task.json"))
     assert "repository tasks use evidence_type=repo_change" in prompt
     assert "operator_result is reserved for work without a repository contract" in prompt
-    assert "deterministic host owns final tests, CodeGraph" in prompt
+    assert "deterministic host owns final tests, cleanliness" in prompt
     assert "run only focused tests" in prompt
     assert "Do NOT run the repository's full contract/pre-push gate" in prompt
     assert "even when task.json asks for it" in prompt
@@ -250,7 +250,6 @@ def test_repository_contract_section_onboarding_when_checkout_present():
     assert "task contract failure" not in section
     assert ".mac/project.yaml" in section
     assert "$MAC_TASK_REPO_WORKTREE" in section
-    assert "codegraph init" in section
     assert "does not publish a branch or PR" in section
 
 
@@ -264,7 +263,6 @@ def test_repository_contract_section_shows_existing_contract():
     task = {"metadata": {"origin": {"repository_contract": contract}}}
     section = te.repository_contract_section(task)
     assert "make test" in section
-    assert "codegraph affected" in section
     assert "task contract failure" not in section
     assert "Agent ownership ends" in section
     assert "deterministic host finalizer exclusively owns" in section
@@ -1048,7 +1046,6 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert steps[3][:2] == ["exec", "--name"]
     assert steps[3][-3:-1] == ["/bin/sh", "-c"]
     assert ".mac-toolchain" in steps[3][-1]
-    assert "repo/.codegraph" in steps[3][-1]
     assert steps[4][0] == "download"
     assert steps[5][0] == "delete"
 
@@ -1570,8 +1567,6 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     )
     (sandbox_repo / ".venv" / "bin").mkdir(parents=True)
     (sandbox_repo / ".venv" / "bin" / "python").write_text("container venv\n", encoding="utf-8")
-    (sandbox_repo / ".codegraph").mkdir()
-    (sandbox_repo / ".codegraph" / "codegraph.db").write_text("generated index\n", encoding="utf-8")
     (sandbox_repo / "fixtures" / "node_modules").mkdir(parents=True)
     (sandbox_repo / "fixtures" / "node_modules" / "package.json").write_text(
         "{}\n", encoding="utf-8"
@@ -1592,7 +1587,6 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     assert not (repo / ".git.bak123").exists()
     assert not (repo / ".git.bak-old").exists()
     assert not (repo / ".venv").exists()
-    assert not (repo / ".codegraph").exists()
     assert not (workspace / ".mac-toolchain").exists()
     assert not (repo / "old.py").exists()
     assert (repo / "same.py").read_text(encoding="utf-8") == "new\n"
@@ -1624,7 +1618,6 @@ def test_sandbox_download_removes_generated_runtime_before_transfer(tmp_path, mo
     assert cleanup_argv[cleanup_argv.index("--workdir") + 1] == "/sandbox/task"
     assert cleanup_script.startswith("rm -rf -- ")
     assert ".mac-toolchain" in cleanup_script
-    assert "repo/.codegraph" in cleanup_script
     assert "repo/.venv" in cleanup_script
     assert "repo/node_modules" in cleanup_script
 
@@ -2218,42 +2211,7 @@ def test_preserve_repository_wip_bundle_captures_clean_and_dirty_state(tmp_path,
     assert manifest == result
 
 
-def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
-    bin_dir = tmp_path / "fake-bin"
-    bin_dir.mkdir(exist_ok=True)
-    script = bin_dir / "codegraph"
-    script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'case "${1:-}" in',
-                "  init)",
-                '    mkdir -p "$2/.codegraph"',
-                '    echo "indexed $2"',
-                "    ;;",
-                "  sync)",
-                '    mkdir -p "$2/.codegraph"',
-                '    echo "synced $2"',
-                "    ;;",
-                "  affected)",
-                "    cat >/dev/null",
-                "    echo '{\"affected\":[]}'",
-                "    ;;",
-                "  unlock)",
-                "    ;;",
-                "  *)",
-                '    echo "unexpected codegraph command: $*" >&2',
-                "    exit 2",
-                "    ;;",
-                "esac",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    monkeypatch.setenv("MAC_CODEGRAPH_BIN", str(script))
+def _prepare_finalizer_env(tmp_path: Path, monkeypatch) -> None:
     # Finalizer tests model a worker-prepared repository context. The worker
     # records the canonical base before the agent starts; make that contract
     # explicit instead of relying on the old finalizer's implicit HEAD~1/main.
@@ -2266,7 +2224,6 @@ def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
                 monkeypatch.setenv("MAC_TASK_REPO_DEFAULT_BRANCH", base_ref)
                 monkeypatch.setenv("MAC_TASK_REPO_LEASE_ID", "lease-test")
                 break
-    return script
 
 
 def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
@@ -2290,7 +2247,7 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     ws.mkdir()
     recovery_entries = [{"step": "bootstrap", "choice": "retry", "result": "ok"}]
     (ws / "harness-recovery-log.json").write_text(json.dumps(recovery_entries), encoding="utf-8")
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -2310,7 +2267,6 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert manifest["repo"]["pushed"] is True
     assert "README.md" in manifest["repo"]["files_changed"]
     assert manifest["recovery"] == recovery_entries
-    assert manifest["codegraph"]["status"] in {"pass", "skipped"}
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
@@ -2333,7 +2289,7 @@ def test_git_finalizer_commits_and_pushes_new_source_files(tmp_path, monkeypatch
         _git(work, "add", "leaked_module.py")
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-untracked",
@@ -2392,7 +2348,7 @@ def test_git_finalizer_clean_preserves_new_source_over_gitignored_artifact(tmp_p
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-clean-preserves",
@@ -2446,7 +2402,7 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -2508,7 +2464,7 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -2575,7 +2531,7 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t1",
@@ -2648,7 +2604,7 @@ def test_git_finalizer_blocks_when_canonical_fetch_fails(tmp_path, monkeypatch):
     origin, canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     # Point canonical_remote_url at a non-existent path to force a fetch failure.
     task = {
@@ -2697,7 +2653,7 @@ def test_git_finalizer_auto_rebases_clean_canonical_advance(tmp_path, monkeypatc
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-stale",
@@ -2738,7 +2694,7 @@ def test_git_finalizer_blocks_conflicting_canonical_advance(tmp_path, monkeypatc
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-conflict",
@@ -2789,7 +2745,7 @@ def test_git_finalizer_passes_rebased_task_head(tmp_path, monkeypatch):
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-rebased",
@@ -2817,7 +2773,7 @@ def test_git_finalizer_blocks_invalid_canonical_remote_url(tmp_path, monkeypatch
     origin, _canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-invalid-remote",
@@ -2863,7 +2819,7 @@ def test_git_finalizer_uses_non_main_canonical_branch(tmp_path, monkeypatch):
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     task = {
         "id": "t-develop",
@@ -2913,7 +2869,7 @@ def test_git_finalizer_blocks_when_canonical_remote_is_missing(tmp_path, monkeyp
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     # No canonical_remote_url or prepared canonical URL: fail closed.
     task = {
@@ -5086,7 +5042,6 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_untracked(tmp_path, 
         "evidence_type": "repo_change",
         "summary": "executor finished with generated files",
         "tests": [{"name": "unit", "status": "pass"}],
-        "codegraph": {"status": "pass"},
     }
     (ws / "mac-evidence.json").write_text(json.dumps(original_evidence), encoding="utf-8")
 
@@ -5680,7 +5635,7 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
     _origin, canonical, work, _main_sha = _setup_two_repo_worktree(tmp_path)
     ws = tmp_path / "ws"
     ws.mkdir()
-    _install_fake_codegraph(tmp_path, monkeypatch)
+    _prepare_finalizer_env(tmp_path, monkeypatch)
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     events = []
     monkeypatch.setattr(
@@ -5714,7 +5669,6 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
         "bootstrap",
         "contract_tests",
         "publication_preflight",
-        "codegraph_audit",
         "guarded_push",
         "evidence_writeback",
     }

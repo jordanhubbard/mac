@@ -43,9 +43,7 @@ def test_repository_breadth_no_longer_classifies_task_scope() -> None:
         "description": "small",
         "metadata": {
             "execution_contract": {
-                "repository_contract": {
-                    "toolchain": {"required_commands": ["git", "python", "codegraph"]}
-                }
+                "repository_contract": {"toolchain": {"required_commands": ["git", "python"]}}
             }
         },
     }

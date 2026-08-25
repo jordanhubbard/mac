@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA
 from mac.models import ProvisioningStatus, ValidationError
 from mac.services import ControlPlane
 from tests.conftest import bind_soul
@@ -306,16 +305,6 @@ def test_review_workflow_emits_provisioning_signal_when_no_reviewer(cp, semantic
             "remote_ref": "refs/heads/x",
             "dirty": False,
             "files_changed": ["src/x.py"],
-        },
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test_fixture",
-            "relevant_files": ["src/x.py"],
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
         },
         "tests": [{"command": "pytest", "returncode": 0}],
     }

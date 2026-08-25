@@ -604,7 +604,6 @@ def _run_bounded(command: str, worktree: Path, timeout: float) -> dict[str, Any]
 
 def _normalized_output_paths(raw: str) -> list[str]:
     outputs = [item.strip() for item in raw.splitlines() if item.strip()]
-    outputs.append(".codegraph")
     normalized: list[str] = []
     for item in outputs:
         path = PurePosixPath(item)
@@ -851,14 +850,10 @@ def orchestrate() -> int:
     problems: list[str] = []
     try:
         if bootstrap_command:
-            missing = [
-                item
-                for item in allowed_outputs
-                if item != ".codegraph" and not (worktree / item).exists()
-            ]
+            missing = [item for item in allowed_outputs if not (worktree / item).exists()]
             if missing or not declared_outputs:
                 bootstrap = _run_bounded(bootstrap_command, worktree, timeout)
-                bootstrap["creates"] = [item for item in allowed_outputs if item != ".codegraph"]
+                bootstrap["creates"] = list(allowed_outputs)
                 missing_after = [
                     item for item in declared_outputs if not (worktree / item).exists()
                 ]
@@ -870,7 +865,7 @@ def orchestrate() -> int:
             else:
                 bootstrap = {
                     "command": bootstrap_command,
-                    "creates": [item for item in allowed_outputs if item != ".codegraph"],
+                    "creates": list(allowed_outputs),
                     "returncode": 0,
                     "status": "skipped",
                     "reason": "declared bootstrap outputs already exist",

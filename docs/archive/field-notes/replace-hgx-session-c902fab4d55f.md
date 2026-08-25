@@ -142,7 +142,7 @@ deploy/deploy-mac-fleet.sh --hub hub --prepare-fungible-onboarding worker-4
 This binds the live provider session to the draining placeholder and publishes
 the reviewed source/venv/tool rollback baseline onto the node's `~/.mac` volume.
 The reviewed toolchain pins the baseline is published against (asserted in the
-remote stage receipt) are uv `0.8.22`, CPython `3.12.11`, CodeGraph `v1.1.6`.
+remote stage receipt) are uv `0.8.22` and CPython `3.12.11`.
 The fungible `~/.mac` volume layout the onboarding helper populates
 (`VolumeLayout.for_account_home("/home/worker")`):
 
@@ -154,7 +154,6 @@ The fungible `~/.mac` volume layout the onboarding helper populates
   "venv": "/home/worker/.mac/venv",
   "local_bin": "/home/worker/.local/bin",
   "mac_bin": "/home/worker/.local/bin/mac",
-  "codegraph_bin": "/home/worker/.mac/bin/codegraph",
   "gh_bin": "/home/worker/.mac/bin/gh",
   "receipt": "/home/worker/.mac/machine-onboarding-receipt.json",
   "lock": "/home/worker/.mac/.machine-onboarding.lock"

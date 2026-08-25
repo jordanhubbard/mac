@@ -144,8 +144,6 @@ Review status distinguishes repository access from later execution:
   redacts credentials, and does not misclassify a verifier auth failure as a
   missing ref.
 - [x] Focused tests and `scripts/run-contract-tests.sh` pass.
-- [x] CodeGraph reports a passing affected-code audit for all changed source
-  files.
 
 Implementation tracking: `task_f16df80ee0b4404091fa9f86fcba64da` (completed).
 Core implementation commits: `7cf4e3d` and `7503ba0`.

@@ -89,9 +89,7 @@ def policy() -> "R.SelectionPolicy":
     )
 
 
-def _resolve(
-    repo, policy, impact_map, changed, base_lines=None, *, fresh=True, cg=(), cg_problem=None
-):
+def _resolve(repo, policy, impact_map, changed, base_lines=None, *, fresh=True):
     # ``fresh`` models the IO-layer freshness decision: True => every mapped file
     # is trustworthy for this base (exact match), False => none (stale/divergent).
     fresh_files = list(impact_map.get("file_tests", {})) if (fresh and impact_map) else []
@@ -101,8 +99,6 @@ def _resolve(
         fresh_map_files=fresh_files,
         policy=policy,
         impact_map=impact_map,
-        codegraph_tests=list(cg),
-        codegraph_problem=cg_problem,
         repo_root=repo,
     )
 
@@ -170,13 +166,11 @@ def test_selector_has_a_reviewed_self_contract(repo, policy, impact_map):
     assert "tests/test_resolve_impacted_tests.py" in result["tests"]
 
 
-def test_unmappable_source_entry_point_resolves_by_contract_without_codegraph(
-    repo, policy, impact_map
-):
+def test_unmappable_source_entry_point_resolves_by_contract(repo, policy, impact_map):
     """A source entry point runs only out-of-process, so the coverage map never
     attributes it. Its reviewed path contract must resolve it to its dedicated
-    test even when CodeGraph is unavailable — never a full-suite escalation. The
-    fixture map does not map ``git_askpass.py``, so without the contract this
+    test without a full-suite escalation. The fixture map does not map
+    ``git_askpass.py``, so without the contract this
     would fail closed to full at the unresolved-source guard."""
     (repo / "tests/test_git_askpass.py").write_text(
         "def test_x():\n    assert True\n", encoding="utf-8"
@@ -186,8 +180,6 @@ def test_unmappable_source_entry_point_resolves_by_contract_without_codegraph(
         policy,
         impact_map,
         ["src/mac/git_askpass.py"],
-        cg=(),
-        cg_problem="codegraph_unavailable",
     )
     assert result["mode"] == "focused"
     assert result["reason"] == "impact_hybrid_scope"
@@ -250,7 +242,7 @@ def test_additions_only_falls_back_to_file_level(repo, policy, impact_map):
     assert {"tests/test_foo.py::test_a", "tests/test_foo.py::test_b"} <= set(result["tests"])
 
 
-def test_stale_map_uses_codegraph(repo, policy, impact_map):
+def test_stale_map_fails_closed(repo, policy, impact_map):
     result = _resolve(
         repo,
         policy,
@@ -258,44 +250,12 @@ def test_stale_map_uses_codegraph(repo, policy, impact_map):
         ["src/mac/foo.py"],
         {"src/mac/foo.py": {10}},
         fresh=False,
-        cg=["tests/test_bar.py::test_c"],
-    )
-    assert result["mode"] == "focused"
-    assert result["map_fresh"] is False
-    assert "tests/test_bar.py::test_c" in result["tests"]
-
-
-def test_stale_map_without_codegraph_fails_closed(repo, policy, impact_map):
-    result = _resolve(
-        repo,
-        policy,
-        impact_map,
-        ["src/mac/foo.py"],
-        {"src/mac/foo.py": {10}},
-        fresh=False,
-        cg=(),
-        cg_problem="codegraph_unavailable",
     )
     assert result["mode"] == "full"
     assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
 
 
-def test_stale_map_with_empty_codegraph_fails_closed(repo, policy, impact_map):
-    result = _resolve(
-        repo,
-        policy,
-        impact_map,
-        ["src/mac/foo.py"],
-        {"src/mac/foo.py": {10}},
-        fresh=False,
-        cg=(),
-        cg_problem=None,
-    )
-    assert result["mode"] == "full"
-    assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
-
-
-def test_new_source_file_not_in_map_fails_closed_without_codegraph(repo, policy, impact_map):
+def test_new_source_file_not_in_map_fails_closed(repo, policy, impact_map):
     result = _resolve(
         repo,
         policy,
@@ -303,8 +263,6 @@ def test_new_source_file_not_in_map_fails_closed_without_codegraph(repo, policy,
         ["src/mac/brand_new.py"],
         {"src/mac/brand_new.py": {1}},
         fresh=True,
-        cg=(),
-        cg_problem=None,
     )
     assert result["mode"] == "full"
 
@@ -322,7 +280,7 @@ def test_nonexistent_always_run_is_filtered(repo, policy, impact_map):
 
 
 def test_missing_map_treats_all_source_as_unresolved(repo, policy):
-    # No map at all: a source change relies entirely on codegraph; none -> full.
+    # No map at all: a source change cannot be resolved, so it forces full.
     result = _resolve(
         repo,
         policy,
@@ -330,8 +288,6 @@ def test_missing_map_treats_all_source_as_unresolved(repo, policy):
         ["src/mac/foo.py"],
         {"src/mac/foo.py": {10}},
         fresh=False,
-        cg=(),
-        cg_problem=None,
     )
     assert result["mode"] == "full"
 
@@ -429,8 +385,6 @@ def test_ancestor_freshness_end_to_end_line_selection(mapped_repo):
         fresh_map_files=fresh,
         policy=R.SelectionPolicy(),
         impact_map=impact_map,
-        codegraph_tests=[],
-        codegraph_problem="codegraph_unavailable",
         repo_root=root,
     )
     assert result["mode"] == "focused"

@@ -457,9 +457,6 @@ The four gates are the real content: a lease and fence authorize every mutation,
 and bound to one exact attempt, review must come from a different agent AND a different model, and
 landing goes through a speculative merge queue whose invariant is "never land an untested tree".
 
-CodeGraph is a hint when the tool and index exist (ADR 0031 Accepted), not a hard gate — the
-previous deck claimed it was mandatory.
-
 If asked why MAC built its own merge queue: GitHub's is organization-only, verified by API against
 the live repo — HTTP 422 on a user-owned repository.
 """,

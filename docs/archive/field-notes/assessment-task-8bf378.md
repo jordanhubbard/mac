@@ -36,7 +36,7 @@ patch skill code/tests; the concrete gap is evidentiary.
 ## Ground Truth Observed
 
 Measured in the task-owned worktree with the bootstrapped `.venv`
-(`python3` 3.12.13; `git`/`gh`/`codegraph` present; pytest/coverage installed by
+(`python3` 3.12.13; `git`/`gh` present; pytest/coverage installed by
 `python3 scripts/bootstrap-project.py`). All skill files were read, not
 modified.
 

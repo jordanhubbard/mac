@@ -15,7 +15,6 @@
 # Knobs (env):
 #   OPENSHELL_VERSION   default 0.0.72        — CLI + gateway version (must match)
 #   GH_VERSION          default 2.95.0        — GitHub CLI version in runtime image
-#   CODEGRAPH_VERSION   default v1.5.0        — CodeGraph version in runtime image
 #   MAC_HOME            default $HOME/.mac
 #   MAC_SRC             default $MAC_HOME/src/mac    — mac source tree (image build context)
 #   OSH_DOCKER_BIN      default docker       — Docker Engine/Moby CLI path
@@ -56,7 +55,6 @@ case "$OPENSHELL_VERSION" in
     ;;
 esac
 GH_VERSION="${GH_VERSION:-2.95.0}"
-CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.5.0}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
 OSH_DOCKER_BIN="${OSH_DOCKER_BIN:-docker}"
@@ -296,7 +294,7 @@ build_runtime_image() {
   fi
   builder="$(cd "$(dirname "$0")" && pwd)/build-runtime-image.sh"
   log "building $OSH_IMAGE_TAG with Docker Engine/Moby from $MAC_SRC (development fallback)"
-  GH_VERSION="$GH_VERSION" CODEGRAPH_VERSION="$CODEGRAPH_VERSION" \
+  GH_VERSION="$GH_VERSION" \
     MAC_SRC="$MAC_SRC" OSH_DOCKER_BIN="$OSH_DOCKER_BIN" \
     OSH_IMAGE_TAG="$OSH_IMAGE_TAG" MAC_IMAGE_SOURCE_SHA="$image_source_sha" \
     MAC_IMAGE_SOURCE_SHA_FILE="$image_source_sha_file" /bin/bash "$builder"
@@ -1486,10 +1484,10 @@ validate_openshell_runtime_image() {
       --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
       --env HOME=/tmp \
-      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; command -v codegraph; codegraph --version; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/buildx visible through OpenShell"
+    log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/buildx visible through OpenShell"
   else
     rc=$?
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
