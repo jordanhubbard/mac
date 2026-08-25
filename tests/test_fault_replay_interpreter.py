@@ -84,8 +84,7 @@ def test_resolution_verifies_rather_than_assumes(replay, tmp_path, monkeypatch):
 
     assert interpreter != str(broken)
     assert (
-        subprocess.run([interpreter, "-c", "import psycopg"], capture_output=True).returncode
-        == 0
+        subprocess.run([interpreter, "-c", "import psycopg"], capture_output=True).returncode == 0
     )
 
 
@@ -142,8 +141,7 @@ def test_the_probe_runner_actually_uses_the_resolved_interpreter(replay, monkeyp
     replay._run_probe(tmp_path / "probe.py", tmp_path)
 
     assert captured["argv"][0] == "/sentinel/python", (
-        "_run_probe ignored the resolved interpreter and spawned %r"
-        % captured["argv"][0]
+        "_run_probe ignored the resolved interpreter and spawned %r" % captured["argv"][0]
     )
 
 

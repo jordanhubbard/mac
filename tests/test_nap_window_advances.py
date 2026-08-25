@@ -104,7 +104,9 @@ def test_a_cycle_written_summary_moves_the_window(cp, consolidator, agent):
     that ancient timestamp. Either way the agent's own consolidation history is
     invisible to it.
     """
-    _summary(cp, agent.id, created_by="nap-cycle:%s" % agent.id, created_at="2026-08-07T05:00:00+00:00")
+    _summary(
+        cp, agent.id, created_by="nap-cycle:%s" % agent.id, created_at="2026-08-07T05:00:00+00:00"
+    )
 
     window = consolidator._latest_nap_window_end(agent.id)
 
@@ -166,7 +168,9 @@ def test_another_agents_summary_does_not_move_this_agents_window(cp, consolidato
     """Identity still has to mean something after the change."""
     machine = cp.register_machine("other-host")
     other = cp.register_agent(machine.id, "other-napper", capabilities=["python"])
-    _summary(cp, other.id, created_by="nap-cycle:%s" % other.id, created_at="2026-08-07T05:00:00+00:00")
+    _summary(
+        cp, other.id, created_by="nap-cycle:%s" % other.id, created_at="2026-08-07T05:00:00+00:00"
+    )
 
     assert consolidator._latest_nap_window_end(agent.id) is None
 
@@ -285,7 +289,9 @@ def test_per_group_errors_are_counted_not_inlined():
     assert outcome["consolidation_group_errors"] == 2
 
 
-@pytest.mark.parametrize("detail", [None, {}, {"consolidation": None}, {"consolidation": "x"}, "junk"])
+@pytest.mark.parametrize(
+    "detail", [None, {}, {"consolidation": None}, {"consolidation": "x"}, "junk"]
+)
 def test_absent_or_malformed_detail_is_empty_not_an_exception(detail):
     """This annotates a completion; it must never be why a nap fails to finish.
 

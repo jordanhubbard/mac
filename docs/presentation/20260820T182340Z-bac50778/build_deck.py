@@ -107,8 +107,11 @@ def image_slide(name: str, note: str, caption: str | None = None, sub: str | Non
     if w > avail_w:
         w, h = avail_w, Emu(int(avail_w / aspect))
     slide.shapes.add_picture(
-        str(path), Emu(int((SLIDE_W - w) / 2)), Emu(int(top_pad + (avail_h - h) / 2)),
-        width=w, height=h,
+        str(path),
+        Emu(int((SLIDE_W - w) / 2)),
+        Emu(int(top_pad + (avail_h - h) / 2)),
+        width=w,
+        height=h,
     )
     notes(slide, note)
     return slide
@@ -123,17 +126,35 @@ line(tf, "MAC", 54, WHITE, bold=True, first=True, space_after=6)
 line(tf, "How the control plane is put together", 30, PALE, space_after=18)
 line(tf, "One hub, many workers, and what runs inside the hub.", 17, MUTED)
 tf2 = textbox(slide, Inches(0.9), Inches(5.6), Inches(11.5), Inches(1.2))
-line(tf2, f"commit {COMMIT}   ·   captured {CAPTURED}", 16, SAND, bold=True, first=True, space_after=4)
-line(tf2, "Diagrams from the source. Screenshots from a hub that was running while this was made.", 13.5, MUTED)
-notes(slide, """
+line(
+    tf2,
+    f"commit {COMMIT}   ·   captured {CAPTURED}",
+    16,
+    SAND,
+    bold=True,
+    first=True,
+    space_after=4,
+)
+line(
+    tf2,
+    "Diagrams from the source. Screenshots from a hub that was running while this was made.",
+    13.5,
+    MUTED,
+)
+notes(
+    slide,
+    """
 This deck is deliberately picture-first: three flow diagrams and three live console captures.
 It describes commit bac50778 and nothing later.
 
 Open with the shape, not the philosophy: one hub, many workers, and the hub is smaller than people
 expect.
-""")
+""",
+)
 
-image_slide("01-hub-and-workers.png", """
+image_slide(
+    "01-hub-and-workers.png",
+    """
 THE CORE RELATIONSHIP. The hub owns three things — the task ledger, the capability registry, and
 capacity — and hands out leases. Workers hold the actual work.
 
@@ -149,9 +170,12 @@ plane, it speaks like any other participant.
 
 Live numbers bottom-right: 10 agents, 2 busy / 2 idle / 6 offline. Offline is normal — fungible
 workers are created on demand.
-""")
+""",
+)
 
-image_slide("03-life-of-a-task.png", """
+image_slide(
+    "03-life-of-a-task.png",
+    """
 ONE TASK, END TO END. Ten steps, five lanes, time left to right.
 
 The thing to say out loud: every hand-off is a durable row, not a message. That is what makes
@@ -163,9 +187,12 @@ behind the evicted entry because those results were green against a state that w
 
 Step 6 is changing: ADR 0016 was accepted today, making review agent-initiated rather than
 mandatory. The motivating measurement is on the slide — 52 reviews, zero findings.
-""")
+""",
+)
 
-image_slide("02-inside-the-hub.png", """
+image_slide(
+    "02-inside-the-hub.png",
+    """
 THE DEEP DIVE, and the slide to spend time on.
 
 Three daemon threads, each separate for a measured reason. mac-publication got its own thread
@@ -179,7 +206,8 @@ retention is silent when idle.
 
 31 services grouped by purpose. Do not read the lists; use them to show the surface is organised
 rather than accreted.
-""")
+""",
+)
 
 image_slide(
     "04-console-fleet.png",
@@ -250,44 +278,65 @@ first = True
 for num, label, note_ in rows:
     p = tf2.paragraphs[0] if first else tf2.add_paragraph()
     p.space_after = Pt(13)
-    r1 = p.add_run(); r1.text = f"{num:>9}   "
+    r1 = p.add_run()
+    r1.text = f"{num:>9}   "
     r1.font.size, r1.font.bold, r1.font.color.rgb, r1.font.name = Pt(25), True, INK, FONT
-    r2 = p.add_run(); r2.text = label
+    r2 = p.add_run()
+    r2.text = label
     r2.font.size, r2.font.color.rgb, r2.font.name = Pt(18), SLATE, FONT
-    r3 = p.add_run(); r3.text = f"   — {note_}"
+    r3 = p.add_run()
+    r3.text = f"   — {note_}"
     r3.font.size, r3.font.color.rgb, r3.font.name = Pt(14), GREY, FONT
     first = False
-notes(slide, """
+notes(
+    slide,
+    """
 Do not read the table. One point: this is not a prototype, and the CLI and HTTP references are
 generated from the running system, so they cannot drift without failing CI.
-""")
+""",
+)
 
 slide = prs.slides.add_slide(BLANK)
 tf = textbox(slide, Inches(0.85), Inches(0.55), Inches(11.6), Inches(1.0))
 line(tf, "What is decided but not yet true", 34, INK, bold=True, first=True, space_after=4)
 line(tf, "The easiest claims in this deck to falsify, stated up front.", 15, GREY)
 items = [
-    ("Eleven of twenty-four ADRs are still Proposed.",
-     "Including router-side token metering (0017) and the dependency graph (0018). A proposal is a decision the code has not caught up with."),
-    ("ADR 0016 was accepted the day this deck was built.",
-     "Agent-initiated review is decided, not deployed: the rollout is one project-level flag, and the mandatory path still runs everywhere else."),
-    ("A 1% merge-queue land rate is on a slide, not in a runbook.",
-     "211 evictions, all for projected conflicts with the queue base. Nobody has fixed it; the console is simply honest enough to show it."),
-    ("A third of blocked work may be permanently dead.",
-     "ADR 0018 found 165 of 355 blocked tasks waiting on dependencies that can never complete, and it took a hand-written query to find."),
-    ("The screenshots cannot be regenerated from this repository.",
-     "They come from a live hub. The diagrams are reproducible; the captures are evidence with a date on them."),
+    (
+        "Eleven of twenty-four ADRs are still Proposed.",
+        "Including router-side token metering (0017) and the dependency graph (0018). A proposal is a decision the code has not caught up with.",
+    ),
+    (
+        "ADR 0016 was accepted the day this deck was built.",
+        "Agent-initiated review is decided, not deployed: the rollout is one project-level flag, and the mandatory path still runs everywhere else.",
+    ),
+    (
+        "A 1% merge-queue land rate is on a slide, not in a runbook.",
+        "211 evictions, all for projected conflicts with the queue base. Nobody has fixed it; the console is simply honest enough to show it.",
+    ),
+    (
+        "A third of blocked work may be permanently dead.",
+        "ADR 0018 found 165 of 355 blocked tasks waiting on dependencies that can never complete, and it took a hand-written query to find.",
+    ),
+    (
+        "The screenshots cannot be regenerated from this repository.",
+        "They come from a live hub. The diagrams are reproducible; the captures are evidence with a date on them.",
+    ),
 ]
 tf2 = textbox(slide, Inches(0.85), Inches(1.85), Inches(11.6), Inches(5.3))
 first = True
 for head, body in items:
-    line(tf2, head, 17.5, INK, bold=True, space_before=0 if first else 11, space_after=3, first=first)
+    line(
+        tf2, head, 17.5, INK, bold=True, space_before=0 if first else 11, space_after=3, first=first
+    )
     line(tf2, body, 14, GREY, space_after=2)
     first = False
-notes(slide, """
+notes(
+    slide,
+    """
 Keep this slide. In front of engineers it is what earns the rest of the deck — and every item is
 something the system itself surfaced rather than something a reviewer had to dig out.
-""")
+""",
+)
 
 slide = prs.slides.add_slide(BLANK)
 bg(slide, SLATE)
@@ -305,15 +354,27 @@ for t in [
     line(tf2, "•  " + t, 14.5, PALE, space_after=8)
 tf3 = textbox(slide, Inches(7.0), Inches(2.0), Inches(5.5), Inches(4.6))
 line(tf3, "Making the next one", 19, SAND, bold=True, first=True, space_after=8)
-line(tf3, "Follow skills/cut-a-release/SKILL.md. Build a new sibling directory rather than editing this one:",
-     14.5, PALE, space_after=8)
+line(
+    tf3,
+    "Follow skills/cut-a-release/SKILL.md. Build a new sibling directory rather than editing this one:",
+    14.5,
+    PALE,
+    space_after=8,
+)
 line(tf3, "docs/presentation/<UTC timestamp>-<short commit>/", 13.5, WHITE, space_after=10)
-line(tf3, "The timestamp sorts, the commit pins, and neither collides. An old deck keeps meaning what it meant when it was shown.",
-     14.5, PALE)
-notes(slide, """
+line(
+    tf3,
+    "The timestamp sorts, the commit pins, and neither collides. An old deck keeps meaning what it meant when it was shown.",
+    14.5,
+    PALE,
+)
+notes(
+    slide,
+    """
 Close on the convention: decks are cheap, pinned to a commit, and nobody has to wonder whether a
 slide is still true — they can check the hash.
-""")
+""",
+)
 
 prs.save(OUT)
 print(f"wrote {OUT.name} — {len(prs.slides._sldIdLst)} slides")

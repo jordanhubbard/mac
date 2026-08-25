@@ -5,6 +5,7 @@ deploy env, and the gateway ~/.hermes/.env), keep live vars, handle fleet-scoped
 __SUFFIX variants, and survive a file that is ENTIRELY dead lines (the awk-vs-
 grep -e exit-1 edge case) without aborting under set -e.
 """
+
 import os
 import subprocess
 from pathlib import Path
@@ -18,9 +19,7 @@ def _run(home: Path, extra_env=None):
     env["HOME"] = str(home)
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(
-        ["bash", str(SCRIPT)], env=env, text=True, capture_output=True
-    )
+    return subprocess.run(["bash", str(SCRIPT)], env=env, text=True, capture_output=True)
 
 
 def test_purge_cleans_all_three_env_files(tmp_path):
@@ -51,9 +50,7 @@ def test_purge_cleans_all_three_env_files(tmp_path):
     # gateway env: ENTIRELY dead lines (would make `grep -v` exit 1 and, under
     # set -e, abort after the backup — awk must emit empty output and exit 0).
     hermes_env.write_text(
-        "TOKENHUB_API_KEY=dead\n"
-        "export TOKENHUB_ADMIN_TOKEN=dead\n"
-        "MAC_TOKENHUB_PORT=8090\n"
+        "TOKENHUB_API_KEY=dead\nexport TOKENHUB_ADMIN_TOKEN=dead\nMAC_TOKENHUB_PORT=8090\n"
     )
 
     result = _run(home)

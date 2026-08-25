@@ -9,9 +9,7 @@ from mac.services import ControlPlane
 def test_crash_api_binds_agent_identity_and_exposes_normalized_read_model():
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("crashed-host")
-    crashed = cp.register_agent(
-        machine.id, "crashed", capabilities=["python", "ops"]
-    )
+    crashed = cp.register_agent(machine.id, "crashed", capabilities=["python", "ops"])
     peer_machine = cp.register_machine("peer-host")
     cp.register_agent(peer_machine.id, "peer", capabilities=["python", "ops"])
     client = TestClient(
@@ -58,10 +56,13 @@ def test_crash_api_binds_agent_identity_and_exposes_normalized_read_model():
     )
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()] == [report["id"]]
-    assert client.get(
-        "/crash-reports/%s" % report["id"],
-        headers={"Authorization": "Bearer reader"},
-    ).status_code == 403
+    assert (
+        client.get(
+            "/crash-reports/%s" % report["id"],
+            headers={"Authorization": "Bearer reader"},
+        ).status_code
+        == 403
+    )
     detail = client.get(
         "/crash-reports/%s" % report["id"],
         headers={"Authorization": "Bearer secret-reader"},
@@ -69,11 +70,14 @@ def test_crash_api_binds_agent_identity_and_exposes_normalized_read_model():
     assert detail.status_code == 200
     assert detail.json()["occurrences"][0]["event_id"] == "evt-api-1"
 
-    assert client.post(
-        "/crash-reports/%s/resolve" % report["id"],
-        headers={"Authorization": "Bearer reader"},
-        json={"reason": "fixed"},
-    ).status_code == 403
+    assert (
+        client.post(
+            "/crash-reports/%s/resolve" % report["id"],
+            headers={"Authorization": "Bearer reader"},
+            json={"reason": "fixed"},
+        ).status_code
+        == 403
+    )
     resolved = client.post(
         "/crash-reports/%s/resolve" % report["id"],
         headers={"Authorization": "Bearer admin"},

@@ -54,10 +54,7 @@ def utc_now() -> dt.datetime:
 
 def iso8601(value: dt.datetime) -> str:
     return (
-        value.astimezone(dt.timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        value.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
 
 
@@ -173,9 +170,7 @@ def atomic_private_json(path: Path, value: dict[str, Any]) -> None:
         or parent.st_uid != os.getuid()
         or stat.S_IMODE(parent.st_mode) & 0o077
     ):
-        raise QualificationError(
-            "prepublication receipt directory is not owner-private"
-        )
+        raise QualificationError("prepublication receipt directory is not owner-private")
     try:
         current = destination.lstat()
     except FileNotFoundError:
@@ -187,9 +182,7 @@ def atomic_private_json(path: Path, value: dict[str, Any]) -> None:
         or current.st_nlink != 1
     ):
         raise QualificationError("existing prepublication receipt path is unsafe")
-    descriptor, raw = tempfile.mkstemp(
-        prefix=destination.name + ".", dir=destination.parent
-    )
+    descriptor, raw = tempfile.mkstemp(prefix=destination.name + ".", dir=destination.parent)
     temporary = Path(raw)
     try:
         os.fchmod(descriptor, 0o600)
@@ -211,9 +204,7 @@ def _safe_receipt(value: Any, path: str = "receipt") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if not isinstance(key, str):
-                raise QualificationError(
-                    "fleet qualification contains a non-string key"
-                )
+                raise QualificationError("fleet qualification contains a non-string key")
             lowered = key.lower()
             if any(forbidden in lowered for forbidden in FORBIDDEN_KEYS):
                 raise QualificationError(
@@ -286,9 +277,7 @@ def _validate_endpoint_identity(value: dict[str, Any], label: str) -> str:
             raise QualificationError(f"{label} pod identity digest is invalid")
     else:
         raise QualificationError(f"{label} adapter is unsupported")
-    if any(
-        not HEX_SHA256.fullmatch(str(authority.get(key) or "")) for key in digest_keys
-    ):
+    if any(not HEX_SHA256.fullmatch(str(authority.get(key) or "")) for key in digest_keys):
         raise QualificationError(f"{label} authority digest is invalid")
     return digest(canonical({"adapter": adapter, "authority": authority}))
 
@@ -326,10 +315,7 @@ def _validate_reviewed_cli(probe: dict[str, Any]) -> None:
         ):
             raise QualificationError("reviewed OpenShell CLI ready evidence is invalid")
     elif reason == "openclaw_not_managed":
-        if (
-            reviewed.get("required") is not False
-            or reviewed.get("managed_openclaw") is not False
-        ):
+        if reviewed.get("required") is not False or reviewed.get("managed_openclaw") is not False:
             raise QualificationError("optional OpenShell CLI evidence is inconsistent")
     else:
         raise QualificationError("reviewed OpenShell CLI reason is unsupported")
@@ -356,16 +342,14 @@ def validate_upstream(
         or _plain_digest(value.get("fleet_registry_sha256"), "fleet registry digest")
         != registry_sha256
     ):
-        raise QualificationError(
-            "fleet qualification identity differs from local inputs"
-        )
+        raise QualificationError("fleet qualification identity differs from local inputs")
     for key in ("selected_specs_sha256", "probe_helper_sha256"):
         _plain_digest(value.get(key), key)
     qualified_at = parse_time(value.get("qualified_at"))
     now = utc_now()
-    if qualified_at > now + dt.timedelta(
-        seconds=30
-    ) or qualified_at < now - dt.timedelta(seconds=max_age):
+    if qualified_at > now + dt.timedelta(seconds=30) or qualified_at < now - dt.timedelta(
+        seconds=max_age
+    ):
         raise QualificationError("fleet qualification is stale or from the future")
 
     hub_endpoint = value.get("hub_endpoint_identity")
@@ -394,9 +378,7 @@ def validate_upstream(
     if len(set(requested_agents)) != len(requested_agents):
         raise QualificationError("requested agent selection contains duplicates")
     if requested_agents and set(selected_names) != set(requested_agents):
-        raise QualificationError(
-            "fleet qualification selection differs from requested agents"
-        )
+        raise QualificationError("fleet qualification selection differs from requested agents")
     endpoint_authorities: set[str] = set()
     # ``selected_identities`` is derived one-for-one from ``agents`` above.
     # Avoid ``zip(strict=True)`` so the deployment wrapper remains executable
@@ -411,9 +393,7 @@ def validate_upstream(
             or not isinstance(probe, dict)
             or not probe
         ):
-            raise QualificationError(
-                "fleet qualification has incomplete per-agent evidence"
-            )
+            raise QualificationError("fleet qualification has incomplete per-agent evidence")
         endpoint_digest = _plain_digest(
             item.get("endpoint_identity_sha256"), "endpoint identity digest"
         )
@@ -429,13 +409,11 @@ def validate_upstream(
         if endpoint_authority in endpoint_authorities:
             raise QualificationError("selected agents resolve to one physical endpoint")
         endpoint_authorities.add(endpoint_authority)
-        if _plain_digest(
-            item.get("probe_evidence_sha256"), "probe evidence digest"
-        ) != digest(canonical(probe)):
+        if _plain_digest(item.get("probe_evidence_sha256"), "probe evidence digest") != digest(
+            canonical(probe)
+        ):
             raise QualificationError("probe evidence payload digest differs")
-        _plain_digest(
-            item.get("probe_evidence_file_sha256"), "probe evidence file digest"
-        )
+        _plain_digest(item.get("probe_evidence_file_sha256"), "probe evidence file digest")
         if (
             probe.get("schema") != "mac.fleet_preflight_node_probe.v1"
             or probe.get("status") != "passed"
@@ -486,9 +464,7 @@ def git_revision(root: Path) -> str:
         check=False,
     )
     if dirty.returncode != 0 or dirty.stdout.strip():
-        raise QualificationError(
-            "tracked worktree changes are not frozen in the source revision"
-        )
+        raise QualificationError("tracked worktree changes are not frozen in the source revision")
     return value
 
 
@@ -504,9 +480,7 @@ def run_bounded(
             stderr=subprocess.PIPE,
         )
     except OSError as exc:
-        raise QualificationError(
-            "could not start read-only fleet qualification"
-        ) from exc
+        raise QualificationError("could not start read-only fleet qualification") from exc
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
@@ -526,9 +500,7 @@ def run_bounded(
                     continue
                 buffers[key.data].extend(chunk)
                 if sum(len(value) for value in buffers.values()) > MAX_CAPTURE_BYTES:
-                    raise QualificationError(
-                        "fleet preflight output exceeded its bound"
-                    )
+                    raise QualificationError("fleet preflight output exceeded its bound")
         returncode = process.wait(timeout=max(1, int(deadline - time.monotonic())))
         return subprocess.CompletedProcess(
             command,
@@ -571,9 +543,7 @@ def run_qualification(args: argparse.Namespace) -> dict[str, Any]:
         or parent.st_uid != os.getuid()
         or stat.S_IMODE(parent.st_mode) & 0o077
     ):
-        raise QualificationError(
-            "prepublication receipt directory is not owner-private"
-        )
+        raise QualificationError("prepublication receipt directory is not owner-private")
     raw_receipt = output.parent / ("." + output.name + ".upstream")
     raw_receipt.unlink(missing_ok=True)
     command = [
@@ -599,9 +569,7 @@ def run_qualification(args: argparse.Namespace) -> dict[str, Any]:
         upstream_raw = private_bytes(raw_receipt, "fleet qualification receipt")
         upstream = json.loads(upstream_raw)
         if not isinstance(upstream, dict):
-            raise QualificationError(
-                "fleet qualification receipt root is not an object"
-            )
+            raise QualificationError("fleet qualification receipt root is not an object")
         validate_upstream(
             upstream,
             revision=revision,
@@ -644,9 +612,7 @@ def run_qualification(args: argparse.Namespace) -> dict[str, Any]:
         atomic_private_json(output, receipt)
         return receipt
     except (UnicodeError, json.JSONDecodeError) as exc:
-        raise QualificationError(
-            "fleet qualification receipt is not valid JSON"
-        ) from exc
+        raise QualificationError("fleet qualification receipt is not valid JSON") from exc
     finally:
         raw_receipt.unlink(missing_ok=True)
 

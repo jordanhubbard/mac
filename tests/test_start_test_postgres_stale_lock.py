@@ -60,7 +60,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-
 @pytest.fixture()
 def short_tmp():
     """A short temp dir: a unix socket path is capped near 104 bytes, and
@@ -95,18 +94,36 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
     port = _free_port()
 
     initdb = subprocess.run(
-        [str(pg_bin / "initdb"), "-D", str(datadir), "-U", os.environ.get("USER") or "postgres",
-         "--auth=trust"],
-        capture_output=True, text=True,
+        [
+            str(pg_bin / "initdb"),
+            "-D",
+            str(datadir),
+            "-U",
+            os.environ.get("USER") or "postgres",
+            "--auth=trust",
+        ],
+        capture_output=True,
+        text=True,
     )
     assert initdb.returncode == 0, initdb.stderr
 
     # Socket-only: no listen_addresses, so nothing answers on the TCP port.
     started = subprocess.run(
-        [str(pg_bin / "pg_ctl"), "-D", str(datadir), "-l", str(tmp_path / "pg.log"),
-         "-w", "-t", "60", "start",
-         "-o", "-p %d -c listen_addresses= -c unix_socket_directories=%s" % (port, datadir)],
-        capture_output=True, text=True,
+        [
+            str(pg_bin / "pg_ctl"),
+            "-D",
+            str(datadir),
+            "-l",
+            str(tmp_path / "pg.log"),
+            "-w",
+            "-t",
+            "60",
+            "start",
+            "-o",
+            "-p %d -c listen_addresses= -c unix_socket_directories=%s" % (port, datadir),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert started.returncode == 0, started.stderr + (tmp_path / "pg.log").read_text()
 
@@ -139,11 +156,13 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp
         # And the DSN has to actually answer, which is the whole point.
         ready = subprocess.run(
             [str(pg_bin / "pg_isready"), "-h", "127.0.0.1", "-p", str(port)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert ready.returncode == 0, ready.stdout + ready.stderr
     finally:
         subprocess.run(
             [str(pg_bin / "pg_ctl"), "-D", str(datadir), "-m", "immediate", "stop"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )

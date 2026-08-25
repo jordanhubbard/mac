@@ -47,8 +47,9 @@ def _run(tmp_path, *args):
     return rc, json.loads(raw) if raw else None
 
 
-def _setup_machine_agent(tmp_path, host="host-x", agent_name="worker-x", agent_id=None,
-                         capabilities=None):
+def _setup_machine_agent(
+    tmp_path, host="host-x", agent_name="worker-x", agent_id=None, capabilities=None
+):
     rc, machine = _run(tmp_path, "admin", "machine", "register", host)
     assert rc == 0
     cmd = ["agent", "register", machine["id"], agent_name]
@@ -123,8 +124,7 @@ def test_cmd_message_send_remote_dispatch_signature() -> None:
     for p in params:
         assert p.kind in {p.VAR_KEYWORD, p.KEYWORD_ONLY}, (
             "RemoteDispatch.send_message parameter %r is positional (%s); "
-            "update cmd_message_send to pass it as a keyword argument."
-            % (p.name, p.kind)
+            "update cmd_message_send to pass it as a keyword argument." % (p.name, p.kind)
         )
 
 
@@ -199,8 +199,7 @@ def test_cmd_review_decision_remote_dispatch_signature() -> None:
     for p in params[1:]:
         assert p.kind in {p.VAR_KEYWORD, p.KEYWORD_ONLY}, (
             "RemoteDispatch.submit_review parameter %r is positional (%s); "
-            "cmd_review_decision must pass it as a keyword argument."
-            % (p.name, p.kind)
+            "cmd_review_decision must pass it as a keyword argument." % (p.name, p.kind)
         )
 
 
@@ -286,19 +285,27 @@ def test_message_send_local_sqlite(tmp_path) -> None:
     Both the existing test and this one must pass; if one passes and the other
     fails, investigate whether a positional-to-keyword regression was introduced.
     """
-    _, sender = _setup_machine_agent(tmp_path, host="msg-s", agent_name="msg-sender",
-                                     agent_id="agent_msg_sender")
-    _, recipient = _setup_machine_agent(tmp_path, host="msg-r", agent_name="msg-recipient",
-                                        agent_id="agent_msg_recipient")
+    _, sender = _setup_machine_agent(
+        tmp_path, host="msg-s", agent_name="msg-sender", agent_id="agent_msg_sender"
+    )
+    _, recipient = _setup_machine_agent(
+        tmp_path, host="msg-r", agent_name="msg-recipient", agent_id="agent_msg_recipient"
+    )
     rc, task = _run(tmp_path, "task", "create", "msg-task")
     assert rc == 0
 
     rc, msg = _run(
-        tmp_path, "admin", "message", "send",
+        tmp_path,
+        "admin",
+        "message",
+        "send",
         sender["id"],
-        "--recipient-agent-id", recipient["id"],
-        "--message-type", "nudge",
-        "--payload", json.dumps({"note": "ping", "task_id": task["id"]}),
+        "--recipient-agent-id",
+        recipient["id"],
+        "--message-type",
+        "nudge",
+        "--payload",
+        json.dumps({"note": "ping", "task_id": task["id"]}),
     )
     assert rc == 0, "message send failed in local mode"
     assert msg is not None and "id" in msg

@@ -42,7 +42,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
 
     rc, proposed = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "propose",
         "--document-file",
         str(document_path),
@@ -62,7 +63,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
 
     rc, binding = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "binding",
         "set",
         "fleet",
@@ -85,7 +87,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     assert rc == 0 and impact["latest_check"]["id"] == checked["id"]
     rc, approved = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "approve",
         directive_id,
         "--version",
@@ -100,7 +103,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     assert rc == 0 and approved["approved_by"] == "test"
     rc, activated = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "activate",
         directive_id,
         "--version",
@@ -118,7 +122,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     assert rc == 0
     rc, waiver = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "waiver",
         "create",
         directive_id,
@@ -140,7 +145,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     assert rc == 0 and waivers[0]["id"] == waiver["id"]
     rc, revoked = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "waiver",
         "revoke",
         waiver["id"],
@@ -153,7 +159,8 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
 
     rc, deactivated = _run(
         tmp_path,
-        "admin", "directive",
+        "admin",
+        "directive",
         "deactivate",
         directive_id,
         "--reason",

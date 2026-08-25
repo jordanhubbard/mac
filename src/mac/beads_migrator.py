@@ -432,10 +432,14 @@ def _render_ticket(issue: Dict[str, Any], mac_task_id: str) -> str:
         body.append("")
         body.append(str(issue["close_reason"]).rstrip())
         body.append("")
-    return "\n".join(frontmatter) + "\n" + "\n".join(body) + ("" if body and body[-1] == "" else "\n")
+    return (
+        "\n".join(frontmatter) + "\n" + "\n".join(body) + ("" if body and body[-1] == "" else "\n")
+    )
 
 
-def _classify_dependencies(raw: Iterable[Dict[str, Any]]) -> Tuple[List[str], List[str], Optional[str]]:
+def _classify_dependencies(
+    raw: Iterable[Dict[str, Any]],
+) -> Tuple[List[str], List[str], Optional[str]]:
     deps: List[str] = []
     links: List[str] = []
     parent: Optional[str] = None

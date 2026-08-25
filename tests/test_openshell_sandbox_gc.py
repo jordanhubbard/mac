@@ -68,21 +68,27 @@ def test_candidates_protect_live_creator_kept_and_foreign_labels():
         ),
     ]
 
-    assert stale_sandbox_candidates(
-        rows,
-        now=NOW,
-        stale_after_seconds=0,
-        pid_is_alive=lambda pid: pid == 42,
-    ) == []
+    assert (
+        stale_sandbox_candidates(
+            rows,
+            now=NOW,
+            stale_after_seconds=0,
+            pid_is_alive=lambda pid: pid == 42,
+        )
+        == []
+    )
 
 
 def test_candidates_can_exclude_unlabeled_legacy_sandboxes():
-    assert stale_sandbox_candidates(
-        [_sandbox("mac-task-legacy")],
-        now=NOW,
-        stale_after_seconds=0,
-        include_legacy=False,
-    ) == []
+    assert (
+        stale_sandbox_candidates(
+            [_sandbox("mac-task-legacy")],
+            now=NOW,
+            stale_after_seconds=0,
+            include_legacy=False,
+        )
+        == []
+    )
 
 
 def test_reconcile_dry_run_does_not_delete(monkeypatch):
@@ -115,9 +121,7 @@ def test_reconcile_apply_reports_delete_failures(monkeypatch):
         if argv[2] == "list":
             return SimpleNamespace(
                 returncode=0,
-                stdout=json.dumps(
-                    [_sandbox("mac-task-ok"), _sandbox("mac-task-fail")]
-                ),
+                stdout=json.dumps([_sandbox("mac-task-ok"), _sandbox("mac-task-fail")]),
                 stderr="",
             )
         if argv[-1] == "mac-task-ok":
@@ -145,8 +149,9 @@ from mac.openshell_sandbox_gc import (  # noqa: E402
 )
 
 
-def _orphan(name="mac-task-deadbeef", *, owner="mac", kind="task", keep="false",
-            pid="991", phase="Ready"):
+def _orphan(
+    name="mac-task-deadbeef", *, owner="mac", kind="task", keep="false", pid="991", phase="Ready"
+):
     labels = {}
     if owner is not None:
         labels["mac.owner"] = owner
@@ -169,9 +174,7 @@ def test_reaper_reaps_exact_dead_pid_task_sandbox():
 
 def test_reaper_protects_live_pid_race():
     # The recorded creator PID is still alive (task is mid-flight): never reap.
-    record = classify_orphan_task_sandbox(
-        _orphan(pid="42"), pid_is_alive=lambda pid: pid == 42
-    )
+    record = classify_orphan_task_sandbox(_orphan(pid="42"), pid_is_alive=lambda pid: pid == 42)
     assert record["reap"] is False
     assert record["reason"] == "recorded creator PID is still alive"
 
@@ -191,17 +194,13 @@ def test_reaper_protects_against_pid_reuse_when_alive():
 
 
 def test_reaper_protects_keep_true():
-    record = classify_orphan_task_sandbox(
-        _orphan(keep="true"), pid_is_alive=lambda _p: False
-    )
+    record = classify_orphan_task_sandbox(_orphan(keep="true"), pid_is_alive=lambda _p: False)
     assert record["reap"] is False
     assert "mac.keep is truthy" in record["reason"]
 
 
 def test_reaper_protects_missing_keep_label():
-    record = classify_orphan_task_sandbox(
-        _orphan(keep=None), pid_is_alive=lambda _p: False
-    )
+    record = classify_orphan_task_sandbox(_orphan(keep=None), pid_is_alive=lambda _p: False)
     assert record["reap"] is False
     assert "mac.keep is missing or not explicitly falsey" in record["reason"]
 
@@ -215,18 +214,14 @@ def test_reaper_protects_foreign_owner():
 
 
 def test_reaper_protects_missing_kind():
-    record = classify_orphan_task_sandbox(
-        _orphan(kind=None), pid_is_alive=lambda _p: False
-    )
+    record = classify_orphan_task_sandbox(_orphan(kind=None), pid_is_alive=lambda _p: False)
     assert record["reap"] is False
     assert "mac.kind is missing" in record["reason"]
 
 
 def test_reaper_protects_malformed_pid_label():
     for bad in ("not-a-number", "", "0", "-3"):
-        record = classify_orphan_task_sandbox(
-            _orphan(pid=bad), pid_is_alive=lambda _p: False
-        )
+        record = classify_orphan_task_sandbox(_orphan(pid=bad), pid_is_alive=lambda _p: False)
         assert record["reap"] is False, bad
 
 
@@ -241,9 +236,7 @@ def test_reaper_protects_non_managed_name():
 def test_reaper_does_not_require_ready_phase_but_still_needs_dead_pid():
     # The reaper is phase-agnostic: a leaked sandbox in any phase with a dead
     # owner PID is reapable. Liveness is the real gate.
-    record = classify_orphan_task_sandbox(
-        _orphan(phase="Stopped"), pid_is_alive=lambda _p: False
-    )
+    record = classify_orphan_task_sandbox(_orphan(phase="Stopped"), pid_is_alive=lambda _p: False)
     assert record["reap"] is True
 
 
@@ -277,9 +270,7 @@ def test_reaper_idempotent_second_pass_finds_nothing(monkeypatch):
 
     def fake_run(argv, **_kwargs):
         if argv[2] == "list":
-            return SimpleNamespace(
-                returncode=0, stdout=json.dumps(state["rows"]), stderr=""
-            )
+            return SimpleNamespace(returncode=0, stdout=json.dumps(state["rows"]), stderr="")
         # Simulate deletion by dropping the sandbox from the listing.
         state["rows"] = [r for r in state["rows"] if r["name"] != argv[-1]]
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -362,9 +353,7 @@ def test_a_sandbox_whose_creator_is_dead_is_reaped_immediately():
         )
     ]
 
-    candidates = stale_sandbox_candidates(
-        rows, now=NOW, pid_is_alive=lambda pid: False
-    )
+    candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: False)
 
     assert [row["name"] for row in candidates] == ["mac-hubverify-1059c4c10c254"]
 

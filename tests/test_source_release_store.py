@@ -96,12 +96,23 @@ def _store_release(db: Store, rel: SourceRelease) -> None:
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            rel.id, rel.repository_id, rel.repository_name,
-            rel.canonical_remote_url, rel.commit_sha, rel.canonical_ref,
-            rel.tree_digest, rel.artifact_digest, rel.image_digest,
-            rel.created_by, rel.created_by_task_id,
-            rel.review_evidence_id, rel.publication_evidence_id,
-            rel.status, "{}", rel.created_at, rel.updated_at,
+            rel.id,
+            rel.repository_id,
+            rel.repository_name,
+            rel.canonical_remote_url,
+            rel.commit_sha,
+            rel.canonical_ref,
+            rel.tree_digest,
+            rel.artifact_digest,
+            rel.image_digest,
+            rel.created_by,
+            rel.created_by_task_id,
+            rel.review_evidence_id,
+            rel.publication_evidence_id,
+            rel.status,
+            "{}",
+            rel.created_at,
+            rel.updated_at,
         ),
     )
 
@@ -142,10 +153,19 @@ def _store_desired(db: Store, dss: FleetDesiredSourceState) -> None:
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            dss.id, dss.fleet_id, dss.environment_id, dss.generation,
-            dss.release_id, dss.rollout_policy, dss.actor, dss.reason,
-            dss.prior_generation, int(dss.paused), dss.request_id,
-            dss.created_at, dss.updated_at,
+            dss.id,
+            dss.fleet_id,
+            dss.environment_id,
+            dss.generation,
+            dss.release_id,
+            dss.rollout_policy,
+            dss.actor,
+            dss.reason,
+            dss.prior_generation,
+            int(dss.paused),
+            dss.request_id,
+            dss.created_at,
+            dss.updated_at,
         ),
     )
 
@@ -154,51 +174,53 @@ def _store_desired(db: Store, dss: FleetDesiredSourceState) -> None:
 # Fresh-database table creation
 # ---------------------------------------------------------------------------
 
+
 class TestFreshDatabaseTables:
     def test_source_releases_table_exists(self) -> None:
         db = ephemeral_store()
-        tables = {
-            r["name"] for r in [{"name": n} for n in table_names(db)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(db)]}
         assert "source_releases" in tables
         db.close()
 
     def test_fleet_desired_source_states_table_exists(self) -> None:
         db = ephemeral_store()
-        tables = {
-            r["name"] for r in [{"name": n} for n in table_names(db)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(db)]}
         assert "fleet_desired_source_states" in tables
         db.close()
 
     def test_fleet_desired_source_transitions_table_exists(self) -> None:
         db = ephemeral_store()
-        tables = {
-            r["name"] for r in [{"name": n} for n in table_names(db)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(db)]}
         assert "fleet_desired_source_transitions" in tables
         db.close()
 
     def test_fleet_desired_source_idempotency_table_exists(self) -> None:
         db = ephemeral_store()
-        tables = {
-            r["name"] for r in [{"name": n} for n in table_names(db)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(db)]}
         assert "fleet_desired_source_idempotency" in tables
         db.close()
 
     def test_source_releases_expected_columns(self) -> None:
         db = ephemeral_store()
-        cols = {
-            r["name"] for r in [{"name": c} for c in column_names(db, "source_releases")]
-        }
+        cols = {r["name"] for r in [{"name": c} for c in column_names(db, "source_releases")]}
         expected = {
-            "id", "repository_id", "repository_name", "canonical_remote_url",
-            "commit_sha", "canonical_ref", "tree_digest",
-            "artifact_digest", "image_digest", "created_by",
-            "created_by_task_id", "review_evidence_id",
-            "publication_evidence_id", "status", "metadata",
-            "created_at", "updated_at",
+            "id",
+            "repository_id",
+            "repository_name",
+            "canonical_remote_url",
+            "commit_sha",
+            "canonical_ref",
+            "tree_digest",
+            "artifact_digest",
+            "image_digest",
+            "created_by",
+            "created_by_task_id",
+            "review_evidence_id",
+            "publication_evidence_id",
+            "status",
+            "metadata",
+            "created_at",
+            "updated_at",
         }
         assert expected.issubset(cols)
         db.close()
@@ -206,12 +228,23 @@ class TestFreshDatabaseTables:
     def test_fleet_desired_source_states_expected_columns(self) -> None:
         db = ephemeral_store()
         cols = {
-            r["name"] for r in [{"name": c} for c in column_names(db, "fleet_desired_source_states")]
+            r["name"]
+            for r in [{"name": c} for c in column_names(db, "fleet_desired_source_states")]
         }
         expected = {
-            "id", "fleet_id", "environment_id", "generation", "release_id",
-            "rollout_policy", "actor", "reason", "prior_generation",
-            "paused", "request_id", "created_at", "updated_at",
+            "id",
+            "fleet_id",
+            "environment_id",
+            "generation",
+            "release_id",
+            "rollout_policy",
+            "actor",
+            "reason",
+            "prior_generation",
+            "paused",
+            "request_id",
+            "created_at",
+            "updated_at",
         }
         assert expected.issubset(cols)
         db.close()
@@ -231,6 +264,7 @@ class TestFreshDatabaseTables:
 # ---------------------------------------------------------------------------
 # SQLite upgrade: database created without the new tables gets them on open
 # ---------------------------------------------------------------------------
+
 
 class TestSQLiteUpgrade:
     def test_upgrade_adds_source_releases_to_existing_db(self, tmp_path) -> None:
@@ -299,9 +333,7 @@ class TestSQLiteUpgrade:
 
         # Opening with Store should trigger _migrate and add the tables.
         upgraded = ephemeral_store()
-        tables = {
-            r["name"] for r in [{"name": n} for n in table_names(upgraded)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(upgraded)]}
         assert "source_releases" in tables
         assert "fleet_desired_source_states" in tables
         assert "fleet_desired_source_transitions" in tables
@@ -314,9 +346,7 @@ class TestSQLiteUpgrade:
         db1 = ephemeral_store()
         db1.close()
         db2 = ephemeral_store()
-        tables = {
-            r["name"] for r in [{"name": n} for n in table_names(db2)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(db2)]}
         assert "source_releases" in tables
         db2.close()
 
@@ -324,6 +354,7 @@ class TestSQLiteUpgrade:
 # ---------------------------------------------------------------------------
 # Model validation (commit_sha immutability, branch-ref rejection, etc.)
 # ---------------------------------------------------------------------------
+
 
 class TestSourceReleaseModel:
     def test_valid_release_constructs(self) -> None:
@@ -400,6 +431,7 @@ class TestFleetDesiredSourceStateModel:
 # Storage-layer constraints (SQLite enforcement)
 # ---------------------------------------------------------------------------
 
+
 class TestSQLiteConstraints:
     @pytest.fixture()
     def db(self):
@@ -414,9 +446,7 @@ class TestSQLiteConstraints:
 
     def test_roundtrip_release(self, db: Store) -> None:
         rel_id = self._insert_release(db)
-        row = db.query_one(
-            "SELECT id, commit_sha FROM source_releases WHERE id = ?", (rel_id,)
-        )
+        row = db.query_one("SELECT id, commit_sha FROM source_releases WHERE id = ?", (rel_id,))
         assert row is not None
         assert row["commit_sha"] == GOOD_SHA
 
@@ -447,11 +477,18 @@ class TestSQLiteConstraints:
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    new_id("rel"), "projectrepo_abc", "mac",
-                    "git@github.com:org/mac.git", GOOD_SHA,
+                    new_id("rel"),
+                    "projectrepo_abc",
+                    "mac",
+                    "git@github.com:org/mac.git",
+                    GOOD_SHA,
                     "refs/heads/main",  # << branch ref, must be rejected
-                    "sha256:" + "c" * 64, "agent_test",
-                    "draft", "{}", utcnow(), utcnow(),
+                    "sha256:" + "c" * 64,
+                    "agent_test",
+                    "draft",
+                    "{}",
+                    utcnow(),
+                    utcnow(),
                 ),
             )
 
@@ -524,12 +561,12 @@ class TestSQLiteConstraints:
              release_id, rollout_policy, actor, reason, created_at)
             VALUES (?,?,?,?,?,?,?,?,?)
             """,
-            (new_id("tr"), dss.id, None, 1, rel_id, "immediate", "agent_test",
-             "initial", utcnow()),
+            (new_id("tr"), dss.id, None, 1, rel_id, "immediate", "agent_test", "initial", utcnow()),
         )
         rows = db.query_all(
             "SELECT to_generation FROM fleet_desired_source_transitions"
-            " WHERE desired_source_state_id = ?", (dss.id,)
+            " WHERE desired_source_state_id = ?",
+            (dss.id,),
         )
         assert len(rows) == 1
         assert rows[0]["to_generation"] == 1
@@ -539,12 +576,17 @@ class TestSQLiteConstraints:
 # Postgres schema file: ensure new tables are present in the DDL
 # ---------------------------------------------------------------------------
 
+
 class TestPostgresSchema:
     @pytest.fixture(scope="class")
     def schema_text(self) -> str:
         path = (
             Path(__file__).resolve().parent.parent
-            / "src" / "mac" / "data" / "postgres" / "schema.sql"
+            / "src"
+            / "mac"
+            / "data"
+            / "postgres"
+            / "schema.sql"
         )
         return path.read_text()
 
@@ -584,6 +626,7 @@ class TestPostgresSchema:
 # Postgres translation shim: new table names pass through unchanged
 # ---------------------------------------------------------------------------
 
+
 class TestPostgresTranslation:
     @pytest.fixture(autouse=True)
     def _skip_if_no_psycopg(self) -> None:
@@ -592,10 +635,7 @@ class TestPostgresTranslation:
     def test_source_releases_insert_translates(self) -> None:
         from mac.store_postgres import _translate_placeholders
 
-        sql = (
-            "INSERT INTO source_releases "
-            "(id, repository_id, commit_sha) VALUES (?, ?, ?)"
-        )
+        sql = "INSERT INTO source_releases (id, repository_id, commit_sha) VALUES (?, ?, ?)"
         translated = _translate_placeholders(sql)
         assert "source_releases" in translated
         assert "?" not in translated

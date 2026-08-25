@@ -83,9 +83,7 @@ def test_task_batch_is_a_dry_run_without_apply(tmp_path):
     """The default that matters most: forgetting a flag must not mutate."""
     _park(tmp_path, 3)
 
-    result = _json(
-        tmp_path, "task", "batch", "answer", "state=needs_input", "--answer", "postgres"
-    )
+    result = _json(tmp_path, "task", "batch", "answer", "state=needs_input", "--answer", "postgres")
 
     assert result["applied"] is False
     assert result["changed_count"] == 3
@@ -97,8 +95,14 @@ def test_task_batch_applies_and_scopes(tmp_path):
     _park(tmp_path, 2, project="other")
 
     result = _json(
-        tmp_path, "task", "batch", "answer", "state=needs_input project=mac",
-        "--answer", "postgres", "--apply",
+        tmp_path,
+        "task",
+        "batch",
+        "answer",
+        "state=needs_input project=mac",
+        "--answer",
+        "postgres",
+        "--apply",
     )
 
     assert result["applied"] is True
@@ -113,8 +117,16 @@ def test_task_batch_refuses_a_group_that_moved(tmp_path):
     _park(tmp_path, 1)  # the group grew after the preview
 
     rc, _out, err = _run(
-        tmp_path, "task", "batch", "answer", "state=needs_input",
-        "--answer", "x", "--apply", "--expect-token", previewed["token"],
+        tmp_path,
+        "task",
+        "batch",
+        "answer",
+        "state=needs_input",
+        "--answer",
+        "x",
+        "--apply",
+        "--expect-token",
+        previewed["token"],
     )
 
     assert rc == 1
@@ -133,8 +145,14 @@ def test_task_batch_reports_a_forgotten_option_before_touching_anything(tmp_path
 def test_task_batch_merges_metadata_rather_than_replacing_it(tmp_path):
     cp = _park(tmp_path, 2)
     _json(
-        tmp_path, "task", "batch", "set", "state=needs_input",
-        "--metadata-merge", json.dumps({"triaged": "yes"}), "--apply",
+        tmp_path,
+        "task",
+        "batch",
+        "set",
+        "state=needs_input",
+        "--metadata-merge",
+        json.dumps({"triaged": "yes"}),
+        "--apply",
     )
 
     for task in cp.list_tasks("needs_input"):
@@ -150,8 +168,14 @@ def test_task_group_round_trip(tmp_path):
     _park(tmp_path, 3, project="mac")
 
     saved = _json(
-        tmp_path, "task", "group", "save", "parked-mac",
-        "state=needs_input project=mac", "--description", "the mac inbox",
+        tmp_path,
+        "task",
+        "group",
+        "save",
+        "parked-mac",
+        "state=needs_input project=mac",
+        "--description",
+        "the mac inbox",
     )
     assert saved["name"] == "parked-mac"
 
@@ -171,9 +195,7 @@ def test_task_group_round_trip(tmp_path):
 
 def test_task_group_refuses_an_expression_that_will_not_resolve(tmp_path):
     """Failing at save time beats failing when a batch runs against it."""
-    rc, _out, err = _run(
-        tmp_path, "task", "group", "save", "broken", "group=nonexistent"
-    )
+    rc, _out, err = _run(tmp_path, "task", "group", "save", "broken", "group=nonexistent")
 
     assert rc == 1
     assert "unknown task group 'nonexistent'" in err

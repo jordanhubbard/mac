@@ -7,6 +7,7 @@ profile pointer, so an interrupted install leaves either the previous complete
 profile or an unreferenced new credential, never a profile that points at a
 missing secret.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -80,11 +81,7 @@ def clients_root() -> Path:
 def credentials_root() -> Path:
     """Return the directory that stores client credential records."""
     configured = os.environ.get("MAC_CLIENT_CREDENTIALS_DIR")
-    return (
-        Path(configured).expanduser()
-        if configured
-        else mac_home() / "credentials" / "clients"
-    )
+    return Path(configured).expanduser() if configured else mac_home() / "credentials" / "clients"
 
 
 def _timestamp() -> str:
@@ -216,8 +213,12 @@ def validate_enrollment_manifest(
     policy = str(ssh.get("host_key_policy") or "strict").strip().lower()
     if policy not in {"strict", "accept-new", "insecure"}:
         raise ClientProfileError("ssh.host_key_policy is invalid")
-    if mode == "ssh-tunnel" and policy == "strict" and not (
-        ssh.get("known_hosts_file") or ssh.get("host_key_fingerprint") or ssh.get("host_ca")
+    if (
+        mode == "ssh-tunnel"
+        and policy == "strict"
+        and not (
+            ssh.get("known_hosts_file") or ssh.get("host_key_fingerprint") or ssh.get("host_ca")
+        )
     ):
         raise ClientProfileError(
             "strict SSH profiles require known_hosts_file, host_key_fingerprint, or host_ca"
@@ -274,7 +275,11 @@ def validate_enrollment_manifest(
                 "expires_at": str(credential.get("expires_at") or "").strip(),
             },
             "capabilities": sorted(
-                {str(item).strip() for item in manifest.get("capabilities") or [] if str(item).strip()}
+                {
+                    str(item).strip()
+                    for item in manifest.get("capabilities") or []
+                    if str(item).strip()
+                }
             ),
         },
     }
@@ -441,9 +446,7 @@ def list_profiles() -> List[Dict[str, Any]]:
     return result
 
 
-def load_profile(
-    name: Optional[str] = None, *, include_token: bool = False
-) -> Dict[str, Any]:
+def load_profile(name: Optional[str] = None, *, include_token: bool = False) -> Dict[str, Any]:
     """Load the named (or active) client profile, optionally including its token."""
     selected = _name(name) if name else active_profile_name()
     if selected is None:
@@ -535,9 +538,7 @@ def migrate_legacy_profile(
     from mac.fleet_ssh import load_fleet_config, resolve_fleet_ssh
 
     cfg_path = Path(
-        fleets_config
-        or os.environ.get("MAC_FLEETS_CONFIG")
-        or (mac_home() / "fleets.yaml")
+        fleets_config or os.environ.get("MAC_FLEETS_CONFIG") or (mac_home() / "fleets.yaml")
     ).expanduser()
     env_path = Path(env_file or (mac_home() / ".env")).expanduser()
     config = load_fleet_config(str(cfg_path))
@@ -583,9 +584,7 @@ def migrate_legacy_profile(
         },
         "capabilities": [],
     }
-    result = install_enrollment_manifest(
-        manifest, profile_override=profile_name, activate=activate
-    )
+    result = install_enrollment_manifest(manifest, profile_override=profile_name, activate=activate)
     # Migration does not mutate the legacy files. On the first import, retain a
     # secure provenance/rollback snapshot; an idempotent retry creates nothing.
     if result.get("changed"):

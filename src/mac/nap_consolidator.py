@@ -35,6 +35,7 @@ Design notes
   summary gets embedded into the medium tier immediately. Failures
   there don't roll back the summary — the next backfill catches it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -167,7 +168,9 @@ def _evidence_for_records(records: List[MemoryRecord]) -> List[JsonDict]:
 
 
 def _dream_kind(records: List[MemoryRecord]) -> str:
-    joined = "\n".join("%s\n%s" % (record.record_type, record.content) for record in records).lower()
+    joined = "\n".join(
+        "%s\n%s" % (record.record_type, record.content) for record in records
+    ).lower()
     if "failure" in joined or "failed" in joined or "error" in joined:
         return "failure_pattern"
     if any(record.record_type.startswith("deployment_learning") for record in records):
@@ -203,9 +206,10 @@ def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> Li
     record_types = Counter(record.record_type for record in records)
     observations = [_record_observation(record) for record in records[:5]]
     title = "%s for %s" % (kind.replace("_", " "), context.get("group_label") or "group")
-    summary = (
-        "%s. Supported by %d memory record(s): %s"
-        % (title, len(records), "; ".join(observations[:3]))
+    summary = "%s. Supported by %d memory record(s): %s" % (
+        title,
+        len(records),
+        "; ".join(observations[:3]),
     )
     query_terms = sorted(
         {
@@ -409,9 +413,7 @@ class NapConsolidatorService:
 
     # -- Internals ----------------------------------------------------------
 
-    def _records_for_agent_since(
-        self, agent_id: str, since: str
-    ) -> List[MemoryRecord]:
+    def _records_for_agent_since(self, agent_id: str, since: str) -> List[MemoryRecord]:
         """Memory records the agent touched after `since`, excluding
         prior nap_summary rows (don't summarize summaries).
 
@@ -559,9 +561,7 @@ class NapConsolidatorService:
         )
         return run_row["completed_at"] if run_row is not None else None
 
-    def _group_records(
-        self, records: List[MemoryRecord]
-    ) -> "Dict[tuple, List[MemoryRecord]]":
+    def _group_records(self, records: List[MemoryRecord]) -> "Dict[tuple, List[MemoryRecord]]":
         """Group by (task_id, project-as-best-guess). For ambient
         records that don't belong to a task, the group key is (None,
         subject_id) which buckets project-level facts together."""
@@ -689,7 +689,13 @@ class NapConsolidatorService:
             },
             "created_at": context.get("window_end"),
         }
-        for optional_key in ("observations", "record_type_counts", "decision_rule", "avoid", "apply_when"):
+        for optional_key in (
+            "observations",
+            "record_type_counts",
+            "decision_rule",
+            "avoid",
+            "apply_when",
+        ):
             if optional_key in candidate:
                 normalized[optional_key] = candidate[optional_key]
         return normalized

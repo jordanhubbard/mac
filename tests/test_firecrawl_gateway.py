@@ -42,7 +42,9 @@ def test_firecrawl_search_returns_firecrawl_v2_shape(monkeypatch):
 def test_firecrawl_scrape_blocks_private_targets_by_default():
     client = TestClient(firecrawl_gateway.create_app())
 
-    response = client.post("/v2/scrape", json={"url": "http://127.0.0.1:8789", "formats": ["markdown"]})
+    response = client.post(
+        "/v2/scrape", json={"url": "http://127.0.0.1:8789", "formats": ["markdown"]}
+    )
 
     assert response.status_code == 400
     assert "private network" in response.json()["detail"]
@@ -54,7 +56,9 @@ def test_firecrawl_scrape_returns_document_shape(monkeypatch):
     monkeypatch.setattr(firecrawl_gateway, "_fetch_text", lambda url, allow_private: page)
     client = TestClient(firecrawl_gateway.create_app())
 
-    response = client.post("/v2/scrape", json={"url": "http://127.0.0.1/page", "formats": ["markdown", "html"]})
+    response = client.post(
+        "/v2/scrape", json={"url": "http://127.0.0.1/page", "formats": ["markdown", "html"]}
+    )
 
     data = response.json()["data"]
     assert response.status_code == 200

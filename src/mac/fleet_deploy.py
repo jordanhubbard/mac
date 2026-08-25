@@ -67,9 +67,7 @@ def normalize_ssh_target(value: str, *, port: Optional[int] = None) -> str:
     """Normalize an SSH target string to its canonical form."""
     target = parse_ssh_target(value, port=port)
     return (
-        "%s:%d" % (target.user_host, target.port)
-        if target.port is not None
-        else target.user_host
+        "%s:%d" % (target.user_host, target.port) if target.port is not None else target.user_host
     )
 
 
@@ -125,13 +123,11 @@ def _tailscale_status() -> Mapping[str, Any]:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError(
-            "cannot resolve .local target through the active mesh: "
-            "tailscale status is unavailable"
+            "cannot resolve .local target through the active mesh: tailscale status is unavailable"
         ) from exc
     if result.returncode != 0:
         raise ValueError(
-            "cannot resolve .local target through the active mesh: "
-            "tailscale status failed"
+            "cannot resolve .local target through the active mesh: tailscale status failed"
         )
     try:
         payload = json.loads(result.stdout)
@@ -229,9 +225,7 @@ def preserved_cleanup_paths(home: Path, mac_home: Path) -> List[Path]:
     return [phase_failure_evidence_dir(mac_home)]
 
 
-def is_cleanup_protected_path(
-    candidate: Path, home: Path, mac_home: Path
-) -> bool:
+def is_cleanup_protected_path(candidate: Path, home: Path, mac_home: Path) -> bool:
     """Return ``True`` if *candidate* is a preserved path or lives under one.
 
     Cleanup callers consult this before deleting a candidate path so that

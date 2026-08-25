@@ -77,9 +77,7 @@ class FakeProvider:
             flavor=STANDARD_DIND_FLAVOR,
             state="running",
         )
-        self.created.append(
-            (STANDARD_DIND_FLAVOR, name or "", list(extra_args or []))
-        )
+        self.created.append((STANDARD_DIND_FLAVOR, name or "", list(extra_args or [])))
         self.sessions.append(session)
         return session
 
@@ -93,9 +91,7 @@ class FakeProvider:
 
     def delete(self, session_id: str) -> str:
         self.deleted_ids.append(session_id)
-        self.sessions = [
-            session for session in self.sessions if session.session_id != session_id
-        ]
+        self.sessions = [session for session in self.sessions if session.session_id != session_id]
         return session_id
 
 
@@ -341,9 +337,7 @@ def test_execute_creates_standard_dind_waits_for_nonce_attestation_and_persists(
     assert state_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_execute_passes_exact_current_hgx_create_argv(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_execute_passes_exact_current_hgx_create_argv(tmp_path: Path, monkeypatch) -> None:
     calls: list[list[str]] = []
 
     def fake_run(argv, **_kwargs):
@@ -431,14 +425,10 @@ def test_create_exit_alone_never_counts_as_ready(tmp_path: Path) -> None:
         "session_id": "sess-1",
         "automatic_deletion": False,
     }
-    assert result["next_actions"][1]["action"] == (
-        "review_failed_sessions_or_capacity_bound"
-    )
+    assert result["next_actions"][1]["action"] == ("review_failed_sessions_or_capacity_bound")
     persisted = json.loads((tmp_path / "capacity.json").read_text())
     assert persisted["sessions"]["sess-1"]["attestation_status"] == "failed"
-    assert persisted["sessions"]["sess-1"]["failure_class"] == (
-        "ssh_attestation_timeout"
-    )
+    assert persisted["sessions"]["sess-1"]["failure_class"] == ("ssh_attestation_timeout")
 
 
 def test_cooldown_blocks_a_second_scale_up_without_deleting(
@@ -579,9 +569,7 @@ def test_mark_onboarded_consumes_supply_and_new_pending_demand_creates_again(
     assert consumed["available_for_pending_supply"] is False
     assert consumed["provider_mutation"] is False
     assert consumed["idempotent"] is False
-    assert controller.mark_onboarded(
-        "sess-1", agent_id="agent_worker_1"
-    )["idempotent"] is True
+    assert controller.mark_onboarded("sess-1", agent_id="agent_worker_1")["idempotent"] is True
 
     plan = controller.plan(pending_request_count=1)
     assert plan["onboarded_session_ids"] == ["sess-1"]
@@ -657,7 +645,8 @@ def test_cli_registers_explicit_execute_separately_from_read_only_commands() -> 
     status = parser.parse_args(["admin", "hgx", "capacity", "status"])
     execute = parser.parse_args(
         [
-            "admin", "hgx",
+            "admin",
+            "hgx",
             "capacity",
             "execute",
             "--pending-requests",
@@ -668,7 +657,8 @@ def test_cli_registers_explicit_execute_separately_from_read_only_commands() -> 
     )
     mark_onboarded = parser.parse_args(
         [
-            "admin", "hgx",
+            "admin",
+            "hgx",
             "capacity",
             "mark-onboarded",
             "session-immutable",
@@ -702,9 +692,9 @@ def _running_dind(session_id: str, name: str = "") -> HgxSession:
 
 def test_normalize_registered_fungible_agents_accepts_maps_and_records() -> None:
     assert normalize_registered_fungible_agents(None) == {}
-    assert normalize_registered_fungible_agents(
-        {"sess-a": "agent_a", "sess-b": " "}
-    ) == {"sess-a": "agent_a"}
+    assert normalize_registered_fungible_agents({"sess-a": "agent_a", "sess-b": " "}) == {
+        "sess-a": "agent_a"
+    }
     assert normalize_registered_fungible_agents(
         [
             {"session_id": "sess-a", "agent_id": "agent_a"},
@@ -716,9 +706,7 @@ def test_normalize_registered_fungible_agents_accepts_maps_and_records() -> None
     with pytest.raises(ValidationError):
         normalize_registered_fungible_agents("sess-a")
     with pytest.raises(ValidationError, match="two registered agents"):
-        normalize_registered_fungible_agents(
-            [("sess-a", "agent_a"), ("sess-a", "agent_b")]
-        )
+        normalize_registered_fungible_agents([("sess-a", "agent_a"), ("sess-a", "agent_b")])
 
 
 def test_onboarded_sessions_are_reconciled_by_identity_and_block_creation(
@@ -728,9 +716,7 @@ def test_onboarded_sessions_are_reconciled_by_identity_and_block_creation(
     # sessions with no local receipts. Matching immutable identity to the fleet
     # registry counts them as healthy supply instead of untracked quota.
     sessions = [_running_dind("hgx-%d" % index) for index in range(5)]
-    registered = {
-        "hgx-%d" % index: "agent_worker_%d" % index for index in range(5)
-    }
+    registered = {"hgx-%d" % index: "agent_worker_%d" % index for index in range(5)}
     provider = FakeProvider(sessions)
     clock = FakeClock()
     controller = _controller(
@@ -757,9 +743,7 @@ def test_execute_no_op_when_registry_already_satisfies_demand(
     tmp_path: Path,
 ) -> None:
     sessions = [_running_dind("hgx-%d" % index) for index in range(5)]
-    registered = {
-        "hgx-%d" % index: "agent_worker_%d" % index for index in range(5)
-    }
+    registered = {"hgx-%d" % index: "agent_worker_%d" % index for index in range(5)}
     provider = FakeProvider(
         sessions,
         create_error=HgxCommandError(
@@ -777,9 +761,7 @@ def test_execute_no_op_when_registry_already_satisfies_demand(
         policy=HgxCapacityPolicy(max_sessions=6),
     )
 
-    result = controller.execute(
-        pending_request_count=1, registered_agents=registered
-    )
+    result = controller.execute(pending_request_count=1, registered_agents=registered)
 
     assert result["outcome"] == "capacity_satisfied"
     assert result["created_session_ids"] == []
@@ -863,8 +845,7 @@ def test_terminated_registered_session_is_not_counted_as_healthy_supply(
     assert result["attested_session_ids"] == ["sess-1"]
     persisted = json.loads((tmp_path / "capacity.json").read_text())
     assert "hgx-dead" not in persisted.get("sessions", {}) or (
-        persisted["sessions"]["hgx-dead"].get("onboarding_status")
-        != "onboarded"
+        persisted["sessions"]["hgx-dead"].get("onboarding_status") != "onboarded"
     )
 
 
@@ -894,7 +875,8 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
 
     plan = parser.parse_args(
         [
-            "admin", "hgx",
+            "admin",
+            "hgx",
             "capacity",
             "plan",
             "--registered-agents-file",
@@ -903,7 +885,8 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
     )
     execute = parser.parse_args(
         [
-            "admin", "hgx",
+            "admin",
+            "hgx",
             "capacity",
             "execute",
             "--registered-agents-file",
@@ -913,6 +896,4 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
 
     assert plan.registered_agents_file == "/tmp/registered.json"
     assert execute.registered_agents_file == "/tmp/registered.json"
-    assert parser.parse_args(
-        ["admin", "hgx", "capacity", "status"]
-    ).registered_agents_file is None
+    assert parser.parse_args(["admin", "hgx", "capacity", "status"]).registered_agents_file is None

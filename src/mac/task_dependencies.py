@@ -227,10 +227,7 @@ def migrate_dependency_edges(store: Any) -> dict[str, int]:
                 (
                     str(existing_issue.get("raw_dependency_id") or ""),
                     str(existing_issue.get("reason") or ""),
-                    tuple(
-                        str(item)
-                        for item in existing_issue.get("candidates") or []
-                    ),
+                    tuple(str(item) for item in existing_issue.get("candidates") or []),
                 )
                 == key
                 for existing_issue in bucket
@@ -269,14 +266,9 @@ def migrate_dependency_edges(store: Any) -> dict[str, int]:
                 if raw_dependency_id in ids:
                     matches = [raw_dependency_id]
                 else:
-                    suffix = (
-                        raw_dependency_id[5:]
-                        if raw_dependency_id.startswith("task_")
-                        else ""
-                    )
-                    safe_prefix = (
-                        6 <= len(suffix) < 32
-                        and all(char in "0123456789abcdef" for char in suffix.lower())
+                    suffix = raw_dependency_id[5:] if raw_dependency_id.startswith("task_") else ""
+                    safe_prefix = 6 <= len(suffix) < 32 and all(
+                        char in "0123456789abcdef" for char in suffix.lower()
                     )
                     if not safe_prefix:
                         add_issue(
@@ -376,12 +368,9 @@ def migrate_dependency_edges(store: Any) -> dict[str, int]:
             if task_issues:
                 metadata = _json_object(row["metadata"])
                 had_hold = bool(metadata.get("no_dispatch"))
-                prior_quarantine = _json_object(
-                    metadata.get("dependency_quarantine")
-                )
+                prior_quarantine = _json_object(metadata.get("dependency_quarantine"))
                 prior_migration_owned_hold = bool(
-                    prior_quarantine.get("schema")
-                    == "mac.task_dependency_quarantine.v1"
+                    prior_quarantine.get("schema") == "mac.task_dependency_quarantine.v1"
                     and prior_quarantine.get("applied_no_dispatch") is True
                 )
                 metadata["no_dispatch"] = True
@@ -389,9 +378,7 @@ def migrate_dependency_edges(store: Any) -> dict[str, int]:
                     "schema": "mac.task_dependency_quarantine.v1",
                     "issues": task_issues,
                     "detected_at": detected_at,
-                    "applied_no_dispatch": (
-                        prior_migration_owned_hold or not had_hold
-                    ),
+                    "applied_no_dispatch": (prior_migration_owned_hold or not had_hold),
                 }
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",

@@ -98,8 +98,7 @@ def _fake_docker(tmp_path: Path, failing: list) -> Path:
         "create shim task: error during container init: error mounting \"'\n"
         "                         + path + '\" to rootfs: no such file or directory\\n')\n"
         "        raise SystemExit(125)\n"
-        "raise SystemExit(0)\n"
-        % (str(tmp_path / "nvidia.yaml"), failing),
+        "raise SystemExit(0)\n" % (str(tmp_path / "nvidia.yaml"), failing),
         encoding="utf-8",
     )
     script.chmod(0o755)
@@ -114,8 +113,7 @@ def _harness(tmp_path: Path, docker: Path) -> str:
     )
     return (
         "log() { printf '%s\\n' \"$*\" >&2; }\n"
-        + 'OSH_DOCKER_BIN="%s"\nOSH_IMAGE_TAG=probe:latest\nOSH_DIR="%s"\n'
-        % (docker, tmp_path)
+        + 'OSH_DOCKER_BIN="%s"\nOSH_IMAGE_TAG=probe:latest\nOSH_DIR="%s"\n' % (docker, tmp_path)
         + body
         + "\nprune_unmountable_cdi_entries\n"
     )
@@ -233,9 +231,9 @@ def test_the_original_spec_is_backed_up_before_the_first_removal(tmp_path):
     _run(_harness(tmp_path, _fake_docker(tmp_path, ["/run/nvidia-persistenced/socket"])))
     backup = Path(str(spec) + ".mac-bak")
     assert backup.is_file(), "no backup was taken before rewriting the CDI spec"
-    assert "hostPath: /run/nvidia-persistenced/socket" in backup.read_text(
-        encoding="utf-8"
-    ), "the backup must hold the ORIGINAL spec, not the repaired one"
+    assert "hostPath: /run/nvidia-persistenced/socket" in backup.read_text(encoding="utf-8"), (
+        "the backup must hold the ORIGINAL spec, not the repaired one"
+    )
 
 
 def test_the_repair_runs_before_the_gpu_smoke():

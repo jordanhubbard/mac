@@ -96,9 +96,7 @@ def test_message_send_creates_real_ledger_task():
                 "message": {
                     "role": "user",
                     "messageId": "msg-abc",
-                    "parts": [
-                        {"kind": "text", "text": "Fix the flaky test\nin module X"}
-                    ],
+                    "parts": [{"kind": "text", "text": "Fix the flaky test\nin module X"}],
                 }
             },
         },
@@ -173,9 +171,7 @@ def test_tasks_get_reflects_state():
     assert get_state() == TaskState.SUBMITTED
 
     # Drive the ledger task into a "working" state and confirm the projection.
-    cp._transition_task_internal(
-        task_id, MacTaskState.CLAIMED.value, actor="test-fixture"
-    )
+    cp._transition_task_internal(task_id, MacTaskState.CLAIMED.value, actor="test-fixture")
     assert get_state() == TaskState.WORKING
 
 
@@ -183,7 +179,12 @@ def test_tasks_get_unknown_task_is_task_not_found():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     resp = client.post(
         "/a2a",
-        json={"jsonrpc": "2.0", "id": 1, "method": Method.TASKS_GET, "params": {"id": "task_missing"}},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": Method.TASKS_GET,
+            "params": {"id": "task_missing"},
+        },
     )
     assert resp.status_code == 200
     body = resp.json()

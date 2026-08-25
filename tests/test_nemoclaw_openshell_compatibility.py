@@ -45,7 +45,7 @@ def test_nemoclaw_compose_enforces_openshell_required():
     """The NemoClaw docker-compose.yaml sets MAC_OPENSHELL_REQUIRED=1,
     meaning the pilot runs under OpenShell enforcement."""
     text = NEMOCLAW_COMPOSE.read_text(encoding="utf-8")
-    assert "MAC_OPENSHELL_REQUIRED: \"1\"" in text
+    assert 'MAC_OPENSHELL_REQUIRED: "1"' in text
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,8 @@ def test_nemoclaw_required_version_matches_mac_fleet_pin():
     nemoclaw_required = "0.0.72"  # from docs/security/openshell-0.0.72-compatibility-review.mdx
     assert DEFAULT_OPENSHELL_VERSION == nemoclaw_required, (
         "Version mismatch: NemoClaw requires OpenShell %s but MAC fleet pin is %s. "
-        "The pilot is BLOCKED until the pin is aligned." % (nemoclaw_required, DEFAULT_OPENSHELL_VERSION)
+        "The pilot is BLOCKED until the pin is aligned."
+        % (nemoclaw_required, DEFAULT_OPENSHELL_VERSION)
     )
 
 
@@ -118,9 +119,9 @@ def test_compat_review_all_surfaces_pass():
     """The compat review must document PASS on all three MAC sandbox surfaces."""
     text = COMPAT_REVIEW.read_text(encoding="utf-8")
     # All three surfaces must pass
-    assert "Verdict:** **PASS** — no CLI surface change" in text          # Surface A
-    assert "Verdict:** **PASS** — no interface change affecting" in text   # Surface B
-    assert "Verdict:** **PASS** — gateway confinement behavior" in text    # Surface C
+    assert "Verdict:** **PASS** — no CLI surface change" in text  # Surface A
+    assert "Verdict:** **PASS** — no interface change affecting" in text  # Surface B
+    assert "Verdict:** **PASS** — gateway confinement behavior" in text  # Surface C
 
 
 def test_existing_mac_policy_requires_no_adjustment_for_0_0_72():

@@ -1,4 +1,5 @@
 """Tests for replacement-chain walker and write guard (repository_hygiene.py)."""
+
 from __future__ import annotations
 
 import pytest
@@ -31,8 +32,10 @@ def _make_task(state: str, replacement: str = "", no_dispatch: bool = False):
 
 def _loader(db: dict):
     """Return a get_task_fn backed by ``db``."""
+
     def get_task(task_id: str):
         return db.get(task_id)
+
     return get_task
 
 
@@ -98,6 +101,7 @@ def test_walk_unloadable_is_missing():
 def test_walk_exception_in_loader_is_missing():
     def bad_loader(task_id):
         raise RuntimeError("db down")
+
     result = walk_replacement_chain(TASK_A, bad_loader)
     assert result.status == "missing"
 

@@ -31,9 +31,7 @@ def nofollow_regular_file_identity(path: str | Path) -> Tuple[str, str]:
         raise ValueError("approved artifact is not a no-follow regular file")
     descriptor = os.open(
         candidate,
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_CLOEXEC", 0),
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
     )
     try:
         opened = os.fstat(descriptor)

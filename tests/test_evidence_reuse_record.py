@@ -5,6 +5,7 @@ The record persists prior-executor-evidence reuse decisions (see
 ``mac.evidence_reuse_verifier``) so the control plane keeps a durable,
 queryable audit trail across both SQLite and Postgres backends.
 """
+
 from __future__ import annotations
 
 import pytest

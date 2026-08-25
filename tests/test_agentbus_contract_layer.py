@@ -23,10 +23,7 @@ def cp() -> ControlPlane:
 
 def _agents(cp: ControlPlane, *names: str):
     machine = cp.register_machine("contract-host")
-    return [
-        cp.register_agent(machine.id, name, agent_id="agent_%s" % name)
-        for name in names
-    ]
+    return [cp.register_agent(machine.id, name, agent_id="agent_%s" % name) for name in names]
 
 
 def test_registered_schemas_are_enforced_at_publish(cp: ControlPlane) -> None:
@@ -90,9 +87,7 @@ def test_consumer_cursors_survive_hub_side(cp: ControlPlane) -> None:
         "watermark": "x"
     }
     with pytest.raises(ValidationError, match="exceeds"):
-        cp.set_agentbus_consumer_cursor(
-            natasha.id, "peer.message.v1", {"blob": "y" * 9000}
-        )
+        cp.set_agentbus_consumer_cursor(natasha.id, "peer.message.v1", {"blob": "y" * 9000})
 
 
 def test_request_reply_endpoint_correlates_and_times_out(cp: ControlPlane) -> None:

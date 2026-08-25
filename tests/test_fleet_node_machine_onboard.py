@@ -109,18 +109,14 @@ def test_pristine_gate_rejects_every_deployed_artifact(module, tmp_path):
         module.validate_pristine(layout, "supervisord")
 
 
-def test_pristine_gate_rejects_service_configuration_and_process(
-    module, tmp_path, monkeypatch
-):
+def test_pristine_gate_rejects_service_configuration_and_process(module, tmp_path, monkeypatch):
     layout = module.Layout.for_home(tmp_path)
     monkeypatch.setattr(
         module,
         "_service_configuration_paths",
         lambda _layout: [tmp_path / "mac-worker.service"],
     )
-    monkeypatch.setattr(
-        module, "_service_processes", lambda _supervisor: ["mac-worker"]
-    )
+    monkeypatch.setattr(module, "_service_processes", lambda _supervisor: ["mac-worker"])
     with pytest.raises(module.OnboardingError) as error:
         module.validate_pristine(layout, "systemd")
     assert "service_configuration" in str(error.value)
@@ -137,20 +133,18 @@ def test_service_configuration_allows_network_prerequisite(monkeypatch):
     monkeypatch.setattr(
         module.Path,
         "glob",
-        lambda self, pattern: list(paths)
-        if self == Path("/etc/supervisor/conf.d") and pattern == "mac*.conf"
-        else [],
+        lambda self, pattern: (
+            list(paths) if self == Path("/etc/supervisor/conf.d") and pattern == "mac*.conf" else []
+        ),
     )
     monkeypatch.setattr(module, "_path_exists", lambda path: path in paths)
 
-    assert module._service_configuration_paths(
-        module.Layout.for_home(Path("/home/test"))
-    ) == [Path("/etc/supervisor/conf.d/mac-agent.conf")]
+    assert module._service_configuration_paths(module.Layout.for_home(Path("/home/test"))) == [
+        Path("/etc/supervisor/conf.d/mac-agent.conf")
+    ]
 
 
-def test_prepare_is_generation_scoped_and_does_not_publish(
-    module, tmp_path, monkeypatch
-):
+def test_prepare_is_generation_scoped_and_does_not_publish(module, tmp_path, monkeypatch):
     layout = module.Layout.for_home(tmp_path / "home")
     archive = _archive(tmp_path / "mac.tar.gz")
     assets = tmp_path / "reviewed-tool-assets.sh"
@@ -276,14 +270,10 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
     assert layout.codegraph_bin.is_symlink()
     assert layout.gh_bin.is_symlink()
     assert stat.S_IMODE(layout.receipt.stat().st_mode) == 0o600
-    assert all(
-        "start" not in command and "restart" not in command for command in commands
-    )
+    assert all("start" not in command and "restart" not in command for command in commands)
 
 
-def test_failed_commit_compensates_to_source_and_venv_absent(
-    module, tmp_path, monkeypatch
-):
+def test_failed_commit_compensates_to_source_and_venv_absent(module, tmp_path, monkeypatch):
     layout, placeholder = _prepared(module, tmp_path, monkeypatch)
 
     def fail_package_install(argv, *, env=None, timeout=900):
@@ -359,9 +349,7 @@ def test_aborted_cohort_journal_is_preserved_while_precohort_receipt_commits(
     assert transaction.read_bytes() == sentinel
     assert stat.S_IMODE(transaction.stat().st_mode) == 0o600
     assert layout.receipt.is_file()
-    assert module._private_json(layout.receipt, module.RECEIPT_SCHEMA)["status"] == (
-        "published"
-    )
+    assert module._private_json(layout.receipt, module.RECEIPT_SCHEMA)["status"] == ("published")
 
 
 def test_controller_exposes_precohort_mode_without_weakening_typed_deploy():
@@ -448,14 +436,7 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
         + "\n}"
     )
     mac_home = tmp_path / ".mac"
-    managed = (
-        mac_home
-        / "lib"
-        / "python"
-        / "cpython-3.12.11-test"
-        / "bin"
-        / "python3.12"
-    )
+    managed = mac_home / "lib" / "python" / "cpython-3.12.11-test" / "bin" / "python3.12"
     managed.parent.mkdir(parents=True)
     managed.symlink_to(Path(sys.executable))
     system_bin = tmp_path / "system-bin"

@@ -191,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--policy", default="test-policy.toml")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument(
-        "--mode", choices=("whole", "diff"), default="whole",
+        "--mode",
+        choices=("whole", "diff"),
+        default="whole",
         help="'whole' enforces whole-repo floors; 'diff' enforces the statement floor over changed lines",
     )
     parser.add_argument("--base", help="diff mode: base ref for changed-line detection")
@@ -215,7 +217,14 @@ def main(argv: list[str] | None = None) -> int:
             result = evaluate_diff(coverage_doc, policy_doc, changed)
         else:
             result = evaluate(coverage_doc, policy_doc)
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        tomllib.TOMLDecodeError,
+    ) as exc:
         print(f"coverage-policy: invalid input: {exc}", file=sys.stderr)
         return 2
 

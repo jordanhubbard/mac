@@ -81,9 +81,7 @@ def _document(*, policy_value=True, macro=False):
             "workflow": "build-system.make-to-bazel",
             "version": 1,
             "inputs": {"target": {"template": "${primary_target}"}},
-            "effects": {
-                "exclusive": [{"template": "repository:${repository.id}:build-system"}]
-            },
+            "effects": {"exclusive": [{"template": "repository:${repository.id}:build-system"}]},
         }
     return raw
 
@@ -217,9 +215,7 @@ def test_directive_listing_lookup_and_reserved_name_boundaries(service) -> None:
         SYSTEM_DIRECTIVE_ID,
         proposed["id"],
     }
-    assert [item["id"] for item in directives.list(state="proposed")] == [
-        proposed["id"]
-    ]
+    assert [item["id"] for item in directives.list(state="proposed")] == [proposed["id"]]
     with pytest.raises(NotFoundError, match="directive not found"):
         directives.get("directive_missing")
 
@@ -246,9 +242,7 @@ def test_binding_history_filters_and_credential_names_fail_closed(service) -> No
         actor="operator",
     )
 
-    active = directives.list_bindings(
-        target_type="repository", target_id="repo_demo"
-    )
+    active = directives.list_bindings(target_type="repository", target_id="repo_demo")
     inactive = directives.list_bindings(
         target_type="repository", target_id="repo_demo", active=False
     )
@@ -286,21 +280,15 @@ def test_waiver_lifecycle_is_auditable_and_revoke_is_idempotent(service) -> None
         actor="operator",
     )
     assert [item["id"] for item in directives.list_waivers()] == [waiver["id"]]
-    assert [item["id"] for item in directives.list_waivers(proposed["id"])] == [
-        waiver["id"]
-    ]
+    assert [item["id"] for item in directives.list_waivers(proposed["id"])] == [waiver["id"]]
 
-    revoked = directives.revoke_waiver(
-        waiver["id"], actor="operator", reason="migration complete"
-    )
+    revoked = directives.revoke_waiver(waiver["id"], actor="operator", reason="migration complete")
     assert revoked["revoked_by"] == "operator"
-    assert directives.revoke_waiver(
-        waiver["id"], actor="ignored", reason="already revoked"
-    ) == revoked
+    assert (
+        directives.revoke_waiver(waiver["id"], actor="ignored", reason="already revoked") == revoked
+    )
     with pytest.raises(NotFoundError, match="waiver not found"):
-        directives.revoke_waiver(
-            "waiver_missing", actor="operator", reason="not present"
-        )
+        directives.revoke_waiver("waiver_missing", actor="operator", reason="not present")
 
 
 def test_exact_version_activation_waits_for_all_acks_and_expands_held_macro(service) -> None:
@@ -318,14 +306,10 @@ def test_exact_version_activation_waits_for_all_acks_and_expands_held_macro(serv
     assert directives.agent_policy_ready("agent_one") is False
     assert expansions == []
 
-    first = directives.acknowledge(
-        activation["id"], agent_id="agent_one", digest=version["digest"]
-    )
+    first = directives.acknowledge(activation["id"], agent_id="agent_one", digest=version["digest"])
     assert first["state"] == "distributing"
     assert expansions == []
-    final = directives.acknowledge(
-        activation["id"], agent_id="agent_two", digest=version["digest"]
-    )
+    final = directives.acknowledge(activation["id"], agent_id="agent_two", digest=version["digest"])
     assert final["state"] == "active"
     assert final["finalized"] is True
     assert len(expansions) == 1
@@ -364,17 +348,13 @@ def test_new_agent_must_ack_active_epoch_before_dispatch(service) -> None:
         actor="operator",
     )
     for agent_id in ("agent_one", "agent_two"):
-        directives.acknowledge(
-            activation["id"], agent_id=agent_id, digest=version["digest"]
-        )
+        directives.acknowledge(activation["id"], agent_id=agent_id, digest=version["digest"])
     _register_agent(store, "agent_new")
 
     assert directives.agent_policy_ready("agent_new") is False
     pending = directives.pending_activations("agent_new")
     assert [item["activation_id"] for item in pending] == [activation["id"]]
-    directives.acknowledge(
-        activation["id"], agent_id="agent_new", digest=version["digest"]
-    )
+    directives.acknowledge(activation["id"], agent_id="agent_new", digest=version["digest"])
     assert directives.agent_policy_ready("agent_new") is True
     deactivated = directives.deactivate(
         proposed["id"], actor="operator", reason="replace with version 2"
@@ -411,9 +391,7 @@ def test_conflicting_active_policy_is_blocked(service) -> None:
         proposed["id"], version=1, directive_digest=version["digest"], actor="operator"
     )
     for agent_id in ("agent_one", "agent_two"):
-        directives.acknowledge(
-            activation["id"], agent_id=agent_id, digest=version["digest"]
-        )
+        directives.acknowledge(activation["id"], agent_id=agent_id, digest=version["digest"])
 
     conflict = _document(policy_value=False)
     conflict["name"] = "build.bazel-disabled"
@@ -453,12 +431,8 @@ def test_macro_admission_failure_blocks_activation_instead_of_partial_policy(ser
         directive_digest=version["digest"],
         actor="operator",
     )
-    directives.acknowledge(
-        activation["id"], agent_id="agent_one", digest=version["digest"]
-    )
-    final = directives.acknowledge(
-        activation["id"], agent_id="agent_two", digest=version["digest"]
-    )
+    directives.acknowledge(activation["id"], agent_id="agent_one", digest=version["digest"])
+    final = directives.acknowledge(activation["id"], agent_id="agent_two", digest=version["digest"])
 
     assert final["state"] == "blocked"
     assert directives.get(proposed["id"])["state"] == "approved"
@@ -476,9 +450,7 @@ def test_unproven_conditional_overlap_blocks_conflicting_macro_effects(service) 
         actor="operator",
     )
     for agent_id in ("agent_one", "agent_two"):
-        directives.acknowledge(
-            activation["id"], agent_id=agent_id, digest=version["digest"]
-        )
+        directives.acknowledge(activation["id"], agent_id=agent_id, digest=version["digest"])
 
     candidate = _document(macro=True)
     candidate["name"] = "build.bazel-second"
@@ -492,7 +464,4 @@ def test_unproven_conditional_overlap_blocks_conflicting_macro_effects(service) 
     checked = directives.check(second["id"], actor="operator")
 
     assert checked["status"] == "blocked"
-    assert any(
-        item["code"] == "macro_effect_overlap_unproven"
-        for item in checked["blockers"]
-    )
+    assert any(item["code"] == "macro_effect_overlap_unproven" for item in checked["blockers"])

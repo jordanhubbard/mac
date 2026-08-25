@@ -82,9 +82,9 @@ _OCSF_CLASS_NAMES = {
 
 # OCSF severity_id -> mac observation level.
 _OCSF_SEVERITY_LEVELS = {
-    0: "info",   # Unknown
-    1: "info",   # Informational
-    2: "info",   # Low
+    0: "info",  # Unknown
+    1: "info",  # Informational
+    2: "info",  # Low
     3: "warning",  # Medium
     4: "error",  # High
     5: "critical",  # Critical
@@ -105,6 +105,7 @@ _LEVEL_RANK = {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}
 try:
     import nemo_relay as _nemo_relay
     from nemo_relay._native import flush_subscribers as _flush_subscribers
+
     _NEMO_RELAY_AVAILABLE: bool = True
 except ImportError:
     _nemo_relay = None  # type: ignore[assignment]

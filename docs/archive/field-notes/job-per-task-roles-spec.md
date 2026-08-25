@@ -161,16 +161,16 @@ Localised to two files. No new modules.
 @dataclass
 class RunnerConfig:
     mac_url: str
-    agent_id: str                    # default ("dispatcher") agent id;
-                                     # unchanged behaviour for tasks
-                                     # with no role hit
+    agent_id: str  # default ("dispatcher") agent id;
+    # unchanged behaviour for tasks
+    # with no role hit
     namespace: str = "mac"
     service_account: str = "mac-task-runner"
     default_image: str = DEFAULT_TASK_IMAGE
-    role_images: Dict[str, str] = field(default_factory=dict)            # NEW
-    role_agent_ids: Dict[str, str] = field(default_factory=dict)         # NEW
-    role_executors: Dict[str, str] = field(default_factory=dict)         # NEW
-    capability_role_aliases: Dict[str, str] = field(default_factory=dict) # NEW
+    role_images: Dict[str, str] = field(default_factory=dict)  # NEW
+    role_agent_ids: Dict[str, str] = field(default_factory=dict)  # NEW
+    role_executors: Dict[str, str] = field(default_factory=dict)  # NEW
+    capability_role_aliases: Dict[str, str] = field(default_factory=dict)  # NEW
     # ... existing fields (poll_interval_seconds, backoff_limit, etc.)
 
     @classmethod
@@ -181,9 +181,7 @@ class RunnerConfig:
             role_images=_json_env("MAC_RUNNER_ROLE_IMAGES", {}),
             role_agent_ids=_json_env("MAC_RUNNER_ROLE_AGENT_IDS", {}),
             role_executors=_json_env("MAC_RUNNER_ROLE_EXECUTORS", {}),
-            capability_role_aliases=_json_env(
-                "MAC_RUNNER_CAPABILITY_ROLE_ALIASES", {}
-            ),
+            capability_role_aliases=_json_env("MAC_RUNNER_CAPABILITY_ROLE_ALIASES", {}),
         )
 ```
 
@@ -292,10 +290,9 @@ read from `cfg.agent_id` blindly. Existing label additions:
 New env entries on the Job container:
 
 ```python
-{"name": "MAC_AGENT_ID", "value": job_agent_id},               # changed
-{"name": "MAC_AGENT_ROLE", "value": role or ""},                # new
-{"name": "MAC_TASK_EXECUTOR_COMMAND",
- "value": _resolve_executor_for_role(role, cfg)},               # new
+({"name": "MAC_AGENT_ID", "value": job_agent_id},)  # changed
+({"name": "MAC_AGENT_ROLE", "value": role or ""},)  # new
+({"name": "MAC_TASK_EXECUTOR_COMMAND", "value": _resolve_executor_for_role(role, cfg)},)  # new
 ```
 
 **`claim_and_launch_one`** needs one wrinkle: the claim call currently

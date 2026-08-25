@@ -36,7 +36,9 @@ class _Client:
 
 def _instance(tmp_path, client=None):
     return worker.MacWorker(
-        client or _Client(), "agent", tmp_path,
+        client or _Client(),
+        "agent",
+        tmp_path,
         lambda *_a: worker.WorkerExecution(0, "ok"),
         self_update_repo=tmp_path,
     )
@@ -54,7 +56,8 @@ def test_review_nudge_poll_filters_and_skipped_result(monkeypatch, tmp_path) -> 
     statuses = []
     monkeypatch.setattr(instance, "_handle_status_update_message", statuses.append)
     monkeypatch.setattr(
-        instance, "_handle_review_verdict_nudge",
+        instance,
+        "_handle_review_verdict_nudge",
         lambda *_a: worker.WorkerRunResult(status="review_not_claimable"),
     )
     messages = [
@@ -75,14 +78,21 @@ def test_status_update_message_validation_success_and_failure(monkeypatch, tmp_p
     instance._handle_status_update_message({"payload": "bad"})
     instance._handle_status_update_message({"payload": {"schema": "other"}})
     instance.status_update_sink = lambda *_a: {"status": "sent", "sent": 1}
-    instance._handle_status_update_message({"id": "m", "payload": {"schema": "mac.notifier.task_progress.v1"}})
+    instance._handle_status_update_message(
+        {"id": "m", "payload": {"schema": "mac.notifier.task_progress.v1"}}
+    )
     instance.status_update_sink = lambda *_a: (_ for _ in ()).throw(RuntimeError("send failed"))
-    instance._handle_status_update_message({"id": "m", "payload": {"schema": "mac.notifier.task_progress.v1"}})
+    instance._handle_status_update_message(
+        {"id": "m", "payload": {"schema": "mac.notifier.task_progress.v1"}}
+    )
 
 
 def test_status_update_slack_routing_matrix(monkeypatch, tmp_path) -> None:
     instance = _instance(tmp_path)
-    assert instance._send_status_update_to_home_channels({"channel_type": "email"})["status"] == "skipped"
+    assert (
+        instance._send_status_update_to_home_channels({"channel_type": "email"})["status"]
+        == "skipped"
+    )
     monkeypatch.setattr(worker, "_load_slack_accounts", lambda *_a: [])
     monkeypatch.setattr(worker, "_load_slack_home_channels", lambda *_a: [])
     assert instance._send_status_update_to_home_channels({})["status"] == "skipped"
@@ -109,17 +119,21 @@ def test_status_update_slack_routing_matrix(monkeypatch, tmp_path) -> None:
     class WebClient:
         def __init__(self, token):
             self.token = token
+
         def chat_postMessage(self, **_kwargs):
             if self.token == "raise-token":
                 raise RuntimeError("slack down")
             return {"ok": self.token != "fail-token"}
 
     import slack_sdk
+
     monkeypatch.setattr(slack_sdk, "WebClient", WebClient)
-    result = instance._send_status_update_to_home_channels({
-        "target": {"channel_type": "slack", "external_id": "T/target"},
-        "notification": {"title": "Done", "body": "Complete"},
-    })
+    result = instance._send_status_update_to_home_channels(
+        {
+            "target": {"channel_type": "slack", "external_id": "T/target"},
+            "notification": {"title": "Done", "body": "Complete"},
+        }
+    )
     assert result == {"status": "sent", "sent": 1, "skipped": 5, "failed": 2}
 
 
@@ -135,8 +149,11 @@ def test_review_verdict_nudge_invalid_claim_and_repository_error(monkeypatch, tm
     client.post = lambda *_a, **_k: {"status": "claimed"}
     client.get = lambda *_a, **_k: {}
     monkeypatch.setattr(
-        instance, "_prepare_review_workspace",
-        lambda *_a, **_k: (_ for _ in ()).throw(worker.RepositoryAccessError("denied", failure_class="auth")),
+        instance,
+        "_prepare_review_workspace",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            worker.RepositoryAccessError("denied", failure_class="auth")
+        ),
     )
     monkeypatch.setattr(instance, "_advance_review_workflow_after_verdict", lambda *_a: None)
     client.fail = True
@@ -158,19 +175,42 @@ def test_agentbus_control_filters_and_handlers(monkeypatch, tmp_path) -> None:
     client.get_value = {}
     assert instance._process_agentbus_control() is None
     streams = [
-        "bad", {}, {"id": "done"}, {"id": "wrong", "recipient_agent_id": "other"},
+        "bad",
+        {},
+        {"id": "done"},
+        {"id": "wrong", "recipient_agent_id": "other"},
         {"id": "unknown", "recipient_agent_id": "agent", "topic": "other"},
-        {"id": "repo", "recipient_agent_id": "agent", "topic": worker.REPO_UPDATE_TOPIC, "content_type": worker.REPO_UPDATE_CONTENT_TYPE},
-        {"id": "debug", "recipient_agent_id": "agent", "topic": worker.DEBUG_TERMINAL_OPEN_TOPIC, "content_type": worker.DEBUG_TERMINAL_OPEN_CONTENT_TYPE},
+        {
+            "id": "repo",
+            "recipient_agent_id": "agent",
+            "topic": worker.REPO_UPDATE_TOPIC,
+            "content_type": worker.REPO_UPDATE_CONTENT_TYPE,
+        },
+        {
+            "id": "debug",
+            "recipient_agent_id": "agent",
+            "topic": worker.DEBUG_TERMINAL_OPEN_TOPIC,
+            "content_type": worker.DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
+        },
     ]
     client.get_value = streams
     monkeypatch.setattr(instance, "_load_agentbus_control_state", lambda: ["done"])
     saved = []
-    monkeypatch.setattr(instance, "_save_agentbus_control_state", lambda state: saved.append(list(state)))
-    monkeypatch.setattr(instance, "_handle_debug_terminal_open_stream", lambda *_a: {"status": "opened"})
-    monkeypatch.setattr(instance, "_handle_repo_update_stream", lambda *_a: {"status": "updated", "restart_requested": True})
+    monkeypatch.setattr(
+        instance, "_save_agentbus_control_state", lambda state: saved.append(list(state))
+    )
+    monkeypatch.setattr(
+        instance, "_handle_debug_terminal_open_stream", lambda *_a: {"status": "opened"}
+    )
+    monkeypatch.setattr(
+        instance,
+        "_handle_repo_update_stream",
+        lambda *_a: {"status": "updated", "restart_requested": True},
+    )
     monkeypatch.setattr(instance, "_publish_repo_update_result", lambda *_a, **_k: None)
-    monkeypatch.setattr(instance, "_run_repo_update_service_restarts", lambda *_a: {"status": "service_restarted"})
+    monkeypatch.setattr(
+        instance, "_run_repo_update_service_restarts", lambda *_a: {"status": "service_restarted"}
+    )
     result = instance._process_agentbus_control()
     assert result["restart_requested"] is True
     assert saved
@@ -180,26 +220,41 @@ def test_control_stream_handler_exception_paths(monkeypatch, tmp_path) -> None:
     client = _Client()
     instance = _instance(tmp_path, client)
     client.get_value = [{"payload": {"x": 1}}]
-    monkeypatch.setattr(instance, "_execute_debug_terminal_open", lambda *_a: (_ for _ in ()).throw(RuntimeError("debug")))
+    monkeypatch.setattr(
+        instance,
+        "_execute_debug_terminal_open",
+        lambda *_a: (_ for _ in ()).throw(RuntimeError("debug")),
+    )
     monkeypatch.setattr(instance, "_publish_debug_terminal_output", lambda *_a, **_k: None)
     assert instance._handle_debug_terminal_open_stream({"id": "s"})["status"] == "error"
-    monkeypatch.setattr(instance, "_execute_repo_update", lambda *_a: (_ for _ in ()).throw(RuntimeError("repo")))
+    monkeypatch.setattr(
+        instance, "_execute_repo_update", lambda *_a: (_ for _ in ()).throw(RuntimeError("repo"))
+    )
     assert instance._handle_repo_update_stream({"id": "s"})["status"] == "error"
 
 
 def test_local_registry_dict_list_invalid_and_enabled(tmp_path) -> None:
     path = tmp_path / "fleets.yaml"
-    assert worker._agent_configured_in_local_registry(
-        fleet_name="fleet", agent_name="agent", registry_path=path
-    ) is False
+    assert (
+        worker._agent_configured_in_local_registry(
+            fleet_name="fleet", agent_name="agent", registry_path=path
+        )
+        is False
+    )
     path.write_text("bad: [")
-    assert worker._agent_configured_in_local_registry(
-        fleet_name="fleet", agent_name="agent", registry_path=path
-    ) is False
+    assert (
+        worker._agent_configured_in_local_registry(
+            fleet_name="fleet", agent_name="agent", registry_path=path
+        )
+        is False
+    )
     path.write_text("fleets: invalid\n")
-    assert worker._agent_configured_in_local_registry(
-        fleet_name="fleet", agent_name="agent", registry_path=path
-    ) is False
+    assert (
+        worker._agent_configured_in_local_registry(
+            fleet_name="fleet", agent_name="agent", registry_path=path
+        )
+        is False
+    )
     path.write_text("""
 fleets:
   fleet:
@@ -210,9 +265,12 @@ fleets:
       - name: agent
         enabled: false
 """)
-    assert worker._agent_configured_in_local_registry(
-        fleet_name="fleet", agent_name="agent", registry_path=path
-    ) is False
+    assert (
+        worker._agent_configured_in_local_registry(
+            fleet_name="fleet", agent_name="agent", registry_path=path
+        )
+        is False
+    )
     path.write_text("""
 fleets:
   - hub_agent: hub
@@ -220,9 +278,12 @@ fleets:
     agents:
       - name: agent
 """)
-    assert worker._agent_configured_in_local_registry(
-        fleet_name="fleet", agent_name="agent", registry_path=path
-    ) is True
+    assert (
+        worker._agent_configured_in_local_registry(
+            fleet_name="fleet", agent_name="agent", registry_path=path
+        )
+        is True
+    )
 
 
 def test_worker_evidence_and_text_helper_edges(tmp_path) -> None:
@@ -236,7 +297,9 @@ def test_worker_evidence_and_text_helper_edges(tmp_path) -> None:
     assert worker._remote_branch_from_ref("origin/topic") == "topic"
     assert worker._remote_branch_from_ref("refs/tags/v1") == ""
     assert worker._worker_int_value("bad") is None
-    assert worker._prose_tail("diff --git x\n+++ file\nplain useful summary here\ntoken", 2) == ["plain useful summary here"]
+    assert worker._prose_tail("diff --git x\n+++ file\nplain useful summary here\ntoken", 2) == [
+        "plain useful summary here"
+    ]
     assert worker._prose_tail("token\nother", 1) == ["other"]
 
 

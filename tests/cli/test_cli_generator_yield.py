@@ -4,6 +4,7 @@ This is the reporting half of the yield rule: a generator that cannot show
 its own yield should not be allowed to file, so the yield has to be visible
 from the CLI rather than only inside the gate.
 """
+
 from __future__ import annotations
 
 import io

@@ -34,9 +34,7 @@ MANAGED_FILES = (
 # their absence is not an error (the impact map is produced by a post-merge
 # scheduled job, so early images legitimately lack it). Once present, verify()
 # still enforces exact inventory + digest, so a candidate cannot inject one.
-OPTIONAL_MANAGED_FILES = (
-    "src/mac/data/test_impact_map.json",
-)
+OPTIONAL_MANAGED_FILES = ("src/mac/data/test_impact_map.json",)
 FORBIDDEN_ROOT_CONTROLS = (
     ".coveragerc",
     "conftest.py",
@@ -126,10 +124,7 @@ def build_manifest(root: Path, *, source_revision: str) -> dict[str, object]:
     root = root.resolve(strict=True)
     if not SHA_RE.fullmatch(source_revision):
         raise HarnessError("source revision must be an exact lowercase Git SHA")
-    files = {
-        str(relative): _digest(_regular_file(root, relative))
-        for relative in _inventory(root)
-    }
+    files = {str(relative): _digest(_regular_file(root, relative)) for relative in _inventory(root)}
     return {
         "schema": SCHEMA,
         "source_revision": source_revision,

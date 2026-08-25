@@ -79,9 +79,7 @@ def test_declarative_setup_plan_builds_existing_fleet_registry_shape(tmp_path):
     assert redacted["env_values"]["MAC_API_TOKEN"] == "<set>"
 
 
-def test_declarative_setup_canonicalizes_local_target_and_implicit_hub_url(
-    tmp_path, monkeypatch
-):
+def test_declarative_setup_canonicalizes_local_target_and_implicit_hub_url(tmp_path, monkeypatch):
     spec = _spec()
     spec["fleet"].pop("hub_url")
     spec["agents"] = [
@@ -123,7 +121,11 @@ def test_declarative_setup_canonicalizes_local_target_and_implicit_hub_url(
 
 def test_declarative_webdav_requires_dns_name_and_derives_https_url(tmp_path):
     spec = _spec()
-    spec["webdav"] = {"enabled": True, "dns_name": "jordanhubbard.net", "public_host": "146.190.134.110"}
+    spec["webdav"] = {
+        "enabled": True,
+        "dns_name": "jordanhubbard.net",
+        "public_host": "146.190.134.110",
+    }
     plan = build_setup_plan(
         spec,
         root=ROOT,
@@ -257,7 +259,8 @@ def test_mac_fleet_doctor_prints_llm_setup_report(tmp_path):
             "-m",
             "mac.cli",
             "--json",
-            "admin", "fleet",
+            "admin",
+            "fleet",
             "doctor",
             "--spec",
             str(spec_path),
@@ -295,7 +298,8 @@ def test_mac_fleet_validate_reads_and_redacts_env_file(tmp_path):
             "-m",
             "mac.cli",
             "--json",
-            "admin", "fleet",
+            "admin",
+            "fleet",
             "validate",
             "--spec",
             str(spec_path),
@@ -340,43 +344,63 @@ def test_spec_path_materializes_default_model_never_blank(tmp_path):
 
 # --- relocated from test_fleet_setup_edges.py (coverage companion folded in) ---
 
+
 def _base_spec() -> dict:
-    return {'schema': fleet_setup.SETUP_SPEC_SCHEMA, 'hub': {'name': 'hub', 'target': 'ops@hub.example'}, 'agents': [{'name': 'hub', 'target': 'ops@hub.example'}], 'router': {'providers': [{'id': 'nvidia', 'key': 'inline-secret'}]}, 'network': {'provider': 'none'}}
+    return {
+        "schema": fleet_setup.SETUP_SPEC_SCHEMA,
+        "hub": {"name": "hub", "target": "ops@hub.example"},
+        "agents": [{"name": "hub", "target": "ops@hub.example"}],
+        "router": {"providers": [{"id": "nvidia", "key": "inline-secret"}]},
+        "network": {"provider": "none"},
+    }
 
 
 def _build(tmp_path: Path, spec: dict) -> dict:
-    return fleet_setup.build_setup_plan(spec, root=tmp_path, fleets_config=tmp_path / 'fleets.yaml', env={})
+    return fleet_setup.build_setup_plan(
+        spec, root=tmp_path, fleets_config=tmp_path / "fleets.yaml", env={}
+    )
 
 
-def test_load_setup_spec_json_non_mapping_and_missing_yaml(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    json_path = tmp_path / 'spec.json'
-    json_path.write_text(json.dumps(['not', 'mapping']), encoding='utf-8')
-    with pytest.raises(ValueError, match='mapping'):
+def test_load_setup_spec_json_non_mapping_and_missing_yaml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    json_path = tmp_path / "spec.json"
+    json_path.write_text(json.dumps(["not", "mapping"]), encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
         fleet_setup.load_setup_spec(json_path)
-    yaml_path = tmp_path / 'spec.yaml'
-    yaml_path.write_text('schema: x\n', encoding='utf-8')
+    yaml_path = tmp_path / "spec.yaml"
+    yaml_path.write_text("schema: x\n", encoding="utf-8")
     original_import = builtins.__import__
 
     def fail_yaml(name: str, *args, **kwargs):
-        if name == 'yaml':
-            raise ImportError('missing')
+        if name == "yaml":
+            raise ImportError("missing")
         return original_import(name, *args, **kwargs)
-    monkeypatch.setattr(builtins, '__import__', fail_yaml)
-    with pytest.raises(RuntimeError, match='PyYAML'):
+
+    monkeypatch.setattr(builtins, "__import__", fail_yaml)
+    with pytest.raises(RuntimeError, match="PyYAML"):
         fleet_setup.load_setup_spec(yaml_path)
 
 
 def test_bad_spec_collects_validation_errors_and_router_warning(tmp_path: Path) -> None:
-    spec = {'schema': 'wrong', 'fleet': {'hub': 'hub'}, 'supervisor': 'bad', 'ssh_host_key_policy': 'maybe', 'agents': [{'name': 'worker', 'target': 'host'}], 'router': {'providers': [{'id': 'unknown'}]}, 'network': {'provider': 'invalid'}}
+    spec = {
+        "schema": "wrong",
+        "fleet": {"hub": "hub"},
+        "supervisor": "bad",
+        "ssh_host_key_policy": "maybe",
+        "agents": [{"name": "worker", "target": "host"}],
+        "router": {"providers": [{"id": "unknown"}]},
+        "network": {"provider": "invalid"},
+    }
     plan = _build(tmp_path, spec)
-    joined = '; '.join(plan['errors'])
-    assert 'schema' in joined
-    assert 'supervisor' in joined
-    assert 'ssh_host_key_policy' in joined
-    assert 'include the hub' in joined
-    assert 'network.provider' in joined
-    assert 'at least one' in joined
-    assert plan['warnings'] == ['unknown router provider skipped: unknown']
+    joined = "; ".join(plan["errors"])
+    assert "schema" in joined
+    assert "supervisor" in joined
+    assert "ssh_host_key_policy" in joined
+    assert "include the hub" in joined
+    assert "network.provider" in joined
+    assert "at least one" in joined
+    assert plan["warnings"] == ["unknown router provider skipped: unknown"]
 
 
 def test_gateway_impl_runtime_selector_allowlist(tmp_path: Path) -> None:
@@ -392,17 +416,15 @@ def test_gateway_impl_runtime_selector_allowlist(tmp_path: Path) -> None:
     An unknown value must still fail loudly (mirrors network.provider), which
     is the property this test exists to protect.
     """
-    for accepted in ('hermes', 'openclaw', 'none'):
+    for accepted in ("hermes", "openclaw", "none"):
         spec = _base_spec()
-        spec['gateway_impl'] = accepted
-        assert not any(
-            'gateway_impl' in e for e in _build(tmp_path, spec)['errors']
-        ), accepted
+        spec["gateway_impl"] = accepted
+        assert not any("gateway_impl" in e for e in _build(tmp_path, spec)["errors"]), accepted
     bad = _base_spec()
-    bad['gateway_impl'] = 'nemoclaw'
+    bad["gateway_impl"] = "nemoclaw"
     assert any(
-        'gateway_impl must be hermes, openclaw, or none' in e
-        for e in _build(tmp_path, bad)['errors']
+        "gateway_impl must be hermes, openclaw, or none" in e
+        for e in _build(tmp_path, bad)["errors"]
     )
 
 
@@ -410,39 +432,47 @@ def test_openclaw_defaults_block_read_with_hermes_fallback(tmp_path: Path) -> No
     """Runtime defaults read from the OpenClaw block, and the legacy hermes key
     still resolves for backward compatibility."""
     spec = _base_spec()
-    spec['defaults'] = {'openclaw': {'gateway_provider': 'newclaw', 'slack_home_channel_name': 'chan'}}
-    defaults = _build(tmp_path, spec)['fleet_config']['defaults']['hermes']
-    assert defaults['gateway_provider'] == 'newclaw'
-    assert defaults['slack_home_channel_name'] == 'chan'
+    spec["defaults"] = {
+        "openclaw": {"gateway_provider": "newclaw", "slack_home_channel_name": "chan"}
+    }
+    defaults = _build(tmp_path, spec)["fleet_config"]["defaults"]["hermes"]
+    assert defaults["gateway_provider"] == "newclaw"
+    assert defaults["slack_home_channel_name"] == "chan"
     legacy = _base_spec()
-    legacy['defaults'] = {'hermes': {'gateway_provider': 'legacyclaw'}}
-    assert _build(tmp_path, legacy)['fleet_config']['defaults']['hermes']['gateway_provider'] == 'legacyclaw'
+    legacy["defaults"] = {"hermes": {"gateway_provider": "legacyclaw"}}
+    assert (
+        _build(tmp_path, legacy)["fleet_config"]["defaults"]["hermes"]["gateway_provider"]
+        == "legacyclaw"
+    )
 
 
 def test_tailscale_and_headscale_secret_branches(tmp_path: Path) -> None:
     tailscale = _base_spec()
-    tailscale['network'] = {'provider': 'tailscale', 'tailscale': {'auth_key_env': 'TS_AUTH'}}
-    tailscale['require_mesh_auth'] = True
+    tailscale["network"] = {"provider": "tailscale", "tailscale": {"auth_key_env": "TS_AUTH"}}
+    tailscale["require_mesh_auth"] = True
     missing = _build(tmp_path, tailscale)
-    assert 'TS_AUTH' in missing['required_env']
-    tailscale['secrets'] = {'tailscale_auth_key': 'tail-secret'}
+    assert "TS_AUTH" in missing["required_env"]
+    tailscale["secrets"] = {"tailscale_auth_key": "tail-secret"}
     supplied = _build(tmp_path, tailscale)
-    assert supplied['env_values']['TS_AUTH'] == 'tail-secret'
+    assert supplied["env_values"]["TS_AUTH"] == "tail-secret"
     headscale = _base_spec()
-    headscale['network'] = {'provider': 'headscale', 'headscale': {'login_server': 'https://headscale.example', 'preauth_key_env': 'HS_KEY'}}
-    headscale['secrets'] = {'headscale_preauth_key': 'head-secret', 'hub_token': 'hub-token'}
+    headscale["network"] = {
+        "provider": "headscale",
+        "headscale": {"login_server": "https://headscale.example", "preauth_key_env": "HS_KEY"},
+    }
+    headscale["secrets"] = {"headscale_preauth_key": "head-secret", "hub_token": "hub-token"}
     head = _build(tmp_path, headscale)
-    assert head['env_values']['HS_KEY'] == 'head-secret'
-    assert head['env_values']['MAC_DEPLOY_HUB_TOKEN'] == 'hub-token'
+    assert head["env_values"]["HS_KEY"] == "head-secret"
+    assert head["env_values"]["MAC_DEPLOY_HUB_TOKEN"] == "hub-token"
 
 
 def test_tailscale_auth_key_format_validation() -> None:
     valid = [
-        'tskey-auth-k123456789CNTRL-abcdefghij0123456789',
-        'tskey-abcdefghij0123',
-        '  tskey-auth-kAbc123CNTRL-zzzzzzzzzz  ',
+        "tskey-auth-k123456789CNTRL-abcdefghij0123456789",
+        "tskey-abcdefghij0123",
+        "  tskey-auth-kAbc123CNTRL-zzzzzzzzzz  ",
     ]
-    invalid = ['tail-secret', 'tskey-', 'tskey-auth-x', '', 'placeholder-key']
+    invalid = ["tail-secret", "tskey-", "tskey-auth-x", "", "placeholder-key"]
     for value in valid:
         assert fleet_setup._looks_like_tailscale_auth_key(value) is True
     for value in invalid:
@@ -451,54 +481,82 @@ def test_tailscale_auth_key_format_validation() -> None:
 
 def test_tailscale_stale_auth_key_emits_rotation_warning(tmp_path: Path) -> None:
     spec = _base_spec()
-    spec['network'] = {'provider': 'tailscale', 'tailscale': {'auth_key_env': 'TS_AUTH'}}
-    spec['secrets'] = {'tailscale_auth_key': 'stale-placeholder'}
+    spec["network"] = {"provider": "tailscale", "tailscale": {"auth_key_env": "TS_AUTH"}}
+    spec["secrets"] = {"tailscale_auth_key": "stale-placeholder"}
     stale = _build(tmp_path, spec)
-    assert stale['env_values']['TS_AUTH'] == 'stale-placeholder'
-    assert any('rotate it before deploy' in w for w in stale['warnings'])
+    assert stale["env_values"]["TS_AUTH"] == "stale-placeholder"
+    assert any("rotate it before deploy" in w for w in stale["warnings"])
 
-    spec['secrets'] = {'tailscale_auth_key': 'tskey-auth-kAbc123CNTRL-zzzzzzzzzz'}
+    spec["secrets"] = {"tailscale_auth_key": "tskey-auth-kAbc123CNTRL-zzzzzzzzzz"}
     fresh = _build(tmp_path, spec)
-    assert fresh['env_values']['TS_AUTH'] == 'tskey-auth-kAbc123CNTRL-zzzzzzzzzz'
-    assert not any('rotate it before deploy' in w for w in fresh['warnings'])
+    assert fresh["env_values"]["TS_AUTH"] == "tskey-auth-kAbc123CNTRL-zzzzzzzzzz"
+    assert not any("rotate it before deploy" in w for w in fresh["warnings"])
 
 
 def test_agent_config_validation_edges(monkeypatch: pytest.MonkeyPatch) -> None:
     errors: list[str] = []
 
     def normalize(target: str, *, port=None):
-        if target == 'bad-target':
-            raise ValueError('invalid target')
+        if target == "bad-target":
+            raise ValueError("invalid target")
         return target
-    monkeypatch.setattr(fleet_setup, 'normalize_ssh_target', normalize)
-    agents = fleet_setup._agent_configs({'agents': [{}, {'name': 'dup', 'target': 'host'}, {'name': 'dup', 'target': 'host'}, {'name': 'invalid', 'target': 'bad-target', 'os': 'windows', 'supervisor': 'bad'}]}, hub_name='hub', supervisor='auto', errors=errors, openclaw_defaults={}, worker_defaults={})
+
+    monkeypatch.setattr(fleet_setup, "normalize_ssh_target", normalize)
+    agents = fleet_setup._agent_configs(
+        {
+            "agents": [
+                {},
+                {"name": "dup", "target": "host"},
+                {"name": "dup", "target": "host"},
+                {"name": "invalid", "target": "bad-target", "os": "windows", "supervisor": "bad"},
+            ]
+        },
+        hub_name="hub",
+        supervisor="auto",
+        errors=errors,
+        openclaw_defaults={},
+        worker_defaults={},
+    )
     assert len(agents) == 2
-    joined = '; '.join(errors)
-    assert 'needs a name' in joined
-    assert 'duplicate' in joined
-    assert 'target invalid' in joined
-    assert 'os must' in joined
-    assert 'supervisor invalid' in joined
+    joined = "; ".join(errors)
+    assert "needs a name" in joined
+    assert "duplicate" in joined
+    assert "target invalid" in joined
+    assert "os must" in joined
+    assert "supervisor invalid" in joined
 
 
 def test_router_network_webdav_and_helper_edges() -> None:
-    router, values, required, warnings = fleet_setup._router_env({'providers': [{'id': 'nvidia', 'key': 'secret', 'base_url': 'https://custom.example/v1'}], 'router': {}}, {})
-    assert router['providers'].startswith('nvidia=')
-    assert values['NVIDIA_API_KEY'] == 'secret'
-    assert values['NVIDIA_BASE_URL'] == 'https://custom.example/v1'
+    router, values, required, warnings = fleet_setup._router_env(
+        {
+            "providers": [
+                {"id": "nvidia", "key": "secret", "base_url": "https://custom.example/v1"}
+            ],
+            "router": {},
+        },
+        {},
+    )
+    assert router["providers"].startswith("nvidia=")
+    assert values["NVIDIA_API_KEY"] == "secret"
+    assert values["NVIDIA_BASE_URL"] == "https://custom.example/v1"
     assert not required and (not warnings)
     errors: list[str] = []
-    fleet_setup._network_config({'network': {'provider': 'headscale', 'headscale': {}}}, {}, errors)
-    assert 'login_server' in errors[0]
+    fleet_setup._network_config({"network": {"provider": "headscale", "headscale": {}}}, {}, errors)
+    assert "login_server" in errors[0]
     errors = []
-    webdav = fleet_setup._webdav_config({'webdav': {'enabled': True, 'dns_name': 'example.com', 'url': 'http://example.com/files'}}, {}, {}, errors)
-    assert webdav['enabled'] is True
-    assert 'https' in errors[0]
-    assert not fleet_setup._valid_dns_name('127.0.0.1')
-    assert fleet_setup._normalize_public_path('files') == '/files/'
-    assert fleet_setup._host_from_target('user@example.com:2222') == 'example.com'
-    assert fleet_setup._status([], [{'status': 'warn'}]) == 'warn'
+    webdav = fleet_setup._webdav_config(
+        {"webdav": {"enabled": True, "dns_name": "example.com", "url": "http://example.com/files"}},
+        {},
+        {},
+        errors,
+    )
+    assert webdav["enabled"] is True
+    assert "https" in errors[0]
+    assert not fleet_setup._valid_dns_name("127.0.0.1")
+    assert fleet_setup._normalize_public_path("files") == "/files/"
+    assert fleet_setup._host_from_target("user@example.com:2222") == "example.com"
+    assert fleet_setup._status([], [{"status": "warn"}]) == "warn"
     assert fleet_setup._list((1, 2)) == [1, 2]
-    assert fleet_setup._list('one') == ['one']
-    assert fleet_setup._optional_int('5') == 5
-    assert fleet_setup._optional_int('bad') is None
+    assert fleet_setup._list("one") == ["one"]
+    assert fleet_setup._optional_int("5") == 5
+    assert fleet_setup._optional_int("bad") is None

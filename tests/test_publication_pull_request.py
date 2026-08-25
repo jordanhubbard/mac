@@ -39,12 +39,8 @@ def build_repo(tmp_path: Path):
     """A bare remote with ``main`` and a pushed ``task/feature`` branch."""
     remote = tmp_path / "remote.git"
     source = tmp_path / "source"
-    subprocess.run(
-        ["git", "init", "--bare", str(remote)], check=True, capture_output=True
-    )
-    subprocess.run(
-        ["git", "clone", str(remote), str(source)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "clone", str(remote), str(source)], check=True, capture_output=True)
     git(source, "config", "user.email", "mac-test@example.com")
     git(source, "config", "user.name", "MAC Test")
     (source / "base.txt").write_text("base\n", encoding="utf-8")
@@ -128,9 +124,7 @@ class FakeForge:
         return self.queue_merged_sha
 
     def open_pull_request(self, repo_url, head, *, base=None, title=None, body=None):
-        self.opened.append(
-            {"repo_url": repo_url, "head": head, "base": base, "title": title}
-        )
+        self.opened.append({"repo_url": repo_url, "head": head, "base": base, "title": title})
         return gitops.PullRequestResult(
             host="github",
             number=101,
@@ -167,9 +161,7 @@ class FakeForge:
 
 def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",)):
     monkeypatch.setattr(gitops, "resolve_forge", lambda url: "github")
-    monkeypatch.setattr(
-        gitops, "required_status_check_contexts", lambda url, branch: tuple(checks)
-    )
+    monkeypatch.setattr(gitops, "required_status_check_contexts", lambda url, branch: tuple(checks))
     monkeypatch.setattr(gitops, "open_pull_request", forge.open_pull_request)
     monkeypatch.setattr(gitops, "merge_pull_request", forge.merge_pull_request)
     monkeypatch.setattr(gitops, "merge_queue_enabled", forge.merge_queue_enabled)
@@ -234,9 +226,7 @@ def drive_to_approval(cp, source: Path, task_head: str, *, pull_request=None):
     cp.submit_for_review(task.id, worker.id)
     review = cp.request_review(task.id, reviewer.id)
     verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
-    cp.submit_review(
-        review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id
-    )
+    cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
     return task, evidence, reviewer
 
 
@@ -262,9 +252,7 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
         "hub contract gate ran even though the forge gates the merge"
     )
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
@@ -308,9 +296,7 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     strategy = next(item for item in commands if item["name"] == "publication_strategy")
     assert strategy["strategy"] == "pull_request"
     assert strategy["required_status_checks"] == ["sanity"]
-    gate = next(
-        item for item in commands if item["name"] == "publication_contract_gate"
-    )
+    gate = next(item for item in commands if item["name"] == "publication_contract_gate")
     assert gate["skipped"] is True
 
     # The completion proof is honest about squashing and still admits the task.
@@ -326,14 +312,12 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     assert proofs[0]["reviewed_head_sha"] == task_head
 
 
-def test_publication_defers_while_the_pull_request_checks_are_pending(
-    cp, tmp_path, monkeypatch
-):
+def test_publication_defers_while_the_pull_request_checks_are_pending(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(
         remote,
         tmp_path / "forge",
-        merge_blocked="Required status check \"sanity\" is expected.",
+        merge_blocked='Required status check "sanity" is expected.',
     )
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
@@ -342,10 +326,7 @@ def test_publication_defers_while_the_pull_request_checks_are_pending(
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert "required checks" in str(excinfo.value)
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "")
-        == "pull_request_checks_pending"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_checks_pending"
     assert getattr(excinfo.value, "publication_retry_after_seconds", 0) > 0
     # The PR exists; main is untouched; the task is not completed.
     assert len(forge.opened) == 1
@@ -353,9 +334,7 @@ def test_publication_defers_while_the_pull_request_checks_are_pending(
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
 
 
-def test_direct_push_opt_out_still_pushes_the_canonical_branch(
-    cp, tmp_path, monkeypatch
-):
+def test_direct_push_opt_out_still_pushes_the_canonical_branch(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge)
@@ -363,9 +342,7 @@ def test_direct_push_opt_out_still_pushes_the_canonical_branch(
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
     cp._publication_merge_test_runner = lambda *a, **k: (0, "suite passed")
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     assert forge.opened == []
@@ -373,9 +350,7 @@ def test_direct_push_opt_out_still_pushes_the_canonical_branch(
     detail = published_detail(cp, task.id)
     assert detail["publication_mode"] in {"fast_forward", "merge_commit"}
     assert any(item["name"] == "push_main_occ" for item in detail["commands"])
-    strategy = next(
-        item for item in detail["commands"] if item["name"] == "publication_strategy"
-    )
+    strategy = next(item for item in detail["commands"] if item["name"] == "publication_strategy")
     assert strategy["strategy"] == "direct_push"
     assert "opt-out" in strategy["reason"]
     final = git(source, "ls-remote", "origin", "refs/heads/main").split()[0]
@@ -391,15 +366,11 @@ def test_repository_without_a_forge_falls_back_to_direct_push(cp, tmp_path):
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
     cp._publication_merge_test_runner = lambda *a, **k: (0, "suite passed")
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     detail = published_detail(cp, task.id)
-    strategy = next(
-        item for item in detail["commands"] if item["name"] == "publication_strategy"
-    )
+    strategy = next(item for item in detail["commands"] if item["name"] == "publication_strategy")
     assert strategy["strategy"] == "direct_push"
     assert "no API-reachable forge" in strategy["reason"]
     assert any(item["name"] == "push_main_occ" for item in detail["commands"])
@@ -415,9 +386,7 @@ def test_pull_request_is_the_default_strategy(cp, monkeypatch):
     monkeypatch.delenv("MAC_PUBLICATION_STRATEGY", raising=False)
     monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
     assert (
-        cp._resolve_publication_strategy("https://github.com/acme/widgets.git")[
-            "strategy"
-        ]
+        cp._resolve_publication_strategy("https://github.com/acme/widgets.git")["strategy"]
         == "pull_request"
     )
 
@@ -456,9 +425,7 @@ def test_merge_pull_request_reports_gate_refusals_as_blocked(monkeypatch):
         "_http_put_json",
         lambda *a, **k: (405, {}, 'Required status check "sanity" is expected.'),
     )
-    result = gitops.merge_pull_request(
-        "https://github.com/acme/widgets.git", 7, sha="a" * 40
-    )
+    result = gitops.merge_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
     assert result.blocked is True
     assert result.merged is False
     assert "sanity" in result.reason
@@ -516,19 +483,17 @@ def test_required_status_check_contexts_reads_rulesets(monkeypatch):
             },
         ],
     )
-    assert gitops.required_status_check_contexts(
-        "https://github.com/acme/widgets.git", "main"
-    ) == ("sanity", "compatibility")
+    assert gitops.required_status_check_contexts("https://github.com/acme/widgets.git", "main") == (
+        "sanity",
+        "compatibility",
+    )
 
 
 def test_required_status_check_contexts_is_unknown_without_credentials(monkeypatch):
     for name in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     assert (
-        gitops.required_status_check_contexts(
-            "https://github.com/acme/widgets.git", "main"
-        )
-        is None
+        gitops.required_status_check_contexts("https://github.com/acme/widgets.git", "main") is None
     )
 
 
@@ -558,9 +523,7 @@ def test_hub_reuses_the_pull_request_the_agent_opened(cp, tmp_path, monkeypatch)
         },
     )
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     # The hub opened nothing; it merged the agent's PR, pinned to the head the
@@ -571,9 +534,7 @@ def test_hub_reuses_the_pull_request_the_agent_opened(cp, tmp_path, monkeypatch)
     detail = published_detail(cp, task.id)
     assert detail["pull_request_number"] == 77
     assert detail["pull_request_opened_by"] == "agent"
-    opened = next(
-        item for item in detail["commands"] if item["name"] == "open_pull_request"
-    )
+    opened = next(item for item in detail["commands"] if item["name"] == "open_pull_request")
     assert opened["opened_by"] == "agent"
 
     proof = [
@@ -586,9 +547,7 @@ def test_hub_reuses_the_pull_request_the_agent_opened(cp, tmp_path, monkeypatch)
     assert proof["pull_request_opened_by"] == "agent"
 
 
-def test_hub_fallback_pull_request_is_recorded_as_a_fallback(
-    cp, tmp_path, monkeypatch
-):
+def test_hub_fallback_pull_request_is_recorded_as_a_fallback(cp, tmp_path, monkeypatch):
     """A worker that opened no PR still publishes -- visibly, not silently."""
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
@@ -598,17 +557,13 @@ def test_hub_fallback_pull_request_is_recorded_as_a_fallback(
     cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     detail = published_detail(cp, task.id)
-    opened = next(
-        item for item in detail["commands"] if item["name"] == "open_pull_request"
-    )
+    opened = next(item for item in detail["commands"] if item["name"] == "open_pull_request")
     assert opened["opened_by"] == "hub_fallback"
     assert opened["agent_reason"]
     assert detail["pull_request_opened_by"] == "hub_fallback"
 
 
-def test_agent_opens_the_pull_request_onto_the_contract_canonical_branch(
-    tmp_path, monkeypatch
-):
+def test_agent_opens_the_pull_request_onto_the_contract_canonical_branch(tmp_path, monkeypatch):
     """canonical_branch comes from the contract; it is never assumed to be main."""
     calls: list[dict] = []
 
@@ -651,9 +606,7 @@ def test_agent_opens_the_pull_request_onto_the_contract_canonical_branch(
     ]
 
 
-def test_agent_pull_request_declines_without_a_forge_and_never_raises(
-    tmp_path, monkeypatch
-):
+def test_agent_pull_request_declines_without_a_forge_and_never_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(gitops, "resolve_forge", lambda url: None)
     target = gitops.CanonicalPublicationTarget(
         worktree=tmp_path,
@@ -673,9 +626,7 @@ def test_agent_pull_request_declines_without_a_forge_and_never_raises(
     assert "no API-reachable forge" in outcome["reason"]
 
 
-def test_agent_pull_request_reports_forge_errors_without_the_token(
-    tmp_path, monkeypatch
-):
+def test_agent_pull_request_reports_forge_errors_without_the_token(tmp_path, monkeypatch):
     token = "ghp_" + "z" * 36
     monkeypatch.setenv("GH_TOKEN", token)
     monkeypatch.setattr(gitops, "resolve_forge", lambda url: "github")
@@ -718,9 +669,7 @@ def test_merge_queue_enqueues_instead_of_merging_directly(cp, tmp_path, monkeypa
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert "merge queue" in str(excinfo.value)
-    assert getattr(excinfo.value, "publication_failure_kind", "") == (
-        "pull_request_queued"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == ("pull_request_queued")
     assert getattr(excinfo.value, "publication_retry_after_seconds", 0) > 0
     # Enqueued, pinned to the reviewed head -- and never merged directly.
     assert forge.enqueued == [{"number": 101, "sha": task_head}]
@@ -744,9 +693,7 @@ def test_publication_completes_once_the_merge_queue_lands_the_pull_request(
     # The queue tests the projected merge and lands it, asynchronously.
     landed = forge.land_from_queue(task_head)
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
@@ -763,9 +710,7 @@ def test_publication_completes_once_the_merge_queue_lands_the_pull_request(
     assert "what was tested is what lands" in serialization["guarantee"]
 
 
-def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(
-    cp, tmp_path, monkeypatch
-):
+def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp_path, monkeypatch):
     """No FORGE queue means mac's own queue serializes, and it still refuses.
 
     The checks ran against a merge candidate built from one canonical tip. If
@@ -802,13 +747,9 @@ def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(
             moved.append(git(other, "rev-parse", "HEAD"))
         return ("sanity",)
 
-    monkeypatch.setattr(
-        gitops, "required_status_check_contexts", advance_main_once
-    )
+    monkeypatch.setattr(gitops, "required_status_check_contexts", advance_main_once)
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     detail = published_detail(cp, task.id)
@@ -817,9 +758,7 @@ def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(
     assert [item["sha"] for item in forge.merges] == [task_head]
     # ``commands`` is per-attempt, so this is the second attempt's own land
     # gate -- the first attempt's raised before it could merge.
-    land_gates = [
-        item for item in detail["commands"] if item["name"] == "merge_queue_land_gate"
-    ]
+    land_gates = [item for item in detail["commands"] if item["name"] == "merge_queue_land_gate"]
     assert len(land_gates) == 1
     assert land_gates[0]["allowed"] is True
     serialization = next(
@@ -847,31 +786,19 @@ def test_merge_queue_enabled_reads_the_branch_ruleset(monkeypatch):
             {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}},
         ],
     )
-    assert (
-        gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is True
-    )
-    monkeypatch.setattr(
-        gitops, "_http_get_json", lambda *a, **k: [{"type": "pull_request"}]
-    )
-    assert (
-        gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main")
-        is False
-    )
+    assert gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is True
+    monkeypatch.setattr(gitops, "_http_get_json", lambda *a, **k: [{"type": "pull_request"}])
+    assert gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is False
 
 
 def test_merge_queue_enabled_is_unknown_without_credentials_or_on_gitea(monkeypatch):
     for name in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN", "GITEA_TOKEN"):
         monkeypatch.delenv(name, raising=False)
-    assert (
-        gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is None
-    )
+    assert gitops.merge_queue_enabled("https://github.com/acme/widgets.git", "main") is None
     monkeypatch.setenv("GITEA_TOKEN", "gt_" + "x" * 36)
     # gitea has no merge queue: unknown, so the caller records the weaker
     # guarantee rather than assuming serialization it will not get.
-    assert (
-        gitops.merge_queue_enabled("https://gitea.invalid/acme/widgets.git", "main")
-        is None
-    )
+    assert gitops.merge_queue_enabled("https://gitea.invalid/acme/widgets.git", "main") is None
 
 
 def test_enqueue_pins_the_reviewed_head_and_classifies_refusals(monkeypatch):
@@ -888,9 +815,7 @@ def test_enqueue_pins_the_reviewed_head_and_classifies_refusals(monkeypatch):
         )
 
     monkeypatch.setattr(gitops, "_graphql", fake_graphql)
-    result = gitops.enqueue_pull_request(
-        "https://github.com/acme/widgets.git", 7, sha="a" * 40
-    )
+    result = gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
     assert result.queued is True
     assert result.merged is False
     assert result.serialization == "merge_queue"
@@ -902,9 +827,7 @@ def test_enqueue_pins_the_reviewed_head_and_classifies_refusals(monkeypatch):
         return {"repository": {"pullRequest": {"id": "PR_1", "merged": False}}}, ""
 
     monkeypatch.setattr(gitops, "_graphql", refuse)
-    blocked = gitops.enqueue_pull_request(
-        "https://github.com/acme/widgets.git", 7, sha="a" * 40
-    )
+    blocked = gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
     assert blocked.blocked is True
     assert blocked.queued is False
 
@@ -915,9 +838,7 @@ def test_enqueue_pins_the_reviewed_head_and_classifies_refusals(monkeypatch):
 
     monkeypatch.setattr(gitops, "_graphql", explode)
     with pytest.raises(RuntimeError, match="internal server error"):
-        gitops.enqueue_pull_request(
-            "https://github.com/acme/widgets.git", 7, sha="a" * 40
-        )
+        gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
 
 
 def test_enqueue_failures_never_echo_the_token(monkeypatch):
@@ -927,15 +848,11 @@ def test_enqueue_failures_never_echo_the_token(monkeypatch):
 
     def reflecting_http(url, headers, query, variables, token_arg):
         captured.append(token_arg)
-        return {}, gitops._scrub_secret(
-            "bad credentials for token %s" % token, token_arg
-        )
+        return {}, gitops._scrub_secret("bad credentials for token %s" % token, token_arg)
 
     monkeypatch.setattr(gitops, "_graphql", reflecting_http)
     with pytest.raises(RuntimeError) as excinfo:
-        gitops.enqueue_pull_request(
-            "https://github.com/acme/widgets.git", 7, sha="a" * 40
-        )
+        gitops.enqueue_pull_request("https://github.com/acme/widgets.git", 7, sha="a" * 40)
     assert token not in str(excinfo.value)
     assert captured == [token]
 
@@ -986,15 +903,11 @@ def _install_fake_hub(monkeypatch, payload):
     return _FakeHubClient
 
 
-def test_agent_asks_the_hub_for_the_forge_credential_when_its_env_has_none(
-    tmp_path, monkeypatch
-):
+def test_agent_asks_the_hub_for_the_forge_credential_when_its_env_has_none(tmp_path, monkeypatch):
     for name in ("GH_TOKEN", "GITHUB_TOKEN", "MAC_TASK_GIT_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     hub_token = "ghp_" + "h" * 36
-    client = _install_fake_hub(
-        monkeypatch, {"name": "github.token", "value": hub_token}
-    )
+    client = _install_fake_hub(monkeypatch, {"name": "github.token", "value": hub_token})
     seen: list[dict] = []
 
     def fake_open(repo_url, head, *, base=None, title=None, body=None, **kwargs):
@@ -1072,9 +985,7 @@ def test_forge_token_from_hub_is_empty_without_a_hub(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_merge_is_not_requested_until_required_checks_actually_passed(
-    cp, tmp_path, monkeypatch
-):
+def test_merge_is_not_requested_until_required_checks_actually_passed(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
     # The forge would happily merge -- the caller holds a ruleset bypass, which
@@ -1086,10 +997,7 @@ def test_merge_is_not_requested_until_required_checks_actually_passed(
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "")
-        == "pull_request_checks_pending"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_checks_pending"
     # It asked about the reviewed head, and asked for nothing else.
     assert forge.verified == [{"sha": task_head, "contexts": ["sanity"]}]
     assert forge.merges == []
@@ -1108,17 +1016,12 @@ def test_failed_required_checks_are_not_a_deferral(cp, tmp_path, monkeypatch):
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "")
-        == "pull_request_checks_failed"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_checks_failed"
     assert forge.merges == []
     assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
 
 
-def test_unreadable_check_results_are_not_treated_as_passing(
-    cp, tmp_path, monkeypatch
-):
+def test_unreadable_check_results_are_not_treated_as_passing(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
     forge.checks_known = False
@@ -1128,10 +1031,7 @@ def test_unreadable_check_results_are_not_treated_as_passing(
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "")
-        == "pull_request_checks_pending"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_checks_pending"
     assert forge.merges == []
 
 
@@ -1145,9 +1045,7 @@ def test_verified_checks_are_recorded_and_allow_the_merge(cp, tmp_path, monkeypa
 
     detail = published_detail(cp, task.id)
     verification = next(
-        item
-        for item in detail["commands"]
-        if item["name"] == "required_check_verification"
+        item for item in detail["commands"] if item["name"] == "required_check_verification"
     )
     assert verification["case"] == "verified"
     assert verification["passed"] == ["sanity"]
@@ -1155,33 +1053,25 @@ def test_verified_checks_are_recorded_and_allow_the_merge(cp, tmp_path, monkeypa
     assert verification["head_sha"] == task_head
 
 
-def test_no_required_contexts_is_recorded_distinctly_from_pending(
-    cp, tmp_path, monkeypatch
-):
+def test_no_required_contexts_is_recorded_distinctly_from_pending(cp, tmp_path, monkeypatch):
     """An unprotected repo is not a repo whose checks have not started."""
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge, checks=())
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
     ran: list[str] = []
-    cp._publication_merge_test_runner = lambda *a, **k: (
-        ran.append("gate") or (0, "suite passed")
-    )
+    cp._publication_merge_test_runner = lambda *a, **k: ran.append("gate") or (0, "suite passed")
 
     cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     detail = published_detail(cp, task.id)
     verification = next(
-        item
-        for item in detail["commands"]
-        if item["name"] == "required_check_verification"
+        item for item in detail["commands"] if item["name"] == "required_check_verification"
     )
     assert verification["case"] == "none_configured"
     assert verification["contexts"] == []
     # The local contract gate is what protected this one, and it really ran.
-    gate = next(
-        item for item in detail["commands"] if item["name"] == "publication_contract_gate"
-    )
+    gate = next(item for item in detail["commands"] if item["name"] == "publication_contract_gate")
     assert gate.get("skipped") is not True
     assert ran == ["gate"]
 
@@ -1233,8 +1123,6 @@ def test_required_check_verdicts_is_unknown_when_the_forge_cannot_be_asked(
 
 
 def test_required_check_verdicts_with_no_contexts_is_known_and_empty():
-    verdict = gitops.required_check_verdicts(
-        "https://github.com/acme/widgets.git", "a" * 40, ()
-    )
+    verdict = gitops.required_check_verdicts("https://github.com/acme/widgets.git", "a" * 40, ())
     assert verdict["known"] is True
     assert verdict["pending"] == []

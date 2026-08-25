@@ -72,16 +72,41 @@ FAMILIES = (
 )
 
 BOOL_MARKERS = (
-    "_ENABLED", "_REQUIRED", "_ALLOW_", "_AUTO_", "_DRY_RUN",
-    "_KEEP", "_REBUILD_", "_VALIDATE_", "_VERBOSE_", "_ROTATE_",
-    "_REQUIRE_", "_UPLOAD_", "_RECONCILE_", "_REJECT_", "_PREFER_",
+    "_ENABLED",
+    "_REQUIRED",
+    "_ALLOW_",
+    "_AUTO_",
+    "_DRY_RUN",
+    "_KEEP",
+    "_REBUILD_",
+    "_VALIDATE_",
+    "_VERBOSE_",
+    "_ROTATE_",
+    "_REQUIRE_",
+    "_UPLOAD_",
+    "_RECONCILE_",
+    "_REJECT_",
+    "_PREFER_",
 )
 BOOL_SUFFIXES = ("_OK", "_GC", "_INSTALL", "_MANAGE", "_TRUSTED", "_FATAL")
 INT_SUFFIXES = (
-    "_SECONDS", "_PORT", "_LIMIT", "_BYTES", "_DIM", "_ATTEMPTS",
-    "_THRESHOLD", "_SIZE", "_MAX", "_TIMEOUT", "_INTERVAL",
-    "_CONCURRENCY", "_TTL", "_FLOOR", "_AGE",
-    "_COUNT", "_RETRIES",
+    "_SECONDS",
+    "_PORT",
+    "_LIMIT",
+    "_BYTES",
+    "_DIM",
+    "_ATTEMPTS",
+    "_THRESHOLD",
+    "_SIZE",
+    "_MAX",
+    "_TIMEOUT",
+    "_INTERVAL",
+    "_CONCURRENCY",
+    "_TTL",
+    "_FLOOR",
+    "_AGE",
+    "_COUNT",
+    "_RETRIES",
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 CONSUMER_DEFAULTS = {
@@ -163,11 +188,7 @@ def build_records() -> list[dict[str, object]]:
                 fragments = []
         else:
             fragments = [text]
-        for name in {
-            match
-            for fragment in fragments
-            for match in NAME_RE.findall(fragment)
-        }:
+        for name in {match for fragment in fragments for match in NAME_RE.findall(fragment)}:
             # Prefix fragments are template mechanics, not environment keys.
             if name.endswith("_"):
                 continue
@@ -213,7 +234,8 @@ def fleet_scoped_precedence_lines() -> list[str]:
         "uppercased, with every run of non-alphanumeric characters replaced by "
         "a single `_` and leading/trailing `_` stripped. For example, fleet "
         "`%s` yields suffix `%s`, so `MAC_API_TOKEN` scopes to "
-        "`%s`." % (
+        "`%s`."
+        % (
             example_fleet,
             scoped_var("X", example_fleet).split("__", 1)[1],
             scoped_var("MAC_API_TOKEN", example_fleet),
@@ -242,9 +264,7 @@ def fleet_scoped_precedence_lines() -> list[str]:
         "| --- | --- |",
     ]
     for name in sorted(FLEET_SCOPED_VARS):
-        lines.append(
-            "| `%s` | `%s` |" % (name, scoped_var(name, example_fleet))
-        )
+        lines.append("| `%s` | `%s` |" % (name, scoped_var(name, example_fleet)))
     lines.append("")
     return lines
 
@@ -318,7 +338,9 @@ def main() -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(registry_text, encoding="utf-8")
     REFERENCE.write_text(reference_text, encoding="utf-8")
-    print(f"wrote {len(records)} variables to {OUTPUT.relative_to(ROOT)} and {REFERENCE.relative_to(ROOT)}")
+    print(
+        f"wrote {len(records)} variables to {OUTPUT.relative_to(ROOT)} and {REFERENCE.relative_to(ROOT)}"
+    )
 
 
 if __name__ == "__main__":

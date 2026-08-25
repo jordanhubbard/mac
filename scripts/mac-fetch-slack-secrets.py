@@ -175,7 +175,9 @@ def update_yaml_env_block(config_path: Path, kvs: dict[str, str]) -> bool:
             handled.add(k)
         changed = True
     if changed:
-        config_path.write_text("\n".join(out) + ("\n" if not text.endswith("\n") else ""), encoding="utf-8")
+        config_path.write_text(
+            "\n".join(out) + ("\n" if not text.endswith("\n") else ""), encoding="utf-8"
+        )
     return changed
 
 
@@ -208,7 +210,11 @@ def upsert_env_file(env_path: Path, kvs: dict[str, str]) -> bool:
     handled: set[str] = set()
     changed = False
     for line in lines:
-        key = line.split("=", 1)[0].strip() if ("=" in line and not line.lstrip().startswith("#")) else None
+        key = (
+            line.split("=", 1)[0].strip()
+            if ("=" in line and not line.lstrip().startswith("#"))
+            else None
+        )
         if key in kvs:
             new_line = "%s=%s" % (key, kvs[key])
             if new_line != line:
@@ -248,7 +254,10 @@ def main() -> int:
         token = os.environ.get("TOKENHUB_ADMIN_TOKEN", "")
         source, list_fn, get_fn = "tokenhub", vault_list, vault_get
         if not token:
-            print("TOKENHUB_ADMIN_TOKEN is required (or set MAC_SECRET_VAULT_URL/TOKEN)", file=sys.stderr)
+            print(
+                "TOKENHUB_ADMIN_TOKEN is required (or set MAC_SECRET_VAULT_URL/TOKEN)",
+                file=sys.stderr,
+            )
             return 2
     hermes_home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").expanduser()
     hermes_home.mkdir(parents=True, exist_ok=True)
@@ -312,12 +321,14 @@ def main() -> int:
         team_id = info.get("team_id") or ""
         actual_team = info.get("team") or workspace
         if team_id and team_id in seen_team_ids:
-            summary.append({
-                "workspace": workspace,
-                "skipped": "duplicate_team",
-                "team_id": team_id,
-                "duplicate_of": seen_team_ids[team_id],
-            })
+            summary.append(
+                {
+                    "workspace": workspace,
+                    "skipped": "duplicate_team",
+                    "team_id": team_id,
+                    "duplicate_of": seen_team_ids[team_id],
+                }
+            )
             continue
         if team_id:
             seen_team_ids[team_id] = workspace
@@ -329,14 +340,16 @@ def main() -> int:
         if app_tok:
             account["app_token"] = app_tok
         accounts.append(account)
-        summary.append({
-            "workspace": workspace,
-            "stored": True,
-            "team": actual_team,
-            "team_id": team_id,
-            "user": info.get("user"),
-            "account_name": account_name,
-        })
+        summary.append(
+            {
+                "workspace": workspace,
+                "stored": True,
+                "team": actual_team,
+                "team_id": team_id,
+                "user": info.get("user"),
+                "account_name": account_name,
+            }
+        )
         if primary_bot is None:
             primary_bot = bot
             primary_app = app_tok
@@ -366,15 +379,20 @@ def main() -> int:
     # are present in config.yaml.
     env_file_changed = upsert_env_file(hermes_home / ".env", env_updates)
 
-    print(json.dumps({
-        "agent": agent,
-        "workspaces": summary,
-        "slack_accounts_path": str(hermes_home / "slack_accounts.json"),
-        "config_yaml_path": str(config_path),
-        "config_yaml_changed": config_changed,
-        "env_file_changed": env_file_changed,
-        "env_file_path": str(hermes_home / ".env"),
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "agent": agent,
+                "workspaces": summary,
+                "slack_accounts_path": str(hermes_home / "slack_accounts.json"),
+                "config_yaml_path": str(config_path),
+                "config_yaml_changed": config_changed,
+                "env_file_changed": env_file_changed,
+                "env_file_path": str(hermes_home / ".env"),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

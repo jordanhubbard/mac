@@ -10,6 +10,7 @@ Covers:
 The hub HTTP seam (_hub_put, _hub_post) and agent runner are injected so
 nothing here spawns Hermes or hits a network.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,6 +23,7 @@ from mac import task_executor as te
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
+
 
 def _task(
     *,
@@ -54,16 +56,14 @@ def _repo_task(
     """Build a task with a repository contract in metadata."""
     metadata: Dict[str, Any] = {
         "execution_contract": {
-            "repository_contract": {
-                "toolchain": {
-                    "required_commands": ["python3", "git", "gh"]
-                }
-            }
+            "repository_contract": {"toolchain": {"required_commands": ["python3", "git", "gh"]}}
         }
     }
     if extra_metadata:
         metadata.update(extra_metadata)
-    return _task(title=title, description=description, attempt_count=attempt_count, metadata=metadata)
+    return _task(
+        title=title, description=description, attempt_count=attempt_count, metadata=metadata
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +181,7 @@ def test_compute_scope_origin_contract():
         metadata={
             "origin": {
                 "repository_contract": {
-                    "toolchain": {
-                        "required_commands": ["python3", "git", "gh"]
-                    }
+                    "toolchain": {"required_commands": ["python3", "git", "gh"]}
                 }
             }
         }
@@ -266,6 +264,7 @@ def test_hub_put_sends_put_method(monkeypatch):
         class FakeResp:
             def read(self):
                 return b""
+
         return FakeResp()
 
     monkeypatch.setenv("MAC_HUB_URL", "http://localhost:9999")
@@ -288,9 +287,19 @@ def test_hub_put_sends_put_method(monkeypatch):
 
 def test_record_scope_estimate_merges_metadata(monkeypatch):
     puts: List[Dict] = []
-    monkeypatch.setattr(scope, "_hub_put", lambda path, payload, **kw: puts.append({"path": path, "payload": payload}) or True)
+    monkeypatch.setattr(
+        scope,
+        "_hub_put",
+        lambda path, payload, **kw: puts.append({"path": path, "payload": payload}) or True,
+    )
 
-    estimate = {"schema": "mac.scope_estimate.v1", "size": "small", "estimated_units": 1, "signals": [], "rationale": "small"}
+    estimate = {
+        "schema": "mac.scope_estimate.v1",
+        "size": "small",
+        "estimated_units": 1,
+        "signals": [],
+        "rationale": "small",
+    }
     existing = {"execution_contract": {"evidence_type": "repo_change"}}
     result = te.record_scope_estimate("task_abc", estimate, existing)
 
@@ -314,8 +323,16 @@ def test_record_scope_estimate_no_task_id(monkeypatch):
 
 def test_record_scope_estimate_none_existing(monkeypatch):
     puts: List[Dict] = []
-    monkeypatch.setattr(scope, "_hub_put", lambda path, payload, **kw: puts.append({"payload": payload}) or True)
-    estimate = {"schema": "mac.scope_estimate.v1", "size": "large", "estimated_units": 2, "signals": [], "rationale": "x"}
+    monkeypatch.setattr(
+        scope, "_hub_put", lambda path, payload, **kw: puts.append({"payload": payload}) or True
+    )
+    estimate = {
+        "schema": "mac.scope_estimate.v1",
+        "size": "large",
+        "estimated_units": 2,
+        "signals": [],
+        "rationale": "x",
+    }
     te.record_scope_estimate("t1", estimate, None)
     merged = puts[0]["payload"]["metadata"]
     assert merged["scope_estimate"]["size"] == "large"
@@ -354,9 +371,10 @@ def test_maybe_preflight_calls_record(monkeypatch):
     monkeypatch.setattr(
         scope,
         "record_scope_estimate",
-        lambda task_id, estimate, existing=None: recorded.append(
-            {"task_id": task_id, "estimate": estimate, "existing": existing}
-        ) or True,
+        lambda task_id, estimate, existing=None: (
+            recorded.append({"task_id": task_id, "estimate": estimate, "existing": existing})
+            or True
+        ),
     )
     task = _task(attempt_count=1, metadata={"some_key": "some_val"}, task_id="task_preflight")
     te.maybe_preflight_scope_estimate(task)
@@ -390,8 +408,16 @@ def test_run_executor_calls_scope_estimate_on_attempt_1(monkeypatch, tmp_path):
     monkeypatch.setattr(
         te,
         "maybe_preflight_scope_estimate",
-        lambda task: scope_calls.append(task)
-        or {"schema": "mac.scope_estimate.v1", "size": "small", "estimated_units": 1, "signals": [], "rationale": "x"},
+        lambda task: (
+            scope_calls.append(task)
+            or {
+                "schema": "mac.scope_estimate.v1",
+                "size": "small",
+                "estimated_units": 1,
+                "signals": [],
+                "rationale": "x",
+            }
+        ),
     )
     monkeypatch.setattr(
         te,
@@ -405,7 +431,11 @@ def test_run_executor_calls_scope_estimate_on_attempt_1(monkeypatch, tmp_path):
     monkeypatch.setattr(te, "run_deterministic_git_finalizer", lambda *a, **kw: None)
     monkeypatch.setattr(te, "maybe_auto_decompose", lambda *a, **kw: False)
     monkeypatch.setattr(te, "write_fallback_evidence_manifest", lambda *a, **kw: None)
-    monkeypatch.setattr(te, "classify_outcome", lambda *a, **kw: {"outcome": "success", "evidence_type": "operator_result", "signals": []})
+    monkeypatch.setattr(
+        te,
+        "classify_outcome",
+        lambda *a, **kw: {"outcome": "success", "evidence_type": "operator_result", "signals": []},
+    )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
     monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
 
@@ -626,8 +656,10 @@ def test_compute_scope_estimate_no_regression_hub_unreachable(monkeypatch):
 
 def test_compute_scope_estimate_no_regression_raises(monkeypatch):
     """recall_scope_lessons raising → silently falls back to textual-only."""
+
     def boom(task, **kw):
         raise RuntimeError("hub exploded")
+
     monkeypatch.setattr(scope, "recall_scope_lessons", boom)
     task = _task(title="Fix a small bug", description="Short fix.")
     result = te.compute_scope_estimate(task)
@@ -678,6 +710,7 @@ def test_compute_scope_estimate_calls_recall_scope_lessons(monkeypatch):
 def test_compute_scope_estimate_public_signature_unchanged():
     """Public signature: (task: Dict) -> Dict — unchanged after refactor."""
     import inspect
+
     sig = inspect.signature(te.compute_scope_estimate)
     params = list(sig.parameters.keys())
     assert params == ["task"], "Public signature must remain (task,); got: %r" % params

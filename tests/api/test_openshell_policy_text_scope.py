@@ -22,7 +22,8 @@ from mac.models import OpenShellPolicy, OpenShellPolicyVersion
 from mac.services import ControlPlane
 
 SECRET_HOST = "hub-internal.example.invalid"
-POLICY_TEXT = """version: 1
+POLICY_TEXT = (
+    """version: 1
 
 network_policies:
   mac_hub:
@@ -30,7 +31,9 @@ network_policies:
     endpoints:
       - host: %s
         port: 8789
-""" % SECRET_HOST
+"""
+    % SECRET_HOST
+)
 
 
 def _headers(token: str) -> dict:
@@ -67,9 +70,18 @@ def fleet():
 
 def test_policy_to_dict_omits_text_by_default():
     policy = OpenShellPolicy(
-        id="p", name="n", description="", policy_text=POLICY_TEXT,
-        parsed_metadata={}, version=1, checksum="sha256:x", created_by="h",
-        updated_by="h", active=True, created_at="t", updated_at="t",
+        id="p",
+        name="n",
+        description="",
+        policy_text=POLICY_TEXT,
+        parsed_metadata={},
+        version=1,
+        checksum="sha256:x",
+        created_by="h",
+        updated_by="h",
+        active=True,
+        created_at="t",
+        updated_at="t",
         deleted_at=None,
     )
     assert "policy_text" not in policy.to_dict()
@@ -82,8 +94,14 @@ def test_policy_to_dict_omits_text_by_default():
 def test_policy_version_to_dict_omits_text_by_default():
     """A version history is a history of guardrail sources — equally sensitive."""
     version = OpenShellPolicyVersion(
-        id="v", policy_id="p", version=2, policy_text=POLICY_TEXT,
-        parsed_metadata={}, checksum="sha256:x", created_by="h", created_at="t",
+        id="v",
+        policy_id="p",
+        version=2,
+        policy_text=POLICY_TEXT,
+        parsed_metadata={},
+        checksum="sha256:x",
+        created_by="h",
+        created_at="t",
     )
     assert "policy_text" not in version.to_dict()
     assert version.to_dict(include_text=True)["policy_text"] == POLICY_TEXT
@@ -124,8 +142,7 @@ def test_text_bearing_routes_require_admin(method, path_template):
 def test_identity_views_stay_readable(path_template):
     """Narrowing must not break drift detection or the dashboard."""
     assert (
-        _required_scope("GET", path_template % {"policy": "ospol_1", "agent": "agent_1"})
-        == "read"
+        _required_scope("GET", path_template % {"policy": "ospol_1", "agent": "agent_1"}) == "read"
     )
 
 
@@ -153,9 +170,7 @@ def test_status_still_reports_convergence_without_the_text(fleet):
     """The dashboard needs to know WHICH policy is assigned and whether the host
     converged — not the guardrail body."""
     client, _cp, policy, mine, _other = fleet
-    body = client.get(
-        "/agents/%s/openshell/status" % mine.id, headers=_headers("reader")
-    ).json()
+    body = client.get("/agents/%s/openshell/status" % mine.id, headers=_headers("reader")).json()
     assert body["policy"]["policy_id" if "policy_id" in body["policy"] else "id"] == policy.id
     assert body["policy"]["checksum"] == policy.checksum
     assert "policy_text" not in body["policy"]
@@ -174,17 +189,24 @@ def test_dashboard_still_lists_policies_without_their_text(fleet):
 def test_read_and_write_tokens_are_denied_the_text_routes(fleet):
     client, _cp, policy, _mine, _other = fleet
     for token in ("reader", "writer"):
-        assert client.get(
-            "/openshell/policies/%s" % policy.id, headers=_headers(token)
-        ).status_code == 403
-        assert client.get(
-            "/openshell/policies/%s/versions" % policy.id, headers=_headers(token)
-        ).status_code == 403
-        assert client.post(
-            "/openshell/policies/%s/render" % policy.id,
-            headers=_headers(token),
-            json={"agent_user": "u", "hub_host": "h.example", "hub_port": 8789},
-        ).status_code == 403
+        assert (
+            client.get("/openshell/policies/%s" % policy.id, headers=_headers(token)).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/openshell/policies/%s/versions" % policy.id, headers=_headers(token)
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                "/openshell/policies/%s/render" % policy.id,
+                headers=_headers(token),
+                json={"agent_user": "u", "hub_host": "h.example", "hub_port": 8789},
+            ).status_code
+            == 403
+        )
 
 
 def test_render_was_reachable_with_a_write_token_before_this_change(fleet):
@@ -203,9 +225,7 @@ def test_render_was_reachable_with_a_write_token_before_this_change(fleet):
 def test_admin_still_gets_the_text_it_needs(fleet):
     """`mac openshell policy show` must keep working for operators."""
     client, _cp, policy, _mine, _other = fleet
-    body = client.get(
-        "/openshell/policies/%s" % policy.id, headers=_headers("admin")
-    ).json()
+    body = client.get("/openshell/policies/%s" % policy.id, headers=_headers("admin")).json()
     assert body["policy_text"] == POLICY_TEXT.strip()
 
     versions = client.get(
@@ -217,9 +237,7 @@ def test_admin_still_gets_the_text_it_needs(fleet):
 def test_agent_self_service_route_is_unaffected(fleet):
     """The worker still converges: it needs the text for its OWN policy."""
     client, _cp, policy, mine, _other = fleet
-    body = client.get(
-        "/agents/%s/openshell/policy" % mine.id, headers=_headers("mine")
-    ).json()
+    body = client.get("/agents/%s/openshell/policy" % mine.id, headers=_headers("mine")).json()
     assert body["policy_text"] == POLICY_TEXT.strip()
     assert body["checksum"] == policy.checksum
 
@@ -256,14 +274,10 @@ def test_cli_policy_show_and_versions_keep_the_text_on_the_db_path(fleet):
 
     _client, cp, policy, _mine, _other = fleet
 
-    shown = _cli_json(
-        cli.cmd_openshell_policy_show, Namespace(policy=policy.id), cp
-    )
+    shown = _cli_json(cli.cmd_openshell_policy_show, Namespace(policy=policy.id), cp)
     assert shown["policy_text"] == policy.policy_text
 
-    versions = _cli_json(
-        cli.cmd_openshell_policy_versions, Namespace(policy=policy.id), cp
-    )
+    versions = _cli_json(cli.cmd_openshell_policy_versions, Namespace(policy=policy.id), cp)
     assert versions and all("policy_text" in v for v in versions)
 
 
@@ -274,7 +288,5 @@ def test_cli_policy_list_stays_text_free(fleet):
     from mac import cli
 
     _client, cp, _policy, _mine, _other = fleet
-    listed = _cli_json(
-        cli.cmd_openshell_policy_list, Namespace(include_deleted=False), cp
-    )
+    listed = _cli_json(cli.cmd_openshell_policy_list, Namespace(include_deleted=False), cp)
     assert listed and all("policy_text" not in item for item in listed)

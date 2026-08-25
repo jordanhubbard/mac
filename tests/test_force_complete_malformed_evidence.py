@@ -37,7 +37,7 @@ from mac.services import ControlPlane
 @pytest.mark.parametrize(
     "value",
     [
-        ["repository_url"],          # the shape that caused the outage
+        ["repository_url"],  # the shape that caused the outage
         "postgresql://host/db",
         7,
         [["a", 1], ["b"]],
@@ -46,7 +46,7 @@ from mac.services import ControlPlane
     ],
 )
 def test_a_non_object_becomes_an_empty_object(value):
-    """"Not an object" and "no object" are the same answer to every caller."""
+    """ "Not an object" and "no object" are the same answer to every caller."""
     assert ensure_json_object(value) == {}
 
 
@@ -184,9 +184,7 @@ def test_reopen_then_force_complete_is_possible():
     agent = cp.register_agent(machine.id, "reopen-worker", capabilities=["python"])
     assignment = cp.claim_task_v2(task.id, agent.id, lease_seconds=600)
     lease_id = getattr(assignment, "lease_id", None) or cp.get_task(task.id).lease_id
-    cp.transition_task(
-        task.id, "blocked", agent.id, {"reason": "stuck"}, lease_id=lease_id
-    )
+    cp.transition_task(task.id, "blocked", agent.id, {"reason": "stuck"}, lease_id=lease_id)
 
     reopened = cp.reopen_task(task.id, "operator", "needs rework")
     assert reopened.state == "open"

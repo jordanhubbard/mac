@@ -46,18 +46,16 @@ def _run_postgres_install_enabled(
     snippet = "\n".join(
         [
             "log() { printf '%s\\n' \"$*\" >&2; }",
-            f'POSTGRES_URL_CONFIGURED={postgres_url_configured!r}',
-            f'POSTGRES_INSTALL={postgres_install!r}',
-            f'AGENT={agent!r}',
-            f'SHARED_SERVICES_MANAGER_AGENT={shared_services_manager_agent!r}',
+            f"POSTGRES_URL_CONFIGURED={postgres_url_configured!r}",
+            f"POSTGRES_INSTALL={postgres_install!r}",
+            f"AGENT={agent!r}",
+            f"SHARED_SERVICES_MANAGER_AGENT={shared_services_manager_agent!r}",
             _function("control_plane_enabled"),
             _function("postgres_install_enabled"),
             "postgres_install_enabled",
         ]
     )
-    return subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    return subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
 
 
 def test_operator_configured_dsn_always_wins_over_auto_install() -> None:
@@ -119,18 +117,13 @@ def test_existing_operator_database_is_preserved_before_auto_install() -> None:
 def test_install_script_forwards_the_dsn_back_to_the_caller() -> None:
     function = _function("install_or_validate_control_plane_database")
     assert "POSTGRES_DSN_OUT_FILE" in function
-    assert 'export MAC_DEPLOY_DATABASE_URL' in function
-    assert (
-        'die "install-postgres-service.sh did not report a database DSN"'
-        in function
-    )
+    assert "export MAC_DEPLOY_DATABASE_URL" in function
+    assert 'die "install-postgres-service.sh did not report a database DSN"' in function
 
 
 def test_install_script_exists_and_is_valid_bash() -> None:
     assert INSTALL_SCRIPT.exists()
-    result = subprocess.run(
-        ["bash", "-n", str(INSTALL_SCRIPT)], capture_output=True, text=True
-    )
+    result = subprocess.run(["bash", "-n", str(INSTALL_SCRIPT)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
@@ -175,13 +168,11 @@ def test_get_env_key_does_not_die_on_a_first_run_with_no_password_yet() -> None:
         [
             "set -euo pipefail",
             _extract_function(INSTALL_SCRIPT, "get_env_key"),
-            "value=\"$(get_env_key /nonexistent/file SOME_KEY)\"",
+            'value="$(get_env_key /nonexistent/file SOME_KEY)"',
             "printf 'ok:[%s]\\n' \"$value\"",
         ]
     )
-    result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok:[]"
 
@@ -190,8 +181,8 @@ def test_get_env_key_does_not_die_on_a_first_run_with_no_password_yet() -> None:
             "set -euo pipefail",
             _extract_function(INSTALL_SCRIPT, "get_env_key"),
             "tmp=$(mktemp)",
-            ": > \"$tmp\"",
-            "value=\"$(get_env_key \"$tmp\" SOME_KEY)\"",
+            ': > "$tmp"',
+            'value="$(get_env_key "$tmp" SOME_KEY)"',
             "printf 'ok:[%s]\\n' \"$value\"",
         ]
     )

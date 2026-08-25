@@ -29,9 +29,7 @@ from mac.models import (
 )
 
 
-IDENTITY_NAME_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
-)
+IDENTITY_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
 CHANNELS = {
     "discord",
     "googlechat",
@@ -164,8 +162,7 @@ class CommunicationService:
         )
         if delivery is not None:
             raise TransitionError(
-                "identity %s has human-message delivery history; disable it instead"
-                % identity.name
+                "identity %s has human-message delivery history; disable it instead" % identity.name
             )
         active_lease = self.store.query_one(
             """
@@ -278,9 +275,7 @@ class CommunicationService:
             (account.id,),
         )
         if delivery is not None:
-            raise TransitionError(
-                "communication account has delivery history; disable it instead"
-            )
+            raise TransitionError("communication account has delivery history; disable it instead")
         active_lease = self.store.query_one(
             "SELECT id FROM gateway_identity_leases WHERE account_id = ? AND leased_until > ? LIMIT 1",
             (account.id, utcnow()),
@@ -530,9 +525,7 @@ class CommunicationService:
         )
         return self.get_gateway_lease(lease.id)
 
-    def release_gateway_lease(
-        self, lease_id: str, agent_id: str, fencing_token: str
-    ) -> None:
+    def release_gateway_lease(self, lease_id: str, agent_id: str, fencing_token: str) -> None:
         lease = self.get_gateway_lease(lease_id)
         if lease.agent_id != agent_id or lease.fencing_token != fencing_token:
             raise TransitionError("gateway lease ownership or fencing token mismatch")
@@ -642,7 +635,11 @@ class CommunicationService:
         self._observe(
             "communication.delivery.queued",
             delivery_id,
-            {"identity_id": identity.id, "account_id": account.id, "origin_agent_id": origin_agent_id},
+            {
+                "identity_id": identity.id,
+                "account_id": account.id,
+                "origin_agent_id": origin_agent_id,
+            },
         )
         return self.get_delivery(delivery_id)
 
@@ -740,9 +737,7 @@ class CommunicationService:
         if delivery.status != "delivering" or delivery.delivery_agent_id != agent_id:
             raise TransitionError("human delivery is not leased to agent %s" % agent_id)
         status = (
-            "pending"
-            if retryable and delivery.attempt_count < delivery.max_attempts
-            else "failed"
+            "pending" if retryable and delivery.attempt_count < delivery.max_attempts else "failed"
         )
         now = utcnow()
         self.store.execute(
@@ -755,7 +750,9 @@ class CommunicationService:
             (status, str(error or "delivery failed")[:2000], now, delivery.id, agent_id),
         )
         self._observe(
-            "communication.delivery.failed" if status == "failed" else "communication.delivery.retry",
+            "communication.delivery.failed"
+            if status == "failed"
+            else "communication.delivery.retry",
             delivery.id,
             {"agent_id": agent_id, "attempt_count": delivery.attempt_count},
         )
@@ -836,11 +833,7 @@ class CommunicationService:
     def _resolved_representation(
         self, agent_id: str, binding: RepresentationBinding
     ) -> Dict[str, Any]:
-        identity = (
-            self.get_identity(binding.identity_id).to_dict()
-            if binding.identity_id
-            else None
-        )
+        identity = self.get_identity(binding.identity_id).to_dict() if binding.identity_id else None
         return {
             "agent_id": agent_id,
             "mode": binding.mode,

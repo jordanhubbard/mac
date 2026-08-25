@@ -189,9 +189,7 @@ def test_dispatch_result_wrapper_debug_and_mapping_protocol() -> None:
     assert bool(value)
     with pytest.raises(AttributeError):
         _ = value.missing
-    assert _wrap_list({"unexpected": "mapping"})[0].to_dict() == {
-        "unexpected": "mapping"
-    }
+    assert _wrap_list({"unexpected": "mapping"})[0].to_dict() == {"unexpected": "mapping"}
 
 
 def test_update_agent_uses_hub_put_endpoint_and_preserves_actor() -> None:

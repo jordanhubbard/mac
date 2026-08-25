@@ -27,6 +27,7 @@ both ``services`` and ``allocator`` (``services`` imports ``allocator``, so the
 shared rule cannot live in either) and imports nothing from mac, which is what
 keeps it importable from anywhere.
 """
+
 from __future__ import annotations
 
 from typing import Any, Mapping, Optional
@@ -52,9 +53,7 @@ DEGRADED = "degraded"
 SELF_TEST_CLEARING_STATUSES = frozenset({"passed", DEGRADED})
 
 
-def startup_self_test_clears_dispatch(
-    startup: Any, *, agent_id: str
-) -> bool:
+def startup_self_test_clears_dispatch(startup: Any, *, agent_id: str) -> bool:
     """True when this startup self-test clears its agent for dispatch.
 
     Requires the reviewed schema, a self-test belonging to THIS agent, a

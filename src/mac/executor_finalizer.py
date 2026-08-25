@@ -223,9 +223,7 @@ def recover_from_new_file_refusal(
     try:
         preserved = load_preserved_executor_state(workspace)
     except PreservationMissing as exc:
-        raise RepositoryRecoveryError(
-            "preserved executor state is unusable: %s" % exc
-        ) from exc
+        raise RepositoryRecoveryError("preserved executor state is unusable: %s" % exc) from exc
 
     refusal_manifest = _read_executor_evidence_payload(workspace)
     repo_section = refusal_manifest.get("repo")
@@ -245,9 +243,7 @@ def recover_from_new_file_refusal(
 
     worktree = preserved.worktree_path
     if not worktree or not worktree.is_dir():
-        raise RepositoryRecoveryError(
-            "preserved worktree is missing: %s" % worktree
-        )
+        raise RepositoryRecoveryError("preserved worktree is missing: %s" % worktree)
 
     new_files = sorted(
         {
@@ -263,16 +259,16 @@ def recover_from_new_file_refusal(
     for path in new_files:
         added = run_git(["add", "--", path], worktree)
         if getattr(added, "returncode", 1) != 0:
-            raise RepositoryRecoveryError(
-                "could not stage preserved new file: %s" % path
-            )
+            raise RepositoryRecoveryError("could not stage preserved new file: %s" % path)
         recovered_files.append(path)
 
     staged = run_git(["diff", "--cached", "--quiet"], worktree)
     if getattr(staged, "returncode", 0) != 1:
         raise RepositoryRecoveryError("recovery produced no staged repository change")
 
-    task_id = str(task.get("id") or preserved.executor_evidence.get("task", {}).get("id") or "").strip()
+    task_id = str(
+        task.get("id") or preserved.executor_evidence.get("task", {}).get("id") or ""
+    ).strip()
     if not task_id:
         raise RepositoryRecoveryError("preserved task has no id")
     title = str(task.get("title") or task_id).strip()
@@ -309,9 +305,7 @@ def recover_from_new_file_refusal(
                 % (sync.get("reason") or sync.get("status"))
             )
         if not lease_id:
-            raise RepositoryRecoveryError(
-                "repository context is missing repository_lease_id"
-            )
+            raise RepositoryRecoveryError("repository context is missing repository_lease_id")
         target = resolve_canonical_publication_target(
             worktree=worktree,
             canonical_remote=canonical_remote,
@@ -328,7 +322,8 @@ def recover_from_new_file_refusal(
 
     if not getattr(publication, "ok", False) or not getattr(publication, "remote_verified", False):
         raise RepositoryRecoveryError(
-            "guarded recovery push failed: %s" % (getattr(publication, "error", "") or "unknown error")
+            "guarded recovery push failed: %s"
+            % (getattr(publication, "error", "") or "unknown error")
         )
 
     return {
@@ -501,9 +496,7 @@ def _fsync_regular_file(path: Path) -> None:
     try:
         details = os.fstat(descriptor)
         if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
-            raise PreservationMissing(
-                "repository WIP artifact is not a single-link regular file"
-            )
+            raise PreservationMissing("repository WIP artifact is not a single-link regular file")
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -531,9 +524,7 @@ def preserve_repository_wip_bundle(
     try:
         context = json.loads(context_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - caller retains the sandbox
-        raise PreservationMissing(
-            "repository-worktree.json is missing or invalid"
-        ) from exc
+        raise PreservationMissing("repository-worktree.json is missing or invalid") from exc
     if not isinstance(context, dict):
         raise PreservationMissing("repository-worktree.json must contain an object")
 
@@ -544,9 +535,7 @@ def preserve_repository_wip_bundle(
         worktree = Path(worktree_raw).expanduser().resolve(strict=True)
         worktree.relative_to(workspace)
     except (OSError, ValueError) as exc:
-        raise PreservationMissing(
-            "repository worktree is outside the task workspace"
-        ) from exc
+        raise PreservationMissing("repository worktree is outside the task workspace") from exc
 
     def run_git(
         args: List[str],
@@ -610,35 +599,27 @@ def preserve_repository_wip_bundle(
 
     head_sha = run_git(["rev-parse", "--verify", "HEAD^{commit}"]).stdout.strip()
     base_sha = str(
-        context.get("repository_base_sha")
-        or _repository_prepared_base(dict(task))
-        or ""
+        context.get("repository_base_sha") or _repository_prepared_base(dict(task)) or ""
     ).strip()
     if not base_sha:
         raise PreservationMissing("repository prepared base SHA is missing")
-    base_sha = run_git(
-        ["rev-parse", "--verify", "%s^{commit}" % base_sha]
-    ).stdout.strip()
-    status = run_git(
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
-    ).stdout
+    base_sha = run_git(["rev-parse", "--verify", "%s^{commit}" % base_sha]).stdout.strip()
+    status = run_git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]).stdout
     dirty = bool(status)
 
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise PreservationMissing("task id is missing")
     lease_id = str(
-        context.get("repository_lease_id")
-        or _repository_lease_id(dict(task))
-        or ""
+        context.get("repository_lease_id") or _repository_lease_id(dict(task)) or ""
     ).strip()
     if not lease_id:
         raise PreservationMissing("repository lease id is missing")
 
     context_digest = "sha256:%s" % hashlib.sha256(context_path.read_bytes()).hexdigest()
-    status_digest = "sha256:%s" % hashlib.sha256(
-        status.encode("utf-8", errors="surrogateescape")
-    ).hexdigest()
+    status_digest = (
+        "sha256:%s" % hashlib.sha256(status.encode("utf-8", errors="surrogateescape")).hexdigest()
+    )
     changed_file_count = len([item for item in status.split("\0") if item])
     if not dirty and head_sha == base_sha:
         result = {
@@ -670,12 +651,8 @@ def preserve_repository_wip_bundle(
 
     safe_task = safe_path_component(task_id) or "task"
     safe_lease = safe_path_component(lease_id) or "lease"
-    temporary_index = workspace / (
-        ".repository-wip-%s-%d.index" % (safe_lease, os.getpid())
-    )
-    temporary_bundle = workspace / (
-        ".repository-wip-%s-%d.bundle.tmp" % (safe_lease, os.getpid())
-    )
+    temporary_index = workspace / (".repository-wip-%s-%d.index" % (safe_lease, os.getpid()))
+    temporary_bundle = workspace / (".repository-wip-%s-%d.bundle.tmp" % (safe_lease, os.getpid()))
     salvage_head = head_sha
     bundle_ref = ""
     try:
@@ -689,9 +666,7 @@ def preserve_repository_wip_bundle(
             }
             run_git(["read-tree", head_sha], environment=index_environment)
             run_git(["add", "-A", "--", "."], environment=index_environment)
-            tree_sha = run_git(
-                ["write-tree"], environment=index_environment
-            ).stdout.strip()
+            tree_sha = run_git(["write-tree"], environment=index_environment).stdout.strip()
             salvage_head = run_git(
                 [
                     "commit-tree",
@@ -729,9 +704,7 @@ def preserve_repository_wip_bundle(
                 "repository WIP bundle is %d bytes; durable artifact limit is %d"
                 % (bundle_size, bundle_limit)
             )
-        bundle_digest = "sha256:%s" % hashlib.sha256(
-            temporary_bundle.read_bytes()
-        ).hexdigest()
+        bundle_digest = "sha256:%s" % hashlib.sha256(temporary_bundle.read_bytes()).hexdigest()
         bundle_name = "repository-wip-%s-%s.bundle" % (
             safe_lease,
             salvage_head[:12],
@@ -743,9 +716,7 @@ def preserve_repository_wip_bundle(
                 raise PreservationMissing(
                     "immutable repository WIP bundle path is not a single-link regular file"
                 )
-            existing_digest = "sha256:%s" % hashlib.sha256(
-                bundle_path.read_bytes()
-            ).hexdigest()
+            existing_digest = "sha256:%s" % hashlib.sha256(bundle_path.read_bytes()).hexdigest()
             if existing_digest != bundle_digest:
                 raise PreservationMissing(
                     "immutable repository WIP bundle name already exists with different content"
@@ -1103,8 +1074,7 @@ class _FinalizerPhaseContext:
     def __exit__(self, exc_type: Any, exc_value: Any, _traceback: Any) -> bool:
         elapsed_ms = (time.monotonic() - self._started) * 1000.0
         timed_out = bool(
-            exc_type is not None
-            and issubclass(exc_type, (TimeoutError, subprocess.TimeoutExpired))
+            exc_type is not None and issubclass(exc_type, (TimeoutError, subprocess.TimeoutExpired))
         )
         cancelled = bool(
             exc_type is not None and issubclass(exc_type, (KeyboardInterrupt, SystemExit))
@@ -1127,7 +1097,9 @@ class _FinalizerPhaseContext:
         event = (
             "finalizer_phase_timeout"
             if timed_out
-            else "finalizer_phase_cancelled" if cancelled else "finalizer_phase_completed"
+            else "finalizer_phase_cancelled"
+            if cancelled
+            else "finalizer_phase_completed"
         )
         emit_telemetry(
             event,
@@ -1305,12 +1277,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "repository_snapshot",
         partial_evidence_fn=_partial_evidence,
     ) as phase:
-        status = _git(
-            ["status", "--porcelain"], worktree_path, timeout=phase.remaining
-        )
-        tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(
-            status.stdout
-        )
+        status = _git(["status", "--porcelain"], worktree_path, timeout=phase.remaining)
+        tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(status.stdout)
         if tracked_lines or untracked_paths or staged_new_paths:
             add = _git(["add", "-A"], worktree_path, timeout=phase.remaining)
             if add.returncode != 0:
@@ -1463,9 +1431,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 isolation_key="%s-%s" % (str(task.get("id") or "task"), lease_id),
                 timeout=phase.remaining,
             )
-            freshness = check_canonical_freshness(
-                publication_target, timeout=phase.remaining
-            )
+            freshness = check_canonical_freshness(publication_target, timeout=phase.remaining)
         except (OSError, ValueError) as exc:
             freshness = CanonicalFreshnessResult(
                 False,
@@ -1489,9 +1455,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "codegraph_audit",
         partial_evidence_fn=_partial_evidence,
     ) as phase:
-        codegraph = run_codegraph_audit(
-            worktree_path, files_changed, timeout=phase.remaining
-        )
+        codegraph = run_codegraph_audit(worktree_path, files_changed, timeout=phase.remaining)
         progress["codegraph"] = codegraph
         # CodeGraph is advisory. Preserve its result without failing publication.
     codegraph_problems = codegraph_audit_manifest_problems(
@@ -1508,9 +1472,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     pushed = False
     pull_request: Optional[dict] = None
     publication: Optional[CanonicalFreshnessResult] = None
-    push_remote_display = (
-        freshness.target.remote_display if freshness.target is not None else ""
-    )
+    push_remote_display = freshness.target.remote_display if freshness.target is not None else ""
     if bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok:
         assert publication_target is not None
         with _FinalizerPhaseContext(
@@ -1604,9 +1566,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "canonical_tip_sha": head_sha if integrated_on_canonical else "",
         "head_sha": head_sha,
         "remote_verified": bool(
-            integrated_on_canonical
-            and publication is not None
-            and publication.remote_verified
+            integrated_on_canonical and publication is not None and publication.remote_verified
         ),
     }
     manifest = {
@@ -1635,14 +1595,19 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "tests": [tests] if tests is not None else None,
         "push": push_evidence,
         "checks": (
-            ([codegraph_audit_check(codegraph)] if str(codegraph.get("status") or "") != "skipped" else [])
+            (
+                [codegraph_audit_check(codegraph)]
+                if str(codegraph.get("status") or "") != "skipped"
+                else []
+            )
             + [
-            {
-                "name": "git_finalizer",
-                "returncode": 0 if all_ok else 1,
-                "status": "pass" if all_ok else "fail",
-            }
-        ]),
+                {
+                    "name": "git_finalizer",
+                    "returncode": 0 if all_ok else 1,
+                    "status": "pass" if all_ok else "fail",
+                }
+            ]
+        ),
     }
     if freshness_error is not None:
         manifest["freshness_error"] = freshness_error
@@ -1663,9 +1628,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         if not all_ok:
             phase.mark_failed(
                 str(
-                    push_evidence.get("reason")
-                    or push_evidence.get("stderr")
-                    or "finalizer failed"
+                    push_evidence.get("reason") or push_evidence.get("stderr") or "finalizer failed"
                 )
             )
     emit_telemetry(
@@ -1710,9 +1673,7 @@ def _cooperative_integration_check(
         task_id = str(output.get("task_id") or "unknown").strip()
         status = str(output.get("status") or "").strip()
         if status != "ready" or not head_sha or not evidence_id:
-            problems.append(
-                "cooperative child %s has no verifiable completed output" % task_id
-            )
+            problems.append("cooperative child %s has no verifiable completed output" % task_id)
             continue
         required.append((evidence_id, head_sha))
     verified: List[str] = []
@@ -1739,7 +1700,9 @@ def _cooperative_integration_check(
     }
 
 
-def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any], review_context: Dict[str, Any]) -> None:
+def run_deterministic_review_verdict(
+    task_workspace: Path, task: Dict[str, Any], review_context: Dict[str, Any]
+) -> None:
     """Finalize a semantic review with deterministic independent checks.
 
     The review agent owns the semantic verdict.  Deterministic checks may veto
@@ -1779,8 +1742,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     semantic_valid = (
         str(semantic_manifest.get("schema") or "").strip() == "mac.worker_evidence.v1"
         and str(semantic_manifest.get("status") or "").strip().lower() == "complete"
-        and str(semantic_manifest.get("evidence_type") or "").strip().lower()
-        == "review_verdict"
+        and str(semantic_manifest.get("evidence_type") or "").strip().lower() == "review_verdict"
         and semantic_verdict in {"approved", "rejected"}
     )
 
@@ -1856,15 +1818,10 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
                     review_worktree_path,
                 )
                 try:
-                    observed_content = read_only_repository_content_digest(
-                        review_worktree_path
-                    )
+                    observed_content = read_only_repository_content_digest(review_worktree_path)
                 except OSError:
                     observed_content = ""
-                invariant_ok = (
-                    cleaned.returncode == 0
-                    and observed_content == expected_content
-                )
+                invariant_ok = cleaned.returncode == 0 and observed_content == expected_content
             independent_pass = semantic_valid and invariant_ok
             if not independent_pass:
                 independent_problem = (
@@ -1880,17 +1837,17 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         checked_out_head = checked_out.stdout.strip() if checked_out.returncode == 0 else ""
         if ck.returncode == 0 and checked_out_head == exec_head:
             bootstrap = _run_repository_bootstrap_if_needed(review_worktree_path, task)
-            test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
+            test_cmd = (
+                _repository_contract_test_command(task) or "scripts/run-contract-tests.sh"
+            ).strip()
             tr = run_with_stall_watchdog(["bash", "-lc", test_cmd], review_worktree_path)
             bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
-            codegraph = run_codegraph_audit(review_worktree_path, exec_repo.get("files_changed") or [])
+            codegraph = run_codegraph_audit(
+                review_worktree_path, exec_repo.get("files_changed") or []
+            )
             integration = _cooperative_integration_check(task, review_worktree_path)
             integration_ok = integration is None or integration.get("status") == "pass"
-            independent_pass = (
-                bootstrap_ok
-                and tr.returncode == 0
-                and integration_ok
-            )
+            independent_pass = bootstrap_ok and tr.returncode == 0 and integration_ok
             tests = {
                 "command": test_cmd,
                 "returncode": int(tr.returncode),
@@ -1911,7 +1868,9 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         else "rejected"
     )
     digest_head = str(exec_access.get("base_sha") or "") if read_only_report_review else exec_head
-    digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
+    digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode(
+        "utf-8"
+    )
     import hashlib as _hashlib
 
     worktree_digest = "sha256:" + _hashlib.sha256(digest_input).hexdigest()
@@ -1953,7 +1912,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
                 "name": "review_verdict_finalizer",
                 "returncode": 0 if independent_pass else 1,
                 "status": "pass" if independent_pass else "fail",
-            }
+            },
         ],
         # mac-wjy3: canonical list shape (see run_deterministic_git_finalizer).
         "tests": [tests] if tests is not None else None,
@@ -1966,7 +1925,15 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             **exec_access,
             "independent_review_verified": independent_pass,
         }
-    for key in ("summary", "feedback", "findings", "llm", "llm_model", "opencode_model", "gateway_model"):
+    for key in (
+        "summary",
+        "feedback",
+        "findings",
+        "llm",
+        "llm_model",
+        "opencode_model",
+        "gateway_model",
+    ):
         if key in semantic_manifest:
             manifest[key] = semantic_manifest[key]
     if verdict == "rejected" and not any(
@@ -1980,9 +1947,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             manifest["feedback"] = independent_problem or "independent verification failed"
     elif verdict == "rejected" and independent_problem and semantic_verdict == "approved":
         existing = str(manifest.get("feedback") or "").strip()
-        manifest["feedback"] = "; ".join(
-            part for part in (existing, independent_problem) if part
-        )
+        manifest["feedback"] = "; ".join(part for part in (existing, independent_problem) if part)
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
     if codegraph is not None:
@@ -1992,9 +1957,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     assignment = _review_experiment_assignment(task)
     if assignment:
         protocol = _read_json_object(task_workspace / "review-protocol.json")
-        independent = _read_json_object(
-            task_workspace / "review-independent-findings.json"
-        )
+        independent = _read_json_object(task_workspace / "review-independent-findings.json")
         experiment_record = dict(assignment)
         if assignment.get("blind"):
             experiment_record["protocol"] = protocol or {
@@ -2012,9 +1975,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         manifest["review_experiment"] = experiment_record
         if independent.get("schema") == "mac.independent_review_findings.v1":
             manifest["independent_findings"] = (
-                independent.get("findings")
-                if isinstance(independent.get("findings"), list)
-                else []
+                independent.get("findings") if isinstance(independent.get("findings"), list) else []
             )
             manifest["independent_no_findings_reason"] = str(
                 independent.get("no_findings_reason") or ""
@@ -2025,7 +1986,9 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     )
 
 
-def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any], result, review_context) -> None:
+def write_fallback_evidence_manifest(
+    task_workspace: Path, task: Dict[str, Any], result, review_context
+) -> None:
     """autonomy-loop fix (loop-01): the fallback must never fabricate *verified*
     completion. It records the agent's output as an UNVERIFIED operator_result
     (never a fake repo_change/test, no synthetic passing check), so a
@@ -2055,4 +2018,6 @@ def write_fallback_evidence_manifest(task_workspace: Path, task: Dict[str, Any],
     recovery_log = _load_harness_recovery_log(task_workspace)
     if recovery_log:
         manifest["recovery"] = recovery_log
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )

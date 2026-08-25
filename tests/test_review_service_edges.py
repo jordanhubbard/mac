@@ -78,9 +78,7 @@ def test_request_review_transition_and_existing_review_paths(monkeypatch) -> Non
 def test_submit_review_validation_and_verdict_finder_edges(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     service = cp.reviews
-    monkeypatch.setattr(
-        service, "current_review_target_evidence_id", lambda *_a: "executor"
-    )
+    monkeypatch.setattr(service, "current_review_target_evidence_id", lambda *_a: "executor")
     monkeypatch.setattr(service, "get_review", lambda *_a: _review())
     with pytest.raises(AuthorizationError):
         service.submit_review("review", "approved", "other", evidence_id="e")
@@ -97,12 +95,24 @@ def test_submit_review_validation_and_verdict_finder_edges(monkeypatch) -> None:
         service.submit_review("review", "approved", "reviewer", evidence_id="e")
 
     service._find_verdict_evidence = lambda *_a, **_k: (None, ["bad signature"])
-    monkeypatch.setattr(service, "_get_evidence", lambda *_a: _evidence(metadata={"verification": {}}))
+    monkeypatch.setattr(
+        service, "_get_evidence", lambda *_a: _evidence(metadata={"verification": {}})
+    )
     with pytest.raises(ValidationError, match="missing verification"):
         service.submit_review("review", "approved", "reviewer", evidence_id="e")
     verdict_manifest = {"reviewed_evidence_id": "executor", "llm": {"model": "same"}}
     verdict = _evidence(metadata={"verification": verdict_manifest})
-    monkeypatch.setattr(service, "_get_evidence", lambda evidence_id: verdict if evidence_id == "e" else _evidence(metadata={"verification": {"llm": {"model": "same"}, "agent_generated": True}}))
+    monkeypatch.setattr(
+        service,
+        "_get_evidence",
+        lambda evidence_id: (
+            verdict
+            if evidence_id == "e"
+            else _evidence(
+                metadata={"verification": {"llm": {"model": "same"}, "agent_generated": True}}
+            )
+        ),
+    )
     with pytest.raises(ValidationError, match="signed review_verdict"):
         service.submit_review("review", "approved", "reviewer", evidence_id="e")
     service._find_verdict_evidence = lambda *_a, **_k: (verdict, [])
@@ -214,10 +224,17 @@ def test_owner_and_latest_executor_evidence_helpers(monkeypatch) -> None:
     monkeypatch.setattr(service, "_get_task", lambda *_a: _task())
     monkeypatch.setattr(service.store, "query_one", lambda *_a, **_k: {"found": 1})
     assert service.agent_has_owned_task("task", "agent") is True
-    monkeypatch.setattr(service.store, "query_all", lambda *_a, **_k: [
-        {"created_by": "reviewer", "metadata": json.dumps({"verification": {"evidence_type": "review_verdict"}})},
-        {"created_by": "executor", "metadata": "not-json"},
-    ])
+    monkeypatch.setattr(
+        service.store,
+        "query_all",
+        lambda *_a, **_k: [
+            {
+                "created_by": "reviewer",
+                "metadata": json.dumps({"verification": {"evidence_type": "review_verdict"}}),
+            },
+            {"created_by": "executor", "metadata": "not-json"},
+        ],
+    )
     assert service.latest_executor_evidence_author("task") == "executor"
     monkeypatch.setattr(service.store, "query_all", lambda *_a, **_k: [])
     assert service.latest_executor_evidence_author("task") is None
@@ -226,10 +243,12 @@ def test_owner_and_latest_executor_evidence_helpers(monkeypatch) -> None:
 def test_feedback_bounding_and_manifest_shapes() -> None:
     service = ControlPlane.in_memory().reviews
     assert service._bounded_review_findings("bad") == []
-    findings = service._bounded_review_findings([
-        "bad",
-        {"severity": "x" * 100, "path": "p" * 600, "line": "bad", "message": "m" * 3000},
-    ])
+    findings = service._bounded_review_findings(
+        [
+            "bad",
+            {"severity": "x" * 100, "path": "p" * 600, "line": "bad", "message": "m" * 3000},
+        ]
+    )
     assert len(findings) == 1
     assert len(findings[0]["severity"]) == 64
     assert findings[0]["line"] is None
@@ -249,6 +268,9 @@ def test_feedback_bounding_and_manifest_shapes() -> None:
 def test_publication_policy_requires_dictionary() -> None:
     service = ControlPlane.in_memory().reviews
     assert service.task_requires_publication_evidence(_task(metadata={"policy": "bad"})) is False
-    assert service.task_requires_publication_evidence(
-        _task(metadata={"policy": {"publication_evidence_required": True}})
-    ) is True
+    assert (
+        service.task_requires_publication_evidence(
+            _task(metadata={"policy": {"publication_evidence_required": True}})
+        )
+        is True
+    )

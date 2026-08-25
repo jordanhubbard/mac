@@ -124,31 +124,37 @@ def test_cli_requires_private_material_and_writes_private_outputs(tmp_path: Path
     source.chmod(0o600)
     plan = private / "plan.json"
     request = private / "request.json"
-    assert material.main(
-        [
-            "open",
-            "--material",
-            str(source),
-            "--plan-out",
-            str(plan),
-            "--request-out",
-            str(request),
-        ]
-    ) == 0
+    assert (
+        material.main(
+            [
+                "open",
+                "--material",
+                str(source),
+                "--plan-out",
+                str(plan),
+                "--request-out",
+                str(request),
+            ]
+        )
+        == 0
+    )
     assert stat.S_IMODE(plan.stat().st_mode) == 0o600
     assert stat.S_IMODE(request.stat().st_mode) == 0o600
     source.chmod(0o644)
-    assert material.main(
-        [
-            "open",
-            "--material",
-            str(source),
-            "--plan-out",
-            str(plan),
-            "--request-out",
-            str(request),
-        ]
-    ) == 2
+    assert (
+        material.main(
+            [
+                "open",
+                "--material",
+                str(source),
+                "--plan-out",
+                str(plan),
+                "--request-out",
+                str(request),
+            ]
+        )
+        == 2
+    )
 
 
 def test_helper_is_executable() -> None:

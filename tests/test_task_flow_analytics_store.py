@@ -176,19 +176,14 @@ class TestTaskCompletionModel:
 class TestFreshDatabaseTables:
     def test_tables_exist(self) -> None:
         db = ephemeral_store()
-        tables = {
-            r["name"]
-            for r in [{"name": n} for n in table_names(db)]
-        }
+        tables = {r["name"] for r in [{"name": n} for n in table_names(db)]}
         assert "task_flow_spans" in tables
         assert "task_completions" in tables
         db.close()
 
     def test_span_columns(self) -> None:
         db = ephemeral_store()
-        cols = {
-            r["name"] for r in [{"name": c} for c in column_names(db, "task_flow_spans")]
-        }
+        cols = {r["name"] for r in [{"name": c} for c in column_names(db, "task_flow_spans")]}
         expected = {
             "id",
             "task_id",
@@ -208,9 +203,7 @@ class TestFreshDatabaseTables:
 
     def test_completion_columns(self) -> None:
         db = ephemeral_store()
-        cols = {
-            r["name"] for r in [{"name": c} for c in column_names(db, "task_completions")]
-        }
+        cols = {r["name"] for r in [{"name": c} for c in column_names(db, "task_completions")]}
         expected = {
             "id",
             "task_id",
@@ -281,12 +274,7 @@ class TestFreshDatabaseTables:
 class TestPostgresSchema:
     def _schema_text(self) -> str:
         schema_path = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "mac"
-            / "data"
-            / "postgres"
-            / "schema.sql"
+            Path(__file__).resolve().parents[1] / "src" / "mac" / "data" / "postgres" / "schema.sql"
         )
         return schema_path.read_text(encoding="utf-8")
 

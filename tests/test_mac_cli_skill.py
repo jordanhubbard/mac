@@ -94,9 +94,7 @@ def test_every_command_the_skill_names_exists(tree):
         # produces is the command and nothing else.
         if parts not in tree:
             missing.append("mac " + " ".join(parts))
-    assert not missing, (
-        "the skill names commands that do not exist: %s" % ", ".join(missing)
-    )
+    assert not missing, "the skill names commands that do not exist: %s" % ", ".join(missing)
 
 
 def _mentioned_flags(text: str) -> set[tuple[tuple[str, ...], str]]:
@@ -157,9 +155,7 @@ def test_every_flag_the_skill_names_exists():
     for path, flag in sorted(_mentioned_flags(text)):
         if flag not in _options_for(path):
             missing.append("mac %s %s" % (" ".join(path), flag))
-    assert not missing, (
-        "the skill names flags that do not exist: %s" % ", ".join(missing)
-    )
+    assert not missing, "the skill names flags that do not exist: %s" % ", ".join(missing)
 
 
 def test_the_traps_it_documents_are_real(tree):

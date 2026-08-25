@@ -41,6 +41,7 @@ def test_invoke_agent_routes_to_acp_when_flagged(monkeypatch):
     sentinel = object()
     monkeypatch.setenv("MAC_EXECUTOR_BACKEND", "acp")
     monkeypatch.setattr(task_executor, "_invoke_acp_agent", lambda *a, **k: sentinel)
+
     # runner must NOT be called on the ACP path
     def _boom(*a, **k):  # pragma: no cover - asserts it is never invoked
         raise AssertionError("hermes runner should not run under backend=acp")
@@ -51,20 +52,34 @@ def test_invoke_agent_routes_to_acp_when_flagged(monkeypatch):
 
 def test_invoke_acp_agent_streams_updates_and_maps_stop_reason(monkeypatch, tmp_path):
     posted = []
-    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append((path, payload)) or True)
+    monkeypatch.setattr(
+        task_executor,
+        "_hub_post",
+        lambda path, payload, **k: posted.append((path, payload)) or True,
+    )
 
     class _FakeExecutor:
         _argv = ["fake-acp-agent"]
 
         def run(self, prompt, *, on_update, on_permission, timeout=None):
-            on_update({"sessionId": "s1", "update": {
-                "sessionUpdate": SessionUpdateKind.AGENT_MESSAGE_CHUNK,
-                "content": text_block("hello "),
-            }})
-            on_update({"sessionId": "s1", "update": {
-                "sessionUpdate": SessionUpdateKind.AGENT_MESSAGE_CHUNK,
-                "content": text_block("world"),
-            }})
+            on_update(
+                {
+                    "sessionId": "s1",
+                    "update": {
+                        "sessionUpdate": SessionUpdateKind.AGENT_MESSAGE_CHUNK,
+                        "content": text_block("hello "),
+                    },
+                }
+            )
+            on_update(
+                {
+                    "sessionId": "s1",
+                    "update": {
+                        "sessionUpdate": SessionUpdateKind.AGENT_MESSAGE_CHUNK,
+                        "content": text_block("world"),
+                    },
+                }
+            )
             on_update({"sessionId": "s1", "update": {"sessionUpdate": SessionUpdateKind.TOOL_CALL}})
             return types.SimpleNamespace(stop_reason=StopReason.END_TURN)
 
@@ -118,7 +133,9 @@ def test_invoke_acp_agent_survives_backend_exception(monkeypatch, tmp_path):
 
 def test_permission_handler_auto_approves_allow_option(monkeypatch):
     posted = []
-    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True)
+    monkeypatch.setattr(
+        task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True
+    )
     monkeypatch.setattr(task_executor, "_openshell_enabled", lambda: False)
     monkeypatch.setattr("mac.acp.permission.load_openshell_policy", lambda *a, **k: None)
     monkeypatch.delenv("MAC_ACP_PERMISSION_MODE", raising=False)
@@ -155,11 +172,17 @@ def test_permission_handler_denies_network_under_lockdown_policy(monkeypatch):
     """Unsandboxed + lockdown policy + a network tool_call -> deny (reject option),
     and the recorded action-event carries the deny reason."""
     posted = []
-    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True)
+    monkeypatch.setattr(
+        task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True
+    )
     monkeypatch.setattr(task_executor, "_openshell_enabled", lambda: False)
-    monkeypatch.setattr(task_executor, "_acp_permission_handler", task_executor._acp_permission_handler)
+    monkeypatch.setattr(
+        task_executor, "_acp_permission_handler", task_executor._acp_permission_handler
+    )
     # inject the lockdown policy via the loader
-    monkeypatch.setattr("mac.acp.permission.load_openshell_policy", lambda *a, **k: _LOCKDOWN_POLICY)
+    monkeypatch.setattr(
+        "mac.acp.permission.load_openshell_policy", lambda *a, **k: _LOCKDOWN_POLICY
+    )
     monkeypatch.setenv("MAC_ACP_PERMISSION_MODE", "policy")
 
     handler = task_executor._acp_permission_handler("task_lock")
@@ -184,7 +207,9 @@ def test_permission_handler_allows_when_sandboxed(monkeypatch):
     """Sandboxed run short-circuits to allow ('sandbox-enforced'); the policy is
     never even loaded."""
     posted = []
-    monkeypatch.setattr(task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True)
+    monkeypatch.setattr(
+        task_executor, "_hub_post", lambda path, payload, **k: posted.append(payload) or True
+    )
     monkeypatch.setattr(task_executor, "_openshell_enabled", lambda: True)
 
     def _boom(*a, **k):  # pragma: no cover - asserts it is never invoked

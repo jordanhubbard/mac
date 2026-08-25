@@ -18,6 +18,7 @@ To run an integration test against a real Qdrant, set
 ``mac memory backfill`` + ``mac memory recall``. The CLI uses the same
 VectorWriterService class.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -107,9 +108,7 @@ class _FakeQdrant:
                 if must_clauses and not _matches(stored["payload"]):
                     continue
                 score = sum(a * b for a, b in zip(vec, query_vec))
-                results.append(
-                    {"id": stored["id"], "score": score, "payload": stored["payload"]}
-                )
+                results.append({"id": stored["id"], "score": score, "payload": stored["payload"]})
             results.sort(key=lambda r: r["score"], reverse=True)
             return {"result": results[:limit], "status": "ok"}
         raise AssertionError("FakeQdrant: unhandled %s %s" % (method, url))
@@ -263,6 +262,7 @@ def test_env_backend_tokenhub_requires_full_config(cp, monkeypatch):
     raises ValidationError at writer-init time, rather than silently
     falling back to the hash stub."""
     from mac.vector_writer_service import VectorWriterService
+
     monkeypatch.setenv("MAC_MEMORY_EMBED_BACKEND", "tokenhub")
     monkeypatch.delenv("MAC_MEMORY_EMBED_MODEL", raising=False)
     monkeypatch.delenv("MAC_MEMORY_EMBED_BASE_URL", raising=False)
@@ -277,14 +277,17 @@ def test_env_backend_unknown_value_rejected(cp, monkeypatch):
     monkeypatch.setenv("MAC_MEMORY_EMBED_BACKEND", "magic")
     with pytest.raises(Exception, match="unknown MAC_MEMORY_EMBED_BACKEND"):
         from mac.vector_writer_service import VectorWriterService
+
         VectorWriterService(memory=cp.memory, qdrant_url="http://x:1")
 
 
 # mem-store-02: real embeddings are the default ("auto") whenever a model +
 # endpoint are configured; otherwise a safe hash fallback.
 
+
 def test_auto_backend_uses_real_embedder_when_configured(monkeypatch):
     import mac.vector_writer_service as v
+
     monkeypatch.delenv("MAC_MEMORY_EMBED_BACKEND", raising=False)  # default = auto
     monkeypatch.setenv("MAC_MEMORY_EMBED_BASE_URL", "http://hub/v1")
     monkeypatch.setenv("MAC_MEMORY_EMBED_API_KEY", "k")
@@ -294,9 +297,14 @@ def test_auto_backend_uses_real_embedder_when_configured(monkeypatch):
 
 def test_auto_backend_falls_back_to_hash_when_unconfigured(monkeypatch):
     import mac.vector_writer_service as v
+
     for k in (
-        "MAC_MEMORY_EMBED_BACKEND", "MAC_MEMORY_EMBED_MODEL", "MAC_MEMORY_EMBED_BASE_URL",
-        "MAC_MEMORY_EMBED_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY",
+        "MAC_MEMORY_EMBED_BACKEND",
+        "MAC_MEMORY_EMBED_MODEL",
+        "MAC_MEMORY_EMBED_BASE_URL",
+        "MAC_MEMORY_EMBED_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
     ):
         monkeypatch.delenv(k, raising=False)
     assert v.resolve_embed_fn_from_env() is None  # hash stub
@@ -307,10 +315,17 @@ def test_batch_embed_preserves_order_and_short_circuits(monkeypatch):
     import mac.vector_writer_service as v
 
     class _Resp:
-        def __init__(self, b): self._b = b
-        def read(self): return self._b
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, b):
+            self._b = b
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
 
     captured = {}
 
@@ -323,10 +338,10 @@ def test_batch_embed_preserves_order_and_short_circuits(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     fn = v.tokenhub_embedding_batch_fn(base_url="http://h/v1", api_key="k", model="m")
-    assert fn([]) == []                       # empty short-circuits (no call)
+    assert fn([]) == []  # empty short-circuits (no call)
     out = fn(["a", "b", "c"])
-    assert out == [[0.0], [1.0], [2.0]]        # sorted back into input order
-    assert captured["n"] == 3                  # one call for all three
+    assert out == [[0.0], [1.0], [2.0]]  # sorted back into input order
+    assert captured["n"] == 3  # one call for all three
 
 
 def test_batch_embed_rejects_count_mismatch(monkeypatch):
@@ -335,14 +350,23 @@ def test_batch_embed_rejects_count_mismatch(monkeypatch):
     from mac.models import ValidationError
 
     class _Resp:
-        def __init__(self, b): self._b = b
-        def read(self): return self._b
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, b):
+            self._b = b
+
+        def read(self):
+            return self._b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
 
     monkeypatch.setattr(
         "urllib.request.urlopen",
-        lambda req, timeout=None: _Resp(json.dumps({"data": [{"index": 0, "embedding": [1.0]}]}).encode()),
+        lambda req, timeout=None: _Resp(
+            json.dumps({"data": [{"index": 0, "embedding": [1.0]}]}).encode()
+        ),
     )
     fn = v.tokenhub_embedding_batch_fn(base_url="http://h/v1", api_key="k", model="m")
     with pytest.raises(ValidationError, match="returned 1 vectors for 2 inputs"):
@@ -354,6 +378,7 @@ def test_env_backend_hash_default_keeps_static_dim(cp, monkeypatch, fake_qdrant)
     MAC_MEMORY_DEFAULT_EMBEDDING_DIM — no probe call."""
     monkeypatch.delenv("MAC_MEMORY_EMBED_BACKEND", raising=False)
     from mac.vector_writer_service import VectorWriterService
+
     w = VectorWriterService(
         memory=cp.memory,
         qdrant_url="http://x:1",
@@ -415,13 +440,21 @@ def test_recall_returns_mem09_standard_shape(cp, writer, fake_qdrant):
 def test_recall_project_filter_scopes_to_payload_project(cp, writer, fake_qdrant):
     """mem-09: server-side project filter; only matching points return."""
     a = cp.add_memory(
-        task_id=None, subject_type="topic", subject_id=None,
-        record_type="note", content="alpha topic", evidence_id=None,
+        task_id=None,
+        subject_type="topic",
+        subject_id=None,
+        record_type="note",
+        content="alpha topic",
+        evidence_id=None,
         created_by="agent_one",
     )
     b = cp.add_memory(
-        task_id=None, subject_type="topic", subject_id=None,
-        record_type="note", content="beta topic", evidence_id=None,
+        task_id=None,
+        subject_type="topic",
+        subject_id=None,
+        record_type="note",
+        content="beta topic",
+        evidence_id=None,
         created_by="agent_one",
     )
     writer.embed_memory(a.id)
@@ -444,8 +477,13 @@ def test_embed_fn_returning_wrong_dim_is_rejected(cp, fake_qdrant):
     refuses rather than silently corrupting the Qdrant collection."""
     cp_local = ControlPlane.in_memory()
     record = cp_local.add_memory(
-        task_id=None, subject_type="x", subject_id=None, record_type="n",
-        content="hello", evidence_id=None, created_by="human",
+        task_id=None,
+        subject_type="x",
+        subject_id=None,
+        record_type="n",
+        content="hello",
+        evidence_id=None,
+        created_by="human",
     )
     writer = VectorWriterService(
         memory=cp_local.memory,

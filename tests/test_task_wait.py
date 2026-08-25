@@ -108,7 +108,7 @@ def test_a_task_that_needs_a_human_leaves_rather_than_stalling_the_wait():
 
 
 def test_a_departure_is_reported_not_swallowed():
-    """"We stopped waiting on this" is information the caller needs. A wait
+    """ "We stopped waiting on this" is information the caller needs. A wait
     that returns success having quietly abandoned half the work is worse than
     one that never returns."""
     wait = TaskWait({"task_1": "running", "task_2": "running"})

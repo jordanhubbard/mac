@@ -88,10 +88,14 @@ def _findings_digest(parsed: Dict[str, Any]) -> str:
     hourly timestamp noise). Falls back to the whole body if no sections parse.
     """
     sections = parsed.get("sections") or {}
-    basis = "\n".join(
-        "%s\n%s" % (name.strip().lower(), (body or "").strip())
-        for name, body in sorted(sections.items())
-    ) if sections else ""
+    basis = (
+        "\n".join(
+            "%s\n%s" % (name.strip().lower(), (body or "").strip())
+            for name, body in sorted(sections.items())
+        )
+        if sections
+        else ""
+    )
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 
@@ -206,7 +210,5 @@ def import_dream_logs(
                 )
                 report["embedded"] += 1
             except Exception as exc:  # noqa: BLE001 - memory persists even if embed fails
-                report["errors"].append(
-                    {"file": path.name, "phase": "embed", "error": str(exc)}
-                )
+                report["errors"].append({"file": path.name, "phase": "embed", "error": str(exc)})
     return report

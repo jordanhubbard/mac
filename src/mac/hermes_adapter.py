@@ -305,15 +305,11 @@ class HermesMacAdapter:
         tasks = context.get("tasks") or []
         agents = context.get("agents") or []
         project_names = ", ".join(str(project.get("project")) for project in projects[:5])
-        return (
-            "MAC work context: %d active task(s), %d project(s), %d agent(s). "
-            "Projects: %s."
-            % (
-                len(tasks),
-                len(projects),
-                len(agents),
-                project_names or "none",
-            )
+        return "MAC work context: %d active task(s), %d project(s), %d agent(s). Projects: %s." % (
+            len(tasks),
+            len(projects),
+            len(agents),
+            project_names or "none",
         )
 
     def runtime_proof(
@@ -1103,9 +1099,7 @@ def _cmd_add_child_task(args: argparse.Namespace) -> None:
             project=args.project,
             priority=args.priority,
             required_capabilities=(
-                _csv(args.required_capabilities)
-                if args.required_capabilities is not None
-                else None
+                _csv(args.required_capabilities) if args.required_capabilities is not None else None
             ),
             dependencies=_csv(args.dependencies) if args.dependencies is not None else None,
             metadata=_json_arg(args.metadata, {}),
@@ -1277,7 +1271,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--url",
-        default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8789",
+        default=os.environ.get("MAC_URL")
+        or os.environ.get("MAC_HUB_URL")
+        or "http://127.0.0.1:8789",
     )
     from mac.fleet_env import resolve_first as _resolve_token
 
@@ -1294,7 +1290,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--web-token", default=os.environ.get("FIRECRAWL_API_KEY"))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    register = sub.add_parser("register", help="register tenant, persona, Hermes instance, and optional platform bindings")
+    register = sub.add_parser(
+        "register", help="register tenant, persona, Hermes instance, and optional platform bindings"
+    )
     register.add_argument("--tenant", required=True)
     register.add_argument("--persona", required=True)
     register.add_argument("--instance", required=True)
@@ -1335,10 +1333,14 @@ def build_parser() -> argparse.ArgumentParser:
     tasks.add_argument("--project")
     tasks.add_argument("--limit", type=int)
     tasks.add_argument("--view", choices=("summary",))
-    tasks.add_argument("--summary", action="store_true", help="request the lightweight task summary projection")
+    tasks.add_argument(
+        "--summary", action="store_true", help="request the lightweight task summary projection"
+    )
     tasks.set_defaults(func=_cmd_tasks)
 
-    work_context = sub.add_parser("work-context", help="fetch MAC's task/project/agent context for this Hermes instance")
+    work_context = sub.add_parser(
+        "work-context", help="fetch MAC's task/project/agent context for this Hermes instance"
+    )
     work_context.add_argument("hermes_instance_id")
     work_context.add_argument("--active-only", action="store_true")
     work_context.add_argument("--task-limit", type=int, default=100)
@@ -1348,7 +1350,9 @@ def build_parser() -> argparse.ArgumentParser:
     work_brief.add_argument("hermes_instance_id")
     work_brief.set_defaults(func=_cmd_work_brief)
 
-    runtime_proof = sub.add_parser("runtime-proof", help="prove MAC/Hermes task-project bridge readiness")
+    runtime_proof = sub.add_parser(
+        "runtime-proof", help="prove MAC/Hermes task-project bridge readiness"
+    )
     runtime_proof.add_argument("hermes_instance_id")
     runtime_proof.add_argument(
         "--skip-local-startup",
@@ -1357,7 +1361,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     runtime_proof.set_defaults(func=_cmd_runtime_proof)
 
-    import_project_item = sub.add_parser("import-project-item", help="import an external project item into MAC")
+    import_project_item = sub.add_parser(
+        "import-project-item", help="import an external project item into MAC"
+    )
     import_project_item.add_argument("source")
     import_project_item.add_argument("external_id")
     import_project_item.add_argument("title")
@@ -1385,15 +1391,21 @@ def build_parser() -> argparse.ArgumentParser:
     projects = sub.add_parser("projects", help="list MAC project summaries")
     projects.set_defaults(func=_cmd_projects)
 
-    project_detail = sub.add_parser("project-detail", help="fetch one MAC project summary and records")
+    project_detail = sub.add_parser(
+        "project-detail", help="fetch one MAC project summary and records"
+    )
     project_detail.add_argument("project")
     project_detail.set_defaults(func=_cmd_project_detail)
 
-    project_repositories = sub.add_parser("project-repositories", help="list registered project repositories")
+    project_repositories = sub.add_parser(
+        "project-repositories", help="list registered project repositories"
+    )
     project_repositories.add_argument("--enabled", action="store_true", default=None)
     project_repositories.set_defaults(func=_cmd_project_repositories)
 
-    register_project_repository = sub.add_parser("register-project-repository", help="register a mac-task-backed project repository")
+    register_project_repository = sub.add_parser(
+        "register-project-repository", help="register a mac-task-backed project repository"
+    )
     register_project_repository.add_argument("name")
     register_project_repository.add_argument("path")
     register_project_repository.add_argument("--source")
@@ -1412,11 +1424,15 @@ def build_parser() -> argparse.ArgumentParser:
     agent_detail.add_argument("agent_id")
     agent_detail.set_defaults(func=_cmd_agent_detail)
 
-    agent_identity = sub.add_parser("agent-identity", help="fetch composed MAC/Hermes agent identity")
+    agent_identity = sub.add_parser(
+        "agent-identity", help="fetch composed MAC/Hermes agent identity"
+    )
     agent_identity.add_argument("agent_id")
     agent_identity.set_defaults(func=_cmd_agent_identity)
 
-    claim_next = sub.add_parser("claim-next", help="claim or dry-run the next eligible MAC task for an agent")
+    claim_next = sub.add_parser(
+        "claim-next", help="claim or dry-run the next eligible MAC task for an agent"
+    )
     claim_next.add_argument("agent_id")
     claim_next.add_argument("--lease-seconds", type=int, default=900)
     claim_next.add_argument("--allowed-project", action="append", default=[])
@@ -1445,7 +1461,9 @@ def build_parser() -> argparse.ArgumentParser:
     transition.add_argument("--lease-id")
     transition.set_defaults(func=_cmd_transition)
 
-    add_child_task = sub.add_parser("add-child-task", help="create a child task that blocks its parent")
+    add_child_task = sub.add_parser(
+        "add-child-task", help="create a child task that blocks its parent"
+    )
     add_child_task.add_argument("task_id")
     add_child_task.add_argument("title")
     add_child_task.add_argument("--description", default="")
@@ -1482,7 +1500,9 @@ def build_parser() -> argparse.ArgumentParser:
     request_review.add_argument("--actor", default="hermes")
     request_review.set_defaults(func=_cmd_request_review)
 
-    claim_review = sub.add_parser("claim-review", help="claim a review with optional executor evidence context")
+    claim_review = sub.add_parser(
+        "claim-review", help="claim a review with optional executor evidence context"
+    )
     claim_review.add_argument("review_id")
     claim_review.add_argument("reviewer_agent_id")
     claim_review.add_argument("--executor-evidence-id")
@@ -1506,7 +1526,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     command_audit = sub.add_parser("command-audit", help="record or list MAC command audit entries")
     command_audit_sub = command_audit.add_subparsers(dest="command_audit_action", required=True)
-    command_audit_record = command_audit_sub.add_parser("record", help="record an audited command phase")
+    command_audit_record = command_audit_sub.add_parser(
+        "record", help="record an audited command phase"
+    )
     command_audit_record.add_argument("agent_id")
     command_audit_record.add_argument("--phase", required=True)
     command_audit_record.add_argument("--argv-json", required=True)
@@ -1535,23 +1557,31 @@ def build_parser() -> argparse.ArgumentParser:
     command_audit_list.add_argument("--limit", type=int, default=200)
     command_audit_list.set_defaults(func=_cmd_command_audit_list)
 
-    web_search = sub.add_parser("web-search", help="search through the hub Firecrawl-compatible gateway")
+    web_search = sub.add_parser(
+        "web-search", help="search through the hub Firecrawl-compatible gateway"
+    )
     web_search.add_argument("query")
     web_search.add_argument("--limit", type=int, default=5)
     web_search.set_defaults(func=_cmd_web_search)
 
-    web_scrape = sub.add_parser("web-scrape", help="extract one page through the hub Firecrawl-compatible gateway")
+    web_scrape = sub.add_parser(
+        "web-scrape", help="extract one page through the hub Firecrawl-compatible gateway"
+    )
     web_scrape.add_argument("url")
     web_scrape.add_argument("--format", action="append", choices=("markdown", "html"), default=None)
     web_scrape.set_defaults(func=_cmd_web_scrape)
 
-    web_crawl = sub.add_parser("web-crawl", help="start a bounded crawl through the hub Firecrawl-compatible gateway")
+    web_crawl = sub.add_parser(
+        "web-crawl", help="start a bounded crawl through the hub Firecrawl-compatible gateway"
+    )
     web_crawl.add_argument("url")
     web_crawl.add_argument("--limit", type=int, default=1)
     web_crawl.add_argument("--format", action="append", choices=("markdown", "html"), default=None)
     web_crawl.set_defaults(func=_cmd_web_crawl)
 
-    web_crawl_status = sub.add_parser("web-crawl-status", help="fetch a Firecrawl-compatible crawl status")
+    web_crawl_status = sub.add_parser(
+        "web-crawl-status", help="fetch a Firecrawl-compatible crawl status"
+    )
     web_crawl_status.add_argument("job_id")
     web_crawl_status.set_defaults(func=_cmd_web_crawl_status)
 
@@ -1559,7 +1589,9 @@ def build_parser() -> argparse.ArgumentParser:
     reply.add_argument("task_id")
     reply.set_defaults(func=_cmd_reply)
 
-    writeback = sub.add_parser("writeback", help="prepare and record Hermes memory write-back for a completed task")
+    writeback = sub.add_parser(
+        "writeback", help="prepare and record Hermes memory write-back for a completed task"
+    )
     writeback.add_argument("hermes_instance_id")
     writeback.add_argument("task_id")
     writeback.set_defaults(func=_cmd_writeback)

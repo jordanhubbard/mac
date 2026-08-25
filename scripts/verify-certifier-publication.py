@@ -123,9 +123,7 @@ def _buildx_command(
         if probe():
             return [docker, "buildx"]
         anonymous_buildx.unlink(missing_ok=True)
-    raise VerificationError(
-        "docker buildx is required for anonymous registry read-back"
-    )
+    raise VerificationError("docker buildx is required for anonymous registry read-back")
 
 
 def _host_linux_platform() -> str:
@@ -167,9 +165,7 @@ def verify_registry_digest(
     docker = shutil.which("docker")
     if docker is None:
         raise VerificationError("docker buildx is required for registry read-back")
-    if expected_revision is not None and not re.fullmatch(
-        r"[0-9a-f]{40}", expected_revision
-    ):
+    if expected_revision is not None and not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
         raise VerificationError("expected revision must be an exact lowercase Git SHA")
     requested = match.group(1)
     linux_platform = _host_linux_platform()
@@ -183,16 +179,13 @@ def verify_registry_digest(
         observed = "sha256:" + hashlib.sha256(manifest.stdout).hexdigest()
         if observed != requested:
             raise VerificationError(
-                "registry manifest digest differs: "
-                f"requested={requested} observed={observed}"
+                f"registry manifest digest differs: requested={requested} observed={observed}"
             )
         _run(
             [docker, "pull", "--platform", linux_platform, image_ref],
             environment=environment,
         )
-        inspection = _run(
-            [docker, "image", "inspect", image_ref], environment=environment
-        )
+        inspection = _run([docker, "image", "inspect", image_ref], environment=environment)
         try:
             values = json.loads(inspection.stdout)
             image = values[0]
@@ -201,15 +194,12 @@ def verify_registry_digest(
             image_user = image["Config"]["User"]
             repo_digests = image["RepoDigests"]
         except (IndexError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise VerificationError(
-                "pulled certifier image metadata is incomplete"
-            ) from exc
+            raise VerificationError("pulled certifier image metadata is incomplete") from exc
         if not re.fullmatch(r"[0-9a-f]{40}", str(revision or "")):
             raise VerificationError("certifier OCI revision label is invalid")
         if expected_revision is not None and revision != expected_revision:
             raise VerificationError(
-                "certifier OCI revision differs: "
-                f"expected={expected_revision} observed={revision}"
+                f"certifier OCI revision differs: expected={expected_revision} observed={revision}"
             )
         if image_user != "sandbox":
             raise VerificationError("certifier image does not run as sandbox")

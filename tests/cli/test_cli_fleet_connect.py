@@ -10,6 +10,7 @@ This lives in tests/cli/ deliberately: the coverage gate discovers tested
 subcommands by scanning THIS directory for `_run(...)` calls, so a CLI test
 filed anywhere else leaves the subcommand looking untested.
 """
+
 from __future__ import annotations
 
 import io
@@ -28,16 +29,11 @@ def fleet_home(tmp_path, monkeypatch):
     """A registry and a deploy env file that are not the operator's own."""
     fleets = tmp_path / "fleets.yaml"
     fleets.write_text(
-        "fleets:\n"
-        "  hazel:\n"
-        "    fleet_name: watership-down\n"
-        "    hub_url: http://100.64.0.9:8789\n",
+        "fleets:\n  hazel:\n    fleet_name: watership-down\n    hub_url: http://100.64.0.9:8789\n",
         encoding="utf-8",
     )
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        "# a comment\nexport MAC_API_TOKEN__HAZEL='%s'\n" % TOKEN, encoding="utf-8"
-    )
+    env_file.write_text("# a comment\nexport MAC_API_TOKEN__HAZEL='%s'\n" % TOKEN, encoding="utf-8")
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(fleets))
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", str(env_file))
     monkeypatch.delenv("MAC_API_TOKEN__HAZEL", raising=False)

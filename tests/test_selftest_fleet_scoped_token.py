@@ -79,21 +79,34 @@ def _run_wrapper_resolver(env: dict) -> str:
 # (env, expected) cases exercised identically against both resolvers.
 _CASES = [
     # Migrated node: scoped token wins over a stale flat token.
-    ({"MAC_FLEET_NAME": "mac-g55y", "MAC_WORKER_TOKEN": "STALE",
-      "MAC_WORKER_TOKEN__MAC_G55Y": "GOOD"}, "GOOD"),
+    (
+        {
+            "MAC_FLEET_NAME": "mac-g55y",
+            "MAC_WORKER_TOKEN": "STALE",
+            "MAC_WORKER_TOKEN__MAC_G55Y": "GOOD",
+        },
+        "GOOD",
+    ),
     # Un-migrated node: flat token is still honored (one deprecation cycle).
     ({"MAC_FLEET_NAME": "mac-g55y", "MAC_WORKER_TOKEN": "FLAT_ONLY"}, "FLAT_ONLY"),
     # No fleet configured: flat fallback.
     ({"MAC_WORKER_TOKEN": "FLAT_NOFLEET"}, "FLAT_NOFLEET"),
     # MAC_FLEET overrides MAC_FLEET_NAME; scoped value later in the chain wins.
-    ({"MAC_FLEET": "rocky", "MAC_FLEET_NAME": "ignored",
-      "MAC_TOKEN__ROCKY": "SCOPED_MAC_TOKEN"}, "SCOPED_MAC_TOKEN"),
+    (
+        {"MAC_FLEET": "rocky", "MAC_FLEET_NAME": "ignored", "MAC_TOKEN__ROCKY": "SCOPED_MAC_TOKEN"},
+        "SCOPED_MAC_TOKEN",
+    ),
     # Cross-chain: a scoped MAC_API_TOKEN outranks a flat MAC_WORKER_TOKEN.
-    ({"MAC_FLEET_NAME": "rocky", "MAC_WORKER_TOKEN": "flat",
-      "MAC_API_TOKEN__ROCKY": "scopedapi"}, "scopedapi"),
+    (
+        {
+            "MAC_FLEET_NAME": "rocky",
+            "MAC_WORKER_TOKEN": "flat",
+            "MAC_API_TOKEN__ROCKY": "scopedapi",
+        },
+        "scopedapi",
+    ),
     # An explicitly empty scoped token counts as set (mirrors mac.fleet_env).
-    ({"MAC_FLEET_NAME": "rocky", "MAC_WORKER_TOKEN__ROCKY": "",
-      "MAC_WORKER_TOKEN": "flat"}, ""),
+    ({"MAC_FLEET_NAME": "rocky", "MAC_WORKER_TOKEN__ROCKY": "", "MAC_WORKER_TOKEN": "flat"}, ""),
     # Nothing set: empty result (the wrapper :? guard would then fire).
     ({"MAC_FLEET_NAME": "rocky"}, ""),
 ]

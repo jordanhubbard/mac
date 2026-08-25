@@ -13,6 +13,7 @@ None of that was visible through ``points_count``, which is all
 transport shaped like Qdrant's REST responses, so every branch is covered
 without a live instance.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -163,12 +164,9 @@ def test_probe_skips_the_payload_scan_for_an_empty_collection():
 def test_probe_pages_through_a_multi_page_collection():
     """next_page_offset is followed until it comes back null."""
     points = [
-        _point("2026-08-21T0%d:00:00Z" % (i % 10), "model-a")
-        for i in range(SCAN_PAGE_SIZE + 7)
+        _point("2026-08-21T0%d:00:00Z" % (i % 10), "model-a") for i in range(SCAN_PAGE_SIZE + 7)
     ]
-    fake = FakeQdrant(
-        {"mac_memory_medium": {"points_count": len(points), "points": points}}
-    )
+    fake = FakeQdrant({"mac_memory_medium": {"points_count": len(points), "points": points}})
     entry = probe_collection(
         "http://q:6333", "mac_memory_medium", tier="medium", transport=fake, now=NOW
     )
@@ -220,9 +218,7 @@ def test_probe_reports_an_unreachable_collection_as_an_error_not_a_crash():
 
 
 def test_probe_survives_a_scroll_that_fails_after_the_count_succeeded():
-    fake = FakeQdrant(
-        {"c": {"points_count": 9, "scroll_raises": RuntimeError("scroll exploded")}}
-    )
+    fake = FakeQdrant({"c": {"points_count": 9, "scroll_raises": RuntimeError("scroll exploded")}})
     entry = probe_collection("http://q:6333", "c", tier="medium", transport=fake)
     assert entry["points_count"] == 9
     assert entry["scan_error"] == "scroll exploded"
@@ -243,9 +239,7 @@ def test_probe_tolerates_points_with_missing_or_malformed_payload_fields():
             }
         }
     )
-    entry = probe_collection(
-        "http://q:6333", "c", tier="medium", transport=fake, now=NOW
-    )
+    entry = probe_collection("http://q:6333", "c", tier="medium", transport=fake, now=NOW)
     assert entry["payload_scanned"] == 4
     assert entry["embedding_models"] == {"model-a": 2}
     assert entry["newest_embedded_at"] == "2026-08-21T11:00:00Z"

@@ -53,9 +53,7 @@ def test_metric_stays_only_in_observability_row() -> None:
     )
 
     actions = cp.list_action_events(action_type="observability", limit=50)
-    assert not any(
-        event.attributes.get("observability_id") == obs.id for event in actions
-    )
+    assert not any(event.attributes.get("observability_id") == obs.id for event in actions)
 
     source = [o for o in cp.list_observability(limit=50) if o.id == obs.id]
     assert len(source) == 1
@@ -73,9 +71,7 @@ def test_info_log_stays_only_in_observability_row() -> None:
     )
 
     actions = cp.list_action_events(action_type="observability", limit=50)
-    assert not any(
-        event.attributes.get("observability_id") == obs.id for event in actions
-    )
+    assert not any(event.attributes.get("observability_id") == obs.id for event in actions)
 
 
 def test_error_level_projects_failure_outcome_without_detail() -> None:

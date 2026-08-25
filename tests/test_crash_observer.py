@@ -54,7 +54,9 @@ def test_observer_captures_trace_and_posts_before_returning_failure(monkeypatch,
     monkeypatch.setenv("MAC_WORKER_TOKEN", "secret")
     monkeypatch.setenv("MAC_AGENT_ID", "agent_test")
     monkeypatch.setattr(observer, "_enable_core_dumps", lambda: {"enabled": True})
-    monkeypatch.setattr(observer, "_core_evidence", lambda *_a: ("core:test", {"provider": "test"}, ""))
+    monkeypatch.setattr(
+        observer, "_core_evidence", lambda *_a: ("core:test", {"provider": "test"}, "")
+    )
     try:
         rc = observer.observe(
             "systemd",
@@ -99,9 +101,10 @@ def test_every_deployment_supervisor_uses_external_crash_observer():
     assert "ulimit -c unlimited" in deploy
     assert "export PYTHONFAULTHANDLER=1" in deploy
     for supervisor in ("systemd", "supervisord", "launchd"):
-        assert "--supervisor %s" % supervisor in deploy or (
-            "<string>--supervisor</string><string>%s</string>" % supervisor
-        ) in deploy
+        assert (
+            "--supervisor %s" % supervisor in deploy
+            or ("<string>--supervisor</string><string>%s</string>" % supervisor) in deploy
+        )
     assert deploy.count("mac-crash-observer") >= 4
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")

@@ -95,9 +95,9 @@ def test_test_jobs_fraction_is_configurable():
 
 def test_test_jobs_respects_min_and_max():
     cfg = HubLoadShedConfig(test_jobs_fraction=0.5, min_test_jobs=2, max_test_jobs=4)
-    assert resolve_test_jobs(2, cfg) == 2      # min floor
-    assert resolve_test_jobs(20, cfg) == 4     # max ceiling
-    assert resolve_test_jobs(1, cfg) == 2      # never below 1/min
+    assert resolve_test_jobs(2, cfg) == 2  # min floor
+    assert resolve_test_jobs(20, cfg) == 4  # max ceiling
+    assert resolve_test_jobs(1, cfg) == 2  # never below 1/min
 
 
 def test_config_from_env_overrides_fraction_and_watermarks():
@@ -171,18 +171,18 @@ def test_breaker_drains_when_task_in_flight_under_load():
 
 def test_hysteresis_stays_tripped_between_low_and_high():
     b, s = _breaker()
-    s.set_load(0.9)          # trip
+    s.set_load(0.9)  # trip
     assert b.state() is BreakerState.SHEDDING
-    s.set_load(0.7)          # between low(0.55) and high(0.85): still shedding
+    s.set_load(0.7)  # between low(0.55) and high(0.85): still shedding
     assert b.state() is BreakerState.SHEDDING
     assert b.should_claim() is False
 
 
 def test_breaker_recovers_below_low_watermark():
     b, s = _breaker()
-    s.set_load(0.9)          # trip
+    s.set_load(0.9)  # trip
     assert b.state() is BreakerState.SHEDDING
-    s.set_load(0.5)          # <= low 0.55: recover
+    s.set_load(0.5)  # <= low 0.55: recover
     assert b.state() is BreakerState.CLAIMING
     assert b.should_claim() is True
 

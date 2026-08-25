@@ -70,9 +70,8 @@ _ENV_BACKEND_CMD = "MAC_ACP_BACKEND_CMD"
 def default_argv(prompt: str) -> List[str]:
     """Build the OpenClaw-in-OpenShell invocation for ``prompt``."""
 
-    wrapper = (
-        os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-        or str(mac_paths.mac_home() / "bin" / "openclaw-agent")
+    wrapper = os.environ.get("MAC_OPENCLAW_AGENT_BIN") or str(
+        mac_paths.mac_home() / "bin" / "openclaw-agent"
     )
     return [
         wrapper,

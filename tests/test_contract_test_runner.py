@@ -131,9 +131,7 @@ exit 0
         env["MAC_TEST_CHECKPOINT"] = checkpoint
         env["MAC_TEST_CHECKPOINT_DIR"] = str(tmp_path / "ckpt")
     if nested_pytest:
-        env["PYTEST_CURRENT_TEST"] = (
-            "tests/test_contract_test_runner.py::test_nested (call)"
-        )
+        env["PYTEST_CURRENT_TEST"] = "tests/test_contract_test_runner.py::test_nested (call)"
         env["PYTEST_XDIST_WORKER"] = "gw0"
         env["PYTEST_XDIST_WORKER_COUNT"] = "6"
         env["PYTEST_XDIST_TESTRUNUID"] = "outer-run"
@@ -174,8 +172,7 @@ def test_contract_runner_preflight_completes_before_full_gate(tmp_path):
         "tests/test_control_plane_public_contract.py",
     )
     positions = [
-        next(index for index, line in enumerate(calls) if command in line)
-        for command in expected
+        next(index for index, line in enumerate(calls) if command in line) for command in expected
     ]
     first_full = next(
         index for index, line in enumerate(calls) if "-m coverage run -m pytest" in line
@@ -216,7 +213,9 @@ def test_contract_runner_fast_mode_skips_coverage_and_policy(tmp_path):
     pytest_calls = [
         line
         for line in calls
-        if "-m pytest" in line and "coverage" not in line and "--version" not in line
+        if "-m pytest" in line
+        and "coverage" not in line
+        and "--version" not in line
         and "test_control_plane_public_contract.py" not in line
     ]
     assert len(pytest_calls) == 2
@@ -252,7 +251,9 @@ def test_contract_runner_honors_disable_groups_in_fast_mode(tmp_path):
     pytest_calls = [
         line
         for line in calls
-        if "-m pytest" in line and "coverage" not in line and "--version" not in line
+        if "-m pytest" in line
+        and "coverage" not in line
+        and "--version" not in line
         and "test_control_plane_public_contract.py" not in line
     ]
     assert pytest_calls, "expected fast-mode pytest phases"
@@ -278,9 +279,7 @@ def test_contract_runner_disables_nested_xdist_and_preserves_hard_failure(tmp_pa
     assert completed.returncode == 19, completed.stdout + completed.stderr
     assert "nested pytest detected" in completed.stderr
     assert "single" in completed.stderr and "serial owner" in completed.stderr
-    pytest_calls = [
-        line for line in calls if "-m coverage run -m pytest" in line
-    ]
+    pytest_calls = [line for line in calls if "-m coverage run -m pytest" in line]
     # Exactly one serial owner: NO second xdist controller, NO worker pool.
     assert len(pytest_calls) == 1
     assert "-n " not in pytest_calls[0]
@@ -383,14 +382,8 @@ def test_suite_never_asserts_wall_clock_performance() -> None:
         return any(
             isinstance(item, ast.Call)
             and (
-                (
-                    isinstance(item.func, ast.Attribute)
-                    and item.func.attr in clock_methods
-                )
-                or (
-                    isinstance(item.func, ast.Name)
-                    and item.func.id in clock_methods
-                )
+                (isinstance(item.func, ast.Attribute) and item.func.attr in clock_methods)
+                or (isinstance(item.func, ast.Name) and item.func.id in clock_methods)
             )
             for item in ast.walk(node)
         )
@@ -404,9 +397,7 @@ def test_suite_never_asserts_wall_clock_performance() -> None:
         ):
             timed_names: set[str] = set()
             assignments = [
-                item
-                for item in ast.walk(function)
-                if isinstance(item, (ast.Assign, ast.AnnAssign))
+                item for item in ast.walk(function) if isinstance(item, (ast.Assign, ast.AnnAssign))
             ]
             changed = True
             while changed:
@@ -431,21 +422,14 @@ def test_suite_never_asserts_wall_clock_performance() -> None:
                             if isinstance(item, ast.Name) and item.id not in timed_names:
                                 timed_names.add(item.id)
                                 changed = True
-            for assertion in (
-                item for item in ast.walk(function) if isinstance(item, ast.Assert)
-            ):
+            for assertion in (item for item in ast.walk(function) if isinstance(item, ast.Assert)):
                 if has_clock_call(assertion.test) or any(
                     isinstance(item, ast.Name)
                     and item.id in timed_names
-                    and any(
-                        fragment in item.id.lower()
-                        for fragment in elapsed_name_fragments
-                    )
+                    and any(fragment in item.id.lower() for fragment in elapsed_name_fragments)
                     for item in ast.walk(assertion.test)
                 ):
-                    violations.append(
-                        "%s:%d" % (path.relative_to(ROOT), assertion.lineno)
-                    )
+                    violations.append("%s:%d" % (path.relative_to(ROOT), assertion.lineno))
 
     assert violations == [], (
         "wall-clock assertions are forbidden; use explicit synchronization, "
@@ -556,8 +540,7 @@ def _stage_interpreter_repo(
         "py.parent.mkdir(parents=True, exist_ok=True)\n"
         "py.write_text(%r)\n"
         "os.chmod(py, 0o755)\n"
-        "print('bootstrap-project.py built .venv', file=sys.stderr)\n"
-        % _GOOD_PY_BODY,
+        "print('bootstrap-project.py built .venv', file=sys.stderr)\n" % _GOOD_PY_BODY,
         encoding="utf-8",
     )
     if broken_venv:
@@ -589,12 +572,11 @@ def _stage_interpreter_repo(
         _write_exec(
             path_bin / "python3",
             "#!/bin/sh\n"
-            "for a in \"$@\"; do\n"
-            "  case \"$a\" in *bootstrap-project.py)\n"
-            "    exec \"$REAL_PY\" \"$@\" ;;\n"
+            'for a in "$@"; do\n'
+            '  case "$a" in *bootstrap-project.py)\n'
+            '    exec "$REAL_PY" "$@" ;;\n'
             "  esac\n"
-            "done\n"
-            + _GOOD_PY_BODY.split("\n", 1)[1],
+            "done\n" + _GOOD_PY_BODY.split("\n", 1)[1],
         )
     else:
         # Shadow any host python3 (notably macOS /usr/bin/python3) with an
@@ -602,9 +584,7 @@ def _stage_interpreter_repo(
         # so its result must not depend on what the host happens to install.
         _write_exec(
             path_bin / "python3",
-            "#!/bin/sh\n"
-            "case \"$*\" in *bootstrap-project.py*) exit 0 ;; esac\n"
-            "exit 1\n",
+            '#!/bin/sh\ncase "$*" in *bootstrap-project.py*) exit 0 ;; esac\nexit 1\n',
         )
 
     env = {
@@ -632,9 +612,7 @@ def test_contract_runner_rebuilds_a_broken_preexisting_venv(tmp_path):
     discarded and re-bootstrapped, not treated as a fatal dead end. Before the
     repair the runner skipped bootstrap whenever .venv/bin/python existed and
     exited 1; now it rebuilds the unusable venv and the gate proceeds."""
-    repo, env = _stage_interpreter_repo(
-        tmp_path, broken_venv=True, provide_builder=True
-    )
+    repo, env = _stage_interpreter_repo(tmp_path, broken_venv=True, provide_builder=True)
 
     completed = subprocess.run(
         [str(repo / "scripts" / "run-contract-tests.sh")],
@@ -657,9 +635,7 @@ def test_contract_runner_reports_when_no_interpreter_can_run_the_suite(tmp_path)
     """With a broken .venv and no non-.venv interpreter available to bootstrap
     with, the runner must fail closed with the diagnostic (exit 1) rather than
     silently running a gate it cannot measure."""
-    repo, env = _stage_interpreter_repo(
-        tmp_path, broken_venv=True, provide_builder=False
-    )
+    repo, env = _stage_interpreter_repo(tmp_path, broken_venv=True, provide_builder=False)
 
     completed = subprocess.run(
         [str(repo / "scripts" / "run-contract-tests.sh")],
@@ -795,9 +771,7 @@ def test_contract_runner_is_byte_identical_without_the_checkpoint_flag(tmp_path)
 
 def test_contract_runner_declined_checkpoint_runs_the_normal_full_gate(tmp_path):
     """Plan exit 10 means "run everything"; no triage phase may appear."""
-    completed, calls = _run_with_fake_python(
-        tmp_path, checkpoint="1", checkpoint_plan_status=10
-    )
+    completed, calls = _run_with_fake_python(tmp_path, checkpoint="1", checkpoint_plan_status=10)
     assert completed.returncode == 0
     assert len(_checkpoint_calls(calls, "plan")) == 1
     assert "checkpoint triage pass" not in completed.stdout
@@ -813,7 +787,9 @@ def test_contract_runner_checkpoint_triage_precedes_the_full_coverage_gate(tmp_p
     )
     assert completed.returncode == 0
     assert "checkpoint triage pass" in completed.stdout
-    assert "running the" in completed.stdout and "complete coverage-measured gate" in completed.stdout
+    assert (
+        "running the" in completed.stdout and "complete coverage-measured gate" in completed.stdout
+    )
     triage = [c for c in calls if "\t-m pytest" in c]
     assert triage, "the triage phase runs pytest WITHOUT coverage"
     assert len([c for c in calls if "-m coverage run -m pytest" in c]) == 2, (

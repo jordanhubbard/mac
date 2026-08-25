@@ -14,9 +14,9 @@ def test_worker_acknowledges_exact_pending_digest_then_confirms() -> None:
     import json
 
     digest = hashlib.sha256(
-        json.dumps(
-            document, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
+        json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
     def transport(method, path, payload):
@@ -83,9 +83,7 @@ def test_worker_fails_closed_when_ack_does_not_clear_pending_epoch() -> None:
         }
 
     with pytest.raises(MacApiError, match="did not clear"):
-        _synchronize_directive_policy(
-            MacApiClient("http://hub", transport=transport), "agent_one"
-        )
+        _synchronize_directive_policy(MacApiClient("http://hub", transport=transport), "agent_one")
 
 
 def test_worker_tolerates_only_pre_directive_hub_not_found() -> None:
@@ -103,6 +101,4 @@ def test_worker_propagates_current_hub_transport_failure() -> None:
         raise MacApiError("connection reset")
 
     with pytest.raises(MacApiError, match="connection reset"):
-        _synchronize_directive_policy(
-            MacApiClient("http://hub", transport=transport), "agent_one"
-        )
+        _synchronize_directive_policy(MacApiClient("http://hub", transport=transport), "agent_one")

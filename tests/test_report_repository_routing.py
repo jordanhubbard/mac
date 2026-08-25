@@ -31,9 +31,7 @@ from mac.models import (
 from mac.services import ControlPlane, sign_verification_manifest
 
 
-_RUNTIME_REF = (
-    "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64
-)
+_RUNTIME_REF = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64
 _POLICY_DIGEST = "sha256:" + "2" * 64
 _TUPLE = {
     "openshell_bin_path": "/approved/openshell",
@@ -182,21 +180,15 @@ def test_hub_projects_exact_report_executor_marker_and_rejects_spoof():
 
 def test_worker_cannot_self_approve_report_executor():
     cp = ControlPlane.in_memory()
-    worker_agent = _agent(
-        cp, "unapproved-openshell", ["ops"], attested=True, approved=False
-    )
-    assert not agent_has_read_only_report_repository_executor(
-        worker_agent.resources
-    )
+    worker_agent = _agent(cp, "unapproved-openshell", ["ops"], attested=True, approved=False)
+    assert not agent_has_read_only_report_repository_executor(worker_agent.resources)
 
     forged = dict(worker_agent.resources)
     forged[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = _approval()
-    forged[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = (
-        read_only_report_repository_executor_resource(
-            runtime_image_ref=_RUNTIME_REF,
-            policy_sha256=_POLICY_DIGEST,
-            **_TUPLE,
-        )
+    forged[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = read_only_report_repository_executor_resource(
+        runtime_image_ref=_RUNTIME_REF,
+        policy_sha256=_POLICY_DIGEST,
+        **_TUPLE,
     )
     refreshed = cp.heartbeat_agent(worker_agent.id, resources=forged)
     assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY not in refreshed.resources
@@ -217,21 +209,21 @@ def test_stale_heartbeat_cannot_resurrect_revoked_report_approval(monkeypatch):
     def paused(agent_id, resources, *, conn=None):
         nonlocal paused_once
         result = original(agent_id, resources, conn=conn)
-        if conn is None and not paused_once and threading.current_thread().name == "stale-heartbeat":
+        if (
+            conn is None
+            and not paused_once
+            and threading.current_thread().name == "stale-heartbeat"
+        ):
             paused_once = True
             reached_stale_read.set()
             assert resume.wait(5)
         return result
 
-    monkeypatch.setattr(
-        cp, "_agent_resources_with_preserved_control_plane_fields", paused
-    )
+    monkeypatch.setattr(cp, "_agent_resources_with_preserved_control_plane_fields", paused)
     outcome = {}
 
     def heartbeat():
-        outcome["agent"] = cp.heartbeat_agent(
-            admitted.id, resources=stale_resources
-        )
+        outcome["agent"] = cp.heartbeat_agent(admitted.id, resources=stale_resources)
 
     thread = threading.Thread(target=heartbeat, name="stale-heartbeat")
     thread.start()
@@ -244,9 +236,7 @@ def test_stale_heartbeat_cannot_resurrect_revoked_report_approval(monkeypatch):
     assert not thread.is_alive()
     assert "agent" in outcome
     assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY not in outcome["agent"].resources
-    assert not agent_has_read_only_report_repository_executor(
-        outcome["agent"].resources
-    )
+    assert not agent_has_read_only_report_repository_executor(outcome["agent"].resources)
 
 
 def test_report_claim_requires_marker_and_break_glass_cannot_bypass():
@@ -281,9 +271,7 @@ def test_pending_k8s_review_is_retracted_and_nudged_to_attested_peer(
     cp = ControlPlane.in_memory()
     executor = _agent(cp, "executor", ["ops", "review"], attested=True)
     k8s_reviewer = _agent(cp, "k8s-reviewer", ["review"], attested=False)
-    openshell_reviewer = _agent(
-        cp, "openshell-reviewer", ["review"], attested=True
-    )
+    openshell_reviewer = _agent(cp, "openshell-reviewer", ["review"], attested=True)
     task = _report_task(cp)
     cp.claim_task(task.id, executor.id)
     cp.start_task(task.id, executor.id)
@@ -326,9 +314,7 @@ def test_pending_k8s_review_is_retracted_and_nudged_to_attested_peer(
     assert result["nudge_id"]
     reviews = {review.id: review for review in cp.list_reviews(task.id)}
     assert reviews[legacy_review_id].status == ReviewStatus.RETRACTED.value
-    assert "reviewer_report_repository_executor_missing" in (
-        reviews[legacy_review_id].reason or ""
-    )
+    assert "reviewer_report_repository_executor_missing" in (reviews[legacy_review_id].reason or "")
     assert any(
         review.status == ReviewStatus.PENDING.value
         and review.reviewer_agent_id == openshell_reviewer.id
@@ -360,9 +346,7 @@ def test_review_claim_revalidates_report_marker_atomically(monkeypatch):
     advanced = cp.advance_default_review_workflow(task.id)
     assert advanced["reviewer_agent_id"] == reviewer.id
     pending = next(
-        item
-        for item in cp.list_reviews(task.id)
-        if item.status == ReviewStatus.PENDING.value
+        item for item in cp.list_reviews(task.id) if item.status == ReviewStatus.PENDING.value
     )
 
     revoked = dict(cp.get_agent(reviewer.id).resources)
@@ -432,9 +416,10 @@ def test_review_claim_merges_into_locked_policy_metadata(monkeypatch):
     thread.join(5)
     assert not thread.is_alive()
     assert outcome["claim"]["status"] == "claimed"
-    assert cp.get_task(task.id).metadata["report_repository_access"] == changed[
-        "report_repository_access"
-    ]
+    assert (
+        cp.get_task(task.id).metadata["report_repository_access"]
+        == changed["report_repository_access"]
+    )
 
 
 @pytest.fixture()
@@ -449,12 +434,8 @@ def report_boundary_env(tmp_path: Path, monkeypatch):
     executor_script.write_text("raise SystemExit(0)\n", encoding="utf-8")
     source_root = tmp_path / "mac-source"
     (source_root / "src" / "mac").mkdir(parents=True)
-    (source_root / "src" / "mac" / "__init__.py").write_text(
-        "", encoding="utf-8"
-    )
-    (source_root / "pyproject.toml").write_text(
-        "[project]\nname='mac-test'\n", encoding="utf-8"
-    )
+    (source_root / "src" / "mac" / "__init__.py").write_text("", encoding="utf-8")
+    (source_root / "pyproject.toml").write_text("[project]\nname='mac-test'\n", encoding="utf-8")
     policy = tmp_path / "policy.yaml"
     policy.write_text("version: 1\n", encoding="utf-8")
     runtime_ref = tmp_path / "runtime-image-ref"
@@ -496,9 +477,7 @@ def test_worker_attests_digest_bound_per_task_report_executor(report_boundary_en
     ]
 
 
-def test_linux_report_attestation_requires_actual_landlock(
-    report_boundary_env, monkeypatch
-):
+def test_linux_report_attestation_requires_actual_landlock(report_boundary_env, monkeypatch):
     executor, _policy = report_boundary_env
     monkeypatch.setattr(worker.sys, "platform", "linux")
     monkeypatch.setattr(sandbox, "_kernel_has_landlock", lambda: False)
@@ -528,9 +507,7 @@ def test_darwin_host_install_attests_without_any_container(
     monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     monkeypatch.setenv("MAC_OPENSHELL_BIN", str(tmp_path / "no-such-openshell"))
-    monkeypatch.setenv(
-        "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(tmp_path / "no-such-ref")
-    )
+    monkeypatch.setenv("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(tmp_path / "no-such-ref"))
 
     attestation = worker._read_only_report_executor_attestation([str(executor)])
     assert attestation is not None
@@ -582,9 +559,7 @@ def test_host_install_attestation_may_not_claim_a_container_runtime():
     ):
         overstated = dict(base)
         overstated[key] = value
-        assert not models.valid_read_only_report_repository_executor_attestation(
-            overstated
-        ), key
+        assert not models.valid_read_only_report_repository_executor_attestation(overstated), key
     # Linux may not borrow the host-install posture, and the retired macOS
     # Docker posture is no longer accepted anywhere.
     for platform, posture in (
@@ -629,9 +604,7 @@ def test_linux_still_requires_a_full_container_bound_attestation():
     ):
         emptied = dict(linux)
         emptied[key] = ""
-        assert not models.valid_read_only_report_repository_executor_attestation(
-            emptied
-        ), key
+        assert not models.valid_read_only_report_repository_executor_attestation(emptied), key
 
 
 def _marker_resources(attestation):
@@ -691,9 +664,7 @@ def test_host_executor_drift_after_approval_fails_before_popen(
         )
 
 
-def test_deployment_realistic_marker_stamps_missing_runtime_paths(
-    report_boundary_env, monkeypatch
-):
+def test_deployment_realistic_marker_stamps_missing_runtime_paths(report_boundary_env, monkeypatch):
     executor, _policy = report_boundary_env
     attestation = worker._read_only_report_executor_attestation([str(executor)])
     assert attestation is not None
@@ -707,9 +678,7 @@ def test_deployment_realistic_marker_stamps_missing_runtime_paths(
         _marker_resources(attestation), os.environ
     )
     assert os.environ["MAC_TASK_EXECUTOR_PYTHON"] == attestation["python_path"]
-    assert os.environ["MAC_TASK_EXECUTOR_SCRIPT"] == attestation[
-        "executor_script_path"
-    ]
+    assert os.environ["MAC_TASK_EXECUTOR_SCRIPT"] == attestation["executor_script_path"]
     assert os.environ["MAC_SELF_UPDATE_REPO"] == attestation["source_root"]
     worker_subprocess._assert_approved_read_only_report_host_executor(
         [str(executor)], dict(os.environ)
@@ -746,9 +715,7 @@ def test_deployed_report_wrapper_execs_only_approved_absolute_artifacts():
     installer = (
         Path(__file__).resolve().parents[1] / "deploy" / "fleet-node-install.sh"
     ).read_text(encoding="utf-8")
-    block = installer.split("cat > \"$executor\" <<'EOF'", 1)[1].split(
-        "\nEOF", 1
-    )[0]
+    block = installer.split("cat > \"$executor\" <<'EOF'", 1)[1].split("\nEOF", 1)[0]
     assert block.startswith("\n#!/bin/bash")
     assert '. "$HOME/.mac/mac.env"' not in block
     assert 'exec "$MAC_TASK_EXECUTOR_PYTHON" "$MAC_TASK_EXECUTOR_SCRIPT"' in block
@@ -756,9 +723,7 @@ def test_deployed_report_wrapper_execs_only_approved_absolute_artifacts():
     assert 'install -m 0755 "$resolved_python" "${report_python}.new"' in installer
 
 
-def test_model_sandbox_never_receives_fleet_hub_credentials(
-    report_boundary_env, monkeypatch
-):
+def test_model_sandbox_never_receives_fleet_hub_credentials(report_boundary_env, monkeypatch):
     monkeypatch.delenv("MAC_TASK_REPO_ACCESS_MODE", raising=False)
     monkeypatch.delenv("MAC_TASK_REPO_ACCESS_SCHEMA", raising=False)
     for name in (
@@ -788,9 +753,7 @@ def test_custom_attestation_key_passthrough_removes_report_attestation(
     monkeypatch.setenv("MAC_OPENSHELL_ENV_PASSTHROUGH", "MAC_ATTESTATION_KEY")
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "secret-value")
     monkeypatch.setenv("MAC_TASK_REPO_ACCESS_MODE", "read_only")
-    monkeypatch.setenv(
-        "MAC_TASK_REPO_ACCESS_SCHEMA", "mac.report_repository_access.v1"
-    )
+    monkeypatch.setenv("MAC_TASK_REPO_ACCESS_SCHEMA", "mac.report_repository_access.v1")
     assert worker._read_only_report_executor_attestation([str(executor)]) is None
     with pytest.raises(ValueError, match="non-allowlisted"):
         sandbox._openshell_environment()

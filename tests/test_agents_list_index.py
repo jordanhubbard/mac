@@ -6,6 +6,7 @@ and sorts by name,id — without a partial index that is a full scan + filesort
 over every tombstone (the ~1s /agents latency for 8 live agents). The partial
 index idx_agents_live_name makes it an index-only scan of just the live rows.
 """
+
 from __future__ import annotations
 
 from mac.services import ControlPlane
@@ -20,8 +21,7 @@ def test_list_agents_query_uses_partial_live_index():
     query = "SELECT * FROM agents WHERE deleted_at IS NULL ORDER BY name, id"
     if _backend(cp) == "postgres":
         plan = " ".join(
-            str(dict(row).get("QUERY PLAN", ""))
-            for row in cp.store.query_all("EXPLAIN " + query)
+            str(dict(row).get("QUERY PLAN", "")) for row in cp.store.query_all("EXPLAIN " + query)
         )
         assert "idx_agents_live_name" in plan, plan
         # A Sort node means the index is not supplying the ordering.

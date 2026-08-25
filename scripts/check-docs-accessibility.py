@@ -94,9 +94,7 @@ def check_links_and_images() -> list[str]:
                 target = match.group("target").strip()
                 rel = _display(page)
                 if is_image and not text:
-                    errors.append(
-                        f"{rel}:{lineno}: image is missing alternative text: {target}"
-                    )
+                    errors.append(f"{rel}:{lineno}: image is missing alternative text: {target}")
                 if (
                     target.startswith("#")
                     or "://" in target
@@ -110,9 +108,7 @@ def check_links_and_images() -> list[str]:
                 if not clean:
                     continue
                 if not resolved.exists():
-                    errors.append(
-                        f"{rel}:{lineno}: broken relative link -> {target}"
-                    )
+                    errors.append(f"{rel}:{lineno}: broken relative link -> {target}")
     return errors
 
 

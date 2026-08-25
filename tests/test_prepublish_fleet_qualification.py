@@ -17,9 +17,7 @@ SCRIPT = ROOT / "scripts" / "prepublish-fleet-qualification.py"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location(
-        "prepublish_fleet_qualification", SCRIPT
-    )
+    spec = importlib.util.spec_from_file_location("prepublish_fleet_qualification", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -158,9 +156,7 @@ def test_actual_agents_receipt_validates_canonical_embedded_evidence() -> None:
         ),
     ),
 )
-def test_upstream_receipt_rejects_stale_tampered_or_aliased_nodes(
-    mutation, error: str
-) -> None:
+def test_upstream_receipt_rejects_stale_tampered_or_aliased_nodes(mutation, error: str) -> None:
     module = _load_module()
     revision = "c" * 40
     registry_digest = "d" * 64
@@ -294,13 +290,7 @@ def test_entrypoint_avoids_python_310_only_zip_strict() -> None:
     zip_calls = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "zip"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "zip"
     ]
     assert zip_calls
-    assert all(
-        keyword.arg != "strict"
-        for call in zip_calls
-        for keyword in call.keywords
-    )
+    assert all(keyword.arg != "strict" for call in zip_calls for keyword in call.keywords)

@@ -137,9 +137,7 @@ class HumanDirective:
 
     def require_authenticated(self) -> None:
         if not self.authenticated:
-            raise ValidationError(
-                "direct execution requires a hub-authenticated human directive"
-            )
+            raise ValidationError("direct execution requires a hub-authenticated human directive")
         if not str(self.human_id or "").strip():
             raise ValidationError("human directive is missing an authenticated human id")
 
@@ -187,9 +185,7 @@ class RepositoryTarget:
         if not str(self.repository_id or "").strip():
             raise MissingCapabilityError("repository", "repository identity is unavailable")
         base = str(self.base_sha or "").strip().lower()
-        if len(base) != GIT_SHA_LEN or any(
-            ch not in "0123456789abcdef" for ch in base
-        ):
+        if len(base) != GIT_SHA_LEN or any(ch not in "0123456789abcdef" for ch in base):
             raise MissingCapabilityError(
                 "base_attestation",
                 "repository base SHA is not a valid attested 40-hex commit",
@@ -647,9 +643,7 @@ class OpenClawDirectExecutionService:
         instance = self._get_persona_instance(persona_instance_id)
         return getattr(instance, "persona_id", None), getattr(instance, "tenant_id", None)
 
-    def _grant_direct_capabilities(
-        self, requested: Optional[List[Capability]]
-    ) -> List[Capability]:
+    def _grant_direct_capabilities(self, requested: Optional[List[Capability]]) -> List[Capability]:
         if requested is None:
             requested = [Capability.SOURCE_INSPECTION, Capability.WRITE_WORKTREE]
         granted: List[Capability] = []
@@ -661,9 +655,7 @@ class OpenClawDirectExecutionService:
             granted.insert(0, Capability.SOURCE_INSPECTION)
         return granted
 
-    def _provision_isolated_worktree(
-        self, execution: ConversationExecution
-    ) -> WritableWorktree:
+    def _provision_isolated_worktree(self, execution: ConversationExecution) -> WritableWorktree:
         if self._provision_worktree is None:
             raise MissingCapabilityError(
                 "write_worktree",

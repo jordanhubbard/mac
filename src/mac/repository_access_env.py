@@ -43,9 +43,7 @@ def fence_read_only_repository_environment(
     """
 
     for name in tuple(environment):
-        if name in REPOSITORY_CREDENTIAL_ENV_NAMES or name.startswith(
-            _GIT_CONFIG_INDEXED_PREFIXES
-        ):
+        if name in REPOSITORY_CREDENTIAL_ENV_NAMES or name.startswith(_GIT_CONFIG_INDEXED_PREFIXES):
             environment.pop(name, None)
     environment.update(
         {
@@ -53,8 +51,7 @@ def fence_read_only_repository_environment(
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_CONFIG_SYSTEM": "/dev/null",
             "GIT_SSH_COMMAND": (
-                "ssh -o BatchMode=yes -o IdentitiesOnly=yes "
-                "-o IdentityFile=/dev/null"
+                "ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=/dev/null"
             ),
         }
     )
@@ -82,9 +79,7 @@ def read_only_repository_content_digest(root: Path) -> str:
             # traversal; otherwise changing ``link -> existing-a`` into
             # ``link -> existing-b`` is invisible to the repository proof.
             rel = path.relative_to(root).as_posix()
-            payload = os.readlink(path).encode(
-                "utf-8", errors="surrogateescape"
-            )
+            payload = os.readlink(path).encode("utf-8", errors="surrogateescape")
             digest.update(b"L\0")
             digest.update(rel.encode("utf-8", errors="surrogateescape"))
             digest.update(b"\0")

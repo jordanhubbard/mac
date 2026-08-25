@@ -310,9 +310,7 @@ def rpc_result(rpc_id: RpcId, result: Any) -> Dict[str, Any]:
     return {"jsonrpc": JSONRPC_VERSION, "id": rpc_id, "result": result}
 
 
-def rpc_error(
-    rpc_id: RpcId, code: int, message: str, data: Any = None
-) -> Dict[str, Any]:
+def rpc_error(rpc_id: RpcId, code: int, message: str, data: Any = None) -> Dict[str, Any]:
     """Build a JSON-RPC 2.0 error response envelope."""
 
     return {

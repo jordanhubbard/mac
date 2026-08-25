@@ -13,6 +13,7 @@ Acceptance criteria (task: tailscaled under supervisord on no-systemd nodes):
 - The supervisord conf block uses the fleet-scoped socket path that matches
   what compute_tailscale_socket returns, so the client and the daemon agree.
 """
+
 from __future__ import annotations
 
 import re
@@ -49,6 +50,7 @@ def test_supervisord_client_uses_privileged_socket_without_secret_output() -> No
 # Helper: extract a named bash function body from the script
 # ---------------------------------------------------------------------------
 
+
 def _extract(func: str) -> str:
     m = re.search(
         r"^%s\(\) \{\n.*?^}$" % re.escape(func),
@@ -70,6 +72,7 @@ def _run_bash(snippet: str) -> subprocess.CompletedProcess:
 # ---------------------------------------------------------------------------
 # detect_supervisor: systemd absent → supervisord branch
 # ---------------------------------------------------------------------------
+
 
 def test_detect_supervisor_picks_supervisord_when_systemd_dir_absent():
     """The key container-node case: systemctl may be on PATH but
@@ -132,27 +135,21 @@ def test_detect_supervisor_explicit_override_supervisord():
     occurs and 'supervisord' is returned immediately.
     """
     fn = _extract("detect_supervisor")
-    result = _run_bash(
-        "SUPERVISOR_KIND=supervisord\n" + fn + "\ndetect_supervisor"
-    )
+    result = _run_bash("SUPERVISOR_KIND=supervisord\n" + fn + "\ndetect_supervisor")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "supervisord"
 
 
 def test_detect_supervisor_explicit_override_systemd():
     fn = _extract("detect_supervisor")
-    result = _run_bash(
-        "SUPERVISOR_KIND=systemd\n" + fn + "\ndetect_supervisor"
-    )
+    result = _run_bash("SUPERVISOR_KIND=systemd\n" + fn + "\ndetect_supervisor")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "systemd"
 
 
 def test_detect_supervisor_rejects_unknown_override():
     fn = _extract("detect_supervisor")
-    result = _run_bash(
-        "SUPERVISOR_KIND=upstart\n" + fn + "\ndetect_supervisor"
-    )
+    result = _run_bash("SUPERVISOR_KIND=upstart\n" + fn + "\ndetect_supervisor")
     assert result.returncode != 0
     assert "unsupported supervisor" in result.stderr
 
@@ -161,11 +158,10 @@ def test_detect_supervisor_rejects_unknown_override():
 # compute_tailscale_socket: fleet-scoped path for supervisord
 # ---------------------------------------------------------------------------
 
+
 def test_compute_tailscale_socket_supervisord_uses_fleet_scoped_path():
     fn = _extract("compute_tailscale_socket")
-    result = _run_bash(
-        "FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket supervisord"
-    )
+    result = _run_bash("FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket supervisord")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "/run/tailscale/mac.sock"
 
@@ -173,18 +169,14 @@ def test_compute_tailscale_socket_supervisord_uses_fleet_scoped_path():
 def test_compute_tailscale_socket_supervisord_uses_fleet_name_variable():
     """Socket path must embed FLEET_NAME, not a hard-coded 'mac'."""
     fn = _extract("compute_tailscale_socket")
-    result = _run_bash(
-        "FLEET_NAME=gke-fleet\n" + fn + "\ncompute_tailscale_socket supervisord"
-    )
+    result = _run_bash("FLEET_NAME=gke-fleet\n" + fn + "\ncompute_tailscale_socket supervisord")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "/run/tailscale/gke-fleet.sock"
 
 
 def test_compute_tailscale_socket_systemd_is_empty():
     fn = _extract("compute_tailscale_socket")
-    result = _run_bash(
-        "FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket systemd"
-    )
+    result = _run_bash("FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket systemd")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "", (
         "systemd should produce an empty socket path so tailscale uses its default"
@@ -193,9 +185,7 @@ def test_compute_tailscale_socket_systemd_is_empty():
 
 def test_compute_tailscale_socket_launchd_is_empty():
     fn = _extract("compute_tailscale_socket")
-    result = _run_bash(
-        "FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket launchd"
-    )
+    result = _run_bash("FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket launchd")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == ""
 
@@ -203,6 +193,7 @@ def test_compute_tailscale_socket_launchd_is_empty():
 # ---------------------------------------------------------------------------
 # tailscale_socket_flag: emits flag only when socket is set
 # ---------------------------------------------------------------------------
+
 
 def test_tailscale_socket_flag_emits_flag_when_socket_set():
     fn = _extract("tailscale_socket_flag")
@@ -215,9 +206,7 @@ def test_tailscale_socket_flag_emits_flag_when_socket_set():
 
 def test_tailscale_socket_flag_emits_nothing_when_socket_empty():
     fn = _extract("tailscale_socket_flag")
-    result = _run_bash(
-        "TAILSCALE_SOCKET=\n" + fn + "\ntailscale_socket_flag"
-    )
+    result = _run_bash("TAILSCALE_SOCKET=\n" + fn + "\ntailscale_socket_flag")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "", (
         "tailscale_socket_flag must produce no output for empty socket "
@@ -229,6 +218,7 @@ def test_tailscale_socket_flag_emits_nothing_when_socket_empty():
 # Supervisord conf block: socket path consistency
 # ---------------------------------------------------------------------------
 
+
 def test_supervisord_conf_uses_fleet_name_sock_path():
     """The [program:...] conf written to conf.d must use the fleet-scoped
     socket path that matches compute_tailscale_socket output.
@@ -236,25 +226,22 @@ def test_supervisord_conf_uses_fleet_name_sock_path():
     # The conf block in install-tailscale.sh is embedded in the supervisord
     # case arm.  Verify both paths are consistent.
     assert "--socket=/run/tailscale/${FLEET_NAME}.sock" in SCRIPT, (
-        "supervisord conf must start tailscaled with "
-        "--socket=/run/tailscale/${FLEET_NAME}.sock"
+        "supervisord conf must start tailscaled with --socket=/run/tailscale/${FLEET_NAME}.sock"
     )
 
 
 def test_supervisord_conf_uses_fleet_scoped_state_dir():
     """State directory must also be fleet-scoped to survive pod restarts."""
-    assert (
-        "--state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state" in SCRIPT
-    ), "tailscaled state file must be fleet-scoped for persistence across restarts"
+    assert "--state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state" in SCRIPT, (
+        "tailscaled state file must be fleet-scoped for persistence across restarts"
+    )
 
 
 def test_supervisord_conf_has_autorestart():
     """tailscaled must have autorestart=true so it comes back after a
     supervisord restart (the core 'survives pod restart' requirement).
     """
-    assert "autorestart=true" in SCRIPT, (
-        "supervisord program block must set autorestart=true"
-    )
+    assert "autorestart=true" in SCRIPT, "supervisord program block must set autorestart=true"
 
 
 def test_supervisord_socket_path_matches_compute_socket():
@@ -262,9 +249,7 @@ def test_supervisord_socket_path_matches_compute_socket():
     what compute_tailscale_socket returns for 'supervisord'.
     """
     fn = _extract("compute_tailscale_socket")
-    result = _run_bash(
-        "FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket supervisord"
-    )
+    result = _run_bash("FLEET_NAME=mac\n" + fn + "\ncompute_tailscale_socket supervisord")
     computed_socket = result.stdout.strip()
     # The conf uses ${FLEET_NAME} shell variable expansion; verify the template
     # matches the pattern that compute_tailscale_socket produces.
@@ -278,6 +263,7 @@ def test_supervisord_socket_path_matches_compute_socket():
 # Socket flag thread-through: all tailscale client calls must use the flag
 # ---------------------------------------------------------------------------
 
+
 def test_all_tailscale_status_calls_use_socket_flag():
     """Every 'tailscale status' invocation in the script must go through
     the tailscale_socket_flag helper so supervisord nodes hit the right socket.
@@ -289,8 +275,9 @@ def test_all_tailscale_status_calls_use_socket_flag():
     )
     # All should be wrapped: `tailscale $(tailscale_socket_flag) status`
     unwrapped = [
-        c for c in re.finditer(r"\btailscale\s+(?!\$\(tailscale_socket_flag\))status\b", SCRIPT)
-        if "tailscale_socket_flag" not in SCRIPT[max(0, c.start()-30):c.start()]
+        c
+        for c in re.finditer(r"\btailscale\s+(?!\$\(tailscale_socket_flag\))status\b", SCRIPT)
+        if "tailscale_socket_flag" not in SCRIPT[max(0, c.start() - 30) : c.start()]
     ]
     assert len(unwrapped) == 0, (
         "Found tailscale status calls not wrapped with $(tailscale_socket_flag): "
@@ -300,13 +287,13 @@ def test_all_tailscale_status_calls_use_socket_flag():
 
 def test_all_tailscale_up_calls_use_socket_flag():
     """Every 'tailscale up' invocation must go through tailscale_socket_flag."""
-    unwrapped = list(re.finditer(
-        r"\btailscale\s+(?!\$\(tailscale_socket_flag\))up\b",
-        SCRIPT,
-    ))
-    assert len(unwrapped) == 0, (
-        "Found tailscale up calls not wrapped with $(tailscale_socket_flag)"
+    unwrapped = list(
+        re.finditer(
+            r"\btailscale\s+(?!\$\(tailscale_socket_flag\))up\b",
+            SCRIPT,
+        )
     )
+    assert len(unwrapped) == 0, "Found tailscale up calls not wrapped with $(tailscale_socket_flag)"
 
 
 def test_socket_computed_before_wait_loop():

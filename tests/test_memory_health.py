@@ -7,6 +7,7 @@ Covers the alert rules that encode the failure modes the original
 * stalled consolidator: last_nap_run_at older than 2× nap_interval
 * no_nap_history: any memory_records but no completed nap_runs
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -193,9 +194,7 @@ def test_health_alerts_on_ingestion_that_stopped_a_month_ago(cp, monkeypatch):
     """667 points is not health when the newest is 27 days old."""
     monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
     h = cp.memory_health(
-        qdrant_transport=_audit_transport(
-            [_pt("2026-07-25T20:16:47Z", "model-a")] * 3
-        )
+        qdrant_transport=_audit_transport([_pt("2026-07-25T20:16:47Z", "model-a")] * 3)
     )
     entry = h["qdrant"]["collections"]["mac_memory_medium"]
     assert entry["newest_embedded_at"] == "2026-07-25T20:16:47Z"
@@ -208,13 +207,9 @@ def test_health_alerts_on_ingestion_that_stopped_a_month_ago(cp, monkeypatch):
 def test_health_alerts_on_the_never_written_long_tier(cp, monkeypatch):
     monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
     h = cp.memory_health(
-        qdrant_transport=_audit_transport(
-            [_pt(_utcnow_iso(), "model-a")], long_points=()
-        )
+        qdrant_transport=_audit_transport([_pt(_utcnow_iso(), "model-a")], long_points=())
     )
-    unwritten = next(
-        a for a in h["alerts"] if a["code"] == "unwritten_memory_tier"
-    )
+    unwritten = next(a for a in h["alerts"] if a["code"] == "unwritten_memory_tier")
     assert unwritten["tier"] == "long"
     assert unwritten["severity"] == "critical"
 
@@ -241,9 +236,9 @@ def test_health_alerts_on_two_embedding_models_in_one_collection(cp, monkeypatch
 
 def test_health_ingestion_threshold_is_caller_tunable(cp, monkeypatch):
     monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
-    two_hours_ago = (
-        datetime.now(tz=timezone.utc) - timedelta(hours=2)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    two_hours_ago = (datetime.now(tz=timezone.utc) - timedelta(hours=2)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     points = [_pt(two_hours_ago, "model-a")]
     quiet = cp.memory_health(qdrant_transport=_audit_transport(points, points))
     assert "stalled_vector_ingestion" not in [a["code"] for a in quiet["alerts"]]
@@ -334,9 +329,7 @@ def test_the_tick_alerts_on_ingestion_that_stopped(cp, monkeypatch):
     assert summary["ran"] is True
     assert [a["code"] for a in summary["alerts"]] == ["stalled_vector_ingestion"]
     logs = cp.observability.list_observability(name="memory.alert", limit=500)
-    assert [(log.detail or {}).get("code") for log in logs] == [
-        "stalled_vector_ingestion"
-    ]
+    assert [(log.detail or {}).get("code") for log in logs] == ["stalled_vector_ingestion"]
 
 
 def test_the_tick_heartbeats_even_when_everything_is_healthy(cp, monkeypatch):
@@ -353,9 +346,7 @@ def test_the_tick_heartbeats_even_when_everything_is_healthy(cp, monkeypatch):
 
     cp.memory_health_tick()
 
-    logs = cp.observability.list_observability(
-        name="memory.health_tick_ran", limit=500
-    )
+    logs = cp.observability.list_observability(name="memory.health_tick_ran", limit=500)
     assert logs and (logs[0].detail or {})["alert_codes"] == []
 
 
@@ -366,8 +357,10 @@ def test_the_tick_is_throttled(cp, monkeypatch):
     monkeypatch.setattr(
         cp,
         "memory_health",
-        lambda **_kwargs: calls.append(1)
-        or {"alerts": [], "qdrant": {"ingestion_max_age_hours": 24.0, "error": None}},
+        lambda **_kwargs: (
+            calls.append(1)
+            or {"alerts": [], "qdrant": {"ingestion_max_age_hours": 24.0, "error": None}}
+        ),
     )
 
     first = cp.memory_health_tick()
@@ -422,6 +415,4 @@ def test_a_broken_monitor_never_stops_dispatch(cp, monkeypatch):
     result = cp.tick()
 
     assert result["memory_health"]["errors"]
-    assert cp.observability.list_observability(
-        name="memory.health_tick_failed", limit=500
-    )
+    assert cp.observability.list_observability(name="memory.health_tick_failed", limit=500)

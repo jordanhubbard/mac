@@ -152,9 +152,7 @@ def test_module_cli_emits_nul_delimited_route(tmp_path, capsysbinary):
         encoding="utf-8",
     )
 
-    rc = fleet_ssh.main(
-        ["--config", str(path), "--fleet", "one", "--kind", "ssh", "--nul"]
-    )
+    rc = fleet_ssh.main(["--config", str(path), "--fleet", "one", "--kind", "ssh", "--nul"])
 
     assert rc == 0
     values = capsysbinary.readouterr().out.rstrip(b"\0").split(b"\0")

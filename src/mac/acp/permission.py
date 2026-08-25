@@ -92,7 +92,9 @@ def permission_mode(raw: Optional[str] = None) -> str:
     an unexpected direction.
     """
 
-    value = (raw if raw is not None else os.environ.get("MAC_ACP_PERMISSION_MODE", "")).strip().lower()
+    value = (
+        (raw if raw is not None else os.environ.get("MAC_ACP_PERMISSION_MODE", "")).strip().lower()
+    )
     if value in {PermissionMode.POLICY, PermissionMode.ALLOW, PermissionMode.DENY}:
         return value
     return PermissionMode.POLICY
@@ -176,7 +178,9 @@ def evaluate_permission(
         return PermissionDecision(allow=False, reason="policy-fs-write-readonly")
 
     # execute / unknown -> only safe under the kernel sandbox (handled above).
-    return PermissionDecision(allow=False, reason="policy-unsandboxed-execute:%s" % (kind or "unknown"))
+    return PermissionDecision(
+        allow=False, reason="policy-unsandboxed-execute:%s" % (kind or "unknown")
+    )
 
 
 def load_openshell_policy(path: Optional[str] = None) -> Optional[Dict[str, Any]]:

@@ -30,11 +30,7 @@ def _worker(tmp_path):
 
 
 def _observation_names(client):
-    return [
-        payload.get("name")
-        for path, payload in client.posts
-        if path == "/observability/logs"
-    ]
+    return [payload.get("name") for path, payload in client.posts if path == "/observability/logs"]
 
 
 def test_is_onboarding_task_true_when_origin_onboarding_flag(tmp_path) -> None:
@@ -54,11 +50,7 @@ def test_is_onboarding_task_true_when_contract_missing_schema(tmp_path) -> None:
 def test_is_onboarding_task_false_when_valid_contract_schema(tmp_path) -> None:
     instance = _worker(tmp_path)
     task = {
-        "metadata": {
-            "origin": {
-                "repository_contract": {"schema": "mac.repository_contract.v1"}
-            }
-        }
+        "metadata": {"origin": {"repository_contract": {"schema": "mac.repository_contract.v1"}}}
     }
     assert instance._is_onboarding_task(task) is False
 
@@ -91,7 +83,9 @@ def test_prepare_task_workspace_writes_environment_contract(monkeypatch, tmp_pat
     assert "mac.environment_contract.v1" in contract_path.read_text(encoding="utf-8")
 
 
-def test_prepare_task_workspace_populates_runtime_environment_contract(monkeypatch, tmp_path) -> None:
+def test_prepare_task_workspace_populates_runtime_environment_contract(
+    monkeypatch, tmp_path
+) -> None:
     instance = _worker(tmp_path)
     worktree_dir = tmp_path / "worktree"
     worktree_dir.mkdir()
@@ -166,11 +160,7 @@ def test_prepare_task_workspace_derives_for_non_onboarding_repository_tasks(
 
     task = {
         "id": "task_x",
-        "metadata": {
-            "origin": {
-                "repository_contract": {"schema": "mac.repository_contract.v1"}
-            }
-        },
+        "metadata": {"origin": {"repository_contract": {"schema": "mac.repository_contract.v1"}}},
     }
     assert instance._is_onboarding_task(task) is False
     task_dir = instance._prepare_task_workspace(task, {"id": "lease_x"})
@@ -186,23 +176,17 @@ def test_prepare_task_workspace_derives_for_non_onboarding_repository_tasks(
     assert derived["detail"]["egress_hosts_proposed"] == 1
 
 
-def test_prepare_task_workspace_skips_when_task_has_no_repository(
-    monkeypatch, tmp_path
-) -> None:
+def test_prepare_task_workspace_skips_when_task_has_no_repository(monkeypatch, tmp_path) -> None:
     """No repository worktree, nothing to analyse."""
     instance = _worker(tmp_path)
-    monkeypatch.setattr(
-        instance, "_prepare_repository_worktree", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(instance, "_prepare_repository_worktree", lambda *_a, **_k: None)
 
     def _fail(_dir):
         raise AssertionError("derive_environment_contract should not be called")
 
     monkeypatch.setattr(worker, "derive_environment_contract", _fail)
 
-    task_dir = instance._prepare_task_workspace(
-        {"id": "task_x", "metadata": {}}, {"id": "lease_x"}
-    )
+    task_dir = instance._prepare_task_workspace({"id": "task_x", "metadata": {}}, {"id": "lease_x"})
     assert not (task_dir / "environment-contract.json").exists()
 
 

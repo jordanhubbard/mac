@@ -6,6 +6,7 @@ prints key material.  It emits only an HMAC challenge probe, or an explicit
 request a conditional recovery rotation and relay the one-use manifest through
 owner-only files before atomically installing it on the target.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -81,6 +82,7 @@ def _private_bytes(path: Path, *, label: str) -> tuple[bytes, os.stat_result]:
         if os.read(descriptor, 1):
             raise DeploymentAttestationError("%s grew while reading" % label)
         after = os.fstat(descriptor)
+
         def identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
             return (
                 value.st_dev,
@@ -90,6 +92,7 @@ def _private_bytes(path: Path, *, label: str) -> tuple[bytes, os.stat_result]:
                 value.st_mtime_ns,
                 value.st_ctime_ns,
             )
+
         if identity(opened) != identity(after):
             raise DeploymentAttestationError("%s changed while reading" % label)
         return bytes(raw), after
@@ -213,9 +216,7 @@ def install_recovery_manifest(
     """Consume one private manifest and atomically install its key."""
 
     source = manifest_path.expanduser()
-    manifest, source_identity = _private_json(
-        source, label="attestation recovery manifest"
-    )
+    manifest, source_identity = _private_json(source, label="attestation recovery manifest")
     if not isinstance(manifest, dict) or set(manifest) != {
         "schema",
         "agent_id",
@@ -228,12 +229,8 @@ def install_recovery_manifest(
         raise DeploymentAttestationError("attestation recovery manifest schema is unsupported")
     if manifest.get("agent_id") != _required(expected_agent_id, "expected agent id"):
         raise DeploymentAttestationError("attestation recovery manifest agent does not match")
-    if manifest.get("deployment_id") != _required(
-        expected_deployment_id, "expected deployment id"
-    ):
-        raise DeploymentAttestationError(
-            "attestation recovery manifest deployment does not match"
-        )
+    if manifest.get("deployment_id") != _required(expected_deployment_id, "expected deployment id"):
+        raise DeploymentAttestationError("attestation recovery manifest deployment does not match")
     key = _required(manifest.get("attestation_key"), "attestation key")
     if len(key) < 32 or any(character.isspace() for character in key):
         raise DeploymentAttestationError("attestation key has an unsafe shape")
@@ -249,18 +246,12 @@ def install_recovery_manifest(
         or parent.st_uid != os.getuid()
         or stat.S_IMODE(parent.st_mode) & 0o077
     ):
-        raise DeploymentAttestationError(
-            "attestation environment directory must be owner-only"
-        )
+        raise DeploymentAttestationError("attestation environment directory must be owner-only")
     values = (
-        _private_env(destination, label="attestation environment")
-        if destination.exists()
-        else {}
+        _private_env(destination, label="attestation environment") if destination.exists() else {}
     )
     values["MAC_ATTESTATION_KEY"] = key
-    descriptor, raw = tempfile.mkstemp(
-        prefix=destination.name + ".", dir=str(destination.parent)
-    )
+    descriptor, raw = tempfile.mkstemp(prefix=destination.name + ".", dir=str(destination.parent))
     os.close(descriptor)
     temporary = Path(raw)
     try:
@@ -284,9 +275,7 @@ def install_recovery_manifest(
         source_identity.st_dev,
         source_identity.st_ino,
     ):
-        raise DeploymentAttestationError(
-            "attestation recovery manifest changed before consumption"
-        )
+        raise DeploymentAttestationError("attestation recovery manifest changed before consumption")
     source.unlink()
     return {
         "schema": INSTALL_RECEIPT_SCHEMA,
@@ -325,9 +314,7 @@ def build_candidate_proof(challenge_path: Path, env_file: Path) -> Dict[str, Any
 
     environment = env_file.expanduser()
     key = _required(
-        _private_env(environment, label="attestation environment").get(
-            "MAC_ATTESTATION_KEY", ""
-        ),
+        _private_env(environment, label="attestation environment").get("MAC_ATTESTATION_KEY", ""),
         "installed attestation key",
     )
     fingerprint = "sha256:" + hashlib.sha256(key.encode()).hexdigest()

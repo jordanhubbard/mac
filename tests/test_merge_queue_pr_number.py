@@ -148,7 +148,10 @@ def test_an_entry_with_a_pr_still_evicts_but_says_so_differently(queue):
 
 def _tested_entry(queue, *, task_id, attempts, pr=0):
     entry = queue.admit(
-        repository="r", branch="main", task_id=task_id, head_sha="a" * 40,
+        repository="r",
+        branch="main",
+        task_id=task_id,
+        head_sha="a" * 40,
         pull_request_number=pr,
     )
     queue._store.execute(

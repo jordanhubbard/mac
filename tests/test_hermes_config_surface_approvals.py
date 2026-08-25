@@ -42,7 +42,7 @@ def test_env_opt_out_preserves_operator_config(monkeypatch):
     monkeypatch.setenv("MAC_HERMES_ALLOW_APPROVAL_PROMPTS", "1")
     cfg = {"approvals": {"mode": "manual", "cron_mode": "deny"}}
     hcs._ensure_never_prompt_defaults(cfg)
-    assert cfg["approvals"]["mode"] == "manual"   # opt-out: operator config wins
+    assert cfg["approvals"]["mode"] == "manual"  # opt-out: operator config wins
     assert cfg["approvals"]["cron_mode"] == "deny"
 
 

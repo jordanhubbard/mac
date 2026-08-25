@@ -170,9 +170,7 @@ adapter.import_project_item(
     priority=10,
     dependencies=["task_parent"],
 )
-adapter.register_project_repository(
-    "nanolang", "/Users/jordanh/Src/nanolang", project="nanolang"
-)
+adapter.register_project_repository("nanolang", "/Users/jordanh/Src/nanolang", project="nanolang")
 adapter.list_project_repositories()
 ```
 
@@ -292,7 +290,9 @@ adapter.claim_task(task_id, agent_id)
 adapter.claim_next_task(agent_id, dry_run=True)
 adapter.start_task(task_id, agent_id)
 adapter.add_evidence(task_id, "test", "artifact://pytest", "tests passed", agent_id)
-adapter.record_command_audit(agent_id, phase="completed", argv=["git", "status"], cwd="/workspace/mac", task_id=task_id)
+adapter.record_command_audit(
+    agent_id, phase="completed", argv=["git", "status"], cwd="/workspace/mac", task_id=task_id
+)
 adapter.web_search("current project dependency release notes", limit=5)
 adapter.web_scrape("https://example.com", formats=["markdown"])
 adapter.submit_for_review(task_id, agent_id)

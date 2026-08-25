@@ -245,9 +245,7 @@ def _route_fields(
         )
         explicit_provider = str(env.get("MAC_CODEX_PROVIDER") or "").strip()
         host = (urlsplit(endpoint).hostname or "").lower()
-        provider = explicit_provider or (
-            "openai" if host.endswith("openai.com") else "mac-router"
-        )
+        provider = explicit_provider or ("openai" if host.endswith("openai.com") else "mac-router")
         auth_kind = "oauth_file" if auth_source == "~/.codex/auth.json" else "bearer_env"
         configured_model = str(
             env.get("MAC_TASK_MODEL") or env.get("MAC_CODEX_MODEL") or ""
@@ -296,9 +294,7 @@ def _route_fields(
         return {
             "provider": "opencode",
             "protocol": "opencode-run",
-            "auth_kind": (
-                "bearer_env" if auth_source == "OPENCODE_API_KEY" else "api_key_file"
-            ),
+            "auth_kind": ("bearer_env" if auth_source == "OPENCODE_API_KEY" else "api_key_file"),
             "endpoint": "",
             "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_OPENCODE_MODEL") or "").strip(),
         }
@@ -310,11 +306,7 @@ def _route_fields(
         return {
             "provider": "pi",
             "protocol": "pi-print",
-            "auth_kind": (
-                "api_key_file"
-                if auth_source.startswith("~/.pi")
-                else "bearer_env"
-            ),
+            "auth_kind": ("api_key_file" if auth_source.startswith("~/.pi") else "bearer_env"),
             "endpoint": "",
             "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_PI_MODEL") or "").strip(),
         }
@@ -385,7 +377,12 @@ def _detect_claude(
     if str(settings.get("apiKeyHelper") or "").strip():
         return True, binary, "apiKeyHelper", "claude: configured via apiKeyHelper"
     if str(env.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip():
-        return True, binary, "CLAUDE_CODE_OAUTH_TOKEN", "claude: configured via CLAUDE_CODE_OAUTH_TOKEN"
+        return (
+            True,
+            binary,
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "claude: configured via CLAUDE_CODE_OAUTH_TOKEN",
+        )
     credentials = home / ".claude" / ".credentials.json"
     try:
         if credentials.is_file() and credentials.stat().st_size > 0:
@@ -399,7 +396,12 @@ def _detect_claude(
         pass
     config = _read_json(home / ".claude.json")
     if config and str(config.get("primary_key") or "").strip():
-        return True, binary, "~/.claude.json:primary_key", "claude: configured via ~/.claude.json primary_key"
+        return (
+            True,
+            binary,
+            "~/.claude.json:primary_key",
+            "claude: configured via ~/.claude.json primary_key",
+        )
     return False, binary, "", "claude: on PATH but no supported credential configuration"
 
 
@@ -554,9 +556,7 @@ _DETECTORS = {
 }
 
 
-def _service_augmented_which(
-    env: Mapping[str, str], home: Path
-) -> Callable[[str], Optional[str]]:
+def _service_augmented_which(env: Mapping[str, str], home: Path) -> Callable[[str], Optional[str]]:
     """``shutil.which`` over the service PATH plus standard user install dirs.
 
     The worker daemon runs under a minimal supervisor PATH (systemd/launchd/
@@ -627,16 +627,12 @@ def detect_all(
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
-    host_which = (
-        _service_augmented_which(env, home) if host_which is None else host_which
-    )
+    host_which = _service_augmented_which(env, home) if host_which is None else host_which
     if which is None:
         which = host_which
     out: Dict[str, Dict[str, object]] = {}
     for name, detect in _DETECTORS.items():
-        host_configured, host_binary, host_source, host_detail = detect(
-            env, home, host_which
-        )
+        host_configured, host_binary, host_source, host_detail = detect(env, home, host_which)
         configured, binary, source, detail = detect(env, home, which)
         checked = dict((verification or {}).get(name) or {})
         reported_binary = str(checked.get("binary") or "").strip()
@@ -769,8 +765,7 @@ def _ladder_order(env: Mapping[str, str], rationale: List[str]) -> Tuple[str, ..
         )
     if not ordered:
         rationale.append(
-            "route ladder names no CLI this build can detect; falling back to the "
-            "built-in order"
+            "route ladder names no CLI this build can detect; falling back to the built-in order"
         )
         return AGENT_PRIORITY
     rationale.append("route ladder order applies: %s" % ", ".join(ordered))
@@ -861,23 +856,15 @@ def resolve_coding_agent(
                     selected = choice
                 if not verify_all:
                     return choice
-                rationale.append(
-                    "%s: route verified; continuing fallback verification" % agent
-                )
+                rationale.append("%s: route verified; continuing fallback verification" % agent)
                 continue
-            rationale.append(
-                "%s: route verification failed; trying next configured agent" % agent
-            )
+            rationale.append("%s: route verification failed; trying next configured agent" % agent)
 
     if selected is not None:
-        rationale.append(
-            "%s selected after checking all configured routes" % selected.agent
-        )
+        rationale.append("%s selected after checking all configured routes" % selected.agent)
         return replace(selected, rationale=list(rationale))
 
-    rationale.append(
-        "no acceptable coding agent available/authed; executor will fail closed"
-    )
+    rationale.append("no acceptable coding agent available/authed; executor will fail closed")
     return _choice("", False, "", "", rationale, env)
 
 
@@ -891,9 +878,7 @@ def mcp_config_document(server_command: List[str], name: str = "server") -> Dict
     return {"mcpServers": {name: {"command": command, "args": args}}}
 
 
-def _default_argv(
-    agent: str, binary: str, prompt: str, *, model: str = ""
-) -> List[str]:
+def _default_argv(agent: str, binary: str, prompt: str, *, model: str = "") -> List[str]:
     """Non-interactive, approvals-bypassed invocation per agent.
 
     Approval bypass is intentional and coupled to the executor's OpenShell
@@ -987,7 +972,8 @@ def _codex_provider_config_argv(choice: CodingAgentChoice) -> List[str]:
         "-c",
         "model_providers.%s.base_url=%s" % (provider_id, json.dumps(choice.endpoint)),
         "-c",
-        "model_providers.%s.wire_api=%s" % (
+        "model_providers.%s.wire_api=%s"
+        % (
             provider_id,
             json.dumps(choice.protocol or "responses"),
         ),
@@ -1017,8 +1003,7 @@ def _codex_provider_config_argv(choice: CodingAgentChoice) -> List[str]:
         )
         args += [
             "-c",
-            "model_providers.%s.env_http_headers=%s"
-            % (provider_id, inline_table),
+            "model_providers.%s.env_http_headers=%s" % (provider_id, inline_table),
         ]
     return args
 

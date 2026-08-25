@@ -13,7 +13,10 @@ def _fake_scroll(store):
 def test_export_flattens_and_keeps_id_collection():
     store = {
         "mac_memory_medium": [
-            {"id": 1, "payload": {"agent_id": "natasha", "summary": "knows Boris", "tier": "medium"}},
+            {
+                "id": 1,
+                "payload": {"agent_id": "natasha", "summary": "knows Boris", "tier": "medium"},
+            },
             {"id": 2, "payload": {"agent_id": "rocky", "summary": "ships connectors"}},
         ],
         "mac_memory_long": [
@@ -28,10 +31,12 @@ def test_export_flattens_and_keeps_id_collection():
 
 
 def test_export_filters_by_agent():
-    store = {"mac_memory_medium": [
-        {"id": 1, "payload": {"agent_id": "natasha", "summary": "a"}},
-        {"id": 2, "payload": {"agent_id": "rocky", "summary": "b"}},
-    ]}
+    store = {
+        "mac_memory_medium": [
+            {"id": 1, "payload": {"agent_id": "natasha", "summary": "a"}},
+            {"id": 2, "payload": {"agent_id": "rocky", "summary": "b"}},
+        ]
+    }
     recs = mv.export_memory_records(_fake_scroll(store), ["mac_memory_medium"], agent_id="natasha")
     assert [r["id"] for r in recs] == [1]
 
@@ -49,7 +54,7 @@ def test_prune_points_deletes_vetted_ids():
     calls = []
     delete = lambda col, ids: calls.append((col, list(ids)))
     res = mv.prune_points(delete, "mac_memory_medium", [1, 2, None])
-    assert res["deleted"] == 2          # None filtered out
+    assert res["deleted"] == 2  # None filtered out
     assert calls == [("mac_memory_medium", [1, 2])]
 
 

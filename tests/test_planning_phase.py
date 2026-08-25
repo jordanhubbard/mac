@@ -12,6 +12,7 @@ Covers:
   planning_phase_completed
 - Parent task blocks on children until all children complete (services contract)
 """
+
 from __future__ import annotations
 
 import itertools
@@ -68,7 +69,7 @@ def _large_task(
             "estimated_units": 2,
             "signals": ["desc_words:250", "repo_required_cmds:3"],
             "rationale": "size=large based on: desc_words:250; repo_required_cmds:3",
-        }
+        },
     }
     if extra_metadata:
         metadata.update(extra_metadata)
@@ -98,9 +99,7 @@ class TestIsPlanningPhase:
         assert te.is_planning_phase(task) is True
 
     def test_returns_true_for_plan_first_flag(self):
-        task = _task(
-            metadata={"plan_first": True, "decomposition": {"max_children": 3}}
-        )
+        task = _task(metadata={"plan_first": True, "decomposition": {"max_children": 3}})
         assert te.is_planning_phase(task) is True
 
     def test_plan_first_false_does_not_trigger(self):
@@ -109,9 +108,7 @@ class TestIsPlanningPhase:
 
     def test_plan_first_string_true_triggers(self):
         # Truthy strings should trigger
-        task = _task(
-            metadata={"plan_first": "true", "decomposition": {"max_children": 3}}
-        )
+        task = _task(metadata={"plan_first": "true", "decomposition": {"max_children": 3}})
         assert te.is_planning_phase(task) is True
 
     def test_no_decompose_prevents_planning(self):
@@ -119,18 +116,12 @@ class TestIsPlanningPhase:
         assert te.is_planning_phase(task) is False
 
     def test_child_task_prevents_planning(self):
-        task = _large_task(
-            extra_metadata={
-                "relationships": {"parent_task_id": "task_parent_abc"}
-            }
-        )
+        task = _large_task(extra_metadata={"relationships": {"parent_task_id": "task_parent_abc"}})
         assert te.is_planning_phase(task) is False
 
     def test_task_with_existing_children_skips_planning(self):
         task = _large_task(
-            extra_metadata={
-                "relationships": {"child_task_ids": ["task_child1", "task_child2"]}
-            }
+            extra_metadata={"relationships": {"child_task_ids": ["task_child1", "task_child2"]}}
         )
         assert te.is_planning_phase(task) is False
 
@@ -155,9 +146,7 @@ class TestIsPlanningPhase:
         assert te.is_planning_phase(task) is False
 
     def test_missing_size_in_estimate_returns_false(self):
-        task = _task(
-            metadata={"scope_estimate": {"schema": "mac.scope_estimate.v1"}}
-        )
+        task = _task(metadata={"scope_estimate": {"schema": "mac.scope_estimate.v1"}})
         assert te.is_planning_phase(task) is False
 
 
@@ -202,7 +191,11 @@ class TestBuildPlanningPrompt:
     def test_contains_do_not_write_code_instruction(self, tmp_path: Path):
         task = _large_task()
         prompt = te.build_planning_prompt(task, tmp_path / "task.json")
-        assert "DO NOT write any code" in prompt or "NOT to implement" in prompt or "NOT implement" in prompt
+        assert (
+            "DO NOT write any code" in prompt
+            or "NOT to implement" in prompt
+            or "NOT implement" in prompt
+        )
 
     def test_contains_task_file_path(self, tmp_path: Path):
         task_file = tmp_path / "task.json"
@@ -300,9 +293,7 @@ class TestShouldEnterPlanningPhase:
     def test_enters_when_hub_is_ready(self):
         task = _large_task()
         assert (
-            te.should_enter_planning_phase(
-                task, hub_capability={"ready": True, "reason": "ready"}
-            )
+            te.should_enter_planning_phase(task, hub_capability={"ready": True, "reason": "ready"})
             is True
         )
 
@@ -334,9 +325,7 @@ def _make_plan_evidence(task_workspace: Path) -> None:
         "ordering_rationale": "layer 0 -> layer 1 -> layer 2",
         "coverage_claim": "covers all deliverables in the parent task",
     }
-    (task_workspace / "mac-evidence.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (task_workspace / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def _patch_run_executor_base(monkeypatch, *, tmp_path: Path) -> Dict[str, List]:
@@ -358,14 +347,24 @@ def _patch_run_executor_base(monkeypatch, *, tmp_path: Path) -> Dict[str, List]:
 
     monkeypatch.setattr(te, "recall_deployment_lessons", lambda task: [])
     monkeypatch.setattr(te, "recall_plan_lessons", lambda task, limit=3: [])
-    monkeypatch.setattr(te, "emit_telemetry", lambda event, **kw: state["telemetry"].append(event) or True)
+    monkeypatch.setattr(
+        te, "emit_telemetry", lambda event, **kw: state["telemetry"].append(event) or True
+    )
     monkeypatch.setattr(te, "_openshell_enabled", lambda: False)
     monkeypatch.setattr(te, "_openshell_required_for_local_agent", lambda: False)
     monkeypatch.setattr(te, "_invoke_agent", fake_invoke_agent)
-    monkeypatch.setattr(te, "run_deterministic_git_finalizer", lambda *a, **kw: state["git_finalizer_calls"].append(1))
+    monkeypatch.setattr(
+        te,
+        "run_deterministic_git_finalizer",
+        lambda *a, **kw: state["git_finalizer_calls"].append(1),
+    )
     monkeypatch.setattr(te, "maybe_auto_decompose", lambda *a, **kw: False)
     monkeypatch.setattr(te, "write_fallback_evidence_manifest", lambda *a, **kw: None)
-    monkeypatch.setattr(te, "classify_outcome", lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []})
+    monkeypatch.setattr(
+        te,
+        "classify_outcome",
+        lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []},
+    )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
     monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
     monkeypatch.setattr(te, "record_plan_outcome", lambda *a, **kw: True)
@@ -480,15 +479,11 @@ class TestRunExecutorPlanningPhase:
         assert "planning_phase_started" not in state["telemetry"]
         assert "planning_phase_skipped" in state["telemetry"]
         assert "sandbox_hub_connectivity" in state["telemetry"]
-        probe = json.loads(
-            (tmp_path / "sandbox-hub-connectivity.json").read_text(encoding="utf-8")
-        )
+        probe = json.loads((tmp_path / "sandbox-hub-connectivity.json").read_text(encoding="utf-8"))
         assert probe["ready"] is False
         assert probe["reason"] == "hub_credentials_missing"
 
-    def test_empty_plan_decomposed_is_rewritten_not_completed(
-        self, monkeypatch, tmp_path: Path
-    ):
+    def test_empty_plan_decomposed_is_rewritten_not_completed(self, monkeypatch, tmp_path: Path):
         state = _patch_run_executor_base(monkeypatch, tmp_path=tmp_path)
 
         def fake_invoke_empty_plan(runner, prompt, workspace, audit_id, opts):
@@ -519,9 +514,7 @@ class TestRunExecutorPlanningPhase:
             is_review=False,
         )
 
-        loaded = json.loads(
-            (tmp_path / "mac-evidence.json").read_text(encoding="utf-8")
-        )
+        loaded = json.loads((tmp_path / "mac-evidence.json").read_text(encoding="utf-8"))
         assert loaded["evidence_type"] != "plan_decomposed"
         assert loaded["rejected_evidence_type"] == "plan_decomposed"
         assert "planning_phase_completed" not in state["telemetry"]
@@ -638,7 +631,9 @@ class TestRunExecutorPlanningPhase:
         monkeypatch.setattr(
             te,
             "_invoke_agent",
-            lambda runner, prompt, workspace, audit_id, opts: state["prompts"].append(prompt) or _FakeResult(0),
+            lambda runner, prompt, workspace, audit_id, opts: (
+                state["prompts"].append(prompt) or _FakeResult(0)
+            ),
         )
         monkeypatch.setattr(
             te,
@@ -723,9 +718,7 @@ class TestLargeFixtureToChildren:
 
         # Topology dependency ordering must be mentioned
         assert (
-            "topology" in prompt.lower()
-            or "order_layers" in prompt
-            or "mac plan order" in prompt
+            "topology" in prompt.lower() or "order_layers" in prompt or "mac plan order" in prompt
         )
         # Children with dependencies must be required
         assert "dependencies" in prompt
@@ -804,9 +797,7 @@ class TestParentGatesOnChildren:
     def test_children_open_after_add(self):
         """Children with no interdependency must be open immediately after creation."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large parent task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large parent task", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [
@@ -817,8 +808,9 @@ class TestParentGatesOnChildren:
         child_ids = [c["id"] for c in result["children"]]
         for cid in child_ids:
             child = cp.get_task(cid)
-            assert child.state == TaskState.OPEN.value, (
-                "child %s should be open, got %s" % (cid, child.state)
+            assert child.state == TaskState.OPEN.value, "child %s should be open, got %s" % (
+                cid,
+                child.state,
             )
             assert child.metadata["dependency_policy"]["on_unsatisfied"] == "supervise"
             assert child.metadata["repair_policy"]["environment_prerequisite"] is True
@@ -828,18 +820,13 @@ class TestParentGatesOnChildren:
             "on_unsatisfied": "supervise",
             "join": "all_settled",
         }
-        assert (
-            refreshed_parent.metadata["coordination"]["join_policy"]
-            == "all_settled"
-        )
+        assert refreshed_parent.metadata["coordination"]["join_policy"] == "all_settled"
 
     def test_all_children_complete_unblocks_parent(self):
         """When all children transition to completed the parent dependency is
         satisfied — verified by checking the dependency list is fulfilled."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large parent task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large parent task", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [
@@ -853,10 +840,7 @@ class TestParentGatesOnChildren:
         cp.force_complete_task(child_ids[0], "test_agent", reason="test")
         cp.force_complete_task(child_ids[1], "test_agent", reason="test")
 
-        all_complete = all(
-            cp.get_task(cid).state == TaskState.COMPLETED.value
-            for cid in child_ids
-        )
+        all_complete = all(cp.get_task(cid).state == TaskState.COMPLETED.value for cid in child_ids)
         assert all_complete, "all children must be completed"
 
         # Parent's dependencies are the child IDs — they are now all completed.
@@ -872,9 +856,7 @@ class TestParentGatesOnChildren:
     def test_partial_child_completion_does_not_complete_parent(self):
         """Completing only one of two children must not satisfy the parent's block."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large parent task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large parent task", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [
@@ -900,9 +882,7 @@ class TestParentGatesOnChildren:
 
     def test_failed_child_supervises_descendants_and_releases_integration(self):
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Repair a coupled subsystem", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Repair a coupled subsystem", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [
@@ -921,8 +901,7 @@ class TestParentGatesOnChildren:
             ],
         )
         by_node = {
-            child["metadata"]["coordination"]["plan_node_id"]: child
-            for child in result["children"]
+            child["metadata"]["coordination"]["plan_node_id"]: child for child in result["children"]
         }
 
         cp.force_complete_task(by_node["base"]["id"], "test", reason="done")
@@ -935,15 +914,10 @@ class TestParentGatesOnChildren:
 
         downstream = cp.get_task(by_node["downstream"]["id"])
         assert downstream.state == TaskState.BLOCKED.value
-        assert (
-            downstream.metadata["dependency_resolution"]["status"]
-            == "unsatisfied"
-        )
+        assert downstream.metadata["dependency_resolution"]["status"] == "unsatisfied"
         assert cp.get_task(parent.id).state == TaskState.WAITING.value
         cp._unblock_ready_tasks(limit=100)
-        assert cp.get_task(by_node["downstream"]["id"]).state == (
-            TaskState.BLOCKED.value
-        )
+        assert cp.get_task(by_node["downstream"]["id"]).state == (TaskState.BLOCKED.value)
         assert cp.get_task(parent.id).state == TaskState.WAITING.value
 
         cp.force_complete_task(by_node["independent"]["id"], "test", reason="done")
@@ -963,9 +937,7 @@ class TestParentGatesOnChildren:
         "event_order",
         list(itertools.permutations(("complete_a", "fail_b", "complete_c"))),
     )
-    def test_all_settled_join_is_confluent_across_terminal_event_order(
-        self, event_order
-    ):
+    def test_all_settled_join_is_confluent_across_terminal_event_order(self, event_order):
         cp = ControlPlane.in_memory()
         parent = cp.create_task(
             title="Order-independent supervised plan",
@@ -985,18 +957,14 @@ class TestParentGatesOnChildren:
             for child in result["children"]
         }
         actions = {
-            "complete_a": lambda: cp.force_complete_task(
-                by_node["a"], "test", reason="done"
-            ),
+            "complete_a": lambda: cp.force_complete_task(by_node["a"], "test", reason="done"),
             "fail_b": lambda: cp._transition_task_internal(
                 by_node["b"],
                 TaskState.FAILED.value,
                 "test",
                 {"reason": "executor_failed", "returncode": 124},
             ),
-            "complete_c": lambda: cp.force_complete_task(
-                by_node["c"], "test", reason="done"
-            ),
+            "complete_c": lambda: cp.force_complete_task(by_node["c"], "test", reason="done"),
         }
 
         for event in event_order:
@@ -1004,9 +972,10 @@ class TestParentGatesOnChildren:
             cp._unblock_ready_tasks(limit=100)
 
         assert cp.get_task(parent.id).state == TaskState.OPEN.value
-        assert {
-            cp.get_task(child_id).state for child_id in by_node.values()
-        } == {TaskState.COMPLETED.value, TaskState.FAILED.value}
+        assert {cp.get_task(child_id).state for child_id in by_node.values()} == {
+            TaskState.COMPLETED.value,
+            TaskState.FAILED.value,
+        }
         assert all(
             cp.get_task(child_id).state != TaskState.CANCELLED.value
             for child_id in by_node.values()
@@ -1049,9 +1018,7 @@ class TestParentGatesOnChildren:
     def test_children_inherit_parent_project(self):
         """Children should inherit the parent's project when not specified."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large parent task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large parent task", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [{"title": "Child step A"}],
@@ -1062,9 +1029,7 @@ class TestParentGatesOnChildren:
     def test_add_child_tasks_returns_children_list(self):
         """add_child_tasks return value must include a non-empty 'children' list."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large parent task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large parent task", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [
@@ -1081,9 +1046,7 @@ class TestParentGatesOnChildren:
     def test_atomic_children_resolve_symbolic_dependency_graph(self):
         """A single planner POST maps node_ids to real sibling task IDs."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large ordered task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large ordered task", description="x", project="mac")
         result = cp.add_child_tasks(
             parent.id,
             [
@@ -1111,17 +1074,17 @@ class TestParentGatesOnChildren:
             ],
         )
         children = result["children"]
-        ids = {
-            child["metadata"]["coordination"]["plan_node_id"]: child["id"]
-            for child in children
-        }
+        ids = {child["metadata"]["coordination"]["plan_node_id"]: child["id"] for child in children}
 
         assert children[0]["dependencies"] == []
         assert children[1]["dependencies"] == [ids["analysis"]]
         assert children[2]["dependencies"] == [ids["analysis"]]
         assert children[3]["dependencies"] == [ids["worker"], ids["services"]]
         assert children[4]["dependencies"] == [
-            ids["analysis"], ids["worker"], ids["services"], ids["tests"]
+            ids["analysis"],
+            ids["worker"],
+            ids["services"],
+            ids["tests"],
         ]
         assert children[0]["state"] == TaskState.OPEN.value
         assert all(child["state"] == TaskState.WAITING.value for child in children[1:])
@@ -1203,9 +1166,7 @@ class TestParentGatesOnChildren:
         """Children can declare explicit dependencies on sibling children,
         creating a dependency chain: A -> B -> C (C depends on B, B depends on A)."""
         cp = ControlPlane.in_memory()
-        parent = cp.create_task(
-            title="Large ordered task", description="x", project="mac"
-        )
+        parent = cp.create_task(title="Large ordered task", description="x", project="mac")
         # Create A first (no deps)
         result_a = cp.add_child_tasks(parent.id, [{"title": "Child A"}])
         child_a_id = result_a["children"][0]["id"]
@@ -1217,9 +1178,7 @@ class TestParentGatesOnChildren:
         )
         child_b_id = result_b["children"][0]["id"]
         child_b = cp.get_task(child_b_id)
-        assert child_a_id in child_b.dependencies, (
-            "Child B should depend on Child A"
-        )
+        assert child_a_id in child_b.dependencies, "Child B should depend on Child A"
         assert child_b.state == TaskState.WAITING.value, (
             "Child B should be waiting until Child A completes"
         )

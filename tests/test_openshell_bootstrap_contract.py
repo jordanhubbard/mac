@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _api_retirement_planner_source() -> str:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     function = bootstrap.split("retire_managed_sandboxes_via_api() {", 1)[1].split(
         "\n}\n\nretire_managed_sandboxes_via_docker", 1
     )[0]
@@ -22,9 +22,9 @@ def _api_retirement_planner_source() -> str:
 
 
 def _api_retirement_function_source() -> str:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     start = bootstrap.index("wait_for_empty_openshell_api_inventory() {")
     end = bootstrap.index("\n\nretire_managed_sandboxes_via_docker()", start)
     return bootstrap[start:end]
@@ -122,20 +122,20 @@ esac
     harness = (
         "set -euo pipefail\n"
         "openshell_local_gateway() {\n"
-        "  local cli=\"$1\"\n"
+        '  local cli="$1"\n'
         "  shift\n"
-        "  OPENSHELL_GATEWAY_ENDPOINT=\"$OPENSHELL_LOCAL_GATEWAY_ENDPOINT\" "
-        "\"$cli\" \"$@\"\n"
+        '  OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" '
+        '"$cli" "$@"\n'
         "}\n"
         "checkpoint_openclaw_with_cli() { return 97; }\n"
         "write_managed_openshell_container_ids() {\n"
-        "  printf 'containers %s\\n' \"$1\" >> \"$OPERATIONS\"\n"
-        "  : > \"$2\"\n"
+        '  printf \'containers %s\\n\' "$1" >> "$OPERATIONS"\n'
+        '  : > "$2"\n'
         "}\n"
-        "log() { printf 'log %s\\n' \"$*\" >> \"$OPERATIONS\"; }\n"
+        'log() { printf \'log %s\\n\' "$*" >> "$OPERATIONS"; }\n'
         + _api_retirement_function_source()
-        + "\nretire_managed_sandboxes_via_api \"$FAKE_CLI\" "
-        "\"$INITIAL_INVENTORY\" \"$RETIREMENT_TIMEOUT_SECONDS\"\n"
+        + '\nretire_managed_sandboxes_via_api "$FAKE_CLI" '
+        '"$INITIAL_INVENTORY" "$RETIREMENT_TIMEOUT_SECONDS"\n'
     )
     result = subprocess.run(
         ["/bin/bash", "-c", harness],
@@ -161,44 +161,40 @@ esac
         timeout=30,
     )
     recorded_operations = (
-        operations.read_text(encoding="utf-8").splitlines()
-        if operations.exists()
-        else []
+        operations.read_text(encoding="utf-8").splitlines() if operations.exists() else []
     )
     return result, recorded_operations
 
 
 def _openclaw_promotion_source() -> str:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     start = bootstrap.index("rollback_openclaw_promotion() {")
     end = bootstrap.index("\n\ncheckpoint_openclaw_with_cli()", start)
     return bootstrap[start:end]
 
 
 def _linux_gateway_ownership_source() -> str:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     start = bootstrap.index("mac_owned_gateway_wrapper() {")
     end = bootstrap.index("\n\nretire_managed_sandboxes_via_api()", start)
     return bootstrap[start:end]
 
 
 def _gateway_fail_closed_source() -> str:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     start = bootstrap.index("stop_gateway_fail_closed() {")
     end = bootstrap.index("\n\n# A previous deployment", start)
     return bootstrap[start:end]
 
 
 def test_openshell_bootstrap_is_docker_engine_only():
-    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
 
     assert 'compute_drivers = ["docker"]' in script
     assert "[openshell.drivers.docker]" in script
@@ -209,20 +205,14 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "OSH_DRIVER is no longer supported" in script
     assert "replacing podman-docker compatibility shim" in script
     assert "Podman compatibility shim" in script
-    assert (
-        "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store"
-        in script
-    )
+    assert "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store" in script
     assert "podman load" in script
     assert (
         "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/buildx visible through OpenShell"
         in script
     )
     assert (
-        script.count(
-            "/usr/local/lib/docker/cli-plugins/docker-buildx version "
-            "| grep -F v0.30.1"
-        )
+        script.count("/usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1")
         >= 1
     )
     assert "run_live_confinement_probe" in script
@@ -264,46 +254,36 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "[program:openshell-gateway]" in script
     assert "sudo supervisorctl restart openshell-gateway" in script
     assert "run-gateway.sh" in script
-    assert (
-        "unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT"
-        in script
-    )
+    assert "unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT" in script
     assert "[program:mac-openshell-firewall]" in script
     assert "chain=MAC_OPENSH_GW" in script
     assert '"$ipt" -A "$chain" -i lo -j RETURN' in script
     assert '"$ipt" -A "$chain" -i "$bridge_iface" -j RETURN' in script
     assert '"$ipt" -A "$chain" -i docker0 -j RETURN' not in script
     assert '"$ipt" -A "$chain" -i \'br+\' -j RETURN' not in script
-    assert 'bridge_iface=__OPENSH_BRIDGE_IFACE__' in script
+    assert "bridge_iface=__OPENSH_BRIDGE_IFACE__" in script
     assert 'network_name="openshell-docker"' in script
-    assert 'network create --driver bridge' in script
+    assert "network create --driver bridge" in script
     assert '[[ "$network_id" =~ ^[0-9a-f]{64}$ ]]' in script
     assert 'bridge_iface="br-${network_id:0:12}"' in script
     assert '"$ipt" -A "$chain" -j DROP' in script
     assert "left mesh interfaces" in script
     assert "sudo systemctl show-environment" in script
     assert "manager=$gateway_manager state=$gateway_state" in script
-    assert (
-        'OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:'
-        in script
-    )
+    assert 'OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:' in script
     assert script.count('supervisor_image = "$OSH_SUPERVISOR_IMAGE"') == 1
     assert "openshell/supervisor:latest" not in script
     assert "MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0" in script
     assert "rotating OAuth state is not durable in throwaway sandboxes" in script
     create_arg_lines = [
-        line
-        for line in script.splitlines()
-        if 'echo "MAC_OPENSHELL_CREATE_ARGS=' in line
+        line for line in script.splitlines() if 'echo "MAC_OPENSHELL_CREATE_ARGS=' in line
     ]
     assert create_arg_lines
     assert all("--env" not in line and " -- " not in line for line in create_arg_lines)
 
 
 def test_linux_bootstrap_installs_and_verifies_docker_buildx():
-    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
 
     assert "ensure_docker_buildx()" in script
     assert "for candidate in docker-buildx docker-buildx-plugin" in script
@@ -313,9 +293,9 @@ def test_linux_bootstrap_installs_and_verifies_docker_buildx():
 
 
 def test_openshell_image_docs_do_not_advertise_podman_builds():
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
 
     assert "docker build" in containerfile
     assert "podman build" not in containerfile
@@ -326,9 +306,9 @@ def test_openshell_image_declares_and_verifies_modern_bash_runtime():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
     contract_path = ROOT / "deploy" / "verify-bash-contract.sh"
     contract = contract_path.read_text(encoding="utf-8")
 
@@ -355,9 +335,9 @@ def test_openshell_image_declares_and_verifies_modern_bash_runtime():
 
 
 def test_openshell_image_proves_the_riscv_validation_floor() -> None:
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
 
     package_install = " ".join(
         line.strip()
@@ -391,9 +371,9 @@ def test_openshell_image_proves_the_riscv_validation_floor() -> None:
 
 def test_openshell_image_provides_process_inspection_baseline() -> None:
     """Contract tests may inspect child lifecycle; Debian-slim must not omit ps."""
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
 
     package_install = " ".join(
         line.strip()
@@ -408,18 +388,14 @@ def test_openshell_image_installs_codegraph_baseline():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
-    builder = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(
+    builder = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(encoding="utf-8")
+    preparer = (ROOT / "deploy" / "openshell" / "prepare-runtime-image-assets.sh").read_text(
         encoding="utf-8"
     )
-    preparer = (
-        ROOT / "deploy" / "openshell" / "prepare-runtime-image-assets.sh"
-    ).read_text(encoding="utf-8")
-    reviewed_assets = (ROOT / "deploy" / "reviewed-tool-assets.sh").read_text(
+    reviewed_assets = (ROOT / "deploy" / "reviewed-tool-assets.sh").read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
         encoding="utf-8"
     )
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
 
     assert 'CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.5.0}"' in bootstrap
     assert "prefetching pinned runtime-image assets on the host" in builder
@@ -441,15 +417,9 @@ def test_openshell_image_installs_codegraph_baseline():
     assert "claude-${asset_arch}.tgz" in containerfile
     assert "cursor-${asset_arch}.tgz" in containerfile
     assert "npm install -g pnpm" not in containerfile
-    assert (
-        "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets"
-        in containerfile
-    )
+    assert "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets" in containerfile
     assert "codegraph-${codegraph_arch}.tgz" in containerfile
-    assert (
-        'CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}"'
-        in containerfile
-    )
+    assert 'CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}"' in containerfile
     assert 'ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current' in containerfile
     assert 'ARG GH_VERSION="2.95.0"' in containerfile
     assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in preparer
@@ -458,10 +428,7 @@ def test_openshell_image_installs_codegraph_baseline():
     assert "https://cli.github.com/packages" not in containerfile
     assert "github.com" not in containerfile
     assert "raw.githubusercontent.com" not in containerfile
-    assert (
-        "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph"
-        in containerfile
-    )
+    assert "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph" in containerfile
     assert "chmod -R a+rX /usr/local/lib/codegraph" in containerfile
     assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
     assert "codegraph install --yes" in containerfile
@@ -475,9 +442,9 @@ def test_runtime_image_proves_all_three_coding_clis_resolve_on_path() -> None:
     a dangling symlink, or a non-PATH binary fails the build closed instead of
     shipping an image the in-sandbox probe later rejects as
     ``agent_binary_missing`` (the reported cursor-agent-not-on-PATH case)."""
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
 
     # Basename PATH-resolution proof for all three CLIs plus the cursor `agent`
     # alias, so build-time catches an unlinked/host-only binary.
@@ -496,9 +463,9 @@ def test_runtime_image_smoke_checks_catch_missing_cursor_agent_on_path() -> None
     + a minimal non-mutating ``--version`` invocation. This is what would catch
     a regression that drops ``cursor-agent`` from the image-owned PATH while
     preserving the fail-closed posture for both static and fungible classes."""
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
 
     smoke_lines = [
         line
@@ -525,8 +492,7 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
 
     assert (
         "ghcr.io/nvidia/openshell/supervisor@sha256:"
-        "80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d"
-        in bootstrap
+        "80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d" in bootstrap
     )
     assert '"$OSH_DOCKER_BIN" run --rm "$OSH_SUPERVISOR_IMAGE" --version' in bootstrap
     assert '"openshell-sandbox $OPENSHELL_VERSION"' in bootstrap
@@ -537,14 +503,8 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     assert "refusing to run the unauthenticated OpenShell gateway without its firewall" in bootstrap
     assert "systemctl restart mac-openshell-firewall.service" in bootstrap
     assert "supervisorctl start mac-openshell-firewall >/dev/null 2>&1 || true" not in bootstrap
-    assert (
-        'OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"'
-        in bootstrap
-    )
-    assert (
-        'OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" '
-        '"$cli" "$@"' in bootstrap
-    )
+    assert 'OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"' in bootstrap
+    assert 'OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" "$cli" "$@"' in bootstrap
     sandbox_operations = [
         line
         for line in bootstrap.splitlines()
@@ -553,29 +513,22 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     assert sandbox_operations
     assert all("openshell_local_gateway" in line for line in sandbox_operations)
     assert 'gateway add --name openshell "$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"' in bootstrap
-    assert 'gateway select openshell' in bootstrap
-    assert 'gateway list --output json' in bootstrap
-    assert '--label mac.owner=mac --label mac.kind=openshell-gateway' in bootstrap
+    assert "gateway select openshell" in bootstrap
+    assert "gateway list --output json" in bootstrap
+    assert "--label mac.owner=mac --label mac.kind=openshell-gateway" in bootstrap
     assert 'matches[0].get("endpoint") != endpoint' in bootstrap
-    assert (
-        "gateway add http://127.0.0.1:17670 >/dev/null 2>&1 || true"
-        not in bootstrap
-    )
+    assert "gateway add http://127.0.0.1:17670 >/dev/null 2>&1 || true" not in bootstrap
     assert "gateway select openshell >/dev/null 2>&1 || true" not in bootstrap
     linux = bootstrap.index("ensure_docker_engine")
-    retirement = bootstrap.index(
-        "retire_managed_sandboxes_before_upgrade || exit $?", linux
-    )
-    stop_existing = bootstrap.index(
-        "stop_gateway_fail_closed\nverify_supervisor_image", retirement
-    )
+    retirement = bootstrap.index("retire_managed_sandboxes_before_upgrade || exit $?", linux)
+    stop_existing = bootstrap.index("stop_gateway_fail_closed\nverify_supervisor_image", retirement)
     install_cli = bootstrap.index("# --- 1. openshell CLI")
     assert retirement < stop_existing < install_cli
     # One runtime-image smoke block, not two: the darwin block went away
     # with the macOS Docker path (ADR 0015). Linux is unchanged.
     assert bootstrap.count("clear_repo_update_dispatch_blocker") == 2
     assert "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE" in bootstrap
-    assert 'Path(key).unlink()' in bootstrap
+    assert "Path(key).unlink()" in bootstrap
 
 
 def test_macos_bootstrap_is_a_host_install_with_no_container_runtime():
@@ -588,9 +541,9 @@ def test_macos_bootstrap_is_a_host_install_with_no_container_runtime():
     fail on a platform that is no longer expected to have Docker.
     """
 
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
     assert "bootstrap_darwin" not in bootstrap
     assert "remove_existing_owned_macos_gateway" not in bootstrap
     assert "openshell-gw" in bootstrap  # the Linux gateway is untouched
@@ -605,12 +558,12 @@ def test_macos_bootstrap_is_a_host_install_with_no_container_runtime():
 
 
 def test_linux_gateway_stops_require_exact_mac_manager_ownership(tmp_path):
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
-    schema_stop = bootstrap.split(
-        "stop_existing_gateway_for_schema_recovery() {", 1
-    )[1].split("\n}\n\nretire_managed_sandboxes_via_api", 1)[0]
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    schema_stop = bootstrap.split("stop_existing_gateway_for_schema_recovery() {", 1)[1].split(
+        "\n}\n\nretire_managed_sandboxes_via_api", 1
+    )[0]
     fail_closed = _gateway_fail_closed_source()
     assert schema_stop.index("require_owned_gateway_manager_definitions") < schema_stop.index(
         "systemctl --user stop openshell-gateway.service"
@@ -724,8 +677,7 @@ esac
 
     systemd_definition = tmp_path / "openshell-gateway.service"
     original_systemd_definition = (
-        b"[Service]\nExecStart=/opt/acme/openshell-gateway "
-        b"--config /opt/acme/gateway.toml\n"
+        b"[Service]\nExecStart=/opt/acme/openshell-gateway --config /opt/acme/gateway.toml\n"
     )
     systemd_definition.write_bytes(original_systemd_definition)
     manager_log.write_text("", encoding="utf-8")
@@ -777,9 +729,7 @@ esac
     )
     assert blocked_supervisor_install.returncode != 0
     assert "unowned supervisord service" in blocked_supervisor_install.stderr
-    assert supervisor_config.read_text(encoding="utf-8") == (
-        unrelated_supervisor_definition
-    )
+    assert supervisor_config.read_text(encoding="utf-8") == (unrelated_supervisor_definition)
     assert "sudo supervisorctl stop" not in manager_log.read_text(encoding="utf-8")
 
     manager_log.write_text("", encoding="utf-8")
@@ -817,9 +767,7 @@ esac
         encoding="utf-8",
     )
     supervisor_config.write_text(
-        "[program:openshell-gateway]\n"
-        f"command={wrapper}\n"
-        f"directory={osh_dir}\n",
+        f"[program:openshell-gateway]\ncommand={wrapper}\ndirectory={osh_dir}\n",
         encoding="utf-8",
     )
     manager_log.write_text("", encoding="utf-8")
@@ -828,9 +776,7 @@ esac
         env={
             **base_env,
             "SYSTEMD_PRESENT": "1",
-            "SYSTEMD_EXEC_START": (
-                f"{{ path={wrapper} ; argv[]={wrapper} ; ignore_errors=no ; }}"
-            ),
+            "SYSTEMD_EXEC_START": (f"{{ path={wrapper} ; argv[]={wrapper} ; ignore_errors=no ; }}"),
         },
         capture_output=True,
         text=True,
@@ -936,10 +882,7 @@ def test_api_retirement_rejects_malformed_post_delete_inventory(tmp_path):
 
         assert result.returncode != 0
         assert "malformed post-retirement OpenShell inventory" in result.stderr
-        assert (
-            "ERROR: malformed post-retirement OpenShell API inventory"
-            in result.stderr
-        )
+        assert "ERROR: malformed post-retirement OpenShell API inventory" in result.stderr
         assert operations == [
             "delete mac-task-deadbeef",
             "log requested pre-upgrade retirement of managed sandbox mac-task-deadbeef",
@@ -956,12 +899,9 @@ def test_api_retirement_times_out_while_inventory_remains_nonempty(tmp_path):
     assert result.returncode != 0
     assert (
         "OpenShell API inventory did not become empty before the 1-second "
-        "retirement deadline"
-        in result.stderr
+        "retirement deadline" in result.stderr
     )
-    assert "ERROR: timed out waiting for OpenShell API inventory retirement" in (
-        result.stderr
-    )
+    assert "ERROR: timed out waiting for OpenShell API inventory retirement" in (result.stderr)
     assert operations.count("list") >= 2
     assert "containers all" not in operations
 
@@ -975,9 +915,7 @@ def test_api_retirement_kills_a_hung_inventory_call_at_the_deadline(tmp_path):
 
     assert result.returncode != 0
     assert "inventory call exceeded its bounded wait" in result.stderr
-    assert "ERROR: timed out waiting for OpenShell API inventory retirement" in (
-        result.stderr
-    )
+    assert "ERROR: timed out waiting for OpenShell API inventory retirement" in (result.stderr)
     assert operations == [
         "delete mac-task-deadbeef",
         "log requested pre-upgrade retirement of managed sandbox mac-task-deadbeef",
@@ -1057,22 +995,18 @@ exec /bin/mv "$@"
 
 
 def test_schema_fallback_requires_stopped_exact_managed_containers():
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
-    fallback = bootstrap.split("retire_managed_sandboxes_before_upgrade() {", 1)[
-        1
-    ].split("\n}\n\nrun_live_confinement_probe", 1)[0]
-    first_quiescence = fallback.index("validate_managed_container_quiescence")
-    stop_gateway = fallback.index(
-        "stop_existing_gateway_for_schema_recovery", first_quiescence
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
     )
+    fallback = bootstrap.split("retire_managed_sandboxes_before_upgrade() {", 1)[1].split(
+        "\n}\n\nrun_live_confinement_probe", 1
+    )[0]
+    first_quiescence = fallback.index("validate_managed_container_quiescence")
+    stop_gateway = fallback.index("stop_existing_gateway_for_schema_recovery", first_quiescence)
     second_quiescence = fallback.index(
         "validate_managed_container_quiescence", first_quiescence + 1
     )
-    docker_recovery = fallback.index(
-        "retire_managed_sandboxes_via_docker", second_quiescence
-    )
+    docker_recovery = fallback.index("retire_managed_sandboxes_via_docker", second_quiescence)
     assert first_quiescence < stop_gateway < second_quiescence < docker_recovery
 
     direct = bootstrap.split("retire_managed_sandboxes_via_docker() {", 1)[1].split(
@@ -1080,15 +1014,12 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     )[0]
     assert "exited|created|dead" in direct
     assert "refusing direct recovery of non-quiescent OpenShell container" in direct
-    inventory_writer = bootstrap.split(
-        "write_managed_openshell_container_ids() {", 1
-    )[1].split("\n}\n\nvalidate_managed_container_quiescence", 1)[0]
+    inventory_writer = bootstrap.split("write_managed_openshell_container_ids() {", 1)[1].split(
+        "\n}\n\nvalidate_managed_container_quiescence", 1
+    )[0]
     assert "openshell.ai/managed-by=openshell" in inventory_writer
     assert "openshell.ai/sandbox-name" in direct
-    assert (
-        "^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-"
-        "[A-Za-z0-9._-]+$" in direct
-    )
+    assert "^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$" in direct
     assert 'sandbox_name" = "$expected_openclaw' in direct
     checkpoint = direct.index("checkpoint_openclaw_with_docker")
     exact_remove = direct.index('"$OSH_DOCKER_BIN" rm "$container_id"')
@@ -1098,27 +1029,25 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     api = bootstrap.split("retire_managed_sandboxes_via_api() {", 1)[1].split(
         "\n}\n\nretire_managed_sandboxes_via_docker", 1
     )[0]
-    api_wait = bootstrap.split("wait_for_empty_openshell_api_inventory() {", 1)[
-        1
-    ].split("\n}\n\nretire_managed_sandboxes_via_api", 1)[0]
-    assert '[cli, "sandbox", "list", "--limit", "1000", "--output", "json"]' in (
-        api_wait
-    )
+    api_wait = bootstrap.split("wait_for_empty_openshell_api_inventory() {", 1)[1].split(
+        "\n}\n\nretire_managed_sandboxes_via_api", 1
+    )[0]
+    assert '[cli, "sandbox", "list", "--limit", "1000", "--output", "json"]' in (api_wait)
     assert "time.monotonic()" in api_wait
     assert "start_new_session=True" in api_wait
     assert "os.killpg(process.pid, signal.SIGTERM)" in api_wait
     assert "process.wait(timeout=min(5.0, remaining))" in api_wait
     assert "wait_for_empty_openshell_api_inventory" in api
-    assert "str(item.get(\"phase\") or \"\").strip().lower() != \"ready\"" in api
+    assert 'str(item.get("phase") or "").strip().lower() != "ready"' in api
     assert 'labels.get("mac.owner") == "mac"' in api
     assert 'labels.get("mac.keep") or ""' in api
     assert '"certifier"' not in api.split("disposable_patterns =", 1)[1].split("}", 1)[0]
     assert "pid = int(raw_pid)" in api
     assert "os.kill(pid, 0)" in api
 
-    retirement = bootstrap.split("retire_managed_sandboxes_before_upgrade() {", 1)[
-        1
-    ].split("\n}\n\nrun_live_confinement_probe", 1)[0]
+    retirement = bootstrap.split("retire_managed_sandboxes_before_upgrade() {", 1)[1].split(
+        "\n}\n\nrun_live_confinement_probe", 1
+    )[0]
     assert retirement.count("sandbox list --limit 1000 --output json") == 1
 
 
@@ -1129,7 +1058,7 @@ def test_complete_openshell_bootstrap_clears_default_and_configured_dispatch_hol
         encoding="utf-8"
     )
     start = bootstrap.index("clear_repo_update_dispatch_blocker(){")
-    end = bootstrap.index('\n}\n\nresolve_deployed_source_revision(){', start) + len("\n}\n")
+    end = bootstrap.index("\n}\n\nresolve_deployed_source_revision(){", start) + len("\n}\n")
     helper = bootstrap[start:end]
 
     mac_home = tmp_path / "mac home"
@@ -1170,7 +1099,7 @@ def test_runtime_source_revision_uses_archive_marker_and_rejects_disagreement(
         encoding="utf-8"
     )
     start = bootstrap.index("resolve_deployed_source_revision(){")
-    end = bootstrap.index('\n}\nexport PATH=', start) + len("\n}\n")
+    end = bootstrap.index("\n}\nexport PATH=", start) + len("\n}\n")
     helper = bootstrap[start:end]
 
     fake_bin = tmp_path / "bin"
@@ -1178,7 +1107,7 @@ def test_runtime_source_revision_uses_archive_marker_and_rejects_disagreement(
     fake_git = fake_bin / "git"
     fake_git.write_text(
         "#!/bin/sh\n"
-        "if [ -n \"${FAKE_GIT_REVISION:-}\" ]; then\n"
+        'if [ -n "${FAKE_GIT_REVISION:-}" ]; then\n'
         "  printf '%s\\n' \"$FAKE_GIT_REVISION\"\n"
         "  exit 0\n"
         "fi\n"
@@ -1233,18 +1162,18 @@ def test_linux_gateway_firewall_resolves_only_the_owned_docker_bridge(tmp_path):
     docker.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "if [ \"$1\" = network ] && [ \"$2\" = inspect ]; then\n"
-        "  if [ \"${3:-}\" = --format ]; then\n"
-        "    case \"$4\" in\n"
+        'if [ "$1" = network ] && [ "$2" = inspect ]; then\n'
+        '  if [ "${3:-}" = --format ]; then\n'
+        '    case "$4" in\n'
         "      *Driver*) printf '%s\\n' bridge ;;\n"
         "      *Id*) printf '%064d\\n' 0 | tr 0 c ;;\n"
         "      *) exit 2 ;;\n"
         "    esac\n"
         "  else\n"
-        "    test -f \"$FAKE_DOCKER_STATE\"\n"
+        '    test -f "$FAKE_DOCKER_STATE"\n'
         "  fi\n"
-        "elif [ \"$1\" = network ] && [ \"$2\" = create ]; then\n"
-        "  : > \"$FAKE_DOCKER_STATE\"\n"
+        'elif [ "$1" = network ] && [ "$2" = create ]; then\n'
+        '  : > "$FAKE_DOCKER_STATE"\n'
         "else\n"
         "  exit 2\n"
         "fi\n",
@@ -1254,10 +1183,10 @@ def test_linux_gateway_firewall_resolves_only_the_owned_docker_bridge(tmp_path):
     ip = fake_bin / "ip"
     ip.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$*\" > \"$FAKE_IP_LOG\"\n"
-        "test \"$1\" = link\n"
-        "test \"$2\" = show\n"
-        "test \"$3\" = br-cccccccccccc\n",
+        'printf \'%s\\n\' "$*" > "$FAKE_IP_LOG"\n'
+        'test "$1" = link\n'
+        'test "$2" = show\n'
+        'test "$3" = br-cccccccccccc\n',
         encoding="utf-8",
     )
     ip.chmod(0o755)
@@ -1280,18 +1209,14 @@ def test_linux_gateway_firewall_resolves_only_the_owned_docker_bridge(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "br-cccccccccccc"
     assert state.exists()
-    assert ip_log.read_text(encoding="utf-8").strip() == (
-        "link show br-cccccccccccc"
-    )
+    assert ip_log.read_text(encoding="utf-8").strip() == ("link show br-cccccccccccc")
 
 
 def test_runtime_publication_verifier_requires_anonymous_digest_readback():
-    verifier = (ROOT / "scripts" / "verify-runtime-publication.py").read_text(
-        encoding="utf-8"
-    )
+    verifier = (ROOT / "scripts" / "verify-runtime-publication.py").read_text(encoding="utf-8")
     assert "mac-openshell-runtime@sha256:" in verifier
-    assert 'claude --version | grep -F \\"2.1.220\\"' in verifier
-    assert 'cursor-agent --version | grep -F \\"2026.07.23-e383d2b\\"' in verifier
+    assert 'claude --version | grep -F "2.1.220"' in verifier
+    assert 'cursor-agent --version | grep -F "2026.07.23-e383d2b"' in verifier
     assert "command -v codex; command -v claude; command -v cursor-agent;" in verifier
     assert 'anonymous_env["DOCKER_CONFIG"] = config' in verifier
     assert '"pull", args.image_ref' in verifier
@@ -1306,21 +1231,17 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
-    script = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(
+    script = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(encoding="utf-8")
+    preparer = (ROOT / "deploy" / "openshell" / "prepare-runtime-image-assets.sh").read_text(
         encoding="utf-8"
     )
-    preparer = (
-        ROOT / "deploy" / "openshell" / "prepare-runtime-image-assets.sh"
-    ).read_text(encoding="utf-8")
 
     assert 'IMAGE_ASSET_DIR="$MAC_SRC/.mac-openshell-build-assets"' in script
     assert 'BUILD_LOCK_DIR="$MAC_SRC/.mac-openshell-build.lock"' in script
     assert "acquire_build_lock" in script
     assert 'kill -0 "$owner_pid"' in script
     assert "timed out waiting for OpenShell image-build lock" in script
-    assert ".mac-openshell-build.lock" in (ROOT / ".dockerignore").read_text(
-        encoding="utf-8"
-    )
+    assert ".mac-openshell-build.lock" in (ROOT / ".dockerignore").read_text(encoding="utf-8")
     assert "prepare-runtime-image-assets.sh" in script
     assert "node-amd64.tar.xz" in preparer
     assert "node-arm64.tar.xz" in preparer
@@ -1410,8 +1331,11 @@ sleep 0.25
     }
     builder = ROOT / "deploy" / "openshell" / "build-runtime-image.sh"
     first = subprocess.Popen(
-        ["/bin/bash", str(builder)], env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ["/bin/bash", str(builder)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     deadline = time.monotonic() + 5
     while not any(ready.iterdir()) and time.monotonic() < deadline:
@@ -1419,8 +1343,11 @@ sleep 0.25
     assert any(ready.iterdir()), first.communicate(timeout=1)
 
     second = subprocess.Popen(
-        ["/bin/bash", str(builder)], env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ["/bin/bash", str(builder)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     first_output = first.communicate(timeout=10)
     second_output = second.communicate(timeout=10)
@@ -1436,9 +1363,9 @@ def test_openshell_image_installs_dev_extra_for_contract_tests():
     full suite — can actually RUN in-sandbox. Without it, in-sandbox
     verification of a repo-coupled code task fails to execute and the substance
     gate can never pass, so no autonomous code change lands through OpenShell."""
-    containerfile = (
-        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
     assert "uv sync --frozen --no-editable --extra dev" in containerfile
     assert "COPY pyproject.toml uv.lock README.md /tmp/mac-src/" in containerfile
     assert "COPY src /tmp/mac-src/src" in containerfile

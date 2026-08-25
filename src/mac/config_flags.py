@@ -108,20 +108,15 @@ def validate_flag_value(flag: str, value: Any) -> Any:
                 return True
             if lowered in _FALSY:
                 return False
-        raise ValidationError(
-            "config flag %s expects a boolean (got %r)" % (flag, value)
-        )
+        raise ValidationError("config flag %s expects a boolean (got %r)" % (flag, value))
     if spec["type"] == "enum":
         candidate = str(value).strip().lower()
         if candidate in spec["values"]:
             return candidate
         raise ValidationError(
-            "config flag %s expects one of %s (got %r)"
-            % (flag, ", ".join(spec["values"]), value)
+            "config flag %s expects one of %s (got %r)" % (flag, ", ".join(spec["values"]), value)
         )
-    raise ValidationError(
-        "config flag %s has unsupported registry type %r" % (flag, spec["type"])
-    )
+    raise ValidationError("config flag %s has unsupported registry type %r" % (flag, spec["type"]))
 
 
 def flag_default(flag: str) -> Any:

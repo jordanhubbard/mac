@@ -114,9 +114,7 @@ def test_strict_ssh_profile_requires_pinned_identity(isolated_mac_home):
         install_enrollment_manifest(manifest)
 
 
-def test_dispatch_uses_active_profile_without_legacy_files(
-    isolated_mac_home, monkeypatch
-):
+def test_dispatch_uses_active_profile_without_legacy_files(isolated_mac_home, monkeypatch):
     install_enrollment_manifest(_manifest())
     for name in (
         "MAC_API_URL",
@@ -131,9 +129,7 @@ def test_dispatch_uses_active_profile_without_legacy_files(
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(isolated_mac_home / "absent.yaml"))
-    args = argparse.Namespace(
-        db=None, hub_url=None, token=None, fleet=None, profile=None
-    )
+    args = argparse.Namespace(db=None, hub_url=None, token=None, fleet=None, profile=None)
 
     dispatch = resolve_dispatch(args)
 
@@ -142,9 +138,7 @@ def test_dispatch_uses_active_profile_without_legacy_files(
     assert dispatch._client.token == _manifest()["credential"]["token"]
 
 
-def test_dispatch_reconnects_ssh_tunnel_profile(
-    isolated_mac_home, monkeypatch
-):
+def test_dispatch_reconnects_ssh_tunnel_profile(isolated_mac_home, monkeypatch):
     manifest = _manifest(
         connection={
             "api_url": "http://127.0.0.1:48789",
@@ -162,9 +156,7 @@ def test_dispatch_reconnects_ssh_tunnel_profile(
     )
     install_enrollment_manifest(manifest)
     called = []
-    monkeypatch.setattr(
-        "mac.client_login.ensure_session", lambda profile: called.append(profile)
-    )
+    monkeypatch.setattr("mac.client_login.ensure_session", lambda profile: called.append(profile))
     for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL", "MAC_API_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
@@ -176,9 +168,7 @@ def test_dispatch_reconnects_ssh_tunnel_profile(
     assert called == ["rocky"]
 
 
-def test_legacy_migration_requires_explicit_admin_acknowledgement(
-    isolated_mac_home, monkeypatch
-):
+def test_legacy_migration_requires_explicit_admin_acknowledgement(isolated_mac_home, monkeypatch):
     fleets = isolated_mac_home / "fleets.yaml"
     env = isolated_mac_home / ".env"
     isolated_mac_home.mkdir(parents=True)

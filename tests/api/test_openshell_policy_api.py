@@ -51,9 +51,7 @@ def _app():
 
 def test_agent_can_fetch_its_own_assigned_policy() -> None:
     client, _cp, mine, _other, policy = _app()
-    response = client.get(
-        "/agents/%s/openshell/policy" % mine.id, headers=_headers("mine")
-    )
+    response = client.get("/agents/%s/openshell/policy" % mine.id, headers=_headers("mine"))
     assert response.status_code == 200
     body = response.json()
     assert body["policy_text"] == POLICY_TEXT.strip()
@@ -64,9 +62,7 @@ def test_agent_can_fetch_its_own_assigned_policy() -> None:
 def test_an_agent_cannot_read_another_agents_policy() -> None:
     """The whole point of binding the path agent to the token principal."""
     client, _cp, mine, _other, _policy = _app()
-    response = client.get(
-        "/agents/%s/openshell/policy" % mine.id, headers=_headers("other")
-    )
+    response = client.get("/agents/%s/openshell/policy" % mine.id, headers=_headers("other"))
     assert response.status_code == 403
 
 
@@ -74,9 +70,7 @@ def test_a_read_token_cannot_reach_the_policy() -> None:
     """A GET would otherwise fall through to the generic "read" scope, handing
     the fleet's confinement map to any dashboard credential."""
     client, _cp, mine, _other, _policy = _app()
-    response = client.get(
-        "/agents/%s/openshell/policy" % mine.id, headers=_headers("reader")
-    )
+    response = client.get("/agents/%s/openshell/policy" % mine.id, headers=_headers("reader"))
     assert response.status_code == 403
 
 
@@ -88,7 +82,5 @@ def test_unauthenticated_access_is_rejected() -> None:
 def test_agent_without_an_assignment_gets_404_not_an_empty_policy() -> None:
     """An empty policy would read as "no confinement required" at the far end."""
     client, _cp, _mine, other, _policy = _app()
-    response = client.get(
-        "/agents/%s/openshell/policy" % other.id, headers=_headers("other")
-    )
+    response = client.get("/agents/%s/openshell/policy" % other.id, headers=_headers("other"))
     assert response.status_code == 404

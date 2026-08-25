@@ -70,7 +70,7 @@ def test_the_tested_marker_retags_by_digest(jobs):
     script = "\n".join(str(step.get("run", "")) for step in steps)
 
     assert "imagetools create" in script
-    assert "@$DIGEST" in script or '@${DIGEST}' in script
+    assert "@$DIGEST" in script or "@${DIGEST}" in script
 
 
 def test_the_publish_job_exposes_what_the_marker_consumes(jobs):

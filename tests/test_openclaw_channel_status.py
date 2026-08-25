@@ -6,17 +6,11 @@ import importlib.util
 from pathlib import Path
 
 
-VALIDATOR = (
-    Path(__file__).resolve().parents[1]
-    / "scripts"
-    / "validate-openclaw-channel-status.py"
-)
+VALIDATOR = Path(__file__).resolve().parents[1] / "scripts" / "validate-openclaw-channel-status.py"
 
 
 def load_validator():
-    spec = importlib.util.spec_from_file_location(
-        "validate_openclaw_channel_status", VALIDATOR
-    )
+    spec = importlib.util.spec_from_file_location("validate_openclaw_channel_status", VALIDATOR)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

@@ -1,4 +1,5 @@
 """Tests for fleet-scoped env var resolution (mac-g55y)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -64,9 +65,9 @@ def test_resolve_first_walks_priority_chain():
 def test_parse_env_file_handles_quotes_and_exports(tmp_path: Path):
     env_path = tmp_path / ".env"
     env_path.write_text(
-        '# comment line\n'
-        '\n'
-        'MAC_API_TOKEN=plain-value\n'
+        "# comment line\n"
+        "\n"
+        "MAC_API_TOKEN=plain-value\n"
         'export MAC_DEPLOY_HUB_TOKEN="quoted value with spaces"\n'
         "MAC_DEPLOY_ROUTER_DEFAULT_MODEL='single-quoted'\n"
     )

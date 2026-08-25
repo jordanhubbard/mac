@@ -71,9 +71,7 @@ class CuriosityConfig:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 
     @classmethod
-    def from_env(
-        cls, environ: Optional[Mapping[str, str]] = None
-    ) -> "CuriosityConfig":
+    def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "CuriosityConfig":
         env = os.environ if environ is None else environ
         raw = str(env.get("MAC_CURIOSITY_WRAPPER") or "").strip()
         if raw:
@@ -120,8 +118,7 @@ class CuriosityService:
         path = self.config.wrapper_path
         if not self.available():
             raise CuriosityUnavailable(
-                "no curiosity wrapper at %s; this host has no OpenClaw "
-                "quarantine ledger" % path
+                "no curiosity wrapper at %s; this host has no OpenClaw quarantine ledger" % path
             )
         return path
 
@@ -150,9 +147,7 @@ class CuriosityService:
                 % (" ".join(str(a) for a in args), self.config.timeout_seconds)
             ) from exc
         except OSError as exc:
-            raise CuriosityUnavailable(
-                "could not execute %s: %s" % (wrapper, exc)
-            ) from exc
+            raise CuriosityUnavailable("could not execute %s: %s" % (wrapper, exc)) from exc
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip()
             raise CuriosityCommandError(
@@ -173,17 +168,14 @@ class CuriosityService:
         if status is not None:
             normalized = str(status).strip().lower()
             if normalized not in CURIOSITY_STATUSES:
-                raise ValueError(
-                    "status must be one of %s" % ", ".join(CURIOSITY_STATUSES)
-                )
+                raise ValueError("status must be one of %s" % ", ".join(CURIOSITY_STATUSES))
             args += ["--status", normalized]
         raw = self._run(args)
         try:
             payload = json.loads(raw) if raw.strip() else []
         except ValueError as exc:
             raise CuriosityCommandError(
-                "curiosity list returned output that is not JSON: %s"
-                % raw.strip()[:200]
+                "curiosity list returned output that is not JSON: %s" % raw.strip()[:200]
             ) from exc
         candidates = payload if isinstance(payload, list) else [payload]
         return {
@@ -213,9 +205,7 @@ class CuriosityService:
         """
         verb = str(decision).strip().lower()
         if verb not in CURIOSITY_DECISIONS:
-            raise ValueError(
-                "decision must be one of %s" % ", ".join(CURIOSITY_DECISIONS)
-            )
+            raise ValueError("decision must be one of %s" % ", ".join(CURIOSITY_DECISIONS))
         identifier = str(candidate_id or "").strip()
         if not identifier:
             raise ValueError("candidate_id is required")

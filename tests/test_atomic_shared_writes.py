@@ -158,9 +158,7 @@ def test_atomic_writer_picks_a_unique_temp_name_per_call(tmp_path):
     names = []
     for _ in range(8):
         with atomic_file.atomic_writer(tmp_path / "shared.json") as handle:
-            names.append(
-                sorted(p.name for p in tmp_path.iterdir() if p.name != "shared.json")
-            )
+            names.append(sorted(p.name for p in tmp_path.iterdir() if p.name != "shared.json"))
             handle.write("{}")
     flat = [n for batch in names for n in batch]
     assert len(set(flat)) == len(flat), "temp names collided: %r" % flat
@@ -252,9 +250,7 @@ def _lockable_worker(home: Path):
     return instance
 
 
-def test_install_lock_failure_raises_instead_of_running_pip_unserialized(
-    tmp_path, monkeypatch
-):
+def test_install_lock_failure_raises_instead_of_running_pip_unserialized(tmp_path, monkeypatch):
     """A swallowed flock error meant installing into the shared venv unlocked.
 
     ``except Exception: pass`` around ``fcntl.flock`` returned a handle that the
@@ -392,10 +388,7 @@ def test_concurrent_policy_syncs_never_install_a_spliced_policy(policy_home, tmp
     """
 
     target = policy_home / "openshell-policy.yaml"
-    texts = [
-        POLICY_TEMPLATE % (marker, _filler(marker, 1_200_000))
-        for marker in ("a", "b", "c")
-    ]
+    texts = [POLICY_TEMPLATE % (marker, _filler(marker, 1_200_000)) for marker in ("a", "b", "c")]
     workers = [_policy_worker(tmp_path / ("w" + m), t) for m, t in zip("abc", texts)]
 
     expected = set()
@@ -482,8 +475,7 @@ def _trickle_put(port, token, url_path, body, *, chunks=8, delay=0.02, start_del
     try:
         header = (
             "PUT %s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer %s\r\n"
-            "Content-Length: %d\r\nConnection: close\r\n\r\n"
-            % (url_path, token, len(body))
+            "Content-Length: %d\r\nConnection: close\r\n\r\n" % (url_path, token, len(body))
         )
         conn.sendall(header.encode())
         step = max(1, len(body) // chunks)
@@ -533,9 +525,10 @@ def test_concurrent_puts_to_one_path_never_splice(dav):
         assert b"201" in response.split(b"\r\n", 1)[0], (name, response[:120])
 
     stored = (dav.root / "race.bin").read_bytes()
-    assert stored in (body_a, body_b), (
-        "stored file is a splice: %d bytes, %d 'A' + %d 'B'"
-        % (len(stored), stored.count(b"A"), stored.count(b"B"))
+    assert stored in (body_a, body_b), "stored file is a splice: %d bytes, %d 'A' + %d 'B'" % (
+        len(stored),
+        stored.count(b"A"),
+        stored.count(b"B"),
     )
 
 
@@ -620,10 +613,7 @@ def test_concurrent_finalizer_phases_never_splice_progress(tmp_path):
     assert len(expected) == 3
 
     children = _run_forked_writers(
-        [
-            lambda c=c: c._write_progress("running", filler=fillers[c.phase])
-            for c in contexts
-        ],
+        [lambda c=c: c._write_progress("running", filler=fillers[c.phase]) for c in contexts],
         iterations=25,
     )
     _assert_never_spliced(path, expected, children)

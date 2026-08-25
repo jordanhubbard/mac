@@ -48,9 +48,9 @@ SOUL_BACKUP_EXCLUDES: List[str] = [
     ".hermes/bin",
     ".hermes/cache",
     ".hermes/audio_cache",
-    ".hermes/image_cache",   # regenerable thumbnail/image cache
-    ".hermes/lsp",           # language-server caches (often 100s of MB)
-    ".hermes/sandboxes",     # per-task worktrees, regenerated on demand
+    ".hermes/image_cache",  # regenerable thumbnail/image cache
+    ".hermes/lsp",  # language-server caches (often 100s of MB)
+    ".hermes/sandboxes",  # per-task worktrees, regenerated on demand
     ".hermes/skills",
     ".hermes/config.yaml",
     ".hermes/config.yaml.*",
@@ -75,9 +75,7 @@ HUB_ENV_SECRETS = ["MAC_SECRET_KEY", "MAC_API_TOKEN"]
 _FLEET_SERVICES = ["mac-agent", "mac-hermes-gateway", "mac", "mac-gen-server"]
 
 
-def _ssh_shell(
-    target: str, command: str, route: Optional[FleetSshSpec] = None
-) -> str:
+def _ssh_shell(target: str, command: str, route: Optional[FleetSshSpec] = None) -> str:
     if route is not None:
         return shlex.join(ssh_argv(route, command))
     return "ssh %s %s" % (shlex.quote(target), shlex.quote(command))
@@ -102,16 +100,22 @@ def _ssh_python(
 
 
 def _qdrant_dir(os_kind: str, fleet_name: str) -> str:
-    return (DEFAULT_QDRANT_DIR_DARWIN if os_kind == "darwin"
-            else DEFAULT_QDRANT_DIR_LINUX.format(fleet_name=fleet_name))
+    return (
+        DEFAULT_QDRANT_DIR_DARWIN
+        if os_kind == "darwin"
+        else DEFAULT_QDRANT_DIR_LINUX.format(fleet_name=fleet_name)
+    )
 
 
 def _control_plane_services(os_kind: str, fleet_name: str, *, include_qdrant: bool) -> List[str]:
     """Service identifiers (systemd unit names or launchd labels) for the hub's
     DB-touching services, in stop order."""
     if os_kind == "darwin":
-        svcs = ["com.%s.agent" % fleet_name, "com.%s.hermes-gateway" % fleet_name,
-                "com.%s.control-plane" % fleet_name]
+        svcs = [
+            "com.%s.agent" % fleet_name,
+            "com.%s.hermes-gateway" % fleet_name,
+            "com.%s.control-plane" % fleet_name,
+        ]
         if include_qdrant:
             svcs.append("com.%s.qdrant" % fleet_name)
         return svcs
@@ -147,14 +151,14 @@ def _restart_services_cmd(
     if os_kind == "darwin":
         la = "$HOME/Library/LaunchAgents"
         # bootstrap re-adds (RunAtLoad starts); kickstart -k as a fallback.
-        inner = ("uid=$(id -u); for L in %s; do "
-                 "launchctl bootstrap gui/$uid \"%s/$L.plist\" 2>/dev/null "
-                 "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done"
-                 % (" ".join(reversed(services)), la))
+        inner = (
+            "uid=$(id -u); for L in %s; do "
+            'launchctl bootstrap gui/$uid "%s/$L.plist" 2>/dev/null '
+            "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done"
+            % (" ".join(reversed(services)), la)
+        )
         return _ssh_shell(target, inner, route)
-    return _ssh_shell(
-        target, "sudo systemctl start %s" % " ".join(reversed(services)), route
-    )
+    return _ssh_shell(target, "sudo systemctl start %s" % " ".join(reversed(services)), route)
 
 
 def _seed_hub_secrets_cmd(
@@ -181,9 +185,7 @@ def _seed_hub_secrets_cmd(
         "p.write_text(chr(10).join(kept+incoming)+chr(10));"
         "os.chmod(p,0o600)" % env_path
     )
-    source = _ssh_shell(
-        src_target, 'grep -E "^(%s)=" %s' % (keys, env_path), src_route
-    )
+    source = _ssh_shell(src_target, 'grep -E "^(%s)=" %s' % (keys, env_path), src_route)
     pipeline = "%s | %s" % (
         source,
         _ssh_python(dst_target, upsert, route=dst_route),
@@ -277,8 +279,8 @@ def _darwin_restore_cmd(
     command = (
         "uid=$(id -u); "
         "for L in %s; do launchctl bootout gui/$uid/$L 2>/dev/null || true; done; "
-        "cd \"$HOME\" && tar xzf %s; "
-        "for L in %s; do launchctl bootstrap gui/$uid \"%s/$L.plist\" 2>/dev/null "
+        'cd "$HOME" && tar xzf %s; '
+        'for L in %s; do launchctl bootstrap gui/$uid "%s/$L.plist" 2>/dev/null '
         "|| launchctl kickstart -k gui/$uid/$L 2>/dev/null || true; done"
         % (labels, tgz, labels, la)
     )
@@ -300,9 +302,7 @@ def _transfer_cmd(
             dst_target,
             remote_path,
         )
-    source = shlex.join(
-        ssh_argv(src_route, "cat -- %s" % shlex.quote(remote_path))
-    )
+    source = shlex.join(ssh_argv(src_route, "cat -- %s" % shlex.quote(remote_path)))
     destination = shlex.join(
         ssh_argv(
             dst_route,
@@ -355,7 +355,7 @@ def migration_plan(
     and Qdrant vectors live in the shared hub and stay put; only the soul (which
     is host-local) moves, and the deploy re-attaches ``agent_<name>`` to its
     existing hub-stored persona/memories/mood."""
-    fn = (fleet_name or fleet)
+    fn = fleet_name or fleet
     tgz = "/tmp/%s-soul.tgz" % name
     db_tgz = "/tmp/%s-mac.db" % name
     qd_tgz = "/tmp/%s-qdrant.tgz" % name
@@ -368,7 +368,7 @@ def migration_plan(
     else:
         restore_cmd = _ssh_shell(
             dst_target,
-            "sudo systemctl stop %s; cd \"$HOME\" && tar xzf %s; "
+            'sudo systemctl stop %s; cd "$HOME" && tar xzf %s; '
             "sudo systemctl start %s" % (svcs, tgz, svcs),
             dst_route,
         )
@@ -386,16 +386,14 @@ def migration_plan(
             "import sqlite3,os;"
             "s=sqlite3.connect(os.path.expanduser(%r));"
             "d=sqlite3.connect(%r);"
-            "s.backup(d);d.close();s.close()" % (db_path, db_tgz))
-        steps.append(
-            ("backup-db-source", _ssh_python(src_target, db_backup, route=src_route))
+            "s.backup(d);d.close();s.close()" % (db_path, db_tgz)
         )
+        steps.append(("backup-db-source", _ssh_python(src_target, db_backup, route=src_route)))
         # 3. Qdrant storage snapshot (Linux /var/lib needs sudo + chown for scp).
         if src_os == "darwin":
             qd_cmd = "tar czf %s -C %s ." % (qd_tgz, sq)
         else:
-            qd_cmd = ("sudo tar czf %s -C %s . && sudo chown \"$USER\" %s"
-                      % (qd_tgz, sq, qd_tgz))
+            qd_cmd = 'sudo tar czf %s -C %s . && sudo chown "$USER" %s' % (qd_tgz, sq, qd_tgz)
         steps.append(("backup-qdrant-source", _ssh_shell(src_target, qd_cmd, src_route)))
 
     # 4. Soul backup (always).
@@ -483,8 +481,7 @@ def migration_plan(
                 "stage-qdrant-dest",
                 _ssh_shell(
                     dst_target,
-                    "mkdir -p %s && rm -rf %s/* && tar xzf %s -C %s"
-                    % (dq, dq, qd_tgz, dq),
+                    "mkdir -p %s && rm -rf %s/* && tar xzf %s -C %s" % (dq, dq, qd_tgz, dq),
                     dst_route,
                 ),
             )
@@ -497,19 +494,22 @@ def migration_plan(
     # 9. Restore soul over the deploy's fresh ~/.hermes, reconcile the host's
     #    Hermes identity to the migrated agent, then verify.
     steps.append(("restore-soul", restore_cmd))
-    steps.append(
-        ("reconcile-identity", _reconcile_identity_cmd(dst_target, name, dst_route))
-    )
+    steps.append(("reconcile-identity", _reconcile_identity_cmd(dst_target, name, dst_route)))
     if hub:
-        verify = ("compare sha256 ~/.hermes/SOUL.md on %s vs %s; "
-                  "mac agent list (decrypts); "
-                  "row counts match src for agents/personas/memory_records/messages; "
-                  "qdrant /collections vector counts match; "
-                  "THEN restart the OTHER spokes' mac-agent (their DB records reverted "
-                  "to this snapshot, so they read 'degraded' until they re-register fresh "
-                  "resources)" % (src_target, dst_target))
+        verify = (
+            "compare sha256 ~/.hermes/SOUL.md on %s vs %s; "
+            "mac agent list (decrypts); "
+            "row counts match src for agents/personas/memory_records/messages; "
+            "qdrant /collections vector counts match; "
+            "THEN restart the OTHER spokes' mac-agent (their DB records reverted "
+            "to this snapshot, so they read 'degraded' until they re-register fresh "
+            "resources)" % (src_target, dst_target)
+        )
     else:
-        verify = "compare sha256 ~/.hermes/SOUL.md on %s vs %s; mac agent list" % (src_target, dst_target)
+        verify = "compare sha256 ~/.hermes/SOUL.md on %s vs %s; mac agent list" % (
+            src_target,
+            dst_target,
+        )
     steps.append(("verify", verify))
 
     if not keep_source:
@@ -522,9 +522,7 @@ def migration_plan(
                 src_route,
             )
         else:
-            decommission = _ssh_shell(
-                src_target, "sudo systemctl stop %s" % svcs, src_route
-            )
+            decommission = _ssh_shell(src_target, "sudo systemctl stop %s" % svcs, src_route)
         steps.append(("decommission-source", decommission))
     if retire_source_agent:
         steps.append(("retire-source-agent", "mac agent delete %s" % retire_source_agent))
@@ -553,6 +551,7 @@ def execute_migration(
     fleets.yaml in-process), not a shell command.
     """
     if runner is None:
+
         def runner(cmd: str) -> int:
             return subprocess.run(cmd, shell=True).returncode  # noqa: S602 — operator-invoked
 

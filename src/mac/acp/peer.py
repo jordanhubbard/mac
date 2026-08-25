@@ -165,9 +165,7 @@ class Peer:
 
     # -- outbound ------------------------------------------------------------
 
-    def request(
-        self, method: str, params: Optional[Dict[str, Any]] = None
-    ) -> PendingRequest:
+    def request(self, method: str, params: Optional[Dict[str, Any]] = None) -> PendingRequest:
         """Send a request and return a :class:`PendingRequest` to await it."""
 
         with self._lock:
@@ -192,9 +190,7 @@ class Peer:
 
         self._write(JSONRPCResponse(id=request_id, result=result))
 
-    def respond_error(
-        self, request_id: Union[str, int], error: JSONRPCError
-    ) -> None:
+    def respond_error(self, request_id: Union[str, int], error: JSONRPCError) -> None:
         """Send an error response for a previously-deferred inbound request."""
 
         self._write(JSONRPCResponse(id=request_id, error=error))

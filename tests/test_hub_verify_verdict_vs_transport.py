@@ -17,6 +17,7 @@ transport fault. So it inverted the bug: genuine rejections were swallowed as
 Observed 2026-08-20: twelve such events in ninety minutes, twenty tasks
 accumulated in REVIEWING, five of them past a hundred hours.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -30,6 +31,7 @@ SSH_TAIL = "\nError:   x ssh exited with status exit status: 1"
 
 
 # --- a real verdict is a rejection, whatever the transport did afterwards ---
+
 
 @pytest.mark.parametrize(
     "output",
@@ -49,6 +51,7 @@ def test_a_judged_failure_is_a_rejection_even_through_a_dying_stream(output):
 
 
 # --- a harness that died is not a rejection --------------------------------
+
 
 def test_the_478_case_stays_unavailable():
     """Coverage PASSED, then the stream died. No verdict exists to sign."""
@@ -80,6 +83,7 @@ def test_an_unrecognised_failure_is_still_a_rejection():
 
 
 # --- the discipline that keeps this correct --------------------------------
+
 
 @pytest.mark.parametrize("signature", sorted(_HUB_VERIFY_VERDICT_SIGNATURES))
 def test_no_verdict_signature_appears_in_passing_output(signature):

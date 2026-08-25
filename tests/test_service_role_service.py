@@ -1,4 +1,5 @@
 """media-01 service-role election: claim/sync/reconcile lifecycle."""
+
 from __future__ import annotations
 
 import threading
@@ -18,7 +19,9 @@ OPS = ["image.generate", "audio.tts", "audio.music", "audio.asr", "video.generat
 def _gpu_agent(cp, name, capacity=3):
     m = cp.register_machine("%s-host" % name, resources={})
     return cp.register_agent(
-        m.id, name, capabilities=["gpu", "cuda"],
+        m.id,
+        name,
+        capabilities=["gpu", "cuda"],
         resources={"hardware": GPU_HW, "capacity": capacity},
     )
 
@@ -55,7 +58,9 @@ def test_cpu_agent_is_ineligible():
     _seed(cp)
     m = cp.register_machine("rocky-host", resources={})
     a = cp.register_agent(
-        m.id, "rocky", capabilities=["python"],
+        m.id,
+        "rocky",
+        capabilities=["python"],
         resources={"hardware": {"accelerator": "none"}, "capacity": 5},
     )
     res = cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts"])
@@ -67,7 +72,9 @@ def test_under_vram_hardware_is_ineligible():
     _seed(cp)
     m = cp.register_machine("small-host", resources={})
     a = cp.register_agent(
-        m.id, "small", capabilities=["gpu", "cuda"],
+        m.id,
+        "small",
+        capabilities=["gpu", "cuda"],
         resources={"hardware": {"accelerator": "cuda", "gpu": {"vram_mb": 5000}}, "capacity": 5},
     )
     res = cp.sync_agent_service_claims(a.id, ["video.generate"])  # svd needs 15GB
@@ -192,9 +199,7 @@ def test_dispatch_hold_atomically_withdraws_and_blocks_service_claim_renewal():
 
     cp.set_agent_dispatch_hold(agent.id, "fleet deployment")
     assert cp.service_roles.list_active_claims(agent_id=agent.id) == []
-    blocked = cp.sync_agent_service_claims(
-        agent.id, ["image.generate"], lease_seconds=7200
-    )
+    blocked = cp.sync_agent_service_claims(agent.id, ["image.generate"], lease_seconds=7200)
 
     assert blocked["held"] == []
     assert blocked["eligible"] is False
@@ -236,14 +241,10 @@ def test_successor_hold_epoch_withdraws_service_claims_and_rolls_them_back_atomi
     )
     cp.sync_agent_service_claims(agents[0].id, ["image.generate"])
     cp.sync_agent_service_claims(agents[1].id, ["audio.tts"])
-    claims = [
-        cp.service_roles.list_active_claims(agent_id=agent.id)[0]
-        for agent in agents
-    ]
+    claims = [cp.service_roles.list_active_claims(agent_id=agent.id)[0] for agent in agents]
     for index, agent in enumerate(agents):
         cp.store.execute(
-            "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ? "
-            "WHERE id = ?",
+            "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ? WHERE id = ?",
             ("deployment-%s" % index, agent.id),
         )
 
@@ -265,8 +266,7 @@ def test_successor_hold_epoch_withdraws_service_claims_and_rolls_them_back_atomi
 
     for index, (agent, claim) in enumerate(zip(agents, claims)):
         cp.store.execute(
-            "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ? "
-            "WHERE id = ?",
+            "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ? WHERE id = ?",
             ("rollback-deployment-%s" % index, agent.id),
         )
         cp.store.execute(
@@ -291,9 +291,10 @@ def test_successor_hold_epoch_withdraws_service_claims_and_rolls_them_back_atomi
             (claims[0].id, claims[1].id),
         )
     } == {"active"}
-    assert [
-        cp.get_agent(agent.id).dispatch_hold_reason for agent in agents
-    ] == ["rollback-deployment-0", "rollback-deployment-1"]
+    assert [cp.get_agent(agent.id).dispatch_hold_reason for agent in agents] == [
+        "rollback-deployment-0",
+        "rollback-deployment-1",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -303,9 +304,7 @@ def test_successor_hold_epoch_withdraws_service_claims_and_rolls_them_back_atomi
         ("idle", "degraded", "agent_health_unavailable"),
     ),
 )
-def test_unavailable_agent_cannot_acquire_service_claim(
-    status, health_status, reason
-):
+def test_unavailable_agent_cannot_acquire_service_claim(status, health_status, reason):
     cp = ControlPlane.in_memory()
     _seed(cp)
     agent = _gpu_agent(cp, "unavailable-%s" % reason, capacity=5)

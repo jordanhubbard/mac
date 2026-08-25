@@ -37,9 +37,7 @@ def test_every_command_the_skill_names_exists(text):
 
     tree = _command_tree()
     missing = [
-        "mac " + " ".join(parts)
-        for parts in sorted(_mentioned_commands(text))
-        if parts not in tree
+        "mac " + " ".join(parts) for parts in sorted(_mentioned_commands(text)) if parts not in tree
     ]
     assert not missing, "the skill names commands that do not exist: %s" % missing
 

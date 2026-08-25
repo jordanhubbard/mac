@@ -6,6 +6,7 @@ Covers:
   - Hub mode: dispatch.HubPlane.search_memory() passes all kwargs to GET /memory
   - CLI argument wiring: argparse flags map to the right kwargs
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
@@ -19,6 +20,7 @@ from mac.services import ControlPlane
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _cp() -> ControlPlane:
     return ControlPlane.in_memory()
@@ -34,24 +36,19 @@ def _add(
     created_by: str = "nap-consolidator",
     task_id: Optional[str] = None,
 ) -> Any:
-    return cp.add_memory(
-        task_id, subject_type, subject_id, record_type, content, None, created_by
-    )
+    return cp.add_memory(task_id, subject_type, subject_id, record_type, content, None, created_by)
 
 
 def _age(cp: ControlPlane, mem_id: str, days_ago: float) -> None:
     """Backdate a record's created_at so we can test since/until filters."""
-    ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat(
-        timespec="microseconds"
-    )
-    cp.store.execute(
-        "UPDATE memory_records SET created_at = ? WHERE id = ?", (ts, mem_id)
-    )
+    ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat(timespec="microseconds")
+    cp.store.execute("UPDATE memory_records SET created_at = ? WHERE id = ?", (ts, mem_id))
 
 
 # ---------------------------------------------------------------------------
 # record_type exact filter
 # ---------------------------------------------------------------------------
+
 
 class TestRecordTypeExact:
     def test_matches_exact(self):
@@ -82,6 +79,7 @@ class TestRecordTypeExact:
 # ---------------------------------------------------------------------------
 # record_type prefix filter
 # ---------------------------------------------------------------------------
+
 
 class TestRecordTypePrefix:
     def test_prefix_matches_all_variants(self):
@@ -126,6 +124,7 @@ class TestRecordTypePrefix:
 # created_by filter
 # ---------------------------------------------------------------------------
 
+
 class TestCreatedByFilter:
     def test_filter_by_creator(self):
         cp = _cp()
@@ -159,6 +158,7 @@ class TestCreatedByFilter:
 # since / until filters
 # ---------------------------------------------------------------------------
 
+
 class TestSinceUntilFilters:
     def test_since_excludes_old_records(self):
         cp = _cp()
@@ -168,9 +168,7 @@ class TestSinceUntilFilters:
         # Backdate 'old' to 10 days ago
         _age(cp, old.id, days_ago=10)
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(
-            timespec="microseconds"
-        )
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(timespec="microseconds")
         result = cp.search_memory(since=cutoff)
         ids = {r.id for r in result}
         assert new.id in ids
@@ -183,9 +181,7 @@ class TestSinceUntilFilters:
 
         _age(cp, old.id, days_ago=10)
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(
-            timespec="microseconds"
-        )
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(timespec="microseconds")
         result = cp.search_memory(until=cutoff)
         ids = {r.id for r in result}
         assert old.id in ids
@@ -213,6 +209,7 @@ class TestSinceUntilFilters:
 # ---------------------------------------------------------------------------
 # limit filter
 # ---------------------------------------------------------------------------
+
 
 class TestLimitFilter:
     def test_limit_caps_results(self):
@@ -243,6 +240,7 @@ class TestLimitFilter:
 # ---------------------------------------------------------------------------
 # order filter
 # ---------------------------------------------------------------------------
+
 
 class TestOrderFilter:
     def test_asc_default(self):
@@ -281,10 +279,11 @@ class TestOrderFilter:
 # Combined filter scenarios (acceptance criteria)
 # ---------------------------------------------------------------------------
 
+
 class TestCombinedFilters:
     def test_nap_summary_count_by_agent(self):
         """
-        Acceptance: mac memory search can directly answer 
+        Acceptance: mac memory search can directly answer
         'recent nap_summary and dream:* counts per agent'.
         """
         cp = _cp()
@@ -310,7 +309,9 @@ class TestCombinedFilters:
     def test_recent_nap_records_across_fleet(self):
         """since + record_type gives a time-bounded view of nap records."""
         cp = _cp()
-        recent = _add(cp, record_type="nap_summary", created_by="nap-consolidator", content="recent")
+        recent = _add(
+            cp, record_type="nap_summary", created_by="nap-consolidator", content="recent"
+        )
         old = _add(cp, record_type="nap_summary", created_by="nap-consolidator", content="old")
         _age(cp, old.id, days_ago=30)
 
@@ -361,11 +362,13 @@ class TestCombinedFilters:
 # CLI argument wiring
 # ---------------------------------------------------------------------------
 
+
 class TestCLIArgumentWiring:
     """Verify the argparse flags are wired to the right attribute names."""
 
     def _parse(self, *argv: str) -> Any:
         from mac.cli import build_parser
+
         parser = build_parser()
         return parser.parse_args(["admin", "memory", "search"] + list(argv))
 
@@ -407,11 +410,16 @@ class TestCLIArgumentWiring:
 
     def test_combined_flags(self):
         args = self._parse(
-            "--record-type-prefix", "dream:",
-            "--created-by", "agent_rocky",
-            "--since", "2026-06-01T00:00:00",
-            "--limit", "20",
-            "--order", "desc",
+            "--record-type-prefix",
+            "dream:",
+            "--created-by",
+            "agent_rocky",
+            "--since",
+            "2026-06-01T00:00:00",
+            "--limit",
+            "20",
+            "--order",
+            "desc",
         )
         assert args.record_type_prefix == "dream:"
         assert args.created_by == "agent_rocky"

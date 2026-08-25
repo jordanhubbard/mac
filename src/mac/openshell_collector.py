@@ -29,17 +29,18 @@ def normalize_openshell_event(
     """Normalize a raw OpenShell event into the action-event schema."""
     event = raw.get("event") if isinstance(raw.get("event"), dict) else raw
     outcome_raw = str(
-        event.get("outcome")
-        or event.get("disposition")
-        or event.get("action")
-        or ""
+        event.get("outcome") or event.get("disposition") or event.get("action") or ""
     ).lower()
     denied = any(marker in outcome_raw for marker in ("deny", "denied", "blocked", "reject"))
     allowed = any(marker in outcome_raw for marker in ("allow", "allowed", "permit"))
     outcome = "denied" if denied else ("allowed" if allowed else "unknown")
     severity = "warning" if denied else "info"
-    action_type = str(event.get("category") or event.get("class_name") or event.get("type") or "openshell")
-    action_name = str(event.get("name") or event.get("activity_name") or event.get("operation") or "event")
+    action_type = str(
+        event.get("category") or event.get("class_name") or event.get("type") or "openshell"
+    )
+    action_name = str(
+        event.get("name") or event.get("activity_name") or event.get("operation") or "event"
+    )
     attrs = dict(event)
     attrs.setdefault("raw", raw)
     policy = event.get("policy") if isinstance(event.get("policy"), dict) else {}
@@ -56,7 +57,13 @@ def normalize_openshell_event(
         "action_type": "openshell.%s" % action_type.strip().lower().replace(" ", "_"),
         "action_name": action_name.strip().lower().replace(" ", "_"),
         "subject_type": str(event.get("subject_type") or "sandbox"),
-        "subject_id": str(event.get("subject_id") or sandbox_id or event.get("sandbox_id") or event.get("container_id") or ""),
+        "subject_id": str(
+            event.get("subject_id")
+            or sandbox_id
+            or event.get("sandbox_id")
+            or event.get("container_id")
+            or ""
+        ),
         "outcome": outcome,
         "severity": severity,
         "policy_id": policy.get("id") or event.get("policy_id"),
@@ -78,7 +85,9 @@ def iter_json_lines(path: Path) -> Iterator[Dict[str, Any]]:
             yield json.loads(line)
 
 
-def post_action_event(base_url: str, token: str, event: Dict[str, Any], *, timeout: float = 10.0) -> None:
+def post_action_event(
+    base_url: str, token: str, event: Dict[str, Any], *, timeout: float = 10.0
+) -> None:
     """Post a single action event to the hub action-events endpoint."""
     data = json.dumps(event, sort_keys=True, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
@@ -118,8 +127,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the OpenShell collector entry point and return its exit code."""
     parser = argparse.ArgumentParser(prog="mac-openshell-collector")
     parser.add_argument("--events-file", required=True)
-    parser.add_argument("--hub-url", default=os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL"))
-    parser.add_argument("--token", default=os.environ.get("MAC_WORKER_TOKEN") or os.environ.get("MAC_API_TOKEN"))
+    parser.add_argument(
+        "--hub-url", default=os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL")
+    )
+    parser.add_argument(
+        "--token", default=os.environ.get("MAC_WORKER_TOKEN") or os.environ.get("MAC_API_TOKEN")
+    )
     parser.add_argument("--agent-id", default=os.environ.get("MAC_AGENT_ID"))
     parser.add_argument("--sandbox-id", default=os.environ.get("MAC_OPENSHELL_SANDBOX_ID"))
     parser.add_argument("--follow", action="store_true")
@@ -130,7 +143,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     path = Path(args.events_file).expanduser()
     if not args.follow:
-        print(json.dumps({"posted": collect_once(iter_json_lines(path), base_url=args.hub_url, token=args.token, agent_id=args.agent_id, sandbox_id=args.sandbox_id)}))
+        print(
+            json.dumps(
+                {
+                    "posted": collect_once(
+                        iter_json_lines(path),
+                        base_url=args.hub_url,
+                        token=args.token,
+                        agent_id=args.agent_id,
+                        sandbox_id=args.sandbox_id,
+                    )
+                }
+            )
+        )
         return 0
     seen = 0
     while True:

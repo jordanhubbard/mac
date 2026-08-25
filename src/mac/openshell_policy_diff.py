@@ -159,9 +159,7 @@ def policy_capabilities(policy_text: Optional[str]) -> JsonDict:
     }
 
 
-def diff_policy_texts(
-    old_text: Optional[str], new_text: Optional[str]
-) -> JsonDict:
+def diff_policy_texts(old_text: Optional[str], new_text: Optional[str]) -> JsonDict:
     """Structural diff of two policies, in terms of DIRECTION.
 
     ``old_text``/``new_text`` may be ``None`` for "no policy" (first

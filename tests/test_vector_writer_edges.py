@@ -271,7 +271,9 @@ def test_embed_backfill_and_recall_validation_paths(monkeypatch) -> None:
         evidence_id=None,
         created_by="test",
     )
-    monkeypatch.setattr(writer, "embed_memory", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("qdrant down")))
+    monkeypatch.setattr(
+        writer, "embed_memory", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("qdrant down"))
+    )
     report = writer.backfill()
     assert report["failures"] == [{"memory_id": record.id, "error": "qdrant down"}]
 
@@ -354,9 +356,13 @@ def test_recall_builds_filters_and_normalizes_hits() -> None:
     ],
 )
 def test_payload_specializations(subject_type, subject_id, content, expected) -> None:
-    payload = _writer()._build_payload(
-        _record(content, subject_type=subject_type, subject_id=subject_id), tier="medium"
-    ).to_dict()
+    payload = (
+        _writer()
+        ._build_payload(
+            _record(content, subject_type=subject_type, subject_id=subject_id), tier="medium"
+        )
+        .to_dict()
+    )
     for key, value in expected.items():
         assert payload.get(key) == value
 
@@ -381,9 +387,7 @@ def test_urllib_transport_success_empty_and_errors(monkeypatch) -> None:
 
     errors = [
         (
-            urllib.error.HTTPError(
-                "http://q/x", 500, "bad", {}, io.BytesIO(b"qdrant detail")
-            ),
+            urllib.error.HTTPError("http://q/x", 500, "bad", {}, io.BytesIO(b"qdrant detail")),
             "HTTP 500",
         ),
         (urllib.error.URLError("refused"), "unreachable"),

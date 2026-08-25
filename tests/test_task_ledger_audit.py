@@ -67,7 +67,9 @@ def _task(
         "attempt_count": 0,
         "max_attempts": 3,
         "started_at": None,
-        "completed_at": "2026-01-01T00:00:00+00:00" if state in {"completed", "failed", "cancelled"} else None,
+        "completed_at": "2026-01-01T00:00:00+00:00"
+        if state in {"completed", "failed", "cancelled"}
+        else None,
         "created_at": "2026-01-01T00:00:00+00:00",
         "updated_at": "2026-01-01T00:00:01+00:00",
     }
@@ -230,9 +232,7 @@ def test_completed_repository_task_requires_canonical_ancestry(tmp_path):
     repo, landed, unmerged = _repo(tmp_path)
     landed_task = _task("task_" + "1" * 32, "completed", metadata=_repo_task_metadata())
     unmerged_task = _task("task_" + "2" * 32, "completed", metadata=_repo_task_metadata())
-    landed_evidence, landed_publications, landed_reviews = _repo_evidence(
-        landed_task["id"], landed
-    )
+    landed_evidence, landed_publications, landed_reviews = _repo_evidence(landed_task["id"], landed)
     unmerged_evidence, unmerged_publications, unmerged_reviews = _repo_evidence(
         unmerged_task["id"], unmerged
     )
@@ -339,22 +339,24 @@ def test_publication_selects_winning_evidence_and_ignores_rejected_attempt(tmp_p
     assert resolution["executor_evidence_id"] == publications[0]["evidence_id"]
     assert row["repository"]["proof_sha"] == landed
     claims = row["repository"]["claims"]
-    assert next(
-        claim
-        for claim in claims
-        if claim["evidence_id"] == rejected_evidence_id
-    )["superseded"] is True
+    assert (
+        next(claim for claim in claims if claim["evidence_id"] == rejected_evidence_id)[
+            "superseded"
+        ]
+        is True
+    )
     winning_claims = [
-        claim
-        for claim in claims
-        if claim["evidence_id"] == publications[0]["evidence_id"]
+        claim for claim in claims if claim["evidence_id"] == publications[0]["evidence_id"]
     ]
     assert any(claim["authoritative"] is True for claim in winning_claims)
-    assert next(
-        claim
-        for claim in winning_claims
-        if claim["source"] == "task.metadata.latest_review_claim"
-    )["superseded"] is True
+    assert (
+        next(
+            claim
+            for claim in winning_claims
+            if claim["source"] == "task.metadata.latest_review_claim"
+        )["superseded"]
+        is True
+    )
     assert row["assessment"]["verdict"] == "verified"
 
 
@@ -422,7 +424,10 @@ def test_publication_does_not_let_older_integrated_attempt_mask_winner(tmp_path)
     )
     row = report["tasks"][0]
 
-    assert row["evidence"]["publication_resolution"]["executor_evidence_id"] == publications[0]["evidence_id"]
+    assert (
+        row["evidence"]["publication_resolution"]["executor_evidence_id"]
+        == publications[0]["evidence_id"]
+    )
     assert row["repository"]["proof_sha"] is None
     assert row["repository"]["integration_status"] == "not_integrated"
     assert row["assessment"]["verdict"] == "contradiction"
@@ -514,9 +519,7 @@ def test_cancelled_entry_reason_ignores_later_self_transition_and_checks_replace
         replacement["id"], landed
     )
     cancelled = _task("task_" + "4" * 32, "cancelled")
-    cancelled["metadata"] = {
-        "repository_ref_lifecycle": {"replacement_task_id": replacement["id"]}
-    }
+    cancelled["metadata"] = {"repository_ref_lifecycle": {"replacement_task_id": replacement["id"]}}
     cancelled_history = _history(
         cancelled["id"],
         "cancelled",
@@ -613,7 +616,9 @@ def test_failed_but_merged_and_stranded_blocked_tasks_are_contradictions(tmp_pat
         "failed_task_work_is_on_canonical_branch"
     ]
     assert rows[blocked["id"]]["dependencies"]["all_completed"] is True
-    assert "blocked_with_all_dependencies_completed" in rows[blocked["id"]]["assessment"]["findings"]
+    assert (
+        "blocked_with_all_dependencies_completed" in rows[blocked["id"]]["assessment"]["findings"]
+    )
     assert rows[blocked["id"]]["assessment"]["recommended_action"] == "reopen_stranded_blocked_task"
 
 
@@ -711,8 +716,7 @@ def test_canonical_short_task_id_commit_message_recovers_legacy_publication(tmp_
 
     assert row["repository"]["proof_sha"] == attributed
     assert (
-        row["repository"]["claims"][0]["attribution_status"]
-        == "task_id_prefix_in_commit_message"
+        row["repository"]["claims"][0]["attribution_status"] == "task_id_prefix_in_commit_message"
     )
     assert row["assessment"]["verdict"] == "verified"
 
@@ -727,8 +731,7 @@ def test_canonical_short_task_id_in_other_task_prose_is_not_attribution(tmp_path
         repo,
         "commit",
         "-m",
-        "MAC task %s: reproduce failure on %s payload"
-        % (other_task, task["id"][:13]),
+        "MAC task %s: reproduce failure on %s payload" % (other_task, task["id"][:13]),
     )
     unrelated = _git(repo, "rev-parse", "HEAD")
     _git(repo, "update-ref", "refs/remotes/origin/main", unrelated)
@@ -762,10 +765,7 @@ def test_canonical_exact_task_title_recovers_legacy_publication(tmp_path):
     row = report["tasks"][0]
 
     assert row["repository"]["proof_sha"] == attributed
-    assert (
-        row["repository"]["claims"][0]["attribution_status"]
-        == "task_title_in_commit_message"
-    )
+    assert row["repository"]["claims"][0]["attribution_status"] == "task_title_in_commit_message"
     assert row["assessment"]["verdict"] == "verified"
 
 
@@ -874,7 +874,10 @@ def test_blocked_dependency_chain_reports_terminal_failure():
         }
     ]
     assert rows[parent["id"]]["assessment"]["verdict"] == "contradiction"
-    assert "blocked_by_failed_cancelled_or_missing_dependency" in rows[parent["id"]]["assessment"]["findings"]
+    assert (
+        "blocked_by_failed_cancelled_or_missing_dependency"
+        in rows[parent["id"]]["assessment"]["findings"]
+    )
 
 
 def test_dependency_cycle_is_not_reported_as_valid_blocking():

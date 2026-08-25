@@ -5,6 +5,7 @@ nothing, which is worse: a fleet with 84 open tasks and idle capable workers
 looked, from every command an operator would run, like a fleet with nothing
 wrong.
 """
+
 from __future__ import annotations
 
 import io
@@ -28,6 +29,7 @@ def _self_test(status, *, agent_id="agent_natasha", blocking=None):
 
 # --- the self-test gate -----------------------------------------------------
 
+
 def test_a_passed_self_test_clears_dispatch():
     """The regression that benched natasha.
 
@@ -36,16 +38,12 @@ def test_a_passed_self_test_clears_dispatch():
     required the status to be literally "degraded", so the healthiest outcome
     was the one it rejected.
     """
-    assert startup_self_test_clears_dispatch(
-        _self_test("passed"), agent_id="agent_natasha"
-    )
+    assert startup_self_test_clears_dispatch(_self_test("passed"), agent_id="agent_natasha")
 
 
 def test_a_degraded_but_unblocked_self_test_still_clears_dispatch():
     """The case the gate was originally written for must keep working."""
-    assert startup_self_test_clears_dispatch(
-        _self_test("degraded"), agent_id="agent_natasha"
-    )
+    assert startup_self_test_clears_dispatch(_self_test("degraded"), agent_id="agent_natasha")
 
 
 def test_blocking_problems_are_still_disqualifying():
@@ -70,9 +68,7 @@ def test_an_unrecognised_schema_does_not_clear_dispatch():
 
 
 def test_failed_is_not_a_clearing_status():
-    assert not startup_self_test_clears_dispatch(
-        _self_test("failed"), agent_id="agent_natasha"
-    )
+    assert not startup_self_test_clears_dispatch(_self_test("failed"), agent_id="agent_natasha")
 
 
 # --- why-unclaimed ----------------------------------------------------------
@@ -82,12 +78,13 @@ PAYLOAD = {
     "task_reasons": [],
     "candidate_count": 3,
     "candidates": [
-        {"agent_name": "natasha", "eligible": False,
-         "reasons": [{"code": "agent_unhealthy"}]},
-        {"agent_name": "rocky", "eligible": False,
-         "reasons": [{"code": "agent_capacity_full"}]},
-        {"agent_name": "bullwinkle", "eligible": False,
-         "reasons": [{"code": "agent_capacity_full"}]},
+        {"agent_name": "natasha", "eligible": False, "reasons": [{"code": "agent_unhealthy"}]},
+        {"agent_name": "rocky", "eligible": False, "reasons": [{"code": "agent_capacity_full"}]},
+        {
+            "agent_name": "bullwinkle",
+            "eligible": False,
+            "reasons": [{"code": "agent_capacity_full"}],
+        },
     ],
 }
 

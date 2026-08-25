@@ -25,9 +25,7 @@ def identity_module() -> Any:
     return module
 
 
-def run_cli(
-    *args: str, check: bool = True
-) -> tuple[subprocess.CompletedProcess[str], dict]:
+def run_cli(*args: str, check: bool = True) -> tuple[subprocess.CompletedProcess[str], dict]:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         text=True,
@@ -159,9 +157,7 @@ def test_kubernetes_authority_survives_pod_rollover_but_requires_adapter(
         lambda value: value["authority"].update({"instance_id_sha256": "short"}),
     ],
 )
-def test_schema_rejects_extra_sensitive_or_malformed_fields(
-    identity_module: Any, mutation
-) -> None:
+def test_schema_rejects_extra_sensitive_or_malformed_fields(identity_module: Any, mutation) -> None:
     value = identity_module.build_ssh_machine(
         host_key_fingerprint="3" * 64,
         instance_id_kind="linux-machine-id",

@@ -42,9 +42,7 @@ class DispatchScoreSnapshot:
     learning_states: Dict[Tuple[str, str, str], str] = field(default_factory=dict)
 
     def record_assignment(self, agent_id: str) -> None:
-        self.active_lease_counts[agent_id] = (
-            int(self.active_lease_counts.get(agent_id, 0)) + 1
-        )
+        self.active_lease_counts[agent_id] = int(self.active_lease_counts.get(agent_id, 0)) + 1
 
 
 @dataclass(frozen=True)
@@ -81,9 +79,7 @@ class DispatchAdvisor:
                 if agent_id in active_counts:
                     active_counts[agent_id] = int(row["active_count"])
 
-        learning: Dict[str, List[Mapping[str, Any]]] = {
-            agent_id: [] for agent_id in agent_ids
-        }
+        learning: Dict[str, List[Mapping[str, Any]]] = {agent_id: [] for agent_id in agent_ids}
         for agent_id_chunk in _chunks(agent_ids, _QUERY_CHUNK_SIZE):
             placeholders = ",".join("?" for _ in agent_id_chunk)
             rows = self.store.query_all(
@@ -112,9 +108,7 @@ class DispatchAdvisor:
                     learning[agent_id].append(value)
         return DispatchScoreSnapshot(
             active_lease_counts=active_counts,
-            learning_records={
-                key: tuple(value) for key, value in learning.items()
-            },
+            learning_records={key: tuple(value) for key, value in learning.items()},
         )
 
     def rank_agents(
@@ -134,25 +128,15 @@ class DispatchAdvisor:
             capacity = _agent_capacity(agent)
             active = max(0, int(snapshot.active_lease_counts.get(agent.id, 0)))
             bounded_active = min(active, capacity)
-            headroom_ppm = (
-                (capacity - bounded_active) * _LOAD_SCALE // capacity
-            )
-            capability_surplus = len(
-                set(agent.capabilities or []) - required_capabilities
-            )
+            headroom_ppm = (capacity - bounded_active) * _LOAD_SCALE // capacity
+            capability_surplus = len(set(agent.capabilities or []) - required_capabilities)
             best_fit_ppm = _LOAD_SCALE // (1 + capability_surplus)
             learning_state = self._learning_state(task, agent.id, snapshot)
-            learning_tier = {"failure": 0, "unknown": 1, "success": 2}[
-                learning_state
-            ]
+            learning_tier = {"failure": 0, "unknown": 1, "success": 2}[learning_state]
             idle = agent.status == "idle"
             # Fixed-point components make the float bounded and interpretable.
             # One ppm of load headroom always dominates every softer signal.
-            score = float(
-                headroom_ppm
-                + (learning_tier / 10.0)
-                + (best_fit_ppm / 100_000_000.0)
-            )
+            score = float(headroom_ppm + (learning_tier / 10.0) + (best_fit_ppm / 100_000_000.0))
             sort_key = (
                 -headroom_ppm,
                 -learning_tier,
@@ -187,9 +171,7 @@ class DispatchAdvisor:
             "order_signal": 0.0,
         }
         result = []
-        for selected_rank, (_key, agent, score, components) in enumerate(
-            candidates, start=1
-        ):
+        for selected_rank, (_key, agent, score, components) in enumerate(candidates, start=1):
             rationale = (
                 "deterministic advisory: load=%d/%d; repository_access=%s; "
                 "capability_surplus=%d; stable_tie_break=agent_id"
@@ -212,9 +194,7 @@ class DispatchAdvisor:
                         "hard_gates_rechecked_in_claim": True,
                         "route": str(route),
                         "worker_identity_fixed": route == "worker_pull",
-                        "audit_behavior": (
-                            "persist_with_exact_lease_if_claim_succeeds"
-                        ),
+                        "audit_behavior": ("persist_with_exact_lease_if_claim_succeeds"),
                         "allow_cooperative_reuse": bool(allow_cooperative_reuse),
                         "task_order": task_order,
                         "agent_score": components,

@@ -97,9 +97,7 @@ def parse_github_owner_repo(url: str) -> Optional[Tuple[str, str]]:
         host = match.group(1).lower()
         path = match.group(2)
     else:
-        parsed = urllib.parse.urlsplit(
-            value if "://" in value else "https://" + value
-        )
+        parsed = urllib.parse.urlsplit(value if "://" in value else "https://" + value)
         host = (parsed.hostname or "").lower()
         path = parsed.path
     if host != "github.com" and not host.endswith(".github.com"):
@@ -259,20 +257,28 @@ class ProjectIngestPolicy:
             return cls()
         enabled = bool(raw.get("enabled"))
         labels_raw = raw.get("labels") or []
-        labels = tuple(
-            str(item).strip()
-            for item in labels_raw
-            if isinstance(item, (str,)) and str(item).strip()
-        ) if isinstance(labels_raw, (list, tuple)) else ()
+        labels = (
+            tuple(
+                str(item).strip()
+                for item in labels_raw
+                if isinstance(item, (str,)) and str(item).strip()
+            )
+            if isinstance(labels_raw, (list, tuple))
+            else ()
+        )
         state = str(raw.get("state") or "open").strip().lower()
         if state not in {"open", "all", "closed"}:
             state = "open"
         caps_raw = raw.get("default_capabilities") or []
-        caps = tuple(
-            str(item).strip()
-            for item in caps_raw
-            if isinstance(item, str) and str(item).strip()
-        ) if isinstance(caps_raw, (list, tuple)) else ()
+        caps = (
+            tuple(
+                str(item).strip()
+                for item in caps_raw
+                if isinstance(item, str) and str(item).strip()
+            )
+            if isinstance(caps_raw, (list, tuple))
+            else ()
+        )
         try:
             priority = int(raw.get("priority") or 0)
         except (TypeError, ValueError):
@@ -301,9 +307,7 @@ class GitHubIssueIngestor:
         self.control_plane = control_plane
         self.config = config
         self._issue_fetcher = issue_fetcher or _http_list_issues
-        self._token_provider = token_provider or (
-            lambda: gitops.token_for_host("github")
-        )
+        self._token_provider = token_provider or (lambda: gitops.token_for_host("github"))
         self._stop_event = threading.Event()
         self._run_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -425,9 +429,7 @@ class GitHubIssueIngestor:
             try:
                 capability = self._refresh_merge_capabilities(actor=actor)
             except Exception as exc:  # noqa: BLE001 - never break ingest.
-                _log.warning(
-                    "merge-queue capability refresh failed: %s", _safe_error(exc)
-                )
+                _log.warning("merge-queue capability refresh failed: %s", _safe_error(exc))
                 capability = {
                     "schema": MERGE_CAPABILITY_REPORT_SCHEMA,
                     "checked": 0,
@@ -490,9 +492,7 @@ class GitHubIssueIngestor:
             "repositories": [],
         }
         try:
-            repositories = list(
-                self.control_plane.list_project_repositories(enabled=True)
-            )
+            repositories = list(self.control_plane.list_project_repositories(enabled=True))
         except Exception as exc:  # noqa: BLE001
             report["error"] = _safe_error(exc)
             return report
@@ -502,28 +502,20 @@ class GitHubIssueIngestor:
             report["checked"] += 1
             coordinates = repository_remote_and_branch(repo)
             remote, branch = coordinates["remote"], coordinates["branch"]
-            existing: Optional[MergeCapability] = stored_capability(
-                getattr(repo, "metadata", None)
-            )
-            if existing is not None and not existing.is_stale(
-                branch=branch, ttl_seconds=ttl
-            ):
+            existing: Optional[MergeCapability] = stored_capability(getattr(repo, "metadata", None))
+            if existing is not None and not existing.is_stale(branch=branch, ttl_seconds=ttl):
                 report["skipped_fresh"] += 1
                 report["repositories"].append(
                     {
                         "repository": getattr(repo, "name", ""),
                         "status": "fresh",
                         "resolved_at": existing.resolved_at,
-                        "mode": "merge_queue"
-                        if existing.use_forge_queue
-                        else "mac_native_queue",
+                        "mode": "merge_queue" if existing.use_forge_queue else "mac_native_queue",
                     }
                 )
                 continue
             try:
-                resolved = resolve_merge_capability(
-                    remote, branch, resolver="github-ingest"
-                )
+                resolved = resolve_merge_capability(remote, branch, resolver="github-ingest")
                 self.control_plane.record_repository_merge_capability(
                     getattr(repo, "id", ""), resolved.to_dict()
                 )
@@ -548,9 +540,7 @@ class GitHubIssueIngestor:
                     "branch": resolved.branch,
                     "resolved_at": resolved.resolved_at,
                     "error": resolved.error,
-                    "mode": "merge_queue"
-                    if resolved.use_forge_queue
-                    else "mac_native_queue",
+                    "mode": "merge_queue" if resolved.use_forge_queue else "mac_native_queue",
                 }
             )
         return report
@@ -645,9 +635,7 @@ class GitHubIssueIngestor:
         }
         if not policy.enabled:
             return result
-        repo_url = (
-            metadata.get("repository_url") if isinstance(metadata, Mapping) else None
-        )
+        repo_url = metadata.get("repository_url") if isinstance(metadata, Mapping) else None
         parsed = parse_github_owner_repo(str(repo_url or ""))
         if parsed is None:
             result["skipped_reason"] = "no github repository_url"
@@ -711,9 +699,7 @@ class GitHubIssueIngestor:
                     actor=actor,
                 )
             except Exception as exc:  # noqa: BLE001 - isolate one issue's failure.
-                result.setdefault("errors", []).append(
-                    {"issue": number, "error": _safe_error(exc)}
-                )
+                result.setdefault("errors", []).append({"issue": number, "error": _safe_error(exc)})
                 continue
             existing_by_key[key] = task
             current_open += 1

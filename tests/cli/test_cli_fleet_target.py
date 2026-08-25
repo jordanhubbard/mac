@@ -4,6 +4,7 @@ Smoke-covers the target-of-record CLI surface: set -> get returns the pinned
 per-role target for both artifact tracks (source commit + OpenClaw
 version/revision).
 """
+
 from __future__ import annotations
 
 import io
@@ -37,8 +38,16 @@ def _run(tmp_path, *args):
 def _seed_both_tracks(tmp_path):
     _run(
         tmp_path,
-        "admin", "fleet", "target", "set", "gateway", "0f55d49",
-        "--openclaw-version", "2026.6.11", "--openclaw-revision", "19",
+        "admin",
+        "fleet",
+        "target",
+        "set",
+        "gateway",
+        "0f55d49",
+        "--openclaw-version",
+        "2026.6.11",
+        "--openclaw-revision",
+        "19",
     )
     _run(tmp_path, "admin", "fleet", "target", "set", "worker", "abc1234")
 
@@ -46,8 +55,16 @@ def _seed_both_tracks(tmp_path):
 def test_set_then_get_returns_pinned_target(tmp_path):
     rc, out = _run(
         tmp_path,
-        "admin", "fleet", "target", "set", "gateway", "0f55d49",
-        "--openclaw-version", "2026.6.11", "--openclaw-revision", "19",
+        "admin",
+        "fleet",
+        "target",
+        "set",
+        "gateway",
+        "0f55d49",
+        "--openclaw-version",
+        "2026.6.11",
+        "--openclaw-revision",
+        "19",
     )
     assert rc in (None, 0)
     assert out["role"] == "gateway"
@@ -92,8 +109,14 @@ def test_get_missing_role_fails(tmp_path):
 def test_set_rejects_partial_openclaw_track(tmp_path):
     rc, _ = _run(
         tmp_path,
-        "admin", "fleet", "target", "set", "gateway", "0f55d49",
-        "--openclaw-version", "2026.6.11",
+        "admin",
+        "fleet",
+        "target",
+        "set",
+        "gateway",
+        "0f55d49",
+        "--openclaw-version",
+        "2026.6.11",
     )
     assert rc not in (None, 0)
 

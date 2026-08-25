@@ -54,9 +54,7 @@ def test_shared_service_stops_before_plist_replacement_and_loads_before_health(
 ) -> None:
     script = (ROOT / "deploy" / installer_name).read_text(encoding="utf-8")
 
-    source_path = script.index(
-        '$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)'
-    )
+    source_path = script.index('$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)')
     launchd_branch = script.index("  launchd)")
     source_helper = script.index("launchd-lifecycle.sh")
     stage_plist = script.index('cat > "$tmp_plist" <<EOF', launchd_branch)
@@ -65,9 +63,7 @@ def test_shared_service_stops_before_plist_replacement_and_loads_before_health(
         "mac_launchd_stop_job_if_present",
         launchd_branch,
     )
-    replace_plist = script.index(
-        'mac_launchd_transaction_replace "$tmp_plist" "$plist"', stop
-    )
+    replace_plist = script.index('mac_launchd_transaction_replace "$tmp_plist" "$plist"', stop)
     bootstrap = script.index("mac_launchd_bootstrap_job", replace_plist)
     health = script.index(health_assignment, bootstrap)
     commit = script.index("mac_launchd_transaction_commit", health)
@@ -77,9 +73,7 @@ def test_shared_service_stops_before_plist_replacement_and_loads_before_health(
     assert transaction < stage_plist < stop < replace_plist < bootstrap < health < commit
     if wrapper_call:
         wrapper_stage = script.index(f'{wrapper_call} "$tmp_wrapper"', transaction)
-        wrapper_track = script.index(
-            'mac_launchd_transaction_track_file "$wrapper"', transaction
-        )
+        wrapper_track = script.index('mac_launchd_transaction_track_file "$wrapper"', transaction)
         wrapper_replace = script.index(
             'mac_launchd_transaction_replace "$tmp_wrapper" "$wrapper"', stop
         )
@@ -95,13 +89,14 @@ def test_shared_service_stops_before_plist_replacement_and_loads_before_health(
 def _run_qdrant_container_stop(
     tmp_path: Path, mode: str
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    script = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(encoding="utf-8")
     functions = LAUNCHD_LIFECYCLE.read_text(encoding="utf-8") + "\n"
-    functions += "qdrant_container_is_present() {" + script.split(
-        "qdrant_container_is_present() {", 1
-    )[1].split('case "$SUPERVISOR_KIND" in', 1)[0]
+    functions += (
+        "qdrant_container_is_present() {"
+        + script.split("qdrant_container_is_present() {", 1)[1].split(
+            'case "$SUPERVISOR_KIND" in', 1
+        )[0]
+    )
     case_dir = tmp_path / mode
     case_dir.mkdir()
     calls = case_dir / "calls"
@@ -161,15 +156,13 @@ exit 64
             + "CONTAINER_RUNTIME_PATH_COUNT=1\n"
             + 'if [ -n "${SECOND_CONTAINER_RUNTIME:-}" ]; then '
             + 'CONTAINER_RUNTIME_PATHS[1]="$SECOND_CONTAINER_RUNTIME"; '
-            + 'CONTAINER_RUNTIME_PATH_COUNT=2; fi\n'
+            + "CONTAINER_RUNTIME_PATH_COUNT=2; fi\n"
             + "stop_qdrant_container_if_present",
         ],
         env={
             **os.environ,
             "CONTAINER_CMD_ABS": str(runtime),
-            "SECOND_CONTAINER_RUNTIME": (
-                str(stale_runtime) if mode == "cross-runtime" else ""
-            ),
+            "SECOND_CONTAINER_RUNTIME": (str(stale_runtime) if mode == "cross-runtime" else ""),
             "QDRANT_CONTAINER_NAME": "mac-qdrant",
             "FAKE_CONTAINER_MODE": mode,
             "FAKE_CONTAINER_CALLS": str(calls),
@@ -706,9 +699,7 @@ def _large_sparse_regular_file(path: Path, size: int = 64 * 1024 * 1024) -> int:
     return size
 
 
-def _start_artifact_helper(
-    function_call: str, *arguments: Path
-) -> subprocess.Popen[str]:
+def _start_artifact_helper(function_call: str, *arguments: Path) -> subprocess.Popen[str]:
     return subprocess.Popen(
         [
             "/bin/bash",
@@ -724,9 +715,7 @@ def _start_artifact_helper(
     )
 
 
-def _wait_for_copy_artifact(
-    process: subprocess.Popen[str], directory: Path, pattern: str
-) -> Path:
+def _wait_for_copy_artifact(process: subprocess.Popen[str], directory: Path, pattern: str) -> Path:
     deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
         candidates = list(directory.glob(pattern))
@@ -749,9 +738,7 @@ def test_snapshot_rejects_in_place_mutation_after_source_open(tmp_path: Path) ->
     source = tmp_path / "source.plist"
     backup = tmp_path / "backup.plist"
     size = _large_sparse_regular_file(source)
-    process = _start_artifact_helper(
-        'mac_launchd_snapshot_file "$2" "$3" user', source, backup
-    )
+    process = _start_artifact_helper('mac_launchd_snapshot_file "$2" "$3" user', source, backup)
     _wait_for_copy_artifact(process, tmp_path, backup.name)
 
     with source.open("r+b", buffering=0) as stream:
@@ -791,9 +778,7 @@ def test_replace_rejects_source_rename_and_substitution_after_open(
 
 
 @pytest.mark.parametrize("helper", ("snapshot", "replace"))
-def test_artifact_helpers_reject_symlink_sources(
-    tmp_path: Path, helper: str
-) -> None:
+def test_artifact_helpers_reject_symlink_sources(tmp_path: Path, helper: str) -> None:
     real_source = tmp_path / "real-source"
     source = tmp_path / "linked-source"
     destination = tmp_path / "destination"
@@ -819,7 +804,7 @@ def test_artifact_helpers_reject_symlink_sources(
 def test_artifact_copy_contract_checks_fd_identity_and_readback() -> None:
     lifecycle = LAUNCHD_LIFECYCLE.read_text(encoding="utf-8")
 
-    assert lifecycle.count('flags |= os.O_NOFOLLOW') >= 2
+    assert lifecycle.count("flags |= os.O_NOFOLLOW") >= 2
     assert lifecycle.count("identity(initial) != identity(opened)") >= 2
     assert "lifecycle artifact snapshot read-back mismatch" in lifecycle
     assert "lifecycle replacement read-back mismatch" in lifecycle
@@ -869,7 +854,7 @@ exit 113
         [
             "/bin/bash",
             "-c",
-            'set -Eeuo pipefail; '
+            "set -Eeuo pipefail; "
             'trap \'status=$?; printf "STRUCTURAL:%s\\n" "$status" >&2; '
             'exit "$status"\' ERR; '
             '. "$1"; '
@@ -923,18 +908,19 @@ def test_privileged_mode_never_evaluates_a_command_prefix() -> None:
     lifecycle = LAUNCHD_LIFECYCLE.read_text(encoding="utf-8")
 
     assert "sudo -n launchctl" in lifecycle
-    assert "sudo -n \"$python_bin\" -c" in lifecycle
+    assert 'sudo -n "$python_bin" -c' in lifecycle
     assert "shell=True" not in lifecycle
     assert "eval " not in lifecycle
 
 
 def test_qdrant_empty_runtime_set_is_bash_32_nounset_safe() -> None:
-    script = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(
-        encoding="utf-8"
+    script = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(encoding="utf-8")
+    stop_function = (
+        "stop_qdrant_container_if_present() {"
+        + script.split("stop_qdrant_container_if_present() {", 1)[1].split(
+            'case "$SUPERVISOR_KIND" in', 1
+        )[0]
     )
-    stop_function = "stop_qdrant_container_if_present() {" + script.split(
-        "stop_qdrant_container_if_present() {", 1
-    )[1].split('case "$SUPERVISOR_KIND" in', 1)[0]
     result = subprocess.run(
         [
             "/bin/bash",
@@ -1157,9 +1143,7 @@ def test_launchd_transaction_compensates_before_commit(
 def test_launchd_transaction_retains_failed_generation_for_forward_repair(
     tmp_path: Path,
 ) -> None:
-    result = _run_launchd_transaction(
-        tmp_path, "health-fail", recovery_policy="retain-forward"
-    )
+    result = _run_launchd_transaction(tmp_path, "health-fail", recovery_policy="retain-forward")
     case_dir = tmp_path / "health-fail"
 
     assert result.returncode == 1, result.stderr
@@ -1181,9 +1165,7 @@ def test_launchd_transaction_chains_caller_exit_cleanup_exactly_once(
     cleanup = tmp_path / mode / "caller-cleanup"
 
     assert result.returncode in {0, 1, 143}, result.stderr
-    assert cleanup.read_text(encoding="utf-8").splitlines() == [
-        f"cleanup:{expected_parent_rc}"
-    ]
+    assert cleanup.read_text(encoding="utf-8").splitlines() == [f"cleanup:{expected_parent_rc}"]
 
 
 def test_failed_fresh_install_removes_new_generation(tmp_path: Path) -> None:
@@ -1295,9 +1277,7 @@ def test_system_transaction_rolls_back_control_and_root_artifacts_via_sudo(
     assert stat.S_IMODE((case_dir / "service-run").stat().st_mode) == 0o750
     assert (case_dir / "state").read_text(encoding="utf-8") == "active\n"
 
-    control_calls = (case_dir / "sudo-control-calls").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    control_calls = (case_dir / "sudo-control-calls").read_text(encoding="utf-8").splitlines()
     assert control_calls == [
         "-n launchctl print gui/501/com.mac.tx",
         "-n launchctl print gui/501/com.mac.tx",
@@ -1315,9 +1295,7 @@ def test_system_transaction_rolls_back_control_and_root_artifacts_via_sudo(
         f"-n launchctl bootstrap gui/501 {case_dir / 'service.plist'}",
         "-n launchctl print gui/501/com.mac.tx",
     ]
-    artifact_calls = (case_dir / "sudo-artifact-calls").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    artifact_calls = (case_dir / "sudo-artifact-calls").read_text(encoding="utf-8").splitlines()
     assert len(artifact_calls) >= 9
     assert all(call.startswith("-n|") and call.endswith("|-c") for call in artifact_calls)
 
@@ -1342,8 +1320,7 @@ def _remove_owned_absent(
         # exact program bytes the function would otherwise have executed.
         env["MAC_TEST_FORCE_EUID"] = str(geteuid)
         prelude = (
-            "import os as _os; "
-            "_os.geteuid = lambda: int(_os.environ['MAC_TEST_FORCE_EUID']); "
+            "import os as _os; _os.geteuid = lambda: int(_os.environ['MAC_TEST_FORCE_EUID']); "
         )
         script = (
             'set -euo pipefail; . "$1"\n'

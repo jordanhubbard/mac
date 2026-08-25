@@ -9,6 +9,7 @@ double-holding it. Eligibility + capacity policy lives in the control plane
 (services.py); this module is the pure CRUD + the atomic claim/renew/expire that
 mirrors claim_task/renew_lease/expire_leases.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -73,11 +74,17 @@ class ServiceRoleService:
                 updated_at = excluded.updated_at
             """,
             (
-                rid, op, slug, model_id,
+                rid,
+                op,
+                slug,
+                model_id,
                 json_dumps(coerce_list(required_capabilities or [])),
                 json_dumps(ensure_json_object(hardware_requirements or {})),
-                1 if enabled else 0, tenant_id,
-                json_dumps(ensure_json_object(metadata or {})), now, now,
+                1 if enabled else 0,
+                tenant_id,
+                json_dumps(ensure_json_object(metadata or {})),
+                now,
+                now,
             ),
         )
         return self.get_role_by_slug(slug, tenant_id=tenant_id)
@@ -171,7 +178,9 @@ class ServiceRoleService:
             )
         return self._claim(cid)
 
-    def renew_service_claim(self, claim_id: str, agent_id: str, lease_seconds: int = 1800) -> ServiceClaim:
+    def renew_service_claim(
+        self, claim_id: str, agent_id: str, lease_seconds: int = 1800
+    ) -> ServiceClaim:
         now = utcnow()
         expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat()
         self.store.execute(
@@ -181,7 +190,9 @@ class ServiceRoleService:
         )
         return self._claim(claim_id)
 
-    def release_service_claim(self, claim_id: str, agent_id: Optional[str] = None, *, reason: str = "released") -> None:
+    def release_service_claim(
+        self, claim_id: str, agent_id: Optional[str] = None, *, reason: str = "released"
+    ) -> None:
         now = utcnow()
         if agent_id is None:
             self.store.execute(
@@ -192,10 +203,18 @@ class ServiceRoleService:
             self.store.execute(
                 "UPDATE service_claims SET status = ?, updated_at = ? "
                 "WHERE id = ? AND agent_id = ? AND status = ?",
-                (ServiceClaimStatus.RELEASED.value, now, claim_id, agent_id, ServiceClaimStatus.ACTIVE.value),
+                (
+                    ServiceClaimStatus.RELEASED.value,
+                    now,
+                    claim_id,
+                    agent_id,
+                    ServiceClaimStatus.ACTIVE.value,
+                ),
             )
 
-    def expire_service_claims(self, now: Optional[str] = None, *, grace_seconds: int = 60) -> List[ServiceClaim]:
+    def expire_service_claims(
+        self, now: Optional[str] = None, *, grace_seconds: int = 60
+    ) -> List[ServiceClaim]:
         """Sweep active claims past expiry (holder stopped renewing = silent or
         overloaded) → status=expired, slot reopens. Race-guarded on status."""
         cutoff = (parse_time(utcnow()) - timedelta(seconds=int(grace_seconds))).isoformat()
@@ -209,12 +228,19 @@ class ServiceRoleService:
             claim = self._claim_from_row(row)
             self.store.execute(
                 "UPDATE service_claims SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
-                (ServiceClaimStatus.EXPIRED.value, stamp, claim.id, ServiceClaimStatus.ACTIVE.value),
+                (
+                    ServiceClaimStatus.EXPIRED.value,
+                    stamp,
+                    claim.id,
+                    ServiceClaimStatus.ACTIVE.value,
+                ),
             )
             expired.append(claim)
         return expired
 
-    def expire_agent_claims(self, agent_id: str, *, reason: str = "agent_offline") -> List[ServiceClaim]:
+    def expire_agent_claims(
+        self, agent_id: str, *, reason: str = "agent_offline"
+    ) -> List[ServiceClaim]:
         """Expire all of an agent's active service claims (e.g. it went offline)."""
         rows = self.store.query_all(
             "SELECT * FROM service_claims WHERE agent_id = ? AND status = ?",
@@ -231,7 +257,9 @@ class ServiceRoleService:
             out.append(claim)
         return out
 
-    def list_active_claims(self, *, role_id: Optional[str] = None, agent_id: Optional[str] = None) -> List[ServiceClaim]:
+    def list_active_claims(
+        self, *, role_id: Optional[str] = None, agent_id: Optional[str] = None
+    ) -> List[ServiceClaim]:
         sql = "SELECT * FROM service_claims WHERE status = ?"
         params: List[Any] = [ServiceClaimStatus.ACTIVE.value]
         if role_id is not None:
@@ -270,17 +298,26 @@ class ServiceRoleService:
 
     def _role_from_row(self, row: Any) -> ServiceRole:
         return ServiceRole(
-            id=row["id"], op=row["op"], slug=row["slug"], model_id=row["model_id"],
+            id=row["id"],
+            op=row["op"],
+            slug=row["slug"],
+            model_id=row["model_id"],
             required_capabilities=json_loads(row["required_capabilities"], []),
             hardware_requirements=json_loads(row["hardware_requirements"], {}),
-            enabled=bool(row["enabled"]), tenant_id=row["tenant_id"],
+            enabled=bool(row["enabled"]),
+            tenant_id=row["tenant_id"],
             metadata=json_loads(row["metadata"], {}),
-            created_at=row["created_at"], updated_at=row["updated_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     def _claim_from_row(self, row: Any) -> ServiceClaim:
         return ServiceClaim(
-            id=row["id"], service_role_id=row["service_role_id"], agent_id=row["agent_id"],
-            status=row["status"], expires_at=row["expires_at"],
-            created_at=row["created_at"], updated_at=row["updated_at"],
+            id=row["id"],
+            service_role_id=row["service_role_id"],
+            agent_id=row["agent_id"],
+            status=row["status"],
+            expires_at=row["expires_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )

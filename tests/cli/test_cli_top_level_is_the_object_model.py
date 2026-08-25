@@ -10,6 +10,7 @@ Those commands are now under one administrative verb. Nothing was removed:
 documentation, and breaking them to tidy a help page would be a bad trade. What
 changed is what the CLI SHOWS.
 """
+
 from __future__ import annotations
 
 import io
@@ -43,10 +44,7 @@ def _rows(text):
     the help text's grammar as if it were commands.
     """
     body = text.split("The objects mac models", 1)[-1]
-    return {
-        match.group(1)
-        for match in re.finditer(r"^  ([a-z][a-z0-9-]*)  +\S", body, re.M)
-    }
+    return {match.group(1) for match in re.finditer(r"^  ([a-z][a-z0-9-]*)  +\S", body, re.M)}
 
 
 def test_the_default_view_shows_only_the_objects_and_admin(tmp_path):
@@ -154,9 +152,7 @@ def test_the_task_producing_guard_still_fires_for_moved_commands():
 
     from mac.dispatch import _task_producing_cli_operation
 
-    args = argparse.Namespace(
-        command="admin", admin_command="bridge", bridge_command="import"
-    )
+    args = argparse.Namespace(command="admin", admin_command="bridge", bridge_command="import")
 
     assert _task_producing_cli_operation(args) == "bridge task import"
 

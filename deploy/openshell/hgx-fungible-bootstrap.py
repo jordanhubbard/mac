@@ -207,8 +207,9 @@ def render_python_wrapper(interpreter: os.PathLike[str] | str) -> str:
             "managed interpreter must be an absolute path",
             "point --interpreter at the uv-managed CPython %s binary" % PYTHON_VERSION,
         )
-    return '#!/bin/sh\n# Managed by hgx-fungible-bootstrap.py: exec wrapper (never a\n# symlink) so venv/ensurepip keep sys.base_prefix on the managed runtime.\nexec "%s" "$@"\n' % str(
-        target
+    return (
+        '#!/bin/sh\n# Managed by hgx-fungible-bootstrap.py: exec wrapper (never a\n# symlink) so venv/ensurepip keep sys.base_prefix on the managed runtime.\nexec "%s" "$@"\n'
+        % str(target)
     )
 
 
@@ -289,9 +290,7 @@ def _owner_uid(layout: VolumeLayout, expected_uid: Optional[int]) -> Optional[in
     return expected_uid
 
 
-def inspect_volume(
-    layout: VolumeLayout, *, expected_uid: Optional[int]
-) -> Report:
+def inspect_volume(layout: VolumeLayout, *, expected_uid: Optional[int]) -> Report:
     """Read-only inspection of every invariant the bootstrap must guarantee."""
 
     report = Report()
@@ -317,24 +316,21 @@ def inspect_volume(
             not offenders,
             "owner-only modes"
             if not offenders
-            else "group/other bits on %d path(s): %s"
-            % (len(offenders), ", ".join(offenders[:5])),
+            else "group/other bits on %d path(s): %s" % (len(offenders), ", ".join(offenders[:5])),
             "" if not offenders else "provision resets ~/.mac to 0700/0600",
         )
         if expected_uid is not None:
             wrong_owner = [
                 str(current)
                 for current in _walk(layout.mac_home)
-                if not current.is_symlink()
-                and current.lstat().st_uid != expected_uid
+                if not current.is_symlink() and current.lstat().st_uid != expected_uid
             ]
             report.add(
                 "mac_home_runtime_owner",
                 not wrong_owner,
                 "runtime user owns ~/.mac"
                 if not wrong_owner
-                else "%d path(s) not owned by uid %d"
-                % (len(wrong_owner), expected_uid),
+                else "%d path(s) not owned by uid %d" % (len(wrong_owner), expected_uid),
                 "" if not wrong_owner else "provision chowns ~/.mac to the runtime user",
             )
 
@@ -453,9 +449,7 @@ def provision(
         _chown_path(layout.python_wrapper, runtime_uid, runtime_gid)
 
     # 4/5. Validate; a failing invariant is a precise remediation, not a commit.
-    report = inspect_volume(
-        layout, expected_uid=runtime_uid if apply_ownership else None
-    )
+    report = inspect_volume(layout, expected_uid=runtime_uid if apply_ownership else None)
     if not report.ok:
         # Never leave a partial venv behind on a failed provision.
         if is_partial_venv(layout.venv):
@@ -485,9 +479,7 @@ def provision(
     return receipt
 
 
-def validate(
-    layout: VolumeLayout, *, expected_uid: Optional[int] = None
-) -> Dict[str, Any]:
+def validate(layout: VolumeLayout, *, expected_uid: Optional[int] = None) -> Dict[str, Any]:
     """Re-prove the invariants read-only; raise with a remediation if unmet."""
 
     report = inspect_volume(layout, expected_uid=expected_uid)
@@ -574,7 +566,9 @@ def _ensure_link_target_exists(
     targets = {
         # Prefer the real venv binary; fall back to a ~/.mac/bin placeholder so
         # we never touch venv/ on a fresh volume.
-        layout.mac_bin: venv_mac if (venv_mac.exists() or venv_mac.is_symlink()) else bin_dir / "mac",
+        layout.mac_bin: venv_mac
+        if (venv_mac.exists() or venv_mac.is_symlink())
+        else bin_dir / "mac",
         layout.codegraph_bin: bin_dir / "codegraph",
         layout.gh_bin: bin_dir / "gh",
     }
@@ -660,17 +654,13 @@ def _build_layout(args: argparse.Namespace) -> VolumeLayout:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", help="runtime account home (defaults to $HOME)")
-    parser.add_argument(
-        "--user", help="runtime account that must own ~/.mac (for chown)"
-    )
+    parser.add_argument("--user", help="runtime account that must own ~/.mac (for chown)")
     parser.add_argument("--uid", type=int, help="runtime uid (overrides --user lookup)")
     parser.add_argument("--gid", type=int, help="runtime gid")
     parser.add_argument(
         "--instance", help="HGX instance name (optional metadata, never a hostname)"
     )
-    parser.add_argument(
-        "--interpreter", help="absolute path to the managed CPython interpreter"
-    )
+    parser.add_argument("--interpreter", help="absolute path to the managed CPython interpreter")
     parser.add_argument(
         "--no-ownership",
         action="store_true",
@@ -699,9 +689,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 apply_ownership=apply_ownership,
             )
         else:
-            receipt = validate(
-                layout, expected_uid=uid if apply_ownership else None
-            )
+            receipt = validate(layout, expected_uid=uid if apply_ownership else None)
     except BootstrapError as exc:
         json.dump(exc.as_dict(), sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")

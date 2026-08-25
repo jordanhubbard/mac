@@ -50,10 +50,7 @@ def test_repository_access_learning_redacts_secrets_and_classifies_auth() -> Non
     assert learning["failure_class"] == "authentication"
     assert "top-secret" not in serialized
     assert "<redacted>" in serialized
-    assert (
-        "prefer a peer with a recent successful access learning"
-        in learning["recommendation"]
-    )
+    assert "prefer a peer with a recent successful access learning" in learning["recommendation"]
     assert classify_repository_access_failure(error) == "authentication"
 
 
@@ -130,9 +127,7 @@ def test_task_repository_remote_prefers_contract_canonical_url() -> None:
     task = {
         "metadata": {
             "execution_contract": {
-                "repository_contract": {
-                    "canonical_remote_url": "git@github.com:acme/canonical.git"
-                }
+                "repository_contract": {"canonical_remote_url": "git@github.com:acme/canonical.git"}
             },
             "origin": {"repository_url": "https://github.com/acme/fallback.git"},
         }

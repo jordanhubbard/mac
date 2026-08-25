@@ -64,16 +64,16 @@ def test_fulfill_marks_request_fulfilled(cp):
     # operator workflow.
     cp.roles.create_role(slug="qa", name="qa", description="d", system_prompt="p", level="ic")
     soul = bind_soul(cp, persona_name="qa-soul", allowed_role_slugs=["qa"])
-    agent = cp.register_agent(machine.id, "newcomer", capabilities=["python"], hermes_instance_id=soul)
+    agent = cp.register_agent(
+        machine.id, "newcomer", capabilities=["python"], hermes_instance_id=soul
+    )
     cp.roles.assign_role(agent.id, "qa")
     request = cp.provisioning.request_agent(
         reason="dispatch.no_eligible_agent",
         role_slug="qa",
         requested_by="dispatcher",
     )
-    fulfilled = cp.provisioning.fulfill_request(
-        request.id, agent.id, fulfilled_by="operator"
-    )
+    fulfilled = cp.provisioning.fulfill_request(request.id, agent.id, fulfilled_by="operator")
     assert fulfilled.status == ProvisioningStatus.FULFILLED.value
     assert fulfilled.fulfilled_agent_id == agent.id
     assert fulfilled.closed_at is not None
@@ -87,9 +87,7 @@ def test_fulfill_refuses_same_actor_request_and_approval(cp):
     soul = bind_soul(cp, persona_name="qa-soul", allowed_role_slugs=["qa"])
     agent = cp.register_agent(machine.id, "a", capabilities=["python"], hermes_instance_id=soul)
     cp.roles.assign_role(agent.id, "qa")
-    request = cp.provisioning.request_agent(
-        reason="r", role_slug="qa", requested_by="dispatcher"
-    )
+    request = cp.provisioning.request_agent(reason="r", role_slug="qa", requested_by="dispatcher")
     with pytest.raises(ValidationError, match="two-party check"):
         cp.provisioning.fulfill_request(request.id, agent.id, fulfilled_by="dispatcher")
     # A different approver succeeds.
@@ -105,7 +103,9 @@ def test_fulfill_refuses_agent_lacking_required_role_or_capabilities(cp):
     cp.roles.create_role(slug="ops", name="ops", description="d", system_prompt="p", level="ic")
     ops_soul = bind_soul(cp, persona_name="ops-soul", allowed_role_slugs=["ops"])
     qa_soul = bind_soul(cp, persona_name="qa-soul-2", allowed_role_slugs=["qa"])
-    wrong_role_agent = cp.register_agent(machine.id, "wrong", capabilities=["python"], hermes_instance_id=ops_soul)
+    wrong_role_agent = cp.register_agent(
+        machine.id, "wrong", capabilities=["python"], hermes_instance_id=ops_soul
+    )
     cp.roles.assign_role(wrong_role_agent.id, "ops")
     no_caps_agent = cp.register_agent(machine.id, "nocap", hermes_instance_id=qa_soul)
     cp.roles.assign_role(no_caps_agent.id, "qa")

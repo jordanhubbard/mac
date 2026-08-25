@@ -13,6 +13,7 @@ with the persisted ``fleets.yaml`` wire format, the deploy payload contract, and
 existing callers; reads accept the OpenClaw-named ``openclaw`` block first and
 fall back to the legacy ``hermes`` key.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -70,7 +71,15 @@ _ENV_DENYLIST = {
     "HERMES_CONFIG",
     "HERMES_ENV",
 }
-_SECRET_NAME_PARTS = ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "PRIVATE_KEY", "CREDENTIAL", "KEY_JSON")
+_SECRET_NAME_PARTS = (
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "API_KEY",
+    "PRIVATE_KEY",
+    "CREDENTIAL",
+    "KEY_JSON",
+)
 _RUNTIME_FIELDS = (
     "slack_home_channel_name",
     "gateway_model",
@@ -289,28 +298,32 @@ def _frontmatter(path: Path) -> Dict[str, Any]:
 
 def _env_specs_from_entry(entry: Any, *, source: str, required: bool) -> List[Dict[str, Any]]:
     if isinstance(entry, str):
-        return [{
-            "name": entry,
-            "description": "",
-            "prompt": entry,
-            "url": None,
-            "password": _looks_secret(entry),
-            "category": "plugin",
-            "required": required,
-            "source": source,
-        }]
+        return [
+            {
+                "name": entry,
+                "description": "",
+                "prompt": entry,
+                "url": None,
+                "password": _looks_secret(entry),
+                "category": "plugin",
+                "required": required,
+                "source": source,
+            }
+        ]
     if isinstance(entry, dict) and entry.get("name"):
         name = str(entry.get("name"))
-        return [{
-            "name": name,
-            "description": str(entry.get("description") or ""),
-            "prompt": str(entry.get("prompt") or name),
-            "url": entry.get("url"),
-            "password": _looks_secret(name, entry),
-            "category": str(entry.get("category") or "plugin"),
-            "required": required,
-            "source": source,
-        }]
+        return [
+            {
+                "name": name,
+                "description": str(entry.get("description") or ""),
+                "prompt": str(entry.get("prompt") or name),
+                "url": entry.get("url"),
+                "password": _looks_secret(name, entry),
+                "category": str(entry.get("category") or "plugin"),
+                "required": required,
+                "source": source,
+            }
+        ]
     return []
 
 
@@ -342,20 +355,22 @@ def _plugin_manifest_records() -> List[Dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
-            records.append({
-                "key": key,
-                "name": name,
-                "label": manifest.get("label") or name,
-                "version": manifest.get("version") or "",
-                "kind": manifest.get("kind") or "standalone",
-                "source": source,
-                "path": str(manifest_path),
-                "description": manifest.get("description") or "",
-                "requires_env": manifest.get("requires_env") or [],
-                "optional_env": manifest.get("optional_env") or [],
-                "provides_tools": manifest.get("provides_tools") or [],
-                "provides_hooks": manifest.get("hooks") or manifest.get("provides_hooks") or [],
-            })
+            records.append(
+                {
+                    "key": key,
+                    "name": name,
+                    "label": manifest.get("label") or name,
+                    "version": manifest.get("version") or "",
+                    "kind": manifest.get("kind") or "standalone",
+                    "source": source,
+                    "path": str(manifest_path),
+                    "description": manifest.get("description") or "",
+                    "requires_env": manifest.get("requires_env") or [],
+                    "optional_env": manifest.get("optional_env") or [],
+                    "provides_tools": manifest.get("provides_tools") or [],
+                    "provides_hooks": manifest.get("hooks") or manifest.get("provides_hooks") or [],
+                }
+            )
     return records
 
 
@@ -384,22 +399,29 @@ def _skill_records() -> List[Dict[str, Any]]:
                 continue
             seen.add(identity)
             category = rel.parts[0] if len(rel.parts) > 1 else ""
-            records.append({
-                "name": name or skill_md.parent.name,
-                "key": key,
-                "category": category,
-                "source": source,
-                "path": str(skill_md),
-                "description": str(meta.get("description") or "")[:1024],
-                "tags": meta.get("tags") or [],
-                "triggers": meta.get("triggers") or [],
-                "platforms": meta.get("platforms") or [],
-                "required_environment_variables": meta.get("required_environment_variables") or [],
-            })
-    return sorted(records, key=lambda item: (str(item.get("category") or ""), str(item.get("name") or "")))
+            records.append(
+                {
+                    "name": name or skill_md.parent.name,
+                    "key": key,
+                    "category": category,
+                    "source": source,
+                    "path": str(skill_md),
+                    "description": str(meta.get("description") or "")[:1024],
+                    "tags": meta.get("tags") or [],
+                    "triggers": meta.get("triggers") or [],
+                    "platforms": meta.get("platforms") or [],
+                    "required_environment_variables": meta.get("required_environment_variables")
+                    or [],
+                }
+            )
+    return sorted(
+        records, key=lambda item: (str(item.get("category") or ""), str(item.get("name") or ""))
+    )
 
 
-def _declared_env_specs(plugins: List[Dict[str, Any]], skills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _declared_env_specs(
+    plugins: List[Dict[str, Any]], skills: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     specs: Dict[str, Dict[str, Any]] = {}
     try:
         cfg = _hermes_config_module()
@@ -440,7 +462,10 @@ def _declared_env_specs(plugins: List[Dict[str, Any]], skills: List[Dict[str, An
                 spec["category"] = "skill"
                 specs.setdefault(spec["name"], spec)
 
-    return sorted(specs.values(), key=lambda item: (str(item.get("category") or ""), str(item.get("name") or "")))
+    return sorted(
+        specs.values(),
+        key=lambda item: (str(item.get("category") or ""), str(item.get("name") or "")),
+    )
 
 
 def _load_registry(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -553,14 +578,18 @@ def _config_field_records(
         has_current, current_value = _nested_get(current_config, path)
         has_desired, desired_value = _nested_get(desired_config, path)
         value = desired_value if has_desired else (current_value if has_current else default_value)
-        out.append({
-            "key": path,
-            "value": _safe_json_value(value),
-            "default": _safe_json_value(default_value) if has_default else None,
-            "type": type(value).__name__ if value is not None else "null",
-            "source": "fleet_desired" if has_desired else ("local_config" if has_current else "default"),
-            "desired": has_desired,
-        })
+        out.append(
+            {
+                "key": path,
+                "value": _safe_json_value(value),
+                "default": _safe_json_value(default_value) if has_default else None,
+                "type": type(value).__name__ if value is not None else "null",
+                "source": "fleet_desired"
+                if has_desired
+                else ("local_config" if has_current else "default"),
+                "desired": has_desired,
+            }
+        )
     return out
 
 
@@ -585,15 +614,29 @@ def _env_field_records(
         desired_present = name in desired_env and str(desired_env.get(name) or "") != ""
         local_present = name in local_env and str(local_env.get(name) or "") != ""
         env_present = os.environ.get(name) not in (None, "")
-        value = desired_env.get(name) if desired_present else (local_env.get(name) if local_present else os.environ.get(name, ""))
-        out.append({
-            **spec,
-            "present": bool(desired_present or local_present or env_present),
-            "configured": bool(desired_present or local_present or env_present),
-            "desired": desired_present,
-            "source": "fleet_desired" if desired_present else ("local_env" if local_present else ("process_env" if env_present else spec.get("source"))),
-            "redacted_value": _redacted(value) if (value and (spec.get("password") or _looks_secret(name))) else (str(value) if value and not spec.get("password") else ""),
-        })
+        value = (
+            desired_env.get(name)
+            if desired_present
+            else (local_env.get(name) if local_present else os.environ.get(name, ""))
+        )
+        out.append(
+            {
+                **spec,
+                "present": bool(desired_present or local_present or env_present),
+                "configured": bool(desired_present or local_present or env_present),
+                "desired": desired_present,
+                "source": "fleet_desired"
+                if desired_present
+                else (
+                    "local_env"
+                    if local_present
+                    else ("process_env" if env_present else spec.get("source"))
+                ),
+                "redacted_value": _redacted(value)
+                if (value and (spec.get("password") or _looks_secret(name)))
+                else (str(value) if value and not spec.get("password") else ""),
+            }
+        )
     return out
 
 
@@ -641,12 +684,16 @@ def _skill_records_with_state(
     for skill in skills:
         name = str(skill.get("name") or skill.get("key"))
         disabled = name in desired_disabled or name in current_disabled
-        out.append({
-            **skill,
-            "enabled": not disabled,
-            "state": "disabled" if disabled else "enabled",
-            "state_source": "fleet_desired" if name in desired_disabled else ("local_config" if name in current_disabled else "default"),
-        })
+        out.append(
+            {
+                **skill,
+                "enabled": not disabled,
+                "state": "disabled" if disabled else "enabled",
+                "state_source": "fleet_desired"
+                if name in desired_disabled
+                else ("local_config" if name in current_disabled else "default"),
+            }
+        )
     return out
 
 
@@ -670,63 +717,83 @@ def build_hermes_config_surfaces(
         temp_registry = deepcopy(reg)
         entry_key, entry = _find_or_create_fleet_entry(temp_registry, fleet)
         hermes_defaults = _fleet_hermes_defaults(entry)
-        desired_config = hermes_defaults.get("config") if isinstance(hermes_defaults.get("config"), dict) else {}
-        desired_env = hermes_defaults.get("env") if isinstance(hermes_defaults.get("env"), dict) else {}
-        desired_plugins = hermes_defaults.get("plugins") if isinstance(hermes_defaults.get("plugins"), dict) else {}
-        desired_skills = hermes_defaults.get("skills") if isinstance(hermes_defaults.get("skills"), dict) else {}
+        desired_config = (
+            hermes_defaults.get("config") if isinstance(hermes_defaults.get("config"), dict) else {}
+        )
+        desired_env = (
+            hermes_defaults.get("env") if isinstance(hermes_defaults.get("env"), dict) else {}
+        )
+        desired_plugins = (
+            hermes_defaults.get("plugins")
+            if isinstance(hermes_defaults.get("plugins"), dict)
+            else {}
+        )
+        desired_skills = (
+            hermes_defaults.get("skills") if isinstance(hermes_defaults.get("skills"), dict) else {}
+        )
         desired_payload = hermes_payload_from_defaults(hermes_defaults)
         fleet_agent_ids = set(str(v) for v in fleet.get("agent_ids") or [])
         fleet_agents = [
-            agent for agent in agents_list
+            agent
+            for agent in agents_list
             if str(agent.get("id") or "") in fleet_agent_ids
             or str(agent.get("agent", {}).get("id") or "") in fleet_agent_ids
         ]
         agent_overrides = []
         for item in entry.get("agents") or []:
             if isinstance(item, dict) and isinstance(item.get("hermes"), dict):
-                agent_overrides.append({
-                    "name": item.get("name") or "",
-                    "keys": sorted(item["hermes"].keys()),
-                })
-        surfaces.append({
-            "schema": SCHEMA,
-            "fleet_id": fleet.get("id"),
-            "fleet_name": fleet.get("name"),
-            "registry_key": entry_key,
-            "registry_path": str(reg_path),
-            "hermes_home": str(home),
-            "config_path": str(home / "config.yaml"),
-            "env_path": str(home / ".env"),
-            "updated_at": utcnow(),
-            "runtime": {key: hermes_defaults.get(key, "") for key in _RUNTIME_FIELDS},
-            "agent_count": len(fleet_agents),
-            "agents": [
-                {
-                    "id": agent.get("id") or agent.get("agent", {}).get("id"),
-                    "name": agent.get("name") or agent.get("agent", {}).get("name"),
-                    "hermes_instance_id": agent.get("hermes_instance_id") or agent.get("agent", {}).get("hermes_instance_id"),
-                    "support_surface": {
-                        "capabilities": agent.get("capabilities") or agent.get("agent", {}).get("capabilities") or [],
-                        "installed_packages": agent.get("installed_packages") or agent.get("agent", {}).get("installed_packages") or {},
-                    },
-                }
-                for agent in fleet_agents
-            ],
-            "agent_overrides": agent_overrides,
-            "config_fields": _config_field_records(current_config, desired_config),
-            "env_vars": _env_field_records(env_specs, local_env, desired_env),
-            "plugins": _plugin_records_with_state(plugins, desired_plugins, current_config),
-            "skills": _skill_records_with_state(skills, desired_skills, current_config),
-            "desired_digest": payload_digest(desired_payload),
-            "desired_payload_redacted": redacted_hermes_payload(desired_payload),
-            "desired": {
+                agent_overrides.append(
+                    {
+                        "name": item.get("name") or "",
+                        "keys": sorted(item["hermes"].keys()),
+                    }
+                )
+        surfaces.append(
+            {
+                "schema": SCHEMA,
+                "fleet_id": fleet.get("id"),
+                "fleet_name": fleet.get("name"),
+                "registry_key": entry_key,
+                "registry_path": str(reg_path),
+                "hermes_home": str(home),
+                "config_path": str(home / "config.yaml"),
+                "env_path": str(home / ".env"),
+                "updated_at": utcnow(),
                 "runtime": {key: hermes_defaults.get(key, "") for key in _RUNTIME_FIELDS},
-                "config": desired_config,
-                "env_keys": sorted(desired_env.keys()),
-                "plugins": desired_plugins,
-                "skills": desired_skills,
-            },
-        })
+                "agent_count": len(fleet_agents),
+                "agents": [
+                    {
+                        "id": agent.get("id") or agent.get("agent", {}).get("id"),
+                        "name": agent.get("name") or agent.get("agent", {}).get("name"),
+                        "hermes_instance_id": agent.get("hermes_instance_id")
+                        or agent.get("agent", {}).get("hermes_instance_id"),
+                        "support_surface": {
+                            "capabilities": agent.get("capabilities")
+                            or agent.get("agent", {}).get("capabilities")
+                            or [],
+                            "installed_packages": agent.get("installed_packages")
+                            or agent.get("agent", {}).get("installed_packages")
+                            or {},
+                        },
+                    }
+                    for agent in fleet_agents
+                ],
+                "agent_overrides": agent_overrides,
+                "config_fields": _config_field_records(current_config, desired_config),
+                "env_vars": _env_field_records(env_specs, local_env, desired_env),
+                "plugins": _plugin_records_with_state(plugins, desired_plugins, current_config),
+                "skills": _skill_records_with_state(skills, desired_skills, current_config),
+                "desired_digest": payload_digest(desired_payload),
+                "desired_payload_redacted": redacted_hermes_payload(desired_payload),
+                "desired": {
+                    "runtime": {key: hermes_defaults.get(key, "") for key in _RUNTIME_FIELDS},
+                    "config": desired_config,
+                    "env_keys": sorted(desired_env.keys()),
+                    "plugins": desired_plugins,
+                    "skills": desired_skills,
+                },
+            }
+        )
     return surfaces
 
 
@@ -748,16 +815,31 @@ def normalize_surface_patch(raw: Mapping[str, Any]) -> Dict[str, Any]:
         "schema": PAYLOAD_SCHEMA,
         "runtime": {key: str(runtime.get(key) or "") for key in _RUNTIME_FIELDS if key in runtime},
         "config": deepcopy(config),
-        "remove_config": _normalize_string_list(raw.get("remove_config"), field_name="remove_config"),
+        "remove_config": _normalize_string_list(
+            raw.get("remove_config"), field_name="remove_config"
+        ),
         "env": {_validate_env_name(key): str(value) for key, value in env.items()},
-        "remove_env": [_validate_env_name(key) for key in _normalize_string_list(raw.get("remove_env"), field_name="remove_env")],
+        "remove_env": [
+            _validate_env_name(key)
+            for key in _normalize_string_list(raw.get("remove_env"), field_name="remove_env")
+        ],
         "plugins": {
-            "enabled": _normalize_string_list(plugins.get("enabled"), field_name="plugins.enabled") if "enabled" in plugins else None,
-            "disabled": _normalize_string_list(plugins.get("disabled"), field_name="plugins.disabled") if "disabled" in plugins else None,
+            "enabled": _normalize_string_list(plugins.get("enabled"), field_name="plugins.enabled")
+            if "enabled" in plugins
+            else None,
+            "disabled": _normalize_string_list(
+                plugins.get("disabled"), field_name="plugins.disabled"
+            )
+            if "disabled" in plugins
+            else None,
         },
         "skills": {
-            "disabled": _normalize_string_list(skills.get("disabled"), field_name="skills.disabled") if "disabled" in skills else None,
-            "platform_disabled": skills.get("platform_disabled") if isinstance(skills.get("platform_disabled"), dict) else None,
+            "disabled": _normalize_string_list(skills.get("disabled"), field_name="skills.disabled")
+            if "disabled" in skills
+            else None,
+            "platform_disabled": skills.get("platform_disabled")
+            if isinstance(skills.get("platform_disabled"), dict)
+            else None,
         },
     }
     return patch
@@ -807,7 +889,9 @@ def _apply_patch_to_hermes_mapping(hermes: Dict[str, Any], patch: Mapping[str, A
         if skills_patch.get("platform_disabled") is not None:
             normalized: Dict[str, List[str]] = {}
             for platform, values in skills_patch["platform_disabled"].items():
-                normalized[str(platform)] = _normalize_string_list(values, field_name="skills.platform_disabled.%s" % platform)
+                normalized[str(platform)] = _normalize_string_list(
+                    values, field_name="skills.platform_disabled.%s" % platform
+                )
             skills["platform_disabled"] = normalized
 
 
@@ -837,12 +921,17 @@ def _ensure_never_prompt_defaults(config: Dict[str, Any]) -> None:
     can opt a single host back into interactive approvals with
     ``MAC_HERMES_ALLOW_APPROVAL_PROMPTS=1`` (then their existing config wins).
     """
-    if os.environ.get("MAC_HERMES_ALLOW_APPROVAL_PROMPTS", "").strip().lower() in {"1", "true", "yes", "on"}:
+    if os.environ.get("MAC_HERMES_ALLOW_APPROVAL_PROMPTS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
         return
     approvals = config.get("approvals")
     if not isinstance(approvals, dict):
         approvals = {}
-    approvals["mode"] = "off"          # no dangerous-command approval prompts
+    approvals["mode"] = "off"  # no dangerous-command approval prompts
     approvals["cron_mode"] = "approve"  # non-interactive runs must not fall to deny
     config["approvals"] = approvals
 
@@ -868,7 +957,9 @@ def _promote_slack_accounts_tokens(config: Dict[str, Any], home: Path) -> None:
         data = json.loads(accts.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 — malformed accounts file: leave config as-is
         return
-    accounts = data if isinstance(data, list) else (data.get("accounts") or data.get("agents") or [])
+    accounts = (
+        data if isinstance(data, list) else (data.get("accounts") or data.get("agents") or [])
+    )
     for acct in accounts:
         if not isinstance(acct, dict):
             continue

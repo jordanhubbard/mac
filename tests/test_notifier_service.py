@@ -16,6 +16,7 @@ Coverage:
 - list_channels filters: enabled, channel_type
 - Target deduplication: same agent_id+binding never appears twice
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -284,7 +285,8 @@ class TestEventMatching:
         notifiers, sent = self._make_service_with_sent(cp)
         agent = _make_agent(cp)
         notifiers.configure_channel(
-            "ch", "hermes",
+            "ch",
+            "hermes",
             event_types=["task.completed"],
             target={"agent_id": agent.id},
         )
@@ -296,7 +298,8 @@ class TestEventMatching:
         notifiers, sent = self._make_service_with_sent(cp)
         agent = _make_agent(cp)
         notifiers.configure_channel(
-            "ch", "hermes",
+            "ch",
+            "hermes",
             event_types=["task.failed"],
             target={"agent_id": agent.id},
         )
@@ -308,7 +311,8 @@ class TestEventMatching:
         notifiers, sent = self._make_service_with_sent(cp)
         agent = _make_agent(cp)
         notifiers.configure_channel(
-            "ch", "hermes",
+            "ch",
+            "hermes",
             event_types=["task.*"],
             target={"agent_id": agent.id},
         )
@@ -320,7 +324,8 @@ class TestEventMatching:
         notifiers, sent = self._make_service_with_sent(cp)
         agent = _make_agent(cp)
         notifiers.configure_channel(
-            "ch", "hermes",
+            "ch",
+            "hermes",
             event_types=["task.*"],
             target={"agent_id": agent.id},
         )
@@ -341,6 +346,7 @@ class TestDeliveryPipeline:
 
         def _mock_send(sender, recipient, mtype, payload):
             from mac.models import json_dumps
+
             msg = AgentMessage(
                 id=new_id("msg"),
                 sender_agent_id=sender,
@@ -361,9 +367,15 @@ class TestDeliveryPipeline:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    msg.id, msg.sender_agent_id, msg.recipient_agent_id, msg.task_id,
-                    msg.message_type, json_dumps(msg.payload), msg.status,
-                    msg.created_at, msg.delivered_at,
+                    msg.id,
+                    msg.sender_agent_id,
+                    msg.recipient_agent_id,
+                    msg.task_id,
+                    msg.message_type,
+                    json_dumps(msg.payload),
+                    msg.status,
+                    msg.created_at,
+                    msg.delivered_at,
                 ),
             )
             return msg
@@ -463,9 +475,7 @@ class TestDeliveryPipeline:
         result = notifiers.deliver_pending(notification_id=n1.id)
         assert result["delivered"] == 1
         # n2 should still be pending
-        row = cp.store.query_one(
-            "SELECT status FROM operator_notifications WHERE id = ?", (n2.id,)
-        )
+        row = cp.store.query_one("SELECT status FROM operator_notifications WHERE id = ?", (n2.id,))
         assert row["status"] == "pending"
 
     def test_already_delivered_notification_not_re_sent(self, cp, notifiers_and_sent):
@@ -524,6 +534,7 @@ class TestStaleClaim:
 
         def _mock_send(sender, recipient, mtype, payload):
             from mac.models import json_dumps
+
             msg = AgentMessage(
                 id=new_id("msg"),
                 sender_agent_id=sender,
@@ -542,9 +553,15 @@ class TestStaleClaim:
                     message_type, payload, status, created_at, delivered_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    msg.id, msg.sender_agent_id, msg.recipient_agent_id, msg.task_id,
-                    msg.message_type, json_dumps(msg.payload), msg.status,
-                    msg.created_at, msg.delivered_at,
+                    msg.id,
+                    msg.sender_agent_id,
+                    msg.recipient_agent_id,
+                    msg.task_id,
+                    msg.message_type,
+                    json_dumps(msg.payload),
+                    msg.status,
+                    msg.created_at,
+                    msg.delivered_at,
                 ),
             )
             return msg
@@ -566,9 +583,10 @@ class TestStaleClaim:
 
         # Manually set status to 'delivering' with an old delivered_at (simulating a crashed worker)
         from datetime import datetime, timedelta, timezone
-        stale_ts = (
-            datetime.now(timezone.utc) - timedelta(seconds=700)
-        ).isoformat(timespec="microseconds")
+
+        stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=700)).isoformat(
+            timespec="microseconds"
+        )
         cp.store.execute(
             "UPDATE operator_notifications SET status = 'delivering', delivered_at = ? WHERE id = ?",
             (stale_ts, note.id),
@@ -591,6 +609,7 @@ class TestTargetResolution:
 
         def _mock_send(sender, recipient, mtype, payload):
             from mac.models import json_dumps
+
             msg = AgentMessage(
                 id=new_id("msg"),
                 sender_agent_id=sender,
@@ -609,9 +628,15 @@ class TestTargetResolution:
                     message_type, payload, status, created_at, delivered_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    msg.id, msg.sender_agent_id, msg.recipient_agent_id, msg.task_id,
-                    msg.message_type, json_dumps(msg.payload), msg.status,
-                    msg.created_at, msg.delivered_at,
+                    msg.id,
+                    msg.sender_agent_id,
+                    msg.recipient_agent_id,
+                    msg.task_id,
+                    msg.message_type,
+                    json_dumps(msg.payload),
+                    msg.status,
+                    msg.created_at,
+                    msg.delivered_at,
                 ),
             )
             return msg
@@ -670,7 +695,8 @@ class TestTargetResolution:
         machine = cp.register_machine("host-2")
         agent = cp.register_agent(machine.id, "worker-2", hermes_instance_id=instance.id)
         notifiers.configure_channel(
-            "ch", "hermes",
+            "ch",
+            "hermes",
             target={"hermes_instance_id": instance.id},
         )
         _make_notification(cp, channels=["hermes"])
@@ -691,6 +717,7 @@ class TestAutoHermesFallback:
 
         def _mock_send(sender, recipient, mtype, payload):
             from mac.models import json_dumps
+
             msg = AgentMessage(
                 id=new_id("msg"),
                 sender_agent_id=sender,
@@ -709,9 +736,15 @@ class TestAutoHermesFallback:
                     message_type, payload, status, created_at, delivered_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    msg.id, msg.sender_agent_id, msg.recipient_agent_id, msg.task_id,
-                    msg.message_type, json_dumps(msg.payload), msg.status,
-                    msg.created_at, msg.delivered_at,
+                    msg.id,
+                    msg.sender_agent_id,
+                    msg.recipient_agent_id,
+                    msg.task_id,
+                    msg.message_type,
+                    json_dumps(msg.payload),
+                    msg.status,
+                    msg.created_at,
+                    msg.delivered_at,
                 ),
             )
             return msg
@@ -747,7 +780,8 @@ class TestAutoHermesFallback:
         notifiers, sent = notifiers_and_sent
         agent = _make_agent(cp)
         notifiers.configure_channel(
-            "muted", "hermes",
+            "muted",
+            "hermes",
             target={"agent_id": agent.id},
             enabled=False,
         )
@@ -768,6 +802,7 @@ class TestPayloadStructure:
 
         def _mock_send(sender, recipient, mtype, payload):
             from mac.models import json_dumps
+
             msg = AgentMessage(
                 id=new_id("msg"),
                 sender_agent_id=sender,
@@ -786,9 +821,15 @@ class TestPayloadStructure:
                     message_type, payload, status, created_at, delivered_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    msg.id, msg.sender_agent_id, msg.recipient_agent_id, msg.task_id,
-                    msg.message_type, json_dumps(msg.payload), msg.status,
-                    msg.created_at, msg.delivered_at,
+                    msg.id,
+                    msg.sender_agent_id,
+                    msg.recipient_agent_id,
+                    msg.task_id,
+                    msg.message_type,
+                    json_dumps(msg.payload),
+                    msg.status,
+                    msg.created_at,
+                    msg.delivered_at,
                 ),
             )
             return msg
@@ -911,6 +952,7 @@ class TestFailurePropagation:
 
         def _mock_send(sender, recipient, mtype, payload):
             from mac.models import json_dumps
+
             msg = AgentMessage(
                 id=new_id("msg"),
                 sender_agent_id=sender,
@@ -928,9 +970,15 @@ class TestFailurePropagation:
                     message_type, payload, status, created_at, delivered_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    msg.id, msg.sender_agent_id, msg.recipient_agent_id, msg.task_id,
-                    msg.message_type, json_dumps(msg.payload), msg.status,
-                    msg.created_at, msg.delivered_at,
+                    msg.id,
+                    msg.sender_agent_id,
+                    msg.recipient_agent_id,
+                    msg.task_id,
+                    msg.message_type,
+                    json_dumps(msg.payload),
+                    msg.status,
+                    msg.created_at,
+                    msg.delivered_at,
                 ),
             )
             return msg
@@ -979,7 +1027,8 @@ class TestControlPlaneIntegration:
 
     def test_event_types_stored_sorted(self, cp):
         ch = cp.notifiers.configure_channel(
-            "sorted", "hermes",
+            "sorted",
+            "hermes",
             event_types=["task.failed", "task.completed", "task.started"],
         )
         assert ch.event_types == ["task.completed", "task.failed", "task.started"]
@@ -991,9 +1040,7 @@ class TestControlPlaneIntegration:
     def test_channel_target_and_metadata_roundtrip(self, cp):
         target = {"agent_id": "agent_xyz", "extra": "data"}
         meta = {"owner": "ops-team", "priority": 1}
-        ch = cp.notifiers.configure_channel(
-            "full", "hermes", target=target, metadata=meta
-        )
+        ch = cp.notifiers.configure_channel("full", "hermes", target=target, metadata=meta)
         fetched = cp.notifiers.get_channel(ch.id)
         assert fetched.target["agent_id"] == "agent_xyz"
         assert fetched.metadata["owner"] == "ops-team"
@@ -1041,6 +1088,7 @@ def _make_openclaw_notifier(
 
     def _list_comm_ids(enabled=True):
         from mac.models import CommunicationIdentity
+
         return [
             CommunicationIdentity(
                 id="identity_001",
@@ -1062,6 +1110,7 @@ def _make_openclaw_notifier(
         if enqueue_raises:
             raise enqueue_raises
         from mac.models import HumanMessageDelivery
+
         delivery = HumanMessageDelivery(
             id=new_id("delivery"),
             identity_id=kwargs.get("identity_id", "identity_001"),
@@ -1109,18 +1158,23 @@ def _make_openclaw_notifier(
         return msg
 
     from mac.notifier_service import NotifierService as NS
-    return NS(
-        cp.store,
-        list_agents=cp.list_agents,
-        get_agent=cp.get_agent,
-        list_platform_bindings=cp.identity.list_platform_bindings,
-        get_platform_binding=cp.identity.get_platform_binding,
-        send_message=_send_message,
-        record_log=_capture_log,
-        enqueue_human_message=_enqueue,
-        resolve_agent_representation=_resolve,
-        list_communication_identities=_list_comm_ids,
-    ), logged, sent_ids
+
+    return (
+        NS(
+            cp.store,
+            list_agents=cp.list_agents,
+            get_agent=cp.get_agent,
+            list_platform_bindings=cp.identity.list_platform_bindings,
+            get_platform_binding=cp.identity.get_platform_binding,
+            send_message=_send_message,
+            record_log=_capture_log,
+            enqueue_human_message=_enqueue,
+            resolve_agent_representation=_resolve,
+            list_communication_identities=_list_comm_ids,
+        ),
+        logged,
+        sent_ids,
+    )
 
 
 class TestOpenClawOutboxDelivery:
@@ -1392,7 +1446,8 @@ def _setup_platform_infra(cp, label: str, platform: str = "slack"):
     """Register a full stack and return (tenant, instance, agent, binding)."""
     tenant = cp.register_tenant("t-%s" % label)
     persona = cp.register_persona(
-        tenant.id, "Bot-%s" % label,
+        tenant.id,
+        "Bot-%s" % label,
         "hermes://%s/soul" % label,
         "hermes://%s/mem" % label,
     )
@@ -1589,6 +1644,7 @@ class TestConfiguredTargetsChannelMismatch:
         # → no targets → skipped
         assert result["skipped"] == 1
         assert len(sent) == 0
+
 
 class TestAutoHermesTargetsActorPath:
     """Lines 477-482, 489: _auto_persona_instance_targets actor and NotFoundError branches."""

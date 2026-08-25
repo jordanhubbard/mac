@@ -82,8 +82,7 @@ def _dangling(store) -> Dict[str, List[str]]:
 
     for table, column in sorted(_TASK_ID_LIST_COLUMNS):
         rows = store.query_all(
-            'SELECT "%s" AS value FROM "%s" WHERE "%s" IS NOT NULL'
-            % (column, table, column)
+            'SELECT "%s" AS value FROM "%s" WHERE "%s" IS NOT NULL' % (column, table, column)
         )
         missing = []
         for row in rows:
@@ -123,9 +122,7 @@ def test_every_task_reference_resolves_on_a_working_ledger():
     child = cp.create_task("child", project="mac", dependencies=[parent.id])
     parked = cp.create_task("parked", project="mac")
     cp.request_task_input(parked.id, [{"question": "which database?"}], "worker-1")
-    cp.answer_task_input(
-        parked.id, "postgres", "jordan", disposition=cp.ANSWER_RESUME
-    )
+    cp.answer_task_input(parked.id, "postgres", "jordan", disposition=cp.ANSWER_RESUME)
 
     lease = cp.claim_task(parent.id, agent.id)
     assert lease is not None

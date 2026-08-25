@@ -35,8 +35,7 @@ class ContextError(RuntimeError):
 
 def _sensitive(path: PurePosixPath) -> bool:
     return any(
-        part in SENSITIVE_PARTS or part == ".env" or part.startswith(".env.")
-        for part in path.parts
+        part in SENSITIVE_PARTS or part == ".env" or part.startswith(".env.") for part in path.parts
     ) or path.name.endswith(SENSITIVE_SUFFIXES)
 
 
@@ -58,9 +57,7 @@ def context_manifest(root: Path) -> dict[str, object]:
     )
     if completed.returncode != 0:
         raise ContextError("git could not enumerate the certifier build context")
-    names = sorted(
-        {item.decode("utf-8") for item in completed.stdout.split(b"\0") if item}
-    )
+    names = sorted({item.decode("utf-8") for item in completed.stdout.split(b"\0") if item})
     if not names:
         raise ContextError("certifier build context is empty")
     aggregate = hashlib.sha256()
@@ -70,9 +67,7 @@ def context_manifest(root: Path) -> dict[str, object]:
         if relative.is_absolute() or ".." in relative.parts or str(relative) != raw_name:
             raise ContextError(f"unsafe build-context path: {raw_name}")
         if _sensitive(relative):
-            raise ContextError(
-                f"secret-shaped file may not enter the certifier image: {raw_name}"
-            )
+            raise ContextError(f"secret-shaped file may not enter the certifier image: {raw_name}")
         path = root.joinpath(*relative.parts)
         metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
@@ -87,9 +82,7 @@ def context_manifest(root: Path) -> dict[str, object]:
             + digest.encode("ascii")
             + b"\n"
         )
-        files.append(
-            {"path": raw_name, "mode": mode, "digest": "sha256:" + digest}
-        )
+        files.append({"path": raw_name, "mode": mode, "digest": "sha256:" + digest})
     return {
         "schema": "mac.certifier_build_context.v1",
         "digest": "sha256:" + aggregate.hexdigest(),

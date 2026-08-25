@@ -46,7 +46,7 @@ def _offenders():
     invocation = re.compile(
         r'(?:"[^"\n]*/mac"|\'[^\'\n]*/mac\'|[\w./${}-]*/mac|\bmac)'
         r'\s+(?:--[\w-]+(?:=\S+)?\s+|"\$[\w{}]+"\s+|\$[\w{}]+\s+)*'
-        r'(%s)\b' % names
+        r"(%s)\b" % names
     )
     found = []
     for directory in SCANNED:
@@ -64,7 +64,7 @@ def _offenders():
                 if not match:
                     continue
                 # `mac admin <cmd>` is the correct spelling.
-                if re.search(r'\badmin\s+%s\b' % re.escape(match.group(1)), line):
+                if re.search(r"\badmin\s+%s\b" % re.escape(match.group(1)), line):
                     continue
                 found.append(
                     "%s:%d: %s" % (path.relative_to(REPO_ROOT), number, line.strip()[:100])
@@ -90,13 +90,13 @@ def test_the_scan_would_actually_catch_the_shape_that_shipped(tmp_path):
     invocation = re.compile(
         r'(?:"[^"\n]*/mac"|\'[^\'\n]*/mac\'|[\w./${}-]*/mac|\bmac)'
         r'\s+(?:--[\w-]+(?:=\S+)?\s+|"\$[\w{}]+"\s+|\$[\w{}]+\s+)*'
-        r'(%s)\b' % names
+        r"(%s)\b" % names
     )
 
     assert invocation.search('"$MAC_HOME/venv/bin/mac" openshell render-policy \\')
-    assert invocation.search('mac fleet doctor')
+    assert invocation.search("mac fleet doctor")
     assert invocation.search('mac --db "$DOCS_DB" init')
     # And does not fire on the corrected spelling.
     line = '"$MAC_HOME/venv/bin/mac" admin openshell render-policy'
     match = invocation.search(line)
-    assert match is None or re.search(r'\badmin\s+%s\b' % match.group(1), line)
+    assert match is None or re.search(r"\badmin\s+%s\b" % match.group(1), line)

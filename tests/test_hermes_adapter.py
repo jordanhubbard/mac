@@ -18,6 +18,8 @@ def _mac_cli_json_output():
         yield
     finally:
         _mac_cli._set_output_json(False)
+
+
 from mac.api import create_app
 from mac.hermes_adapter import (
     ConversationTaskInput,
@@ -87,7 +89,9 @@ def finish_task(cp, task_id):
         "checks": [{"name": "pytest", "returncode": 0}],
     }
     manifest["signed_by"] = worker.id
-    manifest["signature"] = sign_verification_manifest(cp._agent_attestation_key(worker.id), manifest)
+    manifest["signature"] = sign_verification_manifest(
+        cp._agent_attestation_key(worker.id), manifest
+    )
     evidence = cp.add_evidence(
         task_id,
         "test",
@@ -159,7 +163,10 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
     assert work_context["schema"] == "mac.hermes_work_context.v1"
     assert work_context["projects"][0]["project"] == "deploy"
     assert work_context["tasks"][0]["id"] == task["id"]
-    assert work_context["tasks"][0]["origin"]["hermes_instance_id"] == registration["hermes_instance"]["id"]
+    assert (
+        work_context["tasks"][0]["origin"]["hermes_instance_id"]
+        == registration["hermes_instance"]["id"]
+    )
     assert any(
         operation["name"] == "create_task_from_conversation"
         for operation in work_context["operations"]["api"]
@@ -182,20 +189,17 @@ def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
         "get_agent_identity",
     } <= operation_names
     assert any(
-        "mac-hermes tasks" in command
-        for command in work_context["operations"]["mac_hermes_cli"]
+        "mac-hermes tasks" in command for command in work_context["operations"]["mac_hermes_cli"]
     )
     assert any(
-        "mac-hermes projects" in command
-        for command in work_context["operations"]["mac_hermes_cli"]
+        "mac-hermes projects" in command for command in work_context["operations"]["mac_hermes_cli"]
     )
     assert any(
         "mac-hermes project-items" in command
         for command in work_context["operations"]["mac_hermes_cli"]
     )
     assert any(
-        "mac-hermes agents" in command
-        for command in work_context["operations"]["mac_hermes_cli"]
+        "mac-hermes agents" in command for command in work_context["operations"]["mac_hermes_cli"]
     )
     assert any(
         "mac-hermes claim-next" in command
@@ -349,7 +353,10 @@ def test_hermes_adapter_summarizes_result_and_prepares_memory_writeback():
     summary = adapter.task_summary(task["id"])
     assert summary["state"] == "completed"
     assert summary["approved_review_count"] == 1
-    assert adapter.user_reply_for_task(task["id"]) == "Fix build is complete and published to test://publish."
+    assert (
+        adapter.user_reply_for_task(task["id"])
+        == "Fix build is complete and published to test://publish."
+    )
 
     writes = []
     writeback = adapter.write_completed_task_to_memory(
@@ -622,8 +629,12 @@ def test_hermes_adapter_exposes_firecrawl_web_research_bridge():
     )
 
     assert adapter.web_search("release notes", limit=2)["success"] is True
-    assert adapter.web_scrape("https://example.com", formats=["markdown", "html"])["success"] is True
-    assert adapter.web_crawl("https://example.com", limit=1, formats=["markdown"])["success"] is True
+    assert (
+        adapter.web_scrape("https://example.com", formats=["markdown", "html"])["success"] is True
+    )
+    assert (
+        adapter.web_crawl("https://example.com", limit=1, formats=["markdown"])["success"] is True
+    )
     assert adapter.web_crawl_status("crawl_1")["status"] == "completed"
     assert calls == [
         ("POST", "/v2/search", {"query": "release notes", "limit": 2}),
@@ -678,7 +689,8 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
 
     rc = mac_cli_main(
         [
-            "--db", dsn_for(db),
+            "--db",
+            dsn_for(db),
             "project",
             "create",
             "c26",
@@ -701,7 +713,8 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
 
     rc = mac_cli_main(
         [
-            "--db", dsn_for(db),
+            "--db",
+            dsn_for(db),
             "admin",
             "hermes",
             "runtime-proof",
@@ -713,7 +726,9 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == "mac.hermes_runtime_proof.v1"
-    assert payload["evidence"]["cli"]["mac_cli_commands"][0].startswith("mac admin hermes work-context")
+    assert payload["evidence"]["cli"]["mac_cli_commands"][0].startswith(
+        "mac admin hermes work-context"
+    )
     assert any(
         command.startswith("mac admin hermes runtime-proof")
         for command in payload["evidence"]["cli"]["mac_cli_commands"]
@@ -728,7 +743,8 @@ def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkey
 
     rc = mac_cli_main(
         [
-            "--db", dsn_for(db),
+            "--db",
+            dsn_for(db),
             "admin",
             "bridge",
             "import",
@@ -1022,7 +1038,15 @@ def test_mac_hermes_cli_exposes_task_lifecycle_operations(monkeypatch, capsys):
         ],
         ["claim", "task_1", "agent_1", "--lease-seconds", "30"],
         ["start", "task_1", "agent_1"],
-        ["transition", "task_1", "blocked", "--actor", "hermes", "--detail", '{"reason":"waiting"}'],
+        [
+            "transition",
+            "task_1",
+            "blocked",
+            "--actor",
+            "hermes",
+            "--detail",
+            '{"reason":"waiting"}',
+        ],
         [
             "evidence",
             "task_1",

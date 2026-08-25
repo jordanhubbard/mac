@@ -57,9 +57,7 @@ def test_review_advance_consumer_does_not_outlive_the_lifespan(monkeypatch):
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
         started = _threads_named("mac-review-advance") - before
-        assert started, (
-            "the hub tick gate should have enabled the review-advance consumer"
-        )
+        assert started, "the hub tick gate should have enabled the review-advance consumer"
 
     assert _wait_all_stopped(started) == set(), (
         "the review-advance consumer is still alive after the lifespan exited; "
@@ -106,7 +104,7 @@ def test_failed_service_start_unwinds_the_services_already_started(monkeypatch):
     assert _wait_all_stopped(_threads_named("mac-hub-tick") - before_tick) == set(), (
         "hub ticker survived a failed lifespan startup"
     )
-    assert _wait_all_stopped(
-        _threads_named("mac-review-advance") - before_advance
-    ) == set(), "review-advance consumer survived a failed lifespan startup"
+    assert _wait_all_stopped(_threads_named("mac-review-advance") - before_advance) == set(), (
+        "review-advance consumer survived a failed lifespan startup"
+    )
     assert getattr(app.state, "hub_tick_thread", None) is None

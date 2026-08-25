@@ -116,9 +116,7 @@ class ACPExecutor:
 
             init = client.initialize(timeout=timeout)
             session_id = client.session_new(self._cwd, timeout=timeout)
-            prompt_result = client.session_prompt(
-                session_id, prompt, timeout=timeout
-            )
+            prompt_result = client.session_prompt(session_id, prompt, timeout=timeout)
             return ACPRunResult(
                 session_id=session_id,
                 stop_reason=prompt_result.stop_reason,

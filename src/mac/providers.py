@@ -15,6 +15,7 @@ Consumers:
 - deploy/deploy-mac-fleet.sh's scrub reads `python -m mac.providers scrub-regex`
   for the set of upstream secret env vars a spoke must not hold.
 """
+
 from __future__ import annotations
 
 from typing import Dict, Iterable, List, NamedTuple, Tuple
@@ -22,8 +23,8 @@ from typing import Dict, Iterable, List, NamedTuple, Tuple
 
 class Provider(NamedTuple):
     id: str
-    key_env: str          # API-key env var, e.g. NVIDIA_API_KEY
-    base_env: str         # base-url env var, e.g. NVIDIA_BASE_URL
+    key_env: str  # API-key env var, e.g. NVIDIA_API_KEY
+    base_env: str  # base-url env var, e.g. NVIDIA_BASE_URL
     default_base_url: str  # OpenAI-compatible base URL the router fronts
 
 
@@ -34,7 +35,9 @@ ROUTER_PROVIDERS: Tuple[Provider, ...] = (
     Provider("nvidia", "NVIDIA_API_KEY", "NVIDIA_BASE_URL", "https://inference-api.nvidia.com/v1"),
     Provider("openai", "OPENAI_API_KEY", "OPENAI_BASE_URL", "https://api.openai.com/v1"),
     Provider("anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-    Provider("perplexity", "PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"),
+    Provider(
+        "perplexity", "PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "https://api.perplexity.ai"
+    ),
 )
 
 # Additional upstream provider env vars managed with chat provider keys when the

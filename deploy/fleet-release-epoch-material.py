@@ -51,9 +51,7 @@ def _read(path: Path) -> dict[str, Any]:
             raise MaterialError("material file changed while opening")
         raw = bytearray()
         while len(raw) < observed.st_size:
-            chunk = os.read(
-                descriptor, min(64 * 1024, observed.st_size - len(raw))
-            )
+            chunk = os.read(descriptor, min(64 * 1024, observed.st_size - len(raw)))
             if not chunk:
                 raise MaterialError("material file was truncated")
             raw.extend(chunk)
@@ -127,7 +125,11 @@ def _exact(value: Any, keys: Iterable[str], label: str) -> dict[str, Any]:
 
 def _text(value: Any, label: str, maximum: int = 512) -> str:
     result = str(value or "").strip()
-    if not result or len(result.encode()) > maximum or any(not char.isprintable() for char in result):
+    if (
+        not result
+        or len(result.encode()) > maximum
+        or any(not char.isprintable() for char in result)
+    ):
         raise MaterialError(f"{label} is invalid")
     return result
 
@@ -182,7 +184,10 @@ def _cohort_agents(raw: Any, *, prove: bool = False) -> list[dict[str, Any]]:
                 agent["prepared_evidence_sha256"], "prepared evidence digest"
             )
             receipt = agent["install_receipt"]
-            if not isinstance(receipt, dict) or receipt.get("schema") != "mac.worker_credential_install_receipt.v1":
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("schema") != "mac.worker_credential_install_receipt.v1"
+            ):
                 raise MaterialError("worker install receipt is unsupported")
             proof = agent["attestation_proof"]
             if proof is not None and (
@@ -272,12 +277,19 @@ def build_open(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, A
             },
             "participant state",
         )
-        if state["schema"] != "mac.fleet_release_participant_state.v1" or state["agent_id"] != agent_id:
+        if (
+            state["schema"] != "mac.fleet_release_participant_state.v1"
+            or state["agent_id"] != agent_id
+        ):
             raise MaterialError("participant state belongs to another agent")
         held = state["expected_dispatch_hold"]
         reason = state["expected_hold_reason"]
         held_at = state["expected_hold_at"]
-        if not isinstance(held, bool) or (held and (not reason or not held_at)) or (not held and (reason is not None or held_at is not None)):
+        if (
+            not isinstance(held, bool)
+            or (held and (not reason or not held_at))
+            or (not held and (reason is not None or held_at is not None))
+        ):
             raise MaterialError("participant hold ownership is malformed")
         baseline = _text(state["baseline_seen"], "participant heartbeat baseline", 128)
         principal = _text(item["principal_id"], "principal id")
@@ -369,9 +381,7 @@ def build_prove(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, 
                 "agent_id": item["agent_id"],
                 "install_receipt": item["install_receipt"],
                 "attestation_proof": item["attestation_proof"],
-                "report_executor_startup_timestamp": item[
-                    "report_executor_startup_timestamp"
-                ],
+                "report_executor_startup_timestamp": item["report_executor_startup_timestamp"],
             }
             for item in agents
         ],

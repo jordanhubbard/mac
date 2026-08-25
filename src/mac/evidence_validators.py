@@ -96,10 +96,11 @@ def _verify_remote_ref_resolves(remote_url: str, remote_ref: str) -> Optional[st
         failure_class = classify_repository_access_failure(stderr)
         if failure_class in {*AUTH_FAILURE_CLASSES, "network"}:
             return None
-        return (
-            "repo.remote_ref %s does not resolve on %s (git ls-remote "
-            "returncode=%d: %s)"
-            % (remote_ref, access.display, completed.returncode, stderr[:200])
+        return "repo.remote_ref %s does not resolve on %s (git ls-remote returncode=%d: %s)" % (
+            remote_ref,
+            access.display,
+            completed.returncode,
+            stderr[:200],
         )
     if not (completed.stdout or "").strip():
         return (
@@ -127,8 +128,7 @@ class VerificationRepoAnchor:
         return cls(
             head_sha=str(repo.get("head_sha") or "").strip(),
             dirty=repo.get("dirty"),
-            pushed=repo.get("pushed") is True
-            or str(repo.get("pushed") or "").lower() == "true",
+            pushed=repo.get("pushed") is True or str(repo.get("pushed") or "").lower() == "true",
             remote_ref=str(repo.get("remote_ref") or "").strip(),
             remote_url=str(repo.get("remote_url") or "").strip(),
             pr_url=str(repo.get("pr_url") or "").strip(),
@@ -333,7 +333,9 @@ class NoChangeValidator(EvidenceValidator):
         # inspected, but requiring a newly pushed ref contradicts the evidence
         # type and turned correct investigations into deterministic retries.
         problems = self.require_clean_repo_anchor(manifest)
-        if not str(manifest.raw.get("reason") or manifest.raw.get("no_change_reason") or "").strip():
+        if not str(
+            manifest.raw.get("reason") or manifest.raw.get("no_change_reason") or ""
+        ).strip():
             problems.append("no_change evidence requires a reason")
         if self.passed_checks(manifest, context) < 1:
             problems.append("no_change evidence requires at least one passing check")
@@ -374,7 +376,9 @@ class ReviewVerdictValidator(EvidenceValidator):
         problems.extend(rejected_verdict_feedback_problems(manifest.raw))
         if verdict == "approved":
             if self.passed_checks(manifest, context) < 1:
-                problems.append("review_verdict evidence requires at least one independent passing check")
+                problems.append(
+                    "review_verdict evidence requires at least one independent passing check"
+                )
             problems.extend(codegraph_audit_manifest_problems(manifest.raw))
         return problems
 
@@ -431,12 +435,8 @@ class PlanDecomposedValidator(EvidenceValidator):
             problems.append("plan_decomposed evidence requires a non-empty children list")
         else:
             for index, child in enumerate(children, start=1):
-                if not isinstance(child, dict) or not str(
-                    child.get("title") or ""
-                ).strip():
-                    problems.append(
-                        "plan_decomposed child %d requires a title" % index
-                    )
+                if not isinstance(child, dict) or not str(child.get("title") or "").strip():
+                    problems.append("plan_decomposed child %d requires a title" % index)
         if not str(manifest.raw.get("ordering_rationale") or "").strip():
             problems.append("plan_decomposed evidence requires ordering_rationale")
         if not str(manifest.raw.get("coverage_claim") or "").strip():
@@ -471,8 +471,7 @@ VALIDATORS: Dict[str, EvidenceValidator] = {
 _UNREGISTERED_VALIDATOR_KINDS = set(VALIDATORS) - EVIDENCE_KINDS
 assert not _UNREGISTERED_VALIDATOR_KINDS, (
     "evidence validators advertise kinds missing from the canonical "
-    "mac.models.EVIDENCE_KINDS registry: %s"
-    % ", ".join(sorted(_UNREGISTERED_VALIDATOR_KINDS))
+    "mac.models.EVIDENCE_KINDS registry: %s" % ", ".join(sorted(_UNREGISTERED_VALIDATOR_KINDS))
 )
 
 
@@ -561,8 +560,7 @@ def operator_result_validation_problems(raw: Mapping[str, Any]) -> List[str]:
     sources = _operator_result_sources(raw)
 
     if any(
-        _manifest_list(source.get("artifacts"))
-        or _manifest_list(source.get("findings"))
+        _manifest_list(source.get("artifacts")) or _manifest_list(source.get("findings"))
         for source in sources
     ):
         return []

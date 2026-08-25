@@ -169,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     results = [replay_fault(dict(fault)) for fault in document.get("faults", [])]
     report = {
         "schema": SCHEMA,
-        "status": "pass" if results and all(item["status"] == "pass" for item in results) else "fail",
+        "status": "pass"
+        if results and all(item["status"] == "pass" for item in results)
+        else "fail",
         "faults": results,
     }
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"

@@ -211,7 +211,9 @@ def _validation_detail(
     out.setdefault("image", image)
     out.setdefault(
         "validation",
-        validation_summary if validation_summary else ("validated" if validated else "not validated"),
+        validation_summary
+        if validation_summary
+        else ("validated" if validated else "not validated"),
     )
     out.setdefault("reported_at_by_admin", utcnow())
     return out
@@ -252,7 +254,11 @@ def reconcile_openshell_agents(
     if not agent_selectors:
         raise ValueError("no agents selected for OpenShell reconciliation")
 
-    text = policy_text if policy_text is not None else default_policy_path().read_text(encoding="utf-8")
+    text = (
+        policy_text
+        if policy_text is not None
+        else default_policy_path().read_text(encoding="utf-8")
+    )
     agents, missing_agents = _select_agents(
         _list_dicts(plane.list_agents()),
         agent_selectors,
@@ -346,7 +352,9 @@ def reconcile_openshell_agents(
 
     counts = {
         "agents": len(rows),
-        "resource_updates": sum("set_resources.openshell_required" in row["actions"] for row in rows),
+        "resource_updates": sum(
+            "set_resources.openshell_required" in row["actions"] for row in rows
+        ),
         "policy_assignments": sum("assign_policy" in row["actions"] for row in rows),
         "status_reports": sum("report_status" in row["actions"] for row in rows),
     }

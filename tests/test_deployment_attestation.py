@@ -40,9 +40,7 @@ def _write_manifest(path: Path, value) -> None:
 
 def _report_attestation():
     return read_only_report_repository_executor_attestation(
-        runtime_image_ref=(
-            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64
-        ),
+        runtime_image_ref=("ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64),
         policy_sha256="sha256:" + "2" * 64,
         openshell_bin_path="/opt/openshell",
         openshell_bin_sha256="sha256:" + "3" * 64,
@@ -82,9 +80,7 @@ def test_probe_is_secret_free_and_recovery_rotates_only_stale(tmp_path):
     env_file = tmp_path / "mac.env"
     _write_env(env_file, original)
 
-    valid_probe = build_key_probe(
-        agent.id, "deployment-1", env_file, nonce="n" * 40
-    )
+    valid_probe = build_key_probe(agent.id, "deployment-1", env_file, nonce="n" * 40)
     assert original not in json.dumps(valid_probe)
     assert cp.verify_agent_attestation_challenge(
         agent.id, valid_probe["challenge"], valid_probe["signature"]
@@ -93,18 +89,12 @@ def test_probe_is_secret_free_and_recovery_rotates_only_stale(tmp_path):
         cp.recover_agent_attestation_key(agent.id, valid_probe)
 
     _write_env(env_file, "stale-local-key-that-is-at-least-thirty-two-bytes")
-    stale_probe = build_key_probe(
-        agent.id, "deployment-1", env_file, nonce="s" * 40
-    )
+    stale_probe = build_key_probe(agent.id, "deployment-1", env_file, nonce="s" * 40)
     replacement = cp.recover_agent_attestation_key(agent.id, stale_probe)
     assert replacement != original
     _write_env(env_file, replacement)
-    proved = build_key_probe(
-        agent.id, "deployment-1", env_file, nonce="p" * 40
-    )
-    assert cp.verify_agent_attestation_challenge(
-        agent.id, proved["challenge"], proved["signature"]
-    )
+    proved = build_key_probe(agent.id, "deployment-1", env_file, nonce="p" * 40)
+    assert cp.verify_agent_attestation_challenge(agent.id, proved["challenge"], proved["signature"])
 
 
 def test_recovery_manifest_install_is_owner_only_atomic_and_one_use(tmp_path):
@@ -208,9 +198,7 @@ def test_probe_reports_missing_key_and_rejects_untrusted_environment_files(tmp_p
         ("agent_worker", "bad\x00deployment", "x" * 32, "deployment id is required"),
     ],
 )
-def test_recovery_manifest_rejects_unsafe_fields(
-    agent_id, deployment_id, key, message
-):
+def test_recovery_manifest_rejects_unsafe_fields(agent_id, deployment_id, key, message):
     with pytest.raises(DeploymentAttestationError, match=message):
         recovery_manifest(agent_id, deployment_id, key)
 
@@ -321,9 +309,7 @@ def test_recovery_install_rejects_untrusted_destination_without_consuming(
     assert source.exists()
 
 
-def test_recovery_install_replace_failure_is_atomic_and_preserves_manifest(
-    tmp_path, monkeypatch
-):
+def test_recovery_install_replace_failure_is_atomic_and_preserves_manifest(tmp_path, monkeypatch):
     source = tmp_path / "recovery.json"
     _write_manifest(
         source,
@@ -351,33 +337,39 @@ def test_recovery_install_replace_failure_is_atomic_and_preserves_manifest(
 
 
 def test_command_handoff_writes_private_probe_and_install_artifacts(tmp_path, capsys):
-    assert deployment_attestation.main(
-        [
-            "probe",
-            "--agent-id",
-            "agent_worker",
-            "--deployment-id",
-            "deployment-stdout-only",
-            "--env-file",
-            str(tmp_path / "absent.env"),
-        ]
-    ) == 0
+    assert (
+        deployment_attestation.main(
+            [
+                "probe",
+                "--agent-id",
+                "agent_worker",
+                "--deployment-id",
+                "deployment-stdout-only",
+                "--env-file",
+                str(tmp_path / "absent.env"),
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["state"] == "missing"
 
     probe_output = tmp_path / "nested" / "probe.json"
-    assert deployment_attestation.main(
-        [
-            "probe",
-            "--agent-id",
-            "agent_worker",
-            "--deployment-id",
-            "deployment-cli",
-            "--env-file",
-            str(tmp_path / "absent.env"),
-            "--output",
-            str(probe_output),
-        ]
-    ) == 0
+    assert (
+        deployment_attestation.main(
+            [
+                "probe",
+                "--agent-id",
+                "agent_worker",
+                "--deployment-id",
+                "deployment-cli",
+                "--env-file",
+                str(tmp_path / "absent.env"),
+                "--output",
+                str(probe_output),
+            ]
+        )
+        == 0
+    )
     probe_stdout = json.loads(capsys.readouterr().out)
     assert json.loads(probe_output.read_text(encoding="utf-8")) == probe_stdout
     assert stat_mode(probe_output) == 0o600
@@ -389,21 +381,24 @@ def test_command_handoff_writes_private_probe_and_install_artifacts(tmp_path, ca
     )
     destination = tmp_path / "installed.env"
     receipt_output = tmp_path / "nested" / "receipt.json"
-    assert deployment_attestation.main(
-        [
-            "install",
-            "--manifest",
-            str(source),
-            "--env-file",
-            str(destination),
-            "--agent-id",
-            "agent_worker",
-            "--deployment-id",
-            "deployment-cli",
-            "--receipt-out",
-            str(receipt_output),
-        ]
-    ) == 0
+    assert (
+        deployment_attestation.main(
+            [
+                "install",
+                "--manifest",
+                str(source),
+                "--env-file",
+                str(destination),
+                "--agent-id",
+                "agent_worker",
+                "--deployment-id",
+                "deployment-cli",
+                "--receipt-out",
+                str(receipt_output),
+            ]
+        )
+        == 0
+    )
     receipt_stdout = json.loads(capsys.readouterr().out)
     assert json.loads(receipt_output.read_text(encoding="utf-8")) == receipt_stdout
     assert stat_mode(receipt_output) == 0o600
@@ -420,8 +415,7 @@ def test_candidate_proof_is_exact_and_signed_by_installed_key(tmp_path, capsys):
         "agent_id": "agent_worker",
         "generation": "generation-one",
         "principal_id": "principal-one",
-        "candidate_fingerprint": "sha256:"
-        + hashlib.sha256(key.encode()).hexdigest(),
+        "candidate_fingerprint": "sha256:" + hashlib.sha256(key.encode()).hexdigest(),
         "nonce": "n" * 40,
     }
     challenge_file = tmp_path / "challenge.json"
@@ -433,17 +427,20 @@ def test_candidate_proof_is_exact_and_signed_by_installed_key(tmp_path, capsys):
     }
 
     output = tmp_path / "proof.json"
-    assert deployment_attestation.main(
-        [
-            "prove-candidate",
-            "--challenge",
-            str(challenge_file),
-            "--env-file",
-            str(env_file),
-            "--output",
-            str(output),
-        ]
-    ) == 0
+    assert (
+        deployment_attestation.main(
+            [
+                "prove-candidate",
+                "--challenge",
+                str(challenge_file),
+                "--env-file",
+                str(env_file),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
     assert json.loads(output.read_text()) == proof
     assert stat_mode(output) == 0o600
     assert json.loads(capsys.readouterr().out) == {
@@ -459,17 +456,20 @@ def test_candidate_proof_is_exact_and_signed_by_installed_key(tmp_path, capsys):
 
 
 def test_command_reports_contract_errors_without_traceback(tmp_path, capsys):
-    assert deployment_attestation.main(
-        [
-            "probe",
-            "--agent-id",
-            "",
-            "--deployment-id",
-            "deployment-cli-error",
-            "--env-file",
-            str(tmp_path / "absent.env"),
-        ]
-    ) == 2
+    assert (
+        deployment_attestation.main(
+            [
+                "probe",
+                "--agent-id",
+                "",
+                "--deployment-id",
+                "deployment-cli-error",
+                "--env-file",
+                str(tmp_path / "absent.env"),
+            ]
+        )
+        == 2
+    )
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "deployment attestation error: agent id is required\n"
@@ -510,9 +510,7 @@ def test_report_executor_approval_cas_binds_current_startup_and_revokes():
     assert agent_has_read_only_report_repository_executor(approved.resources)
     assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in approved.resources
 
-    revoked = cp.revoke_agent_report_repository_executor(
-        agent.id, "deployment artifact changed"
-    )
+    revoked = cp.revoke_agent_report_repository_executor(agent.id, "deployment artifact changed")
     assert not agent_has_read_only_report_repository_executor(revoked.resources)
     assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY not in revoked.resources
 
@@ -537,11 +535,14 @@ def test_recovery_and_report_approval_routes_are_admin_only(tmp_path):
         )
     )
     path = "/agents/%s/attestation-key/recover" % agent.id
-    assert client.post(
-        path,
-        headers={"Authorization": "Bearer worker"},
-        json={"probe": probe},
-    ).status_code == 403
+    assert (
+        client.post(
+            path,
+            headers={"Authorization": "Bearer worker"},
+            json={"probe": probe},
+        ).status_code
+        == 403
+    )
     recovered = client.post(
         path,
         headers={"Authorization": "Bearer admin"},
@@ -568,9 +569,7 @@ def test_atomic_release_revalidates_report_executor_proof():
         agent_id=agent_id,
         resources=resources,
     )
-    cp.approve_agent_report_repository_executor(
-        agent_id, attestation, "2026-07-18T12:00:00Z"
-    )
+    cp.approve_agent_report_repository_executor(agent_id, attestation, "2026-07-18T12:00:00Z")
     cp.set_agent_dispatch_hold(agent_id, "deployment-one")
     released = cp.release_agent_dispatch_holds_batch(
         [(agent_id, "deployment-one")],
@@ -621,9 +620,7 @@ def test_atomic_successor_hold_revalidates_report_executor_proof():
         agent_id=agent_id,
         resources=resources,
     )
-    cp.approve_agent_report_repository_executor(
-        agent_id, attestation, "2026-07-18T12:00:00Z"
-    )
+    cp.approve_agent_report_repository_executor(agent_id, attestation, "2026-07-18T12:00:00Z")
     cp.set_agent_dispatch_hold(agent_id, "deployment-transition-one")
     transitioned = cp.release_agent_dispatch_holds_batch(
         [(agent_id, "deployment-transition-one")],

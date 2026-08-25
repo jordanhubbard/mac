@@ -184,10 +184,7 @@ def _diagnosis_reason(value: Any) -> str:
     """The diagnosis' own verdict, without the process output it now carries."""
 
     if isinstance(value, Mapping):
-        return " ".join(
-            str(value.get(key) or "")
-            for key in ("failure", "problem", "remediation")
-        )
+        return " ".join(str(value.get(key) or "") for key in ("failure", "problem", "remediation"))
     return str(value or "")
 
 
@@ -244,23 +241,18 @@ def _class_from_history(events: Iterable[Any]) -> str:
         ):
             return AttemptFailureClass.SUPERSEDED.value
         shared_control_plane_transport = (
-            (
-                "mac api" in blob
-                or "/evidence" in blob
-                or "evidence post failed" in blob
-            )
-            and any(
-                _has_marker(blob, marker)
-                for marker in (
-                    "timed out",
-                    "timeout",
-                    "connection reset",
-                    "connection refused",
-                    "service unavailable",
-                    "bad gateway",
-                    "gateway timeout",
-                    "temporary failure",
-                )
+            "mac api" in blob or "/evidence" in blob or "evidence post failed" in blob
+        ) and any(
+            _has_marker(blob, marker)
+            for marker in (
+                "timed out",
+                "timeout",
+                "connection reset",
+                "connection refused",
+                "service unavailable",
+                "bad gateway",
+                "gateway timeout",
+                "temporary failure",
             )
         )
         if shared_control_plane_transport:

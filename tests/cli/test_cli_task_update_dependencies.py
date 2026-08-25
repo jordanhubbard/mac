@@ -14,6 +14,7 @@ that in practice the edge simply never got added, and tasks ran in the wrong
 order. `ControlPlane.update_task` and the `TaskUpdate` API model had accepted
 `dependencies` all along; only the CLI flag was missing.
 """
+
 from __future__ import annotations
 
 import io

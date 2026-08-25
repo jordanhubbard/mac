@@ -29,6 +29,7 @@ def _cp() -> ControlPlane:
 
 # Identity service ---------------------------------------------------------
 
+
 def test_identity_persona_instance_roundtrip():
     cp = _cp()
     tenant = cp.register_tenant("acme")
@@ -72,6 +73,7 @@ def test_platform_binding_accepts_persona_instance_id_keyword():
 
 # ControlPlane -------------------------------------------------------------
 
+
 def test_control_plane_persona_delegators():
     cp = _cp()
     tenant = cp.register_tenant("acme")
@@ -84,6 +86,7 @@ def test_control_plane_persona_delegators():
 
 
 # HTTP routes --------------------------------------------------------------
+
 
 def _client(cp: ControlPlane) -> TestClient:
     return TestClient(create_app(control_plane=cp))
@@ -144,6 +147,7 @@ def test_request_type_aliases_are_persona_types():
 
 # Provenance ---------------------------------------------------------------
 
+
 def test_action_event_accepts_persona_instance_id_keyword():
     cp = _cp()
     event = cp.action_events.record_action_event(
@@ -158,6 +162,7 @@ def test_action_event_accepts_persona_instance_id_keyword():
 
 # Roles / agent linkage ----------------------------------------------------
 
+
 def test_soul_role_linkage_uses_persona_instance_id(monkeypatch):
     cp = _cp()
     machine = cp.register_machine("host")
@@ -170,16 +175,12 @@ def test_soul_role_linkage_uses_persona_instance_id(monkeypatch):
 def test_register_and_update_agent_accept_persona_instance_id_keyword():
     cp = _cp()
     tenant = cp.register_tenant("acme")
-    persona = cp.register_persona(
-        tenant.id, "concierge", "soul://concierge", "memory://concierge"
-    )
+    persona = cp.register_persona(tenant.id, "concierge", "soul://concierge", "memory://concierge")
     first = cp.register_persona_instance(tenant.id, "rocky", persona_id=persona.id)
     second = cp.register_persona_instance(tenant.id, "boris", persona_id=persona.id)
     machine = cp.register_machine("host")
     # register_agent binds via the runtime-neutral keyword.
-    agent = cp.register_agent(
-        machine.id, "rocky-agent", persona_instance_id=first.id
-    )
+    agent = cp.register_agent(machine.id, "rocky-agent", persona_instance_id=first.id)
     assert agent.persona_instance_id == first.id
     # update_agent rebinds via the runtime-neutral keyword.
     updated = cp.update_agent(agent.id, persona_instance_id=second.id)
@@ -190,6 +191,7 @@ def test_register_and_update_agent_accept_persona_instance_id_keyword():
 
 
 # Notifier -----------------------------------------------------------------
+
 
 def test_notifier_persona_instance_target_routing():
     cp = _cp()
@@ -202,9 +204,7 @@ def test_notifier_persona_instance_target_routing():
     )
     instance = cp.register_persona_instance(tenant.id, "rocky", persona_id=persona.id)
     machine = cp.register_machine("host")
-    agent = cp.register_agent(
-        machine.id, "rocky-agent", hermes_instance_id=instance.id
-    )
+    agent = cp.register_agent(machine.id, "rocky-agent", hermes_instance_id=instance.id)
     notifiers = cp.notifiers
     targets = notifiers._agents_for_persona_instance(instance.id)
     assert [a.id for a in targets] == [agent.id]

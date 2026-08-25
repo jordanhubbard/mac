@@ -239,9 +239,21 @@ def test_webdav_main_closes_server_on_normal_and_interrupted_exit(tmp_path, monk
 
     monkeypatch.setattr(module, "WebDAVServer", FakeServer)
     root = tmp_path / "root"
-    assert module.main(
-        ["--host", "127.0.0.1", "--port", "8080", "--root", str(root), "--public-prefix", "files"]
-    ) == 0
+    assert (
+        module.main(
+            [
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8080",
+                "--root",
+                str(root),
+                "--public-prefix",
+                "files",
+            ]
+        )
+        == 0
+    )
     assert root.is_dir()
     assert instances[-1].address == ("127.0.0.1", 8080)
     assert instances[-1].closed

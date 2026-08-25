@@ -76,9 +76,7 @@ def test_policy_update_is_reflected_with_a_new_checksum() -> None:
     cp.openshell.assign_policy(policy.id, target_type="agent", target_id=agent.id)
     before = cp.assigned_openshell_policy(agent.id)
 
-    cp.openshell.update_policy(
-        policy.id, policy_text=POLICY_TEXT.replace("8789", "9999")
-    )
+    cp.openshell.update_policy(policy.id, policy_text=POLICY_TEXT.replace("8789", "9999"))
     after = cp.assigned_openshell_policy(agent.id)
 
     assert after["checksum"] != before["checksum"]

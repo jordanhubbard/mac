@@ -83,9 +83,7 @@ def test_a_command_that_had_to_be_provisioned_is_also_an_excursion():
 def test_the_two_kinds_are_reported_separately():
     """They mean different things to a reviewer: one gap was papered over, the
     other could not be."""
-    excursion = excursion_from_delta(
-        _delta(missing=["qemu"], provisioned=["lein"]), project="c26"
-    )
+    excursion = excursion_from_delta(_delta(missing=["qemu"], provisioned=["lein"]), project="c26")
 
     assert excursion["missing_after"] == ["qemu"]
     assert excursion["provisioned"] == ["lein"]
@@ -135,9 +133,7 @@ def test_the_task_carries_the_delta_for_audit(cp):
 def test_the_task_states_the_decision_it_exists_for(cp):
     """A reviewer must be able to close it either way: fix the image, or fix
     the contract. A report that does not name the decision gets read once."""
-    report = cp.record_sandbox_excursion(
-        _delta(missing=["libssl-dev"]), project="nanolang"
-    )
+    report = cp.record_sandbox_excursion(_delta(missing=["libssl-dev"]), project="nanolang")
     description = cp.get_task(report["filed"][0]).description
 
     assert "contract is RIGHT" in description
@@ -210,6 +206,7 @@ def test_filing_failures_never_raise(cp, monkeypatch):
     Turning a report into an exception would fail work over a diagnostic --
     strictly worse than the silence being fixed.
     """
+
     def boom(*args, **kwargs):
         raise RuntimeError("ledger unavailable")
 

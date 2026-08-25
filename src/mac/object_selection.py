@@ -80,7 +80,7 @@ class ObjectAttributes:
     def field_for(self, key: str) -> Optional[Tuple[str, str]]:
         """(kind, record field) for a selector key, or None if unknown."""
         if key.startswith("metadata."):
-            return ("metadata", key[len("metadata."):])
+            return ("metadata", key[len("metadata.") :])
         for kind, table in (
             ("text", self.text),
             ("numeric", self.numeric),
@@ -157,8 +157,7 @@ def parse(expression: str, object_name: str) -> Tuple[Term, ...]:
     if not text:
         raise SelectorError(
             "empty selector: refusing to match every %s by accident. State at "
-            "least one term. Valid keys: %s"
-            % (object_name, ", ".join(attributes.valid_keys))
+            "least one term. Valid keys: %s" % (object_name, ", ".join(attributes.valid_keys))
         )
     terms: List[Term] = []
     for token in _split_terms(text):
@@ -220,9 +219,7 @@ def _term_matches(term: Term, record: Any, attributes: ObjectAttributes) -> bool
     if kind == "boolean":
         wanted = _as_bool(term.values[0])
         if wanted is None:
-            raise SelectorError(
-                "%s takes true or false, got %r" % (term.key, term.values[0])
-            )
+            raise SelectorError("%s takes true or false, got %r" % (term.key, term.values[0]))
         hit = bool(actual) is wanted
         return hit if term.op in {"=", "~"} else not hit
 
@@ -236,9 +233,7 @@ def _term_matches(term: Term, record: Any, attributes: ObjectAttributes) -> bool
         try:
             bounds = [float(v) for v in term.values]
         except ValueError:
-            raise SelectorError(
-                "%s expects a number, got %r" % (term.key, ",".join(term.values))
-            )
+            raise SelectorError("%s expects a number, got %r" % (term.key, ",".join(term.values)))
         if term.op == ">=":
             return current >= bounds[0]
         if term.op == "<=":
@@ -259,9 +254,7 @@ def _term_matches(term: Term, record: Any, attributes: ObjectAttributes) -> bool
     if term.op == "~":
         return any(v.lower() in current_text.lower() for v in term.values)
     if term.op in {">=", "<="}:
-        raise SelectorError(
-            "%s is not numeric; %s needs a numeric attribute" % (term.key, term.op)
-        )
+        raise SelectorError("%s is not numeric; %s needs a numeric attribute" % (term.key, term.op))
     hit = current_text in set(term.values)
     return hit if term.op == "=" else not hit
 
@@ -271,9 +264,7 @@ def matches(record: Any, terms: Sequence[Term], object_name: str) -> bool:
     return all(_term_matches(term, record, attributes) for term in terms)
 
 
-def filter_records(
-    records: Iterable[Any], expression: str, object_name: str
-) -> List[Any]:
+def filter_records(records: Iterable[Any], expression: str, object_name: str) -> List[Any]:
     """Every record the expression names, in the order given."""
     terms = parse(expression, object_name)
     return [r for r in records if matches(r, terms, object_name)]

@@ -100,7 +100,7 @@ def _sha256_digest(value: Optional[str]) -> bool:
     text = str(value).strip()
     if not text.startswith(RUNTIME_DELTA_SHA256_RE):
         return False
-    suffix = text[len(RUNTIME_DELTA_SHA256_RE):]
+    suffix = text[len(RUNTIME_DELTA_SHA256_RE) :]
     return len(suffix) == 64 and all(ch in "0123456789abcdef" for ch in suffix)
 
 
@@ -244,7 +244,9 @@ class DeployService:
             rows = self.store.query_all("SELECT * FROM artifacts ORDER BY created_at, id")
         return [self._artifact_from_row(row) for row in rows]
 
-    def delete_artifact(self, artifact_id_or_digest: str, actor: str = "operator") -> Dict[str, Any]:
+    def delete_artifact(
+        self, artifact_id_or_digest: str, actor: str = "operator"
+    ) -> Dict[str, Any]:
         artifact = self.get_artifact(artifact_id_or_digest)
         deployment = self.store.query_one(
             "SELECT id FROM deployments WHERE artifact_id = ? LIMIT 1",
@@ -349,10 +351,7 @@ class DeployService:
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY channel, name"
-        return [
-            self._environment_from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
-        ]
+        return [self._environment_from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
     def deploy_artifact(
         self,
@@ -423,9 +422,7 @@ class DeployService:
         return self.get_deployment(deployment_id)
 
     def get_deployment(self, deployment_id: str) -> Deployment:
-        row = self.store.query_one(
-            "SELECT * FROM deployments WHERE id = ?", (deployment_id,)
-        )
+        row = self.store.query_one("SELECT * FROM deployments WHERE id = ?", (deployment_id,))
         if row is None:
             raise NotFoundError("deployment not found: %s" % deployment_id)
         return self._deployment_from_row(row)
@@ -513,9 +510,7 @@ class DeployService:
         if not package_manager:
             raise ValidationError("runtime delta package_manager is required")
         command_list = _list_of_strings(commands, field_name="commands")
-        dependency_list = _list_of_json_values(
-            added_dependencies, field_name="added_dependencies"
-        )
+        dependency_list = _list_of_json_values(added_dependencies, field_name="added_dependencies")
         reason = str(reason or "").strip()
         if not reason:
             raise ValidationError("runtime delta reason is required")
@@ -613,9 +608,7 @@ class DeployService:
         problems = self._runtime_delta_validation_problems(delta)
         now = utcnow()
         status = (
-            RuntimeDeltaStatus.REJECTED.value
-            if problems
-            else RuntimeDeltaStatus.VALIDATED.value
+            RuntimeDeltaStatus.REJECTED.value if problems else RuntimeDeltaStatus.VALIDATED.value
         )
         validation = {
             "schema": "mac.runtime_delta_validation.v1",
@@ -711,9 +704,7 @@ class DeployService:
         )
         return self.get_runtime_delta(delta.id)
 
-    def create_runtime_run(
-        self, task_id: str, agent_id: str, environment_id: str
-    ) -> RuntimeRun:
+    def create_runtime_run(self, task_id: str, agent_id: str, environment_id: str) -> RuntimeRun:
         self._get_task(task_id)
         self._get_agent(agent_id)
         runtime = self.get_runtime(environment_id)
@@ -779,9 +770,7 @@ class DeployService:
                 return self._runtime_from_row(row)
         raise ValidationError("runtime delta has no registered base runtime")
 
-    def _runtime_delta_validation_problems(
-        self, delta: RuntimeEnvironmentDelta
-    ) -> List[str]:
+    def _runtime_delta_validation_problems(self, delta: RuntimeEnvironmentDelta) -> List[str]:
         problems: List[str] = []
         if delta.package_manager not in ALLOWED_RUNTIME_DELTA_PACKAGE_MANAGERS:
             problems.append(
@@ -810,7 +799,9 @@ class DeployService:
                 problems.append("base_runtime_digest is not registered")
         if not delta.lockfile_path:
             problems.append("lockfile_path is required")
-        elif str(delta.lockfile_path).startswith("/") or ".." in str(delta.lockfile_path).split("/"):
+        elif str(delta.lockfile_path).startswith("/") or ".." in str(delta.lockfile_path).split(
+            "/"
+        ):
             problems.append("lockfile_path must be relative to the task worktree")
         if not _sha256_digest(delta.lockfile_digest):
             problems.append("lockfile_digest must be sha256:<64 lowercase hex chars>")
@@ -831,9 +822,7 @@ class DeployService:
             problems.append(str(exc))
         return problems
 
-    def _runtime_delta_command_problems(
-        self, delta: RuntimeEnvironmentDelta
-    ) -> List[str]:
+    def _runtime_delta_command_problems(self, delta: RuntimeEnvironmentDelta) -> List[str]:
         problems: List[str] = []
         forbidden = (
             " sudo ",
@@ -880,13 +869,15 @@ class DeployService:
                 problems.append("node dependency commands must not install globally")
             pip_install = " pip install " in lowered or " python -m pip install " in lowered
             if pip_install and delta.package_manager == "pip":
-                if ".venv" not in lowered and "virtual_env" not in lowered and "venv/bin" not in lowered:
+                if (
+                    ".venv" not in lowered
+                    and "virtual_env" not in lowered
+                    and "venv/bin" not in lowered
+                ):
                     problems.append("pip installs must target a task-local virtualenv")
         return problems
 
-    def _runtime_delta_dependency_problems(
-        self, delta: RuntimeEnvironmentDelta
-    ) -> List[str]:
+    def _runtime_delta_dependency_problems(self, delta: RuntimeEnvironmentDelta) -> List[str]:
         problems: List[str] = []
         for dependency in delta.added_dependencies:
             if isinstance(dependency, dict):
@@ -915,9 +906,7 @@ class DeployService:
                 problems.append("dependency is not pinned: %s" % text)
         return problems
 
-    def _runtime_delta_dependency_pinned(
-        self, dependency: str, package_manager: str
-    ) -> bool:
+    def _runtime_delta_dependency_pinned(self, dependency: str, package_manager: str) -> bool:
         text = str(dependency or "").strip()
         if not text:
             return False
@@ -1023,7 +1012,7 @@ class DeployService:
             return
         local_path: Optional[_P] = None
         if uri.startswith("file://"):
-            local_path = _P(uri[len("file://"):])
+            local_path = _P(uri[len("file://") :])
         elif uri.startswith("/"):
             local_path = _P(uri)
         if local_path is None:
@@ -1104,10 +1093,13 @@ class DeployService:
                     "runtime manifest field at %s pins :latest; pin a digest"
                     % (".".join(path) or "(root)")
                 )
-            if path and path[-1].lower() in {"image", "container_image"} and "@sha256:" not in stripped:
+            if (
+                path
+                and path[-1].lower() in {"image", "container_image"}
+                and "@sha256:" not in stripped
+            ):
                 raise ValidationError(
-                    "runtime manifest image at %s must include a sha256 digest"
-                    % ".".join(path)
+                    "runtime manifest image at %s must include a sha256 digest" % ".".join(path)
                 )
 
     # Row hydration ----------------------------------------------------

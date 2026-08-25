@@ -194,9 +194,10 @@ Sequence before any `git push` / MR:
    (`-- --fix`), `eslint .` (`--fix`), `prettier --check .` (`--write`),
    `ruff check .` (`--fix`), or `flake8 .`. Lint failures are recorded in
    evidence but do not block; tests are the hard gate. In this repo the
-   canonical Python lint gate is `make lint` (check-only) / `make lint-fix`
-   (safe autofixes + formatting), both driven by the single shared `[tool.ruff]`
-   configuration in `pyproject.toml` via `scripts/run-lint.sh`.
+   canonical Python lint gate is `make lint` (ruff check + format --check) /
+   `make lint-fix` (those same tools, applied), both driven by the single
+   shared `[tool.ruff]` configuration in `pyproject.toml` via
+   `scripts/run-lint.sh`.
 3. **Run tests** — execute the detected command in the repo root,
    capturing full stdout+stderr.
 4. **Run CodeGraph when useful** — an existing index may provide advisory

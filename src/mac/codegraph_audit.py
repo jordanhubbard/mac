@@ -331,7 +331,11 @@ def run_codegraph_audit(
     except OSError as exc:
         audit.setdefault("warnings", []).append("could not update .git/info/exclude: %s" % exc)
 
-    index_cmd = [binary, "sync", str(repo_path)] if (repo_path / ".codegraph").exists() else [binary, "init", str(repo_path)]
+    index_cmd = (
+        [binary, "sync", str(repo_path)]
+        if (repo_path / ".codegraph").exists()
+        else [binary, "init", str(repo_path)]
+    )
     index_result = _run_codegraph_command(
         index_cmd, cwd=repo_path, timeout=remaining(), runner=runner
     )
@@ -443,5 +447,7 @@ def codegraph_audit_diagnostics(manifest: Mapping[str, Any]) -> list[str]:
     audited_files = set(codegraph_relevant_files(audit.get("relevant_files") or []))
     missing = [path for path in relevant if path not in audited_files]
     if missing:
-        problems.append("codegraph audit missing changed source/build files: %s" % ", ".join(missing))
+        problems.append(
+            "codegraph audit missing changed source/build files: %s" % ", ".join(missing)
+        )
     return problems

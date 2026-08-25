@@ -114,9 +114,7 @@ class ProjectRepositoryService:
         repo_metadata["repository_contract"] = contract
         repo_metadata["codegraph"] = codegraph_status
         now = utcnow()
-        row = self._store.query_one(
-            "SELECT id FROM project_repositories WHERE name = ?", (name,)
-        )
+        row = self._store.query_one("SELECT id FROM project_repositories WHERE name = ?", (name,))
         repo_id = row["id"] if row is not None else new_id("projectrepo")
         self._store.execute(
             """
@@ -178,9 +176,7 @@ class ProjectRepositoryService:
 
     def list(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
         if enabled is None:
-            rows = self._store.query_all(
-                "SELECT * FROM project_repositories ORDER BY name, id"
-            )
+            rows = self._store.query_all("SELECT * FROM project_repositories ORDER BY name, id")
         else:
             rows = self._store.query_all(
                 "SELECT * FROM project_repositories WHERE enabled = ? ORDER BY name, id",

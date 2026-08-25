@@ -75,18 +75,13 @@ def test_terminal_transition_materializes_completion_and_task_show_flow():
     detail = cp.task_detail(task.id)
     assert detail["flow"]["schema"] == "mac.task_flow_detail.v1"
     assert detail["flow"]["completions"][0]["outcome"] == "completed"
-    assert (
-        detail["flow"]["spans"][-1]["stage"]
-        == TaskFlowStage.FINALIZATION.value
-    )
+    assert detail["flow"]["spans"][-1]["stage"] == TaskFlowStage.FINALIZATION.value
 
 
 def test_report_opens_and_resolves_stranding_episode():
     cp = ControlPlane.in_memory()
     task, _agent = _running_task(cp)
-    future = (parse_time(utcnow()) + timedelta(minutes=11)).isoformat(
-        timespec="microseconds"
-    )
+    future = (parse_time(utcnow()) + timedelta(minutes=11)).isoformat(timespec="microseconds")
 
     report = cp.task_flow.report(
         warning_seconds=300,
@@ -108,9 +103,7 @@ def test_report_opens_and_resolves_stranding_episode():
     )
     assert stored is not None and stored["resolved_at"] is None
 
-    when = (parse_time(future) + timedelta(seconds=1)).isoformat(
-        timespec="microseconds"
-    )
+    when = (parse_time(future) + timedelta(seconds=1)).isoformat(timespec="microseconds")
     with cp.store.transaction() as conn:
         conn.execute(
             "UPDATE tasks SET state = ?, completed_at = ?, updated_at = ? WHERE id = ?",
@@ -228,9 +221,9 @@ def _dispatch_round(
         "round_id": round_id,
         "allocator_version": "authoritative-v2",
         "source": "test-allocator",
-        "started_at": (
-            parse_time(when) - timedelta(milliseconds=20)
-        ).isoformat(timespec="microseconds"),
+        "started_at": (parse_time(when) - timedelta(milliseconds=20)).isoformat(
+            timespec="microseconds"
+        ),
         "completed_at": when,
         "ready_task_ids": ["task_ready"],
         "candidate_task_ids": ["task_ready"],
@@ -299,10 +292,13 @@ def test_empty_dispatch_round_is_write_free():
     )
 
     assert result["retained"] is False
-    assert cp.store.query_one(
-        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
-        ("round_empty",),
-    ) is None
+    assert (
+        cp.store.query_one(
+            "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+            ("round_empty",),
+        )
+        is None
+    )
     assert not cp.list_observability(name="dispatcher.v2.round")
 
 
@@ -325,9 +321,7 @@ def test_selected_claim_rejection_is_error_level_and_rate_limited():
     cp.task_flow.record_dispatch_round(
         _dispatch_round(
             round_id="round_rejected_2",
-            when=(start + timedelta(minutes=1)).isoformat(
-                timespec="microseconds"
-            ),
+            when=(start + timedelta(minutes=1)).isoformat(timespec="microseconds"),
             claim_failures=[failure],
         )
     )
@@ -344,9 +338,7 @@ def test_selected_claim_rejection_is_error_level_and_rate_limited():
     )
     assert len(rejection_events) == 1
     assert rejection_events[0].level == "error"
-    assert rejection_events[0].detail["reason"] == (
-        "transactional_dependency_rejection"
-    )
+    assert rejection_events[0].detail["reason"] == ("transactional_dependency_rejection")
 
 
 def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
@@ -364,9 +356,7 @@ def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
     cp.task_flow.record_dispatch_round(
         _dispatch_round(
             round_id="round_mismatch_repeat",
-            when=(start + timedelta(minutes=1)).isoformat(
-                timespec="microseconds"
-            ),
+            when=(start + timedelta(minutes=1)).isoformat(timespec="microseconds"),
         )
     )
     names = [
@@ -381,9 +371,7 @@ def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
     warning = cp.task_flow.record_dispatch_round(
         _dispatch_round(
             round_id="round_mismatch_warning",
-            when=(start + timedelta(minutes=6)).isoformat(
-                timespec="microseconds"
-            ),
+            when=(start + timedelta(minutes=6)).isoformat(timespec="microseconds"),
         )
     )["mismatch"]
     assert warning["severity"] == "warning"
@@ -391,9 +379,7 @@ def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
     critical = cp.task_flow.record_dispatch_round(
         _dispatch_round(
             round_id="round_mismatch_critical",
-            when=(start + timedelta(minutes=11)).isoformat(
-                timespec="microseconds"
-            ),
+            when=(start + timedelta(minutes=11)).isoformat(timespec="microseconds"),
         )
     )["mismatch"]
     assert critical["severity"] == "critical"
@@ -407,9 +393,7 @@ def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
     resolved = cp.task_flow.record_dispatch_round(
         _dispatch_round(
             round_id="round_mismatch_resolved",
-            when=(start + timedelta(minutes=12)).isoformat(
-                timespec="microseconds"
-            ),
+            when=(start + timedelta(minutes=12)).isoformat(timespec="microseconds"),
             assignments=[
                 {
                     "task_id": "task_ready",
@@ -425,9 +409,12 @@ def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
         ("*",),
     )
     assert state["resolved_at"] is not None
-    assert cp.task_flow.report(refresh_limit=0)["dispatch"][
-        "ready_free_capacity_mismatch"
-    ]["active_count"] == 0
+    assert (
+        cp.task_flow.report(refresh_limit=0)["dispatch"]["ready_free_capacity_mismatch"][
+            "active_count"
+        ]
+        == 0
+    )
 
 
 def test_authoritative_allocator_result_records_through_real_hook():
@@ -473,9 +460,7 @@ def test_authoritative_allocator_result_records_through_real_hook():
         "lease_id",
         "project",
     }
-    assert cp.task_flow.report(project="mac", refresh_limit=0)["dispatch"][
-        "round_count"
-    ] == 1
+    assert cp.task_flow.report(project="mac", refresh_limit=0)["dispatch"]["round_count"] == 1
 
 
 def test_empty_round_resolves_active_mismatch_without_retaining_round():
@@ -501,10 +486,13 @@ def test_empty_round_resolves_active_mismatch_without_retaining_round():
 
     assert empty["retained"] is False
     assert empty["mismatch"]["active"] is False
-    assert cp.store.query_one(
-        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
-        ("round_empty_resolution",),
-    ) is None
+    assert (
+        cp.store.query_one(
+            "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+            ("round_empty_resolution",),
+        )
+        is None
+    )
     state = cp.store.query_one(
         "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
         ("*",),
@@ -539,9 +527,7 @@ def test_stale_mismatch_observation_cannot_reopen_resolved_episode():
     stale = cp.task_flow.record_dispatch_round(
         _dispatch_round(
             round_id="round_stale",
-            when=(start + timedelta(minutes=1)).isoformat(
-                timespec="microseconds"
-            ),
+            when=(start + timedelta(minutes=1)).isoformat(timespec="microseconds"),
         )
     )["mismatch"]
 
@@ -619,11 +605,17 @@ def test_material_round_lifecycle_prunes_expired_dispatch_rounds():
         )
     )
 
-    assert cp.store.query_one(
-        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
-        ("round_to_expire",),
-    ) is None
-    assert cp.store.query_one(
-        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
-        ("round_retention_trigger",),
-    ) is not None
+    assert (
+        cp.store.query_one(
+            "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+            ("round_to_expire",),
+        )
+        is None
+    )
+    assert (
+        cp.store.query_one(
+            "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+            ("round_retention_trigger",),
+        )
+        is not None
+    )

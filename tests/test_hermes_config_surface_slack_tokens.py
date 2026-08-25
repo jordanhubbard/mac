@@ -21,10 +21,18 @@ def _write_accounts(home, accounts):
 
 
 def test_promotes_first_valid_account_tokens(tmp_path):
-    _write_accounts(tmp_path, [
-        {"name": "offtera", "bot_token": "xoxb-AAA", "app_token": "xapp-BBB", "user_token": "xoxp-CCC"},
-        {"name": "omgjkh", "bot_token": "xoxb-DDD", "app_token": "xapp-EEE"},
-    ])
+    _write_accounts(
+        tmp_path,
+        [
+            {
+                "name": "offtera",
+                "bot_token": "xoxb-AAA",
+                "app_token": "xapp-BBB",
+                "user_token": "xoxp-CCC",
+            },
+            {"name": "omgjkh", "bot_token": "xoxb-DDD", "app_token": "xapp-EEE"},
+        ],
+    )
     cfg: dict = {}
     hcs._promote_slack_accounts_tokens(cfg, tmp_path)
     assert cfg["env"]["SLACK_BOT_TOKEN"] == "xoxb-AAA"
@@ -54,7 +62,9 @@ def test_skips_accounts_without_valid_token_shape(tmp_path):
 
 def test_apply_payload_promotes_tokens_end_to_end(tmp_path):
     (tmp_path / "config.yaml").write_text("{}\n")
-    _write_accounts(tmp_path, [{"name": "offtera", "bot_token": "xoxb-LIVE", "app_token": "xapp-LIVE"}])
+    _write_accounts(
+        tmp_path, [{"name": "offtera", "bot_token": "xoxb-LIVE", "app_token": "xapp-LIVE"}]
+    )
     hcs.apply_hermes_surface_payload({}, target_home=tmp_path)
     written = yaml.safe_load((tmp_path / "config.yaml").read_text()) or {}
     assert (written.get("env") or {}).get("SLACK_BOT_TOKEN") == "xoxb-LIVE"

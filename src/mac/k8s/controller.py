@@ -16,18 +16,22 @@ log = logging.getLogger(__name__)
 
 MANAGED_LABEL_SELECTOR = "app.kubernetes.io/managed-by=mac-k8s-runner"
 
+
 @dataclass
 class ControllerConfig:
     namespace: str = "mac"
     reconcile_interval_seconds: float = 30.0
 
+
 class MacApiProtocol(Protocol):
     def get(self, path: str) -> JsonDict: ...
     def post(self, path: str, body: JsonDict) -> JsonDict: ...
 
+
 class K8sJobsProtocol(Protocol):
     def list_active(self, namespace: str, label_selector: str) -> List[JsonDict]: ...
     def delete(self, namespace: str, name: str) -> None: ...
+
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     if not value:
@@ -39,16 +43,20 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     except (TypeError, ValueError):
         return None
 
+
 def _job_lease_label(job: JsonDict) -> Optional[str]:
-    labels = ((job.get("metadata") or {}).get("labels") or {})
+    labels = (job.get("metadata") or {}).get("labels") or {}
     return labels.get("mac.lease.id")
 
+
 def _job_task_label(job: JsonDict) -> Optional[str]:
-    labels = ((job.get("metadata") or {}).get("labels") or {})
+    labels = (job.get("metadata") or {}).get("labels") or {}
     return labels.get("mac.task.id")
+
 
 def _job_name(job: JsonDict) -> Optional[str]:
     return (job.get("metadata") or {}).get("name")
+
 
 def reconcile_stuck_jobs(
     mac: MacApiProtocol,
@@ -71,9 +79,7 @@ def reconcile_stuck_jobs(
         task_id = _job_task_label(job)
         lease_id_on_job = _job_lease_label(job)
         if not task_id:
-            summaries.append(
-                {"status": "kept", "reason": "no-task-label", "job": name}
-            )
+            summaries.append({"status": "kept", "reason": "no-task-label", "job": name})
             continue
         try:
             task = mac.get("/tasks/%s" % task_id)
@@ -97,7 +103,10 @@ def reconcile_stuck_jobs(
         active_lease_id = task.get("lease_id")
         if active_lease_id and lease_id_on_job and active_lease_id != lease_id_on_job:
             _delete_job(
-                k8s, cfg.namespace, name, summaries,
+                k8s,
+                cfg.namespace,
+                name,
+                summaries,
                 reason="lease-superseded",
                 extra={"job_lease": lease_id_on_job, "task_lease": active_lease_id},
             )
@@ -105,7 +114,10 @@ def reconcile_stuck_jobs(
 
         if not active_lease_id:
             _delete_job(
-                k8s, cfg.namespace, name, summaries,
+                k8s,
+                cfg.namespace,
+                name,
+                summaries,
                 reason="no-active-lease",
             )
             continue
@@ -113,7 +125,10 @@ def reconcile_stuck_jobs(
         leased_until = _parse_iso(task.get("leased_until"))
         if leased_until and leased_until < now:
             _delete_job(
-                k8s, cfg.namespace, name, summaries,
+                k8s,
+                cfg.namespace,
+                name,
+                summaries,
                 reason="lease-expired",
                 extra={"leased_until": task.get("leased_until")},
             )
@@ -122,6 +137,7 @@ def reconcile_stuck_jobs(
         summaries.append({"status": "kept", "reason": "live", "job": name})
 
     return summaries
+
 
 def _delete_job(
     k8s: K8sJobsProtocol,
@@ -142,4 +158,3 @@ def _delete_job(
         record["status"] = "delete-failed"
         record["error"] = str(exc)
         summaries.append(record)
-

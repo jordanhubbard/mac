@@ -74,9 +74,18 @@ def test_dispatch_assign_noop_when_no_agent(tmp_path):
 
 
 def test_secret_delete(tmp_path):
-    rc, secret = _run(tmp_path, "admin", "secret", "set", "tok", "abc123",
-                      "--scopes", '{"capabilities": ["deploy"]}',
-                      "--created-by", "human")
+    rc, secret = _run(
+        tmp_path,
+        "admin",
+        "secret",
+        "set",
+        "tok",
+        "abc123",
+        "--scopes",
+        '{"capabilities": ["deploy"]}',
+        "--created-by",
+        "human",
+    )
     assert rc == 0
     rc, result = _run(tmp_path, "admin", "secret", "delete", secret["id"], "--actor", "human")
     assert rc == 0
@@ -84,12 +93,22 @@ def test_secret_delete(tmp_path):
 
 
 def test_secret_rotate(tmp_path):
-    rc, secret = _run(tmp_path, "admin", "secret", "set", "tok2", "old-value",
-                      "--scopes", '{"capabilities": ["deploy"]}',
-                      "--created-by", "human")
+    rc, secret = _run(
+        tmp_path,
+        "admin",
+        "secret",
+        "set",
+        "tok2",
+        "old-value",
+        "--scopes",
+        '{"capabilities": ["deploy"]}',
+        "--created-by",
+        "human",
+    )
     assert rc == 0
-    rc, rotated = _run(tmp_path, "admin", "secret", "rotate", secret["name"], "new-value",
-                       "--actor", "human")
+    rc, rotated = _run(
+        tmp_path, "admin", "secret", "rotate", secret["name"], "new-value", "--actor", "human"
+    )
     assert rc == 0
     assert rotated["name"] == "tok2"
 
@@ -98,20 +117,46 @@ def test_secret_access_denied_without_caps(tmp_path):
     """Access is denied by default when agent lacks matching capabilities.
     We only verify the command call is well-formed (rc 0 or 1, no crash)."""
     _, agent = _setup_machine_agent(tmp_path, host="sec-host", agent_name="sec-agent")
-    rc, secret = _run(tmp_path, "admin", "secret", "set", "deploy-tok", "s3kr3t",
-                      "--scopes", '{"capabilities": ["deploy"]}',
-                      "--created-by", "human")
+    rc, secret = _run(
+        tmp_path,
+        "admin",
+        "secret",
+        "set",
+        "deploy-tok",
+        "s3kr3t",
+        "--scopes",
+        '{"capabilities": ["deploy"]}',
+        "--created-by",
+        "human",
+    )
     assert rc == 0
     # secret access returns 1 when denied — that is the expected behavior
-    rc, _ = _run(tmp_path, "admin", "secret", "access", secret["id"],
-                 agent["id"], "--purpose", "deploy pipeline")
+    rc, _ = _run(
+        tmp_path,
+        "admin",
+        "secret",
+        "access",
+        secret["id"],
+        agent["id"],
+        "--purpose",
+        "deploy pipeline",
+    )
     assert rc in (0, 1)  # denied (1) is normal; 0 if caps matched
 
 
 def test_secret_audits(tmp_path):
-    rc, secret = _run(tmp_path, "admin", "secret", "set", "audit-tok", "val",
-                      "--scopes", '{"capabilities": ["deploy"]}',
-                      "--created-by", "human")
+    rc, secret = _run(
+        tmp_path,
+        "admin",
+        "secret",
+        "set",
+        "audit-tok",
+        "val",
+        "--scopes",
+        '{"capabilities": ["deploy"]}',
+        "--created-by",
+        "human",
+    )
     assert rc == 0
     rc, audits = _run(tmp_path, "admin", "secret", "audits", "--secret-id", secret["id"])
     assert rc == 0
@@ -124,8 +169,18 @@ def test_secret_audits(tmp_path):
 
 
 def test_rollout_create_and_list(tmp_path):
-    rc, rollout = _run(tmp_path, "admin", "rollout", "create", "v1.2.3", "canary",
-                       "--created-by", "ops", "--channel", "fleet")
+    rc, rollout = _run(
+        tmp_path,
+        "admin",
+        "rollout",
+        "create",
+        "v1.2.3",
+        "canary",
+        "--created-by",
+        "ops",
+        "--channel",
+        "fleet",
+    )
     assert rc == 0
     assert rollout["version"] == "v1.2.3"
     assert rollout["id"].startswith("rollout_")
@@ -137,35 +192,49 @@ def test_rollout_create_and_list(tmp_path):
 
 def test_rollout_advance_pause(tmp_path):
     """A freshly created canary rollout accepts 'pause' (no install-ready check)."""
-    rc, rollout = _run(tmp_path, "admin", "rollout", "create", "v2.0.0", "canary",
-                       "--created-by", "ops")
+    rc, rollout = _run(
+        tmp_path, "admin", "rollout", "create", "v2.0.0", "canary", "--created-by", "ops"
+    )
     assert rc == 0
-    rc, advanced = _run(tmp_path, "admin", "rollout", "advance", rollout["id"], "pause",
-                        "--actor", "ops")
+    rc, advanced = _run(
+        tmp_path, "admin", "rollout", "advance", rollout["id"], "pause", "--actor", "ops"
+    )
     assert rc == 0
     assert advanced["status"] == "paused"
 
 
 def test_rollout_advance_resume_after_pause(tmp_path):
     """A paused canary rollout accepts 'resume'."""
-    rc, rollout = _run(tmp_path, "admin", "rollout", "create", "v3.0.0", "canary",
-                       "--created-by", "ops")
+    rc, rollout = _run(
+        tmp_path, "admin", "rollout", "create", "v3.0.0", "canary", "--created-by", "ops"
+    )
     assert rc == 0
     # Pause first
     _run(tmp_path, "admin", "rollout", "advance", rollout["id"], "pause", "--actor", "ops")
-    rc, advanced = _run(tmp_path, "admin", "rollout", "advance", rollout["id"], "resume",
-                        "--actor", "ops")
+    rc, advanced = _run(
+        tmp_path, "admin", "rollout", "advance", rollout["id"], "resume", "--actor", "ops"
+    )
     assert rc == 0
     assert advanced["status"] == "canarying"
 
 
 def test_rollout_rescue(tmp_path):
     """rescue_rollout works from the 'planned' state without needing start_canary."""
-    rc, rollout = _run(tmp_path, "admin", "rollout", "create", "v4.0.0", "canary",
-                       "--created-by", "ops")
+    rc, rollout = _run(
+        tmp_path, "admin", "rollout", "create", "v4.0.0", "canary", "--created-by", "ops"
+    )
     assert rc == 0
-    rc, result = _run(tmp_path, "admin", "rollout", "rescue", rollout["id"],
-                      "--actor", "ops", "--reason", "regression detected")
+    rc, result = _run(
+        tmp_path,
+        "admin",
+        "rollout",
+        "rescue",
+        rollout["id"],
+        "--actor",
+        "ops",
+        "--reason",
+        "regression detected",
+    )
     assert rc == 0
     assert "rollout" in result
     assert "task" in result
@@ -177,10 +246,20 @@ def test_rollout_rescue(tmp_path):
 
 
 def test_eval_set_create_list_show(tmp_path):
-    rc, eset = _run(tmp_path, "admin", "eval", "set", "create", "my-eval-set",
-                    "--scoring", "higher_is_better",
-                    "--description", "CLI smoke eval",
-                    "--created-by", "test")
+    rc, eset = _run(
+        tmp_path,
+        "admin",
+        "eval",
+        "set",
+        "create",
+        "my-eval-set",
+        "--scoring",
+        "higher_is_better",
+        "--description",
+        "CLI smoke eval",
+        "--created-by",
+        "test",
+    )
     assert rc == 0
     assert eset["name"] == "my-eval-set"
     assert eset["id"].startswith("evalset_")
@@ -195,11 +274,13 @@ def test_eval_set_create_list_show(tmp_path):
 
 
 def test_eval_set_baseline(tmp_path):
-    rc, eset = _run(tmp_path, "admin", "eval", "set", "create", "baseline-eval",
-                    "--created-by", "test")
+    rc, eset = _run(
+        tmp_path, "admin", "eval", "set", "create", "baseline-eval", "--created-by", "test"
+    )
     assert rc == 0
-    rc, updated = _run(tmp_path, "admin", "eval", "set", "baseline", eset["id"], "0.85",
-                       "--actor", "test")
+    rc, updated = _run(
+        tmp_path, "admin", "eval", "set", "baseline", eset["id"], "0.85", "--actor", "test"
+    )
     assert rc == 0
     assert float(updated["baseline_score"]) == pytest.approx(0.85)
 
@@ -207,9 +288,19 @@ def test_eval_set_baseline(tmp_path):
 def test_eval_run_record_and_list(tmp_path):
     rc, eset = _run(tmp_path, "admin", "eval", "set", "create", "run-eval", "--created-by", "test")
     assert rc == 0
-    rc, run = _run(tmp_path, "admin", "eval", "run", "record",
-                   eset["id"], "agent_build", "build-001", "0.92",
-                   "--created-by", "test")
+    rc, run = _run(
+        tmp_path,
+        "admin",
+        "eval",
+        "run",
+        "record",
+        eset["id"],
+        "agent_build",
+        "build-001",
+        "0.92",
+        "--created-by",
+        "test",
+    )
     assert rc == 0
     assert float(run["score"]) == pytest.approx(0.92)
 
@@ -232,10 +323,18 @@ def test_events_list_empty(tmp_path):
 def test_events_list_with_filter(tmp_path):
     rc, task = _run(tmp_path, "task", "create", "event-task")
     assert rc == 0
-    rc, events = _run(tmp_path, "admin", "events", "list",
-                      "--subject-type", "task",
-                      "--subject-id", task["id"],
-                      "--limit", "10")
+    rc, events = _run(
+        tmp_path,
+        "admin",
+        "events",
+        "list",
+        "--subject-type",
+        "task",
+        "--subject-id",
+        task["id"],
+        "--limit",
+        "10",
+    )
     assert rc == 0
     assert isinstance(events, list)
 
@@ -246,11 +345,17 @@ def test_events_list_with_filter(tmp_path):
 
 
 def test_artifact_register_list_show_delete(tmp_path):
-    rc, art = _run(tmp_path, "admin", "artifact", "register",
-                   "image",
-                   "sha256:" + "a" * 64,
-                   "ghcr.io/org/img:v1",
-                   "--created-by", "ops")
+    rc, art = _run(
+        tmp_path,
+        "admin",
+        "artifact",
+        "register",
+        "image",
+        "sha256:" + "a" * 64,
+        "ghcr.io/org/img:v1",
+        "--created-by",
+        "ops",
+    )
     assert rc == 0
     assert art["id"].startswith("art_")
 
@@ -272,8 +377,7 @@ def test_artifact_register_list_show_delete(tmp_path):
 
 
 def test_env_register_list_show(tmp_path):
-    rc, env = _run(tmp_path, "admin", "env", "register", "staging",
-                   "--created-by", "ops")
+    rc, env = _run(tmp_path, "admin", "env", "register", "staging", "--created-by", "ops")
     assert rc == 0
     assert env["id"].startswith("env_")
 
@@ -309,12 +413,19 @@ def test_env_deployments_empty(tmp_path):
 
 def test_bridge_import_and_list(tmp_path):
     """bridge import takes positional source, external_id, title."""
-    rc, item = _run(tmp_path, "admin", "bridge", "import",
-                    "github",
-                    "GH-42",
-                    "Upstream issue from GH",
-                    "--project", "upstream-proj",
-                    "--actor", "sync-bot")
+    rc, item = _run(
+        tmp_path,
+        "admin",
+        "bridge",
+        "import",
+        "github",
+        "GH-42",
+        "Upstream issue from GH",
+        "--project",
+        "upstream-proj",
+        "--actor",
+        "sync-bot",
+    )
     assert rc == 0
     assert "task_id" in item
 
@@ -340,9 +451,17 @@ def test_bridge_repository_register_and_list(tmp_path):
         "evidence:\n  required: [repo.head_sha]\n",
         encoding="utf-8",
     )
-    rc, repo = _run(tmp_path, "admin", "bridge", "repository", "register",
-                    "my-repo", str(repo_dir),
-                    "--project", "myproj")
+    rc, repo = _run(
+        tmp_path,
+        "admin",
+        "bridge",
+        "repository",
+        "register",
+        "my-repo",
+        str(repo_dir),
+        "--project",
+        "myproj",
+    )
     assert rc == 0
     assert repo["id"].startswith("projectrepo_")
 
@@ -358,8 +477,16 @@ def test_bridge_repository_register_and_list(tmp_path):
 
 def test_user_register(tmp_path):
     tenant = _setup_tenant(tmp_path)
-    rc, user = _run(tmp_path, "admin", "user", "register", tenant["id"], "alice",
-                    "--display-name", "Alice Smith")
+    rc, user = _run(
+        tmp_path,
+        "admin",
+        "user",
+        "register",
+        tenant["id"],
+        "alice",
+        "--display-name",
+        "Alice Smith",
+    )
     assert rc == 0
     assert user["handle"] == "alice"
     assert user["tenant_id"] == tenant["id"]
@@ -367,9 +494,18 @@ def test_user_register(tmp_path):
 
 def test_persona_register(tmp_path):
     tenant = _setup_tenant(tmp_path)
-    rc, persona = _run(tmp_path, "admin", "persona", "register", tenant["id"], "hermes-alice",
-                       "--soul-ref", "soul://alice",
-                       "--memory-scope", "project:myproj")
+    rc, persona = _run(
+        tmp_path,
+        "admin",
+        "persona",
+        "register",
+        tenant["id"],
+        "hermes-alice",
+        "--soul-ref",
+        "soul://alice",
+        "--memory-scope",
+        "project:myproj",
+    )
     assert rc == 0
     assert persona["name"] == "hermes-alice"
     assert persona["tenant_id"] == tenant["id"]
@@ -387,9 +523,9 @@ def test_binding_register(tmp_path):
     tenant = _setup_tenant(tmp_path)
     rc, hermes = _run(tmp_path, "admin", "hermes", "register", tenant["id"], "hermes-bind")
     assert rc == 0
-    rc, binding = _run(tmp_path, "admin", "binding", "register",
-                       tenant["id"], hermes["id"],
-                       "slack", "CTEST123")
+    rc, binding = _run(
+        tmp_path, "admin", "binding", "register", tenant["id"], hermes["id"], "slack", "CTEST123"
+    )
     assert rc == 0
     assert binding["platform"] == "slack"
     assert binding["external_id"] == "CTEST123"
@@ -402,19 +538,29 @@ def test_binding_register(tmp_path):
 
 def test_message_send_and_inbox(tmp_path):
     """message send uses positional sender_agent_id + --recipient-agent-id flag."""
-    _, sender = _setup_machine_agent(tmp_path, host="msg-host-s", agent_name="sender",
-                                     agent_id="agent_sender")
-    _, recipient = _setup_machine_agent(tmp_path, host="msg-host-r", agent_name="recipient",
-                                        agent_id="agent_recipient")
+    _, sender = _setup_machine_agent(
+        tmp_path, host="msg-host-s", agent_name="sender", agent_id="agent_sender"
+    )
+    _, recipient = _setup_machine_agent(
+        tmp_path, host="msg-host-r", agent_name="recipient", agent_id="agent_recipient"
+    )
     # nudge message type requires task_id in payload
     rc, task = _run(tmp_path, "task", "create", "nudge-task")
     assert rc == 0
 
-    rc, msg = _run(tmp_path, "admin", "message", "send",
-                   sender["id"],
-                   "--recipient-agent-id", recipient["id"],
-                   "--message-type", "nudge",
-                   "--payload", json.dumps({"note": "ping", "task_id": task["id"]}))
+    rc, msg = _run(
+        tmp_path,
+        "admin",
+        "message",
+        "send",
+        sender["id"],
+        "--recipient-agent-id",
+        recipient["id"],
+        "--message-type",
+        "nudge",
+        "--payload",
+        json.dumps({"note": "ping", "task_id": task["id"]}),
+    )
     assert rc == 0
     assert msg["id"].startswith("msg_")
 
@@ -453,8 +599,9 @@ def test_task_force_complete(tmp_path):
     assert rc == 0
     _run(tmp_path, "task", "claim", task["id"], agent["id"])
     _run(tmp_path, "task", "start", task["id"], agent["id"])
-    rc, completed = _run(tmp_path, "task", "force-complete", task["id"],
-                         "--actor", "ops", "--reason", "manual")
+    rc, completed = _run(
+        tmp_path, "task", "force-complete", task["id"], "--actor", "ops", "--reason", "manual"
+    )
     assert rc == 0
     assert completed["state"] == "completed"
 
@@ -487,9 +634,7 @@ def test_project_branch_qualified_registration_crud(tmp_path):
         "release/next",
     )
     assert rc == 0
-    assert updated["metadata"]["repository_registration"].endswith(
-        "#release/next"
-    )
+    assert updated["metadata"]["repository_registration"].endswith("#release/next")
 
     rc, deleted = _run(
         tmp_path,
@@ -532,8 +677,9 @@ def test_project_show(tmp_path):
 
 
 def test_agent_heartbeat(tmp_path):
-    _, agent = _setup_machine_agent(tmp_path, host="hb-host", agent_name="hb-worker",
-                                    agent_id="agent_hb")
+    _, agent = _setup_machine_agent(
+        tmp_path, host="hb-host", agent_name="hb-worker", agent_id="agent_hb"
+    )
     rc, result = _run(tmp_path, "agent", "heartbeat", agent["id"])
     assert rc == 0
 
@@ -579,10 +725,16 @@ def test_runtime_list_empty(tmp_path):
 
 def test_notifier_configure_and_list(tmp_path):
     """notifier configure takes positional name and channel_type."""
-    rc, notif = _run(tmp_path, "admin", "notifier", "configure",
-                     "ops-notifier",
-                     "slack",
-                     "--event-types", "task.*")
+    rc, notif = _run(
+        tmp_path,
+        "admin",
+        "notifier",
+        "configure",
+        "ops-notifier",
+        "slack",
+        "--event-types",
+        "task.*",
+    )
     assert rc == 0
 
     rc, notifs = _run(tmp_path, "admin", "notifier", "list")

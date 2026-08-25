@@ -19,9 +19,7 @@ def _inputs(tmp_path: Path, argv: list[str], prompt: str) -> tuple[Path, Path]:
     return command, prompt_file
 
 
-def test_external_agent_receives_prompt_on_stdin_not_argv(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_external_agent_receives_prompt_on_stdin_not_argv(tmp_path: Path, monkeypatch) -> None:
     prompt = "secret-free process list"
     command, prompt_file = _inputs(
         tmp_path,
@@ -39,9 +37,9 @@ def test_external_agent_receives_prompt_on_stdin_not_argv(
 
     monkeypatch.setattr(agent_command.subprocess, "run", fake_run)
 
-    assert agent_command.main(
-        ["--command-file", str(command), "--prompt-file", str(prompt_file)]
-    ) == 0
+    assert (
+        agent_command.main(["--command-file", str(command), "--prompt-file", str(prompt_file)]) == 0
+    )
     assert prompt not in seen["argv"]
     assert seen["input"] == prompt
     assert not command.exists()
@@ -77,9 +75,12 @@ def test_codex_prompt_uses_stdin_marker(monkeypatch) -> None:
         return type("Completed", (), {"returncode": 0})()
 
     monkeypatch.setattr(agent_command.subprocess, "run", fake_run)
-    assert agent_command._run_external_with_stdin(
-        ["codex", "exec", agent_command.PROMPT_SENTINEL], "private prompt"
-    ) == 0
+    assert (
+        agent_command._run_external_with_stdin(
+            ["codex", "exec", agent_command.PROMPT_SENTINEL], "private prompt"
+        )
+        == 0
+    )
     assert seen["argv"] == ["codex", "exec", "-"]
     assert seen["input"] == "private prompt"
     assert "env" not in seen
@@ -111,9 +112,12 @@ def test_codex_bearer_route_uses_ephemeral_home(monkeypatch, tmp_path: Path) -> 
 
     monkeypatch.setattr(agent_command.subprocess, "run", fake_run)
 
-    assert agent_command._run_external_with_stdin(
-        ["codex", "exec", agent_command.PROMPT_SENTINEL], "private prompt"
-    ) == 0
+    assert (
+        agent_command._run_external_with_stdin(
+            ["codex", "exec", agent_command.PROMPT_SENTINEL], "private prompt"
+        )
+        == 0
+    )
     assert seen["argv"] == ["codex", "exec", "-"]
     assert seen["input"] == "private prompt"
     assert seen["isolated_home_existed"] is True

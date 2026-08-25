@@ -67,9 +67,7 @@ def _run_installer(
     mock_bin = _mock_ssh_tools(tmp_path)
     script = (
         "set -euo pipefail\n"
-        "log(){ printf '%s\\n' \"$*\"; }\n"
-        + _function_source()
-        + "\ninstall_github_review_key\n"
+        "log(){ printf '%s\\n' \"$*\"; }\n" + _function_source() + "\ninstall_github_review_key\n"
     )
     env = {
         **os.environ,
@@ -101,9 +99,7 @@ def test_unverified_onboarded_key_falls_back_without_rewriting_ambient_identity(
     config = (tmp_path / "home" / ".ssh" / "config").read_text(encoding="utf-8")
     assert "Host keep.example" in config
     assert config.count("# mac GitHub review deploy key") == 1
-    assert (
-        tmp_path / "home" / ".ssh" / "mac_github_review_id"
-    ).read_bytes() == b"onboarded-key"
+    assert (tmp_path / "home" / ".ssh" / "mac_github_review_id").read_bytes() == b"onboarded-key"
     assert "verified onboarded ambient GitHub SSH identity" in result.stdout
 
 
@@ -115,9 +111,7 @@ def test_hub_deploy_fails_early_when_no_github_identity_is_authorized(tmp_path):
     )
 
     assert result.returncode != 0
-    assert (
-        "hub cannot authenticate to github.com for review publication" in result.stderr
-    )
+    assert "hub cannot authenticate to github.com for review publication" in result.stderr
 
 
 def test_authorized_onboarded_review_key_is_verified_without_rewrite(tmp_path):

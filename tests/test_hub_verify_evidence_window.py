@@ -22,6 +22,7 @@ The head+tail excerpt this repo already had (_hub_review_failure_excerpt, and
 its docstring makes exactly this argument) was applied downstream of the
 truncation -- head and tail of a tail.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -85,9 +86,7 @@ def _fake_run(monkeypatch):
         return done(1, FAILING_RUN, UPLOAD_AND_SSH)  # the sandbox create+run
 
     monkeypatch.setattr(services.subprocess, "run", run)
-    monkeypatch.setattr(
-        gitops, "askpass_remote_auth", lambda url: (url, {}), raising=False
-    )
+    monkeypatch.setattr(gitops, "askpass_remote_auth", lambda url: (url, {}), raising=False)
 
 
 def _capture(monkeypatch):
@@ -118,16 +117,15 @@ def test_the_captured_evidence_names_which_test_failed(monkeypatch):
 def test_the_blind_tail_that_caused_this_would_still_fail(monkeypatch):
     """Guards the fix against being reverted to a tail with a bigger number:
     the coverage table grows with the repo, so any fixed tail loses this race."""
-    assert hub_verification_unavailable_reason(
-        (FAILING_RUN + UPLOAD_AND_SSH)[-2000:]
-    ) == "ssh exited with status"
+    assert (
+        hub_verification_unavailable_reason((FAILING_RUN + UPLOAD_AND_SSH)[-2000:])
+        == "ssh exited with status"
+    )
 
 
 def test_a_genuinely_dead_harness_is_still_unavailable(monkeypatch):
     """#522 must survive this fix: no gate ran, so there is no verdict to sign."""
-    monkeypatch.setattr(
-        gitops, "askpass_remote_auth", lambda url: (url, {}), raising=False
-    )
+    monkeypatch.setattr(gitops, "askpass_remote_auth", lambda url: (url, {}), raising=False)
 
     def run(argv, **kwargs):
         done = lambda rc, out="", err="": subprocess.CompletedProcess(argv, rc, out, err)
@@ -159,7 +157,9 @@ def test_the_excerpt_survives_the_second_truncation_on_the_way_to_the_worker(
     _returncode, output = _capture(monkeypatch)
 
     feedback = "hub contract verification failed (rc=%d): %s\n\n%s" % (
-        1, "scripts/run-contract-tests.sh", output.strip() or "nonzero exit",
+        1,
+        "scripts/run-contract-tests.sh",
+        output.strip() or "nonzero exit",
     )
 
     assert "3 failed, 1204 passed" in feedback

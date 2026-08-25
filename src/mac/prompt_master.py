@@ -81,9 +81,7 @@ def compile_prompt(
         raise PromptPolicyError("coding-agent prompt must be non-empty")
     source_bytes = len(prompt.encode("utf-8"))
     if source_bytes > MAX_INPUT_BYTES:
-        raise PromptPolicyError(
-            "coding-agent prompt exceeds %d-byte input limit" % MAX_INPUT_BYTES
-        )
+        raise PromptPolicyError("coding-agent prompt exceeds %d-byte input limit" % MAX_INPUT_BYTES)
     normalized_target = str(target or "").strip().lower()
     profile = normalized_target if normalized_target in _KNOWN_TARGETS else "universal"
 
@@ -100,9 +98,11 @@ def compile_prompt(
             "stop": "Stop on a policy, scope, safety, or missing-critical-context failure; never wait for chat.",
             "target_model": str(model or ""),
         }
-        header = _MARKER + json.dumps(
-            guidance, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ) + "\n\n"
+        header = (
+            _MARKER
+            + json.dumps(guidance, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            + "\n\n"
+        )
         rewritten = header + redacted
         changed_dimensions = ["policy_envelope"]
         if secrets_changed:

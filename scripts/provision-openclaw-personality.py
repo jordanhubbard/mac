@@ -54,14 +54,14 @@ def remote(spec: Any, command: str, *, timeout: int = 45) -> subprocess.Complete
 
 
 def configured_target(spec: Any) -> bool:
-    command = r'''set -eu
+    command = r"""set -eu
 if [ -d "$HOME/.hermes" ]; then printf 'hermes\n'; exit 0; fi
 root="$HOME/.mac/openclaw/workspace"
 if [ -d "$root" ] && { [ -s "$root/SOUL.md" ] || [ -s "$root/IDENTITY.md" ] || [ -s "$root/USER.md" ] || [ -s "$root/MEMORY.md" ] || [ -d "$root/memory" ]; }; then
   printf 'openclaw\n'
 else
   printf 'blank\n'
-fi'''
+fi"""
     result = remote(spec, command)
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "could not inspect target identity state")
@@ -120,7 +120,9 @@ def validate_proposal(value: dict[str, Any], *, names: set[str], mentor: str) ->
         raise ValueError("proposal missing fields: %s" % ", ".join(missing))
     proposal = {key: str(value[key]).strip() for key in REQUIRED}
     proposal["name"] = re.sub(r"\s+", " ", proposal["name"])
-    if len(proposal["name"]) > 40 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9 .'-]*", proposal["name"]):
+    if len(proposal["name"]) > 40 or not re.fullmatch(
+        r"[A-Za-z][A-Za-z0-9 .'-]*", proposal["name"]
+    ):
         raise ValueError("proposed name is not a safe human-facing fleet name")
     if proposal["name"].casefold() in names:
         raise ValueError("proposed name duplicates an existing fleet identity")
@@ -174,7 +176,9 @@ def gateway_impl(config: dict[str, Any], fleet_key: str, agent: str) -> str:
     defaults = fleet.get("defaults") if isinstance(fleet.get("defaults"), dict) else {}
     default_hermes = defaults.get("hermes") if isinstance(defaults.get("hermes"), dict) else {}
     agents = fleet.get("agents") if isinstance(fleet.get("agents"), list) else []
-    agent_cfg = next((row for row in agents if isinstance(row, dict) and row.get("name") == agent), {})
+    agent_cfg = next(
+        (row for row in agents if isinstance(row, dict) and row.get("name") == agent), {}
+    )
     agent_hermes = agent_cfg.get("hermes") if isinstance(agent_cfg.get("hermes"), dict) else {}
     return str(agent_hermes.get("gateway_impl") or default_hermes.get("gateway_impl") or "hermes")
 
@@ -208,9 +212,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     }
     token = os.environ.get(args.token_env, "")
     roster = live_roster(args.hub_url or str(fleet.get("hub_url") or ""), token)
-    public_names = {
-        str(item.get("name")).casefold() for item in roster if item.get("name")
-    }
+    public_names = {str(item.get("name")).casefold() for item in roster if item.get("name")}
     names = configured_names | public_names
 
     candidates = []
@@ -229,8 +231,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     for candidate in candidates:
         spec = resolve_fleet_ssh(config, fleet_key, candidate)
         command = (
-            "test -x \"$HOME/.mac/bin/openclaw-agent\" && "
-            "\"$HOME/.mac/bin/openclaw-agent\" --agent main --session-id "
+            'test -x "$HOME/.mac/bin/openclaw-agent" && '
+            '"$HOME/.mac/bin/openclaw-agent" --agent main --session-id '
             + shlex.quote("mac-personality-bootstrap-" + args.agent)
             + " --message "
             + shlex.quote(prompt)
@@ -252,24 +254,54 @@ def main(argv: Iterable[str] | None = None) -> int:
         failures.append({"mentor": candidate, "error": "no valid structured proposal"})
 
     if proposal is None:
-        print(json.dumps({"status": "mentor_unavailable", "agent": args.agent, "failures": failures}, sort_keys=True))
+        print(
+            json.dumps(
+                {"status": "mentor_unavailable", "agent": args.agent, "failures": failures},
+                sort_keys=True,
+            )
+        )
         return 5
     if args.dry_run:
-        print(json.dumps({"status": "would_install", "agent": args.agent, "mentor": mentor, "proposal": proposal}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "status": "would_install",
+                    "agent": args.agent,
+                    "mentor": mentor,
+                    "proposal": proposal,
+                },
+                sort_keys=True,
+            )
+        )
         return 0
 
     with tempfile.TemporaryDirectory(prefix="mac-openclaw-personality-") as directory:
         local = Path(directory) / "personality-proposal.json"
         local.write_text(json.dumps(proposal, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.chmod(local, 0o600)
-        mkdir = remote(target_spec, 'mkdir -p "$HOME/.mac/openclaw/migration" && chmod 700 "$HOME/.mac/openclaw" "$HOME/.mac/openclaw/migration"')
+        mkdir = remote(
+            target_spec,
+            'mkdir -p "$HOME/.mac/openclaw/migration" && chmod 700 "$HOME/.mac/openclaw" "$HOME/.mac/openclaw/migration"',
+        )
         if mkdir.returncode:
-            raise RuntimeError(mkdir.stderr.strip() or "could not prepare target migration directory")
+            raise RuntimeError(
+                mkdir.stderr.strip() or "could not prepare target migration directory"
+            )
         destination = target_spec.target + ":.mac/openclaw/migration/personality-proposal.json"
         copied = run(scp_argv(target_spec, [str(local)], destination), timeout=45)
         if copied.returncode:
             raise RuntimeError(copied.stderr.strip() or "could not install personality proposal")
-    print(json.dumps({"status": "installed", "agent": args.agent, "mentor": mentor, "name": proposal["name"]}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": "installed",
+                "agent": args.agent,
+                "mentor": mentor,
+                "name": proposal["name"],
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 

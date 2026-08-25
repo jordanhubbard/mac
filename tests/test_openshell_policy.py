@@ -32,7 +32,10 @@ network_policies:
 
 def test_render_substitutes_and_parses():
     out = op.render_policy(
-        TEMPLATE, agent_user="jkh", hub_host="100.125.137.89", hub_port=8789,
+        TEMPLATE,
+        agent_user="jkh",
+        hub_host="100.125.137.89",
+        hub_port=8789,
         shared_services={"qdrant": 6333, "firecrawl": 3002},
     )
     assert "__" not in out  # no placeholder survives
@@ -50,7 +53,10 @@ def test_render_substitutes_and_parses():
 
 def test_explicit_model_gateway_host():
     out = op.render_policy(
-        TEMPLATE, agent_user="u", hub_host="hubX", hub_port=8789,
+        TEMPLATE,
+        agent_user="u",
+        hub_host="hubX",
+        hub_port=8789,
         model_gateway_host="gw.example",
     )
     doc = yaml.safe_load(out)
@@ -79,13 +85,17 @@ def test_missing_required_args_raise():
 def test_real_operator_template_renders(tmp_path):
     # The actual shipped template must render to placeholder-free valid YAML.
     from pathlib import Path
+
     repo = Path(__file__).resolve().parents[1]
     tmpl = (repo / "deploy" / "openshell" / "mac-hermes-policy.yaml").read_text(encoding="utf-8")
     # render_policy raising on any ACTIVE-config placeholder is the guarantee;
     # comments may still carry __TOKENS__ (template docs). Verify the parsed
     # config is correct.
     out = op.render_policy(
-        tmpl, agent_user="jkh", hub_host="100.125.137.89", hub_port=8789,
+        tmpl,
+        agent_user="jkh",
+        hub_host="100.125.137.89",
+        hub_port=8789,
         shared_services={"qdrant": 6333, "firecrawl": 3002},
     )
     doc = yaml.safe_load(out)
@@ -94,19 +104,13 @@ def test_real_operator_template_renders(tmp_path):
     assert doc["network_policies"]["qdrant"]["endpoints"][0]["port"] == 6333
     assert doc["network_policies"]["firecrawl"]["endpoints"][0]["host"] == "100.125.137.89"
     package_hosts = {
-        endpoint["host"]
-        for endpoint in doc["network_policies"]["python_packages"]["endpoints"]
+        endpoint["host"] for endpoint in doc["network_policies"]["python_packages"]["endpoints"]
     }
     assert {"pypi.org", "files.pythonhosted.org"} <= package_hosts
-    github_bins = {
-        binary["path"]
-        for binary in doc["network_policies"]["github"]["binaries"]
-    }
+    github_bins = {binary["path"] for binary in doc["network_policies"]["github"]["binaries"]}
     assert {"/usr/bin/gh", "/usr/local/bin/gh"} <= github_bins
     claude_policy = doc["network_policies"]["claude_provider"]
-    assert {endpoint["host"] for endpoint in claude_policy["endpoints"]} == {
-        "api.anthropic.com"
-    }
+    assert {endpoint["host"] for endpoint in claude_policy["endpoints"]} == {"api.anthropic.com"}
     cursor_policy = doc["network_policies"]["cursor_provider"]
     assert {
         "api2.cursor.sh",
@@ -124,9 +128,9 @@ def test_real_operator_template_renders(tmp_path):
         "port": 443,
         "tls": "skip",
     }
-    containerfile = (
-        repo / "deploy" / "openshell" / "mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
+    containerfile = (repo / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
     claude_version = re.search(
         r'^ARG CLAUDE_VERSION="([^"]+)"$', containerfile, re.MULTILINE
     ).group(1)
@@ -149,6 +153,7 @@ def test_real_operator_template_renders(tmp_path):
 
 def _real_template():
     from pathlib import Path
+
     repo = Path(__file__).resolve().parents[1]
     return (repo / "deploy" / "openshell" / "mac-hermes-policy.yaml").read_text(encoding="utf-8")
 
@@ -158,8 +163,9 @@ def test_dev_is_directory_not_leaf_under_hard_requirement():
     # right are rejected under hard_requirement on Landlock ABI >= 3; the policy
     # must list the /dev DIRECTORY instead (in either provisioning mode).
     for kwargs in ({}, {"image_runtime": "/opt/mac-venv"}):
-        out = op.render_policy(_real_template(), agent_user="jkh", hub_host="h",
-                               hub_port=8789, **kwargs)
+        out = op.render_policy(
+            _real_template(), agent_user="jkh", hub_host="h", hub_port=8789, **kwargs
+        )
         doc = yaml.safe_load(out)
         fp = doc["filesystem_policy"]
         assert "/dev" in fp["read_write"]
@@ -168,9 +174,14 @@ def test_dev_is_directory_not_leaf_under_hard_requirement():
 
 
 def test_image_runtime_uses_in_image_paths_and_tmp_caches():
-    out = op.render_policy(_real_template(), agent_user="jkh", hub_host="100.64.0.1",
-                           hub_port=8789, image_runtime="/opt/mac-venv",
-                           shared_services={"qdrant": 6333})
+    out = op.render_policy(
+        _real_template(),
+        agent_user="jkh",
+        hub_host="100.64.0.1",
+        hub_port=8789,
+        image_runtime="/opt/mac-venv",
+        shared_services={"qdrant": 6333},
+    )
     assert "__" not in "\n".join(l for l in out.splitlines() if not l.lstrip().startswith("#"))
     doc = yaml.safe_load(out)
     fp = doc["filesystem_policy"]
@@ -184,10 +195,7 @@ def test_image_runtime_uses_in_image_paths_and_tmp_caches():
     py = doc["network_policies"]["mac_hub"]["binaries"][0]["path"]
     assert py == "/opt/mac-venv/bin/python"
     assert doc["network_policies"]["qdrant"]["binaries"][0]["path"] == "/opt/mac-venv/bin/python"
-    package_bins = {
-        item["path"]
-        for item in doc["network_policies"]["python_packages"]["binaries"]
-    }
+    package_bins = {item["path"] for item in doc["network_policies"]["python_packages"]["binaries"]}
     assert {
         "/usr/local/bin/python3",
         "/usr/local/bin/python",

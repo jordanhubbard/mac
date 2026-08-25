@@ -260,9 +260,7 @@ class BatchSlot:
     predecessors: Tuple[str, ...]
 
 
-def speculation_plan(
-    entries: Sequence[QueueEntry], window: int
-) -> List[BatchSlot]:
+def speculation_plan(entries: Sequence[QueueEntry], window: int) -> List[BatchSlot]:
     """Assign each live entry, in order, the heads it must speculate on top of.
 
     The frontmost entry speculates on nothing (it is tested against the real
@@ -306,9 +304,7 @@ class EvictionPlan:
     survivors: Tuple[str, ...]
 
 
-def plan_eviction(
-    entries: Sequence[QueueEntry], failed_entry_id: str, reason: str
-) -> EvictionPlan:
+def plan_eviction(entries: Sequence[QueueEntry], failed_entry_id: str, reason: str) -> EvictionPlan:
     live = [entry for entry in entries if entry.live]
     live.sort(key=lambda item: (item.position, item.id))
     ids = [entry.id for entry in live]
@@ -361,8 +357,7 @@ def landing_is_safe(
     if tip != entry.tested_base_tree:
         return False, (
             "canonical tip tree %s is not the tree this entry was tested on top "
-            "of (%s); the tested projection is stale"
-            % (tip[:12], entry.tested_base_tree[:12])
+            "of (%s); the tested projection is stale" % (tip[:12], entry.tested_base_tree[:12])
         )
     return True, ""
 
@@ -445,9 +440,7 @@ def _lease_is_live(entry: QueueEntry, now: str) -> bool:
         return False
 
 
-def front_projection_is_stale(
-    entry: Optional[QueueEntry], *, canonical_tip_tree: str
-) -> bool:
+def front_projection_is_stale(entry: Optional[QueueEntry], *, canonical_tip_tree: str) -> bool:
     """Did the trunk move out from under the front entry's test result?
 
     Deliberately the same comparison as condition 3 of :func:`landing_is_safe`,
@@ -538,8 +531,7 @@ def plan_front_recovery(
             reason=(
                 "abandoned at the front of the queue: no live lease and nothing "
                 "has driven this entry for %ds (state=%s, limit %ds); every "
-                "entry behind it is blocked until it leaves"
-                % (idle, front.state, horizon)
+                "entry behind it is blocked until it leaves" % (idle, front.state, horizon)
             ),
         )
     if front_projection_is_stale(front, canonical_tip_tree=canonical_tip_tree):
@@ -559,9 +551,7 @@ def plan_front_recovery(
                 )
             ),
         )
-    return FrontRecovery(
-        entry_id=front.id, task_id=front.task_id, idle_seconds=idle or 0
-    )
+    return FrontRecovery(entry_id=front.id, task_id=front.task_id, idle_seconds=idle or 0)
 
 
 @dataclass(frozen=True)
@@ -648,9 +638,7 @@ class NativeMergeQueue:
         return [entry for entry in self.entries(repository, branch) if entry.live]
 
     def entry(self, entry_id: str) -> Optional[QueueEntry]:
-        row = self._store.query_one(
-            "SELECT * FROM merge_queue_entries WHERE id = ?", (entry_id,)
-        )
+        row = self._store.query_one("SELECT * FROM merge_queue_entries WHERE id = ?", (entry_id,))
         return self._from_row(row) if row is not None else None
 
     def window(self, repository: str, branch: str) -> int:
@@ -682,9 +670,7 @@ class NativeMergeQueue:
             """,
             (repository, branch),
         )
-        evicted = [
-            entry for entry in entries if entry.state == STATE_EVICTED
-        ][-10:]
+        evicted = [entry for entry in entries if entry.state == STATE_EVICTED][-10:]
         stalled = [
             entry
             for entry in live
@@ -702,9 +688,7 @@ class NativeMergeQueue:
             ),
             "window_floor": self._bounds.floor,
             "window_ceiling": self._bounds.ceiling,
-            "entries_testing": sum(
-                1 for entry in live if entry.state == STATE_TESTING
-            ),
+            "entries_testing": sum(1 for entry in live if entry.state == STATE_TESTING),
             "entries_tested": sum(1 for entry in live if entry.state == STATE_TESTED),
             # Entries that CANNOT progress, counted apart from the state totals
             # above. Those totals answer "what state is it in"; this answers
@@ -720,9 +704,7 @@ class NativeMergeQueue:
             "entries_queued": sum(1 for entry in live if entry.state == STATE_QUEUED),
             "landed_count": int(row["landed_count"]) if row is not None else 0,
             "failure_count": int(row["failure_count"]) if row is not None else 0,
-            "speculation_discarded": (
-                int(row["speculation_discarded"]) if row is not None else 0
-            ),
+            "speculation_discarded": (int(row["speculation_discarded"]) if row is not None else 0),
             "last_event": str(row["last_event"]) if row is not None else "",
             # How long the head of the line has been untouched, and the limit
             # past which `reconcile_front` evicts it. A head-of-line block is
@@ -878,9 +860,9 @@ class NativeMergeQueue:
             )
         # CAS the slot. A row already leased by a live owner is not ours.
         now = self._now()
-        expires = (
-            parse_time(now) + timedelta(seconds=self._lease_seconds)
-        ).isoformat(timespec="microseconds")
+        expires = (parse_time(now) + timedelta(seconds=self._lease_seconds)).isoformat(
+            timespec="microseconds"
+        )
         result = self._store.execute(
             """
             UPDATE merge_queue_entries
@@ -1056,9 +1038,7 @@ class NativeMergeQueue:
             )
         return outcome
 
-    def _requeue_live(
-        self, repository: str, branch: str, *, event: str
-    ) -> List[str]:
+    def _requeue_live(self, repository: str, branch: str, *, event: str) -> List[str]:
         """Send every live entry back to ``queued`` in a NEW speculation epoch.
 
         The discard rule is :meth:`evict`'s, for :meth:`evict`'s reason: a
@@ -1223,8 +1203,7 @@ class NativeMergeQueue:
                 entry.id,
                 reason=(
                     "cannot progress: no pull request recorded after %d attempt(s), "
-                    "so the entry can neither be landed nor observed as merged"
-                    % entry.attempts
+                    "so the entry can neither be landed nor observed as merged" % entry.attempts
                 ),
             )
             evicted.append(entry.id)

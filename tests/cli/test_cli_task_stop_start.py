@@ -5,6 +5,7 @@ subcommands by scanning THIS directory for `_run(...)` calls, so a CLI test
 filed anywhere else leaves the subcommand looking untested — which is how this
 one was caught.
 """
+
 from __future__ import annotations
 
 import io

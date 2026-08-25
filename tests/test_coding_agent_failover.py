@@ -44,10 +44,7 @@ class TestCreditExhaustionIsItsOwnAnswer:
         ],
     )
     def test_an_exhausted_subscription_is_named(self, message):
-        assert (
-            es._classify_coding_agent_preflight_failure(1, message)
-            == "credit_exhausted"
-        )
+        assert es._classify_coding_agent_preflight_failure(1, message) == "credit_exhausted"
 
     def test_throttling_is_still_throttling(self):
         """A 429 that is rate limiting, not exhaustion, must keep its own class:
@@ -77,7 +74,8 @@ class TestTheResolverCanBeToldNotThatOne:
         monkeypatch.setitem(ca._DETECTORS, "claude", _detector)
 
         choice = ca.resolve_coding_agent(
-            env={"PATH": "/usr/bin"}, which=lambda name: "/usr/bin/" + name,
+            env={"PATH": "/usr/bin"},
+            which=lambda name: "/usr/bin/" + name,
             exclude=("claude",),
         )
 

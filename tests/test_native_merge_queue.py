@@ -66,9 +66,7 @@ def queue(cp):
 
 
 def _admit(queue, task_id: str, head: str, **kwargs):
-    return queue.admit(
-        repository=REPO, branch=BRANCH, task_id=task_id, head_sha=head, **kwargs
-    )
+    return queue.admit(repository=REPO, branch=BRANCH, task_id=task_id, head_sha=head, **kwargs)
 
 
 def _claim(queue, task_id: str, head: str, owner: str = "hub-a"):
@@ -238,9 +236,7 @@ def test_a_failed_entry_is_evicted_and_the_survivors_are_retested_without_it(que
 
     # And nothing behind K can land on the discarded result: even presented
     # with the exact tree it was tested against, the land gate refuses.
-    allowed, why, _ = queue.may_land(
-        third.entry.id, canonical_tip_tree="spec-tree-tree-c"
-    )
+    allowed, why, _ = queue.may_land(third.entry.id, canonical_tip_tree="spec-tree-tree-c")
     assert allowed is False
     assert "no recorded test result" in why
 
@@ -290,14 +286,10 @@ def test_landing_requires_the_front_position_a_result_and_a_matching_tree():
         "",
     )
     # Not at the front.
-    ok, why = landing_is_safe(
-        tested, canonical_tip_tree="base-tree", front_entry_id="b"
-    )
+    ok, why = landing_is_safe(tested, canonical_tip_tree="base-tree", front_entry_id="b")
     assert (ok, "front of the queue" in why) == (False, True)
     # The tip moved: the tested projection is stale.
-    ok, why = landing_is_safe(
-        tested, canonical_tip_tree="other-tree", front_entry_id="a"
-    )
+    ok, why = landing_is_safe(tested, canonical_tip_tree="other-tree", front_entry_id="a")
     assert (ok, "stale" in why) == (False, True)
     # An unreadable tip is a refusal, never a pass.
     ok, why = landing_is_safe(tested, canonical_tip_tree="", front_entry_id="a")
@@ -347,9 +339,7 @@ def test_a_crash_between_validate_and_land_does_not_double_land(cp, queue):
 def test_an_expired_lease_is_reclaimed_and_its_stale_result_is_dropped(cp):
     """A dead hub's slot must come back -- WITHOUT its unverifiable result."""
 
-    queue = NativeMergeQueue(
-        cp.store, bounds=WindowBounds(floor=1, ceiling=4), lease_seconds=60
-    )
+    queue = NativeMergeQueue(cp.store, bounds=WindowBounds(floor=1, ceiling=4), lease_seconds=60)
     decision = queue.claim_slot(
         repository=REPO,
         branch=BRANCH,
@@ -458,18 +448,14 @@ def test_an_unknown_capability_takes_the_safe_branch_never_a_bare_squash():
 
 
 def test_a_forge_that_cannot_be_reached_is_a_definite_native_answer():
-    capability = resolve_merge_capability(
-        REPO, BRANCH, resolve_forge=lambda url: ""
-    )
+    capability = resolve_merge_capability(REPO, BRANCH, resolve_forge=lambda url: "")
     assert (capability.forge, capability.credential) == ("", False)
     assert (capability.supported, capability.enabled) == (False, False)
     assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
 
 
 def test_gitea_has_no_merge_queue_equivalent():
-    capability = resolve_merge_capability(
-        REPO, BRANCH, resolve_forge=lambda url: "gitea"
-    )
+    capability = resolve_merge_capability(REPO, BRANCH, resolve_forge=lambda url: "gitea")
     assert capability.forge == "gitea"
     assert capability.enabled is False
     assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
@@ -495,10 +481,19 @@ def test_a_capability_is_stale_when_it_expires_or_changes_branch():
         branch="main",
         resolved_at="2026-08-18T00:00:00.000000+00:00",
     )
-    assert fresh.is_stale(branch="main", ttl_seconds=3600, now="2026-08-18T00:10:00.000000+00:00") is False
-    assert fresh.is_stale(branch="main", ttl_seconds=3600, now="2026-08-18T02:00:00.000000+00:00") is True
+    assert (
+        fresh.is_stale(branch="main", ttl_seconds=3600, now="2026-08-18T00:10:00.000000+00:00")
+        is False
+    )
+    assert (
+        fresh.is_stale(branch="main", ttl_seconds=3600, now="2026-08-18T02:00:00.000000+00:00")
+        is True
+    )
     # A different canonical branch is a different question.
-    assert fresh.is_stale(branch="release", ttl_seconds=3600, now="2026-08-18T00:10:00.000000+00:00") is True
+    assert (
+        fresh.is_stale(branch="release", ttl_seconds=3600, now="2026-08-18T00:10:00.000000+00:00")
+        is True
+    )
     # Never resolved at all.
     assert MergeCapability().is_stale() is True
 
@@ -514,9 +509,7 @@ def test_the_capability_round_trips_through_repository_metadata(cp, tmp_path):
         resolved_at="2026-08-18T00:00:00.000000+00:00",
         resolver="github-ingest",
     )
-    assert stored_capability(
-        {"merge_serialization_capability": capability.to_dict()}
-    ) == capability
+    assert stored_capability({"merge_serialization_capability": capability.to_dict()}) == capability
     # A blob with the wrong schema is not trusted.
     assert stored_capability({"merge_serialization_capability": {"enabled": True}}) is None
 
@@ -526,26 +519,20 @@ def test_the_capability_round_trips_through_repository_metadata(cp, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_publication_without_a_forge_queue_records_the_native_guarantee(
-    cp, tmp_path, monkeypatch
-):
+def test_publication_without_a_forge_queue_records_the_native_guarantee(cp, tmp_path, monkeypatch):
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     detail = published_detail(cp, task.id)
     assert detail["merge_serialization"] == MODE_NATIVE_QUEUE
 
     capability = next(
-        item
-        for item in detail["commands"]
-        if item["name"] == "merge_serialization_capability"
+        item for item in detail["commands"] if item["name"] == "merge_serialization_capability"
     )
     assert capability["mode"] == MODE_NATIVE_QUEUE
     # supported/enabled are separate facts, both recorded.
@@ -560,9 +547,7 @@ def test_publication_without_a_forge_queue_records_the_native_guarantee(
     assert snapshot["window_ceiling"] >= snapshot["window_floor"]
     assert "queue_depth" in snapshot
 
-    landed = next(
-        item for item in detail["commands"] if item["name"] == "merge_queue_landed"
-    )
+    landed = next(item for item in detail["commands"] if item["name"] == "merge_queue_landed")
     assert landed["changed"] is True
     assert landed["observed_only"] is False
 
@@ -588,9 +573,7 @@ def test_a_queued_pull_request_that_landed_on_the_forge_is_observed_not_remerged
 
     monkeypatch.setattr(gitops, "required_status_check_contexts", land_it_first)
 
-    publication = cp.publish_task(
-        task.id, "git://main", reviewer.id, evidence_id=evidence.id
-    )
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
     assert publication.status == "published"
     # The decisive assertion: mac did NOT ask the forge to merge a second time.
@@ -598,21 +581,15 @@ def test_a_queued_pull_request_that_landed_on_the_forge_is_observed_not_remerged
 
     detail = published_detail(cp, task.id)
     observed = next(
-        item
-        for item in detail["commands"]
-        if item["name"] == "merge_queue_observe_pull_request"
+        item for item in detail["commands"] if item["name"] == "merge_queue_observe_pull_request"
     )
     assert observed["merged"] is True
-    recorded = next(
-        item for item in detail["commands"] if item["name"] == "merge_queue_landed"
-    )
+    recorded = next(item for item in detail["commands"] if item["name"] == "merge_queue_landed")
     assert recorded["observed_only"] is True
     assert detail["final_sha"] == landed[0]
 
 
-def test_an_unreadable_pull_request_state_defers_instead_of_merging(
-    cp, tmp_path, monkeypatch
-):
+def test_an_unreadable_pull_request_state_defers_instead_of_merging(cp, tmp_path, monkeypatch):
     """Ambiguity resolves to NOT landing. It may never resolve to 'merge anyway'."""
 
     remote, source, main_head, task_head = build_repo(tmp_path)
@@ -635,10 +612,7 @@ def test_an_unreadable_pull_request_state_defers_instead_of_merging(
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "")
-        == "merge_queue_unreadable_state"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "merge_queue_unreadable_state"
     assert getattr(excinfo.value, "publication_retry_after_seconds", 0) > 0
     # Nothing was merged and main is untouched.
     assert forge.merges == []
@@ -646,9 +620,7 @@ def test_an_unreadable_pull_request_state_defers_instead_of_merging(
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
 
 
-def test_a_forge_queue_still_wins_when_the_repository_actually_has_one(
-    cp, tmp_path, monkeypatch
-):
+def test_a_forge_queue_still_wins_when_the_repository_actually_has_one(cp, tmp_path, monkeypatch):
     """The native queue is the fallback, not a third parallel mechanism."""
 
     remote, source, main_head, task_head = build_repo(tmp_path)
@@ -659,14 +631,10 @@ def test_a_forge_queue_still_wins_when_the_repository_actually_has_one(
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_queued"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "pull_request_queued"
     # It went to the FORGE queue, and mac's queue never enrolled it.
     assert forge.enqueued == [{"number": 101, "sha": task_head}]
-    assert (
-        cp.store.query_all("SELECT id FROM merge_queue_entries", ()) == []
-    )
+    assert cp.store.query_all("SELECT id FROM merge_queue_entries", ()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -733,9 +701,7 @@ def test_a_capability_probe_failure_does_not_break_issue_ingest(monkeypatch):
         def list_project_repositories(self, enabled=None):
             raise RuntimeError("registry unavailable")
 
-    ingestor = GitHubIssueIngestor(
-        ExplodingControlPlane(), GitHubIngestConfig.from_env()
-    )
+    ingestor = GitHubIssueIngestor(ExplodingControlPlane(), GitHubIngestConfig.from_env())
     report = ingestor._refresh_merge_capabilities(actor="test")
     assert report["checked"] == 0
     assert "registry unavailable" in report["error"]
@@ -750,9 +716,7 @@ def _git_step_for(repo: Path):
     """A `git_step` shaped like publication's, over a real repository."""
 
     def step(name, args, timeout=120, *, check=True):
-        proc = subprocess.run(
-            ["git", "-C", str(repo), *args], capture_output=True, text=True
-        )
+        proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
         result = {
             "returncode": proc.returncode,
             "stdout": proc.stdout.strip(),
@@ -833,9 +797,7 @@ def test_two_queued_changes_that_conflict_yield_no_speculative_base(cp, tmp_path
     assert projected == ""
 
 
-def test_a_predecessor_that_cannot_be_fetched_yields_no_speculative_base(
-    cp, tmp_path
-):
+def test_a_predecessor_that_cannot_be_fetched_yields_no_speculative_base(cp, tmp_path):
     repo, tip, _heads = _repo_with_two_branches(tmp_path)
     projected = cp._build_speculative_base(
         repo,
@@ -846,9 +808,7 @@ def test_a_predecessor_that_cannot_be_fetched_yields_no_speculative_base(
     assert projected == ""
 
 
-def test_publication_defers_when_the_queue_window_is_full(
-    cp, tmp_path, monkeypatch
-):
+def test_publication_defers_when_the_queue_window_is_full(cp, tmp_path, monkeypatch):
     """A change behind the window waits its turn instead of jumping it."""
 
     remote, source, main_head, task_head = build_repo(tmp_path)
@@ -872,10 +832,7 @@ def test_publication_defers_when_the_queue_window_is_full(
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "")
-        == "merge_queue_deferred"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "merge_queue_deferred"
     assert getattr(excinfo.value, "publication_retry_after_seconds", 0) > 0
     assert forge.merges == []
     assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
@@ -927,17 +884,13 @@ def test_a_change_behind_another_is_tested_on_top_of_it_and_will_not_jump_it(
     with pytest.raises(ValidationError) as excinfo:
         cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
 
-    assert (
-        getattr(excinfo.value, "publication_failure_kind", "") == "merge_queue_waiting"
-    )
+    assert getattr(excinfo.value, "publication_failure_kind", "") == "merge_queue_waiting"
     # Nothing landed, and main is exactly where it was.
     assert forge.merges == []
     assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
 
     ours = next(
-        entry
-        for entry in queue.live_entries(repository, "main")
-        if entry.task_id == task.id
+        entry for entry in queue.live_entries(repository, "main") if entry.task_id == task.id
     )
     assert ours.position > ahead.position
     assert ours.predecessors == (other_head,)
@@ -970,9 +923,7 @@ def test_a_change_behind_another_is_tested_on_top_of_it_and_will_not_jump_it(
         (["not", "a", "repository"], None),
     ],
 )
-def test_the_organization_probe_reads_the_repository_owner_type(
-    monkeypatch, payload, expected
-):
+def test_the_organization_probe_reads_the_repository_owner_type(monkeypatch, payload, expected):
     from mac.merge_capability import forge_owner_is_organization
 
     monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
@@ -1110,14 +1061,13 @@ def test_a_corrupt_resolved_at_is_stale_rather_than_trusted():
         branch="main",
         resolved_at="2099-01-01T00:00:00.000000+00:00",
     )
-    assert future.is_stale(
-        branch="main", ttl_seconds=3600, now="2026-08-18T00:00:00.000000+00:00"
-    ) is True
+    assert (
+        future.is_stale(branch="main", ttl_seconds=3600, now="2026-08-18T00:00:00.000000+00:00")
+        is True
+    )
 
 
-def test_recording_a_capability_keeps_the_rest_of_the_repository_metadata(
-    cp, tmp_path
-):
+def test_recording_a_capability_keeps_the_rest_of_the_repository_metadata(cp, tmp_path):
     """The contract and codegraph status must survive a capability write.
 
     `record_merge_capability` reads-modifies-writes the whole `metadata` blob.
@@ -1150,14 +1100,10 @@ def test_recording_a_capability_keeps_the_rest_of_the_repository_metadata(
 
     assert stored_capability(updated.metadata) == capability
     # Everything else is still there.
-    assert updated.metadata["repository_contract"] == (
-        registered.metadata["repository_contract"]
-    )
+    assert updated.metadata["repository_contract"] == (registered.metadata["repository_contract"])
     assert updated.metadata["codegraph"] == registered.metadata["codegraph"]
     # And it is durable, not just returned.
-    assert stored_capability(cp.get_project_repository(registered.id).metadata) == (
-        capability
-    )
+    assert stored_capability(cp.get_project_repository(registered.id).metadata) == (capability)
 
 
 def test_the_poller_records_an_unresolvable_repository_instead_of_skipping_it(
@@ -1171,18 +1117,14 @@ def test_the_poller_records_an_unresolvable_repository_instead_of_skipping_it(
     repo = tmp_path / "repo"
     repo.mkdir()
     _write_repository_contract(repo, project="repo-noremote")
-    registered = cp.register_project_repository(
-        "noremote-repo", str(repo), source="repo-noremote"
-    )
+    registered = cp.register_project_repository("noremote-repo", str(repo), source="repo-noremote")
 
     ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
     report = ingestor._refresh_merge_capabilities(actor="test")
 
     assert report["checked"] >= 1
     assert report["failed"] == 0
-    entry = next(
-        item for item in report["repositories"] if item["repository"] == "noremote-repo"
-    )
+    entry = next(item for item in report["repositories"] if item["repository"] == "noremote-repo")
     assert entry["status"] == "resolved"
     assert entry["mode"] == MODE_NATIVE_QUEUE
     assert "no canonical remote/branch" in entry["error"]
@@ -1306,13 +1248,16 @@ def test_releasing_a_slot_returns_it_without_a_verdict(queue):
     assert queue.window(REPO, BRANCH) == 1
     assert queue.snapshot(REPO, BRANCH)["failure_count"] == 0
     # Somebody else may now take it.
-    assert queue.claim_slot(
-        repository=REPO,
-        branch=BRANCH,
-        task_id="task_a",
-        head_sha="A" * 40,
-        owner="hub-two",
-    ).admitted is True
+    assert (
+        queue.claim_slot(
+            repository=REPO,
+            branch=BRANCH,
+            task_id="task_a",
+            head_sha="A" * 40,
+            owner="hub-two",
+        ).admitted
+        is True
+    )
     # And a worker that no longer holds the slot cannot release it.
     assert queue.release(decision.entry.id, owner="hub-one") is False
 
@@ -1340,9 +1285,7 @@ def test_broken_telemetry_never_breaks_a_land(cp):
     noisy = NativeMergeQueue(
         cp.store, bounds=WindowBounds(floor=1, ceiling=4), observe=exploding_metric
     )
-    entry = noisy.admit(
-        repository=REPO, branch=BRANCH, task_id="task_a", head_sha="A" * 40
-    )
+    entry = noisy.admit(repository=REPO, branch=BRANCH, task_id="task_a", head_sha="A" * 40)
     assert noisy.record_landed(entry.id, landed_sha="L" * 40)["changed"] is True
     # It really did try to report, and really did swallow the failure.
     assert "merge_queue.admitted" in calls
@@ -1498,9 +1441,7 @@ def test_an_abandoned_front_is_evicted_so_the_queue_drains_again(cp):
         base_tree="tree-new",
         merge_tree="merged-new",
     )
-    allowed, why, _entry_now = queue.may_land(
-        resumed.entry.id, canonical_tip_tree="tree-new"
-    )
+    allowed, why, _entry_now = queue.may_land(resumed.entry.id, canonical_tip_tree="tree-new")
     assert allowed is True, why
     assert queue.record_landed(resumed.entry.id, landed_sha="L" * 40)["changed"] is True
     assert queue.snapshot(REPO, BRANCH)["landed_count"] == 1
@@ -1666,16 +1607,22 @@ def test_front_recovery_is_planned_purely_before_anything_is_written():
     """The decision is a pure function of the rows, testable without a store."""
 
     now = utcnow()
-    assert plan_front_recovery(
-        [], canonical_tip_tree="tree-new", now=now, abandoned_after_seconds=120
-    ).action == "none"
+    assert (
+        plan_front_recovery(
+            [], canonical_tip_tree="tree-new", now=now, abandoned_after_seconds=120
+        ).action
+        == "none"
+    )
     # A terminal entry is not a head of line.
-    assert plan_front_recovery(
-        [_entry("a", 1, state=STATE_EVICTED)],
-        canonical_tip_tree="tree-new",
-        now=now,
-        abandoned_after_seconds=120,
-    ).action == "none"
+    assert (
+        plan_front_recovery(
+            [_entry("a", 1, state=STATE_EVICTED)],
+            canonical_tip_tree="tree-new",
+            now=now,
+            abandoned_after_seconds=120,
+        ).action
+        == "none"
+    )
     fresh = QueueEntry(
         id="mergeq_a",
         repository=REPO,
@@ -1688,13 +1635,19 @@ def test_front_recovery_is_planned_purely_before_anything_is_written():
         speculation_epoch=0,
         updated_at=now,
     )
-    assert plan_front_recovery(
-        [fresh], canonical_tip_tree="tree-new", now=now, abandoned_after_seconds=120
-    ).action == "none"
+    assert (
+        plan_front_recovery(
+            [fresh], canonical_tip_tree="tree-new", now=now, abandoned_after_seconds=120
+        ).action
+        == "none"
+    )
     # An unparseable stamp is not a licence to evict.
-    assert plan_front_recovery(
-        [_entry("a", 1)],
-        canonical_tip_tree="tree-new",
-        now=now,
-        abandoned_after_seconds=120,
-    ).action == "none"
+    assert (
+        plan_front_recovery(
+            [_entry("a", 1)],
+            canonical_tip_tree="tree-new",
+            now=now,
+            abandoned_after_seconds=120,
+        ).action
+        == "none"
+    )

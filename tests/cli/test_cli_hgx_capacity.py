@@ -42,30 +42,22 @@ def test_hgx_capacity_cli_separates_reads_from_explicit_execute(
     controller = _FakeController()
     monkeypatch.setattr(cli, "_hgx_capacity_controller", lambda _args: controller)
 
-    assert _run(
-        tmp_path, "admin", "hgx", "capacity", "status", "--pending-requests", "1"
-    ) == 0
+    assert _run(tmp_path, "admin", "hgx", "capacity", "status", "--pending-requests", "1") == 0
     status = json.loads(capsys.readouterr().out)
     assert status == {"mode": "status", "read_only": True}
 
-    assert _run(
-        tmp_path, "admin", "hgx", "capacity", "plan", "--pending-requests", "2"
-    ) == 0
+    assert _run(tmp_path, "admin", "hgx", "capacity", "plan", "--pending-requests", "2") == 0
     plan = json.loads(capsys.readouterr().out)
     assert plan == {"mode": "plan", "read_only": True}
 
-    assert _run(
-        tmp_path, "admin", "hgx", "capacity", "execute", "--pending-requests", "3"
-    ) == 0
+    assert _run(tmp_path, "admin", "hgx", "capacity", "execute", "--pending-requests", "3") == 0
     execute = json.loads(capsys.readouterr().out)
     assert execute["read_only"] is False
     assert execute["deletion"]["automatic"] is False
     assert controller.calls == [("status", 1), ("plan", 2), ("execute", 3)]
 
 
-def test_hgx_capacity_cli_marks_attested_session_onboarded(
-    tmp_path, capsys
-) -> None:
+def test_hgx_capacity_cli_marks_attested_session_onboarded(tmp_path, capsys) -> None:
     state_path = tmp_path / "capacity.json"
     state_path.write_text(
         json.dumps(
@@ -85,47 +77,49 @@ def test_hgx_capacity_cli_marks_attested_session_onboarded(
         encoding="utf-8",
     )
 
-    assert _run(
-        tmp_path,
-        "admin", "hgx",
-        "capacity",
-        "mark-onboarded",
-        "session-immutable",
-        "--agent-id",
-        "agent-real",
-        "--state-file",
-        str(state_path),
-    ) == 0
+    assert (
+        _run(
+            tmp_path,
+            "admin",
+            "hgx",
+            "capacity",
+            "mark-onboarded",
+            "session-immutable",
+            "--agent-id",
+            "agent-real",
+            "--state-file",
+            str(state_path),
+        )
+        == 0
+    )
 
     result = json.loads(capsys.readouterr().out)
     assert result["session_id"] == "session-immutable"
     assert result["agent_id"] == "agent-real"
     assert result["provider_mutation"] is False
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
-    assert persisted["sessions"]["session-immutable"]["onboarding_status"] == (
-        "onboarded"
-    )
+    assert persisted["sessions"]["session-immutable"]["onboarding_status"] == ("onboarded")
 
 
-def test_hgx_capacity_cli_passes_registered_agents_file(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_hgx_capacity_cli_passes_registered_agents_file(tmp_path, monkeypatch, capsys) -> None:
     controller = _FakeController()
     monkeypatch.setattr(cli, "_hgx_capacity_controller", lambda _args: controller)
 
     registry = tmp_path / "registered.json"
-    registry.write_text(
-        json.dumps({"hgx-immutable": "agent_worker_1"}), encoding="utf-8"
-    )
+    registry.write_text(json.dumps({"hgx-immutable": "agent_worker_1"}), encoding="utf-8")
 
-    assert _run(
-        tmp_path,
-        "admin", "hgx",
-        "capacity",
-        "plan",
-        "--registered-agents-file",
-        str(registry),
-    ) == 0
+    assert (
+        _run(
+            tmp_path,
+            "admin",
+            "hgx",
+            "capacity",
+            "plan",
+            "--registered-agents-file",
+            str(registry),
+        )
+        == 0
+    )
     capsys.readouterr()
 
     assert controller.registered_agents == [{"hgx-immutable": "agent_worker_1"}]

@@ -63,7 +63,15 @@ from mac.observability_console import (
     build_transcript_entry,
 )
 from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
-from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, new_id, utcnow
+from mac.models import (
+    AmbiguousIdError,
+    AuthorizationError,
+    MACError,
+    NotFoundError,
+    ValidationError,
+    new_id,
+    utcnow,
+)
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
@@ -228,12 +236,8 @@ class TokenPrincipal:
                 % (self.agent_id, claimed_agent_id)
             )
         if decision.reason == "legacy_worker_package_link_forbidden":
-            raise AuthorizationError(
-                "legacy worker credentials cannot act on package-linked work"
-            )
-        raise AuthorizationError(
-            "actor-bearing worker endpoint requires an agent-bound token"
-        )
+            raise AuthorizationError("legacy worker credentials cannot act on package-linked work")
+        raise AuthorizationError("actor-bearing worker endpoint requires an agent-bound token")
 
 
 AuthTokenMapping = Mapping[str, Union[List[str], Dict[str, Any], TokenPrincipal]]
@@ -255,17 +259,13 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
             human_id=str(human) if human else None,
             client_id=str(client) if client else None,
             principal_kind=str(value.get("principal_kind") or "") or None,
-            credential_fingerprint=(
-                str(value.get("credential_fingerprint") or "") or None
-            ),
+            credential_fingerprint=(str(value.get("credential_fingerprint") or "") or None),
             worker_credential_version=(
                 int(value["worker_credential_version"])
                 if value.get("worker_credential_version") is not None
                 else None
             ),
-            worker_credential_state=(
-                str(value.get("worker_credential_state") or "") or None
-            ),
+            worker_credential_state=(str(value.get("worker_credential_state") or "") or None),
         )
     if not isinstance(value, (list, tuple, set, frozenset)):
         # A principal-like object whose class is NOT this module's, which
@@ -301,8 +301,7 @@ def _normalize_auth_tokens(
             fingerprint = (
                 registered
                 if registered.startswith("sha256:") and len(registered) == 71
-                else "sha256:%s"
-                % hashlib.sha256(registered.encode("utf-8")).hexdigest()
+                else "sha256:%s" % hashlib.sha256(registered.encode("utf-8")).hexdigest()
             )
             principal = replace(
                 principal,
@@ -396,9 +395,7 @@ def _data(model: BaseModel) -> Dict[str, Any]:
     return model.dict(exclude_unset=True)
 
 
-def _task_create_idempotency_scope(
-    principal: "TokenPrincipal", *, surface: str
-) -> str:
+def _task_create_idempotency_scope(principal: "TokenPrincipal", *, surface: str) -> str:
     """Build a stable, secret-free caller namespace for task-create retries."""
 
     identity = (
@@ -416,6 +413,7 @@ def _task_create_idempotency_scope(
     )
     return "mac.task.create.v1|%s|%s" % (surface, identity)
 
+
 def _refuse_agent_minted_directives(principal: "TokenPrincipal", topic: Any) -> None:
     """human.directive.v1 authority IS its operator provenance — an
     agent-bound token minting one would forge a human voice."""
@@ -423,7 +421,6 @@ def _refuse_agent_minted_directives(principal: "TokenPrincipal", topic: Any) -> 
         raise AuthorizationError(
             "agent tokens cannot publish human directives (operator provenance required)"
         )
-
 
 
 AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS = 60.0
@@ -558,6 +555,7 @@ class TaskTranscriptRecord(BaseModel):
     duration_ms: Optional[float] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     actor: str = "worker"
+
 
 class DispatchPreflight(BaseModel):
     """Would a task with these requirements ever be claimed?"""
@@ -1313,24 +1311,16 @@ class FleetReleaseEpochParticipantRequest(BaseModel):
     generation: str
     baseline_seen: str
     principal_id: str
-    attestation_candidate: Optional[
-        FleetReleaseAttestationCandidateRequest
-    ] = None
-    report_executor_action: Literal["preserve", "approve", "revoke"] = (
-        "preserve"
-    )
+    attestation_candidate: Optional[FleetReleaseAttestationCandidateRequest] = None
+    report_executor_action: Literal["preserve", "approve", "revoke"] = "preserve"
     report_executor_attestation: Optional[Dict[str, Any]] = None
 
 
 class FleetReleaseEpochOpenRequest(BaseModel):
     epoch_id: str
-    participants: List[FleetReleaseEpochParticipantRequest] = Field(
-        default_factory=list
-    )
+    participants: List[FleetReleaseEpochParticipantRequest] = Field(default_factory=list)
     successor_hold_reason: Optional[str] = None
-    desired_worker_credential_mode: Optional[
-        Literal["compatibility", "enforced"]
-    ] = None
+    desired_worker_credential_mode: Optional[Literal["compatibility", "enforced"]] = None
 
 
 class FleetReleaseEpochCommitRequest(BaseModel):
@@ -1350,9 +1340,7 @@ class FleetReleaseEpochParticipantProofRequest(BaseModel):
 
 
 class FleetReleaseEpochProveRequest(FleetReleaseEpochCommitRequest):
-    proofs: List[FleetReleaseEpochParticipantProofRequest] = Field(
-        default_factory=list
-    )
+    proofs: List[FleetReleaseEpochParticipantProofRequest] = Field(default_factory=list)
 
 
 class FleetReleaseEpochAbortRequest(FleetReleaseEpochCommitRequest):
@@ -2169,9 +2157,7 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
         raise ValueError(
             "MAC_API_TOKEN is set but empty; unset it to leave the API open, or provide a non-empty token"
         )
-    return _normalize_auth_tokens(
-        {single: TokenPrincipal(scopes=frozenset({"admin"}))}
-    )
+    return _normalize_auth_tokens({single: TokenPrincipal(scopes=frozenset({"admin"}))})
 
 
 def _required_scope(method: str, path: str) -> Optional[str]:
@@ -2289,9 +2275,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # Two identity views stay `read` deliberately — they carry name, version
         # and checksum but never the body, which is everything drift detection
         # and the dashboard need, and nothing an attacker can navigate by.
-        if method == "GET" and (
-            path == "/openshell/policies" or path.endswith("/assignments")
-        ):
+        if method == "GET" and (path == "/openshell/policies" or path.endswith("/assignments")):
             return "read"
         return "admin"
     if method != "GET" and (
@@ -2321,7 +2305,8 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
-        path.endswith("/heartbeat") or path.endswith("/messages/deliver")
+        path.endswith("/heartbeat")
+        or path.endswith("/messages/deliver")
         or path.endswith("/command-audit")
         or path.endswith("/openshell/status")
         or path.endswith("/crash-reports")
@@ -2388,10 +2373,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # make held work dispatchable. They must never be available to an
         # ordinary task writer.
         return "admin"
-    if (
-        method in {"PUT", "DELETE"}
-        and re.match(r"^/tasks/[^/]+$", path)
-    ):
+    if method in {"PUT", "DELETE"} and re.match(r"^/tasks/[^/]+$", path):
         return "admin"
     return "write"
 
@@ -2453,13 +2435,17 @@ def _authorize_acp_websocket(
     #    "Bearer <token>" form.
     if not token:
         offered = []
-        header = websocket.headers.get("sec-websocket-protocol") if hasattr(websocket, "headers") else None
+        header = (
+            websocket.headers.get("sec-websocket-protocol")
+            if hasattr(websocket, "headers")
+            else None
+        )
         if header:
             offered = [p.strip() for p in header.split(",") if p.strip()]
         if offered and offered[0] == "Authorization" and len(offered) > 1:
             candidate = offered[1].strip()
             if candidate.lower().startswith("bearer "):
-                candidate = candidate[len("bearer "):].strip()
+                candidate = candidate[len("bearer ") :].strip()
             token = candidate
             accepted_subprotocol = "Authorization"
 
@@ -2477,7 +2463,8 @@ def _authorize_acp_websocket(
 def _should_record_http_observation(path: str) -> bool:
     return not (
         path == "/health"
-        or path in {
+        or path
+        in {
             "/dashboard/state",
             "/dashboard/stream",
             # The console polls this on a timer. Recording an observation per
@@ -2543,9 +2530,7 @@ def _ensure_payload_bounded(value: Any, field: str) -> None:
     except (TypeError, ValueError) as exc:
         raise ValidationError("%s must be JSON serializable" % field) from exc
     if len(encoded.encode("utf-8")) > MAX_REGISTRATION_PAYLOAD_BYTES:
-        raise ValidationError(
-            "%s exceeds %d-byte limit" % (field, MAX_REGISTRATION_PAYLOAD_BYTES)
-        )
+        raise ValidationError("%s exceeds %d-byte limit" % (field, MAX_REGISTRATION_PAYLOAD_BYTES))
 
 
 MAX_TERMINAL_INPUT_BYTES = 16 * 1024
@@ -2594,8 +2579,6 @@ def _new_terminal_session_id() -> str:
     return "term_" + secrets.token_hex(12)
 
 
-
-
 def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
     if body.data_b64 is not None:
         try:
@@ -2603,20 +2586,14 @@ def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
         except Exception as exc:
             raise ValidationError("terminal input data_b64 is invalid") from exc
         if len(raw) > MAX_TERMINAL_INPUT_BYTES:
-            raise ValidationError(
-                "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
-            )
+            raise ValidationError("terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES)
         return base64.b64encode(raw).decode("ascii")
     raw = str(body.data or "").encode("utf-8")
     if not raw:
         return None
     if len(raw) > MAX_TERMINAL_INPUT_BYTES:
-        raise ValidationError(
-            "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
-        )
+        raise ValidationError("terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES)
     return base64.b64encode(raw).decode("ascii")
-
-
 
 
 def _terminal_session_id_from_stream(stream: Mapping[str, Any]) -> str:
@@ -2662,12 +2639,16 @@ def _dashboard_terminal_sessions_from_streams(
             record["input_stream"] = dict(stream)
             record["input_stream_id"] = str(stream.get("id") or "")
             record["agent_id"] = str(stream.get("recipient_agent_id") or record["agent_id"] or "")
-            record["sender_agent_id"] = str(stream.get("sender_agent_id") or record["sender_agent_id"] or "")
+            record["sender_agent_id"] = str(
+                stream.get("sender_agent_id") or record["sender_agent_id"] or ""
+            )
         else:
             record["output_stream"] = dict(stream)
             record["output_stream_id"] = str(stream.get("id") or "")
             record["agent_id"] = str(stream.get("sender_agent_id") or record["agent_id"] or "")
-            record["sender_agent_id"] = str(stream.get("recipient_agent_id") or record["sender_agent_id"] or "")
+            record["sender_agent_id"] = str(
+                stream.get("recipient_agent_id") or record["sender_agent_id"] or ""
+            )
             record["status"] = str(stream.get("status") or record["status"] or "unknown")
             record["closed_at"] = stream.get("closed_at") or record["closed_at"]
         if record["status"] == "unknown":
@@ -2688,7 +2669,10 @@ def _dashboard_terminal_sessions(
     limit: int = 120,
 ) -> List[Dict[str, Any]]:
     stream_limit = max(1, min(int(limit) * 4, 1000))
-    streams = [stream.to_dict() for stream in cp.list_agentbus_streams(agent_id=agent_id, limit=stream_limit)]
+    streams = [
+        stream.to_dict()
+        for stream in cp.list_agentbus_streams(agent_id=agent_id, limit=stream_limit)
+    ]
     sessions = _dashboard_terminal_sessions_from_streams(streams)
     if status:
         sessions = [item for item in sessions if str(item.get("status") or "") == status]
@@ -2767,10 +2751,7 @@ def _dashboard_swarm_summary(
         machine_counts[machine.hostname if machine is not None else "missing-machine"] += 1
 
     def rows(counter: Counter[str], limit: int = 40) -> List[Dict[str, Any]]:
-        return [
-            {"key": key, "count": count}
-            for key, count in counter.most_common(limit)
-        ]
+        return [{"key": key, "count": count} for key, count in counter.most_common(limit)]
 
     return {
         "agent_total": len(agents),
@@ -2786,11 +2767,7 @@ def _dashboard_swarm_summary(
 def _dashboard_task_summary(task: Any) -> Dict[str, Any]:
     task_dict = task.to_dict()
     return {
-        "task": {
-            key: task_dict[key]
-            for key in _DASHBOARD_TASK_SUMMARY_FIELDS
-            if key in task_dict
-        },
+        "task": {key: task_dict[key] for key in _DASHBOARD_TASK_SUMMARY_FIELDS if key in task_dict},
         "detail_available": True,
         "schema": "mac.dashboard.task_summary.v1",
     }
@@ -2833,13 +2810,7 @@ def _dashboard_session(principal: TokenPrincipal) -> Dict[str, Any]:
         "is_admin": principal.is_admin,
         "can_read": principal.has_scope("read"),
         "can_write": can_write,
-        "mode": (
-            "admin"
-            if principal.is_admin
-            else "read-write"
-            if can_write
-            else "read-only"
-        ),
+        "mode": ("admin" if principal.is_admin else "read-write" if can_write else "read-only"),
     }
 
 
@@ -2872,7 +2843,13 @@ def _dashboard_agent_base(
         "agent": agent.to_dict(),
         "machine": machine.to_dict() if machine is not None else None,
         "active_tasks": active_tasks,
-        "active_projects": sorted({_task_project_key(task) for task in tasks if task.owner_agent_id == agent.id and task.state not in TERMINAL_DASHBOARD_STATES}),
+        "active_projects": sorted(
+            {
+                _task_project_key(task)
+                for task in tasks
+                if task.owner_agent_id == agent.id and task.state not in TERMINAL_DASHBOARD_STATES
+            }
+        ),
         "capacity": capacity,
         "active_lease_count": active_lease_count,
         "availability": {
@@ -3016,7 +2993,9 @@ def _redacted_secret_ref(value: str) -> str:
     return "<redacted:%s:chars=%d>" % (digest, len(value))
 
 
-def _credential_ref(names: Iterable[str], env_files: Optional[Iterable[Path]] = None) -> Dict[str, Any]:
+def _credential_ref(
+    names: Iterable[str], env_files: Optional[Iterable[Path]] = None
+) -> Dict[str, Any]:
     found = _lookup_config_value(names, env_files)
     value = str(found.get("value") or "")
     return {
@@ -3067,11 +3046,12 @@ def _dashboard_service_links(
 ) -> List[Dict[str, Any]]:
     env_files = _service_env_files()
     tokenhub_url = str(
-        _lookup_config_value(("TOKENHUB_URL", "MAC_TOKENHUB_URL"), env_files).get("value")
-        or ""
+        _lookup_config_value(("TOKENHUB_URL", "MAC_TOKENHUB_URL"), env_files).get("value") or ""
     ).rstrip("/")
     qdrant_url = str(
-        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get("value")
+        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get(
+            "value"
+        )
         or ""
     ).rstrip("/")
     firecrawl_url = str(
@@ -3125,8 +3105,7 @@ def _dashboard_service_links(
                 "type": "api_key_or_none",
                 "credential_pass_through": qdrant_navigate_available,
                 "pass_through_url": (
-                    "/dashboard/service-links/qdrant/navigate"
-                    if qdrant_navigate_available else ""
+                    "/dashboard/service-links/qdrant/navigate" if qdrant_navigate_available else ""
                 ),
                 "notes": (
                     "MAC injects the Qdrant API key into the dashboard redirect"
@@ -3150,7 +3129,8 @@ def _dashboard_service_links(
                 "credential_pass_through": firecrawl_navigate_available,
                 "pass_through_url": (
                     "/dashboard/service-links/firecrawl/navigate"
-                    if firecrawl_navigate_available else ""
+                    if firecrawl_navigate_available
+                    else ""
                 ),
                 "notes": (
                     "MAC Firecrawl gateway health page"
@@ -3166,8 +3146,7 @@ def _dashboard_service_links(
 def _tokenhub_session_ticket_url() -> str:
     env_files = _service_env_files()
     tokenhub_url = str(
-        _lookup_config_value(("TOKENHUB_URL", "MAC_TOKENHUB_URL"), env_files).get("value")
-        or ""
+        _lookup_config_value(("TOKENHUB_URL", "MAC_TOKENHUB_URL"), env_files).get("value") or ""
     ).rstrip("/")
     admin = _lookup_config_value(("TOKENHUB_ADMIN_TOKEN",), env_files)
     admin_token = str(admin.get("value") or "")
@@ -3191,14 +3170,15 @@ def _tokenhub_session_ticket_url() -> str:
 def _qdrant_navigate_url() -> str:
     env_files = _service_env_files()
     qdrant_url = str(
-        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get("value")
+        _lookup_config_value(("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"), env_files).get(
+            "value"
+        )
         or ""
     ).rstrip("/")
     if not qdrant_url:
         raise ValidationError("Qdrant URL is not configured")
     api_key = str(
-        _lookup_config_value(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files).get("value")
-        or ""
+        _lookup_config_value(("QDRANT_API_KEY", "QDRANT_FLEET_KEY"), env_files).get("value") or ""
     )
     dashboard_url = "%s/dashboard" % qdrant_url
     if api_key:
@@ -3220,9 +3200,7 @@ def _firecrawl_navigate_url() -> str:
 def _dashboard_ide_task_dict(task_dict: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "task": {
-            key: value
-            for key, value in task_dict.items()
-            if key in _DASHBOARD_IDE_TASK_FIELDS
+            key: value for key, value in task_dict.items() if key in _DASHBOARD_IDE_TASK_FIELDS
         },
         "detail_loaded": False,
     }
@@ -3230,11 +3208,7 @@ def _dashboard_ide_task_dict(task_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 def _dashboard_ide_project_summary(value: Dict[str, Any]) -> Dict[str, Any]:
     """Project navigation needs counts, not embedded task/metadata payloads."""
-    return {
-        key: value[key]
-        for key in _DASHBOARD_IDE_PROJECT_FIELDS
-        if key in value
-    }
+    return {key: value[key] for key in _DASHBOARD_IDE_PROJECT_FIELDS if key in value}
 
 
 def _dashboard_ide_finding(value: Dict[str, Any]) -> Dict[str, Any]:
@@ -3315,9 +3289,7 @@ def _dashboard_ide_agent(
         )
         if key in agent_dict
     }
-    projected_agent["resources"] = _dashboard_ide_resource_facts(
-        agent_dict.get("resources")
-    )
+    projected_agent["resources"] = _dashboard_ide_resource_facts(agent_dict.get("resources"))
 
     projected_machine = None
     if isinstance(machine_dict, dict):
@@ -3336,10 +3308,7 @@ def _dashboard_ide_agent(
         "machine": projected_machine,
         "active_tasks": [
             detail["task"]
-            for detail in (
-                _dashboard_ide_task_dict(task_dict)
-                for task_dict in active_task_dicts
-            )
+            for detail in (_dashboard_ide_task_dict(task_dict) for task_dict in active_task_dicts)
         ],
         "active_projects": base["active_projects"],
         "capacity": base["capacity"],
@@ -3383,22 +3352,15 @@ def _dashboard_ide_state(
     streams = [stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)]
     terminal_sessions = _dashboard_terminal_sessions_from_streams(streams)
     messages = [
-        message.to_dict()
-        for message in cp.list_messages(limit=DASHBOARD_IDE_MESSAGE_LIMIT)
+        message.to_dict() for message in cp.list_messages(limit=DASHBOARD_IDE_MESSAGE_LIMIT)
     ]
     notifications = [
         notification.to_dict()
         for notification in cp.list_notifications(limit=DASHBOARD_IDE_NOTIFICATION_LIMIT)
     ]
-    findings = [
-        finding.to_dict()
-        for finding in cp.list_integration_findings(limit=120)
-    ]
+    findings = [finding.to_dict() for finding in cp.list_integration_findings(limit=120)]
     secrets = [secret.to_dict() for secret in cp.list_secrets()][-200:]
-    runtime_deltas = [
-        delta.to_dict()
-        for delta in cp.list_runtime_deltas(limit=120)
-    ]
+    runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()][-120:]
     rollouts = [rollout.to_dict() for rollout in cp.list_rollouts()][-120:]
     fleets = [fleet.to_dict() for fleet in cp.list_fleets()][-120:]
@@ -3411,16 +3373,10 @@ def _dashboard_ide_state(
                 "agents": len(agents),
                 "service_agents": len(all_agents) - len(agents),
                 "fleets": len(fleets),
-                "healthy_agents": sum(
-                    1 for agent in agents if agent.health_status == "healthy"
-                ),
-                "busy_agents": sum(
-                    1 for agent in agents if agent.status == "busy"
-                ),
+                "healthy_agents": sum(1 for agent in agents if agent.health_status == "healthy"),
+                "busy_agents": sum(1 for agent in agents if agent.status == "busy"),
                 "active_tasks": sum(
-                    1
-                    for task in tasks
-                    if task.state not in TERMINAL_DASHBOARD_STATES
+                    1 for task in tasks if task.state not in TERMINAL_DASHBOARD_STATES
                 ),
                 "projects": len(projects),
                 "workflows": len(workflows),
@@ -3433,21 +3389,11 @@ def _dashboard_ide_state(
                 ),
             },
             "task_states": _state_counts(task_dicts, "state"),
-            "agent_statuses": _state_counts(
-                [agent.to_dict() for agent in agents], "status"
-            ),
+            "agent_statuses": _state_counts([agent.to_dict() for agent in agents], "status"),
         },
-        "project_summaries": [
-            _dashboard_ide_project_summary(project) for project in projects
-        ],
-        "agents": [
-            _dashboard_ide_agent(cp, agent, tasks, machines_by_id)
-            for agent in agents
-        ],
-        "tasks": [
-            _dashboard_ide_task_dict(task_dict)
-            for task_dict in task_dicts
-        ],
+        "project_summaries": [_dashboard_ide_project_summary(project) for project in projects],
+        "agents": [_dashboard_ide_agent(cp, agent, tasks, machines_by_id) for agent in agents],
+        "tasks": [_dashboard_ide_task_dict(task_dict) for task_dict in task_dicts],
         "fleets": fleets,
         "workflows": workflows,
         "workflow_drafts": [],
@@ -3465,9 +3411,7 @@ def _dashboard_ide_state(
         "secrets": secrets,
         "secret_audits": [],
         "service_links": _dashboard_service_links(hermes_startup),
-        "integration_findings": [
-            _dashboard_ide_finding(finding) for finding in findings
-        ],
+        "integration_findings": [_dashboard_ide_finding(finding) for finding in findings],
         "artifacts": [],
         "terminal_sessions": terminal_sessions,
     }
@@ -3492,8 +3436,7 @@ def _dashboard_state(
     rollouts = cp.list_rollouts()
     roles = [role.to_dict() for role in cp.list_roles()]
     provisioning_requests = [
-        request.to_dict()
-        for request in cp.provisioning.list_requests(limit=120)
+        request.to_dict() for request in cp.provisioning.list_requests(limit=120)
     ]
     secrets = [secret.to_dict() for secret in cp.list_secrets()]
     secret_audits = [audit.to_dict() for audit in cp.list_secret_audits()]
@@ -3501,18 +3444,14 @@ def _dashboard_state(
     workflow_drafts = [draft.to_dict() for draft in cp.list_workflow_drafts(limit=120)]
     workflow_runs = cp.workflow_runs_summary()
     notifier_channels = [channel.to_dict() for channel in cp.list_notifier_channels()]
-    agentbus_streams = [
-        stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)
-    ]
+    agentbus_streams = [stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)]
     terminal_sessions = _dashboard_terminal_sessions_from_streams(agentbus_streams)
     artifacts = [artifact.to_dict() for artifact in cp.list_artifacts()]
     bridge_items = [item.to_dict() for item in cp.list_project_items()]
     # beads removed as a read/write source; the status view no longer lists
     # beads repositories (kept as an empty list for dashboard shape stability).
     project_repositories: List[Dict[str, Any]] = []
-    memory_records = [
-        record.to_dict() for record in cp.search_memory()
-    ][-120:]
+    memory_records = [record.to_dict() for record in cp.search_memory()][-120:]
     nap_schedules = [schedule.to_dict() for schedule in cp.list_nap_schedules()]
     nap_runs = [run.to_dict() for run in cp.list_nap_runs()]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()]
@@ -3521,12 +3460,10 @@ def _dashboard_state(
         finding.to_dict() for finding in cp.list_integration_findings(limit=120)
     ]
     integration_observations = [
-        observation.to_dict()
-        for observation in cp.list_integration_observations(limit=120)
+        observation.to_dict() for observation in cp.list_integration_observations(limit=120)
     ]
     openshell_policies = [
-        policy.to_dict()
-        for policy in cp.list_openshell_policies(include_deleted=True)
+        policy.to_dict() for policy in cp.list_openshell_policies(include_deleted=True)
     ]
     openshell_assignments = [
         assignment.to_dict()
@@ -3537,14 +3474,8 @@ def _dashboard_state(
         for policy in openshell_policies
         for version in cp.list_openshell_policy_versions(policy["id"])
     ]
-    openshell_agent_statuses = [
-        cp.get_openshell_status(agent.id)
-        for agent in agents
-    ]
-    action_events = [
-        event.to_dict()
-        for event in cp.list_action_events(limit=240)
-    ]
+    openshell_agent_statuses = [cp.get_openshell_status(agent.id) for agent in agents]
+    action_events = [event.to_dict() for event in cp.list_action_events(limit=240)]
     task_details = [_dashboard_task_summary(task) for task in tasks[:DASHBOARD_TASK_LIMIT]]
     rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
@@ -3622,17 +3553,13 @@ def _dashboard_state(
         "provisioning_requests": provisioning_requests,
         "machines": [machine.to_dict() for machine in machines],
         "fleets": fleets,
-        "agents": [
-            _dashboard_agent_base(cp, agent, tasks, machines_by_id)
-            for agent in agents
-        ],
+        "agents": [_dashboard_agent_base(cp, agent, tasks, machines_by_id) for agent in agents],
         "tasks": task_details,
         "tasks_limited_to": DASHBOARD_TASK_LIMIT,
         "dead_letters": dead_letters,
         "dispatch": _dashboard_dispatch_explain(cp, tasks, agents, machines_by_id),
         "messages": [
-            message.to_dict()
-            for message in cp.list_messages(limit=DASHBOARD_MESSAGE_LIMIT)
+            message.to_dict() for message in cp.list_messages(limit=DASHBOARD_MESSAGE_LIMIT)
         ],
         "notifications": [
             notification.to_dict() for notification in cp.list_notifications(limit=120)
@@ -3658,9 +3585,7 @@ def _dashboard_state(
         "action_events": action_events,
         "service_links": _dashboard_service_links(hermes_startup),
         "events": cp.list_events(limit=240),
-        "command_audit": [
-            record.to_dict() for record in cp.list_command_audit(limit=120)
-        ],
+        "command_audit": [record.to_dict() for record in cp.list_command_audit(limit=120)],
         "secrets": secrets,
         "secret_audits": secret_audits,
         "runtimes": [runtime.to_dict() for runtime in cp.list_runtimes()],
@@ -3779,14 +3704,20 @@ def _normalize_dashboard_workflow_plan(
             {
                 "node_id": node_id,
                 "title": title[:240],
-                "description": str(raw_node.get("description") or raw_node.get("summary") or "").strip(),
+                "description": str(
+                    raw_node.get("description") or raw_node.get("summary") or ""
+                ).strip(),
                 "required_capabilities": _workflow_plan_string_list(
                     raw_node.get("required_capabilities") or raw_node.get("capabilities")
                 ),
                 "depends_on": _workflow_plan_string_list(
-                    raw_node.get("depends_on") or raw_node.get("dependencies") or raw_node.get("parents")
+                    raw_node.get("depends_on")
+                    or raw_node.get("dependencies")
+                    or raw_node.get("parents")
                 ),
-                "priority": _workflow_plan_int(raw_node.get("priority"), _workflow_plan_int(request.get("priority"), 0)),
+                "priority": _workflow_plan_int(
+                    raw_node.get("priority"), _workflow_plan_int(request.get("priority"), 0)
+                ),
                 "metadata": metadata,
             }
         )
@@ -3827,7 +3758,9 @@ def _workflow_plan_topological_order(
         for dep in _workflow_plan_string_list(node.get("depends_on")):
             if dep not in by_id:
                 if not allow_external:
-                    raise ValidationError("workflow plan dependency %r does not reference a planned node" % dep)
+                    raise ValidationError(
+                        "workflow plan dependency %r does not reference a planned node" % dep
+                    )
                 if cp is not None:
                     cp.get_task(dep)
             normalized_deps.append(dep)
@@ -3901,7 +3834,11 @@ def _chat_completion_content(body: Any) -> str:
 def _dashboard_workflow_plan_prompt(cp: ControlPlane, request: Dict[str, Any]) -> str:
     project = str(request.get("project") or "").strip()
     summaries = cp.list_projects()
-    project_summary = next((item for item in summaries if item.get("project") == project), None) if project else None
+    project_summary = (
+        next((item for item in summaries if item.get("project") == project), None)
+        if project
+        else None
+    )
     context = {
         "goal": request.get("goal"),
         "project": project or None,
@@ -3914,10 +3851,10 @@ def _dashboard_workflow_plan_prompt(cp: ControlPlane, request: Dict[str, Any]) -
     return (
         "Create a concrete MAC task plan for the requested work. "
         "Return ONLY JSON with this shape: "
-        "{\"nodes\":[{\"node_id\":\"short_key\",\"title\":\"task title\","
-        "\"description\":\"implementation-grade instructions\","
-        "\"required_capabilities\":[\"python\"],\"depends_on\":[\"other_node_id\"],"
-        "\"priority\":0,\"metadata\":{}}]}. "
+        '{"nodes":[{"node_id":"short_key","title":"task title",'
+        '"description":"implementation-grade instructions",'
+        '"required_capabilities":["python"],"depends_on":["other_node_id"],'
+        '"priority":0,"metadata":{}}]}. '
         "Use depends_on only for earlier node_id values. Keep the plan small, executable, "
         "and review-gate friendly.\n\nContext:\n%s" % json.dumps(context, sort_keys=True)
     )
@@ -3954,7 +3891,9 @@ def _dashboard_workflow_plan_from_router(
             "_mac_context": {
                 "agent_id": "dashboard-workflow-planner",
                 "task_id": "",
-                "request_id": _workflow_plan_id(str(request.get("goal") or ""), request.get("project"), []),
+                "request_id": _workflow_plan_id(
+                    str(request.get("goal") or ""), request.get("project"), []
+                ),
             },
         },
         route_context={"agent_id": "dashboard-workflow-planner"},
@@ -3983,7 +3922,9 @@ def _accept_dashboard_workflow_plan(cp: ControlPlane, request: Dict[str, Any]) -
     ]
     ordered = _workflow_plan_topological_order(nodes, allow_external=True, cp=cp)
     project = str(request.get("project") or "").strip() or None
-    plan_id = str(request.get("plan_id") or _workflow_plan_id(str(request.get("goal") or ""), project, nodes))
+    plan_id = str(
+        request.get("plan_id") or _workflow_plan_id(str(request.get("goal") or ""), project, nodes)
+    )
     actor = str(request.get("actor") or "human")
     root_metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
     created_by_node: Dict[str, str] = {}
@@ -3994,7 +3935,9 @@ def _accept_dashboard_workflow_plan(cp: ControlPlane, request: Dict[str, Any]) -
             for dep in _workflow_plan_string_list(node.get("depends_on"))
         ]
         metadata = dict(node.get("metadata") or {})
-        origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        origin = (
+            dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        )
         origin.update(
             {
                 "type": "dashboard_workflow_plan",
@@ -4003,7 +3946,11 @@ def _accept_dashboard_workflow_plan(cp: ControlPlane, request: Dict[str, Any]) -
             }
         )
         metadata["origin"] = origin
-        workflow = dict(metadata.get("workflow") or {}) if isinstance(metadata.get("workflow"), dict) else {}
+        workflow = (
+            dict(metadata.get("workflow") or {})
+            if isinstance(metadata.get("workflow"), dict)
+            else {}
+        )
         workflow.update(
             {
                 "type": "planned_task_chain",
@@ -4083,7 +4030,9 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
     # sweep; the periodic tick below remains the fallback for anything missed.
     cp.enable_event_driven_review_advance()
     try:
-        stale_after = int(float((os.environ.get("MAC_HUB_TICK_STALE_AFTER_SECONDS") or "300").strip()))
+        stale_after = int(
+            float((os.environ.get("MAC_HUB_TICK_STALE_AFTER_SECONDS") or "300").strip())
+        )
     except ValueError:
         stale_after = 300
 
@@ -4242,9 +4191,7 @@ def _start_retention_loop(app: FastAPI, cp: ControlPlane) -> None:
             try:
                 cp.retention_prune_tick()
             except Exception:  # noqa: BLE001 - retention must never crash the hub
-                logging.getLogger("mac.retention").warning(
-                    "retention tick failed", exc_info=True
-                )
+                logging.getLogger("mac.retention").warning("retention tick failed", exc_info=True)
 
     thread = threading.Thread(target=_loop, name="mac-retention", daemon=True)
     thread.start()
@@ -4363,9 +4310,7 @@ def create_app(
             if resolved_qdrant and env_bool("MAC_TRANSCRIPT_VECTOR_INDEX", True):
                 from mac.vector_writer_service import VectorWriterService
 
-                cp.vector_writer = VectorWriterService(
-                    memory=cp.memory, qdrant_url=resolved_qdrant
-                )
+                cp.vector_writer = VectorWriterService(memory=cp.memory, qdrant_url=resolved_qdrant)
         except Exception:  # noqa: BLE001 - the hub must start without a vector store
             cp.vector_writer = None
 
@@ -4395,26 +4340,19 @@ def create_app(
         # An injected app is hermetic unless its constructor explicitly opts in.
         local_console_enabled = local_console_socket_path is not None
     else:
-        local_console_enabled = (
-            os.environ.get("MAC_LOCAL_CONSOLE_ENABLED", "1").strip().lower()
-            not in {"0", "false", "no", "off"}
-        )
-    configured_client_path = client_principals_path or os.environ.get(
-        "MAC_CLIENT_PRINCIPALS_FILE"
-    )
+        local_console_enabled = os.environ.get(
+            "MAC_LOCAL_CONSOLE_ENABLED", "1"
+        ).strip().lower() not in {"0", "false", "no", "off"}
+    configured_client_path = client_principals_path or os.environ.get("MAC_CLIENT_PRINCIPALS_FILE")
     use_default_client_registry = control_plane is None and db_path is None
     client_principals = (
         ClientPrincipalProvider(
-            Path(configured_client_path).expanduser()
-            if configured_client_path
-            else None
+            Path(configured_client_path).expanduser() if configured_client_path else None
         )
         if configured_client_path or use_default_client_registry or local_console_enabled
         else None
     )
-    client_registry_seen = bool(
-        client_principals is not None and client_principals.path.exists()
-    )
+    client_registry_seen = bool(client_principals is not None and client_principals.path.exists())
     worker_principals = WorkerCredentialPrincipalProvider(cp.store)
     worker_identity_policy = WorkerCredentialPolicyProvider(cp.store)
     local_console_service = None
@@ -4452,9 +4390,7 @@ def create_app(
             # turn a previously authenticated hub into open development mode.
             # This unmatchable hash keeps public routes public while making
             # every scoped route fail closed.
-            merged["sha256:" + ("0" * 64)] = TokenPrincipal(
-                scopes=frozenset({"read"})
-            )
+            merged["sha256:" + ("0" * 64)] = TokenPrincipal(scopes=frozenset({"read"}))
         return merged
 
     initial_tokens = _current_auth_tokens()
@@ -4465,7 +4401,12 @@ def create_app(
     # reach /secrets/{id}/reveal).
     if not initial_tokens:
         bind_host = (os.environ.get("MAC_BIND_HOST") or "").strip()
-        allow_open = (os.environ.get("MAC_API_ALLOW_OPEN") or "").strip().lower() in {"1", "true", "yes", "on"}
+        allow_open = (os.environ.get("MAC_API_ALLOW_OPEN") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         is_loopback = bind_host in {"", "127.0.0.1", "::1", "localhost"}
         if not is_loopback and not allow_open:
             raise ValidationError(
@@ -4550,13 +4491,29 @@ def create_app(
         # against a control plane the app then abandoned.
         services: List[Tuple[str, Callable[[], Any], Callable[[], Any]]] = [
             ("hub_tick", lambda: _start_hub_tick_loop(_app, cp), lambda: _stop_hub_tick_loop(_app)),
-            ("retention", lambda: _start_retention_loop(_app, cp), lambda: _stop_retention_loop(_app)),
-            ("publication_worker", lambda: _start_publication_worker(_app, cp), lambda: _stop_publication_worker(_app)),
-            ("repository_ref_reconciler", repository_ref_reconciler.start, repository_ref_reconciler.stop),
+            (
+                "retention",
+                lambda: _start_retention_loop(_app, cp),
+                lambda: _stop_retention_loop(_app),
+            ),
+            (
+                "publication_worker",
+                lambda: _start_publication_worker(_app, cp),
+                lambda: _stop_publication_worker(_app),
+            ),
+            (
+                "repository_ref_reconciler",
+                repository_ref_reconciler.start,
+                repository_ref_reconciler.stop,
+            ),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
             ("cicd_monitor", cicd_monitor.start, cicd_monitor.stop),
             ("backlog_groomer", backlog_groomer.start, backlog_groomer.stop),
-            ("model_selection_service", model_selection_service.start, model_selection_service.stop),
+            (
+                "model_selection_service",
+                model_selection_service.start,
+                model_selection_service.stop,
+            ),
             ("scientific_optimizer", scientific_optimizer.start, scientific_optimizer.stop),
             ("nap_ticker", nap_ticker.start, nap_ticker.stop),
             ("curiosity_reviewer", curiosity_reviewer.start, curiosity_reviewer.stop),
@@ -4633,9 +4590,7 @@ def create_app(
     # integration. Routing decisions now come from the in-mac router.
     app.state.hermes_startup = build_hermes_startup_report()
 
-    def _assert_task_actor(
-        principal: TokenPrincipal, task_id: str, claimed_agent_id: str
-    ) -> None:
+    def _assert_task_actor(principal: TokenPrincipal, task_id: str, claimed_agent_id: str) -> None:
         principal.assert_actor(claimed_agent_id)
 
     def _assert_review_actor(
@@ -4643,14 +4598,14 @@ def create_app(
     ) -> None:
         review = cp.get_review(review_id)
         _assert_task_actor(principal, review.task_id, claimed_agent_id)
+
     if (
         os.environ.get("MAC_REQUIRE_HERMES_STARTUP_READY", "").strip().lower()
         in {"1", "true", "yes", "on"}
         and not app.state.hermes_startup["ready"]
     ):
         raise ValidationError(
-            "Hermes startup readiness failed: %s"
-            % "; ".join(app.state.hermes_startup["warnings"])
+            "Hermes startup readiness failed: %s" % "; ".join(app.state.hermes_startup["warnings"])
         )
     ui_dir = Path(__file__).with_name("ui")
     if ui_dir.exists():
@@ -4695,7 +4650,9 @@ def create_app(
                 detail=detail,
             )
         except (MACError, StoreError):
-            _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
+            _log.warning(
+                "failed to record http observation for %s", request.url.path, exc_info=True
+            )
 
     def _log_slow_request(request: Any, status_code: int, started: float) -> None:
         """Name a request that took too long, once, at the point it finishes.
@@ -4775,9 +4732,7 @@ def create_app(
             # transaction could otherwise make /health wait on the store lock
             # and provoke the supervisor into killing a busy-but-live hub.
             auth_tokens_for_request = (
-                {}
-                if public_route
-                else await asyncio.to_thread(_current_auth_tokens)
+                {} if public_route else await asyncio.to_thread(_current_auth_tokens)
             )
             principal = _authorize_request(
                 request.method,
@@ -4819,7 +4774,8 @@ def create_app(
         relay_session_id = (
             request.headers.get("x-session-id")
             or request.headers.get("x-mac-session-id")
-            or "http.%s.%s" % (request.method.lower(), request.url.path.replace("/", ".").strip("."))
+            or "http.%s.%s"
+            % (request.method.lower(), request.url.path.replace("/", ".").strip("."))
         )
         try:
             with _relay_agent_scope(relay_session_id):
@@ -4942,12 +4898,14 @@ def create_app(
             payload = await request.json()
         except Exception:  # noqa: BLE001 - malformed body is a JSON-RPC parse error
             return JSONResponse(content=rpc_error(None, ERROR_PARSE, "invalid JSON body"))
-        if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0" or "method" not in payload:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("jsonrpc") != "2.0"
+            or "method" not in payload
+        ):
             rpc_id = payload.get("id") if isinstance(payload, dict) else None
             return JSONResponse(
-                content=rpc_error(
-                    rpc_id, ERROR_INVALID_REQUEST, "not a valid JSON-RPC 2.0 request"
-                )
+                content=rpc_error(rpc_id, ERROR_INVALID_REQUEST, "not a valid JSON-RPC 2.0 request")
             )
         service = A2AService(cp)
         result = service.handle_rpc(
@@ -4989,9 +4947,7 @@ def create_app(
 
         from mac.acp.ws import serve_acp_websocket
 
-        accept_kwargs = (
-            {"subprotocol": accepted_subprotocol} if accepted_subprotocol else None
-        )
+        accept_kwargs = {"subprotocol": accepted_subprotocol} if accepted_subprotocol else None
         await serve_acp_websocket(websocket, backend, accept_kwargs=accept_kwargs)
 
     @app.get("/startup/hermes")
@@ -5046,9 +5002,7 @@ def create_app(
         `mac.observability_console` for the full rationale.
         """
         del principal  # scope is enforced by _required_scope; no per-row ACL
-        return build_console_snapshot(
-            cp, window_hours=window_hours, buckets=buckets
-        )
+        return build_console_snapshot(cp, window_hours=window_hours, buckets=buckets)
 
     @app.get("/dashboard/observe/tasks/{task_id}")
     def dashboard_observe_task(
@@ -5101,15 +5055,18 @@ def create_app(
     ) -> StreamingResponse:
         def stream_event(event: str, cursor: int) -> str:
             now = utcnow()
-            return json.dumps(
-                {
-                    "event": event,
-                    "server_time": now,
-                    "updated_at": now,
-                    "observability_sequence": cursor,
-                },
-                sort_keys=True,
-            ) + "\n"
+            return (
+                json.dumps(
+                    {
+                        "event": event,
+                        "server_time": now,
+                        "updated_at": now,
+                        "observability_sequence": cursor,
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
 
         async def iter_dashboard_states() -> Any:
             latest = cp.list_observability(limit=1)
@@ -5249,7 +5206,9 @@ def create_app(
         return cp.register_persona_instance(**_data(body)).to_dict()
 
     @app.get("/persona-instances")
-    def list_persona_instances(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+    def list_persona_instances(
+        tenant_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
         return [instance.to_dict() for instance in cp.list_persona_instances(tenant_id)]
 
     @app.get("/persona-instances/{instance_id}/context")
@@ -5435,7 +5394,9 @@ def create_app(
             if derived:
                 data["created_by_human"] = derived
         metadata = dict(data.get("metadata") or {})
-        origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        origin = (
+            dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
+        )
         existing_tenant = origin.get("tenant_id") or metadata.get("tenant_id")
         if principal.tenant_id is not None and not principal.is_admin:
             if existing_tenant is not None and existing_tenant != principal.tenant_id:
@@ -5488,10 +5449,7 @@ def create_app(
             )
         ]
         if view == "summary":
-            tasks = [
-                {k: v for k, v in t.items() if k in _TASK_LIST_SUMMARY_FIELDS}
-                for t in tasks
-            ]
+            tasks = [{k: v for k, v in t.items() if k in _TASK_LIST_SUMMARY_FIELDS} for t in tasks]
         return tasks
 
     # parity-ready-http-01: serve ready/search/stats so the CLI works in hub
@@ -5568,7 +5526,9 @@ def create_app(
         tenant_id: Optional[str] = Query(default=None),
         limit: Optional[int] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        return [t.to_dict() for t in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)]
+        return [
+            t.to_dict() for t in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)
+        ]
 
     @app.get("/tasks/ready/explain")
     def ready_task_explanations(
@@ -5597,7 +5557,10 @@ def create_app(
         tenant_id: Optional[str] = Query(default=None),
         limit: int = Query(default=50),
     ) -> List[Dict[str, Any]]:
-        return [t.to_dict() for t in cp.search_tasks(q, project=project, tenant_id=tenant_id, limit=limit)]
+        return [
+            t.to_dict()
+            for t in cp.search_tasks(q, project=project, tenant_id=tenant_id, limit=limit)
+        ]
 
     @app.get("/tasks/stats")
     def task_stats(
@@ -5669,7 +5632,9 @@ def create_app(
     ) -> Dict[str, Any]:
         """Point-in-time, read-only reconciliation of all task states."""
 
-        return cp.task_ledger_audit(project=project, verify_git=verify_git, offset=offset, limit=limit)
+        return cp.task_ledger_audit(
+            project=project, verify_git=verify_git, offset=offset, limit=limit
+        )
 
     @app.get("/tasks/{task_id}")
     def get_task(
@@ -5747,10 +5712,7 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
         principal.require_admin()
-        return [
-            item.to_dict()
-            for item in cp.list_task_break_glass_authorizations(task_id=task_id)
-        ]
+        return [item.to_dict() for item in cp.list_task_break_glass_authorizations(task_id=task_id)]
 
     @app.post("/tasks/{task_id}/break-glass-authorizations")
     def authorize_break_glass(
@@ -5796,9 +5758,7 @@ def create_app(
         return cp.update_task(task_id, actor=actor, **data).to_dict()
 
     @app.post("/tasks/{task_id}/review-experiment")
-    def assign_review_experiment(
-        task_id: str, body: ReviewExperimentAssign
-    ) -> Dict[str, Any]:
+    def assign_review_experiment(task_id: str, body: ReviewExperimentAssign) -> Dict[str, Any]:
         data = _data(body)
         actor = data.pop("actor", "human")
         return cp.assign_review_experiment(task_id, actor=actor, **data)
@@ -5808,9 +5768,7 @@ def create_app(
         return cp.review_observation(task_id)
 
     @app.post("/tasks/{task_id}/review-outcomes")
-    def record_review_outcome(
-        task_id: str, body: ReviewOutcomeCreate
-    ) -> Dict[str, Any]:
+    def record_review_outcome(task_id: str, body: ReviewOutcomeCreate) -> Dict[str, Any]:
         data = _data(body)
         actor = data.pop("actor", "human")
         _ensure_payload_bounded(data.get("detail") or {}, "review_outcome.detail")
@@ -5855,12 +5813,8 @@ def create_app(
         return scientific_optimizer.get_policy(policy_id)
 
     @app.post("/optimizer/policies/{policy_id}/promote")
-    def promote_scientific_policy(
-        policy_id: str, body: ScientificPolicyAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.promote_policy(
-            policy_id, actor=body.actor, reason=body.reason
-        )
+    def promote_scientific_policy(policy_id: str, body: ScientificPolicyAction) -> Dict[str, Any]:
+        return scientific_optimizer.promote_policy(policy_id, actor=body.actor, reason=body.reason)
 
     @app.post("/optimizer/projects/{project}/rollback/{policy_id}")
     def rollback_scientific_policy(
@@ -6053,9 +6007,7 @@ def create_app(
 
     @app.post("/projects/{project}/dispatch")
     def set_project_dispatch(project: str, body: ProjectDispatch) -> Dict[str, Any]:
-        return cp.set_project_dispatch(
-            project, paused=body.paused, actor=body.actor
-        ).to_dict()
+        return cp.set_project_dispatch(project, paused=body.paused, actor=body.actor).to_dict()
 
     @app.get("/projects/{project}")
     def get_project(project: str) -> Dict[str, Any]:
@@ -6192,9 +6144,7 @@ def create_app(
         body: LeaseRenewRequest,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        _assert_task_actor(
-            principal, cp.get_lease(lease_id).task_id, body.agent_id
-        )
+        _assert_task_actor(principal, cp.get_lease(lease_id).task_id, body.agent_id)
         return cp.renew_lease(lease_id, body.agent_id, body.lease_seconds).to_dict()
 
     @app.post("/leases/{lease_id}/delegate")
@@ -6208,9 +6158,7 @@ def create_app(
         # submit_for_review / evidence. This endpoint records the
         # delegation so those calls accept the delegate as a valid
         # actor. Owner remains the sole renew/release authority.
-        _assert_task_actor(
-            principal, cp.get_lease(lease_id).task_id, body.agent_id
-        )
+        _assert_task_actor(principal, cp.get_lease(lease_id).task_id, body.agent_id)
         return cp.delegate_lease(lease_id, body.agent_id, body.to_agent_id).to_dict()
 
     @app.post("/tasks/{task_id}/start")
@@ -6450,9 +6398,7 @@ def create_app(
         _ensure_payload_bounded(body.probe, "agent.attestation.recovery_probe")
         return {
             "agent_id": agent_id,
-            "attestation_key": cp.recover_agent_attestation_key(
-                agent_id, body.probe
-            ),
+            "attestation_key": cp.recover_agent_attestation_key(agent_id, body.probe),
         }
 
     @app.post("/agents/{agent_id}/report-repository-executor/approve")
@@ -6600,10 +6546,7 @@ def create_app(
         tenant_id: Optional[str] = Query(default=None),
         level: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        return [
-            role.to_dict()
-            for role in cp.roles.list_roles(tenant_id=tenant_id, level=level)
-        ]
+        return [role.to_dict() for role in cp.roles.list_roles(tenant_id=tenant_id, level=level)]
 
     @app.get("/roles/{role_id_or_slug}")
     def get_role(role_id_or_slug: str) -> Dict[str, Any]:
@@ -6721,9 +6664,7 @@ def create_app(
 
         principal.refuse_tenant_bound()
         principal.require_admin()
-        return cp.fleet_release_epochs.pre_prove_readiness(
-            epoch_id, identity_sha256
-        )
+        return cp.fleet_release_epochs.pre_prove_readiness(epoch_id, identity_sha256)
 
     @app.post("/agents/dispatch-hold/epochs/open")
     def open_fleet_release_epoch(
@@ -6764,9 +6705,7 @@ def create_app(
         for item in body.proofs:
             value = item.model_dump(exclude={"attestation_proof"})
             value["attestation_proof"] = (
-                item.attestation_proof.model_dump()
-                if item.attestation_proof is not None
-                else None
+                item.attestation_proof.model_dump() if item.attestation_proof is not None else None
             )
             proofs.append(value)
         return cp.fleet_release_epochs.prove(
@@ -7338,9 +7277,7 @@ def create_app(
         data = _data(body)
         _ensure_payload_bounded(data.get("metadata"), "crash.metadata")
         _ensure_payload_bounded(data.get("core_metadata"), "crash.core_metadata")
-        _ensure_payload_bounded(
-            data.get("resource_snapshot"), "crash.resource_snapshot"
-        )
+        _ensure_payload_bounded(data.get("resource_snapshot"), "crash.resource_snapshot")
         return cp.crashes.ingest(agent_id, data)
 
     @app.get("/crash-reports")
@@ -7605,9 +7542,7 @@ def create_app(
         is what drift detection needs.
         """
         principal.refuse_tenant_bound()
-        return cp.get_openshell_policy(policy_id, include_deleted=True).to_dict(
-            include_text=True
-        )
+        return cp.get_openshell_policy(policy_id, include_deleted=True).to_dict(include_text=True)
 
     @app.put("/openshell/policies/{policy_id}")
     def update_openshell_policy(
@@ -8336,9 +8271,7 @@ def create_app(
         role: Optional[str] = Query(default=None),
         fleet: str = Query(default="default"),
     ) -> Dict[str, Any]:
-        return cp.resolve_agent_representation(
-            agent_id, project=project, role=role, fleet=fleet
-        )
+        return cp.resolve_agent_representation(agent_id, project=project, role=role, fleet=fleet)
 
     @app.post("/communication/gateway-leases/acquire")
     def acquire_gateway_identity_lease(
@@ -8374,9 +8307,7 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [
             item.to_dict()
-            for item in cp.list_gateway_identity_leases(
-                agent_id=agent_id, active_only=active_only
-            )
+            for item in cp.list_gateway_identity_leases(agent_id=agent_id, active_only=active_only)
         ]
 
     @app.post("/communication/deliveries")
@@ -8598,9 +8529,7 @@ def create_app(
                 )
             recipients = set(body.recipient_agent_ids)
             if recipients != {body.sender_agent_id}:
-                raise AuthorizationError(
-                    "repo-update to peer agents requires admin scope"
-                )
+                raise AuthorizationError("repo-update to peer agents requires admin scope")
         return cp.publish_agentbus_repo_update(
             sender_agent_id=body.sender_agent_id,
             recipient_agent_ids=body.recipient_agent_ids,
@@ -8685,9 +8614,10 @@ def create_app(
                     # Emit the cursor even on timeout so the next watcher resumes
                     # exactly where this one stopped and cannot miss a message
                     # that lands between rounds.
-                    yield json.dumps(
-                        {"event": "timeout", "inbox_cursor": cursor}, sort_keys=True
-                    ) + "\n"
+                    yield (
+                        json.dumps({"event": "timeout", "inbox_cursor": cursor}, sort_keys=True)
+                        + "\n"
+                    )
                     break
                 await asyncio.sleep(poll_interval)
 
@@ -8728,9 +8658,7 @@ def create_app(
         (closing belongs to the sender, and is what a request/reply waits on).
         """
         principal.assert_actor(agent_id)
-        return cp.drain_agentbus_inbox(
-            agent_id, after_cursor, limit=limit, commit=commit
-        )
+        return cp.drain_agentbus_inbox(agent_id, after_cursor, limit=limit, commit=commit)
 
     @app.post("/agentbus/broadcast")
     def publish_agentbus_broadcast(
@@ -8860,9 +8788,7 @@ def create_app(
         # not nominate itself (or a collaborator) by forging payload fields.
         principal.require_admin()
         actor = principal.client_id or "admin.review-assignment"
-        return cp.request_review(
-            task_id, body.reviewer_agent_id, actor
-        ).to_dict()
+        return cp.request_review(task_id, body.reviewer_agent_id, actor).to_dict()
 
     @app.post("/reviews/{review_id}/claim")
     def claim_review(
@@ -8937,8 +8863,7 @@ def create_app(
         # tokens may not touch it.
         if not tenant_ids or principal.tenant_id not in tenant_ids:
             raise AuthorizationError(
-                "secret %s is not scoped to token tenant %s"
-                % (secret_id, principal.tenant_id)
+                "secret %s is not scoped to token tenant %s" % (secret_id, principal.tenant_id)
             )
 
     # mac-xc8u: simple per-principal sliding-window rate limit for
@@ -9126,10 +9051,7 @@ def create_app(
         vector_db: Optional[str] = Query(default=None),
         collection: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        return [
-            ref.to_dict()
-            for ref in cp.list_vector_refs(memory_id, vector_db, collection)
-        ]
+        return [ref.to_dict() for ref in cp.list_vector_refs(memory_id, vector_db, collection)]
 
     @app.post("/environments")
     def register_environment(
@@ -9262,8 +9184,7 @@ def create_app(
         enabled: Optional[bool] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         return [
-            repository.to_dict()
-            for repository in cp.list_project_repositories(enabled=enabled)
+            repository.to_dict() for repository in cp.list_project_repositories(enabled=enabled)
         ]
 
     # The legacy beads poller/repair endpoints remain removed. The repository
@@ -9285,14 +9206,30 @@ def create_app(
         task_id: Optional[str] = Query(default=None),
         subject_type: Optional[str] = Query(default=None),
         subject_id: Optional[str] = Query(default=None),
-        record_type: Optional[str] = Query(default=None, description="Exact record_type filter (e.g. nap_summary)"),
-        record_type_prefix: Optional[str] = Query(default=None, description="Prefix match on record_type (e.g. dream:)"),
-        created_by: Optional[str] = Query(default=None, description="Filter by creator (e.g. nap-consolidator, agent_rocky)"),
-        since: Optional[str] = Query(default=None, description="ISO-8601 lower bound on created_at (inclusive)"),
-        until: Optional[str] = Query(default=None, description="ISO-8601 upper bound on created_at (inclusive)"),
-        limit: Optional[int] = Query(default=None, ge=1, description="Maximum number of records to return"),
-        order: str = Query(default="asc", description="Sort order: asc (oldest first) or desc (newest first)"),
-        content_contains: Optional[str] = Query(default=None, description="Case-insensitive substring match on record content"),
+        record_type: Optional[str] = Query(
+            default=None, description="Exact record_type filter (e.g. nap_summary)"
+        ),
+        record_type_prefix: Optional[str] = Query(
+            default=None, description="Prefix match on record_type (e.g. dream:)"
+        ),
+        created_by: Optional[str] = Query(
+            default=None, description="Filter by creator (e.g. nap-consolidator, agent_rocky)"
+        ),
+        since: Optional[str] = Query(
+            default=None, description="ISO-8601 lower bound on created_at (inclusive)"
+        ),
+        until: Optional[str] = Query(
+            default=None, description="ISO-8601 upper bound on created_at (inclusive)"
+        ),
+        limit: Optional[int] = Query(
+            default=None, ge=1, description="Maximum number of records to return"
+        ),
+        order: str = Query(
+            default="asc", description="Sort order: asc (oldest first) or desc (newest first)"
+        ),
+        content_contains: Optional[str] = Query(
+            default=None, description="Case-insensitive substring match on record content"
+        ),
     ) -> List[Dict[str, Any]]:
         return [
             record.to_dict()
@@ -9316,7 +9253,9 @@ def create_app(
         return cp.remember_memory(**_data(body)).to_dict()
 
     @app.get("/memory/remembered")
-    def list_remembered_memory(project: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+    def list_remembered_memory(
+        project: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
         return cp.list_remembered_memory(project=project)
 
     @app.delete("/memory/remembered/{key}")
@@ -9351,9 +9290,7 @@ def create_app(
         limit: Optional[int] = Query(default=None, ge=1, le=10000),
         drop_medium: bool = Query(
             default=False,
-            description=(
-                "retire each medium point once its long-tier write succeeded"
-            ),
+            description=("retire each medium point once its long-tier write succeeded"),
         ),
         dry_run: bool = Query(default=False),
         principal: TokenPrincipal = Depends(_get_principal),
@@ -9515,9 +9452,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Effective allowlisted config flags for one agent (+channel scope)."""
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot read a peer agent's config flags"
-            )
+            raise AuthorizationError("agent token cannot read a peer agent's config flags")
         cp.get_agent(agent_id)
         return {
             "schema": "mac.agent_config_flags.v1",
@@ -9535,9 +9470,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Allow a bound runtime to set only its own allowlisted config flag."""
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot set a peer agent's config flags"
-            )
+            raise AuthorizationError("agent token cannot set a peer agent's config flags")
         values = _data(body)
         values.setdefault("set_by", agent_id)
         return cp.set_config_flag(agent_id, flag, **values)
@@ -9551,9 +9484,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Allow a bound runtime to clear only its own config flag override."""
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot clear a peer agent's config flags"
-            )
+            raise AuthorizationError("agent token cannot clear a peer agent's config flags")
         values = _data(body)
         values.setdefault("cleared_by", agent_id)
         cleared = cp.clear_config_flag(agent_id, flag, **values)
@@ -9572,16 +9503,12 @@ def create_app(
     ) -> Dict[str, Any]:
         """Let a bound gateway self-report only its own deploy-config doc."""
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot report a peer agent's deploy config"
-            )
+            raise AuthorizationError("agent token cannot report a peer agent's deploy config")
         values = _data(body)
         _ensure_payload_bounded(values.get("document"), "agent.deploy_config")
         values.setdefault("reported_by", agent_id)
         schema_name = values.pop("schema_name", None)
-        return cp.report_agent_deploy_config(
-            agent_id, schema=schema_name, **values
-        )
+        return cp.report_agent_deploy_config(agent_id, schema=schema_name, **values)
 
     @app.get("/agentbus/streams/{stream_id}/directive-verification")
     def verify_human_directive_route(
@@ -9601,9 +9528,7 @@ def create_app(
         """Hub-durable consumer read position (task_0d50e190): survives
         gateway/sandbox rebuilds, unlike a local state file."""
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot read a peer agent's agentbus cursor"
-            )
+            raise AuthorizationError("agent token cannot read a peer agent's agentbus cursor")
         cursor = cp.get_agentbus_consumer_cursor(agent_id, topic)
         return cursor or {"agent_id": agent_id, "topic": topic, "position": None}
 
@@ -9614,9 +9539,7 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot set a peer agent's agentbus cursor"
-            )
+            raise AuthorizationError("agent token cannot set a peer agent's agentbus cursor")
         return cp.set_agentbus_consumer_cursor(agent_id, body.topic, body.position)
 
     @app.post("/agentbus/request")
@@ -9653,18 +9576,13 @@ def create_app(
         reply_payload: Optional[Dict[str, Any]] = None
         reply_stream_id: Optional[str] = None
         while time.monotonic() < deadline:
-            for stream in cp.list_agentbus_streams(
-                agent_id=body.sender_agent_id, limit=100
-            ):
+            for stream in cp.list_agentbus_streams(agent_id=body.sender_agent_id, limit=100):
                 if (
                     stream.recipient_agent_id == body.sender_agent_id
                     and stream.topic == body.reply_topic
-                    and str((stream.headers or {}).get("correlation_id") or "")
-                    == correlation_id
+                    and str((stream.headers or {}).get("correlation_id") or "") == correlation_id
                 ):
-                    chunks = cp.read_agentbus_chunks(
-                        body.sender_agent_id, stream.id, limit=100
-                    )
+                    chunks = cp.read_agentbus_chunks(body.sender_agent_id, stream.id, limit=100)
                     if chunks:
                         candidate = chunks[-1].payload
                         if isinstance(candidate, dict):
@@ -9718,9 +9636,7 @@ def create_app(
             issued_by=issued_by,
             task_id=body.task_id,
         )
-        wait_seconds = min(
-            max(0.0, float(body.wait_seconds)), AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS
-        )
+        wait_seconds = min(max(0.0, float(body.wait_seconds)), AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS)
         if wait_seconds <= 0:
             return {**published, "status": "queued"}
         correlation_id = published["correlation_id"]
@@ -9743,8 +9659,7 @@ def create_app(
                 if (
                     stream.recipient_agent_id == persona_id
                     and stream.topic in reply_topics
-                    and str((stream.headers or {}).get("correlation_id") or "")
-                    == correlation_id
+                    and str((stream.headers or {}).get("correlation_id") or "") == correlation_id
                 ):
                     chunks = cp.read_agentbus_chunks(persona_id, stream.id, limit=100)
                     if chunks and isinstance(chunks[-1].payload, dict):
@@ -9754,11 +9669,7 @@ def create_app(
                             if stream.topic == EXECUTOR_ACK_TOPIC
                             else DELIVERY_KIND_PERSONA
                         )
-                        status = (
-                            "acknowledged"
-                            if stream.topic == EXECUTOR_ACK_TOPIC
-                            else "replied"
-                        )
+                        status = "acknowledged" if stream.topic == EXECUTOR_ACK_TOPIC else "replied"
                         return {
                             **published,
                             "status": status,
@@ -9790,9 +9701,7 @@ def create_app(
         agent is gone — then the agent is tombstoned with history preserved.
         """
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot deregister a peer agent"
-            )
+            raise AuthorizationError("agent token cannot deregister a peer agent")
         values = _data(body)
         values.setdefault("actor", agent_id)
         return cp.deregister_agent(agent_id, **values)
@@ -9809,9 +9718,7 @@ def create_app(
         and hub metadata across hosts (task_dfdf6ea9).
         """
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot read a peer agent's effective config"
-            )
+            raise AuthorizationError("agent token cannot read a peer agent's effective config")
         return cp.effective_agent_config(agent_id)
 
     @app.post("/v1/agents/{agent_id}/memory")
@@ -9835,15 +9742,11 @@ def create_app(
         ``fleet_learning``, ``dream`` — the decay-protected prefixes).
         """
         if principal.agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError(
-                "agent token cannot write a peer agent's memory"
-            )
+            raise AuthorizationError("agent token cannot write a peer agent's memory")
         cp.get_agent(agent_id)
         record_type = (body.record_type or "agent_learning").strip()
         if record_type != "agent_learning" and not record_type.startswith("agent_learning:"):
-            raise ValidationError(
-                "record_type must be 'agent_learning' or 'agent_learning:<kind>'"
-            )
+            raise ValidationError("record_type must be 'agent_learning' or 'agent_learning:<kind>'")
         content = (body.content or "").strip()
         if not content:
             raise ValidationError("memory content must not be empty")

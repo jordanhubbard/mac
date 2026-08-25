@@ -17,6 +17,7 @@ JsonDict = Dict[str, Any]
 
 DEFAULT_CONFIG_PATH = "/etc/mac/config.yaml"
 
+
 @dataclass
 class RoleConfig:
     slug: str
@@ -31,6 +32,7 @@ class RoleConfig:
     system_prompt: str = ""
     level: str = "ic"
     required_capabilities: List[str] = field(default_factory=list)
+
 
 @dataclass
 class ProjectConfig:
@@ -73,15 +75,17 @@ class MacConfigFile:
         out: List[JsonDict] = []
         for slug, role in self.roles.items():
             required = role.required_capabilities or list(role.capabilities)
-            out.append({
-                "slug": slug,
-                "name": role.name or slug,
-                "description": role.description or "auto-registered role %s" % slug,
-                "system_prompt": role.system_prompt or "You are a %s." % (role.name or slug),
-                "level": role.level or "ic",
-                "default_capabilities": list(role.capabilities),
-                "required_capabilities": required,
-            })
+            out.append(
+                {
+                    "slug": slug,
+                    "name": role.name or slug,
+                    "description": role.description or "auto-registered role %s" % slug,
+                    "system_prompt": role.system_prompt or "You are a %s." % (role.name or slug),
+                    "level": role.level or "ic",
+                    "default_capabilities": list(role.capabilities),
+                    "required_capabilities": required,
+                }
+            )
         return out
 
     def role_agents(self) -> List[JsonDict]:
@@ -106,7 +110,9 @@ class MacConfigFile:
         out: List[str] = []
         for slug, role in self.roles.items():
             caps = {str(c).lower() for c in role.capabilities}
-            if "review" in caps or any(c.endswith("-review") or c.endswith("-reviewer") for c in caps):
+            if "review" in caps or any(
+                c.endswith("-review") or c.endswith("-reviewer") for c in caps
+            ):
                 out.append(slug)
         return out
 
@@ -138,43 +144,35 @@ class MacConfigFile:
         return {slug: role.executor for slug, role in self.roles.items()}
 
     def role_attestation_key_secrets(self) -> Dict[str, Dict[str, str]]:
-        return {
-            slug: dict(role.attestation_key_secret)
-            for slug, role in self.roles.items()
-        }
+        return {slug: dict(role.attestation_key_secret) for slug, role in self.roles.items()}
+
 
 def _require_str(obj: JsonDict, key: str, *, path: str) -> str:
     """Return ``obj[key]`` as a non-empty stripped string or SystemExit."""
     val = obj.get(key)
     if not isinstance(val, str) or not val.strip():
-        raise SystemExit(
-            "%s requires a non-empty string at %s" % (path, key)
-        )
+        raise SystemExit("%s requires a non-empty string at %s" % (path, key))
     return val.strip()
+
 
 def _require_dict(obj: JsonDict, key: str, *, path: str) -> JsonDict:
     val = obj.get(key)
     if not isinstance(val, dict) or not val:
-        raise SystemExit(
-            "%s requires a non-empty object at %s" % (path, key)
-        )
+        raise SystemExit("%s requires a non-empty object at %s" % (path, key))
     return dict(val)
+
 
 def _require_list(obj: JsonDict, key: str, *, path: str) -> List[Any]:
     val = obj.get(key)
     if not isinstance(val, list):
-        raise SystemExit(
-            "%s requires a list at %s (got %s)"
-            % (path, key, type(val).__name__)
-        )
+        raise SystemExit("%s requires a list at %s (got %s)" % (path, key, type(val).__name__))
     return list(val)
+
 
 def _parse_role(slug: str, raw: JsonDict) -> RoleConfig:
     """Validate + coerce one ``roles.<slug>`` block."""
     if not isinstance(raw, dict):
-        raise SystemExit(
-            "roles.%s must be a mapping (got %s)" % (slug, type(raw).__name__)
-        )
+        raise SystemExit("roles.%s must be a mapping (got %s)" % (slug, type(raw).__name__))
     path = "roles.%s" % slug
     capabilities = _require_list(raw, "capabilities", path=path)
     if not capabilities:
@@ -204,6 +202,7 @@ def _parse_role(slug: str, raw: JsonDict) -> RoleConfig:
         required_capabilities=[str(c) for c in required_caps_raw],
     )
 
+
 def _parse_notifier_channel(i: int, raw: JsonDict) -> NotifierChannelConfig:
     """Validate + coerce one ``notifier_channels[i]`` block."""
     if not isinstance(raw, dict):
@@ -225,9 +224,7 @@ def _parse_notifier_channel(i: int, raw: JsonDict) -> NotifierChannelConfig:
         )
     target_raw = raw.get("target") or {}
     if not isinstance(target_raw, dict):
-        raise SystemExit(
-            "%s.target must be a mapping (got %s)" % (path, type(target_raw).__name__)
-        )
+        raise SystemExit("%s.target must be a mapping (got %s)" % (path, type(target_raw).__name__))
     metadata_raw = raw.get("metadata") or {}
     if not isinstance(metadata_raw, dict):
         raise SystemExit(
@@ -250,25 +247,18 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
         with open(resolved, "r", encoding="utf-8") as fh:
             raw_text = fh.read()
     except FileNotFoundError as exc:
-        raise SystemExit(
-            "MAC_CONFIG_FILE %s is missing: %s" % (resolved, exc)
-        ) from exc
+        raise SystemExit("MAC_CONFIG_FILE %s is missing: %s" % (resolved, exc)) from exc
     except OSError as exc:
-        raise SystemExit(
-            "MAC_CONFIG_FILE %s could not be read: %s" % (resolved, exc)
-        ) from exc
+        raise SystemExit("MAC_CONFIG_FILE %s could not be read: %s" % (resolved, exc)) from exc
 
     try:
         data = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
-        raise SystemExit(
-            "MAC_CONFIG_FILE %s is not valid YAML: %s" % (resolved, exc)
-        ) from exc
+        raise SystemExit("MAC_CONFIG_FILE %s is not valid YAML: %s" % (resolved, exc)) from exc
 
     if not isinstance(data, dict):
         raise SystemExit(
-            "MAC_CONFIG_FILE %s must decode to a mapping (got %s)"
-            % (resolved, type(data).__name__)
+            "MAC_CONFIG_FILE %s must decode to a mapping (got %s)" % (resolved, type(data).__name__)
         )
 
     mac_url = _require_str(data, "mac_url", path="mac_url").rstrip("/")
@@ -277,30 +267,20 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
     machine = dispatcher_raw.get("machine")
     agent = dispatcher_raw.get("agent")
     if not isinstance(machine, dict) or not isinstance(agent, dict):
-        raise SystemExit(
-            "dispatcher requires {machine, agent} mappings"
-        )
+        raise SystemExit("dispatcher requires {machine, agent} mappings")
 
     role_machines_raw = data.get("role_machines") or []
     if not isinstance(role_machines_raw, list):
-        raise SystemExit(
-            "role_machines must be a list (got %s)"
-            % type(role_machines_raw).__name__
-        )
+        raise SystemExit("role_machines must be a list (got %s)" % type(role_machines_raw).__name__)
     role_machines: List[JsonDict] = []
     for i, m in enumerate(role_machines_raw):
         if not isinstance(m, dict):
-            raise SystemExit(
-                "role_machines[%d] must be a mapping (got %s)"
-                % (i, type(m).__name__)
-            )
+            raise SystemExit("role_machines[%d] must be a mapping (got %s)" % (i, type(m).__name__))
         role_machines.append(dict(m))
 
     roles_raw = data.get("roles") or {}
     if not isinstance(roles_raw, dict):
-        raise SystemExit(
-            "roles must be a mapping (got %s)" % type(roles_raw).__name__
-        )
+        raise SystemExit("roles must be a mapping (got %s)" % type(roles_raw).__name__)
     roles: Dict[str, RoleConfig] = {}
     for slug, role_raw in roles_raw.items():
         roles[str(slug)] = _parse_role(str(slug), role_raw)
@@ -308,35 +288,31 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
     aliases_raw = data.get("capability_role_aliases") or {}
     if not isinstance(aliases_raw, dict):
         raise SystemExit(
-            "capability_role_aliases must be a mapping (got %s)"
-            % type(aliases_raw).__name__
+            "capability_role_aliases must be a mapping (got %s)" % type(aliases_raw).__name__
         )
     aliases = {str(k): str(v) for k, v in aliases_raw.items()}
 
     projects_raw = data.get("projects") or []
     if not isinstance(projects_raw, list):
-        raise SystemExit(
-            "projects must be a list (got %s)" % type(projects_raw).__name__
-        )
+        raise SystemExit("projects must be a list (got %s)" % type(projects_raw).__name__)
     projects: List[ProjectConfig] = []
     for i, p in enumerate(projects_raw):
         if not isinstance(p, dict):
-            raise SystemExit(
-                "projects[%d] must be a mapping (got %s)" % (i, type(p).__name__)
-            )
+            raise SystemExit("projects[%d] must be a mapping (got %s)" % (i, type(p).__name__))
         name = _require_str(p, "name", path="projects[%d]" % i)
         meta_raw = p.get("metadata") or {}
         if not isinstance(meta_raw, dict):
             raise SystemExit(
-                "projects[%d].metadata must be a mapping (got %s)"
-                % (i, type(meta_raw).__name__)
+                "projects[%d].metadata must be a mapping (got %s)" % (i, type(meta_raw).__name__)
             )
-        projects.append(ProjectConfig(
-            name=name,
-            description=str(p.get("description") or ""),
-            status=str(p.get("status") or "active"),
-            metadata=dict(meta_raw),
-        ))
+        projects.append(
+            ProjectConfig(
+                name=name,
+                description=str(p.get("description") or ""),
+                status=str(p.get("status") or "active"),
+                metadata=dict(meta_raw),
+            )
+        )
 
     attestation_raw = data.get("attestation_keys")
     if attestation_raw is not None and not isinstance(attestation_raw, dict):
@@ -346,12 +322,8 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
         )
     attestation: Optional[JsonDict] = None
     if attestation_raw is not None:
-        att_namespace = _require_str(
-            attestation_raw, "namespace", path="attestation_keys"
-        )
-        att_secret = _require_str(
-            attestation_raw, "secret_name", path="attestation_keys"
-        )
+        att_namespace = _require_str(attestation_raw, "namespace", path="attestation_keys")
+        att_secret = _require_str(attestation_raw, "secret_name", path="attestation_keys")
         attestation = {
             "namespace": att_namespace,
             "secret_name": att_secret,
@@ -362,8 +334,7 @@ def load_config_file(path: Optional[str] = None) -> MacConfigFile:
     if fleet_raw is not None:
         if not isinstance(fleet_raw, dict):
             raise SystemExit(
-                "fleet must be a mapping or omitted (got %s)"
-                % type(fleet_raw).__name__
+                "fleet must be a mapping or omitted (got %s)" % type(fleet_raw).__name__
             )
         fleet_name = _require_str(fleet_raw, "name", path="fleet")
         fleet = {

@@ -307,9 +307,7 @@ def test_sanity_wrapper_recovery_still_reruns_the_full_contract_gate(tmp_path: P
 
     assert result["status"] == "complete"
     assert calls == [(_CONTRACT_COMMAND, worktree)]
-    published = json.loads(
-        (workspace / "recovery-evidence.json").read_text(encoding="utf-8")
-    )
+    published = json.loads((workspace / "recovery-evidence.json").read_text(encoding="utf-8"))
     assert published["preserved_test_evidence"]["command"].startswith(_SANITY_COMMAND)
 
 

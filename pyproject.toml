@@ -147,8 +147,8 @@ packages = ["src/mac"]
 # --- Shared lint / format configuration --------------------------------------
 # One Ruff configuration is the single source of truth for linting and
 # formatting across the mac control plane. It is wired to `make lint`
-# (check-only, the CI/pre-push contract) and `make lint-fix` (apply safe
-# autofixes locally) via scripts/run-lint.sh, so every developer and every host
+# (diagnose: ruff check + ruff format --check) and `make lint-fix` (apply
+# those same tools) via scripts/run-lint.sh, so every developer and every host
 # runs byte-identical rules instead of ad-hoc per-directory settings.
 [tool.ruff]
 # Match the project's minimum supported interpreter (ADR 0001).
@@ -171,5 +171,5 @@ select = ["E9", "F63", "F7", "F82"]
 
 [tool.ruff.format]
 # Match Ruff's Black-compatible defaults so `ruff format` is deterministic and
-# reviewable; `make lint` only checks formatting, `make lint-fix` applies it.
+# reviewable. `make lint` reports format drift; `make lint-fix` applies it.
 docstring-code-format = false

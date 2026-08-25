@@ -42,7 +42,13 @@ def _create_table_names(text: str) -> set:
 
 
 _SQL_NON_COLUMN_LEADERS = {
-    "primary", "foreign", "unique", "check", "constraint", "exclude", "like",
+    "primary",
+    "foreign",
+    "unique",
+    "check",
+    "constraint",
+    "exclude",
+    "like",
 }
 
 
@@ -304,19 +310,15 @@ def test_live_schema_creates_exactly_the_manifest_tables(postgres_store) -> None
     live = {r["table_name"] for r in rows}
     expected = set(EXPECTED_TABLES)
     assert expected - live == set(), (
-        "declared in schema.sql but absent after initialize(): %s"
-        % sorted(expected - live)
+        "declared in schema.sql but absent after initialize(): %s" % sorted(expected - live)
     )
     assert live - expected == set(), (
-        "created by initialize() but not in EXPECTED_TABLES: %s"
-        % sorted(live - expected)
+        "created by initialize() but not in EXPECTED_TABLES: %s" % sorted(live - expected)
     )
 
 
 @pytest.mark.postgres
-def test_live_schema_has_every_column_the_ddl_declares(
-    postgres_store, schema_sql: str
-) -> None:
+def test_live_schema_has_every_column_the_ddl_declares(postgres_store, schema_sql: str) -> None:
     """Every column named in a CREATE TABLE block must exist on the live table.
 
     This is the shape of the defect that reached production: `reviews.findings`
@@ -347,9 +349,7 @@ def test_live_schema_has_every_column_the_ddl_declares(
         for column in _declared_column_names(body):
             if column not in live[table]:
                 missing.append("%s.%s" % (table, column))
-    assert not missing, "declared in schema.sql but not on the live table: %s" % sorted(
-        missing
-    )
+    assert not missing, "declared in schema.sql but not on the live table: %s" % sorted(missing)
 
 
 def test_json_extract_function_defined(schema_sql: str) -> None:
@@ -379,9 +379,7 @@ def test_schema_enumerates_exactly_the_task_states(schema_sql: str) -> None:
 
     expected = {state.value for state in TaskState}
 
-    pg_enum = re.search(
-        r"IF NEW\.state NOT IN \((.*?)\) THEN", schema_sql, re.DOTALL
-    )
+    pg_enum = re.search(r"IF NEW\.state NOT IN \((.*?)\) THEN", schema_sql, re.DOTALL)
     assert pg_enum, "postgres task-state trigger not found"
     assert set(re.findall(r"'([a-z_]+)'", pg_enum.group(1))) == expected
 
@@ -488,8 +486,7 @@ def test_additive_columns_are_present_in_schema(
         ("tasks", "idempotency_key"),
     ):
         assert re.search(
-            r"ALTER TABLE %s\s+ADD COLUMN IF NOT EXISTS\s+%s"
-            % (table, column),
+            r"ALTER TABLE %s\s+ADD COLUMN IF NOT EXISTS\s+%s" % (table, column),
             schema_sql,
         ), "%s.%s lacks a Postgres additive migration" % (table, column)
     assert "idx_tasks_idempotency_key" in schema_sql

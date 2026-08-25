@@ -65,9 +65,7 @@ def test_an_unowned_agent_stays_shared(cp):
 def test_an_owner_may_publish_their_agent(cp, alice):
     machine = _machine(cp)
 
-    agent = cp.register_agent(
-        machine.id, "lent", owner_human_id="alice", visibility="shared"
-    )
+    agent = cp.register_agent(machine.id, "lent", owner_human_id="alice", visibility="shared")
 
     assert agent.visibility == "shared" and agent.owner_human_id == alice.id
 
@@ -96,9 +94,7 @@ def test_an_invalid_visibility_is_refused(cp, alice):
     machine = _machine(cp)
 
     with pytest.raises(ValidationError):
-        cp.register_agent(
-            machine.id, "a", owner_human_id="alice", visibility="semi-public"
-        )
+        cp.register_agent(machine.id, "a", owner_human_id="alice", visibility="semi-public")
 
 
 def test_the_owner_is_stored_as_a_stable_id(cp, alice):

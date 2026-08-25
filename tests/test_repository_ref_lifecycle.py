@@ -27,9 +27,7 @@ def test_cancelled_task_defaults_to_preserved_repository_refs():
     assert lifecycle["eligible_after"] is None
     detail = cp.task_detail(task.id)
     data = detail.to_dict() if hasattr(detail, "to_dict") else detail
-    transition = next(
-        item for item in data["history"] if item["event_type"] == "task.transitioned"
-    )
+    transition = next(item for item in data["history"] if item["event_type"] == "task.transitioned")
     assert transition["detail"]["disposition"] == "preserve"
 
 
@@ -146,8 +144,7 @@ def test_cancelled_task_disposition_can_be_backfilled_without_reopening():
     raw_detail = cp.task_detail(task.id)
     detail = raw_detail.to_dict() if hasattr(raw_detail, "to_dict") else raw_detail
     assert any(
-        item["event_type"] == "repository_ref.lifecycle_updated"
-        for item in detail["history"]
+        item["event_type"] == "repository_ref.lifecycle_updated" for item in detail["history"]
     )
 
 

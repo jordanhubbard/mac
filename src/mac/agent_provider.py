@@ -174,7 +174,11 @@ def resolve_agent_provider(env: Optional[Mapping[str, str]] = None) -> ProviderD
     # alone does not (it only augments an override that some other field opened).
     override_active = bool(model or provider or base_url)
     requested_provider = provider or ("custom" if override_active else "")
-    source = "mac-gateway-explicit" if api_key else ("mac-gateway" if override_active else "hermes-default")
+    source = (
+        "mac-gateway-explicit"
+        if api_key
+        else ("mac-gateway" if override_active else "hermes-default")
+    )
 
     won_by: Dict[str, str] = {}
     rationale: List[str] = []
@@ -195,9 +199,7 @@ def resolve_agent_provider(env: Optional[Mapping[str, str]] = None) -> ProviderD
         rationale.append("api_key present from %s (value redacted)" % api_key_key)
 
     if not override_active:
-        rationale.append(
-            "no mac override configured; Hermes default provider resolution applies"
-        )
+        rationale.append("no mac override configured; Hermes default provider resolution applies")
     elif not provider_key:
         rationale.append("provider defaulted to 'custom' because an override field was set")
 

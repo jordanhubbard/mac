@@ -29,7 +29,12 @@ from mac.deploy_env import (
     normalize_worker_capabilities,
 )
 from mac.fleet_deploy import cleanup_path_strings, parse_ssh_target
-from mac.providers import ROUTER_PROVIDERS, provider_key_env, spoke_scrub_env_vars, upstream_provider_env_vars
+from mac.providers import (
+    ROUTER_PROVIDERS,
+    provider_key_env,
+    spoke_scrub_env_vars,
+    upstream_provider_env_vars,
+)
 import yaml
 
 
@@ -171,7 +176,7 @@ def test_parse_env_text_skips_malformed_quoted_lines():
     # stored as a half-parsed value, and must not poison the good lines around it.
     text = (
         "GOOD=ok\n"
-        'BROKEN="unterminated\n'   # unbalanced double quote
+        'BROKEN="unterminated\n'  # unbalanced double quote
         "ALSO_BROKEN=it's mine\n"  # unbalanced single quote
         "NEXT=fine\n"
     )
@@ -262,7 +267,10 @@ def test_deploy_env_import_is_dependency_light():
         "assert ControlPlane.__name__ == 'ControlPlane'\n"
         "print('OK')\n"
     )
-    env = {**os.environ, "PYTHONPATH": str(ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", ""),
+    }
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
@@ -270,9 +278,7 @@ def test_deploy_env_import_is_dependency_light():
 
 def test_supervisord_resource_health_uses_long_running_loop():
     script = deploy_script_text()
-    watchdog = (ROOT / "deploy" / "agent-resource-health.sh").read_text(
-        encoding="utf-8"
-    )
+    watchdog = (ROOT / "deploy" / "agent-resource-health.sh").read_text(encoding="utf-8")
 
     assert "command=$MAC_HOME/bin/agent-resource-health --loop" in script
     assert 'MAC_RESOURCE_HEALTH_INTERVAL_SECONDS="300"' in script
@@ -303,15 +309,15 @@ def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     assert '--mac-env "$ENV_FILE"' in script
     # Legacy one-shot deploys still repair durable Hermes state in-order. Typed
     # phase 2 consumes the prerequisite receipt and does not rewrite it.
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     legacy = installer.split(
         'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  initialize_hermes_home', 1
-    )[1].split("\nelse\n  log \"typed phase 2 retained", 1)[0]
-    assert legacy.index("apply_hermes_gateway_runtime_shim") < legacy.index(
-        "sync_hermes_chat_config"
-    ) < legacy.index("install_fleet_skills")
+    )[1].split('\nelse\n  log "typed phase 2 retained', 1)[0]
+    assert (
+        legacy.index("apply_hermes_gateway_runtime_shim")
+        < legacy.index("sync_hermes_chat_config")
+        < legacy.index("install_fleet_skills")
+    )
 
 
 def test_fleet_deploy_exports_python_bin_to_remote():
@@ -323,13 +329,15 @@ def test_fleet_deploy_exports_python_bin_to_remote():
         (ln for ln in script.splitlines() if ln.startswith("export AGENT FLEET_NAME")),
         "",
     )
-    assert "PYTHON_BIN" in export_line.split(), "PYTHON_BIN must be exported to the remote deploy env"
+    assert "PYTHON_BIN" in export_line.split(), (
+        "PYTHON_BIN must be exported to the remote deploy env"
+    )
     # Export alone is insufficient: the remote payload (fleet-node-install.sh) must
     # also ASSIGN it — `resolve_python_bin` only runs in the local driver.
     payload = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-    assert re.search(r"^\s*PYTHON_BIN=", payload, re.MULTILINE), \
+    assert re.search(r"^\s*PYTHON_BIN=", payload, re.MULTILINE), (
         'remote payload must ASSIGN PYTHON_BIN (e.g. PYTHON_BIN="$PY"), not just export it'
-
+    )
 
 
 def test_sample_fleet_config_is_generic_and_externalized():
@@ -366,7 +374,10 @@ def test_sample_fleet_config_supports_home_channel_and_model_diversity():
     assert cfg["defaults"]["hermes"]["gateway_provider"] == "custom"
     assert cfg["defaults"]["network"]["provider"] == "none"
     assert cfg["defaults"]["network"]["headscale"]["manage"] is False
-    assert cfg["defaults"]["network"]["headscale"]["preauth_key_env"] == "MAC_DEPLOY_HEADSCALE_PREAUTHKEY"
+    assert (
+        cfg["defaults"]["network"]["headscale"]["preauth_key_env"]
+        == "MAC_DEPLOY_HEADSCALE_PREAUTHKEY"
+    )
 
     models = [
         agent.get("hermes", {}).get("gateway_model")
@@ -385,7 +396,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
         "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
     )
 
-    assert "worker_capabilities_field(worker.get(\"capabilities\"))" in script
+    assert 'worker_capabilities_field(worker.get("capabilities"))' in script
     assert f'DEFAULT_WORKER_CAPABILITIES = "{expected}"' in script
     assert f'WORKER_CAPABILITIES="${{MAC_DEPLOY_WORKER_CAPABILITIES:-{expected}}}"' in script
     assert DEFAULT_WORKER_CAPABILITIES == expected
@@ -435,9 +446,7 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
     assert "post-install attestation key proof did not verify" in script
     # loop-01: the reviewer prompt that asks for a signed review_verdict moved
     # into the extracted mac.task_executor module.
-    executor_prompt = (ROOT / "src" / "mac" / "executor_prompt.py").read_text(
-        encoding="utf-8"
-    )
+    executor_prompt = (ROOT / "src" / "mac" / "executor_prompt.py").read_text(encoding="utf-8")
     assert "evidence_type=review_verdict" in executor_prompt
 
 
@@ -490,12 +499,8 @@ def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
     assert 'mac_api_json GET "/agents" |' not in agent_id_for_drain
 
 
-
-
 def test_fleet_deploy_verifies_onboarded_github_cli_before_phase2_mutation():
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     function = _deploy_function(installer, "install_github_cli", "install_codegraph_cli")
     pre_mutation = installer.split(
         'if [ "$NODE_ACTION" = arm-phase2 ] || [ "$NODE_ACTION" = apply-phase2 ]; then',
@@ -514,13 +519,9 @@ def test_fleet_deploy_verifies_onboarded_github_cli_before_phase2_mutation():
 
 
 def test_node_installer_resolves_onboarded_tools_from_one_trusted_path():
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     assert 'ONBOARDED_COMMAND_PATH="$MAC_HOME/bin:/opt/homebrew/bin:' in installer
-    resolver = _deploy_function(
-        installer, "onboarded_command_path", "install_fleet_registry"
-    )
+    resolver = _deploy_function(installer, "onboarded_command_path", "install_fleet_registry")
     assert 'PATH="$ONBOARDED_COMMAND_PATH" command -v "$name"' in resolver
     github = _deploy_function(
         installer, "configure_github_https_credentials", "wait_for_required_services"
@@ -529,9 +530,7 @@ def test_node_installer_resolves_onboarded_tools_from_one_trusted_path():
 
 
 def test_fleet_deploy_never_forces_an_unverified_github_review_key():
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     function = installer.split("install_github_review_key() {", 1)[1].split(
         "\n}\n\nconfigure_github_https_credentials", 1
     )[0]
@@ -592,15 +591,16 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
 
 def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
     driver = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
 
     assert "copying reviewed native-tool checksum contract" in driver
-    assert 'reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"' in driver
+    assert (
+        'reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"'
+        in driver
+    )
     assert "MAC_DEPLOY_REVIEWED_TOOL_ASSETS=" in driver
-    assert r'_mac_tool_assets=\$2' in driver
-    assert r'\$_mac_tool_assets' in driver
+    assert r"_mac_tool_assets=\$2" in driver
+    assert r"\$_mac_tool_assets" in driver
     assert 'REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-' in installer
     assert '. "$REVIEWED_TOOL_ASSETS"' in installer
     assert 'MAC_REVIEWED_UV_VERSION="0.8.22"' in (
@@ -628,7 +628,7 @@ def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
                 'HOME="$PWD/home"',
                 'LOG_DIR="$PWD/logs"',
                 'bundle="$MAC_HOME/lib/codegraph/versions/v1.5.0"',
-                "mkdir -p \"$MAC_HOME/bin\" \"$bundle/bin\" \"$HOME\" \"$LOG_DIR\"",
+                'mkdir -p "$MAC_HOME/bin" "$bundle/bin" "$HOME" "$LOG_DIR"',
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
                 'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
@@ -663,9 +663,9 @@ def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "verified onboarded CodeGraph v1.5.0" in (
-        tmp_path / "logs" / "log.txt"
-    ).read_text(encoding="utf-8")
+    assert "verified onboarded CodeGraph v1.5.0" in (tmp_path / "logs" / "log.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_codegraph_phase2_verifier_fails_when_onboarding_is_missing(tmp_path):
@@ -679,7 +679,7 @@ def test_codegraph_phase2_verifier_fails_when_onboarding_is_missing(tmp_path):
                 'MAC_HOME="$PWD/mac-home"',
                 'HOME="$PWD/home"',
                 'LOG_DIR="$PWD/logs"',
-                "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
+                'mkdir -p "$MAC_HOME" "$HOME" "$LOG_DIR"',
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
                 'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
@@ -742,9 +742,7 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
         ("codegraph", "Darwin", "arm64", "codegraph-darwin-arm64.tar.gz"),
     ],
 )
-def test_reviewed_tool_asset_matrix_covers_fleet_platforms(
-    tool, os_name, architecture, filename
-):
+def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, architecture, filename):
     assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
     result = subprocess.run(
         [
@@ -774,9 +772,7 @@ def test_reviewed_tool_asset_matrix_covers_fleet_platforms(
     ("tool", "os_name", "architecture"),
     [("uv", "Plan9", "x86_64"), ("codegraph", "Linux", "riscv64")],
 )
-def test_reviewed_tool_asset_unsupported_platform_fails_closed(
-    tool, os_name, architecture
-):
+def test_reviewed_tool_asset_unsupported_platform_fails_closed(tool, os_name, architecture):
     assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
     result = subprocess.run(
         [
@@ -803,7 +799,9 @@ def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_p
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     codegraph = bin_dir / "codegraph"
-    codegraph.write_text("#!/bin/sh\necho codegraph init should not run >&2\nexit 99\n", encoding="utf-8")
+    codegraph.write_text(
+        "#!/bin/sh\necho codegraph init should not run >&2\nexit 99\n", encoding="utf-8"
+    )
     codegraph.chmod(0o755)
     source_dir = tmp_path / "archive-source"
     source_dir.mkdir()
@@ -816,10 +814,14 @@ def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_p
                 'MAC_HOME="$PWD/mac-home"',
                 'HOME="$PWD/home"',
                 'LOG_DIR="$PWD/logs"',
-                "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
+                'mkdir -p "$MAC_HOME" "$HOME" "$LOG_DIR"',
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
-                _deploy_function(script, "ensure_codegraph_git_exclude", "initialize_codegraph_repository"),
-                _deploy_function(script, "initialize_codegraph_repository", "normalize_hermes_redaction_env"),
+                _deploy_function(
+                    script, "ensure_codegraph_git_exclude", "initialize_codegraph_repository"
+                ),
+                _deploy_function(
+                    script, "initialize_codegraph_repository", "normalize_hermes_redaction_env"
+                ),
                 f"initialize_codegraph_repository {source_dir}",
                 "",
             ]
@@ -837,9 +839,7 @@ def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_p
     )
 
     assert result.returncode == 0, result.stderr
-    assert "not a git worktree" in (tmp_path / "logs" / "log.txt").read_text(
-        encoding="utf-8"
-    )
+    assert "not a git worktree" in (tmp_path / "logs" / "log.txt").read_text(encoding="utf-8")
 
 
 def test_fleet_deploy_does_not_print_worker_token_in_systemd_status():
@@ -892,9 +892,7 @@ def test_agent_service_wrapper_raises_file_descriptor_limit_without_hermes_wrapp
     # install_mac_agent_wrapper to install_mac_hermes_task_executor, spanning
     # ~97k characters of unrelated shell, so any function defined in between
     # would trip a containment assertion by mere proximity.
-    match = re.search(
-        r"^install_mac_agent_wrapper\(\) \{.*?^\}$", script, re.M | re.S
-    )
+    match = re.search(r"^install_mac_agent_wrapper\(\) \{.*?^\}$", script, re.M | re.S)
     assert match, "install_mac_agent_wrapper not found"
     agent_wrapper = match.group(0)
 
@@ -907,9 +905,7 @@ def test_agent_service_wrapper_raises_file_descriptor_limit_without_hermes_wrapp
 
 def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     script = deploy_script_text()
-    qdrant_installer = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(
-        encoding="utf-8"
-    )
+    qdrant_installer = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(encoding="utf-8")
     firecrawl_installer = (ROOT / "deploy" / "install-firecrawl-gateway.sh").read_text(
         encoding="utf-8"
     )
@@ -941,12 +937,15 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     assert "ensure_hermes_identity_memory_continuity()" in script
     assert generated_env["SLACK_ALLOWED_USERS"] == "*"
     assert generated_env["SLACK_STRICT_MENTION"] == "true"
-    assert "mac.hermes.runtime_context.v1" in (ROOT / "src" / "mac" / "hermes_runtime.py").read_text(
-        encoding="utf-8"
-    )
+    assert "mac.hermes.runtime_context.v1" in (
+        ROOT / "src" / "mac" / "hermes_runtime.py"
+    ).read_text(encoding="utf-8")
     assert generated_env["MAC_HERMES_INSTANCE_ID"] == "hermes_spoke-a"
     assert generated_env["MAC_WORKER_HERMES_INSTANCE_ID"] == generated_env["MAC_HERMES_INSTANCE_ID"]
-    assert 'common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")' in script
+    assert (
+        'common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")'
+        in script
+    )
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "install_or_validate_shared_services" in script
     assert "mac.hermes.memory_topology.v1" in script
@@ -970,9 +969,9 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     # macOS branch can override it; assert the fleet-scoped result either way.
     assert 'ENV_CONF_DIR="/etc/${FLEET_NAME}"' in qdrant_installer
     assert 'ENV_DEST="$ENV_CONF_DIR/qdrant.env"' in qdrant_installer
-    assert 's|/etc/mac/qdrant.env|${env_dest_sed}|g' in qdrant_installer
-    assert 'com.${FLEET_NAME}.qdrant' in qdrant_installer
-    assert '[program:${FLEET_NAME}-qdrant]' in qdrant_installer
+    assert "s|/etc/mac/qdrant.env|${env_dest_sed}|g" in qdrant_installer
+    assert "com.${FLEET_NAME}.qdrant" in qdrant_installer
+    assert "[program:${FLEET_NAME}-qdrant]" in qdrant_installer
     assert cfg["defaults"]["supervisor"] == "auto"
     assert cfg["shared_services_manager_agent"] == "hub"
     assert cfg["defaults"]["qdrant"]["install"] == "auto"
@@ -1021,7 +1020,9 @@ def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities(tm
     generated_env = build_mac_env({}, deploy_env_config(tmp_path), environ={})
 
     assert "firecrawl = merge_dicts" in script
-    assert 'os.environ.get("MAC_DEPLOY_FIRECRAWL_URL") or text_field(firecrawl.get("url"))' in script
+    assert (
+        'os.environ.get("MAC_DEPLOY_FIRECRAWL_URL") or text_field(firecrawl.get("url"))' in script
+    )
     assert (
         'os.environ.get("MAC_DEPLOY_FIRECRAWL_INSTALL") '
         'or text_field(firecrawl.get("install") or "auto")'
@@ -1065,33 +1066,31 @@ def test_supervisord_pure_worker_has_no_gateway_program_or_restart():
         "install_darwin_service() {", 1
     )[0]
 
-    assert '  none)\n    # A pure worker must not retain or start any chat-gateway program.' in supervisor
+    assert (
+        "  none)\n    # A pure worker must not retain or start any chat-gateway program."
+        in supervisor
+    )
     assert '    active_gateway_program=""\n    gateway_program=""' in supervisor
     assert (
         '  if [ -n "$active_gateway_program" ]; then\n'
         '    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then\n'
-        '      prepare_openclaw_gateway\n'
-        '    fi\n'
+        "      prepare_openclaw_gateway\n"
+        "    fi\n"
         '    start_supervisord_program "$active_gateway_program"'
     ) in supervisor
     assert (
-        '    log "gateway_impl=none: pure worker; skipping gateway program '
-        'install/restart"'
+        '    log "gateway_impl=none: pure worker; skipping gateway program install/restart"'
     ) in supervisor
     assert 'run_supervisorctl status "$AGENT_SUPERVISORD_PROG"' in supervisor
 
 
 def test_fleet_context_systemd_unit_does_not_require_a_local_control_plane():
-    unit = (ROOT / "deploy" / "systemd" / "mac-fleet-context.service").read_text(
-        encoding="utf-8"
-    )
+    unit = (ROOT / "deploy" / "systemd" / "mac-fleet-context.service").read_text(encoding="utf-8")
     unit_section = unit.split("[Service]", 1)[0]
 
     assert "After=network-online.target" in unit_section
     assert "Wants=network-online.target" in unit_section
-    assert not re.search(
-        r"^(?:After|Requires)=.*\bmac\.service\b", unit_section, re.MULTILINE
-    )
+    assert not re.search(r"^(?:After|Requires)=.*\bmac\.service\b", unit_section, re.MULTILINE)
 
 
 def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
@@ -1188,12 +1187,8 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert "from mac.task_executor import main" in script
     assert "raise SystemExit(main())" in script
     assert "mac-task-executor" in script
-    executor_entrypoint = (ROOT / "src" / "mac" / "task_executor.py").read_text(
-        encoding="utf-8"
-    )
-    executor_sandbox = (ROOT / "src" / "mac" / "executor_sandbox.py").read_text(
-        encoding="utf-8"
-    )
+    executor_entrypoint = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    executor_sandbox = (ROOT / "src" / "mac" / "executor_sandbox.py").read_text(encoding="utf-8")
     executor_finalizer = (ROOT / "src" / "mac" / "executor_finalizer.py").read_text(
         encoding="utf-8"
     )
@@ -1208,9 +1203,7 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert '"evidence_type": "operator_result",' in executor_finalizer
     assert '"name": "hermes_chat_query"' not in executor_finalizer
     # telemetry path + memory feed (deployment gets smarter over time)
-    executor_memory = (ROOT / "src" / "mac" / "executor_memory.py").read_text(
-        encoding="utf-8"
-    )
+    executor_memory = (ROOT / "src" / "mac" / "executor_memory.py").read_text(encoding="utf-8")
     assert 'name": "executor.%s"' in executor_memory or '"executor.%s"' in executor_memory
     assert "def recall_deployment_lessons(" in executor_memory
     assert "def record_deployment_learning(" in executor_memory
@@ -1242,7 +1235,10 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
         assert "proceeding degraded (first deploy" in validator
     # Legacy compatibility still transports the flag. Typed cohorts do not use
     # it: exact prerequisite receipts must pass before the hub epoch opens.
-    assert 'add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"' in script
+    assert (
+        'add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"'
+        in script
+    )
     typed = script.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
     arm_worker = script.split("typed_phase2_arm_worker() {", 1)[1].split(
         "\n}\n\ntyped_phase2_apply_worker", 1
@@ -1264,9 +1260,7 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
 
 
 def test_retain_forward_policy_reaches_each_supervisor_failure_domain():
-    controller = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(
-        encoding="utf-8"
-    )
+    controller = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     node = deploy_script_text()
     exit_handler = node.split("deployment_exit_handler() {", 1)[1].split(
         "\n}\ntrap 'deployment_exit_handler", 1
@@ -1329,8 +1323,11 @@ _ROUTER_ENV = {
 
 def test_env_writer_hub_runs_router_locally(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="rocky", hub_agent="rocky",
-        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="rocky",
+        hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789",
+        hub_token="HUBTOK",
         extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": "nvapi-SECRET"},
     )
     assert out.get("MAC_ROUTER_BACKEND") == "inproc"
@@ -1346,8 +1343,11 @@ def test_env_writer_hub_runs_router_locally(tmp_path):
 
 def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="natasha", hub_agent="rocky",
-        hub_url="http://hub.example:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="natasha",
+        hub_agent="rocky",
+        hub_url="http://hub.example:8789",
+        hub_token="HUBTOK",
         # provider key passed UNBLANKED to prove the env-writer never persists it
         # for a spoke (defense-in-depth on top of deploy_host's hub-only gating).
         extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": "nvapi-SECRET"},
@@ -1370,8 +1370,11 @@ def test_env_writer_spoke_routes_via_hub_with_no_provider_keys(tmp_path):
 
 def test_env_writer_hub_standalone_router_runs_on_its_own_port(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="rocky", hub_agent="rocky",
-        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="rocky",
+        hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789",
+        hub_token="HUBTOK",
         extra_env={
             **_ROUTER_ENV,
             "MAC_DEPLOY_ROUTER_BACKEND": "standalone",
@@ -1391,8 +1394,11 @@ def test_env_writer_hub_standalone_router_runs_on_its_own_port(tmp_path):
 
 def test_env_writer_spoke_router_url_override_points_wing_at_replica(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="jordanh-worker1", hub_agent="rocky",
-        hub_url="http://hub.example:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="jordanh-worker1",
+        hub_agent="rocky",
+        hub_url="http://hub.example:8789",
+        hub_token="HUBTOK",
         extra_env={
             **_ROUTER_ENV,
             "MAC_DEPLOY_ROUTER_URL": "http://router.gke-wing.internal:8790/v1",
@@ -1413,8 +1419,11 @@ def test_env_writer_spoke_router_url_override_points_wing_at_replica(tmp_path):
 
 def test_env_writer_hub_postgres_dsn_replaces_sqlite_authority(tmp_path):
     out = _run_env_writer(
-        tmp_path, agent="rocky", hub_agent="rocky",
-        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="rocky",
+        hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789",
+        hub_token="HUBTOK",
         extra_env={
             **_ROUTER_ENV,
             "MAC_DEPLOY_DATABASE_URL": "postgresql://mac:pw@db.internal:5432/mac",
@@ -1428,8 +1437,11 @@ def test_env_writer_hub_postgres_dsn_replaces_sqlite_authority(tmp_path):
 def test_env_writer_hub_rejects_non_postgres_dsn(tmp_path):
     with pytest.raises(ValueError, match="postgres"):
         _run_env_writer(
-            tmp_path, agent="rocky", hub_agent="rocky",
-            hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+            tmp_path,
+            agent="rocky",
+            hub_agent="rocky",
+            hub_url="http://127.0.0.1:8789",
+            hub_token="HUBTOK",
             extra_env={
                 **_ROUTER_ENV,
                 "MAC_DEPLOY_DATABASE_URL": "mysql://nope",
@@ -1439,8 +1451,11 @@ def test_env_writer_hub_rejects_non_postgres_dsn(tmp_path):
 
 def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
     hub = _run_env_writer(
-        tmp_path, agent="rocky", hub_agent="rocky",
-        hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="rocky",
+        hub_agent="rocky",
+        hub_url="http://127.0.0.1:8789",
+        hub_token="HUBTOK",
         extra_env=_ROUTER_ENV,
     )
     assert hub.get("MAC_EVIDENCE_BLOB_DIR", "").endswith("evidence-blobs")
@@ -1453,8 +1468,11 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
     assert hub.get("MAC_JUDGEMENT_ENABLED") == "1"
     assert hub.get("MAC_REVIEW_SEMANTIC_REVIEWER") == "0"
     spoke = _run_env_writer(
-        tmp_path, agent="natasha", hub_agent="rocky",
-        hub_url="http://hub.example:8789", hub_token="HUBTOK",
+        tmp_path,
+        agent="natasha",
+        hub_agent="rocky",
+        hub_url="http://hub.example:8789",
+        hub_token="HUBTOK",
         extra_env=_ROUTER_ENV,
     )
     assert "MAC_EVIDENCE_BLOB_DIR" not in spoke
@@ -1467,8 +1485,11 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
 def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):
     with pytest.raises(ValueError, match="hub-facing token distinct"):
         _run_env_writer(
-            tmp_path, agent="natasha", hub_agent="rocky",
-            hub_url="http://hub.example:8789", hub_token="",
+            tmp_path,
+            agent="natasha",
+            hub_agent="rocky",
+            hub_url="http://hub.example:8789",
+            hub_token="",
             extra_env={**_ROUTER_ENV, "NVIDIA_API_KEY": ""},
         )
 
@@ -1476,8 +1497,11 @@ def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):
 def test_env_writer_hub_without_providers_fails_fast(tmp_path):
     with pytest.raises(ValueError, match="MAC_DEPLOY_ROUTER_PROVIDERS"):
         _run_env_writer(
-            tmp_path, agent="rocky", hub_agent="rocky",
-            hub_url="http://127.0.0.1:8789", hub_token="HUBTOK",
+            tmp_path,
+            agent="rocky",
+            hub_agent="rocky",
+            hub_url="http://127.0.0.1:8789",
+            hub_token="HUBTOK",
             extra_env={
                 "MAC_DEPLOY_ROUTER_BACKEND": "inproc",
                 "MAC_DEPLOY_ROUTER_PROVIDERS": "",
@@ -1492,7 +1516,7 @@ def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
     # The env-file load now goes through load_env_file_with_caller_precedence so
     # caller-supplied variables always win over file defaults.
     call = 'load_env_file_with_caller_precedence "$DEPLOY_ENV_FILE"'
-    assert 'load_env_file_with_caller_precedence()' in script, (
+    assert "load_env_file_with_caller_precedence()" in script, (
         "load_env_file_with_caller_precedence function must be defined in deploy-mac-fleet.sh"
     )
     assert call in script, (
@@ -1537,8 +1561,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
         "MAC_DEPLOY_GH_TOKEN": "caller-github-secret-must-never-be-printed",
     }
     assertions = "\n".join(
-        '[ "${%s}" = %s ]' % (name, shlex.quote(value))
-        for name, value in expected.items()
+        '[ "${%s}" = %s ]' % (name, shlex.quote(value)) for name, value in expected.items()
     )
     result = subprocess.run(
         [
@@ -1606,9 +1629,7 @@ def test_empty_caller_successor_hold_clears_env_file_default(tmp_path):
 
 def test_fleet_deploy_reuses_gh_keyring_token_with_explicit_precedence(tmp_path):
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    match = re.search(
-        r"resolve_github_deploy_token\(\) \{.*?\n\}", script, re.DOTALL
-    )
+    match = re.search(r"resolve_github_deploy_token\(\) \{.*?\n\}", script, re.DOTALL)
     assert match is not None
     function = match.group(0)
 
@@ -1626,7 +1647,7 @@ def test_fleet_deploy_reuses_gh_keyring_token_with_explicit_precedence(tmp_path)
     command = (
         function
         + "\nresolve_github_deploy_token\n"
-        + "printf '%s|%s' \"$MAC_DEPLOY_GH_TOKEN\" \"$GITHUB_DEPLOY_CREDENTIAL_SOURCE\""
+        + 'printf \'%s|%s\' "$MAC_DEPLOY_GH_TOKEN" "$GITHUB_DEPLOY_CREDENTIAL_SOURCE"'
     )
     explicit = subprocess.run(
         ["bash", "-c", command], env=env, capture_output=True, text=True, check=False
@@ -1656,9 +1677,7 @@ def test_router_topology_preflight_runs_before_remote_mutation():
 
 def test_agent_service_reads_worker_token_from_environment_not_process_argv():
     script = deploy_script_text()
-    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split("\n}\n", 1)[0]
 
     assert ': "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"' in wrapper
     assert '--token "$MAC_WORKER_TOKEN"' not in wrapper
@@ -1666,6 +1685,7 @@ def test_agent_service_reads_worker_token_from_environment_not_process_argv():
 
 def _extract_bash_fn(name):
     import re as _re
+
     script = deploy_script_text()
     m = _re.search(r"\n%s\(\) \{\n(.*?)\n\}\n" % _re.escape(name), script, _re.S)
     assert m, "function %s not found" % name
@@ -1674,6 +1694,7 @@ def _extract_bash_fn(name):
 
 def _run_scrub(tmp_path, *, agent, hub_agent, hermes_env_text):
     import subprocess as _sp
+
     (tmp_path / ".hermes").mkdir(parents=True, exist_ok=True)
     henv = tmp_path / ".hermes" / ".env"
     henv.write_text(hermes_env_text, encoding="utf-8")
@@ -1681,9 +1702,12 @@ def _run_scrub(tmp_path, *, agent, hub_agent, hermes_env_text):
     script = (
         "set -euo pipefail\n"
         "log() { :; }\n"
-        'DEPLOY_TS=test; DEPLOY_LOG=/dev/null\n'
-        + ('PY=%r\n' % sys.executable)
-        + ('HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n' % (str(tmp_path), agent, hub_agent))
+        "DEPLOY_TS=test; DEPLOY_LOG=/dev/null\n"
+        + ("PY=%r\n" % sys.executable)
+        + (
+            "HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
+            % (str(tmp_path), agent, hub_agent)
+        )
         + fn
         + "scrub_spoke_provider_secrets\n"
     )
@@ -1716,12 +1740,23 @@ def test_scrub_spoke_provider_secrets_clean_invariant(tmp_path):
     # upstream provider keys, but messaging tokens + gateway creds preserved.
     keys = _run_scrub(tmp_path, agent="natasha", hub_agent="rocky", hermes_env_text=_HERMES_ENV)
     # upstream provider keys stripped
-    for gone in ("OPENAI_API_KEY", "NVIDIA_API_KEY", "FAL_KEY", "ANTHROPIC_API_KEY",
-                 "PERPLEXITY_API_KEY", "FIRECRAWL_API_KEY"):
+    for gone in (
+        "OPENAI_API_KEY",
+        "NVIDIA_API_KEY",
+        "FAL_KEY",
+        "ANTHROPIC_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "FIRECRAWL_API_KEY",
+    ):
         assert gone not in keys, "%s should be scrubbed from a spoke gateway env" % gone
     # messaging connections + gateway creds + config preserved
-    for kept in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "MATTERMOST_BOT_TOKEN",
-                 "MESSAGING_CWD", "MAC_HERMES_GATEWAY_API_KEY"):
+    for kept in (
+        "SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN",
+        "MATTERMOST_BOT_TOKEN",
+        "MESSAGING_CWD",
+        "MAC_HERMES_GATEWAY_API_KEY",
+    ):
         assert kept in keys, "%s must be preserved" % kept
 
 
@@ -1746,7 +1781,9 @@ def test_deploy_host_blanks_provider_keys_for_spokes():
     script = deploy_script_text()
     deploy_host = script.split("deploy_host() {", 1)[1].split("\nmain() {", 1)[0]
     assert 'router_backend_lc="$(printf' in deploy_host
-    condition = 'if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then'
+    condition = (
+        'if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then'
+    )
     assert condition in deploy_host
     gate = deploy_host.split(condition, 1)[1].split("fi", 1)[0]
     for var in ("nvidia_api_key", "openai_api_key", "anthropic_api_key", "perplexity_api_key"):
@@ -1763,7 +1800,10 @@ def test_hub_escrows_router_provider_keys_into_vault():
         "\nsync_messaging_config() {", 1
     )[0]
     # HUB-only, and only when a provider references a vault secret
-    assert '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ] || return 0' in fn
+    assert (
+        '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ] || return 0'
+        in fn
+    )
     assert 'case "${MAC_DEPLOY_ROUTER_PROVIDERS:-}" in *key=secret:*)' in fn
     # idempotent: skip names already in the vault
     assert "already in vault; skip" in fn
@@ -1779,8 +1819,16 @@ def test_hub_escrows_router_provider_keys_into_vault():
     # also escrows the modality-proxy keys (image/audio/video) so the hub's
     # /v1/{genai,audio,video} proxies can resolve them. The IMAGE key is DISTINCT
     # from the chat key (NVIDIA_IMAGE_API_KEY, falling back to NVIDIA_API_KEY).
-    assert '"MAC_ROUTER_IMAGE_KEY"' in fn and '"MAC_ROUTER_AUDIO_KEY"' in fn and '"MAC_ROUTER_VIDEO_KEY"' in fn
-    assert 'NVIDIA_IMAGE_API_KEY' in fn and 'NVIDIA_AUDIO_API_KEY' in fn and 'NVIDIA_VIDEO_API_KEY' in fn
+    assert (
+        '"MAC_ROUTER_IMAGE_KEY"' in fn
+        and '"MAC_ROUTER_AUDIO_KEY"' in fn
+        and '"MAC_ROUTER_VIDEO_KEY"' in fn
+    )
+    assert (
+        "NVIDIA_IMAGE_API_KEY" in fn
+        and "NVIDIA_AUDIO_API_KEY" in fn
+        and "NVIDIA_VIDEO_API_KEY" in fn
+    )
     assert 'post_secret(_name, _value, ["router-upstream", _modality])' in fn
     # failure is loud but non-fatal (chat won't route until the key is escrowed)
     assert "router provider key escrow failed" in fn
@@ -1823,21 +1871,19 @@ def test_omniverse_gpu_skills_installed_only_on_gpu_nodes():
         assert expected in skills, f"{expected} missing from vendored skills asset"
 
     script = deploy_script_text()
-    fn = script.split("install_omniverse_gpu_skills() {", 1)[1].split("\ninitialize_hermes_home() {", 1)[0]
+    fn = script.split("install_omniverse_gpu_skills() {", 1)[1].split(
+        "\ninitialize_hermes_home() {", 1
+    )[0]
     assert "nvidia-smi -L" in fn  # GPU gate
-    assert 'deploy/skills/omniverse-skills.tar.gz' in fn
+    assert "deploy/skills/omniverse-skills.tar.gz" in fn
     assert '"$HOME/.hermes/skills"' in fn
     # Invoked only by the onboarding/legacy preparation branch. Typed phase 2
     # retains the exact receipt-proved skills state.
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     legacy = installer.split(
         'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  initialize_hermes_home', 1
-    )[1].split("\nelse\n  log \"typed phase 2 retained", 1)[0]
-    assert legacy.index("install_fleet_skills") < legacy.index(
-        "install_omniverse_gpu_skills"
-    )
+    )[1].split('\nelse\n  log "typed phase 2 retained', 1)[0]
+    assert legacy.index("install_fleet_skills") < legacy.index("install_omniverse_gpu_skills")
 
 
 def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
@@ -1845,7 +1891,9 @@ def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
     # hub key, so the tunnel program must keep retrying instead of going FATAL after
     # the default 3 attempts.
     script = deploy_script_text()
-    fn = script.split("install_reverse_tunnel_on_hub() {", 1)[1].split("\nuses_direct_mesh_hub", 1)[0]
+    fn = script.split("install_reverse_tunnel_on_hub() {", 1)[1].split("\nuses_direct_mesh_hub", 1)[
+        0
+    ]
     assert "startretries=1000" in fn
 
 
@@ -1866,7 +1914,10 @@ def test_setup_fleet_build_router_provider_spec():
     assert [p.id for p in ROUTER_PROVIDERS] == list(mod._KNOWN_PROVIDERS)
     assert mod.router_secret_name("nvidia") == "nvidia-upstream"
     assert build({}) == ""
-    assert build({"OPENAI_API_KEY": "sk"}) == "openai=https://api.openai.com/v1,1,key=secret:openai-upstream"
+    assert (
+        build({"OPENAI_API_KEY": "sk"})
+        == "openai=https://api.openai.com/v1,1,key=secret:openai-upstream"
+    )
     # nvidia is preferred (priority 0); a custom base url is honored.
     assert build(
         {"NVIDIA_API_KEY": "k", "OPENAI_API_KEY": "sk", "OPENAI_BASE_URL": "https://x/v1"}
@@ -1877,9 +1928,7 @@ def test_setup_fleet_build_router_provider_spec():
     # The spec round-trips through the router's own parser.
     from mac.provider_router import providers_from_env
 
-    providers = providers_from_env(
-        {"MAC_ROUTER_PROVIDERS": build({"NVIDIA_API_KEY": "k"})}
-    )
+    providers = providers_from_env({"MAC_ROUTER_PROVIDERS": build({"NVIDIA_API_KEY": "k"})})
     assert [p.name for p in providers] == ["nvidia"]
     assert providers[0].api_key_env == "secret:nvidia-upstream"
 
@@ -1896,9 +1945,7 @@ def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
 
 def test_agent_startup_self_test_rejects_unsafe_openshell_create_args():
     script = deploy_script_text()
-    selftest = script.split('cat > "$selftest" <<', 1)[1].split(
-        'cat > "$executor" <<', 1
-    )[0]
+    selftest = script.split('cat > "$selftest" <<', 1)[1].split('cat > "$executor" <<', 1)[0]
 
     assert '"openshell_executor_config": False' in script
     assert "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments" in script
@@ -1981,28 +2028,35 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
         environ={},
     )
 
-    assert "network_provider = text_field(network.get(\"provider\"))" in script
+    assert 'network_provider = text_field(network.get("provider"))' in script
     assert "network.provider must be tailscale, headscale, or none" in script
     assert "Headscale provider requires network.headscale.login_server" in script
     assert "HEADSCALE_HEALTH_URL" in script
     assert "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE" in script
     assert config_from_legacy_args(legacy_args, {}).control.network_provider == "tailscale"
     assert config_from_legacy_args(legacy_args, {}).services.webdav_enabled == "1"
-    assert config_from_legacy_args(legacy_args, {}).services.webdav_url == "http://principal.example:8790/artifacts/"
     assert (
-        config_from_legacy_args(legacy_args, {"MAC_DEPLOY_NETWORK_PROVIDER": "none"})
-        .control.network_provider
+        config_from_legacy_args(legacy_args, {}).services.webdav_url
+        == "http://principal.example:8790/artifacts/"
+    )
+    assert (
+        config_from_legacy_args(
+            legacy_args, {"MAC_DEPLOY_NETWORK_PROVIDER": "none"}
+        ).control.network_provider
         == "none"
     )
     assert (
-        config_from_legacy_args(legacy_args, {"NETWORK_PROVIDER": "headscale"})
-        .control.network_provider
+        config_from_legacy_args(
+            legacy_args, {"NETWORK_PROVIDER": "headscale"}
+        ).control.network_provider
         == "headscale"
     )
     assert hub_env["MAC_HUB_URL"] == "http://127.0.0.1:8789"
     assert mesh_spoke_env["MAC_HUB_URL"] == "http://mesh-hub.example:8789"
     assert tunnel_spoke_env["MAC_HUB_URL"] == "http://127.0.0.1:18789"
-    assert '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]' in script
+    assert (
+        '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]' in script
+    )
     assert "uses_direct_mesh_hub()" in script
     assert 'uses_direct_mesh_hub "$network_provider" "$hub_url"' in script
     assert "skipping reverse-tunnel wait" in script
@@ -2010,7 +2064,7 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     assert "provider: none" in sample
     assert "provider: headscale" in sample
     assert "webdav:" in sample
-    assert "public_path: \"/artifacts/\"" in sample
+    assert 'public_path: "/artifacts/"' in sample
 
 
 def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
@@ -2101,12 +2155,14 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     # reads them on the operator side). Cross-check both ends so the names can't
     # silently diverge again.
     assert "MAC_ROUTER_BACKEND=inproc" in env
-    assert "MAC_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=secret:openai-upstream" in env
+    assert (
+        "MAC_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=secret:openai-upstream" in env
+    )
     assert "OPENAI_API_KEY=sk-test" in env
     assert "MAC_DEPLOY_ROUTER_BACKEND=" not in env and "MAC_DEPLOY_ROUTER_PROVIDERS=" not in env
     deploy = deploy_script_text()
-    assert 'fleet_scoped_env MAC_ROUTER_BACKEND' in deploy
-    assert 'fleet_scoped_env MAC_ROUTER_PROVIDERS' in deploy
+    assert "fleet_scoped_env MAC_ROUTER_BACKEND" in deploy
+    assert "fleet_scoped_env MAC_ROUTER_PROVIDERS" in deploy
     assert "MAC_API_TOKEN" not in env
 
 
@@ -2408,21 +2464,24 @@ def test_setup_entrypoints_are_python_driven_and_make_exposed():
     deploy = deploy_script_text()
 
     assert script.startswith("#!/bin/sh")
-    assert "exec \"$PYTHON\" \"$ROOT/setup.py\" \"$@\"" in script
+    assert 'exec "$PYTHON" "$ROOT/setup.py" "$@"' in script
     assert "BASH_SOURCE" not in script
     assert "read -r -d" not in script
-    assert "DEPLOY_FLEET = ROOT / \"deploy\" / \"deploy-mac-fleet.sh\"" in setup_py
-    assert "DEFAULT_ENV_FILE = Path.home() / \".mac\" / \".env\"" in setup_py
+    assert 'DEPLOY_FLEET = ROOT / "deploy" / "deploy-mac-fleet.sh"' in setup_py
+    assert 'DEFAULT_ENV_FILE = Path.home() / ".mac" / ".env"' in setup_py
     assert "def parse_setup_args" in setup_py
     assert "def configure_then_deploy" in setup_py
     assert "def deploy_env" in setup_py
-    assert 'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python' in makefile
+    assert (
+        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python'
+        in makefile
+    )
     assert "sys.version_info >= (3, 11)" in makefile
     assert "setup: require-python" in makefile
     assert "deploy: require-python" in makefile
     assert "--(hub|new-hub)" in makefile
     assert "resolve_python_bin" in deploy
-    assert "\"$PYTHON_BIN\" \"${setup_args[@]}\"" in deploy
+    assert '"$PYTHON_BIN" "${setup_args[@]}"' in deploy
     assert "--fleet-name)" in deploy
     assert "setup_args+=(--fleet-name" in deploy
     assert "setup_args+=(--control-port" in deploy
@@ -2499,25 +2558,26 @@ def _run_reconcile_remote_deploy(
     clear_repo_update_blocker=False,
 ):
     script = deploy_script_text()
-    function_text = "reconcile_remote_deploy() {" + script.split(
-        "reconcile_remote_deploy() {", 1
-    )[1].split("\nset_remote_mac_agent_service() {", 1)[0]
-    fence_function = "remote_deployment_fenced_exec() {" + script.split(
-        "remote_deployment_fenced_exec() {", 1
-    )[1].split("\n}\n\nstream_file_after_remote_fence() {", 1)[0] + "\n}"
+    function_text = (
+        "reconcile_remote_deploy() {"
+        + script.split("reconcile_remote_deploy() {", 1)[1].split(
+            "\nset_remote_mac_agent_service() {", 1
+        )[0]
+    )
+    fence_function = (
+        "remote_deployment_fenced_exec() {"
+        + script.split("remote_deployment_fenced_exec() {", 1)[1].split(
+            "\n}\n\nstream_file_after_remote_fence() {", 1
+        )[0]
+        + "\n}"
+    )
     mac_home = tmp_path / ".mac"
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
     lock_dir = mac_home / "deploy-controller.lock"
     lock_dir.mkdir()
     deployment_nonce = "reconcile-test-nonce"
     (lock_dir / "owner.json").write_text(
-        json.dumps(
-            {
-                "deployment_id": (
-                    f"{deploy_rev}:rocky:{deploy_ts}:{deployment_nonce}"
-                )
-            }
-        ),
+        json.dumps({"deployment_id": (f"{deploy_rev}:rocky:{deploy_ts}:{deployment_nonce}")}),
         encoding="utf-8",
     )
     snippet = f"""
@@ -2573,17 +2633,13 @@ def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_pa
     mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
     log_dir = mac_home / "logs"
     manifest = json.loads(
-        (log_dir / f"deploy-manifest-{deploy_ts}-post.json").read_text(
-            encoding="utf-8"
-        )
+        (log_dir / f"deploy-manifest-{deploy_ts}-post.json").read_text(encoding="utf-8")
     )
     (log_dir / "deploy-manifest-latest.json").write_text(
         json.dumps({**manifest, "stage": "pre"}), encoding="utf-8"
     )
 
-    result = _run_reconcile_remote_deploy(
-        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
-    )
+    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev)
 
     assert result.returncode != 0
     assert "latest manifest stage is 'pre'" in result.stderr
@@ -2598,9 +2654,7 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
     # matching durable manifests instead of probing 127.0.0.1:8789.
     (mac_home / "mac.env").write_text("MAC_PORT=9\n", encoding="utf-8")
 
-    result = _run_reconcile_remote_deploy(
-        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
-    )
+    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev)
 
     assert result.returncode == 0, result.stderr
     assert "remote reconciliation succeeded for rocky" in result.stdout
@@ -2615,9 +2669,7 @@ def test_remote_deploy_reconciliation_rejects_media_readiness_divergence(tmp_pat
     latest["media_runtime_readiness"]["resources"].reverse()
     latest_path.write_text(json.dumps(latest), encoding="utf-8")
 
-    result = _run_reconcile_remote_deploy(
-        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
-    )
+    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev)
 
     assert result.returncode != 0
     assert "manifest media runtime readiness diverged" in result.stderr
@@ -2730,15 +2782,9 @@ def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
     (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
-    (log_dir / "deploy-manifest-latest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
-    (log_dir / f"deploy-{deploy_ts}.log").write_text(
-        "deploy complete\n", encoding="utf-8"
-    )
-    (mac_home / "deployed-source-revision").write_text(
-        deploy_rev + "\n", encoding="utf-8"
-    )
+    (log_dir / "deploy-manifest-latest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
+    (mac_home / "deployed-source-revision").write_text(deploy_rev + "\n", encoding="utf-8")
     return mac_home
 
 
@@ -2814,13 +2860,11 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     # on the same pinned SSH session. Reconciliation still runs after either a
     # zero or non-zero remote install exit.
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    deploy_host = deploy.split("deploy_host() {", 1)[1].split(
-        "\n}\n\nhub_target()", 1
-    )[0]
+    deploy_host = deploy.split("deploy_host() {", 1)[1].split("\n}\n\nhub_target()", 1)[0]
     ssh_section = deploy_host.split("local remote_cmd", 1)[1]
-    deploy_host_tail = ssh_section.split('ssh -A -o BatchMode=yes', 1)[1]
+    deploy_host_tail = ssh_section.split("ssh -A -o BatchMode=yes", 1)[1]
 
-    assert "printf '%s\\n' \"${remote_secret_env[@]}\" > \"$local_secret_payload\"" in ssh_section
+    assert 'printf \'%s\\n\' "${remote_secret_env[@]}" > "$local_secret_payload"' in ssh_section
     assert 'stream_file_after_remote_fence "$local_secret_payload"' in ssh_section
     assert '"MAC_DEPLOY_FENCE_READY:${deploy_generation}"' in ssh_section
     assert "ssh -A -o BatchMode=yes" in ssh_section
@@ -2830,7 +2874,10 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
         '"$openshell_disable_requested"; then' in deploy_host_tail
     )
     assert "remote deploy returned success but post manifest validation failed" in deploy_host_tail
-    assert 'echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"' in deploy_host_tail
+    assert (
+        'echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"'
+        in deploy_host_tail
+    )
 
 
 def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
@@ -2893,20 +2940,18 @@ def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"' in deploy
     assert (
-        'add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED '
-        '"$github_credentials_required"'
+        'add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"'
     ) in deploy
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL_ENABLED "$openshell_enabled"' in deploy
     assert (
-        'add_remote_env MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS '
-        '"$effective_openshell_args"'
+        'add_remote_env MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS "$effective_openshell_args"'
     ) in deploy
     assert (
-        'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE '
+        "add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE "
         '"${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"'
     ) in deploy
     assert (
-        'add_remote_env MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD '
+        "add_remote_env MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD "
         '"${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"'
     ) in deploy
     assert "run_openshell_bootstrap" not in deploy
@@ -2952,10 +2997,7 @@ def test_gateway_log_classifier_accepts_exact_recovered_rocky_startup(tmp_path):
             [
                 "Error:   × sandbox 'mac-openclaw-rocky' already exists",
                 "Error:   × sandbox 'mac-openclaw-rocky' already exists",
-                (
-                    "\x1b[1m\x1b[36mCreated sandbox:\x1b[39m\x1b[0m "
-                    "\x1b[1mmac-openclaw-rocky\x1b[0m"
-                ),
+                ("\x1b[1m\x1b[36mCreated sandbox:\x1b[39m\x1b[0m \x1b[1mmac-openclaw-rocky\x1b[0m"),
                 "2026-07-18T01:02:03.456Z [gateway] ready",
                 *deferred_block,
                 *deferred_block,
@@ -3011,9 +3053,7 @@ def test_gateway_log_classifier_requires_later_create_and_readiness(tmp_path):
     assert result.returncode == 1
     assert summary["actionable_count"] == 1
     assert {item["name"] for item in summary["classes"]} == {"traceback"}
-    assert next(item for item in summary["classes"] if item["name"] == "traceback")[
-        "count"
-    ] == 2
+    assert next(item for item in summary["classes"] if item["name"] == "traceback")["count"] == 2
 
 
 def test_gateway_log_classifier_only_blanks_positionally_recovered_collision(tmp_path):
@@ -3084,20 +3124,23 @@ def test_darwin_openclaw_launchd_bootstrap_starts_gateway_once():
     )[0]
 
     assert "<key>RunAtLoad</key><true/>" in installer
-    assert 'mac_launchd_bootstrap_job \\\n    "gui/$uid" "$plist" "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"' in installer
+    assert (
+        'mac_launchd_bootstrap_job \\\n    "gui/$uid" "$plist" "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"'
+        in installer
+    )
     assert 'launchctl kickstart -k "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"' not in installer
 
 
 def test_launchd_worker_wrapper_marks_agent_offline_on_controlled_shutdown():
     script = deploy_script_text()
-    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
-        'cat > "$executor" <<', 1
-    )[0]
+    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split('cat > "$executor" <<', 1)[
+        0
+    ]
 
     assert "mark_worker_offline()" in wrapper
     assert "stop_worker_wrapper()" in wrapper
     assert "stable_agent_id()" in wrapper
-    assert 'trap stop_worker_wrapper TERM INT' in wrapper
+    assert "trap stop_worker_wrapper TERM INT" in wrapper
     assert "trap - TERM INT" in wrapper
     assert "exit 143" in wrapper
     assert '{"status":"offline","health_status":"degraded"}' in wrapper
@@ -3129,16 +3172,13 @@ def test_worker_wrapper_latches_stop_during_startup_self_test(tmp_path):
     agent_started = tmp_path / "agent-started"
     selftest = bin_dir / "mac-agent-startup-self-test"
     selftest.write_text(
-        "#!/usr/bin/env bash\n"
-        f": > {shlex.quote(str(ready))}\n"
-        "sleep 30\n",
+        f"#!/usr/bin/env bash\n: > {shlex.quote(str(ready))}\nsleep 30\n",
         encoding="utf-8",
     )
     selftest.chmod(0o700)
     agent = venv_bin / "mac-agent"
     agent.write_text(
-        "#!/usr/bin/env bash\n"
-        f": > {shlex.quote(str(agent_started))}\n",
+        f"#!/usr/bin/env bash\n: > {shlex.quote(str(agent_started))}\n",
         encoding="utf-8",
     )
     agent.chmod(0o700)
@@ -3174,12 +3214,10 @@ def test_worker_wrapper_latches_stop_during_startup_self_test(tmp_path):
 def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     script = deploy_script_text()
     generated_env = build_mac_env({}, deploy_env_config(tmp_path), environ={})
-    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
-        'cat > "$executor" <<', 1
-    )[0]
-    selftest = script.split('cat > "$selftest" <<', 1)[1].split(
-        'cat > "$executor" <<', 1
-    )[0]
+    wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split('cat > "$executor" <<', 1)[
+        0
+    ]
+    selftest = script.split('cat > "$selftest" <<', 1)[1].split('cat > "$executor" <<', 1)[0]
 
     assert generated_env["MAC_AGENT_STARTUP_SELF_TEST"] == "1"
     assert '"$HOME/.mac/bin/mac-agent-startup-self-test"' in wrapper
@@ -3187,7 +3225,7 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     assert "MAC_REQUIRE_QDRANT_MEMORY must be true" in selftest
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
-    assert 'str(openclaw_agent_bin)' in selftest
+    assert "str(openclaw_agent_bin)" in selftest
     assert '"MAC_OPENCLAW_STARTUP_OK" in raw_agent_output' in selftest
     assert '"exclusive_service_owner"' in selftest
     assert 'runtime["confinement"].get("provider") != "openshell"' in selftest
@@ -3215,9 +3253,7 @@ def test_openshell_bootstrap_needs_no_macos_docker_path():
     implies a dependency the platform no longer has.
     """
 
-    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
 
     assert "/Applications/Docker.app" not in script
     darwin_entry = script.index('if [ "$(uname -s)" = "Darwin" ]; then')
@@ -3236,9 +3272,7 @@ def test_executor_prompt_includes_repository_runtime_contract():
     assert "bootstrap.command" in script
     assert "test.command" in script
     assert ".mac-executor-policy.txt" in script
-    policy = (ROOT / "src" / "mac" / "executor-policy.txt").read_text(
-        encoding="utf-8"
-    )
+    policy = (ROOT / "src" / "mac" / "executor-policy.txt").read_text(encoding="utf-8")
     assert policy.startswith("mac.executor_policy.v1")
     assert "Write $MAC_TASK_WORKSPACE/mac-evidence.json" in policy
 
@@ -3297,10 +3331,7 @@ def test_deploy_archive_is_pinned_to_captured_revision():
     and can otherwise label different source as the captured revision.
     """
     script = deploy_script_text()
-    assert (
-        'git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" "$GIT_REV"'
-        in script
-    )
+    assert 'git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" "$GIT_REV"' in script
     assert 'git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" HEAD' not in script
 
 
@@ -3340,8 +3371,8 @@ def test_build_mac_env_passes_through_local_gen_advertisement(tmp_path):
 
 def test_deploy_passes_local_gen_env_to_agent():
     script = deploy_script_text()
-    assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_MODEL' in script
-    assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_BASE_URL' in script
+    assert "add_remote_env MAC_DEPLOY_AGENT_GEN_MODEL" in script
+    assert "add_remote_env MAC_DEPLOY_AGENT_GEN_BASE_URL" in script
 
 
 def test_deploy_installs_gpu_gen_server_service():
@@ -3355,7 +3386,7 @@ def test_deploy_installs_gpu_gen_server_service():
     assert 'MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"' in script
     # GPU + systemd + gen-model gates (non-fatal skips)
     assert "no NVIDIA GPU on $AGENT; skipping (GPU-only)" in script
-    assert 'no MAC_AGENT_GEN_MODEL/AUDIO_MODELS/VIDEO_MODELS set; skipping' in script
+    assert "no MAC_AGENT_GEN_MODEL/AUDIO_MODELS/VIDEO_MODELS set; skipping" in script
     assert 'SUPERVISOR_KIND" != "systemd"' in script
     # CUDA wheel-index knob carried to the remote + used for torch(+vision)
     assert "add_remote_env MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL" in script
@@ -3379,8 +3410,8 @@ def test_deploy_installs_audio_and_video_gen_units():
     assert "_install_gen_unit() {" in script
     assert "deploy/local-gen/audio_server.py" in script
     assert "deploy/local-gen/video_server.py" in script
-    assert 'MAC_AGENT_GEN_AUDIO_PORT:-8190' in script
-    assert 'MAC_AGENT_GEN_VIDEO_PORT:-8191' in script
+    assert "MAC_AGENT_GEN_AUDIO_PORT:-8190" in script
+    assert "MAC_AGENT_GEN_VIDEO_PORT:-8191" in script
     # the audio/video model lists are carried to the remote agent
     assert "add_remote_env MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS" in script
     assert "add_remote_env MAC_DEPLOY_AGENT_GEN_VIDEO_MODELS" in script
@@ -3407,7 +3438,8 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     (overrides any stale platform-injected token, since the wrapper sources
     mac.env after the pod env)."""
     values = build_mac_env(
-        {}, deploy_env_config(tmp_path, fleet_name="gke"),
+        {},
+        deploy_env_config(tmp_path, fleet_name="gke"),
         environ={"MAC_DEPLOY_GH_TOKEN": "ghp_test123"},
     )
     assert values["GH_TOKEN"] == "ghp_test123"
@@ -3420,15 +3452,13 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     assert "mac-node-install-${agent}-${TS}.env" not in script
     assert "_mac_secret_file" not in script
     assert ". /dev/stdin" in script
-    assert "printf '%s\\n' \"${remote_secret_env[@]}\" > \"$local_secret_payload\"" in script
+    assert 'printf \'%s\\n\' "${remote_secret_env[@]}" > "$local_secret_payload"' in script
     assert 'stream_file_after_remote_fence "$local_secret_payload"' in script
 
 
 def test_required_github_credentials_fail_before_worker_drain():
     script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-    function = script.split("configure_github_https_credentials() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    function = script.split("configure_github_https_credentials() {", 1)[1].split("\n}\n", 1)[0]
     assert 'if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]' in function
     assert "GH_TOKEN absent on a node that requires" in function
     assert '"$gh_bin" auth status --hostname github.com' in function
@@ -3440,9 +3470,10 @@ def test_required_github_credentials_fail_before_worker_drain():
     assert pre_mutation.index("validate_typed_prerequisite_bundle") < pre_mutation.index(
         "configure_github_https_credentials"
     )
-    assert "configure_github_https_credentials" not in script.split(
-        'write_deploy_manifest "pre" "$MANIFEST_PRE"', 1
-    )[1]
+    assert (
+        "configure_github_https_credentials"
+        not in script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
+    )
 
 
 def test_hub_env_includes_all_option_c_env_vars(tmp_path):
@@ -3484,9 +3515,7 @@ def test_hub_env_includes_all_option_c_env_vars(tmp_path):
         "MAC_HUB_REVIEWER_AGENT_ID",
         "MAC_JUDGEMENT_ENABLED",
     ):
-        assert var not in spoke, (
-            "%s must not be set on spoke nodes (Option C is hub-only)" % var
-        )
+        assert var not in spoke, "%s must not be set on spoke nodes (Option C is hub-only)" % var
 
 
 def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
@@ -3511,15 +3540,13 @@ def test_openshell_bootstrap_installs_the_reviewed_archive_not_a_symlink():
 
 def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
     script = deploy_script_text()
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
 
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"' in script
     assert "reconcile_disabled_optional_openshell" in installer
-    legacy = installer.split(
-        'reload_mac_env\nif [ "$NODE_ACTION" = legacy-one-shot ]; then', 1
-    )[1].split("\nelse\n  log \"typed phase 2 consumed infrastructure receipts", 1)[0]
+    legacy = installer.split('reload_mac_env\nif [ "$NODE_ACTION" = legacy-one-shot ]; then', 1)[
+        1
+    ].split('\nelse\n  log "typed phase 2 consumed infrastructure receipts', 1)[0]
     assert "reconcile_disabled_optional_openshell" in legacy
     for owned_state in (
         "openshell-gw",
@@ -3533,12 +3560,10 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
         '"$openshell_dir/image-source-sha"',
     ):
         assert owned_state in installer
-    disable_function = installer.split(
-        "reconcile_disabled_optional_openshell() {", 1
-    )[1].split("\ninstall_or_validate_shared_services() {", 1)[0]
-    darwin_block = disable_function.split('if [ "$OS_KIND" = "darwin" ]; then', 1)[
-        1
-    ]
+    disable_function = installer.split("reconcile_disabled_optional_openshell() {", 1)[1].split(
+        "\ninstall_or_validate_shared_services() {", 1
+    )[0]
+    darwin_block = disable_function.split('if [ "$OS_KIND" = "darwin" ]; then', 1)[1]
     assert 'mac.owner" }}:{{ index .Config.Labels "mac.kind' in darwin_block
     assert 'log "leaving non-MAC Docker container named openshell-gw untouched"' in darwin_block
     assert '"$cli" gateway list --output json' in disable_function
@@ -3563,9 +3588,7 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
 def test_optional_openshell_disable_guard_normalizes_boolean_tokens(
     requested, required, expected_disable
 ):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\n}\n\nremove_openshell_firewall_chain", start) + len("\n}\n")
     helper = installer[start:end]
@@ -3579,11 +3602,7 @@ def test_optional_openshell_disable_guard_normalizes_boolean_tokens(
         capture_output=True,
         text=True,
         env={
-            **{
-                key: value
-                for key, value in os.environ.items()
-                if key != "MAC_OPENSHELL_REQUIRED"
-            },
+            **{key: value for key, value in os.environ.items() if key != "MAC_OPENSHELL_REQUIRED"},
             "MAC_DEPLOY_OPENSHELL": requested,
             "MAC_DEPLOY_OPENSHELL_REQUIRED": required,
         },
@@ -3593,9 +3612,7 @@ def test_optional_openshell_disable_guard_normalizes_boolean_tokens(
 
 
 def test_optional_openshell_disable_leaves_unowned_darwin_container(tmp_path):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
@@ -3654,9 +3671,7 @@ reconcile_disabled_optional_openshell
 
 
 def test_optional_openshell_disable_is_idempotent_without_managed_state(tmp_path):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
@@ -3697,9 +3712,7 @@ reconcile_disabled_optional_openshell
 
 
 def test_optional_openshell_disable_removes_labeled_darwin_gateway(tmp_path):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
@@ -3769,9 +3782,7 @@ reconcile_disabled_optional_openshell
 def test_optional_openshell_disable_preserves_marker_when_owned_gateway_rm_fails(
     tmp_path,
 ):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
@@ -3831,9 +3842,7 @@ reconcile_disabled_optional_openshell
 
 
 def test_owned_legacy_openshell_firewall_rule_cleanup_executes_exact_delete(tmp_path):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("remove_openshell_firewall_chain() {")
     end = installer.index("\n}\n\nopenshell_firewall_state_present", start) + len("\n}\n")
     helper = installer[start:end]
@@ -3912,9 +3921,7 @@ def _run_linux_optional_openshell_disable(
     firewall_inspection_fails=False,
     managed_firewall=True,
 ):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
@@ -3924,9 +3931,7 @@ def _run_linux_optional_openshell_disable(
     systemd_runtime.mkdir(parents=True)
     systemd_firewall = test_root / "etc/systemd/system/mac-openshell-firewall.service"
     supervisor_gateway = test_root / "etc/supervisor/conf.d/openshell-gateway.conf"
-    supervisor_firewall = (
-        test_root / "etc/supervisor/conf.d/mac-openshell-firewall.conf"
-    )
+    supervisor_firewall = test_root / "etc/supervisor/conf.d/mac-openshell-firewall.conf"
     firewall_script = test_root / "usr/local/sbin/mac-openshell-firewall.sh"
     for original, replacement in (
         (
@@ -4000,9 +4005,7 @@ exit 0
 """,
         "ss": (
             "#!/bin/sh\nprintf '%s\\n' "
-            + shlex.quote(
-                "LISTEN 0 4096 0.0.0.0:17670 0.0.0.0:*" if listener else ""
-            )
+            + shlex.quote("LISTEN 0 4096 0.0.0.0:17670 0.0.0.0:*" if listener else "")
             + "\n"
         ),
         "iptables": iptables_script,
@@ -4062,9 +4065,7 @@ reconcile_disabled_optional_openshell
             "HOME": str(home),
             "MAC_DEPLOY_OPENSHELL": " false ",
             "MAC_DEPLOY_OPENSHELL_REQUIRED": "false",
-            "FIREWALL_INSPECTION_FAILS": (
-                "1" if firewall_inspection_fails else "0"
-            ),
+            "FIREWALL_INSPECTION_FAILS": ("1" if firewall_inspection_fails else "0"),
             "IPTABLES_CALLS": str(iptables_calls),
             "IPTABLES_STATE": str(firewall_state),
             "SUPERVISOR_CALLS": str(supervisor_calls),
@@ -4084,9 +4085,7 @@ reconcile_disabled_optional_openshell
 
 
 def test_systemd_owned_optional_disable_does_not_touch_inactive_supervisor(tmp_path):
-    evidence = _run_linux_optional_openshell_disable(
-        tmp_path, historical_systemd_gateway=True
-    )
+    evidence = _run_linux_optional_openshell_disable(tmp_path, historical_systemd_gateway=True)
 
     result = evidence["result"]
     assert result.returncode == 0, result.stderr
@@ -4124,9 +4123,7 @@ def test_managed_optional_disable_rejects_listener_without_owned_firewall(tmp_pa
 
 
 def test_optional_disable_preserves_firewall_when_inspection_fails(tmp_path):
-    evidence = _run_linux_optional_openshell_disable(
-        tmp_path, firewall_inspection_fails=True
-    )
+    evidence = _run_linux_optional_openshell_disable(tmp_path, firewall_inspection_fails=True)
 
     result = evidence["result"]
     assert result.returncode != 0
@@ -4140,21 +4137,17 @@ def test_optional_disable_preserves_firewall_when_inspection_fails(tmp_path):
 
 def test_required_worker_forces_openshell_despite_explicit_zero():
     script = deploy_script_text()
-    required_block = script.split(
-        'case "$openshell_required_normalized" in', 1
-    )[1].split("  esac\n  if [ \"$openshell_enabled\"", 1)[0]
+    required_block = script.split('case "$openshell_required_normalized" in', 1)[1].split(
+        '  esac\n  if [ "$openshell_enabled"', 1
+    )[0]
 
     assert "openshell_enabled=1" in required_block
     assert "openshell_disable_requested=0" in required_block
     assert "--enable" in required_block
     assert "--fail-closed" in required_block
 
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
-    disable_guard = installer.split("openshell_disable_requested() {", 1)[1].split(
-        "\n}", 1
-    )[0]
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    disable_guard = installer.split("openshell_disable_requested() {", 1)[1].split("\n}", 1)[0]
     assert "MAC_DEPLOY_OPENSHELL_REQUIRED" in disable_guard
     assert "1|true|yes|on) return 1" in disable_guard
 
@@ -4168,11 +4161,11 @@ def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
     assert "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" in script
     assert "mac-openshell-runtime@sha256:" in script
     assert (
-        'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE '
+        "add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE "
         '"${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"'
     ) in script
     assert (
-        'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 '
+        "add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 "
         '"${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"'
     ) in script
     assert 'OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE"' in script
@@ -4203,13 +4196,9 @@ def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
 def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vector(
     tmp_path,
 ):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("bootstrap_enabled_openshell() {")
-    end = installer.index(
-        "\n}\n\nresolve_reviewed_openshell_supervisor", start
-    ) + len("\n}\n")
+    end = installer.index("\n}\n\nresolve_reviewed_openshell_supervisor", start) + len("\n}\n")
     helper = installer[start:end]
 
     source = tmp_path / "source"
@@ -4223,9 +4212,9 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
         "  printf 'input=%s\\n' \"${OSH_RUNTIME_INPUT_SHA256:-}\"\n"
         "  printf 'expected=%s\\n' \"${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}\"\n"
         "  printf 'argc=%s\\n' \"$#\"\n"
-        "  for arg in \"$@\"; do printf 'arg=%s\\n' \"$arg\"; done\n"
-        "} >> \"$MAC_TEST_BOOTSTRAP_CALLS\"\n"
-        "exit \"${MAC_TEST_BOOTSTRAP_RC:-0}\"\n",
+        '  for arg in "$@"; do printf \'arg=%s\\n\' "$arg"; done\n'
+        '} >> "$MAC_TEST_BOOTSTRAP_CALLS"\n'
+        'exit "${MAC_TEST_BOOTSTRAP_RC:-0}"\n',
         encoding="utf-8",
     )
     bootstrap.chmod(0o755)
@@ -4236,9 +4225,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
         "truthy() { case \"$(printf '%s' \"${1:-}\" | tr '[:upper:]' '[:lower:]')\" "
         "in 1|true|yes|on) return 0;; *) return 1;; esac; }\n"
         "die() { printf '%s\\n' \"$*\" >&2; return 1; }\n"
-        "log() { :; }\n"
-        + helper
-        + "\nbootstrap_enabled_openshell\n"
+        "log() { :; }\n" + helper + "\nbootstrap_enabled_openshell\n"
     )
     base_env = {
         **os.environ,
@@ -4331,13 +4318,9 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
 
 
 def test_node_openshell_supervisor_attestation_resolves_reviewed_index(tmp_path):
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("resolve_reviewed_openshell_supervisor() {")
-    end = installer.index(
-        "\n}\n\nverify_managed_openshell_runtime", start
-    ) + len("\n}\n")
+    end = installer.index("\n}\n\nverify_managed_openshell_runtime", start) + len("\n}\n")
     helper = installer[start:end]
 
     mac_home = tmp_path / "mac-home"
@@ -4352,8 +4335,8 @@ def test_node_openshell_supervisor_attestation_resolves_reviewed_index(tmp_path)
     docker.write_text(
         "#!/bin/bash\n"
         "set -eu\n"
-        "[ \"$1 $2 $3\" = \"image inspect --format\" ]\n"
-        "case \"$4\" in\n"
+        '[ "$1 $2 $3" = "image inspect --format" ]\n'
+        'case "$4" in\n'
         "  '{{.Id}}') printf '%s\\n' \"$MAC_TEST_IMAGE_ID\";;\n"
         "  '{{range .RepoDigests}}{{println .}}{{end}}') "
         "printf '%s\\n' \"$MAC_TEST_REPO_DIGEST\";;\n"
@@ -4419,10 +4402,7 @@ def test_node_openshell_supervisor_attestation_resolves_reviewed_index(tmp_path)
     assert 'sha256-"$supervisor_cache_digest"/openshell-sandbox' in runtime
     assert 'sha256-"$supervisor_digest"/openshell-sandbox' not in runtime
     assert '"supervisor_image_digest": "sha256:" + supervisor_digest' in runtime
-    assert (
-        '"supervisor_resolved_image_id": "sha256:" + supervisor_image_id'
-        in runtime
-    )
+    assert '"supervisor_resolved_image_id": "sha256:" + supervisor_image_id' in runtime
 
 
 def _startup_self_test_source() -> str:

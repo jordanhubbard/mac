@@ -5,6 +5,7 @@ answers "what does the fleet's sandbox need", the other puts a reviewed image
 onto workers without interrupting their work. Neither is useful if it only
 works when called as a Python function, so these go through the CLI.
 """
+
 from __future__ import annotations
 
 import io
@@ -98,12 +99,11 @@ def test_rollout_refuses_a_tag(tmp_path):
     reviewed could differ with nothing recording it."""
     rc, out = _run(
         tmp_path,
-        "admin", "sandbox-image",
+        "admin",
+        "sandbox-image",
         "rollout",
         "--image",
         "ghcr.io/jordanhubbard/mac-openshell-runtime:latest",
     )
 
     assert rc not in (None, 0)
-
-

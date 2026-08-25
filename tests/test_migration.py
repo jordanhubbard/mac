@@ -114,7 +114,13 @@ def test_migration_evidence_without_resolvable_ref_errors():
         cp,
         stream=_stream(
             [
-                {"record": "evidence", "task_ref": "acc:does-not-exist", "kind": "log", "uri": "x", "summary": "y"},
+                {
+                    "record": "evidence",
+                    "task_ref": "acc:does-not-exist",
+                    "kind": "log",
+                    "uri": "x",
+                    "summary": "y",
+                },
             ]
         ),
     )
@@ -172,8 +178,10 @@ def test_migration_history_record_alias_still_accepted():
     assert report.errors == []
     assert report.provenance_imported == 1
 
+
 # --- Folded from test_migration_edges.py (task_099d2fcc: consolidate _edges
 # coverage companions into their base module — same tests, one file). ---
+
 
 def test_record_required_field_validation() -> None:
     cp = ControlPlane.in_memory()
@@ -201,11 +209,25 @@ def test_direct_task_ref_and_standalone_provenance() -> None:
     cp = ControlPlane.in_memory()
     report = migration.import_jsonl(
         cp,
-        stream=io.StringIO("\n".join([
-            json.dumps({"record": "task", "title": "work", "task_ref": "local:one"}),
-            json.dumps({"record": "evidence", "task_ref": "local:one", "kind": "log", "uri": "x", "summary": "s"}),
-            json.dumps({"record": "provenance", "standalone": True, "event_type": "migration.note"}),
-        ])),
+        stream=io.StringIO(
+            "\n".join(
+                [
+                    json.dumps({"record": "task", "title": "work", "task_ref": "local:one"}),
+                    json.dumps(
+                        {
+                            "record": "evidence",
+                            "task_ref": "local:one",
+                            "kind": "log",
+                            "uri": "x",
+                            "summary": "s",
+                        }
+                    ),
+                    json.dumps(
+                        {"record": "provenance", "standalone": True, "event_type": "migration.note"}
+                    ),
+                ]
+            )
+        ),
     )
     assert report.tasks_imported == 1
     assert report.evidence_imported == 1

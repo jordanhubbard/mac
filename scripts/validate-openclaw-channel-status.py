@@ -105,16 +105,12 @@ def main(argv: list[str] | None = None) -> int:
     problems = channel_problems(payload, required)
     if problems:
         print(
-            "channel probe did not prove one healthy configured account: "
-            + ", ".join(problems),
+            "channel probe did not prove one healthy configured account: " + ", ".join(problems),
             file=sys.stderr,
         )
         return 1
     if required:
-        print(
-            "OpenClaw channel probes: "
-            + " ".join("%s=healthy" % item for item in required)
-        )
+        print("OpenClaw channel probes: " + " ".join("%s=healthy" % item for item in required))
     else:
         print("OpenClaw channel probes: none configured (headless runtime)")
     return 0

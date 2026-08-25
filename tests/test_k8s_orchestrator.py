@@ -17,6 +17,7 @@ pytest.importorskip("kubernetes", reason="requires the optional mac[k8s] extra")
 
 import mac.k8s.orchestrator as orchestrator
 
+
 class _StubMac:
     def __init__(self, url: str, token: str = "") -> None:
         self.url = url
@@ -34,6 +35,7 @@ class _CredentialMac:
     def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
         self.calls.append(("post", path, body))
         return {"ok": True}
+
 
 class _StubJobs:
     pass
@@ -63,21 +65,22 @@ def _empty_yaml_doc() -> Dict[str, Any]:
         "capability_role_aliases": {},
     }
 
+
 def _write_config(tmp_path: Path) -> Path:
     f = tmp_path / "config.yaml"
     f.write_text(yaml.safe_dump(_empty_yaml_doc()))
     return f
 
+
 @pytest.fixture()
-def baseline_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def baseline_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Env that makes ``RunnerConfig.from_env`` succeed."""
     monkeypatch.setenv("MAC_URL", "http://mac-api.mac.svc:80")
     monkeypatch.setenv("MAC_WORKER_TOKEN", "test-token")
     monkeypatch.setenv("MAC_AGENT_ID", "mac-runner-test")
     monkeypatch.setenv("MAC_RUNNER_NAMESPACE", "mac")
     monkeypatch.setenv("MAC_CONFIG_FILE", str(_write_config(tmp_path)))
+
 
 @pytest.fixture()
 def patched_runtime(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
@@ -97,9 +100,7 @@ def patched_runtime(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
     import mac.k8s.controller as controller_mod
 
     monkeypatch.setattr(hermes_mod, "MacApiClient", _StubMac, raising=True)
-    monkeypatch.setattr(
-        k8s_client_mod, "K8sJobsClient", lambda: _StubJobs(), raising=True
-    )
+    monkeypatch.setattr(k8s_client_mod, "K8sJobsClient", lambda: _StubJobs(), raising=True)
     monkeypatch.setattr(
         k8s_client_mod,
         "K8sDeploymentsClient",
@@ -121,9 +122,7 @@ def patched_runtime(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
             rec["runner_called_during_drift"] = True
         return []
 
-    monkeypatch.setattr(
-        runner_mod, "check_dispatcher_capabilities", _fake_check, raising=True
-    )
+    monkeypatch.setattr(runner_mod, "check_dispatcher_capabilities", _fake_check, raising=True)
 
     def _fake_runner_loop(mac: Any, jobs: Any, cfg: Any, **kwargs: Any) -> int:
         rec["runner_calls"].append((mac, jobs, cfg))
@@ -137,11 +136,10 @@ def patched_runtime(monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
         rec["controller_iterations"] += 1
         return []
 
-    monkeypatch.setattr(
-        controller_mod, "reconcile_stuck_jobs", _fake_reconcile_stuck, raising=True
-    )
+    monkeypatch.setattr(controller_mod, "reconcile_stuck_jobs", _fake_reconcile_stuck, raising=True)
 
     return rec
+
 
 def test_main_runs_drift_probe_then_runner(
     baseline_env: None, patched_runtime: Dict[str, Any]
@@ -153,6 +151,7 @@ def test_main_runs_drift_probe_then_runner(
     assert len(patched_runtime["runner_calls"]) == 1
     # load_in_cluster_config wired exactly once.
     assert patched_runtime["load_in_cluster_config_calls"] == 1
+
 
 def test_main_returns_two_when_mac_url_missing(
     monkeypatch: pytest.MonkeyPatch,
@@ -169,11 +168,10 @@ def test_main_returns_two_when_mac_url_missing(
         )
         return cfg
 
-    monkeypatch.setattr(
-        runner_mod.RunnerConfig, "from_env", staticmethod(_empty_url_cfg)
-    )
+    monkeypatch.setattr(runner_mod.RunnerConfig, "from_env", staticmethod(_empty_url_cfg))
     monkeypatch.setenv("MAC_WORKER_TOKEN", "tok")
     assert orchestrator.main([]) == 2
+
 
 def test_main_returns_two_when_token_missing(
     baseline_env: None,
@@ -235,9 +233,10 @@ def test_bound_credential_heartbeat_is_secret_free_and_preserves_resources(
         monkeypatch.setenv(key, value)
     mac = _CredentialMac()
 
-    assert orchestrator._report_bound_worker_credential(
-        mac, "agent_k8s", logging.getLogger("test")
-    ) is True
+    assert (
+        orchestrator._report_bound_worker_credential(mac, "agent_k8s", logging.getLogger("test"))
+        is True
+    )
     heartbeat = mac.calls[-1]
     assert heartbeat[0:2] == ("post", "/agents/agent_k8s/heartbeat")
     payload = heartbeat[2]
@@ -257,10 +256,12 @@ def test_credential_heartbeat_refuses_local_agent_binding_mismatch(
     monkeypatch.setenv("MAC_WORKER_CREDENTIAL_FINGERPRINT", "0123456789ab")
     mac = _CredentialMac()
 
-    assert orchestrator._report_bound_worker_credential(
-        mac, "agent_k8s", logging.getLogger("test")
-    ) is False
+    assert (
+        orchestrator._report_bound_worker_credential(mac, "agent_k8s", logging.getLogger("test"))
+        is False
+    )
     assert mac.calls == []
+
 
 def test_controller_thread_is_daemon(
     baseline_env: None,
@@ -284,6 +285,7 @@ def test_controller_thread_is_daemon(
     assert t is not None, "controller thread must be created with the expected name"
     assert t.daemon is True, "controller thread must be daemon so it doesn't block exit"
 
+
 def test_runner_loop_exception_returns_non_zero(
     baseline_env: None,
     patched_runtime: Dict[str, Any],
@@ -298,6 +300,7 @@ def test_runner_loop_exception_returns_non_zero(
     rc = orchestrator.main([])
     assert rc == 1
 
+
 def test_runner_loop_keyboard_interrupt_returns_zero(
     baseline_env: None,
     patched_runtime: Dict[str, Any],
@@ -311,6 +314,7 @@ def test_runner_loop_keyboard_interrupt_returns_zero(
     monkeypatch.setattr(runner_mod, "runner_loop", _interrupt, raising=True)
     rc = orchestrator.main([])
     assert rc == 0
+
 
 def test_controller_daemon_failure_does_not_kill_runner(
     baseline_env: None,
@@ -328,9 +332,7 @@ def test_controller_daemon_failure_does_not_kill_runner(
         crash_event.set()
         raise RuntimeError("kube-apiserver gone walkabout")
 
-    monkeypatch.setattr(
-        controller_mod, "reconcile_stuck_jobs", _crashy_reconcile, raising=True
-    )
+    monkeypatch.setattr(controller_mod, "reconcile_stuck_jobs", _crashy_reconcile, raising=True)
 
     orchestrator.controller_loop_failures = 0
 
@@ -373,14 +375,14 @@ def test_controller_daemon_failure_does_not_kill_runner(
     real_sleep(0.05)
 
     assert rc == 0, "runner completed normally; orchestrator should exit 0"
-    assert (
-        orchestrator.controller_loop_failures >= 1
-    ), "controller failure counter should have incremented"
+    assert orchestrator.controller_loop_failures >= 1, (
+        "controller failure counter should have incremented"
+    )
     # An ERROR log was emitted with a stack trace.
     assert any(
-        "controller reconcile iteration failed" in rec.getMessage()
-        for rec in caplog.records
+        "controller reconcile iteration failed" in rec.getMessage() for rec in caplog.records
     ), "expected an ERROR log naming the failed reconcile iteration"
+
 
 def test_drift_probe_fires_before_dispatch_loop(
     baseline_env: None, patched_runtime: Dict[str, Any]
@@ -389,6 +391,7 @@ def test_drift_probe_fires_before_dispatch_loop(
     assert patched_runtime["drift_called"] is True
     assert patched_runtime["drift_calls_before_runner"] is True
     assert patched_runtime["runner_called_during_drift"] is False
+
 
 def test_run_controller_loop_forever_continues_after_iteration_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -404,9 +407,7 @@ def test_run_controller_loop_forever_continues_after_iteration_failure(
             raise RuntimeError("first call crashes")
         return []
 
-    monkeypatch.setattr(
-        controller_mod, "reconcile_stuck_jobs", _reconcile, raising=True
-    )
+    monkeypatch.setattr(controller_mod, "reconcile_stuck_jobs", _reconcile, raising=True)
 
     stop_event = threading.Event()
     sleep_calls = {"n": 0}
@@ -607,9 +608,7 @@ def test_main_warns_on_drift_starts_review_and_defaults_bad_tick_limit(
     cfg = runner_mod.RunnerConfig.from_env()
     cfg.reviewer_agent_ids = {"reviewer": "agent-reviewer"}
     monkeypatch.setattr(runner_mod.RunnerConfig, "from_env", staticmethod(lambda: cfg))
-    monkeypatch.setattr(
-        runner_mod, "check_dispatcher_capabilities", lambda *_a: ["gpu"]
-    )
+    monkeypatch.setattr(runner_mod, "check_dispatcher_capabilities", lambda *_a: ["gpu"])
     monkeypatch.setenv("MAC_REVIEW_TICK_LIMIT", "not-an-int")
     started: List[str] = []
 

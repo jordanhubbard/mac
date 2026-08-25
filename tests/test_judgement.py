@@ -25,7 +25,9 @@ def cp():
 def _register_agent(cp, name="rocky", capabilities=None, resources=None):
     machine = cp.register_machine("%s-host" % name)
     return cp.register_agent(
-        machine.id, name, capabilities=capabilities or ["ops", "python", "review"],
+        machine.id,
+        name,
+        capabilities=capabilities or ["ops", "python", "review"],
         resources=resources,
     )
 
@@ -44,9 +46,7 @@ def _park_in_review(cp, title, reviewer, *, reject_times=0):
         )
     for index in range(reject_times):
         review = cp.request_review(task.id, reviewer.id)
-        cp.submit_review(
-            review.id, "rejected", reviewer.id, reason="no %d" % index
-        )
+        cp.submit_review(review.id, "rejected", reviewer.id, reason="no %d" % index)
         with cp.store.transaction() as conn:
             conn.execute(
                 "UPDATE tasks SET state = ? WHERE id = ?",
@@ -208,7 +208,9 @@ def test_redeploy_is_bounded_per_day(cp):
     # Drive redeploy directly so the test does not depend on a live pile-up.
     from mac.judgement import Finding
 
-    fake = Finding(kind="excessive_reviewing_population", summary="pile", recommended_action="fleet_stop")
+    fake = Finding(
+        kind="excessive_reviewing_population", summary="pile", recommended_action="fleet_stop"
+    )
     first = process._redeploy(actor="test", run_id="one", finding=fake)
     second = process._redeploy(actor="test", run_id="two", finding=fake)
     assert first["action"] == "redeployed"

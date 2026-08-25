@@ -90,9 +90,7 @@ def test_agent_instance_kind_update(tmp_path):
 
     rc, listed = _run(tmp_path, "agent", "list")
     assert rc == 0
-    assert next(item for item in listed if item["id"] == agent["id"])[
-        "instance_kind"
-    ] == "fungible"
+    assert next(item for item in listed if item["id"] == agent["id"])["instance_kind"] == "fungible"
 
 
 def test_openshell_sandbox_gc_dry_run(tmp_path, monkeypatch):
@@ -116,7 +114,8 @@ def test_openshell_sandbox_gc_dry_run(tmp_path, monkeypatch):
 
     rc, report = _run(
         tmp_path,
-        "admin", "openshell",
+        "admin",
+        "openshell",
         "sandbox-gc",
         "--stale-after-hours",
         "1",
@@ -201,11 +200,14 @@ def test_artifact_register_list_show_delete(tmp_path):
     """Full artifact lifecycle: register -> list -> show -> delete."""
     rc, artifact = _run(
         tmp_path,
-        "admin", "artifact", "register",
+        "admin",
+        "artifact",
+        "register",
         "image",
         "sha256:abc123def456",
         "ghcr.io/example/app:1.0.0",
-        "--created-by", "ops",
+        "--created-by",
+        "ops",
     )
     assert rc == 0
     assert artifact["kind"] == "image"
@@ -244,13 +246,18 @@ def test_artifact_register_with_signers_and_sbom(tmp_path):
     """artifact register accepts optional --signers and --sbom-uri."""
     rc, artifact = _run(
         tmp_path,
-        "admin", "artifact", "register",
+        "admin",
+        "artifact",
+        "register",
         "wheel",
         "sha256:deadbeef",
         "https://pypi.org/packages/app-1.0.whl",
-        "--created-by", "ci",
-        "--signers", "alice,bob",
-        "--sbom-uri", "https://sbom.example.com/app-1.0.spdx",
+        "--created-by",
+        "ci",
+        "--signers",
+        "alice,bob",
+        "--sbom-uri",
+        "https://sbom.example.com/app-1.0.spdx",
     )
     assert rc == 0
     assert artifact["kind"] == "wheel"
@@ -268,20 +275,26 @@ def test_env_deploy_current_history(tmp_path):
 
     rc, artifact = _run(
         tmp_path,
-        "admin", "artifact", "register",
+        "admin",
+        "artifact",
+        "register",
         "image",
         "sha256:v1hash",
         "ghcr.io/example/app:v1",
-        "--created-by", "ci",
+        "--created-by",
+        "ci",
     )
     assert rc == 0
 
     rc, deployment = _run(
         tmp_path,
-        "admin", "env", "deploy",
+        "admin",
+        "env",
+        "deploy",
         env["id"],
         artifact["id"],
-        "--actor", "ops",
+        "--actor",
+        "ops",
     )
     assert rc == 0
     assert deployment["environment_id"] == env["id"]
@@ -308,11 +321,15 @@ def test_notifier_configure_list_delete(tmp_path):
     """notifier configure -> list -> delete lifecycle."""
     rc, channel = _run(
         tmp_path,
-        "admin", "notifier", "configure",
+        "admin",
+        "notifier",
+        "configure",
         "slack-alerts",
         "slack",
-        "--event-types", "task.completed,task.failed",
-        "--target", '{"webhook": "https://hooks.slack.com/xxx"}',
+        "--event-types",
+        "task.completed,task.failed",
+        "--target",
+        '{"webhook": "https://hooks.slack.com/xxx"}',
     )
     assert rc == 0
     assert channel["name"] == "slack-alerts"
@@ -346,7 +363,9 @@ def test_notifier_list_filter_enabled(tmp_path):
     # Configure a disabled channel (must use a valid channel_type: hermes, slack, telegram)
     _run(
         tmp_path,
-        "admin", "notifier", "configure",
+        "admin",
+        "notifier",
+        "configure",
         "disabled-channel",
         "hermes",
         "--disabled",
@@ -398,19 +417,28 @@ def test_rollout_verify_artifact(tmp_path):
     """rollout verify-artifact records verification result against a rollout."""
     rc, rollout = _run(
         tmp_path,
-        "admin", "rollout", "create",
-        "v2.0.0", "canary",
-        "--created-by", "ci",
+        "admin",
+        "rollout",
+        "create",
+        "v2.0.0",
+        "canary",
+        "--created-by",
+        "ci",
     )
     assert rc == 0
 
     rc, result = _run(
         tmp_path,
-        "admin", "rollout", "verify-artifact",
+        "admin",
+        "rollout",
+        "verify-artifact",
         rollout["id"],
-        "--artifact-uri", "ghcr.io/example/app:v2.0.0",
-        "--artifact-hash", "sha256:v2hash",
-        "--actor", "ops",
+        "--artifact-uri",
+        "ghcr.io/example/app:v2.0.0",
+        "--artifact-hash",
+        "sha256:v2hash",
+        "--actor",
+        "ops",
     )
     assert rc == 0
     assert isinstance(result, dict)
@@ -420,18 +448,26 @@ def test_rollout_health(tmp_path):
     """rollout health evaluates health checks and returns a health report."""
     rc, rollout = _run(
         tmp_path,
-        "admin", "rollout", "create",
-        "v2.1.0", "canary",
-        "--created-by", "ci",
+        "admin",
+        "rollout",
+        "create",
+        "v2.1.0",
+        "canary",
+        "--created-by",
+        "ci",
     )
     assert rc == 0
 
     rc, result = _run(
         tmp_path,
-        "admin", "rollout", "health",
+        "admin",
+        "rollout",
+        "health",
         rollout["id"],
-        "--checks", '{"error_rate": "ok", "latency_p99": "ok"}',
-        "--actor", "monitor",
+        "--checks",
+        '{"error_rate": "ok", "latency_p99": "ok"}',
+        "--actor",
+        "monitor",
     )
     assert rc == 0
     assert isinstance(result, dict)
@@ -473,10 +509,14 @@ def test_agentbus_publish_event(tmp_path):
     agent = _make_agent(tmp_path, "pub-agent", agent_id="agent_pub")
     rc, result = _run(
         tmp_path,
-        "admin", "agentbus", "publish",
+        "admin",
+        "agentbus",
+        "publish",
         agent["id"],
-        "--recipient-agent-id", agent["id"],
-        "--payload", '{"msg": "hello"}',
+        "--recipient-agent-id",
+        agent["id"],
+        "--payload",
+        '{"msg": "hello"}',
     )
     assert rc == 0
 
@@ -490,11 +530,14 @@ def test_agent_reflect_publishes_self_description(tmp_path):
     )
     rc, result = _run(
         tmp_path,
-        "agent", "reflect",
+        "agent",
+        "reflect",
         agent["id"],
-        "--request-id", "rid-42",
+        "--request-id",
+        "rid-42",
         # No live worker answers in-process; skip the 30s reflect poll.
-        "--reflect-timeout", "0",
+        "--reflect-timeout",
+        "0",
     )
 
     assert rc == 0
@@ -513,10 +556,13 @@ def test_agentbus_repo_update(tmp_path):
     agent = _make_agent(tmp_path, "repo-agent", agent_id="agent_repo")
     rc, result = _run(
         tmp_path,
-        "admin", "agentbus", "repo-update",
+        "admin",
+        "agentbus",
+        "repo-update",
         agent["id"],
         "--all-agents",
-        "--repo-path", "/tmp/test-repo",
+        "--repo-path",
+        "/tmp/test-repo",
     )
     assert rc == 0
 
@@ -526,12 +572,18 @@ def test_agentbus_artifact_publish(tmp_path):
     agent = _make_agent(tmp_path, "art-agent", agent_id="agent_art")
     rc, result = _run(
         tmp_path,
-        "admin", "agentbus", "artifact-publish",
+        "admin",
+        "agentbus",
+        "artifact-publish",
         agent["id"],
-        "--operation", "upsert",
-        "--digest", "sha256:testdigest",
-        "--kind", "public-artifact",
-        "--uri", "https://example.com/artifact.tar.gz",
+        "--operation",
+        "upsert",
+        "--digest",
+        "sha256:testdigest",
+        "--kind",
+        "public-artifact",
+        "--uri",
+        "https://example.com/artifact.tar.gz",
         "--all-agents",
     )
     assert rc == 0
@@ -545,27 +597,37 @@ def test_agentbus_artifact_publish(tmp_path):
 def test_secret_access(tmp_path):
     """secret access grants a handle when the machine is trusted and agent is in scopes."""
     agent = _make_agent(
-        tmp_path, "secret-reader", hostname="trusted-host",
-        agent_id="agent_secretreader", trusted=True
+        tmp_path,
+        "secret-reader",
+        hostname="trusted-host",
+        agent_id="agent_secretreader",
+        trusted=True,
     )
     # Scope the secret to this specific agent by ID
     scopes = json.dumps({"agents": [agent["id"]]})
     rc, secret = _run(
         tmp_path,
-        "admin", "secret", "set",
+        "admin",
+        "secret",
+        "set",
         "access-test-token",
         "my-secret-value",
-        "--scopes", scopes,
-        "--created-by", "human",
+        "--scopes",
+        scopes,
+        "--created-by",
+        "human",
     )
     assert rc == 0
 
     rc, result = _run(
         tmp_path,
-        "admin", "secret", "access",
+        "admin",
+        "secret",
+        "access",
         secret["id"],
         agent["id"],
-        "--purpose", "deploy",
+        "--purpose",
+        "deploy",
     )
     assert rc == 0
     assert isinstance(result, dict)
@@ -580,7 +642,8 @@ def test_task_detect_beads_path(tmp_path):
     """task detect-beads checks a path for beads state; empty dir = no beads."""
     rc, result = _run(
         tmp_path,
-        "task", "detect-beads",
+        "task",
+        "detect-beads",
         str(tmp_path),
     )
     assert rc == 0
@@ -591,7 +654,8 @@ def test_task_detect_ticketing_path(tmp_path):
     """task detect-ticketing checks a path for legacy ticketing state."""
     rc, result = _run(
         tmp_path,
-        "task", "detect-ticketing",
+        "task",
+        "detect-ticketing",
         str(tmp_path),
     )
     assert rc == 0
@@ -620,11 +684,13 @@ def test_extended_cli_coverage_gate():
     }
 
     from mac.cli import build_parser
+
     parser = build_parser()
     # Walk into `admin` too: the administrative commands were re-parented, and
     # a scan of the top level alone would report every one of them as renamed
     # or deleted when they only moved.
     registered = set()
+
     def _collect(p, depth=0):
         if depth > 1:
             return
@@ -635,6 +701,7 @@ def test_extended_cli_coverage_gate():
                 registered.add(name)
                 if name == "admin":
                     _collect(sub, depth + 1)
+
     _collect(parser)
 
     missing_from_cli = extended_covered - registered

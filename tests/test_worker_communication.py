@@ -108,9 +108,7 @@ def test_headless_worker_does_not_claim_human_deliveries(monkeypatch, tmp_path: 
     assert client.calls == []
 
 
-def test_openclaw_worker_never_falls_back_to_direct_slack_sdk(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_openclaw_worker_never_falls_back_to_direct_slack_sdk(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MAC_CHAT_GATEWAY_IMPL", "openclaw")
     result = _worker(tmp_path, _Client())._send_status_update_to_home_channels(
         {"channel_type": "slack"}
@@ -119,9 +117,7 @@ def test_openclaw_worker_never_falls_back_to_direct_slack_sdk(
     assert result["reason"] == "openclaw_outbox_required"
 
 
-def test_delivery_drain_thread_drains_while_task_loop_is_busy(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_delivery_drain_thread_drains_while_task_loop_is_busy(monkeypatch, tmp_path: Path) -> None:
     """task_c049302b: the outbox must drain independently of the task loop.
 
     A worker stuck in a long task iteration previously starved its gateway's
@@ -178,9 +174,7 @@ def test_delivery_drain_skips_when_another_drain_holds_the_lock(
     assert client.calls == []  # skipped: lock held elsewhere
     monkeypatch.setattr(
         "mac.worker.subprocess.run",
-        lambda command, **_kwargs: SimpleNamespace(
-            returncode=0, stdout="{}", stderr=""
-        ),
+        lambda command, **_kwargs: SimpleNamespace(returncode=0, stdout="{}", stderr=""),
     )
     worker._process_human_delivery_outbox()
     assert any(call[1] == "/communication/deliveries/claim" for call in client.calls)

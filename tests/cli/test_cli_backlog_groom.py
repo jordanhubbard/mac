@@ -1,4 +1,5 @@
 """Behavioral tests for `mac fleet backlog-groom enable/disable`."""
+
 from __future__ import annotations
 
 import io
@@ -30,8 +31,18 @@ def _make_project(tmp_path, name="mac", url="https://github.com/o/r"):
 
 def test_enable_sets_policy(tmp_path):
     _make_project(tmp_path)
-    rc, out = _run(tmp_path, "admin", "fleet", "backlog-groom", "enable", "mac",
-                   "--backlog-size", "7", "--capability", "python")
+    rc, out = _run(
+        tmp_path,
+        "admin",
+        "fleet",
+        "backlog-groom",
+        "enable",
+        "mac",
+        "--backlog-size",
+        "7",
+        "--capability",
+        "python",
+    )
     assert rc in (None, 0)
     assert out["backlog_grooming"]["enabled"] is True
     assert out["backlog_grooming"]["backlog_size"] == 7

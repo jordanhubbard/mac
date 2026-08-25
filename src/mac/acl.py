@@ -21,6 +21,7 @@ This module is pure decision logic. It performs no I/O and knows nothing about
 routes; wiring it to the API is a separate change, so this can be tested
 adversarially on its own (ADR 0019 acceptance record).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -59,16 +60,17 @@ class AclError(ValueError):
 # new spelling. A principal that needs several permissions is granted several,
 # visibly, where a reviewer can see them.
 
+
 class Permission:
-    READ = "read"        # observe the resource
-    APPEND = "append"    # add to it without altering what is there
-    CREATE = "create"    # create children beneath it
-    UPDATE = "update"    # modify the resource's own fields
-    WRITE = "write"      # replace or DELETE the resource itself
-    STOP = "stop"        # abort in-flight work and park the resource
-    START = "start"      # return a stopped resource to the queue
+    READ = "read"  # observe the resource
+    APPEND = "append"  # add to it without altering what is there
+    CREATE = "create"  # create children beneath it
+    UPDATE = "update"  # modify the resource's own fields
+    WRITE = "write"  # replace or DELETE the resource itself
+    STOP = "stop"  # abort in-flight work and park the resource
+    START = "start"  # return a stopped resource to the queue
     CONTROL = "control"  # lifecycle: claim, heartbeat, lease, transition
-    GRANT = "grant"      # change the ACL
+    GRANT = "grant"  # change the ACL
 
 
 # `update` is split out of `write`, and `stop`/`start` out of `control`, so the
@@ -181,6 +183,7 @@ def ancestors(path: str) -> List[str]:
 
 # --- entries ---------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class AccessControlEntry:
     """One (principal, resource, permission, allow|deny) statement.
@@ -272,9 +275,7 @@ class AclEvaluator:
             matches = [
                 e
                 for e in self._entries
-                if e.permission == permission
-                and e.resource == path
-                and e.principal in holders
+                if e.permission == permission and e.resource == path and e.principal in holders
             ]
             if not matches:
                 continue
@@ -285,9 +286,7 @@ class AclEvaluator:
                 permission=permission,
                 resource=target,
                 inherited_from=path,
-                via_role=(
-                    decided.principal if decided.principal != principal else None
-                ),
+                via_role=(decided.principal if decided.principal != principal else None),
                 reason=(
                     "explicit deny at %s" % path
                     if denial is not None

@@ -32,6 +32,7 @@ def _clean_env(monkeypatch):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _reload_module_with_env(**env_overrides):
     """Reload relay_observability under a custom environment."""
     old_env = {k: os.environ.get(k) for k in env_overrides}
@@ -368,6 +369,7 @@ def test_create_agent_scope_survives_scope_exception(monkeypatch):
 def test_task_executor_main_imports_relay_observability():
     """task_executor must import relay_observability at module level."""
     from mac import task_executor as te
+
     assert hasattr(te, "relay_observability")
 
 
@@ -510,12 +512,18 @@ def test_relay_context_survives_scope_enter_failure(monkeypatch):
 
 
 def test_sanitize_attrs_keeps_scalars_drops_objects():
-    out = ro._sanitize_attrs({
-        "s": "x", "i": 1, "f": 1.5, "b": True, "n": None,
-        "list_ok": [1, "a", None],
-        "list_bad": [object()],
-        "obj": object(),
-    })
+    out = ro._sanitize_attrs(
+        {
+            "s": "x",
+            "i": 1,
+            "f": 1.5,
+            "b": True,
+            "n": None,
+            "list_ok": [1, "a", None],
+            "list_bad": [object()],
+            "obj": object(),
+        }
+    )
     assert out == {"s": "x", "i": 1, "f": 1.5, "b": True, "n": None, "list_ok": [1, "a", None]}
 
 
@@ -550,7 +558,15 @@ def test_process_info_stays_info():
 
 @pytest.mark.parametrize(
     "severity_id,expected",
-    [(0, "info"), (1, "info"), (2, "info"), (3, "warning"), (4, "error"), (5, "critical"), (6, "critical")],
+    [
+        (0, "info"),
+        (1, "info"),
+        (2, "info"),
+        (3, "warning"),
+        (4, "error"),
+        (5, "critical"),
+        (6, "critical"),
+    ],
 )
 def test_severity_mapping(severity_id, expected):
     obs = ro.ocsf_to_observation({"class_uid": 2004, "severity_id": severity_id})
@@ -569,7 +585,12 @@ def test_non_dict_returns_none():
 
 
 def test_iter_skips_non_dicts():
-    records = [{"class_uid": 1007, "severity_id": 1}, "garbage", 42, {"class_uid": 4002, "severity_id": 1}]
+    records = [
+        {"class_uid": 1007, "severity_id": 1},
+        "garbage",
+        42,
+        {"class_uid": 4002, "severity_id": 1},
+    ]
     out = list(ro.iter_ocsf_observations(records))
     assert [o["name"] for o in out] == ["sandbox.process", "sandbox.http"]
 

@@ -181,6 +181,7 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
     record_scope_estimate,
 )
 
+
 def _run_captured(argv: List[str], cwd: Path, timeout: Optional[float]):
     """Run a subprocess and kill its complete process group on timeout."""
     # DEVNULL rather than inherited: every openshell lifecycle step goes through
@@ -258,8 +259,14 @@ def run_with_stall_watchdog(
         except ValueError:
             return fallback
 
-    stall = stall_timeout if stall_timeout is not None else _env_float("MAC_TEST_STALL_TIMEOUT", 300.0)
-    hard = hard_timeout if hard_timeout is not None else _env_float("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", 1800.0)
+    stall = (
+        stall_timeout if stall_timeout is not None else _env_float("MAC_TEST_STALL_TIMEOUT", 300.0)
+    )
+    hard = (
+        hard_timeout
+        if hard_timeout is not None
+        else _env_float("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", 1800.0)
+    )
 
     # The streaming runner: this one has a stall timeout, so an inherited stdin
     # turns "the command is waiting for input" into "the command stalled", which
@@ -297,7 +304,9 @@ def run_with_stall_watchdog(
         if now - last_activity[0] > stall:
             kill_reason = "stalled: no output for %.0fs (MAC_TEST_STALL_TIMEOUT)" % stall
         elif now - started > hard:
-            kill_reason = "exceeded hard ceiling of %.0fs (MAC_WORKER_REPOSITORY_TEST_TIMEOUT)" % hard
+            kill_reason = (
+                "exceeded hard ceiling of %.0fs (MAC_WORKER_REPOSITORY_TEST_TIMEOUT)" % hard
+            )
         if kill_reason:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -349,10 +358,7 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     if test_items:
         tests_state = (
             "pass"
-            if all(
-                (t.get("returncode") == 0 or t.get("status") == "pass")
-                for t in test_items
-            )
+            if all((t.get("returncode") == 0 or t.get("status") == "pass") for t in test_items)
             else "fail"
         )
     # ``repo`` is {} for non-repo evidence (operator_result/documentation/...);
@@ -387,7 +393,9 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
         "evidence_type": evidence_type,
         "outcome": "success" if success else "failure",
         "signals": signals,
-        "error_signature": "" if success else (
+        "error_signature": ""
+        if success
+        else (
             "untracked_new_files_at_finalize" if new_file_refusal else _error_signature(manifest)
         ),
     }
@@ -444,8 +452,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
     execution = metadata.get("execution_contract") if isinstance(metadata, dict) else {}
     contract = (
         execution.get("repository_contract")
-        if isinstance(execution, dict)
-        and isinstance(execution.get("repository_contract"), dict)
+        if isinstance(execution, dict) and isinstance(execution.get("repository_contract"), dict)
         else origin.get("repository_contract")
     )
     if not isinstance(contract, dict) and isinstance(metadata, dict):
@@ -496,8 +503,8 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
         if item
     )
     lines = [
-            "Repository contract summary: %s" % (summary or "see task.json"),
-            "The complete repository and execution contracts remain in task.json; read them there when more detail is needed.",
+        "Repository contract summary: %s" % (summary or "see task.json"),
+        "The complete repository and execution contracts remain in task.json; read them there when more detail is needed.",
     ]
     if metadata_declares_read_only_report_repository(metadata):
         review_mode = isinstance(metadata.get("review_context"), dict)
@@ -539,7 +546,11 @@ def task_evidence_type(task: Dict[str, Any]) -> str:
     if metadata_declares_report_deliverable(metadata):
         return "operator_result"
     contract = metadata.get("execution_contract") if isinstance(metadata, dict) else {}
-    evidence_type = str(contract.get("evidence_type") or "").strip().lower() if isinstance(contract, dict) else ""
+    evidence_type = (
+        str(contract.get("evidence_type") or "").strip().lower()
+        if isinstance(contract, dict)
+        else ""
+    )
     allowed = {
         "repo_change",
         "documentation",
@@ -582,7 +593,6 @@ def task_is_repo_coupled(task: Dict[str, Any]) -> bool:
     return isinstance(metadata.get("repository_contract"), dict)
 
 
-
 def _repository_contract_test_command(task: Dict[str, Any]) -> str:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
@@ -592,9 +602,7 @@ def _repository_contract_test_command(task: Dict[str, Any]) -> str:
         # repository authority.  Falling through to origin/top-level metadata
         # here would let a stale contract choose executable verifier code even
         # though remote and branch resolution correctly rejected that source.
-        current = _nested_dict(
-            metadata, "execution_contract", "repository_contract", "test"
-        )
+        current = _nested_dict(metadata, "execution_contract", "repository_contract", "test")
         return str(current.get("command") or "").strip()
     candidates = [
         _nested_dict(metadata, "execution_contract", "test"),
@@ -665,7 +673,9 @@ def _repository_prepared_base(task: Dict[str, Any]) -> str:
         return value
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
-    return str(runtime.get("repository_base_sha") or "").strip() if isinstance(runtime, dict) else ""
+    return (
+        str(runtime.get("repository_base_sha") or "").strip() if isinstance(runtime, dict) else ""
+    )
 
 
 def _repository_task_branch(task: Dict[str, Any], fallback: str = "") -> str:
@@ -687,7 +697,9 @@ def _repository_lease_id(task: Dict[str, Any]) -> str:
         return value
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
-    return str(runtime.get("repository_lease_id") or "").strip() if isinstance(runtime, dict) else ""
+    return (
+        str(runtime.get("repository_lease_id") or "").strip() if isinstance(runtime, dict) else ""
+    )
 
 
 def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -706,9 +718,7 @@ def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
     else:
         candidates = [
             _nested_dict(metadata, "execution_contract", "bootstrap"),
-            _nested_dict(
-                metadata, "execution_contract", "repository_contract", "bootstrap"
-            ),
+            _nested_dict(metadata, "execution_contract", "repository_contract", "bootstrap"),
             _nested_dict(metadata, "origin", "repository_contract", "bootstrap"),
             _nested_dict(metadata, "repository_contract", "bootstrap"),
         ]
@@ -728,7 +738,9 @@ def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
 
 def _repository_bootstrap_timeout() -> float:
     raw = (
-        resolve_env_chain("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", "MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
+        resolve_env_chain(
+            "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", "MAC_WORKER_REPOSITORY_TEST_TIMEOUT"
+        )
         or "1800"
     )
     try:
@@ -749,11 +761,7 @@ def _run_repository_bootstrap_if_needed(
     if not command:
         return None
     creates = bootstrap.get("creates") if isinstance(bootstrap.get("creates"), list) else []
-    missing = [
-        path
-        for path in creates
-        if not (worktree_path / str(path)).exists()
-    ]
+    missing = [path for path in creates if not (worktree_path / str(path)).exists()]
     if creates and not missing:
         return {
             "command": command,
@@ -793,7 +801,6 @@ def _run_repository_bootstrap_if_needed(
         }
 
 
-
 def _cooperative_integration_section(task: Dict[str, Any]) -> str:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     coordination = metadata.get("coordination") if isinstance(metadata, dict) else {}
@@ -809,11 +816,9 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
             "Treat every child output below as an explicit input. Fetch and merge each exact remote_ref/head_sha into this task's integration branch; do not squash, cherry-pick, or merely summarize the children because the final review verifies commit ancestry.",
             "Resolve conflicts, run the repository's complete test contract and CodeGraph on the combined result, and produce new executor evidence for the integrated commit.",
             "If any required child output is missing or cannot be integrated, fail closed and identify that child instead of claiming completion.",
-            "Child outputs (JSON):\n%s"
-            % json.dumps(outputs, indent=2, sort_keys=True),
+            "Child outputs (JSON):\n%s" % json.dumps(outputs, indent=2, sort_keys=True),
         ]
     )
-
 
 
 def _coordination_section(task: Dict[str, Any]) -> str:
@@ -841,12 +846,11 @@ def _coordination_section(task: Dict[str, Any]) -> str:
             "",
             "- BEFORE your first edit, announce what you are about to touch: the "
             "repository and the paths. Keep it to that -- a peer can act on "
-            "\"I am editing src/mac/api.py\"; nobody can act on a status update.",
+            '"I am editing src/mac/api.py"; nobody can act on a status update.',
             "- Start a watcher in the BACKGROUND and keep working while it runs: "
             "`mac admin agentbus wait %s`. It blocks until someone messages you, prints "
             "the message, and exits. Restart it after acting, passing "
-            "`--after-cursor` from the previous run so nothing is missed."
-            % agent_id,
+            "`--after-cursor` from the previous run so nothing is missed." % agent_id,
             "- A message may be a correction. Read it before continuing, and if a "
             "peer says they own a file you were about to change, believe them and "
             "adjust rather than racing.",
@@ -856,7 +860,9 @@ def _coordination_section(task: Dict[str, Any]) -> str:
     )
 
 
-def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
+def build_task_prompt(
+    task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None
+) -> str:
     """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     evidence_contract = (
@@ -912,27 +918,33 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
     return "\n\n".join(parts)
 
 
-def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_context: Dict[str, Any], lessons: Optional[List[str]] = None) -> str:
+def build_review_prompt(
+    task: Dict[str, Any],
+    task_workspace: Path,
+    review_context: Dict[str, Any],
+    lessons: Optional[List[str]] = None,
+) -> str:
     """Build the full reviewer prompt text for the given task and review context."""
     parts = [
-            "You are running as a MAC fleet reviewer. Review the executor's work independently.",
-            "Use the workspace files as the source of truth. Preserve secrets and do not print bearer tokens.",
-            "Decide whether the executor evidence actually proves the task was completed and verified.",
-            "Approve only when the evidence is coherent, pushed/published when required, and the checks are passing. Reject unverifiable, local-only, failing, or mismatched work.",
-            "If MAC_TASK_REPO_WORKTREE is set, use that local review checkout for independent build/test work; it is prepared from the executor evidence remote/ref/head and is safe for review commands.",
-            "For repository changes, inspect the review checkout and run focused independent tests for the changed behavior before approving. Do not repeat the full repository contract/pre-push gate or run the repository contract test command in full; the deterministic host already ran and recorded the authoritative impact-scoped gate. Look for failures introduced by the change, not just manifest shape.",
-            "When an existing CodeGraph index is available, use it as an advisory review hint. Include any result in the review verdict; absence or failure does not block approval.",
-            "When you finish, report concise findings and write a review verdict manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
-            "Use schema mac.worker_evidence.v1 with status=complete, evidence_type=review_verdict, verdict=approved or rejected, reviewed_evidence_id=%s, and review_id=%s."
-            % (review_context.get("executor_evidence_id", ""), review_context.get("review_id", "")),
-            'A review verdict must also include repo copied from the executor verification repo object, with the same repo.head_sha, plus at least one independent passing check as checks=[{"name":"...","returncode":0}] or status="pass".',
-            "Include worktree_digest as sha256:<64 lowercase hex chars>. If you cannot independently verify the executor result, write verdict=rejected and explain the blocker instead of omitting repo/check fields.",
-            "Read the original task from executor-task.json and the executor evidence from executor-evidence.json in your workspace (%s)." % str(task_workspace),
-            "Finally, for the per-task activity log, print a short plain-language recap "
-            "of what you checked and found and whether you'd approve and why (1-3 "
-            "sentences, no code or diff), wrapped EXACTLY in these two marker lines:\n"
-            "%s\n<your recap here>\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END),
-        ]
+        "You are running as a MAC fleet reviewer. Review the executor's work independently.",
+        "Use the workspace files as the source of truth. Preserve secrets and do not print bearer tokens.",
+        "Decide whether the executor evidence actually proves the task was completed and verified.",
+        "Approve only when the evidence is coherent, pushed/published when required, and the checks are passing. Reject unverifiable, local-only, failing, or mismatched work.",
+        "If MAC_TASK_REPO_WORKTREE is set, use that local review checkout for independent build/test work; it is prepared from the executor evidence remote/ref/head and is safe for review commands.",
+        "For repository changes, inspect the review checkout and run focused independent tests for the changed behavior before approving. Do not repeat the full repository contract/pre-push gate or run the repository contract test command in full; the deterministic host already ran and recorded the authoritative impact-scoped gate. Look for failures introduced by the change, not just manifest shape.",
+        "When an existing CodeGraph index is available, use it as an advisory review hint. Include any result in the review verdict; absence or failure does not block approval.",
+        "When you finish, report concise findings and write a review verdict manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
+        "Use schema mac.worker_evidence.v1 with status=complete, evidence_type=review_verdict, verdict=approved or rejected, reviewed_evidence_id=%s, and review_id=%s."
+        % (review_context.get("executor_evidence_id", ""), review_context.get("review_id", "")),
+        'A review verdict must also include repo copied from the executor verification repo object, with the same repo.head_sha, plus at least one independent passing check as checks=[{"name":"...","returncode":0}] or status="pass".',
+        "Include worktree_digest as sha256:<64 lowercase hex chars>. If you cannot independently verify the executor result, write verdict=rejected and explain the blocker instead of omitting repo/check fields.",
+        "Read the original task from executor-task.json and the executor evidence from executor-evidence.json in your workspace (%s)."
+        % str(task_workspace),
+        "Finally, for the per-task activity log, print a short plain-language recap "
+        "of what you checked and found and whether you'd approve and why (1-3 "
+        "sentences, no code or diff), wrapped EXACTLY in these two marker lines:\n"
+        "%s\n<your recap here>\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END),
+    ]
     assignment = _review_experiment_assignment(task)
     if assignment:
         if assignment.get("blind"):
@@ -1023,8 +1035,7 @@ def _blind_review_protocol(
         independent.get("schema") == "mac.independent_review_findings.v1"
         and str(independent.get("experiment_id") or "").strip()
         == str(assignment.get("experiment_id") or "").strip()
-        and str(independent.get("arm") or "").strip()
-        == str(assignment.get("arm") or "").strip()
+        and str(independent.get("arm") or "").strip() == str(assignment.get("arm") or "").strip()
         and (bool(findings) or bool(no_findings_reason))
     )
     return {
@@ -1039,13 +1050,9 @@ def _blind_review_protocol(
         "discovery_stderr_sha256": sha256_text(getattr(result, "stderr", "") or ""),
         "independent_findings_valid": valid_findings,
         "independent_findings_count": len(findings),
-        "independent_findings_sha256": (
-            "sha256:" + hashlib.sha256(raw).hexdigest() if raw else ""
-        ),
+        "independent_findings_sha256": ("sha256:" + hashlib.sha256(raw).hexdigest() if raw else ""),
         "protocol_compliant": bool(
-            evidence_hidden
-            and valid_findings
-            and int(getattr(result, "returncode", 1)) == 0
+            evidence_hidden and valid_findings and int(getattr(result, "returncode", 1)) == 0
         ),
         "recorded_at": utcnow(),
     }

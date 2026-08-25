@@ -302,9 +302,7 @@ def test_create_task_invalid_payload_returns_422():
     client = _make_client(cp)
 
     # title is required by TaskCreate; omitting it must fail schema validation
-    resp = client.post(
-        "/tasks", json={"description": "no title"}, headers=_AUTH_HEADERS
-    )
+    resp = client.post("/tasks", json={"description": "no title"}, headers=_AUTH_HEADERS)
 
     assert resp.status_code == 422
 
@@ -326,18 +324,14 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
 
     state_response = client.get("/dashboard/state", headers=_AUTH_HEADERS)
     assert state_response.status_code == 200
-    summary = next(
-        item for item in state_response.json()["tasks"] if item["task"]["id"] == task_id
-    )
+    summary = next(item for item in state_response.json()["tasks"] if item["task"]["id"] == task_id)
     assert summary["task"]["state"] == TaskState.BLOCKED.value
     assert summary["detail_available"] is True
 
     # /dashboard/tasks/{id}/timeline was deleted with the legacy dashboard;
     # ide/src never called it, this test only wanted a way to read history.
     # The console's drill-down is the live endpoint that carries it.
-    timeline_response = client.get(
-        "/dashboard/observe/tasks/%s" % task_id, headers=_AUTH_HEADERS
-    )
+    timeline_response = client.get("/dashboard/observe/tasks/%s" % task_id, headers=_AUTH_HEADERS)
     assert timeline_response.status_code == 200
     # the console drill-down returns history newest-first
     blocked_event = timeline_response.json()["history"][0]
@@ -358,18 +352,13 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
         headers=_AUTH_HEADERS,
         json={
             "actor": "human",
-            "description": task["description"]
-            + "\n\nOperator direction:\n"
-            + direction,
+            "description": task["description"] + "\n\nOperator direction:\n" + direction,
             "metadata": metadata,
         },
     )
     assert update_response.status_code == 200
     assert direction in update_response.json()["description"]
-    assert (
-        update_response.json()["metadata"]["operator_guidance"][-1]["direction"]
-        == direction
-    )
+    assert update_response.json()["metadata"]["operator_guidance"][-1]["direction"] == direction
 
     reopen_response = client.post(
         "/tasks/%s/reopen" % task_id,
@@ -453,9 +442,7 @@ def test_workbench_ide_state_is_bounded_and_does_not_load_secret_audits(monkeypa
     assert body["schema"] == "mac.dashboard_ide.v1"
     assert body["secret_audits"] == []
     assert len(body["tasks"]) == 101
-    projected = next(
-        item for item in body["tasks"] if item["task"]["title"] == "bounded task 0"
-    )
+    projected = next(item for item in body["tasks"] if item["task"]["title"] == "bounded task 0")
     assert projected["detail_loaded"] is False
     assert projected["task"]["dependencies"] == [dependency.id]
     assert projected["task"]["required_capabilities"] == ["python"]
@@ -544,10 +531,7 @@ def test_dashboard_reads_do_not_observe_themselves_or_trigger_stream_updates():
         )
     )
 
-    assert (
-        client.get("/dashboard/state?view=ide", headers=_AUTH_HEADERS).status_code
-        == 200
-    )
+    assert client.get("/dashboard/state?view=ide", headers=_AUTH_HEADERS).status_code == 200
     assert client.get("/.well-known/agent-card.json").status_code == 200
     stream_response = client.get(
         "/dashboard/stream?timeout_seconds=0",
@@ -557,9 +541,7 @@ def test_dashboard_reads_do_not_observe_themselves_or_trigger_stream_updates():
     assert stream_response.headers.get("content-encoding") == "identity"
 
     api_paths = [
-        item.detail.get("path")
-        for item in cp.list_observability(limit=20)
-        if item.layer == "api"
+        item.detail.get("path") for item in cp.list_observability(limit=20) if item.layer == "api"
     ]
     assert "/dashboard/state" not in api_paths
     assert "/dashboard/stream" not in api_paths
@@ -713,7 +695,7 @@ def _client_calls() -> dict:
     for index, match in enumerate(entries):
         name = match.group(1)
         end = entries[index + 1].start() if index + 1 < len(entries) else len(source)
-        body = source[match.end():end]
+        body = source[match.end() : end]
 
         # `req<...>` generics nest (`req<Record<string, unknown>>`), so the type
         # argument must be matched non-greedily rather than as "not a '>'".
@@ -767,10 +749,7 @@ def test_every_client_method_targets_a_real_route():
     app = create_app(control_plane=ControlPlane.in_memory(), auth_tokens=_AUTH_TOKENS)
     shapes = _server_route_shapes(app)
 
-    missing = {
-        name: call for name, call in _client_calls().items() if call not in shapes
-    }
-    assert not missing, (
-        "Fleet IDE client methods with no matching FastAPI route: %s"
-        % sorted("%s -> %s %s" % (n, v, p) for n, (v, p) in missing.items())
+    missing = {name: call for name, call in _client_calls().items() if call not in shapes}
+    assert not missing, "Fleet IDE client methods with no matching FastAPI route: %s" % sorted(
+        "%s -> %s %s" % (n, v, p) for n, (v, p) in missing.items()
     )

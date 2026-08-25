@@ -34,7 +34,8 @@ def test_review_experiment_cli_lifecycle(tmp_path):
 
     rc, assignment = _run(
         tmp_path,
-        "admin", "review",
+        "admin",
+        "review",
         "experiment",
         "assign",
         task["id"],
@@ -47,7 +48,8 @@ def test_review_experiment_cli_lifecycle(tmp_path):
 
     rc, outcome = _run(
         tmp_path,
-        "admin", "review",
+        "admin",
+        "review",
         "experiment",
         "outcome",
         task["id"],
@@ -59,15 +61,14 @@ def test_review_experiment_cli_lifecycle(tmp_path):
     assert rc == 0
     assert outcome["status"] == "confirmed"
 
-    rc, observation = _run(
-        tmp_path, "admin", "review", "experiment", "observe", task["id"]
-    )
+    rc, observation = _run(tmp_path, "admin", "review", "experiment", "observe", task["id"])
     assert rc == 0
     assert observation["experiment"]["experiment_id"] == "cli-exp"
 
     rc, report = _run(
         tmp_path,
-        "admin", "review",
+        "admin",
+        "review",
         "experiment",
         "report",
         "cli-exp",
@@ -76,4 +77,3 @@ def test_review_experiment_cli_lifecycle(tmp_path):
     )
     assert rc == 0
     assert report["policy"]["status"] == "insufficient_evidence"
-

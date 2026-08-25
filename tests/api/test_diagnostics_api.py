@@ -7,6 +7,7 @@ hub-native contract: the ``/diagnostics`` route runs every check against the
 hub's authoritative backend, and ``RemoteDispatch.diagnostics_report`` fetches
 that report over HTTP instead of touching a local store.
 """
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient

@@ -423,7 +423,7 @@ def classify_review_failure(
     # 1. Compound "reviewer_protocol_failure:<sub_reason>" strings
     # ------------------------------------------------------------------
     if reason_str.lower().startswith(PROTOCOL_FAILURE_PREFIX):
-        sub = reason_str[len(PROTOCOL_FAILURE_PREFIX):].strip().lower()
+        sub = reason_str[len(PROTOCOL_FAILURE_PREFIX) :].strip().lower()
         sub_norm = _normalize_reason(sub)
         # semantic_verdict_invalid and blind_protocol_noncompliant are
         # semantic (the reviewer understood the task but delivered a
@@ -432,9 +432,7 @@ def classify_review_failure(
             fc = sub_norm
             return ReviewFailureClassification(fc, False)
         # review_executor_nonzero and similar harness failures are infra.
-        return ReviewFailureClassification(
-            sub_norm or "review_executor_nonzero", True
-        )
+        return ReviewFailureClassification(sub_norm or "review_executor_nonzero", True)
 
     # ------------------------------------------------------------------
     # 2. Exact reason-set lookup
@@ -461,9 +459,7 @@ def classify_review_failure(
     # ------------------------------------------------------------------
     # 4. Free-text pattern matching on combined reason + error blob
     # ------------------------------------------------------------------
-    blob = " ".join(
-        filter(None, [reason_str, str(error or "").strip()])
-    ).lower()
+    blob = " ".join(filter(None, [reason_str, str(error or "").strip()])).lower()
 
     for pattern, failure_class in _ERROR_TEXT_RULES:
         if pattern.search(blob):
@@ -479,19 +475,9 @@ def classify_review_failure(
 
 def _reason_to_canonical_class(norm: str) -> str:
     """Map a normalised reason token to its canonical failure-class string."""
-    _INFRA_NORM_MAP = {
-        _normalize_reason(r): _canonical_infra(r)
-        for r in INFRASTRUCTURE_REASONS
-    }
-    _SEMANTIC_NORM_MAP = {
-        _normalize_reason(r): _canonical_semantic(r)
-        for r in SEMANTIC_REASONS
-    }
-    return (
-        _INFRA_NORM_MAP.get(norm)
-        or _SEMANTIC_NORM_MAP.get(norm)
-        or norm
-    )
+    _INFRA_NORM_MAP = {_normalize_reason(r): _canonical_infra(r) for r in INFRASTRUCTURE_REASONS}
+    _SEMANTIC_NORM_MAP = {_normalize_reason(r): _canonical_semantic(r) for r in SEMANTIC_REASONS}
+    return _INFRA_NORM_MAP.get(norm) or _SEMANTIC_NORM_MAP.get(norm) or norm
 
 
 def _canonical_infra(reason: str) -> str:

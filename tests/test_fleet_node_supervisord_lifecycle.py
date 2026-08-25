@@ -37,26 +37,22 @@ def _run_lifecycle(
         f"FAKE_EVENTS={shlex.quote(str(events))}\n"
         "log() { printf '%s\\n' \"$*\" >&2; }\n"
         "run_supervisorctl() {\n"
-        "  local operation=\"$1\"\n"
+        '  local operation="$1"\n'
         "  shift\n"
-        "  case \"$operation\" in\n"
+        '  case "$operation" in\n'
         "    status)\n"
         "      local index\n"
-        "      index=\"$(<\"$FAKE_STATUS_COUNTER\")\"\n"
-        "      printf '%s\\n' \"$(( index + 1 ))\" > \"$FAKE_STATUS_COUNTER\"\n"
+        '      index="$(<"$FAKE_STATUS_COUNTER")"\n'
+        '      printf \'%s\\n\' "$(( index + 1 ))" > "$FAKE_STATUS_COUNTER"\n'
         "      printf '%s\\n' \"${FAKE_STATUS_OUTPUTS[$index]}\"\n"
-        "      return \"${FAKE_STATUS_RCS[$index]}\"\n"
+        '      return "${FAKE_STATUS_RCS[$index]}"\n'
         "      ;;\n"
         "    start|stop)\n"
-        "      printf '%s %s\\n' \"$operation\" \"$1\" >> \"$FAKE_EVENTS\"\n"
+        '      printf \'%s %s\\n\' "$operation" "$1" >> "$FAKE_EVENTS"\n'
         "      ;;\n"
         "    *) return 64 ;;\n"
         "  esac\n"
-        "}\n"
-        + _lifecycle_functions()
-        + "\n"
-        + command
-        + "\n",
+        "}\n" + _lifecycle_functions() + "\n" + command + "\n",
         encoding="utf-8",
     )
     return subprocess.run(

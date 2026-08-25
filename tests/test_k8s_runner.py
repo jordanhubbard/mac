@@ -35,6 +35,7 @@ from mac.k8s.runner import (
 from types import SimpleNamespace
 from mac.k8s import runner
 
+
 def _task(id_: str = "task-abc", **overrides: Any) -> Dict[str, Any]:
     base = {
         "id": id_,
@@ -46,8 +47,10 @@ def _task(id_: str = "task-abc", **overrides: Any) -> Dict[str, Any]:
     base.update(overrides)
     return base
 
+
 def _lease(id_: str = "lease-xyz") -> Dict[str, Any]:
     return {"id": id_, "task_id": "task-abc", "status": "active"}
+
 
 def _cfg(**overrides: Any) -> RunnerConfig:
     base = RunnerConfig(
@@ -58,6 +61,7 @@ def _cfg(**overrides: Any) -> RunnerConfig:
     for k, v in overrides.items():
         setattr(base, k, v)
     return base
+
 
 def _dispatcher_yaml() -> Dict[str, Any]:
     return {
@@ -73,6 +77,7 @@ def _dispatcher_yaml() -> Dict[str, Any]:
         },
     }
 
+
 def _empty_config_yaml() -> Dict[str, Any]:
     return {
         "mac_url": "http://mac-api.mac.svc:80",
@@ -81,6 +86,7 @@ def _empty_config_yaml() -> Dict[str, Any]:
         "roles": {},
         "capability_role_aliases": {},
     }
+
 
 def _roles_config_yaml() -> Dict[str, Any]:
     """YAML doc carrying two roles + alias map."""
@@ -126,19 +132,20 @@ def _roles_config_yaml() -> Dict[str, Any]:
         },
     }
 
+
 def _write_config_yaml(tmp_path: Path, doc: Dict[str, Any]) -> Path:
     f = tmp_path / "config.yaml"
     f.write_text(yaml.safe_dump(doc))
     return f
 
+
 @pytest.fixture()
-def empty_config_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def empty_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A tmp_path config.yaml with no roles + $MAC_CONFIG_FILE set."""
     f = _write_config_yaml(tmp_path, _empty_config_yaml())
     monkeypatch.setenv("MAC_CONFIG_FILE", str(f))
     return f
+
 
 class TestBuildJobSpec:
     def test_basic_shape(self) -> None:
@@ -160,9 +167,7 @@ class TestBuildJobSpec:
             projected.append(True)
             return []
 
-        monkeypatch.setattr(
-            "mac.k8s.runner._build_executor_container_env", record_projection
-        )
+        monkeypatch.setattr("mac.k8s.runner._build_executor_container_env", record_projection)
         task = _task(
             metadata={
                 "deliverable": "report",
@@ -173,17 +178,13 @@ class TestBuildJobSpec:
             }
         )
 
-        with pytest.raises(
-            ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
-        ):
+        with pytest.raises(ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON):
             build_job_spec(task, _lease(), _cfg())
 
         assert projected == []
 
     def test_job_name_is_dns_safe(self) -> None:
-        spec = build_job_spec(
-            _task(id_="ABC_Task!1"), _lease(id_="lease-WITH/MIXED:chars"), _cfg()
-        )
+        spec = build_job_spec(_task(id_="ABC_Task!1"), _lease(id_="lease-WITH/MIXED:chars"), _cfg())
         name = spec["metadata"]["name"]
         assert all(c.islower() or c.isdigit() or c == "-" for c in name)
         assert not name.startswith("-")
@@ -260,9 +261,7 @@ class TestBuildJobSpec:
     def test_role_job_uses_its_exact_per_agent_credential_secret(self) -> None:
         cfg = _cfg(
             role_agent_ids={"python-coder": "agent_python_coder"},
-            agent_token_secrets={
-                "agent_python_coder": "mac-worker-agent-python-coder-deadbeef"
-            },
+            agent_token_secrets={"agent_python_coder": "mac-worker-agent-python-coder-deadbeef"},
         )
         task = _task(metadata={"required_role": "python-coder"})
         spec = build_job_spec(task, _lease(), cfg)
@@ -291,9 +290,7 @@ class TestBuildJobSpec:
         forwarded into the job container env, raising it on the runner
         deployment has no effect and tasks keep dying at the 1500s
         default. Forward it from RunnerConfig.executor_timeout_seconds."""
-        spec = build_job_spec(
-            _task(), _lease(), _cfg(executor_timeout_seconds=2700)
-        )
+        spec = build_job_spec(_task(), _lease(), _cfg(executor_timeout_seconds=2700))
         env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
         timeout_var = next(
             (e for e in env if e["name"] == "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS"),
@@ -346,10 +343,7 @@ class TestBuildJobSpec:
 
     def test_image_resolution_default(self) -> None:
         spec = build_job_spec(_task(), _lease(), _cfg())
-        assert (
-            spec["spec"]["template"]["spec"]["containers"][0]["image"]
-            == DEFAULT_TASK_IMAGE
-        )
+        assert spec["spec"]["template"]["spec"]["containers"][0]["image"] == DEFAULT_TASK_IMAGE
 
     def test_image_resolution_task_override(self) -> None:
         task = _task(metadata={"runtime": {"image": "ghcr.io/x/y@sha256:abc"}})
@@ -370,22 +364,19 @@ class TestBuildJobSpec:
         cmd = spec["spec"]["template"]["spec"]["containers"][0]["command"]
         assert cmd == ["mac-task-runner"]
 
+
 class TestOpencodeConfigMapMount:
     def test_build_job_spec_mounts_opencode_configmap_by_default(self) -> None:
         spec = build_job_spec(_task(), _lease(), _cfg())
         pod_spec = spec["spec"]["template"]["spec"]
         # Volume present on pod.
         volumes = pod_spec["volumes"]
-        opencode_vol = next(
-            (v for v in volumes if v.get("name") == "opencode-config"), None
-        )
+        opencode_vol = next((v for v in volumes if v.get("name") == "opencode-config"), None)
         assert opencode_vol is not None, "opencode-config volume must be on the pod by default"
         assert opencode_vol["configMap"] == {"name": "mac-opencode-config"}
         # VolumeMount present on container.
         mounts = pod_spec["containers"][0]["volumeMounts"]
-        opencode_mount = next(
-            (m for m in mounts if m.get("name") == "opencode-config"), None
-        )
+        opencode_mount = next((m for m in mounts if m.get("name") == "opencode-config"), None)
         assert opencode_mount is not None
         assert opencode_mount["mountPath"] == "/etc/opencode"
         assert opencode_mount.get("readOnly") is True
@@ -402,11 +393,10 @@ class TestOpencodeConfigMapMount:
         spec = build_job_spec(_task(), _lease(), cfg)
         pod_spec = spec["spec"]["template"]["spec"]
         vol_names = {v.get("name") for v in pod_spec["volumes"]}
-        mount_names = {
-            m.get("name") for m in pod_spec["containers"][0]["volumeMounts"]
-        }
+        mount_names = {m.get("name") for m in pod_spec["containers"][0]["volumeMounts"]}
         assert "opencode-config" not in vol_names
         assert "opencode-config" not in mount_names
+
 
 class TestSanitizeDnsLabel:
     @pytest.mark.parametrize(
@@ -425,6 +415,7 @@ class TestSanitizeDnsLabel:
         long = "x" * 200
         assert len(_sanitize_dns_label(long)) <= 63
 
+
 class _FakeMac:
     def __init__(self, claim_response: Optional[Dict[str, Any]] = None) -> None:
         self._claim = claim_response
@@ -441,6 +432,7 @@ class _FakeMac:
         self.gotten.append(path)
         return {}
 
+
 class _FakeJobs:
     def __init__(
         self,
@@ -452,9 +444,7 @@ class _FakeJobs:
         self.deleted: List[str] = []
         self._fail = fail
         self.last_namespace: Optional[str] = None
-        self._read_responses = read_responses or [
-            {"status": {"succeeded": 1, "failed": 0}}
-        ]
+        self._read_responses = read_responses or [{"status": {"succeeded": 1, "failed": 0}}]
         self.read_calls: List[Dict[str, str]] = []
 
     def create(self, namespace: str, manifest: Dict[str, Any]) -> Dict[str, Any]:
@@ -478,10 +468,12 @@ class _FakeJobs:
             return self._read_responses[0]
         return self._read_responses.pop(0)
 
+
 def test_claim_and_launch_returns_none_when_nothing_ready() -> None:
     mac = _FakeMac(claim_response=None)
     jobs = _FakeJobs()
     assert claim_and_launch_one(mac, jobs, _cfg()) is None
+
 
 def test_claim_and_launch_happy_path() -> None:
     mac = _FakeMac(claim_response={"task": _task(), "lease": _lease()})
@@ -520,9 +512,7 @@ def test_claim_and_launch_blocks_read_only_report_without_creating_job() -> None
     }
     assert jobs.created == []
     assert not any(post["path"].endswith("/delegate") for post in mac.posted)
-    transition = next(
-        post for post in mac.posted if post["path"].endswith("/transition")
-    )
+    transition = next(post for post in mac.posted if post["path"].endswith("/transition"))
     assert transition["body"]["target_state"] == "blocked"
     assert transition["body"]["lease_id"] == "lease-xyz"
     assert transition["body"]["detail"] == {
@@ -541,17 +531,17 @@ def test_claim_and_launch_passes_capability_filter() -> None:
     body = mac.posted[0]["body"]
     assert body["capabilities"] == ["python", "ops"]
 
+
 def test_claim_and_launch_releases_lease_on_k8s_failure() -> None:
     mac = _FakeMac(claim_response={"task": _task(), "lease": _lease()})
     jobs = _FakeJobs(fail=True)
     result = claim_and_launch_one(mac, jobs, _cfg())
     assert result is not None
     assert result["status"] == "k8s_create_failed"
-    release_posts = [
-        p for p in mac.posted if p["path"].endswith("/transition")
-    ]
+    release_posts = [p for p in mac.posted if p["path"].endswith("/transition")]
     assert release_posts, "lease should be released to open on k8s failure"
     assert release_posts[0]["body"]["target_state"] == "open"
+
 
 def test_claim_and_launch_refuses_assignment_without_lease() -> None:
     mac = _FakeMac(claim_response={"task": _task(), "lease": {}})
@@ -560,15 +550,15 @@ def test_claim_and_launch_refuses_assignment_without_lease() -> None:
     assert result is None
     assert jobs.created == []
 
+
 def _role_runner_cfg() -> Any:
     base = _cfg()
     base.role_images = {"python-coder": "ghcr.io/x/coder:latest"}
     base.role_agent_ids = {"python-coder": "mac-worker-python-coder"}
-    base.role_executors = {
-        "python-coder": "/usr/local/bin/mac-task-executor-codex"
-    }
+    base.role_executors = {"python-coder": "/usr/local/bin/mac-task-executor-codex"}
     base.capability_role_aliases = {"python": "python-coder"}
     return base
+
 
 def test_claim_and_launch_delegates_lease_when_role_agent_differs() -> None:
     mac = _FakeMac(
@@ -584,9 +574,7 @@ def test_claim_and_launch_delegates_lease_when_role_agent_differs() -> None:
     assert result is not None
     assert result["status"] == "launched"
 
-    delegate_posts = [
-        p for p in mac.posted if p["path"].endswith("/delegate")
-    ]
+    delegate_posts = [p for p in mac.posted if p["path"].endswith("/delegate")]
     assert len(delegate_posts) == 1, "exactly one delegate call expected"
     body = delegate_posts[0]["body"]
     assert body == {
@@ -610,10 +598,9 @@ def test_claim_and_launch_skips_delegate_when_role_agent_is_dispatcher() -> None
     result = claim_and_launch_one(mac, jobs, cfg)
     assert result is not None
     assert result["status"] == "launched"
-    delegate_posts = [
-        p for p in mac.posted if p["path"].endswith("/delegate")
-    ]
+    delegate_posts = [p for p in mac.posted if p["path"].endswith("/delegate")]
     assert delegate_posts == []
+
 
 def test_claim_and_launch_proceeds_when_delegate_fails() -> None:
     class _FailDelegateMac(_FakeMac):
@@ -636,14 +623,13 @@ def test_claim_and_launch_proceeds_when_delegate_fails() -> None:
     assert result is not None
     assert result["status"] == "lease_delegation_failed"
     assert jobs.created == []
-    delegate_posts = [
-        p for p in mac.posted if p["path"].endswith("/delegate")
-    ]
+    delegate_posts = [p for p in mac.posted if p["path"].endswith("/delegate")]
     assert len(delegate_posts) == 1  # delegation was attempted
     release_posts = [p for p in mac.posted if p["path"].endswith("/transition")]
     assert release_posts, "lease should be released to open on delegation failure"
     assert release_posts[0]["body"]["target_state"] == "open"
     assert release_posts[0]["body"]["detail"]["reason"] == "lease_delegation_failed"
+
 
 def _env_value(env: List[Dict[str, Any]], name: str) -> Optional[Any]:
     for e in env:
@@ -651,8 +637,10 @@ def _env_value(env: List[Dict[str, Any]], name: str) -> Optional[Any]:
             return e.get("value")
     return None
 
+
 def _env_names(env: List[Dict[str, Any]]) -> List[str]:
     return [e["name"] for e in env]
+
 
 def _role_cfg(**overrides: Any) -> RunnerConfig:
     """Variant of _cfg with all four role maps populated."""
@@ -676,6 +664,7 @@ def _role_cfg(**overrides: Any) -> RunnerConfig:
     for k, v in overrides.items():
         setattr(base, k, v)
     return base
+
 
 class TestResolveTaskRole:
     def test_explicit_required_role_wins(self) -> None:
@@ -709,13 +698,11 @@ class TestResolveTaskRole:
         )
         assert _resolve_task_role(task, _role_cfg()) == "python-coder"
 
+
 class TestResolveAgentIdForRole:
     def test_role_hit_returns_role_agent(self) -> None:
         cfg = _role_cfg()
-        assert (
-            _resolve_agent_id_for_role("python-coder", cfg)
-            == "mac-worker-python-coder"
-        )
+        assert _resolve_agent_id_for_role("python-coder", cfg) == "mac-worker-python-coder"
 
     def test_no_role_returns_dispatcher(self) -> None:
         cfg = _role_cfg()
@@ -724,6 +711,7 @@ class TestResolveAgentIdForRole:
     def test_unmapped_role_falls_back_to_dispatcher(self) -> None:
         cfg = _role_cfg()
         assert _resolve_agent_id_for_role("ghost-role", cfg) == cfg.agent_id
+
 
 class TestResolveExecutorForRole:
     def test_role_hit_returns_executor(self) -> None:
@@ -738,6 +726,7 @@ class TestResolveExecutorForRole:
 
     def test_unmapped_role_returns_none(self) -> None:
         assert _resolve_executor_for_role("ghost-role", _role_cfg()) is None
+
 
 def _role_cfg_with_attestation_secrets(**overrides: Any) -> RunnerConfig:
     """Role config with the PR3 attestation key secrets map populated."""
@@ -755,6 +744,7 @@ def _role_cfg_with_attestation_secrets(**overrides: Any) -> RunnerConfig:
     for k, v in overrides.items():
         setattr(base, k, v)
     return base
+
 
 class TestResolveAttestationKeySecretForRole:
     def test_role_hit_returns_secret_ref(self) -> None:
@@ -781,6 +771,7 @@ class TestResolveAttestationKeySecretForRole:
         # Original config unchanged.
         assert cfg.role_attestation_key_secrets["python-coder"]["name"] == "mac-agent-keys"
 
+
 class TestRoleAwareBuildJobSpec:
     def test_no_role_preserves_default_behaviour(self) -> None:
         spec = build_job_spec(_task(), _lease(), _cfg())
@@ -793,10 +784,7 @@ class TestRoleAwareBuildJobSpec:
         assert labels["mac.role"] == "default"
         assert labels["mac.agent.id"] == _sanitize_dns_label("runner-1")
         # Image stays as the cfg default.
-        assert (
-            spec["spec"]["template"]["spec"]["containers"][0]["image"]
-            == DEFAULT_TASK_IMAGE
-        )
+        assert spec["spec"]["template"]["spec"]["containers"][0]["image"] == DEFAULT_TASK_IMAGE
 
     def test_explicit_required_role_populates_everything(self) -> None:
         task = _task(metadata={"required_role": "python-coder"})
@@ -805,15 +793,13 @@ class TestRoleAwareBuildJobSpec:
         assert _env_value(env, "MAC_AGENT_ID") == "mac-worker-python-coder"
         assert _env_value(env, "MAC_AGENT_ROLE") == "python-coder"
         assert (
-            _env_value(env, "MAC_TASK_EXECUTOR_COMMAND")
-            == "/usr/local/bin/mac-task-executor-codex"
+            _env_value(env, "MAC_TASK_EXECUTOR_COMMAND") == "/usr/local/bin/mac-task-executor-codex"
         )
         labels = spec["metadata"]["labels"]
         assert labels["mac.role"] == "python-coder"
         assert labels["mac.agent.id"] == "mac-worker-python-coder"
         assert (
-            spec["spec"]["template"]["spec"]["containers"][0]["image"]
-            == "ghcr.io/x/coder:latest"
+            spec["spec"]["template"]["spec"]["containers"][0]["image"] == "ghcr.io/x/coder:latest"
         )
 
     def test_capability_alias_routes_correctly(self) -> None:
@@ -823,8 +809,7 @@ class TestRoleAwareBuildJobSpec:
         assert _env_value(env, "MAC_AGENT_ID") == "mac-worker-python-coder"
         assert _env_value(env, "MAC_AGENT_ROLE") == "python-coder"
         assert (
-            spec["spec"]["template"]["spec"]["containers"][0]["image"]
-            == "ghcr.io/x/coder:latest"
+            spec["spec"]["template"]["spec"]["containers"][0]["image"] == "ghcr.io/x/coder:latest"
         )
 
     def test_unknown_capability_and_empty_alias_map_falls_through(self) -> None:
@@ -837,10 +822,7 @@ class TestRoleAwareBuildJobSpec:
         assert "MAC_TASK_EXECUTOR_COMMAND" not in _env_names(env)
         labels = spec["metadata"]["labels"]
         assert labels["mac.role"] == "default"
-        assert (
-            spec["spec"]["template"]["spec"]["containers"][0]["image"]
-            == cfg.default_image
-        )
+        assert spec["spec"]["template"]["spec"]["containers"][0]["image"] == cfg.default_image
 
     def test_per_task_runtime_image_still_overrides_role_image(self) -> None:
         task = _task(
@@ -860,11 +842,13 @@ class TestRoleAwareBuildJobSpec:
         assert _env_value(env, "MAC_AGENT_ID") == "mac-worker-python-coder"
         assert _env_value(env, "MAC_AGENT_ROLE") == "python-coder"
 
+
 def _env_entry(env: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
     for e in env:
         if e.get("name") == name:
             return e
     return None
+
 
 class TestAttestationKeyJobEnv:
     def test_no_role_does_not_emit_attestation_env(self) -> None:
@@ -898,10 +882,9 @@ class TestAttestationKeyJobEnv:
         assert entry is not None
         assert entry["valueFrom"]["secretKeyRef"]["key"] == "python-reviewer.attestation"
 
+
 class TestRunnerConfigFromEnvRoles:
-    def test_roles_derived_from_yaml(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_roles_derived_from_yaml(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("MAC_URL", "http://x")
         f = _write_config_yaml(tmp_path, _roles_config_yaml())
         monkeypatch.setenv("MAC_CONFIG_FILE", str(f))
@@ -950,9 +933,7 @@ class TestRunnerConfigFromEnvRoles:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("MAC_URL", "http://x")
-        monkeypatch.setenv(
-            "MAC_CONFIG_FILE", str(tmp_path / "does-not-exist.yaml")
-        )
+        monkeypatch.setenv("MAC_CONFIG_FILE", str(tmp_path / "does-not-exist.yaml"))
         with pytest.raises(SystemExit, match="is missing"):
             RunnerConfig.from_env()
 
@@ -977,6 +958,7 @@ class TestRunnerConfigFromEnvRoles:
         with pytest.raises(SystemExit, match="roles.python-coder.*image"):
             RunnerConfig.from_env()
 
+
 class TestJobIsTerminal:
     def test_succeeded_one_is_terminal(self) -> None:
         assert _job_is_terminal({"status": {"succeeded": 1}}) is True
@@ -993,6 +975,7 @@ class TestJobIsTerminal:
     def test_missing_status_is_not_terminal(self) -> None:
         assert _job_is_terminal({"status": None}) is False
 
+
 class _RenewalFakeMac:
     def __init__(self, *, fail_post: bool = False) -> None:
         self.posts: List[Dict[str, Any]] = []
@@ -1006,6 +989,7 @@ class _RenewalFakeMac:
 
     def get(self, path: str) -> Dict[str, Any]:
         return {}
+
 
 class _RenewalFakeJobs:
     def __init__(self, statuses: List[Dict[str, Any]]) -> None:
@@ -1026,6 +1010,7 @@ class _RenewalFakeJobs:
         if len(self._statuses) == 1:
             return self._statuses[0]
         return self._statuses.pop(0)
+
 
 def test_renewal_loop_stops_on_succeeded_status() -> None:
     """Loop runs through a few iterations and exits when status.succeeded≥1."""
@@ -1058,6 +1043,7 @@ def test_renewal_loop_stops_on_succeeded_status() -> None:
         assert p["path"].endswith("/renew")
         assert p["body"] == {"agent_id": cfg.agent_id}
 
+
 def test_renewal_loop_stops_on_failed_status() -> None:
     mac = _RenewalFakeMac()
     jobs = _RenewalFakeJobs(statuses=[{"status": {"succeeded": 0, "failed": 1}}])
@@ -1076,6 +1062,7 @@ def test_renewal_loop_stops_on_failed_status() -> None:
     )
     assert jobs.read_calls == 1
     assert mac.posts == []
+
 
 def test_renewal_loop_tolerates_transient_post_failure() -> None:
     """A failing /renew POST must NOT crash the goroutine."""
@@ -1104,6 +1091,7 @@ def test_renewal_loop_tolerates_transient_post_failure() -> None:
     # We attempted at least one renew even though they failed.
     assert mac.posts, "renewal POST should have been attempted"
 
+
 def test_renewal_loop_tolerates_read_failure() -> None:
     class _FlakyJobs:
         def __init__(self) -> None:
@@ -1112,9 +1100,7 @@ def test_renewal_loop_tolerates_read_failure() -> None:
         def create(self, namespace: str, manifest: Dict[str, Any]) -> Dict[str, Any]:
             raise NotImplementedError
 
-        def list_active(
-            self, namespace: str, label_selector: str
-        ) -> List[Dict[str, Any]]:
+        def list_active(self, namespace: str, label_selector: str) -> List[Dict[str, Any]]:
             return []
 
         def delete(self, namespace: str, name: str) -> None:
@@ -1143,6 +1129,7 @@ def test_renewal_loop_tolerates_read_failure() -> None:
     )
     # Second read was terminal; loop exited cleanly.
     assert jobs.calls == 2
+
 
 def test_renewal_loop_honours_stop_event() -> None:
     mac = _RenewalFakeMac()
@@ -1175,11 +1162,10 @@ def test_renewal_loop_honours_stop_event() -> None:
     assert jobs.read_calls >= 1
     assert mac.posts, "at least one renew should have fired before stop"
 
+
 def test_claim_and_launch_spawns_renewal_thread() -> None:
     mac = _FakeMac(claim_response={"task": _task(), "lease": _lease()})
-    jobs = _FakeJobs(
-        read_responses=[{"status": {"succeeded": 0, "failed": 0}}]
-    )
+    jobs = _FakeJobs(read_responses=[{"status": {"succeeded": 0, "failed": 0}}])
     cfg = _cfg(lease_renew_interval_seconds=0.0, job_poll_interval_seconds=0.01)
 
     # Track threads started during the call.
@@ -1208,6 +1194,7 @@ def test_claim_and_launch_spawns_renewal_thread() -> None:
         if ev is not None:
             ev.set()
 
+
 class _AgentsMac(_FakeMac):
     def __init__(
         self,
@@ -1227,10 +1214,11 @@ class _AgentsMac(_FakeMac):
         prefix = "/agents/"
         if not path.startswith(prefix):
             raise RuntimeError("unexpected GET path: %s" % path)
-        agent_id = path[len(prefix):]
+        agent_id = path[len(prefix) :]
         if agent_id not in self._agents:
             raise RuntimeError("agent not found: %s" % agent_id)
         return self._agents[agent_id]
+
 
 def test_check_dispatcher_capabilities_returns_empty_when_no_roles_configured() -> None:
     cfg = _cfg()  # role_agent_ids defaults to {}
@@ -1238,6 +1226,7 @@ def test_check_dispatcher_capabilities_returns_empty_when_no_roles_configured() 
     assert check_dispatcher_capabilities(cfg, mac) == []
     # Probe should short-circuit without any GETs.
     assert mac.gotten == []
+
 
 def test_check_dispatcher_capabilities_returns_empty_when_dispatcher_covers_all() -> None:
     cfg = _cfg(
@@ -1260,6 +1249,7 @@ def test_check_dispatcher_capabilities_returns_empty_when_dispatcher_covers_all(
         }
     )
     assert check_dispatcher_capabilities(cfg, mac) == []
+
 
 def test_check_dispatcher_capabilities_returns_missing_when_dispatcher_underprovisioned() -> None:
     cfg = _cfg(
@@ -1284,6 +1274,7 @@ def test_check_dispatcher_capabilities_returns_missing_when_dispatcher_underprov
     missing = check_dispatcher_capabilities(cfg, mac)
     assert missing == ["ops", "review"]
 
+
 def test_check_dispatcher_capabilities_warns_but_does_not_raise_on_404(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1307,10 +1298,10 @@ def test_check_dispatcher_capabilities_warns_but_does_not_raise_on_404(
         missing = check_dispatcher_capabilities(cfg, mac)
     assert missing == ["python"]
     # And it logged a warning about the failed fetch.
-    assert any(
-        "mac-worker-python-reviewer" in rec.getMessage()
-        for rec in caplog.records
-    ), "expected a warning naming the un-fetchable role agent"
+    assert any("mac-worker-python-reviewer" in rec.getMessage() for rec in caplog.records), (
+        "expected a warning naming the un-fetchable role agent"
+    )
+
 
 def test_check_dispatcher_capabilities_tolerates_dispatcher_fetch_failure(
     caplog: pytest.LogCaptureFixture,
@@ -1323,8 +1314,7 @@ def test_check_dispatcher_capabilities_tolerates_dispatcher_fetch_failure(
         missing = check_dispatcher_capabilities(cfg, mac)
     assert missing == []
     assert any(
-        "dispatcher" in rec.getMessage().lower()
-        and "hub unreachable" in rec.getMessage()
+        "dispatcher" in rec.getMessage().lower() and "hub unreachable" in rec.getMessage()
         for rec in caplog.records
     ), "expected a warning naming the dispatcher fetch failure"
 
@@ -1346,9 +1336,7 @@ def _review_cfg(**overrides: Any) -> RunnerConfig:
 
 def test_build_review_job_spec_sets_required_env() -> None:
     cfg = _review_cfg(
-        role_executors={
-            "python-reviewer": "/usr/local/bin/mac-task-executor-codex-review"
-        }
+        role_executors={"python-reviewer": "/usr/local/bin/mac-task-executor-codex-review"}
     )
     spec = build_review_job_spec(
         "review-1",
@@ -1358,10 +1346,7 @@ def test_build_review_job_spec_sets_required_env() -> None:
         cfg,
         canonical_task={"id": "task-abc", "metadata": {}},
     )
-    envs = {
-        e["name"]: e
-        for e in spec["spec"]["template"]["spec"]["containers"][0]["env"]
-    }
+    envs = {e["name"]: e for e in spec["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert envs["MAC_REVIEW_ID"]["value"] == "review-1"
     assert envs["MAC_REVIEW_TARGET_EVIDENCE_ID"]["value"] == "ev-target"
     assert envs["MAC_TASK_ID"]["value"] == "task-abc"
@@ -1402,12 +1387,8 @@ def test_build_review_job_spec_rejects_read_only_report_before_secret_projection
         projected.append(True)
         return []
 
-    monkeypatch.setattr(
-        "mac.k8s.runner._build_executor_container_env", record_projection
-    )
-    with pytest.raises(
-        ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
-    ):
+    monkeypatch.setattr("mac.k8s.runner._build_executor_container_env", record_projection)
+    with pytest.raises(ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON):
         build_review_job_spec(
             "r1",
             "t1",
@@ -1430,9 +1411,12 @@ def test_build_review_job_spec_rejects_read_only_report_before_secret_projection
 
 
 class _FakeMacForReview:
-    def __init__(self, deliver_responses: Dict[str, List[Dict[str, Any]]],
-                 claim_response: Optional[Dict[str, Any]] = None,
-                 task_response: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        deliver_responses: Dict[str, List[Dict[str, Any]]],
+        claim_response: Optional[Dict[str, Any]] = None,
+        task_response: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self._deliver = deliver_responses
         self._claim = claim_response or {"status": "claimed"}
         self._task = task_response or {"id": "task-abc", "metadata": {}}
@@ -1494,7 +1478,9 @@ def test_claim_and_launch_review_happy_path() -> None:
     assert result["role"] == "python-reviewer"
     assert len(jobs.created) == 1
     claim_posts = [p for p in mac.posted if p["path"].endswith("/claim")]
-    assert claim_posts and claim_posts[0]["body"]["reviewer_agent_id"] == "mac-worker-python-reviewer"
+    assert (
+        claim_posts and claim_posts[0]["body"]["reviewer_agent_id"] == "mac-worker-python-reviewer"
+    )
 
 
 def test_claim_and_launch_review_leaves_read_only_report_unclaimed_without_job(
@@ -1527,12 +1513,8 @@ def test_claim_and_launch_review_leaves_read_only_report_unclaimed_without_job(
         projected.append(True)
         return []
 
-    monkeypatch.setattr(
-        "mac.k8s.runner._build_executor_container_env", record_projection
-    )
-    mac = _FakeMacForReview(
-        {"mac-worker-python-reviewer": [nudge]}, task_response=task
-    )
+    monkeypatch.setattr("mac.k8s.runner._build_executor_container_env", record_projection)
+    mac = _FakeMacForReview({"mac-worker-python-reviewer": [nudge]}, task_response=task)
     jobs = _FakeJobs()
 
     assert claim_and_launch_review_one(mac, jobs, cfg) is None
@@ -1574,21 +1556,21 @@ def test_claim_and_launch_review_ignores_non_verdict_messages() -> None:
 
 # --- relocated from test_k8s_runner_edges.py (coverage companion folded in) ---
 
-class _Mac:
 
+class _Mac:
     def __init__(self, responses=None):
         self.responses = list(responses or [])
         self.calls = []
 
     def post(self, path, body):
-        self.calls.append(('post', path, body))
+        self.calls.append(("post", path, body))
         value = self.responses.pop(0) if self.responses else {}
         if isinstance(value, BaseException):
             raise value
         return value
 
     def get(self, path):
-        self.calls.append(('get', path, None))
+        self.calls.append(("get", path, None))
         value = self.responses.pop(0) if self.responses else {}
         if isinstance(value, BaseException):
             raise value
@@ -1596,9 +1578,8 @@ class _Mac:
 
 
 class _Jobs:
-
     def __init__(self, result=None):
-        self.result = result if result is not None else {'metadata': {'uid': 'uid'}}
+        self.result = result if result is not None else {"metadata": {"uid": "uid"}}
         self.created = []
 
     def create(self, namespace, manifest):
@@ -1609,108 +1590,177 @@ class _Jobs:
 
 
 def _cfg_edges(**extra):
-    values = {'mac_url': 'http://mac', 'agent_id': 'dispatcher', 'poll_interval_seconds': 0}
+    values = {"mac_url": "http://mac", "agent_id": "dispatcher", "poll_interval_seconds": 0}
     values.update(extra)
     return runner.RunnerConfig(**values)
 
 
 def _assignment(role=None):
-    metadata = {'required_role': role} if role else {}
-    return {'task': {'id': 'task', 'metadata': metadata, 'required_capabilities': []}, 'lease': {'id': 'lease'}}
+    metadata = {"required_role": role} if role else {}
+    return {
+        "task": {"id": "task", "metadata": metadata, "required_capabilities": []},
+        "lease": {"id": "lease"},
+    }
 
 
 def test_optional_int_sanitize_deadline_and_terminal_edges(monkeypatch) -> None:
-    monkeypatch.delenv('OPTIONAL', raising=False)
-    assert runner._optional_int_env('OPTIONAL') is None
-    monkeypatch.setenv('OPTIONAL', 'bad')
-    assert runner._optional_int_env('OPTIONAL') is None
-    monkeypatch.setenv('OPTIONAL', '0')
-    assert runner._optional_int_env('OPTIONAL') is None
-    monkeypatch.setenv('OPTIONAL', '12')
-    assert runner._optional_int_env('OPTIONAL') == 12
-    assert runner._sanitize_dns_label('---') == 'mac-task'
-    assert runner._resolve_active_deadline({'metadata': {'k8s': {'active_deadline_seconds': 'bad'}}}, _cfg_edges(active_deadline_seconds=99)) == 99
-    assert runner._resolve_active_deadline({'metadata': {'k8s': {'active_deadline_seconds': 1}}}, _cfg_edges()) == 60
+    monkeypatch.delenv("OPTIONAL", raising=False)
+    assert runner._optional_int_env("OPTIONAL") is None
+    monkeypatch.setenv("OPTIONAL", "bad")
+    assert runner._optional_int_env("OPTIONAL") is None
+    monkeypatch.setenv("OPTIONAL", "0")
+    assert runner._optional_int_env("OPTIONAL") is None
+    monkeypatch.setenv("OPTIONAL", "12")
+    assert runner._optional_int_env("OPTIONAL") == 12
+    assert runner._sanitize_dns_label("---") == "mac-task"
+    assert (
+        runner._resolve_active_deadline(
+            {"metadata": {"k8s": {"active_deadline_seconds": "bad"}}},
+            _cfg_edges(active_deadline_seconds=99),
+        )
+        == 99
+    )
+    assert (
+        runner._resolve_active_deadline(
+            {"metadata": {"k8s": {"active_deadline_seconds": 1}}}, _cfg_edges()
+        )
+        == 60
+    )
     assert runner._job_is_terminal(None) is False
-    assert runner._job_is_terminal({'status': {'succeeded': 'bad', 'failed': 'bad'}}) is False
+    assert runner._job_is_terminal({"status": {"succeeded": "bad", "failed": "bad"}}) is False
 
 
 def test_agent_token_secret_map_is_reference_only_and_fail_closed() -> None:
-    assert runner._agent_token_secret_map('') == {}
-    assert runner._agent_token_secret_map('{"agent_a":"mac-worker-agent-a","agent_b":"mac-worker-agent-b"}') == {'agent_a': 'mac-worker-agent-a', 'agent_b': 'mac-worker-agent-b'}
-    with pytest.raises(ValueError, match='JSON object'):
-        runner._agent_token_secret_map('[]')
-    with pytest.raises(ValueError, match='non-empty'):
+    assert runner._agent_token_secret_map("") == {}
+    assert runner._agent_token_secret_map(
+        '{"agent_a":"mac-worker-agent-a","agent_b":"mac-worker-agent-b"}'
+    ) == {"agent_a": "mac-worker-agent-a", "agent_b": "mac-worker-agent-b"}
+    with pytest.raises(ValueError, match="JSON object"):
+        runner._agent_token_secret_map("[]")
+    with pytest.raises(ValueError, match="non-empty"):
         runner._agent_token_secret_map('{"agent_a":""}')
 
 
 def test_dispatcher_capability_probe_shape_and_role_failures() -> None:
-    cfg = _cfg_edges(role_agent_ids={'worker': 'worker'}, reviewer_agent_ids={'review': 'reviewer'})
-    assert runner.check_dispatcher_capabilities(cfg, _Mac([RuntimeError('offline')])) == []
+    cfg = _cfg_edges(role_agent_ids={"worker": "worker"}, reviewer_agent_ids={"review": "reviewer"})
+    assert runner.check_dispatcher_capabilities(cfg, _Mac([RuntimeError("offline")])) == []
     assert runner.check_dispatcher_capabilities(cfg, _Mac([[]])) == []
-    mac = _Mac([{'capabilities': []}, RuntimeError('review missing'), RuntimeError('worker missing')])
+    mac = _Mac(
+        [{"capabilities": []}, RuntimeError("review missing"), RuntimeError("worker missing")]
+    )
     assert runner.check_dispatcher_capabilities(cfg, mac) == []
-    mac = _Mac([{'capabilities': []}, {'capabilities': ['review', 'shared']}, []])
+    mac = _Mac([{"capabilities": []}, {"capabilities": ["review", "shared"]}, []])
     assert runner.check_dispatcher_capabilities(cfg, mac) == []
 
 
 def test_claim_next_failures_and_missing_lease() -> None:
-    assert runner.claim_and_launch_one(_Mac([RuntimeError('offline')]), _Jobs(), _cfg_edges()) is None
+    assert (
+        runner.claim_and_launch_one(_Mac([RuntimeError("offline")]), _Jobs(), _cfg_edges()) is None
+    )
     assert runner.claim_and_launch_one(_Mac([{}]), _Jobs(), _cfg_edges()) is None
-    result = runner.claim_and_launch_one(_Mac([{'task': {'id': 'task'}, 'lease': {}}]), _Jobs(), _cfg_edges())
+    result = runner.claim_and_launch_one(
+        _Mac([{"task": {"id": "task"}, "lease": {}}]), _Jobs(), _cfg_edges()
+    )
     assert result is None
 
 
 def test_claim_delegation_failure_reopens_best_effort() -> None:
-    cfg = _cfg_edges(role_agent_ids={'coder': 'coder'})
-    mac = _Mac([_assignment('coder'), RuntimeError('delegate failed'), RuntimeError('reopen failed')])
+    cfg = _cfg_edges(role_agent_ids={"coder": "coder"})
+    mac = _Mac(
+        [_assignment("coder"), RuntimeError("delegate failed"), RuntimeError("reopen failed")]
+    )
     result = runner.claim_and_launch_one(mac, _Jobs(), cfg)
-    assert result['status'] == 'lease_delegation_failed'
-    assert result['to_agent_id'] == 'coder'
+    assert result["status"] == "lease_delegation_failed"
+    assert result["to_agent_id"] == "coder"
 
 
 def test_claim_job_create_failure_and_renewal_start_failure(monkeypatch) -> None:
-    mac = _Mac([_assignment(), RuntimeError('reopen failed')])
-    result = runner.claim_and_launch_one(mac, _Jobs(RuntimeError('create failed')), _cfg_edges())
-    assert result['status'] == 'k8s_create_failed'
-    monkeypatch.setattr(runner, '_start_lease_renewal_thread', lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError('thread failed')))
+    mac = _Mac([_assignment(), RuntimeError("reopen failed")])
+    result = runner.claim_and_launch_one(mac, _Jobs(RuntimeError("create failed")), _cfg_edges())
+    assert result["status"] == "k8s_create_failed"
+    monkeypatch.setattr(
+        runner,
+        "_start_lease_renewal_thread",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("thread failed")),
+    )
     result = runner.claim_and_launch_one(_Mac([_assignment()]), _Jobs(), _cfg_edges())
-    assert result['status'] == 'launched'
-    assert result['job_uid'] == 'uid'
+    assert result["status"] == "launched"
+    assert result["job_uid"] == "uid"
 
 
 def _nudge(**extra):
-    payload = {'reason': 'produce_review_verdict', 'review_id': 'review', 'task_id': 'task', 'executor_evidence_id': 'evidence'}
+    payload = {
+        "reason": "produce_review_verdict",
+        "review_id": "review",
+        "task_id": "task",
+        "executor_evidence_id": "evidence",
+    }
     payload.update(extra)
-    return {'message_type': 'nudge', 'payload': payload}
+    return {"message_type": "nudge", "payload": payload}
 
 
 def test_review_claim_filters_delivery_and_malformed_messages() -> None:
-    cfg = _cfg_edges(reviewer_agent_ids={'reviewer': 'reviewer-agent'})
-    assert runner.claim_and_launch_review_one(_Mac([RuntimeError('offline')]), _Jobs(), cfg) is None
+    cfg = _cfg_edges(reviewer_agent_ids={"reviewer": "reviewer-agent"})
+    assert runner.claim_and_launch_review_one(_Mac([RuntimeError("offline")]), _Jobs(), cfg) is None
     assert runner.claim_and_launch_review_one(_Mac([{}]), _Jobs(), cfg) is None
-    messages = ['bad', {'message_type': 'other'}, {'message_type': 'nudge', 'payload': {'reason': 'other'}}, _nudge(review_id='')]
+    messages = [
+        "bad",
+        {"message_type": "other"},
+        {"message_type": "nudge", "payload": {"reason": "other"}},
+        _nudge(review_id=""),
+    ]
     assert runner.claim_and_launch_review_one(_Mac([messages]), _Jobs(), cfg) is None
 
 
 def test_review_claim_and_create_failures_then_success() -> None:
-    cfg = _cfg_edges(reviewer_agent_ids={'reviewer': 'reviewer-agent'})
-    assert runner.claim_and_launch_review_one(_Mac([[_nudge()], {'id': 'task', 'metadata': {}}, RuntimeError('claim failed')]), _Jobs(), cfg) is None
-    assert runner.claim_and_launch_review_one(_Mac([[_nudge()], {'id': 'task', 'metadata': {}}, {'status': 'skipped', 'reason': 'busy'}]), _Jobs(), cfg) is None
-    assert runner.claim_and_launch_review_one(_Mac([[_nudge()], {'id': 'task', 'metadata': {}}, {'status': 'claimed'}]), _Jobs(RuntimeError('create failed')), cfg) is None
-    result = runner.claim_and_launch_review_one(_Mac([[_nudge()], {'id': 'task', 'metadata': {}}, {'status': 'claimed'}]), _Jobs(), cfg)
-    assert result['status'] == 'launched'
-    assert result['role'] == 'reviewer'
+    cfg = _cfg_edges(reviewer_agent_ids={"reviewer": "reviewer-agent"})
+    assert (
+        runner.claim_and_launch_review_one(
+            _Mac([[_nudge()], {"id": "task", "metadata": {}}, RuntimeError("claim failed")]),
+            _Jobs(),
+            cfg,
+        )
+        is None
+    )
+    assert (
+        runner.claim_and_launch_review_one(
+            _Mac(
+                [
+                    [_nudge()],
+                    {"id": "task", "metadata": {}},
+                    {"status": "skipped", "reason": "busy"},
+                ]
+            ),
+            _Jobs(),
+            cfg,
+        )
+        is None
+    )
+    assert (
+        runner.claim_and_launch_review_one(
+            _Mac([[_nudge()], {"id": "task", "metadata": {}}, {"status": "claimed"}]),
+            _Jobs(RuntimeError("create failed")),
+            cfg,
+        )
+        is None
+    )
+    result = runner.claim_and_launch_review_one(
+        _Mac([[_nudge()], {"id": "task", "metadata": {}}, {"status": "claimed"}]), _Jobs(), cfg
+    )
+    assert result["status"] == "launched"
+    assert result["role"] == "reviewer"
 
 
 def test_runner_and_review_loops_count_launches_and_sleep(monkeypatch) -> None:
-    outcomes = iter([None, {'status': 'launched', 'task_id': 't', 'lease_id': 'l', 'job_name': 'j'}])
-    monkeypatch.setattr(runner, 'claim_and_launch_one', lambda *_a: next(outcomes))
+    outcomes = iter(
+        [None, {"status": "launched", "task_id": "t", "lease_id": "l", "job_name": "j"}]
+    )
+    monkeypatch.setattr(runner, "claim_and_launch_one", lambda *_a: next(outcomes))
     sleeps = []
     assert runner.runner_loop(_Mac(), _Jobs(), _cfg_edges(), iterations=2, sleep=sleeps.append) == 1
     assert sleeps == [0]
-    outcomes = iter([{'status': 'failed'}, {'status': 'launched'}])
-    monkeypatch.setattr(runner, 'claim_and_launch_review_one', lambda *_a: next(outcomes))
+    outcomes = iter([{"status": "failed"}, {"status": "launched"}])
+    monkeypatch.setattr(runner, "claim_and_launch_review_one", lambda *_a: next(outcomes))
     sleeps = []
     assert runner.review_loop(_Mac(), _Jobs(), _cfg_edges(), iterations=2, sleep=sleeps.append) == 1
     assert sleeps == [0]

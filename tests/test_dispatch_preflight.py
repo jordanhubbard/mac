@@ -41,9 +41,7 @@ def test_a_satisfiable_task_is_dispatchable():
 def test_hardware_narrows_to_the_matching_hosts():
     """os and cpu_arch are PROBED FACTS the fleet already publishes, and the
     allocator already matches them. This is the route a host constraint takes."""
-    result = preflight(
-        FLEET, required_hardware={"os": ["linux"], "cpu_arch": ["x86_64"]}
-    )
+    result = preflight(FLEET, required_hardware={"os": ["linux"], "cpu_arch": ["x86_64"]})
 
     assert result["eligible_agents"] == ["worker1"]
 
@@ -58,7 +56,7 @@ def test_an_os_asked_for_as_a_capability_is_named_as_a_mapping_error():
     assert result["dispatchable"] is False
     assert result["mapping_errors"][0]["capability"] == "linux"
     assert 'required_hardware={"os": ["linux"]}' in result["mapping_errors"][0]["use_instead"]
-    assert 'required_hardware' in explain(result)
+    assert "required_hardware" in explain(result)
 
 
 def test_an_unknown_capability_names_itself():
@@ -87,9 +85,7 @@ def test_a_private_agent_is_capacity_for_anyone_who_can_file():
     fleet = [_agent("rocky", ("python",), visibility="private", owner="human_a")]
 
     for filer in (None, "human_a", "human_b"):
-        result = preflight(
-            fleet, required_capabilities=["python"], created_by_human=filer
-        )
+        result = preflight(fleet, required_capabilities=["python"], created_by_human=filer)
         assert result["dispatchable"], filer
         assert result["eligible_agents"] == ["rocky"], filer
         assert "blocked" not in result["detail"][0], filer
@@ -128,4 +124,3 @@ def test_an_empty_fleet_is_not_dispatchable():
 
     assert result["dispatchable"] is False
     assert result["agents_considered"] == 0
-

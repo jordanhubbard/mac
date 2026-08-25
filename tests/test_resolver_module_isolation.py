@@ -53,9 +53,7 @@ def foreign_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (root / "test-policy.toml").write_text(
-        "[selection]\n"
-        'global_full_paths = ["Makefile"]\n'
-        'always_run = ["tests/test_guard.py"]\n',
+        '[selection]\nglobal_full_paths = ["Makefile"]\nalways_run = ["tests/test_guard.py"]\n',
         encoding="utf-8",
     )
     _git(root, "init", "-q", "-b", "main")
@@ -66,9 +64,7 @@ def _load_selector():
     """A fresh copy of scripts/select-sanity-tests.py, as CI invokes it."""
     name = "mac_select_sanity_tests_isolation"
     sys.modules.pop(name, None)
-    spec = importlib.util.spec_from_file_location(
-        name, ROOT / "scripts" / "select-sanity-tests.py"
-    )
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / "select-sanity-tests.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -138,6 +134,7 @@ def test_the_same_root_is_still_cached(foreign_repo):
 def test_an_unreadable_root_still_returns_none(tmp_path):
     assert tc.load_resolver(tmp_path / "nonexistent") is None
     assert not [
-        name for name in sys.modules if name.startswith(tc._RESOLVER_NAME)
-        and sys.modules[name] is None
+        name
+        for name in sys.modules
+        if name.startswith(tc._RESOLVER_NAME) and sys.modules[name] is None
     ], "a failed load must not leave a placeholder behind"

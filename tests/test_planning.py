@@ -332,5 +332,3 @@ def test_order_layers_deduplicates_paths(tmp_path):
     result = order_layers(["leaf_a.py", "leaf_a.py", "leaf_a.py"], repo_root=tmp_path)
     all_files = [f for layer in result.layers for f in layer.files]
     assert all_files.count("leaf_a.py") == 1
-
-

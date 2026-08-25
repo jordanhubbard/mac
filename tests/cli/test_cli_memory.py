@@ -47,12 +47,19 @@ def test_memory_add_returns_memory_record(tmp_path):
     """memory add creates a MemoryRecord and returns it as JSON."""
     rc, record = _run(
         tmp_path,
-        "admin", "memory", "add",
-        "--subject-type", "project",
-        "--subject-id", "demo-project",
-        "--record-type", "note",
-        "--content", "hub learned that the mesh routes through worker-1",
-        "--created-by", "hub",
+        "admin",
+        "memory",
+        "add",
+        "--subject-type",
+        "project",
+        "--subject-id",
+        "demo-project",
+        "--record-type",
+        "note",
+        "--content",
+        "hub learned that the mesh routes through worker-1",
+        "--created-by",
+        "hub",
     )
     assert rc == 0
     assert record["id"].startswith("mem_")
@@ -73,13 +80,21 @@ def test_memory_add_with_task_id(tmp_path):
 
     rc, record = _run(
         tmp_path,
-        "admin", "memory", "add",
-        "--task-id", task["id"],
-        "--subject-type", "agent",
-        "--subject-id", "worker-1",
-        "--record-type", "observation",
-        "--content", "worker-1 deployed successfully",
-        "--created-by", "hub",
+        "admin",
+        "memory",
+        "add",
+        "--task-id",
+        task["id"],
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        "worker-1",
+        "--record-type",
+        "observation",
+        "--content",
+        "worker-1 deployed successfully",
+        "--created-by",
+        "hub",
     )
     assert rc == 0
     assert record["task_id"] == task["id"]
@@ -92,10 +107,15 @@ def test_memory_add_missing_required_flags_errors(tmp_path):
         # --subject-type is required
         _run(
             tmp_path,
-            "admin", "memory", "add",
-            "--record-type", "note",
-            "--content", "some content",
-            "--created-by", "hub",
+            "admin",
+            "memory",
+            "add",
+            "--record-type",
+            "note",
+            "--content",
+            "some content",
+            "--created-by",
+            "hub",
         )
 
 
@@ -103,12 +123,19 @@ def test_memory_add_with_agent_subject_type(tmp_path):
     """memory add works for agent subject_type (common fleet use-case)."""
     rc, record = _run(
         tmp_path,
-        "admin", "memory", "add",
-        "--subject-type", "agent",
-        "--subject-id", "worker-2",
-        "--record-type", "deployment_learning:gpu",
-        "--content", "gpu worker requires nvidia-smi in PATH",
-        "--created-by", "gpu-worker",
+        "admin",
+        "memory",
+        "add",
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        "worker-2",
+        "--record-type",
+        "deployment_learning:gpu",
+        "--content",
+        "gpu worker requires nvidia-smi in PATH",
+        "--created-by",
+        "gpu-worker",
     )
     assert rc == 0
     assert record["subject_type"] == "agent"
@@ -123,12 +150,19 @@ def test_memory_add_with_agent_subject_type(tmp_path):
 def _add_memory(tmp_path, *, subject_type, subject_id, record_type, content, created_by="hub"):
     rc, record = _run(
         tmp_path,
-        "admin", "memory", "add",
-        "--subject-type", subject_type,
-        "--subject-id", subject_id,
-        "--record-type", record_type,
-        "--content", content,
-        "--created-by", created_by,
+        "admin",
+        "memory",
+        "add",
+        "--subject-type",
+        subject_type,
+        "--subject-id",
+        subject_id,
+        "--record-type",
+        record_type,
+        "--content",
+        content,
+        "--created-by",
+        created_by,
     )
     assert rc == 0
     return record
@@ -136,8 +170,20 @@ def _add_memory(tmp_path, *, subject_type, subject_id, record_type, content, cre
 
 def test_memory_search_returns_all_records_when_no_filters(tmp_path):
     """memory search with no filters returns all memory records."""
-    _add_memory(tmp_path, subject_type="project", subject_id="alpha", record_type="note", content="first note")
-    _add_memory(tmp_path, subject_type="agent", subject_id="worker-1", record_type="observation", content="second note")
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="alpha",
+        record_type="note",
+        content="first note",
+    )
+    _add_memory(
+        tmp_path,
+        subject_type="agent",
+        subject_id="worker-1",
+        record_type="observation",
+        content="second note",
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search")
     assert rc == 0
@@ -147,8 +193,20 @@ def test_memory_search_returns_all_records_when_no_filters(tmp_path):
 
 def test_memory_search_filters_by_subject_type(tmp_path):
     """memory search --subject-type limits results to that subject_type."""
-    _add_memory(tmp_path, subject_type="project", subject_id="beta", record_type="note", content="project note")
-    _add_memory(tmp_path, subject_type="agent", subject_id="worker-1", record_type="note", content="agent note")
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="beta",
+        record_type="note",
+        content="project note",
+    )
+    _add_memory(
+        tmp_path,
+        subject_type="agent",
+        subject_id="worker-1",
+        record_type="note",
+        content="agent note",
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--subject-type", "project")
     assert rc == 0
@@ -158,8 +216,12 @@ def test_memory_search_filters_by_subject_type(tmp_path):
 
 def test_memory_search_filters_by_subject_id(tmp_path):
     """memory search --subject-id limits results to that subject_id."""
-    _add_memory(tmp_path, subject_type="agent", subject_id="worker-1", record_type="note", content="w1 note")
-    _add_memory(tmp_path, subject_type="agent", subject_id="worker-2", record_type="note", content="w2 note")
+    _add_memory(
+        tmp_path, subject_type="agent", subject_id="worker-1", record_type="note", content="w1 note"
+    )
+    _add_memory(
+        tmp_path, subject_type="agent", subject_id="worker-2", record_type="note", content="w2 note"
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--subject-id", "worker-1")
     assert rc == 0
@@ -169,8 +231,16 @@ def test_memory_search_filters_by_subject_id(tmp_path):
 
 def test_memory_search_filters_by_record_type(tmp_path):
     """memory search --record-type limits results to exact type match."""
-    _add_memory(tmp_path, subject_type="project", subject_id="gamma", record_type="note", content="a note")
-    _add_memory(tmp_path, subject_type="project", subject_id="gamma", record_type="observation", content="an obs")
+    _add_memory(
+        tmp_path, subject_type="project", subject_id="gamma", record_type="note", content="a note"
+    )
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="gamma",
+        record_type="observation",
+        content="an obs",
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--record-type", "note")
     assert rc == 0
@@ -180,9 +250,23 @@ def test_memory_search_filters_by_record_type(tmp_path):
 
 def test_memory_search_filters_by_record_type_prefix(tmp_path):
     """memory search --record-type-prefix matches all records with that prefix."""
-    _add_memory(tmp_path, subject_type="project", subject_id="delta", record_type="dream:reflection", content="r1")
-    _add_memory(tmp_path, subject_type="project", subject_id="delta", record_type="dream:lesson", content="r2")
-    _add_memory(tmp_path, subject_type="project", subject_id="delta", record_type="note", content="r3")
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="delta",
+        record_type="dream:reflection",
+        content="r1",
+    )
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="delta",
+        record_type="dream:lesson",
+        content="r2",
+    )
+    _add_memory(
+        tmp_path, subject_type="project", subject_id="delta", record_type="note", content="r3"
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--record-type-prefix", "dream:")
     assert rc == 0
@@ -192,8 +276,22 @@ def test_memory_search_filters_by_record_type_prefix(tmp_path):
 
 def test_memory_search_filters_by_created_by(tmp_path):
     """memory search --created-by limits results to records from that creator."""
-    _add_memory(tmp_path, subject_type="project", subject_id="e", record_type="note", content="from hub", created_by="hub")
-    _add_memory(tmp_path, subject_type="project", subject_id="e", record_type="note", content="from worker", created_by="worker-1")
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="e",
+        record_type="note",
+        content="from hub",
+        created_by="hub",
+    )
+    _add_memory(
+        tmp_path,
+        subject_type="project",
+        subject_id="e",
+        record_type="note",
+        content="from worker",
+        created_by="worker-1",
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--created-by", "hub")
     assert rc == 0
@@ -204,7 +302,13 @@ def test_memory_search_filters_by_created_by(tmp_path):
 def test_memory_search_limit_flag(tmp_path):
     """memory search --limit caps the number of returned records."""
     for i in range(5):
-        _add_memory(tmp_path, subject_type="project", subject_id="f", record_type="note", content=f"note {i}")
+        _add_memory(
+            tmp_path,
+            subject_type="project",
+            subject_id="f",
+            record_type="note",
+            content=f"note {i}",
+        )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--limit", "2")
     assert rc == 0
@@ -220,8 +324,12 @@ def test_memory_search_empty_db_returns_empty_list(tmp_path):
 
 def test_memory_search_order_desc(tmp_path):
     """memory search --order desc returns newest records first."""
-    r1 = _add_memory(tmp_path, subject_type="project", subject_id="g", record_type="note", content="first")
-    r2 = _add_memory(tmp_path, subject_type="project", subject_id="g", record_type="note", content="second")
+    r1 = _add_memory(
+        tmp_path, subject_type="project", subject_id="g", record_type="note", content="first"
+    )
+    r2 = _add_memory(
+        tmp_path, subject_type="project", subject_id="g", record_type="note", content="second"
+    )
 
     rc, records = _run(tmp_path, "admin", "memory", "search", "--order", "desc")
     assert rc == 0
@@ -251,7 +359,16 @@ def test_memory_decay_returns_expected_schema_fields(tmp_path):
     """memory decay result includes all expected schema fields."""
     rc, result = _run(tmp_path, "admin", "memory", "decay", "--ttl-days", "30")
     assert rc == 0
-    for field in ("schema", "ttl_days", "dry_run", "cutoff", "scanned", "forgettable", "by_type", "deleted"):
+    for field in (
+        "schema",
+        "ttl_days",
+        "dry_run",
+        "cutoff",
+        "scanned",
+        "forgettable",
+        "by_type",
+        "deleted",
+    ):
         assert field in result, f"missing field: {field}"
     assert result["ttl_days"] == 30.0
 
@@ -284,8 +401,9 @@ def test_memory_decay_protected_prefixes_preserved(tmp_path):
     protected = result["protected_prefixes"]
     # Core curated types must always be protected.
     for prefix in ("beads_memory", "deployment_learning", "fleet_learning", "dream", "user"):
-        assert any(p == prefix or p.startswith(prefix) for p in protected), \
+        assert any(p == prefix or p.startswith(prefix) for p in protected), (
             f"expected '{prefix}' in protected_prefixes"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +430,9 @@ def test_memory_health_empty_db_zero_counts(tmp_path):
 
 def test_memory_health_counts_increase_after_add(tmp_path):
     """memory_records_count reflects records added via memory add."""
-    _add_memory(tmp_path, subject_type="project", subject_id="health-test", record_type="note", content="x")
+    _add_memory(
+        tmp_path, subject_type="project", subject_id="health-test", record_type="note", content="x"
+    )
     rc, result = _run(tmp_path, "admin", "memory", "health")
     assert rc == 0
     assert result["memory_records_count"] == 1
@@ -362,7 +482,9 @@ def test_memory_recall_missing_qdrant_raises_error(tmp_path, monkeypatch):
 
     # The command should exit with a non-zero code or raise SystemExit.
     try:
-        rc, result = _run(tmp_path, "admin", "memory", "recall", "what did worker-1 learn about the mesh?")
+        rc, result = _run(
+            tmp_path, "admin", "memory", "recall", "what did worker-1 learn about the mesh?"
+        )
         # If it returned a result it must signal an error somehow.
         assert rc != 0
     except (SystemExit, Exception):
@@ -400,11 +522,16 @@ def test_memory_recall_optional_flags_accepted(tmp_path, monkeypatch):
     try:
         _run(
             tmp_path,
-            "admin", "memory", "recall",
+            "admin",
+            "memory",
+            "recall",
             "worker-2 mesh route",
-            "--tier", "medium",
-            "--limit", "3",
-            "--project", "mac",
+            "--tier",
+            "medium",
+            "--limit",
+            "3",
+            "--project",
+            "mac",
         )
     except SystemExit as exc:
         assert exc.code != 2, "argparse rejected valid optional flags for recall"
@@ -446,8 +573,11 @@ def test_memory_summarize_actions_agent_flag_accepted(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "admin", "memory", "summarize-actions",
-        "--agent", agent["id"],
+        "admin",
+        "memory",
+        "summarize-actions",
+        "--agent",
+        agent["id"],
         "--dry-run",
     )
     assert rc == 0
@@ -468,8 +598,11 @@ def test_memory_summarize_actions_created_by_flag(tmp_path):
     """memory summarize-actions --created-by is accepted without error."""
     rc, result = _run(
         tmp_path,
-        "admin", "memory", "summarize-actions",
-        "--created-by", "hub",
+        "admin",
+        "memory",
+        "summarize-actions",
+        "--created-by",
+        "hub",
         "--dry-run",
     )
     assert rc == 0
@@ -520,9 +653,13 @@ def test_memory_promote_flags_parse(tmp_path, monkeypatch):
 
     rc, result = _run(
         tmp_path,
-        "admin", "memory", "promote",
-        "--min-age-days", "60",
-        "--limit", "5",
+        "admin",
+        "memory",
+        "promote",
+        "--min-age-days",
+        "60",
+        "--limit",
+        "5",
         "--drop-medium",
         "--dry-run",
     )
@@ -536,9 +673,7 @@ def test_memory_promote_flags_parse(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_memory_reconcile_embeddings_without_qdrant_fails_gracefully(
-    tmp_path, monkeypatch
-):
+def test_memory_reconcile_embeddings_without_qdrant_fails_gracefully(tmp_path, monkeypatch):
     _no_qdrant(monkeypatch)
 
     try:
@@ -557,10 +692,15 @@ def test_memory_reconcile_embeddings_flags_parse(tmp_path, monkeypatch):
     try:
         _run(
             tmp_path,
-            "admin", "memory", "reconcile-embeddings",
-            "--tier", "medium",
-            "--limit", "10",
-            "--scan-limit", "100",
+            "admin",
+            "memory",
+            "reconcile-embeddings",
+            "--tier",
+            "medium",
+            "--limit",
+            "10",
+            "--scan-limit",
+            "100",
             "--dry-run",
             "--report-only",
         )

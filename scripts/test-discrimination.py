@@ -86,12 +86,24 @@ def run_tests(nodeids: list[str], *, timeout: float) -> set[str]:
         try:
             subprocess.run(
                 [
-                    sys.executable, "-m", "pytest", *nodeids,
-                    "-q", "--no-header", "--tb=no",
-                    "-p", "no:randomly", "-p", "no:cacheprovider",
-                    "--junit-xml", str(report),
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    *nodeids,
+                    "-q",
+                    "--no-header",
+                    "--tb=no",
+                    "-p",
+                    "no:randomly",
+                    "-p",
+                    "no:cacheprovider",
+                    "--junit-xml",
+                    str(report),
                 ],
-                cwd=str(ROOT), capture_output=True, text=True, timeout=timeout,
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             return set()
@@ -178,12 +190,10 @@ def analyse(
     discriminating = len({n for killed in kills.values() for n in killed})
     unique = {
         nodeid: sorted(
-            set(kills[nodeid])
-            - {n for other, ks in kills.items() if other != nodeid for n in ks}
+            set(kills[nodeid]) - {n for other, ks in kills.items() if other != nodeid for n in ks}
         )
         for nodeid in nodeids
-        if set(kills[nodeid])
-        - {n for other, ks in kills.items() if other != nodeid for n in ks}
+        if set(kills[nodeid]) - {n for other, ks in kills.items() if other != nodeid for n in ks}
     }
     return {
         "schema": SCHEMA,
@@ -231,9 +241,7 @@ def main(argv: list[str] | None = None) -> int:
 
     target = args.file if args.file.is_absolute() else ROOT / args.file
     lines = {int(x) for x in args.lines.split(",") if x.strip()}
-    result = analyse(
-        args.test, target, lines, limit=args.max_mutations, timeout=args.timeout
-    )
+    result = analyse(args.test, target, lines, limit=args.max_mutations, timeout=args.timeout)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

@@ -241,7 +241,11 @@ def test_update_encode_decode_and_module_cli(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         surface,
         "apply_hermes_surface_payload",
-        lambda payload, target_home=None: {"applied": True, "payload": payload, "home": str(target_home)},
+        lambda payload, target_home=None: {
+            "applied": True,
+            "payload": payload,
+            "home": str(target_home),
+        },
     )
     result = surface.update_fleet_hermes_surface(
         {"id": "existing", "name": "existing"},

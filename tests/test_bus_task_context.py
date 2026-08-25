@@ -117,9 +117,7 @@ def test_the_bound_is_enforced_and_truncation_is_reported():
 
 
 def test_truncation_is_visible_in_the_prompt_text():
-    events = [
-        _event(index, "git.pushed", task_id="task_mine") for index in range(1, 121)
-    ]
+    events = [_event(index, "git.pushed", task_id="task_mine") for index in range(1, 121)]
 
     rendered = render_bus_context_section(build_bus_task_context(events, FOCUS, bound=50))
 
@@ -179,9 +177,7 @@ def test_it_answers_whether_this_task_has_already_been_published():
 
 
 def test_a_merge_of_someone_elses_task_is_not_my_work_landing():
-    events = [
-        _event(9, "git.merged", task_id="task_theirs", payload={"canonical_branch": "main"})
-    ]
+    events = [_event(9, "git.merged", task_id="task_theirs", payload={"canonical_branch": "main"})]
 
     context = build_bus_task_context(events, FOCUS)
 
@@ -209,9 +205,7 @@ def test_it_answers_whether_the_canonical_tip_moved():
     assert moved is not None
     assert moved["to_sha"] == "newtip1"
     assert moved["base_sha_at_prepare"] == "base000"
-    assert "BASE MOVED" in render_bus_context_section(
-        build_bus_task_context(events, FOCUS)
-    )
+    assert "BASE MOVED" in render_bus_context_section(build_bus_task_context(events, FOCUS))
 
 
 def test_an_advance_to_the_tip_i_already_have_is_not_a_move():

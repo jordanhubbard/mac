@@ -49,9 +49,7 @@ def _args(mac_home: Path, cli_digest: str | None = None) -> argparse.Namespace:
         expected_os=os_kind,
         version="0.0.72",
         base_url="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72",
-        asset_spec=[
-            f"{os_kind}:{arch}:{asset}:{digest}:{cli_digest or default_cli_digest}"
-        ],
+        asset_spec=[f"{os_kind}:{arch}:{asset}:{digest}:{cli_digest or default_cli_digest}"],
         archive=None,
         required=False,
     )
@@ -274,17 +272,9 @@ def test_linux_untrusted_managed_identity_retains_reviewed_gateway_identity(
         expected_os="linux",
         version="0.0.72",
         base_url="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72",
-        asset_spec=[
-            "linux:x86_64:openshell-x86_64-test.tar.gz:"
-            + "a" * 64
-            + ":"
-            + "b" * 64
-        ],
+        asset_spec=["linux:x86_64:openshell-x86_64-test.tar.gz:" + "a" * 64 + ":" + "b" * 64],
         gateway_asset_spec=[
-            "linux:x86_64:openshell-gateway-x86_64-test.tar.gz:"
-            + "c" * 64
-            + ":"
-            + "d" * 64
+            "linux:x86_64:openshell-gateway-x86_64-test.tar.gz:" + "c" * 64 + ":" + "d" * 64
         ],
         archive=None,
         required=True,
@@ -395,12 +385,13 @@ def test_controller_orders_read_only_preflight_before_migration_and_phase1_wal()
     assert cohort.index("classify_reviewed_openshell_cli_prerequisites") < cohort.index(
         'run_bounded_node_phase "$selected_specs_file" phase1-prepare'
     )
-    assert "prepare_reviewed_openshell_cli_prerequisites" not in cohort.split(
-        'echo "==> fleet: arming exact phase-1 restore contracts"', 1
-    )[0]
-    legacy = text.split("legacy_hub_bootstrap() {", 1)[1].split(
-        "\n}\n\nhub_epoch_client_read", 1
-    )[0]
+    assert (
+        "prepare_reviewed_openshell_cli_prerequisites"
+        not in cohort.split('echo "==> fleet: arming exact phase-1 restore contracts"', 1)[0]
+    )
+    legacy = text.split("legacy_hub_bootstrap() {", 1)[1].split("\n}\n\nhub_epoch_client_read", 1)[
+        0
+    ]
     assert legacy.index("classify_reviewed_openshell_cli_prerequisites") < legacy.index(
         "preflight_legacy_hub_prerequisites"
     )
@@ -411,8 +402,8 @@ def test_controller_orders_read_only_preflight_before_migration_and_phase1_wal()
 
 def test_bootstrap_uses_exact_archive_installer() -> None:
     text = BOOTSTRAP.read_text(encoding="utf-8")
-    assert 'reviewed-cli-assets.sh' in text
-    assert 'reviewed-cli.py' in text
+    assert "reviewed-cli-assets.sh" in text
+    assert "reviewed-cli.py" in text
     assert 'ln -sf "$cli" "$MAC_HOME/bin/openshell"' not in text
     assert 'python3 "$helper" install-archive' in text
     assert '--archive "$archive"' in text
@@ -449,7 +440,7 @@ def test_phase2_installer_receives_the_same_reviewed_cli_identity() -> None:
 
 def _controller_status_validator() -> str:
     controller = CONTROLLER.read_text(encoding="utf-8")
-    marker = '"${gateway_identity_specs[@]}" <<\'PY\'\n'
+    marker = "\"${gateway_identity_specs[@]}\" <<'PY'\n"
     return controller.split(marker, 1)[1].split("\nPY\n", 1)[0]
 
 
@@ -623,9 +614,7 @@ reviewed_openshell_cli_status_value() {{
 }}
 prepare_reviewed_openshell_cli_prerequisites {selected}
 """
-    result = subprocess.run(
-        ["bash", "-c", harness], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", harness], text=True, capture_output=True, check=False)
     migrated = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result, migrated
 
@@ -668,9 +657,7 @@ def test_patch_does_not_publish_or_strengthen_runtime_attestation() -> None:
     controller = CONTROLLER.read_text(encoding="utf-8")
     assert "require-runtime-attestation" not in helper
     assert "mac.openshell_runtime_attestation.v1" not in installer
-    builder = controller.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    builder = controller.split("prepare_remote_prerequisite_bundle() {", 1)[1].split("\n}\n", 1)[0]
     assert "MAC_PREREQ_OPENSHELL_RUNTIME_ATTESTATION_SHA" not in builder
     assert "stable_private_path_check" not in builder
     assert "runtime-image-attestation.json" not in builder

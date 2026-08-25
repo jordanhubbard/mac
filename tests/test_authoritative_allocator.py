@@ -286,9 +286,7 @@ def test_break_glass_bypasses_placement_constraints_for_exact_agent_only():
     )
 
     assert evaluate_pair(constrained, recovery).allowed is True
-    assert evaluate_pair(constrained, peer).agent_rejections == (
-        "agent_target_mismatch:pinned",
-    )
+    assert evaluate_pair(constrained, peer).agent_rejections == ("agent_target_mismatch:pinned",)
 
 
 def test_break_glass_retains_host_safety_constraints():
@@ -456,7 +454,5 @@ def test_advisory_startup_verdict_for_another_agent_is_ignored():
 
 
 def test_unhealthy_agent_stays_ineligible():
-    worker = _agent_with_startup_self_test(
-        _advisory_startup(), health_status="unhealthy"
-    )
+    worker = _agent_with_startup_self_test(_advisory_startup(), health_status="unhealthy")
     assert worker.healthy is False

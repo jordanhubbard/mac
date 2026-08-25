@@ -64,7 +64,7 @@ def api_crud():
         for methods, path in routes:
             if path != base and not path.startswith(base + "/"):
                 continue
-            tail = path[len(base):]
+            tail = path[len(base) :]
             resource = tail.startswith("/{") and tail.count("/") == 1
             for method in methods:
                 for verb, wanted in _COLLECTION.items():
@@ -81,15 +81,11 @@ def api_crud():
 @pytest.fixture(scope="module")
 def cli_crud():
     parser = build_parser()
-    action = next(
-        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
-    )
+    action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     found = {}
     for obj in FIRST_CLASS:
         sub = action.choices[obj.name]
-        sub_action = next(
-            a for a in sub._actions if isinstance(a, argparse._SubParsersAction)
-        )
+        sub_action = next(a for a in sub._actions if isinstance(a, argparse._SubParsersAction))
         found[obj.name] = {v for v in CRUD_VERBS if v in sub_action.choices}
     return found
 
@@ -99,9 +95,9 @@ def test_the_cli_never_promises_more_than_the_api_implements(obj, cli_crud, api_
     """A CLI verb with no route behind it is a promise the tool cannot keep."""
     extra = cli_crud[obj.name] - api_crud[obj.name]
 
-    assert not extra, (
-        "mac %s exposes %s with no corresponding HTTP route"
-        % (obj.name, sorted(extra))
+    assert not extra, "mac %s exposes %s with no corresponding HTTP route" % (
+        obj.name,
+        sorted(extra),
     )
 
 
@@ -115,9 +111,9 @@ def test_the_api_never_implements_more_crud_than_the_cli_exposes(obj, cli_crud, 
     """
     missing = api_crud[obj.name] - cli_crud[obj.name]
 
-    assert not missing, (
-        "the API implements %s for %s and the CLI does not expose it"
-        % (sorted(missing), obj.name)
+    assert not missing, "the API implements %s for %s and the CLI does not expose it" % (
+        sorted(missing),
+        obj.name,
     )
 
 
@@ -129,7 +125,8 @@ def test_the_two_surfaces_agree_exactly(obj, cli_crud, api_crud):
 def test_the_other_three_objects_have_complete_crud(cli_crud, api_crud):
     """Nothing else is allowed to be partial."""
     for name in ("project", "task", "agent"):
-        assert cli_crud[name] == set(CRUD_VERBS), (
-            "mac %s is missing %s" % (name, sorted(set(CRUD_VERBS) - cli_crud[name]))
+        assert cli_crud[name] == set(CRUD_VERBS), "mac %s is missing %s" % (
+            name,
+            sorted(set(CRUD_VERBS) - cli_crud[name]),
         )
         assert api_crud[name] == set(CRUD_VERBS)

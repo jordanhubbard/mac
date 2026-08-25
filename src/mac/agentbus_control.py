@@ -184,14 +184,12 @@ def lifecycle_payload(
     verb = str(verb or "").strip()
     if verb not in LIFECYCLE_VERBS:
         raise LifecycleVerbError(
-            "unknown lifecycle verb %r; known verbs are %s"
-            % (verb, ", ".join(LIFECYCLE_VERBS))
+            "unknown lifecycle verb %r; known verbs are %s" % (verb, ", ".join(LIFECYCLE_VERBS))
         )
     scope = str(scope or "").strip()
     if scope not in LIFECYCLE_SCOPES:
         raise LifecycleVerbError(
-            "unknown lifecycle scope %r; known scopes are %s"
-            % (scope, ", ".join(LIFECYCLE_SCOPES))
+            "unknown lifecycle scope %r; known scopes are %s" % (scope, ", ".join(LIFECYCLE_SCOPES))
         )
     if scope in ("project", "agent", "task") and not str(target or "").strip():
         raise LifecycleVerbError(

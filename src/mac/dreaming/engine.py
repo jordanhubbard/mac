@@ -170,8 +170,7 @@ def load_records(
         params.extend([agent_id, agent_id, agent_id, agent_id])
     sql = (
         "SELECT id, record_type, content, task_id, subject_id, created_at "
-        "FROM memory_records WHERE " + " AND ".join(clauses) +
-        " ORDER BY created_at DESC LIMIT ?"
+        "FROM memory_records WHERE " + " AND ".join(clauses) + " ORDER BY created_at DESC LIMIT ?"
     )
     params.append(int(limit))
     rows = store.query_all(sql, tuple(params))
@@ -214,8 +213,7 @@ def load_existing_memories(
     params.append(int(limit))
     rows = store.query_all(
         "SELECT id, record_type, content, task_id, subject_id, created_at "
-        "FROM memory_records WHERE " + " AND ".join(clauses) +
-        " ORDER BY created_at DESC LIMIT ?",
+        "FROM memory_records WHERE " + " AND ".join(clauses) + " ORDER BY created_at DESC LIMIT ?",
         tuple(params),
     )
     return [
@@ -265,8 +263,9 @@ def load_sessions(
     params.append(int(max_messages))
     sql = (
         "SELECT id, sender_agent_id, recipient_agent_id, task_id, message_type,"
-        " payload, created_at FROM messages WHERE " + " AND ".join(clauses) +
-        " ORDER BY created_at DESC LIMIT ?"
+        " payload, created_at FROM messages WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY created_at DESC LIMIT ?"
     )
     try:
         rows = store.query_all(sql, tuple(params))

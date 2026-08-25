@@ -46,9 +46,7 @@ _ACTIVE_TASK_STATES = {
 }
 
 _ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]+")
-_TIMESTAMP_RE = re.compile(
-    r"\b\d{4}-\d{2}-\d{2}[T ][0-9:.+-]+(?:Z)?\b"
-)
+_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ][0-9:.+-]+(?:Z)?\b")
 _PID_RE = re.compile(r"\b(?:pid|process)\s*[=: ]\s*\d+\b", re.IGNORECASE)
 _HOME_RE = re.compile(r"/(?:Users|home)/[^/]+/")
 _SPACE_RE = re.compile(r"\s+")
@@ -181,9 +179,7 @@ class CrashService:
                 "SELECT * FROM agent_crash_reports WHERE fingerprint = ?", (fingerprint,)
             )
             report_id = str(report["id"]) if report is not None else new_id("crash")
-            affected = (
-                json_loads(report["affected_agent_ids"], []) if report is not None else []
-            )
+            affected = json_loads(report["affected_agent_ids"], []) if report is not None else []
             affected_ids = sorted({str(value) for value in affected if value} | {agent_id})
             with self.store.transaction() as conn:
                 if report is None:
@@ -387,7 +383,9 @@ class CrashService:
         return result
 
     def _ensure_repair_task(self, report_id: str, affected_ids: List[str]) -> Any:
-        report = self.store.query_one("SELECT * FROM agent_crash_reports WHERE id = ?", (report_id,))
+        report = self.store.query_one(
+            "SELECT * FROM agent_crash_reports WHERE id = ?", (report_id,)
+        )
         if report is None:
             return None
         if report["status"] == "needs_human":
@@ -414,10 +412,7 @@ class CrashService:
                 prior_task = self.cp.update_task(
                     prior_task.id, metadata=metadata, actor="crash-observer"
                 )
-            if (
-                prior_task.owner_agent_id in set(affected_ids)
-                and prior_task.lease_id
-            ):
+            if prior_task.owner_agent_id in set(affected_ids) and prior_task.lease_id:
                 # The peer originally assigned to repair the crash has now
                 # exhibited the same fingerprint. Release its active lease so
                 # an unaffected peer can take over instead of letting the
@@ -470,9 +465,8 @@ class CrashService:
         )
         try:
             task = self.cp.create_task(
-                "P0: repair MAC crash %s at %s" % (
-                    str(report["process_name"])[:50], str(report["revision"])[:12]
-                ),
+                "P0: repair MAC crash %s at %s"
+                % (str(report["process_name"])[:50], str(report["revision"])[:12]),
                 description=description,
                 project="mac",
                 priority=0,

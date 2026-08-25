@@ -28,13 +28,13 @@ from mac import mac_paths
 # The files/dirs that together make up an agent's "soul + memory". Missing ones
 # are skipped — not every agent (or layout) has every file.
 STATE_ENTRIES: List[str] = [
-    "SOUL.md",            # identity / voice
-    "USER.md",            # what it knows about its human
-    "MEMORY.md",          # persistent notes
-    "memories",           # dir: daily memories (+ MEMORY.md/USER.md in newer layout)
+    "SOUL.md",  # identity / voice
+    "USER.md",  # what it knows about its human
+    "MEMORY.md",  # persistent notes
+    "memories",  # dir: daily memories (+ MEMORY.md/USER.md in newer layout)
     "mood-overlay.json",  # active mood overlay (mood engine)
-    "mood-memory.json",   # per-actor warmth/anger memory (mood engine)
-    "config.yaml",        # persona / model config
+    "mood-memory.json",  # per-actor warmth/anger memory (mood engine)
+    "config.yaml",  # persona / model config
 ]
 
 

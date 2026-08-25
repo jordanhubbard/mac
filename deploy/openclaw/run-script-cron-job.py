@@ -98,15 +98,11 @@ def script_jobs_dir() -> Path:
 
 
 def script_jobs_scripts_dir() -> Path:
-    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (
-        script_jobs_dir() / "scripts"
-    )
+    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (script_jobs_dir() / "scripts")
 
 
 def script_jobs_output_dir() -> Path:
-    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR") or (
-        script_jobs_dir() / "output"
-    )
+    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR") or (script_jobs_dir() / "output")
 
 
 def legacy_gateway_scripts_dir() -> Path:
@@ -208,7 +204,7 @@ def resolve_delivery_target(job: dict) -> Optional[Tuple[str, str]]:
     if delivery == "local" or (not delivery and not platform):
         return None
     if delivery.startswith("slack:") or platform == "slack":
-        raw = delivery[len("slack:"):] if delivery.startswith("slack:") else ""
+        raw = delivery[len("slack:") :] if delivery.startswith("slack:") else ""
         target = str(origin.get("chat_id") or raw or "").strip()
         if _SLACK_TARGET.fullmatch(target):
             return ("slack", target)
@@ -268,7 +264,7 @@ def sandbox_wrapper_settings(agent_bin: str) -> Tuple[str, str]:
         return "", ""
 
     def pick(key: str) -> str:
-        match = re.search(r'^%s=\"?([^\"\n]+)\"?$' % key, text, re.MULTILINE)
+        match = re.search(r"^%s=\"?([^\"\n]+)\"?$" % key, text, re.MULTILINE)
         return match.group(1).strip() if match else ""
 
     return pick("OPEN_SHELL"), pick("SANDBOX")
@@ -288,11 +284,22 @@ def stage_prompt_in_sandbox(agent_bin: str, prompt: str, *, session_id: str = ""
     try:
         subprocess.run(
             [
-                openshell, "sandbox", "exec", "--name", sandbox, "--no-tty", "--",
-                "/bin/bash", "-c",
+                openshell,
+                "sandbox",
+                "exec",
+                "--name",
+                sandbox,
+                "--no-tty",
+                "--",
+                "/bin/bash",
+                "-c",
                 "mkdir -p /sandbox/prompts && cat > %s" % path,
             ],
-            input=prompt, text=True, capture_output=True, check=True, timeout=120,
+            input=prompt,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=120,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -332,9 +339,7 @@ def default_agent_runner(
     if session_id:
         args += ["--session-id", session_id]
     args += ["--json"]
-    result = subprocess.run(
-        args, capture_output=True, text=True, timeout=timeout, check=False
-    )
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
     output = (result.stdout or "").strip()
     if result.returncode != 0 and not output:
         return (result.stderr or "").strip()
@@ -491,9 +496,7 @@ def run_job(
         )
         script_output, script_note = script_runner(scripts_dir, legacy_script)
 
-    prompt = build_prompt(
-        message, script_output, script_note, script_name=legacy_script
-    )
+    prompt = build_prompt(message, script_output, script_note, script_name=legacy_script)
 
     session_id = "mac-host-cron-%s" % _slug(job.get("name") or job.get("legacy_id") or "job")
     reply = extract_reply(agent_runner(agent_bin, prompt, session_id=session_id))
@@ -625,9 +628,7 @@ def main(argv: Optional[list] = None) -> int:
         or os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
         or _default_home_bin("openclaw-message")
     )
-    account = (
-        args.account or os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID") or "default"
-    )
+    account = args.account or os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID") or "default"
     output_dir = args.output_dir or str(script_jobs_output_dir())
 
     result = run_job(

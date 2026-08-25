@@ -67,7 +67,10 @@ def test_run_reflect_timeout_is_observable(monkeypatch) -> None:
     monkeypatch.setenv("MAC_REFLECT_TIMEOUT", "7")
     monkeypatch.setattr("mac.worker_reflect.subprocess.run", timeout)
     worker = _Worker()
-    assert worker._run_reflect_query("status", stream_id="s") == "reflect query timed out after 7 seconds."
+    assert (
+        worker._run_reflect_query("status", stream_id="s")
+        == "reflect query timed out after 7 seconds."
+    )
     assert worker.logs[-1][1]["detail"]["reason"] == "timeout"
 
 

@@ -60,9 +60,7 @@ HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9._-]{0,95}$")
 SAFE_AGENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$")
 
-CONTRACT_KEYS = frozenset(
-    {"schema", "participant", "agent_id", "node_identity_sha256", "checks"}
-)
+CONTRACT_KEYS = frozenset({"schema", "participant", "agent_id", "node_identity_sha256", "checks"})
 RECEIPT_KEYS = frozenset(
     {
         "schema",
@@ -78,9 +76,7 @@ RECEIPT_KEYS = frozenset(
 BUNDLE_KEYS = frozenset(
     {"schema", "agent_id", "node_identity_sha256", "created_at_epoch", "receipts"}
 )
-EXPECTATIONS_KEYS = frozenset(
-    {"schema", "agent_id", "node_identity_sha256", "contracts"}
-)
+EXPECTATIONS_KEYS = frozenset({"schema", "agent_id", "node_identity_sha256", "contracts"})
 RECEIPT_CHECK_KEYS = frozenset({"name", "kind", "evidence_sha256"})
 
 
@@ -89,9 +85,7 @@ class PrerequisiteError(ValueError):
 
 
 def _canonical(value: Any) -> bytes:
-    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode(
-        "utf-8"
-    )
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 def _sha256(value: Any) -> str:
@@ -209,9 +203,7 @@ def _atomic_private_json(path: Path, value: Any) -> None:
         raise PrerequisiteError("output parent must be a real directory")
     if parent.st_uid != os.geteuid() or stat.S_IMODE(parent.st_mode) & 0o077:
         raise PrerequisiteError("output parent must be owner-private")
-    fd, raw_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", dir=destination.parent
-    )
+    fd, raw_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
     temporary = Path(raw_name)
     try:
         os.fchmod(fd, 0o600)
@@ -252,9 +244,7 @@ def _validate_path_check(value: dict[str, Any]) -> dict[str, Any]:
     mode = check["expected_mode"]
     maximum_mode = 0o7777 if check["file_type"] == "directory" else 0o777
     if mode is not None and (
-        isinstance(mode, bool)
-        or not isinstance(mode, int)
-        or not 0 <= mode <= maximum_mode
+        isinstance(mode, bool) or not isinstance(mode, int) or not 0 <= mode <= maximum_mode
     ):
         raise PrerequisiteError("path check expected_mode is invalid")
     digest = check["sha256"]
@@ -293,21 +283,15 @@ def _validate_tcp_host(value: Any, network_scope: Any) -> str:
         return _validate_loopback_host(value)
     if network_scope != "managed_mesh":
         raise PrerequisiteError("TCP check network_scope is invalid")
-    if _managed_mesh_address(value) or value.endswith(
-        (".ts.net", ".svc.cluster.local")
-    ):
+    if _managed_mesh_address(value) or value.endswith((".ts.net", ".svc.cluster.local")):
         return value
-    raise PrerequisiteError(
-        "managed mesh checks require an approved private address or DNS suffix"
-    )
+    raise PrerequisiteError("managed mesh checks require an approved private address or DNS suffix")
 
 
 def _validate_tcp_check(value: dict[str, Any]) -> dict[str, Any]:
     check = _exact_dict(
         value,
-        frozenset(
-            {"name", "kind", "host", "port", "timeout_seconds", "network_scope"}
-        ),
+        frozenset({"name", "kind", "host", "port", "timeout_seconds", "network_scope"}),
         "TCP check",
     )
     _safe_name(check["name"], "check name")
@@ -369,9 +353,7 @@ def _validate_http_check(value: dict[str, Any]) -> dict[str, Any]:
         or not statuses
         or len(statuses) > 16
         or any(
-            isinstance(item, bool)
-            or not isinstance(item, int)
-            or not 100 <= item <= 599
+            isinstance(item, bool) or not isinstance(item, int) or not 100 <= item <= 599
             for item in statuses
         )
         or len(set(statuses)) != len(statuses)
@@ -495,24 +477,16 @@ def _probe_path(check: dict[str, Any]) -> dict[str, Any]:
 def _probe_tcp(check: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
     try:
-        resolved = socket.getaddrinfo(
-            check["host"], check["port"], type=socket.SOCK_STREAM
-        )
+        resolved = socket.getaddrinfo(check["host"], check["port"], type=socket.SOCK_STREAM)
         addresses = {item[4][0] for item in resolved}
         if not addresses:
             raise PrerequisiteError(f"TCP check {check['name']} did not resolve")
         if check["network_scope"] == "loopback":
             if any(not ipaddress.ip_address(value).is_loopback for value in addresses):
-                raise PrerequisiteError(
-                    f"TCP check {check['name']} resolved outside loopback"
-                )
+                raise PrerequisiteError(f"TCP check {check['name']} resolved outside loopback")
         elif any(not _managed_mesh_address(value) for value in addresses):
-            raise PrerequisiteError(
-                f"TCP check {check['name']} resolved outside the managed mesh"
-            )
-        with socket.create_connection(
-            (check["host"], check["port"]), check["timeout_seconds"]
-        ):
+            raise PrerequisiteError(f"TCP check {check['name']} resolved outside the managed mesh")
+        with socket.create_connection((check["host"], check["port"]), check["timeout_seconds"]):
             pass
     except PrerequisiteError:
         raise
@@ -523,9 +497,7 @@ def _probe_tcp(check: dict[str, Any]) -> dict[str, Any]:
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        raise urllib.error.HTTPError(
-            req.full_url, code, "redirect refused", headers, fp
-        )
+        raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
 
 
 def _probe_http(check: dict[str, Any]) -> dict[str, Any]:
@@ -593,11 +565,7 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     _digest(receipt["node_identity_sha256"], "node identity digest")
     _digest(receipt["contract_sha256"], "contract digest")
     observed = receipt["observed_at_epoch"]
-    if (
-        isinstance(observed, bool)
-        or not isinstance(observed, (int, float))
-        or observed <= 0
-    ):
+    if isinstance(observed, bool) or not isinstance(observed, (int, float)) or observed <= 0:
         raise PrerequisiteError("receipt observation time is invalid")
     if receipt["status"] != "ready":
         raise PrerequisiteError("prerequisite receipt is not ready")
@@ -631,9 +599,7 @@ def build_bundle(
     for receipt in parsed:
         participant = receipt["participant"]
         if participant in by_participant:
-            raise PrerequisiteError(
-                "prerequisite bundle contains a duplicate participant"
-            )
+            raise PrerequisiteError("prerequisite bundle contains a duplicate participant")
         if receipt["agent_id"] != expected_agent:
             raise PrerequisiteError("prerequisite receipt agent differs")
         if receipt["node_identity_sha256"] != expected_identity:
@@ -657,9 +623,7 @@ def validate_expectations(value: Any) -> dict[str, Any]:
     _agent_id(expectations["agent_id"])
     _digest(expectations["node_identity_sha256"], "node identity digest")
     contracts = expectations["contracts"]
-    if not isinstance(contracts, dict) or frozenset(contracts) != frozenset(
-        REQUIRED_PARTICIPANTS
-    ):
+    if not isinstance(contracts, dict) or frozenset(contracts) != frozenset(REQUIRED_PARTICIPANTS):
         raise PrerequisiteError("prerequisite expected contract set is incomplete")
     for participant in REQUIRED_PARTICIPANTS:
         _digest(contracts[participant], f"{participant} contract digest")
@@ -688,11 +652,7 @@ def validate_bundle(
         raise PrerequisiteError("max receipt age must be positive and at most one hour")
     current = float(time.time() if now is None else now)
     created = bundle["created_at_epoch"]
-    if (
-        isinstance(created, bool)
-        or not isinstance(created, (int, float))
-        or created <= 0
-    ):
+    if isinstance(created, bool) or not isinstance(created, (int, float)) or created <= 0:
         raise PrerequisiteError("prerequisite bundle creation time is invalid")
     if created > current + 5 or current - created > max_age_seconds:
         raise PrerequisiteError("prerequisite bundle is stale or from the future")
@@ -719,10 +679,7 @@ def validate_bundle(
         if expected["node_identity_sha256"] != expected_identity:
             raise PrerequisiteError("prerequisite expectations node identity differs")
         for receipt in rebuilt["receipts"]:
-            if (
-                receipt["contract_sha256"]
-                != expected["contracts"][receipt["participant"]]
-            ):
+            if receipt["contract_sha256"] != expected["contracts"][receipt["participant"]]:
                 raise PrerequisiteError(
                     f"prerequisite receipt {receipt['participant']} uses an unexpected contract"
                 )
@@ -778,9 +735,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "verify":
-            contract = _read_private_json(
-                args.contract.expanduser(), "prerequisite contract"
-            )
+            contract = _read_private_json(args.contract.expanduser(), "prerequisite contract")
             receipt = verify_contract(contract)
             _atomic_private_json(args.output, receipt)
             result: Any = receipt
@@ -807,9 +762,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 max_age_seconds=args.max_age_seconds,
                 expectations=expectations,
             )
-            result = bundle_summary(
-                bundle, expectations=validate_expectations(expectations)
-            )
+            result = bundle_summary(bundle, expectations=validate_expectations(expectations))
     except PrerequisiteError as exc:
         print(f"fleet prerequisite error: {exc}", file=sys.stderr)
         return 4

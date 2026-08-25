@@ -97,10 +97,7 @@ def sha256(raw: bytes) -> str:
 
 def utc_now() -> str:
     return (
-        dt.datetime.now(dt.timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
+        dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
 
 
@@ -184,9 +181,7 @@ def _entry(root: Path, path: Path) -> dict[str, Any]:
             or before.st_size < 0
             or before.st_size > MAX_INPUT_FILE_BYTES
         ):
-            raise IdentityError(
-                f"frozen image input is not a bounded regular file: {path}"
-            )
+            raise IdentityError(f"frozen image input is not a bounded regular file: {path}")
         raw = bytearray()
         while len(raw) < before.st_size:
             chunk = os.read(descriptor, min(1024 * 1024, before.st_size - len(raw)))
@@ -388,9 +383,7 @@ def atomic_private_json(path: Path, value: dict[str, Any]) -> None:
         or current.st_nlink != 1
     ):
         raise IdentityError("existing image receipt path is unsafe")
-    descriptor, raw = tempfile.mkstemp(
-        prefix=destination.name + ".", dir=destination.parent
-    )
+    descriptor, raw = tempfile.mkstemp(prefix=destination.name + ".", dir=destination.parent)
     temporary = Path(raw)
     try:
         os.fchmod(descriptor, 0o600)
@@ -435,11 +428,7 @@ def _inspect(docker: str, reference: str) -> dict[str, Any]:
         values = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise IdentityError("Docker image inspection was not JSON") from exc
-    if (
-        not isinstance(values, list)
-        or len(values) != 1
-        or not isinstance(values[0], dict)
-    ):
+    if not isinstance(values, list) or len(values) != 1 or not isinstance(values[0], dict):
         raise IdentityError("Docker image inspection shape is invalid")
     return values[0]
 
@@ -460,8 +449,7 @@ def _repo_digest(image: dict[str, Any], repository: str) -> str:
 def _labels(image: dict[str, Any]) -> dict[str, str]:
     labels = (image.get("Config") or {}).get("Labels")
     if not isinstance(labels, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str)
-        for key, value in labels.items()
+        not isinstance(key, str) or not isinstance(value, str) for key, value in labels.items()
     ):
         raise IdentityError("Docker image labels are missing or malformed")
     return labels
@@ -486,9 +474,7 @@ def _validate_image(
         or not SHA40.fullmatch(revision)
         or (expected_revision is not None and revision != expected_revision)
     ):
-        raise IdentityError(
-            "Docker image provenance labels differ from the frozen plan"
-        )
+        raise IdentityError("Docker image provenance labels differ from the frozen plan")
     return _repo_digest(image, plan["repository"]), revision
 
 
@@ -656,9 +642,7 @@ def verify_image(
             )
             if observed_digest != digest:
                 raise IdentityError("anonymous pull resolved a different image digest")
-            _run(
-                _smoke_argv(plan["kind"], docker, reference, platform), env=environment
-            )
+            _run(_smoke_argv(plan["kind"], docker, reference, platform), env=environment)
             evidence.append(
                 {
                     "platform": platform,
@@ -731,9 +715,7 @@ def publication_receipt(
         raise IdentityError("anonymous platform evidence differs from the frozen plan")
     if disposition == "built" and build_revision != plan["requested_revision"]:
         raise IdentityError("a newly built image must bind the controller revision")
-    _validate_provenance_verification(
-        provenance_verification, digest, plan["repository"]
-    )
+    _validate_provenance_verification(provenance_verification, digest, plan["repository"])
     return {
         "schema": RECEIPT_SCHEMA,
         "status": "passed",
@@ -777,9 +759,7 @@ def _validate_plan(plan: dict[str, Any]) -> None:
         or not SHA256.fullmatch(str(plan.get("frozen_inputs_sha256") or ""))
         or plan.get("platforms") != list(PLATFORMS)
         or plan.get("content_tag")
-        != plan["repository"]
-        + ":inputs-"
-        + plan["frozen_inputs_sha256"].removeprefix("sha256:")
+        != plan["repository"] + ":inputs-" + plan["frozen_inputs_sha256"].removeprefix("sha256:")
         or not isinstance(plan.get("inputs"), list)
         or not plan["inputs"]
         or plan.get("build_args") != IMAGE_SPECS.get(str(kind), {}).get("build_args")

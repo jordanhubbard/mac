@@ -78,9 +78,7 @@ def test_project_register_without_target_discovers_cwd(
             },
         )
     ]
-    assert "registering checkout %s (branch main)" % repo.resolve() in (
-        capsys.readouterr().err
-    )
+    assert "registering checkout %s (branch main)" % repo.resolve() in (capsys.readouterr().err)
 
 
 def test_project_register_dot_falls_back_to_current_branch(

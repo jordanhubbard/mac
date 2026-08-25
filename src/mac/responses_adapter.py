@@ -57,9 +57,7 @@ def _responses_tools_to_chat(tools: Any) -> List[Dict[str, Any]]:
         if not isinstance(raw, dict) or raw.get("type") != "function":
             continue
         function = {
-            key: raw[key]
-            for key in ("name", "description", "parameters", "strict")
-            if key in raw
+            key: raw[key] for key in ("name", "description", "parameters", "strict") if key in raw
         }
         if function.get("name"):
             converted.append({"type": "function", "function": function})
@@ -88,9 +86,7 @@ def responses_request_to_chat(body: Dict[str, Any]) -> Dict[str, Any]:
                 role = str(item.get("role") or "user")
                 if role == "developer":
                     role = "system"
-                messages.append(
-                    {"role": role, "content": _content_to_chat(item.get("content"))}
-                )
+                messages.append({"role": role, "content": _content_to_chat(item.get("content"))})
             elif kind == "function_call":
                 call_id = str(item.get("call_id") or item.get("id") or _new_id("call"))
                 messages.append(
@@ -150,9 +146,7 @@ def _usage_to_responses(usage: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(usage, dict):
         return None
     input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-    output_tokens = int(
-        usage.get("completion_tokens") or usage.get("output_tokens") or 0
-    )
+    output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
     return {
         "input_tokens": input_tokens,
         "input_tokens_details": {
@@ -163,10 +157,7 @@ def _usage_to_responses(usage: Any) -> Optional[Dict[str, Any]]:
         "output_tokens": output_tokens,
         "output_tokens_details": {
             "reasoning_tokens": int(
-                (usage.get("completion_tokens_details") or {}).get(
-                    "reasoning_tokens"
-                )
-                or 0
+                (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
             )
         },
         "total_tokens": int(usage.get("total_tokens") or input_tokens + output_tokens),
@@ -192,9 +183,7 @@ def _chat_message_to_output(message: Any) -> List[Dict[str, Any]]:
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
-                "content": [
-                    {"type": "output_text", "text": text, "annotations": []}
-                ],
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
             }
         )
     for raw in message.get("tool_calls") or []:
@@ -250,9 +239,7 @@ def _response_envelope(
     }
 
 
-def chat_response_to_responses(
-    body: Dict[str, Any], request: Dict[str, Any]
-) -> Dict[str, Any]:
+def chat_response_to_responses(body: Dict[str, Any], request: Dict[str, Any]) -> Dict[str, Any]:
     choices = body.get("choices") if isinstance(body, dict) else []
     first = choices[0] if isinstance(choices, list) and choices else {}
     message = first.get("message") if isinstance(first, dict) else {}
@@ -276,9 +263,7 @@ def _chat_stream_result(chunks: Iterable[bytes]) -> Dict[str, Any]:
         while "\n\n" in buffer:
             frame, buffer = buffer.split("\n\n", 1)
             data = "\n".join(
-                line[5:].lstrip()
-                for line in frame.splitlines()
-                if line.startswith("data:")
+                line[5:].lstrip() for line in frame.splitlines() if line.startswith("data:")
             )
             if not data or data == "[DONE]":
                 continue
@@ -312,9 +297,7 @@ def _chat_stream_result(chunks: Iterable[bytes]) -> Dict[str, Any]:
                 function = raw.get("function")
                 if isinstance(function, dict):
                     current["function"]["name"] += str(function.get("name") or "")
-                    current["function"]["arguments"] += str(
-                        function.get("arguments") or ""
-                    )
+                    current["function"]["arguments"] += str(function.get("arguments") or "")
     return {
         "model": model,
         "choices": [
@@ -427,9 +410,7 @@ def _response_events(response: Dict[str, Any]) -> Iterator[bytes]:
     yield _sse({"type": "response.completed", "response": response})
 
 
-def chat_stream_to_responses(
-    chunks: Iterable[bytes], request: Dict[str, Any]
-) -> Iterator[bytes]:
+def chat_stream_to_responses(chunks: Iterable[bytes], request: Dict[str, Any]) -> Iterator[bytes]:
     """Convert a Chat Completions SSE iterator into Responses SSE events."""
     chat = _chat_stream_result(chunks)
     yield from _response_events(chat_response_to_responses(chat, request))

@@ -53,9 +53,7 @@ def effect_conflicts(left: DeclaredEffects, right: DeclaredEffects) -> List[str]
         left.writes, right.reads + right.writes + right.exclusive
     ):
         reasons.add("write:%s" % resource)
-    for resource in _overlapping_resources(
-        right.writes, left.reads + left.writes + left.exclusive
-    ):
+    for resource in _overlapping_resources(right.writes, left.reads + left.writes + left.exclusive):
         reasons.add("write:%s" % resource)
     for resource in _overlapping_resources(
         left.exclusive, right.reads + right.writes + right.exclusive
@@ -78,14 +76,10 @@ def _resources_overlap(left: str, right: str) -> bool:
         return True
     if left.startswith("repo:") or right.startswith("repo:"):
         return True
-    return left.startswith(right.rstrip("/") + "/") or right.startswith(
-        left.rstrip("/") + "/"
-    )
+    return left.startswith(right.rstrip("/") + "/") or right.startswith(left.rstrip("/") + "/")
 
 
-def _overlapping_resources(
-    left: Tuple[str, ...], right: Tuple[str, ...]
-) -> Tuple[str, ...]:
+def _overlapping_resources(left: Tuple[str, ...], right: Tuple[str, ...]) -> Tuple[str, ...]:
     overlaps = set()
     for left_resource in left:
         for right_resource in right:
@@ -93,9 +87,7 @@ def _overlapping_resources(
                 if left_resource == right_resource:
                     overlaps.add(left_resource)
                 else:
-                    overlaps.add(
-                        "%s~%s" % tuple(sorted((left_resource, right_resource)))
-                    )
+                    overlaps.add("%s~%s" % tuple(sorted((left_resource, right_resource))))
     return tuple(sorted(overlaps))
 
 

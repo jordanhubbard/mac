@@ -84,9 +84,9 @@ def test_candidate_is_quarantined_redacted_and_requires_explicit_approval(tmp_pa
         ).stdout
     )
     assert approved["status"] == "approved"
-    memory = (
-        tmp_path / f"workspace/memory/curiosity-approved/{candidate_id}.md"
-    ).read_text(encoding="utf-8")
+    memory = (tmp_path / f"workspace/memory/curiosity-approved/{candidate_id}.md").read_text(
+        encoding="utf-8"
+    )
     assert "task_approval_1" in memory
     assert "Run an A/B comparison" in memory
     verified = json.loads(run(tmp_path, "verify").stdout)

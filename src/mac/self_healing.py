@@ -77,10 +77,13 @@ _ACTIVE_STATES = frozenset(
 _DAEMON_HEARTBEATS = (
     ("nap.tick.run", "MAC_NAP_TICK_ENABLED", "MAC_NAP_TICK_INTERVAL_SECONDS", 900.0),
     ("backlog.groom.run", "MAC_BACKLOG_GROOM_ENABLED", "MAC_BACKLOG_GROOM_INTERVAL_SECONDS", 900.0),
-    ("curiosity.review.run", "MAC_CURIOSITY_REVIEW_ENABLED",
-     "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS", 6 * 60 * 60.0),
-    ("judgement.run", "MAC_JUDGEMENT_ENABLED",
-     "MAC_JUDGEMENT_INTERVAL_SECONDS", 3600.0),
+    (
+        "curiosity.review.run",
+        "MAC_CURIOSITY_REVIEW_ENABLED",
+        "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS",
+        6 * 60 * 60.0,
+    ),
+    ("judgement.run", "MAC_JUDGEMENT_ENABLED", "MAC_JUDGEMENT_INTERVAL_SECONDS", 3600.0),
 )
 
 
@@ -114,7 +117,10 @@ class SelfHealingConfig:
         env = os.environ if environ is None else environ
         errors: List[str] = []
         enabled = str(env.get("MAC_SELF_HEAL_ENABLED") or "").strip().lower() in {
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
@@ -122,27 +128,53 @@ class SelfHealingConfig:
 
         return cls(
             enabled=enabled,
-            interval_seconds=_num("MAC_SELF_HEAL_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS,
-                                  MIN_INTERVAL_SECONDS, 24 * 60 * 60.0),
-            initial_delay_seconds=_num("MAC_SELF_HEAL_INITIAL_DELAY_SECONDS",
-                                       DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0),
-            starvation_seconds=_num("MAC_SELF_HEAL_STARVATION_SECONDS", DEFAULT_STARVATION_SECONDS,
-                                    60 * 60.0, 90 * 24 * 60 * 60.0),
-            nap_stall_seconds=_num("MAC_SELF_HEAL_NAP_STALL_SECONDS", DEFAULT_NAP_STALL_SECONDS,
-                                   30 * 60.0, 30 * 24 * 60 * 60.0),
-            read_silence_seconds=_num("MAC_SELF_HEAL_READ_SILENCE_SECONDS",
-                                      DEFAULT_READ_SILENCE_SECONDS,
-                                      30 * 60.0, 30 * 24 * 60 * 60.0),
-            pin_divergence_seconds=_num("MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS",
-                                        DEFAULT_PIN_DIVERGENCE_SECONDS,
-                                        30 * 60.0, 30 * 24 * 60 * 60.0),
-            agent_silence_seconds=_num("MAC_SELF_HEAL_AGENT_SILENCE_SECONDS",
-                                       DEFAULT_AGENT_SILENCE_SECONDS,
-                                       10 * 60.0, 7 * 24 * 60 * 60.0),
+            interval_seconds=_num(
+                "MAC_SELF_HEAL_INTERVAL_SECONDS",
+                DEFAULT_INTERVAL_SECONDS,
+                MIN_INTERVAL_SECONDS,
+                24 * 60 * 60.0,
+            ),
+            initial_delay_seconds=_num(
+                "MAC_SELF_HEAL_INITIAL_DELAY_SECONDS", DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0
+            ),
+            starvation_seconds=_num(
+                "MAC_SELF_HEAL_STARVATION_SECONDS",
+                DEFAULT_STARVATION_SECONDS,
+                60 * 60.0,
+                90 * 24 * 60 * 60.0,
+            ),
+            nap_stall_seconds=_num(
+                "MAC_SELF_HEAL_NAP_STALL_SECONDS",
+                DEFAULT_NAP_STALL_SECONDS,
+                30 * 60.0,
+                30 * 24 * 60 * 60.0,
+            ),
+            read_silence_seconds=_num(
+                "MAC_SELF_HEAL_READ_SILENCE_SECONDS",
+                DEFAULT_READ_SILENCE_SECONDS,
+                30 * 60.0,
+                30 * 24 * 60 * 60.0,
+            ),
+            pin_divergence_seconds=_num(
+                "MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS",
+                DEFAULT_PIN_DIVERGENCE_SECONDS,
+                30 * 60.0,
+                30 * 24 * 60 * 60.0,
+            ),
+            agent_silence_seconds=_num(
+                "MAC_SELF_HEAL_AGENT_SILENCE_SECONDS",
+                DEFAULT_AGENT_SILENCE_SECONDS,
+                10 * 60.0,
+                7 * 24 * 60 * 60.0,
+            ),
             max_attempts=int(_num("MAC_SELF_HEAL_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS, 1, 10)),
             max_tasks_per_cycle=bounded_env_int(
-                env, "MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE",
-                DEFAULT_MAX_TASKS_PER_CYCLE, 1, 1000, errors=errors,
+                env,
+                "MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE",
+                DEFAULT_MAX_TASKS_PER_CYCLE,
+                1,
+                1000,
+                errors=errors,
             ),
             configuration_error="; ".join(errors),
         )
@@ -163,8 +195,12 @@ class Finding:
 class SelfHealingSentinel:
     """Evaluate system invariants and turn violations into fleet work."""
 
-    def __init__(self, control_plane: Any, config: SelfHealingConfig,
-                 environ: Optional[Mapping[str, str]] = None) -> None:
+    def __init__(
+        self,
+        control_plane: Any,
+        config: SelfHealingConfig,
+        environ: Optional[Mapping[str, str]] = None,
+    ) -> None:
         self.control_plane = control_plane
         self.config = config
         self._environ = environ
@@ -183,16 +219,17 @@ class SelfHealingSentinel:
     def start(self) -> bool:
         if not self.config.active:
             if self.config.configuration_error:
-                self._observe("self_heal.configuration_invalid", "warning",
-                              {"error": self.config.configuration_error})
+                self._observe(
+                    "self_heal.configuration_invalid",
+                    "warning",
+                    {"error": self.config.configuration_error},
+                )
             return False
         with self._state_lock:
             if self._thread is not None and self._thread.is_alive():
                 return False
             self._stop_event.clear()
-            thread = threading.Thread(
-                target=self._loop, name="mac-self-healing", daemon=True
-            )
+            thread = threading.Thread(target=self._loop, name="mac-self-healing", daemon=True)
             self._thread = thread
             thread.start()
         self._observe("self_heal.started", "info", {"config": self.config.to_dict()})
@@ -234,11 +271,16 @@ class SelfHealingSentinel:
 
     # -- observe ------------------------------------------------------------
 
-    def run_once(self, *, actor: str = "self-healing-sentinel",
-                 trigger: str = "operator") -> Dict[str, Any]:
+    def run_once(
+        self, *, actor: str = "self-healing-sentinel", trigger: str = "operator"
+    ) -> Dict[str, Any]:
         if not self._run_lock.acquire(blocking=False):
-            return {"schema": SELF_HEAL_SCHEMA, "status": "busy",
-                    "trigger": trigger, "findings": []}
+            return {
+                "schema": SELF_HEAL_SCHEMA,
+                "status": "busy",
+                "trigger": trigger,
+                "findings": [],
+            }
         run_id = "heal_%s" % uuid.uuid4().hex
         findings: List[Finding] = []
         check_errors: List[str] = []
@@ -274,8 +316,7 @@ class SelfHealingSentinel:
             "capped_count": sum(1 for a in actions if a.get("action") == "skipped"),
             "budget": self.config.max_tasks_per_cycle,
             "findings": [
-                {**finding.to_dict(), **action}
-                for finding, action in zip(findings, actions)
+                {**finding.to_dict(), **action} for finding, action in zip(findings, actions)
             ],
             "check_errors": check_errors,
         }
@@ -297,27 +338,33 @@ class SelfHealingSentinel:
         age = None if newest is None else (_utcnow() - newest).total_seconds()
         if age is not None and age < self.config.nap_stall_seconds:
             return []
-        return [Finding(
-            fingerprint="nap_liveness",
-            kind="nap_liveness",
-            summary=(
-                "%d agents have enabled nap schedules but no nap has run in %s"
-                % (len(schedules),
-                   "over %.0f hours" % (age / 3600.0) if age is not None else "recorded history")
-            ),
-            detail={
-                "enabled_schedules": len(schedules),
-                "newest_run_age_seconds": age,
-                "threshold_seconds": self.config.nap_stall_seconds,
-                "remediation": (
-                    "Diagnose why nap cycles stopped: check the hub's nap-tick "
-                    "status (GET /nap-tick/status), MAC_NAP_TICK_ENABLED in the "
-                    "hub env, and whether any external nap scheduler this fleet "
-                    "relied on still exists. Apply the fix and verify a new "
-                    "nap_run row appears."
+        return [
+            Finding(
+                fingerprint="nap_liveness",
+                kind="nap_liveness",
+                summary=(
+                    "%d agents have enabled nap schedules but no nap has run in %s"
+                    % (
+                        len(schedules),
+                        "over %.0f hours" % (age / 3600.0)
+                        if age is not None
+                        else "recorded history",
+                    )
                 ),
-            },
-        )]
+                detail={
+                    "enabled_schedules": len(schedules),
+                    "newest_run_age_seconds": age,
+                    "threshold_seconds": self.config.nap_stall_seconds,
+                    "remediation": (
+                        "Diagnose why nap cycles stopped: check the hub's nap-tick "
+                        "status (GET /nap-tick/status), MAC_NAP_TICK_ENABLED in the "
+                        "hub env, and whether any external nap scheduler this fleet "
+                        "relied on still exists. Apply the fix and verify a new "
+                        "nap_run row appears."
+                    ),
+                },
+            )
+        ]
 
     def _check_task_starvation(self) -> List[Finding]:
         findings: List[Finding] = []
@@ -337,27 +384,29 @@ class SelfHealingSentinel:
                 (_parse_ts(getattr(t, "created_at", None)) or now for t in tasks),
             )
             task_ids = [getattr(t, "id", "?") for t in tasks[:5]]
-            findings.append(Finding(
-                fingerprint="task_starvation:%s" % project,
-                kind="task_starvation",
-                summary=(
-                    "project %s has %d open task(s) older than %.0f days"
-                    % (project, len(tasks), self.config.starvation_seconds / 86400.0)
-                ),
-                detail={
-                    "project": project,
-                    "stale_count": len(tasks),
-                    "oldest_created_at": oldest.isoformat(),
-                    "sample_task_ids": task_ids,
-                    "remediation": (
-                        "For each listed task run the dispatch explainability "
-                        "surface (mac task why-unclaimed <id>), identify the "
-                        "blocking gate (capabilities, project registration, "
-                        "target mismatch, worker policy), and either fix the "
-                        "gate, re-scope the task, or cancel it with a reason."
+            findings.append(
+                Finding(
+                    fingerprint="task_starvation:%s" % project,
+                    kind="task_starvation",
+                    summary=(
+                        "project %s has %d open task(s) older than %.0f days"
+                        % (project, len(tasks), self.config.starvation_seconds / 86400.0)
                     ),
-                },
-            ))
+                    detail={
+                        "project": project,
+                        "stale_count": len(tasks),
+                        "oldest_created_at": oldest.isoformat(),
+                        "sample_task_ids": task_ids,
+                        "remediation": (
+                            "For each listed task run the dispatch explainability "
+                            "surface (mac task why-unclaimed <id>), identify the "
+                            "blocking gate (capabilities, project registration, "
+                            "target mismatch, worker policy), and either fix the "
+                            "gate, re-scope the task, or cancel it with a reason."
+                        ),
+                    },
+                )
+            )
         return findings
 
     def _check_daemon_heartbeats(self) -> List[Finding]:
@@ -376,27 +425,33 @@ class SelfHealingSentinel:
             grace = max(3 * interval, 15 * 60.0)
             if age is not None and age < grace:
                 continue
-            findings.append(Finding(
-                fingerprint="daemon_silent:%s" % event_name,
-                kind="daemon_silent",
-                summary=(
-                    "%s is enabled (%s) but its heartbeat event %r is %s"
-                    % (enable_var, "set", event_name,
-                       "absent" if age is None else "%.0f min stale" % (age / 60.0))
-                ),
-                detail={
-                    "event_name": event_name,
-                    "enable_var": enable_var,
-                    "expected_interval_seconds": interval,
-                    "age_seconds": age,
-                    "remediation": (
-                        "The daemon's thread has died or the hub is running "
-                        "stale code. Check the hub process logs for the "
-                        "daemon's exception, restart the control plane, and "
-                        "verify the heartbeat event resumes."
+            findings.append(
+                Finding(
+                    fingerprint="daemon_silent:%s" % event_name,
+                    kind="daemon_silent",
+                    summary=(
+                        "%s is enabled (%s) but its heartbeat event %r is %s"
+                        % (
+                            enable_var,
+                            "set",
+                            event_name,
+                            "absent" if age is None else "%.0f min stale" % (age / 60.0),
+                        )
                     ),
-                },
-            ))
+                    detail={
+                        "event_name": event_name,
+                        "enable_var": enable_var,
+                        "expected_interval_seconds": interval,
+                        "age_seconds": age,
+                        "remediation": (
+                            "The daemon's thread has died or the hub is running "
+                            "stale code. Check the hub process logs for the "
+                            "daemon's exception, restart the control plane, and "
+                            "verify the heartbeat event resumes."
+                        ),
+                    },
+                )
+            )
         return findings
 
     def _check_read_path_silence(self) -> List[Finding]:
@@ -404,14 +459,15 @@ class SelfHealingSentinel:
         for agent in self.control_plane.list_agents():
             resources = getattr(agent, "resources", None) or {}
             gateway = resources.get("chat_gateway") if isinstance(resources, Mapping) else None
-            if isinstance(gateway, Mapping) and gateway.get("implementation") == "openclaw" \
-                    and gateway.get("verified"):
+            if (
+                isinstance(gateway, Mapping)
+                and gateway.get("implementation") == "openclaw"
+                and gateway.get("verified")
+            ):
                 openclaw_agents.append(agent)
         if not openclaw_agents:
             return []
-        events = self.control_plane.list_observability(
-            name="continuity.context_served", limit=1
-        )
+        events = self.control_plane.list_observability(name="continuity.context_served", limit=1)
         newest = _parse_ts(getattr(events[0], "created_at", None)) if events else None
         age = None if newest is None else (_utcnow() - newest).total_seconds()
         if age is not None and age < self.config.read_silence_seconds:
@@ -419,32 +475,38 @@ class SelfHealingSentinel:
         # Pin the diagnosis to one affected gateway host; its agent can probe
         # its own plugin env and sandbox, which the hub cannot see.
         target = str(getattr(openclaw_agents[0], "id", "") or "") or None
-        return [Finding(
-            fingerprint="read_path_silence:continuity",
-            kind="read_path_silence",
-            summary=(
-                "%d verified OpenClaw gateway(s) exist but the continuity "
-                "endpoint has served nothing in %s"
-                % (len(openclaw_agents),
-                   "over %.0f hours" % (age / 3600.0) if age is not None else "recorded history")
-            ),
-            detail={
-                "verified_openclaw_agents": [
-                    str(getattr(a, "id", "?")) for a in openclaw_agents
-                ],
-                "age_seconds": age,
-                "remediation": (
-                    "From the gateway host, verify the mac-continuity plugin "
-                    "can reach the hub: check MAC_OPENCLAW_AGENT_ID / "
-                    "MAC_OPENCLAW_CONTROL_URL / MAC_OPENCLAW_ROUTER_API_KEY "
-                    "inside the sandbox, call GET /v1/agents/<id>/continuity "
-                    "with the bound token, and inspect gateway logs for "
-                    "'mac-continuity: context lookup skipped'. Fix the wiring "
-                    "and confirm a continuity.context_served event appears."
+        return [
+            Finding(
+                fingerprint="read_path_silence:continuity",
+                kind="read_path_silence",
+                summary=(
+                    "%d verified OpenClaw gateway(s) exist but the continuity "
+                    "endpoint has served nothing in %s"
+                    % (
+                        len(openclaw_agents),
+                        "over %.0f hours" % (age / 3600.0)
+                        if age is not None
+                        else "recorded history",
+                    )
                 ),
-            },
-            target_agent_id=target,
-        )]
+                detail={
+                    "verified_openclaw_agents": [
+                        str(getattr(a, "id", "?")) for a in openclaw_agents
+                    ],
+                    "age_seconds": age,
+                    "remediation": (
+                        "From the gateway host, verify the mac-continuity plugin "
+                        "can reach the hub: check MAC_OPENCLAW_AGENT_ID / "
+                        "MAC_OPENCLAW_CONTROL_URL / MAC_OPENCLAW_ROUTER_API_KEY "
+                        "inside the sandbox, call GET /v1/agents/<id>/continuity "
+                        "with the bound token, and inspect gateway logs for "
+                        "'mac-continuity: context lookup skipped'. Fix the wiring "
+                        "and confirm a continuity.context_served event appears."
+                    ),
+                },
+                target_agent_id=target,
+            )
+        ]
 
     def _check_stuck_quarantine(self) -> List[Finding]:
         """Auto-quarantine is one-way: a hold is set on zombie signals but
@@ -463,32 +525,41 @@ class SelfHealingSentinel:
             if age is not None and age < self.config.starvation_seconds:
                 continue
             agent_id = str(getattr(agent, "id", "") or "")
-            findings.append(Finding(
-                fingerprint="stuck_quarantine:%s" % agent_id,
-                kind="stuck_quarantine",
-                summary=(
-                    "agent %s has been auto-quarantined for %s with no re-verification"
-                    % (agent_id,
-                       "%.0f days" % (age / 86400.0) if age is not None else "an unknown time")
-                ),
-                detail={
-                    "agent_id": agent_id,
-                    "hold_reason": reason,
-                    "held_at": getattr(agent, "dispatch_hold_at", None),
-                    "remediation": (
-                        "Diagnose the quarantined agent (host reachable? worker "
-                        "process healthy? source checkout importable?). If it is "
-                        "healthy, clear the dispatch hold and verify it claims and "
-                        "completes a task with telemetry. If it is not, fix the "
-                        "host or retire the agent registration."
+            findings.append(
+                Finding(
+                    fingerprint="stuck_quarantine:%s" % agent_id,
+                    kind="stuck_quarantine",
+                    summary=(
+                        "agent %s has been auto-quarantined for %s with no re-verification"
+                        % (
+                            agent_id,
+                            "%.0f days" % (age / 86400.0) if age is not None else "an unknown time",
+                        )
                     ),
-                },
-                # Deliberately unpinned: the held agent cannot claim work.
-            ))
+                    detail={
+                        "agent_id": agent_id,
+                        "hold_reason": reason,
+                        "held_at": getattr(agent, "dispatch_hold_at", None),
+                        "remediation": (
+                            "Diagnose the quarantined agent (host reachable? worker "
+                            "process healthy? source checkout importable?). If it is "
+                            "healthy, clear the dispatch hold and verify it claims and "
+                            "completes a task with telemetry. If it is not, fix the "
+                            "host or retire the agent registration."
+                        ),
+                    },
+                    # Deliberately unpinned: the held agent cannot claim work.
+                )
+            )
         return findings
 
     _REPO_UPDATE_STATUSES = (
-        "updated", "no_update", "skipped", "deferred", "rolled_back", "error",
+        "updated",
+        "no_update",
+        "skipped",
+        "deferred",
+        "rolled_back",
+        "error",
     )
 
     @staticmethod
@@ -543,45 +614,49 @@ class SelfHealingSentinel:
             if self._agent_has_no_worker_process(agent):
                 continue  # no checkout to pin
             last_seen = _parse_ts(getattr(agent, "last_seen_at", None))
-            if last_seen is None or (now - last_seen).total_seconds() > self.config.agent_silence_seconds:
+            if (
+                last_seen is None
+                or (now - last_seen).total_seconds() > self.config.agent_silence_seconds
+            ):
                 continue  # not heartbeating -> _check_agent_unhealthy owns it
             agent_latest = latest.get(agent_id)
             lag = (
-                (fleet_newest - agent_latest).total_seconds()
-                if agent_latest is not None
-                else None
+                (fleet_newest - agent_latest).total_seconds() if agent_latest is not None else None
             )
             if lag is not None and lag < self.config.pin_divergence_seconds:
                 continue
-            findings.append(Finding(
-                fingerprint="fleet_pin_divergence:%s" % agent_id,
-                kind="fleet_pin_divergence",
-                summary=(
-                    "agent %s heartbeats but its repo-update trail %s the fleet's newest application"
-                    % (agent_id,
-                       "lags %.1f hours behind" % (lag / 3600.0) if lag is not None
-                       else "is absent entirely from")
-                ),
-                detail={
-                    "agent_id": agent_id,
-                    "lag_seconds": lag,
-                    "fleet_newest_update": fleet_newest.isoformat(),
-                    "agent_latest_update": (
-                        agent_latest.isoformat() if agent_latest else None
+            findings.append(
+                Finding(
+                    fingerprint="fleet_pin_divergence:%s" % agent_id,
+                    kind="fleet_pin_divergence",
+                    summary=(
+                        "agent %s heartbeats but its repo-update trail %s the fleet's newest application"
+                        % (
+                            agent_id,
+                            "lags %.1f hours behind" % (lag / 3600.0)
+                            if lag is not None
+                            else "is absent entirely from",
+                        )
                     ),
-                    "remediation": (
-                        "The agent's agentbus control consumer is likely wedged: "
-                        "it heartbeats and claims work but never processes "
-                        "repo-update streams, so it runs stale code "
-                        "indefinitely. On its host, check the worker log for "
-                        "control-stream errors, run git -C ~/.mac/src/mac "
-                        "log -1 to confirm the stale pin, then git pull "
-                        "--ff-only to the FLEET pin (not past it) and restart "
-                        "the worker service. Verify a fresh "
-                        "worker.agentbus.repo_update event appears."
-                    ),
-                },
-            ))
+                    detail={
+                        "agent_id": agent_id,
+                        "lag_seconds": lag,
+                        "fleet_newest_update": fleet_newest.isoformat(),
+                        "agent_latest_update": (agent_latest.isoformat() if agent_latest else None),
+                        "remediation": (
+                            "The agent's agentbus control consumer is likely wedged: "
+                            "it heartbeats and claims work but never processes "
+                            "repo-update streams, so it runs stale code "
+                            "indefinitely. On its host, check the worker log for "
+                            "control-stream errors, run git -C ~/.mac/src/mac "
+                            "log -1 to confirm the stale pin, then git pull "
+                            "--ff-only to the FLEET pin (not past it) and restart "
+                            "the worker service. Verify a fresh "
+                            "worker.agentbus.repo_update event appears."
+                        ),
+                    },
+                )
+            )
         return findings
 
     def _check_agent_unhealthy(self) -> List[Finding]:
@@ -608,36 +683,37 @@ class SelfHealingSentinel:
             symptom = (
                 "silent for %.0f minutes" % (age / 60.0)
                 if stale and age is not None
-                else "never seen" if stale
+                else "never seen"
+                if stale
                 else "heartbeating but %s/%s" % (health or "?", status or "?")
             )
-            findings.append(Finding(
-                fingerprint="agent_unhealthy:%s" % agent_id,
-                kind="agent_unhealthy",
-                summary="agent %s is %s" % (agent_id, symptom),
-                detail={
-                    "agent_id": agent_id,
-                    "last_seen_age_seconds": age,
-                    "health_status": health,
-                    "status": status,
-                    "remediation": (
-                        "Diagnose the agent host: is the worker service "
-                        "running (systemd/launchd/supervisord)? A crash-loop "
-                        "shows repeated registrations with degraded/offline "
-                        "state — read the service's startup/self-test log for "
-                        "the failing check. Fix the host or, if the agent is "
-                        "intentionally retired, remove its registration or "
-                        "set a dispatch hold with a reason."
-                    ),
-                },
-            ))
+            findings.append(
+                Finding(
+                    fingerprint="agent_unhealthy:%s" % agent_id,
+                    kind="agent_unhealthy",
+                    summary="agent %s is %s" % (agent_id, symptom),
+                    detail={
+                        "agent_id": agent_id,
+                        "last_seen_age_seconds": age,
+                        "health_status": health,
+                        "status": status,
+                        "remediation": (
+                            "Diagnose the agent host: is the worker service "
+                            "running (systemd/launchd/supervisord)? A crash-loop "
+                            "shows repeated registrations with degraded/offline "
+                            "state — read the service's startup/self-test log for "
+                            "the failing check. Fix the host or, if the agent is "
+                            "intentionally retired, remove its registration or "
+                            "set a dispatch hold with a reason."
+                        ),
+                    },
+                )
+            )
         return findings
 
     # -- plan / act / verify -------------------------------------------------
 
-    def _act_on_findings(
-        self, findings: List[Finding], *, actor: str
-    ) -> List[Dict[str, Any]]:
+    def _act_on_findings(self, findings: List[Finding], *, actor: str) -> List[Dict[str, Any]]:
         """Act on findings under a per-cycle new-task spawn budget.
 
         Fingerprint dedup already collapses a standing problem to one task, but
@@ -654,10 +730,12 @@ class SelfHealingSentinel:
         actions: List[Dict[str, Any]] = []
         for finding in findings:
             if filed >= budget:
-                actions.append({
-                    "action": "skipped",
-                    "reason": "per_cycle_budget_exhausted",
-                })
+                actions.append(
+                    {
+                        "action": "skipped",
+                        "reason": "per_cycle_budget_exhausted",
+                    }
+                )
                 continue
             action = self._act_on(finding, actor=actor)
             if action.get("action") == "task_filed":
@@ -666,9 +744,7 @@ class SelfHealingSentinel:
         return actions
 
     def _act_on(self, finding: Finding, *, actor: str) -> Dict[str, Any]:
-        active_task, completed_attempts, newest_completed = self._history_for(
-            finding.fingerprint
-        )
+        active_task, completed_attempts, newest_completed = self._history_for(finding.fingerprint)
         if active_task is not None:
             return {"action": "in_progress", "task_id": getattr(active_task, "id", None)}
         attempt = completed_attempts + 1
@@ -682,7 +758,9 @@ class SelfHealingSentinel:
             return {"action": "escalated_previously", "attempts": completed_attempts}
         try:
             task = self._file_fix_task(
-                finding, attempt=attempt, actor=actor,
+                finding,
+                attempt=attempt,
+                actor=actor,
                 prior_task=newest_completed,
             )
         except GeneratorSuppressed as exc:
@@ -693,8 +771,7 @@ class SelfHealingSentinel:
             return {"action": "suppressed", "reason": str(exc)[:500]}
         except Exception as exc:  # noqa: BLE001 - isolate one finding's failure.
             return {"action": "error", "error": str(exc)[:500]}
-        return {"action": "task_filed", "task_id": getattr(task, "id", None),
-                "attempt": attempt}
+        return {"action": "task_filed", "task_id": getattr(task, "id", None), "attempt": attempt}
 
     def _history_for(self, fingerprint: str):
         """Return (active fix task, completed attempt count, newest completed)."""
@@ -722,8 +799,9 @@ class SelfHealingSentinel:
             )
         return active, len(completed), newest_completed
 
-    def _file_fix_task(self, finding: Finding, *, attempt: int, actor: str,
-                       prior_task: Any = None) -> Any:
+    def _file_fix_task(
+        self, finding: Finding, *, attempt: int, actor: str, prior_task: Any = None
+    ) -> Any:
         title = "Self-heal: %s" % finding.summary
         if len(title) > 140:
             title = title[:137] + "..."
@@ -739,8 +817,7 @@ class SelfHealingSentinel:
                 "\n\nATTEMPT %d — the previous fix (task %s) completed but the "
                 "symptom RECURRED. Do not repeat that approach: read its "
                 "evidence, decide whether its change should be rolled back, "
-                "and re-plan from the new information."
-                % (attempt, getattr(prior_task, "id", "?"))
+                "and re-plan from the new information." % (attempt, getattr(prior_task, "id", "?"))
             )
         description = (
             "Automated self-healing finding (%s).\n\nInvariant violated: %s\n\n"
@@ -777,8 +854,7 @@ class SelfHealingSentinel:
                 "Self-healing exhausted for: %s" % finding.kind,
                 (
                     "%s\n\n%d autonomous fix attempts completed without the "
-                    "invariant holding. Human judgment needed."
-                    % (finding.summary, attempts)
+                    "invariant holding. Human judgment needed." % (finding.summary, attempts)
                 ),
                 subject_type="self_heal",
                 subject_id=finding.fingerprint,

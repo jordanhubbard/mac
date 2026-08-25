@@ -119,7 +119,9 @@ def test_no_declaration_leaves_discovery_in_charge():
 def test_a_declared_runtime_reaches_the_gate():
     """The hub's case: this host uses docker, do not go looking for podman."""
     result = _run_gate_env(
-        {"MAC_DEPLOY_CONTAINER_RUNTIME_PATHS": "/Applications/Docker.app/Contents/Resources/bin/docker"}
+        {
+            "MAC_DEPLOY_CONTAINER_RUNTIME_PATHS": "/Applications/Docker.app/Contents/Resources/bin/docker"
+        }
     )
 
     assert result["configured"] == "1", (
@@ -223,7 +225,9 @@ def test_the_variable_survives_the_env_file_source():
     environment; only names in _PRECEDENCE_VARS are restored afterwards.
     """
     text = FLEET_DEPLOY.read_text(encoding="utf-8")
-    precedence = text[text.index("_PRECEDENCE_VARS=(") : text.index(")", text.index("_PRECEDENCE_VARS=("))]
+    precedence = text[
+        text.index("_PRECEDENCE_VARS=(") : text.index(")", text.index("_PRECEDENCE_VARS=("))
+    ]
 
     assert "MAC_DEPLOY_CONTAINER_RUNTIME_PATHS" in precedence
 
@@ -277,7 +281,7 @@ def test_a_malformed_runtime_does_not_break_the_failure_it_describes(gate):
 
 
 def test_the_hint_carries_the_runtimes_own_complaint(gate):
-    """"unable to connect to Podman socket" is the entire answer on that host."""
+    """ "unable to connect to Podman socket" is the entire answer on that host."""
     hint = gate["first_line_hint"](_Result(stderr="Cannot connect to Podman socket\ntrace..."))
 
     assert hint == ": Cannot connect to Podman socket"

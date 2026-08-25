@@ -114,7 +114,11 @@ def test_a_rejection_records_the_findings_it_cited(cp):
     reviewer, task, review, evidence = _to_review(cp, "cited-rejection")
 
     done = _verdict(
-        cp, reviewer, task, review, evidence,
+        cp,
+        reviewer,
+        task,
+        review,
+        evidence,
         status=ReviewStatus.REJECTED.value,
         verification={
             "evidence_type": "review_verdict",
@@ -137,7 +141,11 @@ def test_an_approval_records_its_findings_too(cp):
     reviewer, task, review, evidence = _to_review(cp, "cited-approval")
 
     done = _verdict(
-        cp, reviewer, task, review, evidence,
+        cp,
+        reviewer,
+        task,
+        review,
+        evidence,
         status=ReviewStatus.APPROVED.value,
         verification={
             "evidence_type": "review_verdict",
@@ -156,7 +164,11 @@ def test_a_rubber_stamp_is_distinguishable_from_a_reasoned_verdict(cp):
     reviewer, task, review, evidence = _to_review(cp, "rubber-stamp")
 
     done = _verdict(
-        cp, reviewer, task, review, evidence,
+        cp,
+        reviewer,
+        task,
+        review,
+        evidence,
         status=ReviewStatus.APPROVED.value,
         verification={"evidence_type": "review_verdict", "verdict": "approved"},
     )
@@ -175,7 +187,11 @@ def test_a_relayed_harness_failure_is_marked_infrastructure(cp):
     reviewer, task, review, evidence = _to_review(cp, "harness-relay")
 
     done = _verdict(
-        cp, reviewer, task, review, evidence,
+        cp,
+        reviewer,
+        task,
+        review,
+        evidence,
         status=ReviewStatus.REJECTED.value,
         verification={
             "evidence_type": "review_verdict",
@@ -199,7 +215,11 @@ def test_findings_survive_a_reload_from_the_store(cp):
     """Persisted on the row, not merely returned by the call that wrote it."""
     reviewer, task, review, evidence = _to_review(cp, "reload")
     _verdict(
-        cp, reviewer, task, review, evidence,
+        cp,
+        reviewer,
+        task,
+        review,
+        evidence,
         status=ReviewStatus.REJECTED.value,
         verification={
             "evidence_type": "review_verdict",

@@ -42,14 +42,17 @@ def test_mcp_serve_exits_cleanly_on_closed_stdin(tmp_path):
 
 def test_mcp_serve_answers_a_handshake(tmp_path):
     """The real thing: initialize, then list the tools, over stdio."""
-    stdin = "\n".join(
-        json.dumps(m)
-        for m in (
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    stdin = (
+        "\n".join(
+            json.dumps(m)
+            for m in (
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            )
         )
-    ) + "\n"
+        + "\n"
+    )
 
     rc, out = _run(tmp_path, "admin", "mcp", "serve", stdin=stdin)
 

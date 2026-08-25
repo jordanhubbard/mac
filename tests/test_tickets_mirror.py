@@ -1,4 +1,5 @@
 """Tests for the .tickets/<id>.md auto-emit mirror (parity-tickets-autoemit-01)."""
+
 from __future__ import annotations
 
 import pytest

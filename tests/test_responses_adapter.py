@@ -162,7 +162,10 @@ def test_stream_maps_fragmented_text_to_responses_lifecycle():
         "response.output_item.done",
         "response.completed",
     ]
-    assert next(event for event in events if event["type"] == "response.output_text.delta")["delta"] == "hello"
+    assert (
+        next(event for event in events if event["type"] == "response.output_text.delta")["delta"]
+        == "hello"
+    )
     assert events[-1]["response"]["usage"]["total_tokens"] == 3
 
 
@@ -170,9 +173,9 @@ def test_stream_reassembles_fragmented_tool_call_deltas():
     events = _events(
         [
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_3",',
-            b'"function":{"name":"she","arguments":"{\\\"cmd\\\":"}}]}}]}\n\n',
+            b'"function":{"name":"she","arguments":"{\\"cmd\\":"}}]}}]}\n\n',
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":',
-            b'{"name":"ll","arguments":"\\\"pwd\\\"}"}}]}}]}\n\ndata: [DONE]\n\n',
+            b'{"name":"ll","arguments":"\\"pwd\\"}"}}]}}]}\n\ndata: [DONE]\n\n',
         ]
     )
 

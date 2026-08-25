@@ -67,8 +67,6 @@ def test_payload_bounds_clamps_and_terminal_id_validation() -> None:
     assert api._clamp_int(99, 1, 10, 5) == 10
 
 
-
-
 def test_dashboard_agent_and_dispatch_reason_matrix(monkeypatch) -> None:
     task = SimpleNamespace(
         id="task",
@@ -131,7 +129,9 @@ def test_service_url_status_and_ticket_helpers(monkeypatch) -> None:
     monkeypatch.setattr(
         api,
         "_lookup_config_value",
-        lambda names, _files=None: {"value": next((values[name] for name in names if name in values), "")},
+        lambda names, _files=None: {
+            "value": next((values[name] for name in names if name in values), "")
+        },
     )
     monkeypatch.setattr(api.time, "time", lambda: 1000)
     ticket = api._tokenhub_session_ticket_url()
@@ -242,9 +242,12 @@ def test_extract_json_object_accepts_wrapped_json_and_rejects_bad_values() -> No
 
 
 def test_chat_completion_content_accepts_message_parts_and_text_fallback() -> None:
-    assert api._chat_completion_content(
-        {"choices": [{"message": {"content": [{"text": "one"}, "skip", {"content": "two"}]}}]}
-    ) == "one\ntwo"
+    assert (
+        api._chat_completion_content(
+            {"choices": [{"message": {"content": [{"text": "one"}, "skip", {"content": "two"}]}}]}
+        )
+        == "one\ntwo"
+    )
     assert api._chat_completion_content({"choices": [{"text": "fallback"}]}) == "fallback"
     for body, message in [
         (None, "invalid chat response"),
@@ -271,7 +274,9 @@ def test_normalize_workflow_plan_aliases_defaults_and_limits() -> None:
         ],
         "project": "",
     }
-    plan = api._normalize_dashboard_workflow_plan(raw, {"goal": "Goal", "max_tasks": "bad", "priority": 8})
+    plan = api._normalize_dashboard_workflow_plan(
+        raw, {"goal": "Goal", "max_tasks": "bad", "priority": 8}
+    )
     assert plan["goal"] == "Goal"
     assert plan["project"] is None
     assert plan["nodes"][0]["node_id"] == "task_2"

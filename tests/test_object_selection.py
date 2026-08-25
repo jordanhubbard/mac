@@ -34,13 +34,31 @@ from mac.object_selection import (
 from mac.task_selection import SelectorError
 
 TASKS = [
-    {"id": "t1", "state": "open", "project": "mac", "priority": 5,
-     "title": "fix postgres timeout", "required_capabilities": ["python"],
-     "metadata": {"origin": {"kind": "dream"}}},
-    {"id": "t2", "state": "cancelled", "project": "mac", "priority": 1,
-     "title": "obsolete", "required_capabilities": []},
-    {"id": "t3", "state": "blocked", "project": "nanolang", "priority": 9,
-     "title": "wav asset", "required_capabilities": ["c", "python"]},
+    {
+        "id": "t1",
+        "state": "open",
+        "project": "mac",
+        "priority": 5,
+        "title": "fix postgres timeout",
+        "required_capabilities": ["python"],
+        "metadata": {"origin": {"kind": "dream"}},
+    },
+    {
+        "id": "t2",
+        "state": "cancelled",
+        "project": "mac",
+        "priority": 1,
+        "title": "obsolete",
+        "required_capabilities": [],
+    },
+    {
+        "id": "t3",
+        "state": "blocked",
+        "project": "nanolang",
+        "priority": 9,
+        "title": "wav asset",
+        "required_capabilities": ["c", "python"],
+    },
 ]
 
 
@@ -54,7 +72,7 @@ def _ids(records):
 
 
 def test_not_equals_excludes_a_state():
-    """"tasks whose state is not cancelled" -- the first thing asked for."""
+    """ "tasks whose state is not cancelled" -- the first thing asked for."""
     assert _ids(filter_records(TASKS, "state!=cancelled", "task")) == ["t1", "t3"]
 
 
@@ -101,6 +119,8 @@ AGENTS = [
     {"id": "a1", "name": "rocky", "status": "idle", "capabilities": ["python"], "capacity": 2},
     {"id": "a2", "name": "natasha", "status": "busy", "capabilities": ["metal"], "capacity": 8},
 ]
+
+
 @pytest.mark.parametrize("name", ["task", "project", "agent"])
 def test_every_first_class_object_has_a_registry(name):
     assert name in OBJECTS

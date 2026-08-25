@@ -453,9 +453,7 @@ class InitializeParams:
     def from_dict(cls, raw: Mapping[str, Any]) -> "InitializeParams":
         return cls(
             protocol_version=int(raw.get("protocolVersion", PROTOCOL_VERSION)),
-            client_capabilities=ClientCapabilities.from_dict(
-                raw.get("clientCapabilities")
-            ),
+            client_capabilities=ClientCapabilities.from_dict(raw.get("clientCapabilities")),
             client_info=raw.get("clientInfo"),
         )
 
@@ -483,12 +481,8 @@ class InitializeResult:
     def from_dict(cls, raw: Mapping[str, Any]) -> "InitializeResult":
         return cls(
             protocol_version=int(raw.get("protocolVersion", PROTOCOL_VERSION)),
-            agent_capabilities=AgentCapabilities.from_dict(
-                raw.get("agentCapabilities")
-            ),
-            auth_methods=[
-                AuthMethod.from_dict(m) for m in (raw.get("authMethods") or [])
-            ],
+            agent_capabilities=AgentCapabilities.from_dict(raw.get("agentCapabilities")),
+            auth_methods=[AuthMethod.from_dict(m) for m in (raw.get("authMethods") or [])],
             agent_info=raw.get("agentInfo"),
         )
 
@@ -614,9 +608,7 @@ class RequestPermissionParams:
         return cls(
             session_id=str(raw["sessionId"]),
             tool_call=dict(raw.get("toolCall") or {}),
-            options=[
-                PermissionOption.from_dict(o) for o in (raw.get("options") or [])
-            ],
+            options=[PermissionOption.from_dict(o) for o in (raw.get("options") or [])],
         )
 
 

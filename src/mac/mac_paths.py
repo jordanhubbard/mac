@@ -58,6 +58,7 @@ def _env_path(name: str) -> Path | None:
 
 # --- Roots -----------------------------------------------------------------
 
+
 def mac_home() -> Path:
     """The control-plane / hub home. ``MAC_HOME`` overrides; default ``~/.mac``.
 
@@ -92,6 +93,7 @@ def gateway_home() -> Path:
 
 
 # --- Control-plane files (under mac_home) ----------------------------------
+
 
 def mac_env_file() -> Path:
     """Hub/service secrets file: ``$MAC_HOME/mac.env``."""
@@ -156,6 +158,7 @@ def openclaw_home() -> Path:
 # gateway's own state, not the runner's, and relocating them is Phase 2 of the
 # consolidation plan. The runner never reads either.
 
+
 def script_jobs_dir() -> Path:
     """Single home for host two-stage cron-job artefacts:
     ``$MAC_OPENCLAW_HOST_DIR/script-jobs``."""
@@ -166,21 +169,18 @@ def script_jobs_scripts_dir() -> Path:
     """Pre-run scripts the host cron runner executes.
     ``MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR`` overrides; default
     ``$MAC_OPENCLAW_HOST_DIR/script-jobs/scripts``."""
-    return _env_path("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (
-        script_jobs_dir() / "scripts"
-    )
+    return _env_path("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (script_jobs_dir() / "scripts")
 
 
 def script_jobs_output_dir() -> Path:
     """Where non-deliverable script-job replies are written.
     ``MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR`` overrides; default
     ``$MAC_OPENCLAW_HOST_DIR/script-jobs/output``."""
-    return _env_path("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR") or (
-        script_jobs_dir() / "output"
-    )
+    return _env_path("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR") or (script_jobs_dir() / "output")
 
 
 # --- Gateway files (under gateway_home) ------------------------------------
+
 
 def legacy_gateway_scripts_dir() -> Path:
     """Pre-untangle location of the script-job scripts: ``$HERMES_HOME/scripts``.
@@ -192,6 +192,7 @@ def legacy_gateway_scripts_dir() -> Path:
     the fallback disappears with the legacy tree.
     """
     return gateway_home() / "scripts"
+
 
 def gateway_env_file() -> Path:
     """Gateway secrets file the gateway process sources: ``$HERMES_HOME/.env``."""

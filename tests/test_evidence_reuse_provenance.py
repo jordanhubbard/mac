@@ -12,6 +12,7 @@ and that the per-task query returns records in a stable order.
 They complement (rather than duplicate) ``test_evidence_reuse_record.py``,
 which covers the base record/list plumbing.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -165,9 +166,7 @@ def test_refused_reuse_still_records_provenance_event(cp):
     assert record.problems == ["remote sha mismatch"]
 
     detail = next(
-        e.detail
-        for e in cp.task_history(task.id)
-        if e.event_type == "evidence.reuse_recorded"
+        e.detail for e in cp.task_history(task.id) if e.event_type == "evidence.reuse_recorded"
     )
     assert detail["reused"] is False
     assert detail["prior_evidence_id"] == "evd_prior_6"

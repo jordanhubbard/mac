@@ -183,8 +183,7 @@ def test_a_gap_would_still_be_reported_rather_than_faked():
     surface = ObjectSurface(
         name="thing",
         summary="a thing",
-        crud={"create": "make", "list": "list", "show": "show",
-              "update": None, "delete": None},
+        crud={"create": "make", "list": "list", "show": "show", "update": None, "delete": None},
     )
 
     assert sorted(verb for verb, impl in surface.crud.items() if impl is None) == [
@@ -207,8 +206,9 @@ def test_crud_is_listed_before_the_operational_verbs(parser, obj, capsys):
     crud_at = out.index("CRUD:")
     for title, _verbs in obj.groups:
         if "%s:" % title in out:
-            assert crud_at < out.index("%s:" % title), (
-                "%s is listed before CRUD for mac %s" % (title, obj.name)
+            assert crud_at < out.index("%s:" % title), "%s is listed before CRUD for mac %s" % (
+                title,
+                obj.name,
             )
 
 
@@ -256,9 +256,7 @@ def test_top_level_help_is_only_the_first_class_objects(parser, capsys):
     assert "The objects mac models" in out
     for name in FIRST_CLASS_NAMES:
         assert name in out
-    assert "Getting started:" not in out, (
-        "administrative groups are back at the top level"
-    )
+    assert "Getting started:" not in out, "administrative groups are back at the top level"
     assert "mac admin help" in out
 
 
@@ -311,7 +309,6 @@ def test_help_did_not_displace_a_real_subcommand(parser):
 # --------------------------------------------------------------------------
 
 
-
 def _all_commands(parser):
     """Every command the CLI can run, wherever it now lives.
 
@@ -329,6 +326,7 @@ def _all_commands(parser):
         if admin_action is not None:
             names |= set(admin_action.choices)
     return names
+
 
 def test_every_grouped_command_actually_exists(parser):
     """A catalogue entry naming a command that is gone documents nothing."""
@@ -446,9 +444,7 @@ def test_the_default_help_shows_a_shortlist_not_everything(parser, capsys):
     moved = _all_commands(parser) - top_level
     assert len(moved) > 25, "the administrative commands were not re-parented"
     for name in sorted(moved):
-        assert ("\n  %s " % name) not in out, (
-            "mac %s is still listed in the default help" % name
-        )
+        assert ("\n  %s " % name) not in out, "mac %s is still listed in the default help" % name
 
 
 def test_the_default_help_says_where_the_rest_went(parser, capsys):

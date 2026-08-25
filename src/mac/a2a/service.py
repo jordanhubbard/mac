@@ -153,9 +153,7 @@ class A2AService:
                     ERROR_METHOD_NOT_FOUND,
                     "streaming is not supported by this agent (message/stream deferred)",
                 )
-            return rpc_error(
-                rpc_id, ERROR_METHOD_NOT_FOUND, "method not found: %s" % method
-            )
+            return rpc_error(rpc_id, ERROR_METHOD_NOT_FOUND, "method not found: %s" % method)
         except NotFoundError as exc:
             return rpc_error(rpc_id, ERROR_TASK_NOT_FOUND, str(exc))
         except MACError as exc:
@@ -243,9 +241,7 @@ class A2AService:
         a2a_meta = metadata.get("a2a") if isinstance(metadata, Mapping) else None
         if context_id is None:
             context_id = (
-                a2a_meta.get("context_id")
-                if isinstance(a2a_meta, Mapping)
-                else None
+                a2a_meta.get("context_id") if isinstance(a2a_meta, Mapping) else None
             ) or self.DEFAULT_CONTEXT_ID
 
         history = self._history_from_metadata(a2a_meta)

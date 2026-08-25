@@ -10,8 +10,13 @@ import pytest
 from mac import mac_paths
 
 _HOME_ENV = [
-    "MAC_HOME", "HERMES_HOME", "MAC_DB", "MAC_JOURNAL_DIR",
-    "MAC_FLEETS_CONFIG", "MAC_DEPLOY_ENV_FILE", "MAC_OPENCLAW_HOST_DIR",
+    "MAC_HOME",
+    "HERMES_HOME",
+    "MAC_DB",
+    "MAC_JOURNAL_DIR",
+    "MAC_FLEETS_CONFIG",
+    "MAC_DEPLOY_ENV_FILE",
+    "MAC_OPENCLAW_HOST_DIR",
 ]
 
 

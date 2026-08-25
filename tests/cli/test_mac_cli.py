@@ -41,6 +41,8 @@ def test_mac_cli_init_creates_db(tmp_path):
     rc, result = _run(tmp_path, "admin", "init")
     assert rc == 0
     assert result["status"] == "initialized"
+
+
 def test_print_serializes_list_of_dictish():
     # Regression: hub-mode list commands (e.g. `mac project list`) return
     # list[_Dictish]; _print only unwrapped a single top-level to_dict object,
@@ -130,7 +132,8 @@ def test_mac_cli_openshell_reconcile_apply_preserves_resources(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "admin", "openshell",
+        "admin",
+        "openshell",
         "reconcile",
         "--agent",
         "rocky",
@@ -195,7 +198,8 @@ fleets:
 
     rc, result = _run(
         tmp_path,
-        "admin", "openshell",
+        "admin",
+        "openshell",
         "reconcile",
         "--fleet-config",
         str(fleet_config),
@@ -219,7 +223,8 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
 
     rc, published = _run(
         tmp_path,
-        "admin", "fleet",
+        "admin",
+        "fleet",
         "refresh-source",
         "--sender-agent-id",
         sender["id"],
@@ -242,7 +247,8 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
 
     rc, targeted = _run(
         tmp_path,
-        "admin", "fleet",
+        "admin",
+        "fleet",
         "refresh-source",
         "--sender-agent-id",
         sender["id"],
@@ -259,7 +265,9 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
     assert targeted["count"] == 1
     assert targeted["streams"][0]["recipient_agent_id"] == worker["id"]
 
-    rc, chunks = _run(tmp_path, "admin", "agentbus", "read", targeted["streams"][0]["id"], worker["id"])
+    rc, chunks = _run(
+        tmp_path, "admin", "agentbus", "read", targeted["streams"][0]["id"], worker["id"]
+    )
     assert rc == 0
     assert chunks[0]["payload"]["restart_services"] == ["mac.service"]
 
@@ -544,7 +552,8 @@ def test_task_create_no_ticket_skips_mirror(tmp_path, monkeypatch):
 def test_memory_remember_list_forget_round_trip(tmp_path):
     rc, remembered = _run(
         tmp_path,
-        "admin", "memory",
+        "admin",
+        "memory",
         "remember",
         "rule",
         "keep the hub memory path routable",
@@ -639,7 +648,7 @@ def test_mac_cli_task_create_description_file(tmp_path):
     body = (
         "Step 1: append a line\n"
         "  printf -- '- foo bar (baz) {x}' >> file.md\n"
-        "Step 2: git commit -m \"msg with $var and `backticks`\"\n"
+        'Step 2: git commit -m "msg with $var and `backticks`"\n'
         "Step 3: push to refs/heads/branch\n"
     )
     desc_file = tmp_path / "desc.txt"
@@ -649,9 +658,13 @@ def test_mac_cli_task_create_description_file(tmp_path):
 
     rc, task = _run(
         tmp_path,
-        "task", "create", "Mechanical task",
-        "--description-file", str(desc_file),
-        "--metadata-file", str(metadata_file),
+        "task",
+        "create",
+        "Mechanical task",
+        "--description-file",
+        str(desc_file),
+        "--metadata-file",
+        str(metadata_file),
     )
     assert rc == 0
     assert task["title"] == "Mechanical task"
@@ -665,8 +678,11 @@ def test_mac_cli_task_create_metadata_invalid_json_errors_cleanly(tmp_path):
     with pytest.raises(SystemExit) as exc:
         _run(
             tmp_path,
-            "task", "create", "x",
-            "--metadata", "{not: valid json",
+            "task",
+            "create",
+            "x",
+            "--metadata",
+            "{not: valid json",
         )
     assert "invalid JSON" in str(exc.value)
 
@@ -702,12 +718,11 @@ def test_mac_cli_task_create_idempotency_key_reuses_exact_task(tmp_path, capsys)
     assert "already bound to a different request" in capsys.readouterr().err
 
 
-
-
 def test_mac_cli_runtime_delta_lifecycle(tmp_path):
     rc, runtime = _run(
         tmp_path,
-        "admin", "runtime",
+        "admin",
+        "runtime",
         "create",
         "cli-runtime",
         "--manifest",
@@ -725,7 +740,8 @@ def test_mac_cli_runtime_delta_lifecycle(tmp_path):
 
     rc, delta = _run(
         tmp_path,
-        "admin", "runtime",
+        "admin",
+        "runtime",
         "delta",
         "propose",
         task["id"],
@@ -783,7 +799,8 @@ def test_mac_cli_secret_set_and_list_redacts_value(tmp_path):
     # name and value are positional; --scopes and --created-by are required flags
     rc, secret = _run(
         tmp_path,
-        "admin", "secret",
+        "admin",
+        "secret",
         "set",
         "deploy-token",
         "never-reveal-this",
@@ -881,9 +898,7 @@ def _fake_editor(tmp_path, script_body):
     editor.write_text(
         "import sys, pathlib\n"
         "p = pathlib.Path(sys.argv[1])\n"
-        "text = p.read_text()\n"
-        + script_body
-        + "\np.write_text(text)\n"
+        "text = p.read_text()\n" + script_body + "\np.write_text(text)\n"
     )
     return "%s %s" % (sys.executable, editor)
 
@@ -974,7 +989,8 @@ def test_database_migrate_sqlite_to_postgres_cli(tmp_path, monkeypatch):
 
     rc, result = _run(
         tmp_path,
-        "admin", "database",
+        "admin",
+        "database",
         "migrate-sqlite-to-postgres",
         "--sqlite",
         str(source),

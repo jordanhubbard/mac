@@ -54,9 +54,7 @@ def test_create_project_paused(cp):
     rec = cp.create_project("staged-proj", dispatch_paused=True)
     task = cp.create_task("work", project=rec.name)
     explanation = cp.explain_task_dispatch(task.id)
-    assert [reason["code"] for reason in explanation["task_reasons"]] == [
-        "task_project_inactive"
-    ]
+    assert [reason["code"] for reason in explanation["task_reasons"]] == ["task_project_inactive"]
 
 
 def test_paused_project_hides_tasks_from_ready(cp):
@@ -101,9 +99,7 @@ def test_set_project_dispatch_round_trip(cp):
     # pause -> rejected
     cp.set_project_dispatch("p", paused=True)
     paused = cp.explain_task_dispatch(task.id)
-    assert [reason["code"] for reason in paused["task_reasons"]] == [
-        "task_project_inactive"
-    ]
+    assert [reason["code"] for reason in paused["task_reasons"]] == ["task_project_inactive"]
     # activate -> claimable again
     cp.set_project_dispatch("p", paused=False)
     assert cp.explain_task_dispatch(task.id)["task_ready"] is True

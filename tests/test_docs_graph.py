@@ -67,7 +67,8 @@ def test_orphaned_current_doc_is_reported(tmp_path, monkeypatch):
     (docs / "lonely.md").write_text("# lonely\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        module, "_tracked_docs",
+        module,
+        "_tracked_docs",
         lambda: sorted(docs.rglob("*.md")),
     )
     errors = module.check()
@@ -77,9 +78,7 @@ def test_orphaned_current_doc_is_reported(tmp_path, monkeypatch):
 def test_broken_internal_link_is_reported(tmp_path, monkeypatch):
     module = _module()
     docs = _seed_common(module, tmp_path, monkeypatch)
-    (tmp_path / "README.md").write_text(
-        "# root\n\n[gone](docs/missing.md)\n", encoding="utf-8"
-    )
+    (tmp_path / "README.md").write_text("# root\n\n[gone](docs/missing.md)\n", encoding="utf-8")
     (docs / "reference" / "documentation-inventory.md").write_text(
         "| Category | Source | Title |\n|---|---|---|\n", encoding="utf-8"
     )
@@ -91,16 +90,12 @@ def test_broken_internal_link_is_reported(tmp_path, monkeypatch):
 def test_doc_missing_from_inventory_is_reported(tmp_path, monkeypatch):
     module = _module()
     docs = _seed_common(module, tmp_path, monkeypatch)
-    (tmp_path / "README.md").write_text(
-        "# root\n\n[page](docs/page.md)\n", encoding="utf-8"
-    )
+    (tmp_path / "README.md").write_text("# root\n\n[page](docs/page.md)\n", encoding="utf-8")
     (docs / "page.md").write_text("# page\n", encoding="utf-8")
     (docs / "reference" / "documentation-inventory.md").write_text(
         "| Category | Source | Title |\n|---|---|---|\n", encoding="utf-8"
     )
-    monkeypatch.setattr(
-        module, "_tracked_docs", lambda: [docs / "page.md"]
-    )
+    monkeypatch.setattr(module, "_tracked_docs", lambda: [docs / "page.md"])
     errors = module.check()
     assert any("missing from the documentation inventory" in e for e in errors)
 

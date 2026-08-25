@@ -15,9 +15,7 @@ CONTROLLER = ROOT / "deploy" / "deploy-mac-fleet.sh"
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location(
-        "openshell_storage_compatibility", HELPER
-    )
+    spec = importlib.util.spec_from_file_location("openshell_storage_compatibility", HELPER)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -96,8 +94,7 @@ def test_ambiguous_or_unknown_field9_fails_closed(spec: bytes) -> None:
 def _database(path: Path, rows: list[tuple[str, str, str, bytes]]) -> None:
     with sqlite3.connect(path) as connection:
         connection.execute(
-            "CREATE TABLE objects ("
-            "id TEXT PRIMARY KEY, object_type TEXT, name TEXT, payload BLOB)"
+            "CREATE TABLE objects (id TEXT PRIMARY KEY, object_type TEXT, name TEXT, payload BLOB)"
         )
         connection.executemany(
             "INSERT INTO objects(id, object_type, name, payload) VALUES (?, ?, ?, ?)",
@@ -226,24 +223,20 @@ def test_controller_keeps_storage_repair_outside_the_cohort_transaction() -> Non
     main = text.split("main() {", 1)[1]
     explicit = main.split('if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ]; then', 1)[1]
     explicit = explicit.split("\n  fi", 1)[0]
-    assert explicit.index(
-        "prepare_reviewed_openshell_cli_prerequisites"
-    ) < explicit.index("prepare_openshell_storage_prerequisites")
+    assert explicit.index("prepare_reviewed_openshell_cli_prerequisites") < explicit.index(
+        "prepare_openshell_storage_prerequisites"
+    )
 
 
 def test_optional_execution_does_not_skip_existing_storage_classification() -> None:
     text = CONTROLLER.read_text(encoding="utf-8")
-    helper = text.split("run_remote_openshell_storage_helper() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    helper = text.split("run_remote_openshell_storage_helper() {", 1)[1].split("\n}\n", 1)[0]
     assert "openshell_not_required" not in helper
     assert 'command="python3 - ' in helper
-    assert helper.index('helper_sha256="$(sha256_file') < helper.index(
-        'command="python3 - '
-    )
-    preparation = text.split("prepare_openshell_storage_prerequisites() {", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    assert helper.index('helper_sha256="$(sha256_file') < helper.index('command="python3 - ')
+    preparation = text.split("prepare_openshell_storage_prerequisites() {", 1)[1].split("\n}\n", 1)[
+        0
+    ]
     assert '[ "$status" = proof_required ]' in preparation
 
 

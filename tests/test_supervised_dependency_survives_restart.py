@@ -18,6 +18,7 @@ on the child.
 The dispatcher sweep already honoured the marker through
 `_blocked_task_requires_manual_repair`; the startup migration did not.
 """
+
 from __future__ import annotations
 
 from mac.models import TaskState
@@ -109,9 +110,7 @@ def test_supervision_ends_when_the_dependency_is_satisfied_after_all():
     """
     cp = ControlPlane.in_memory()
     prerequisite = cp.create_task("prerequisite", project="mac")
-    dependent = cp.create_task(
-        "dependent", dependencies=[prerequisite.id], project="mac"
-    )
+    dependent = cp.create_task("dependent", dependencies=[prerequisite.id], project="mac")
 
     cp._transition_task_internal(
         prerequisite.id, TaskState.CANCELLED.value, "test", {"reason": "fixture"}
@@ -138,9 +137,7 @@ def test_an_actionable_block_is_not_recovered_by_a_satisfied_dependency():
     """Only dependency supervision is recoverable; a real failure still waits."""
     cp = ControlPlane.in_memory()
     prerequisite = cp.create_task("prerequisite", project="mac")
-    dependent = cp.create_task(
-        "dependent", dependencies=[prerequisite.id], project="mac"
-    )
+    dependent = cp.create_task("dependent", dependencies=[prerequisite.id], project="mac")
     cp.store.execute(
         "UPDATE tasks SET state = ? WHERE id = ?",
         (TaskState.BLOCKED.value, dependent.id),

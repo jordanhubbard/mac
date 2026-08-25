@@ -57,10 +57,30 @@ def _two_node_workflow(cp, *, slug="bug-default"):
                 },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
-                {"from_node_key": "investigate", "to_node_key": "fix", "condition": "success", "priority": 100},
-                {"from_node_key": "investigate", "to_node_key": "", "condition": "failure", "priority": 100},
-                {"from_node_key": "fix", "to_node_key": "", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "investigate",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "investigate",
+                    "to_node_key": "fix",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "investigate",
+                    "to_node_key": "",
+                    "condition": "failure",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "fix",
+                    "to_node_key": "",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -81,16 +101,57 @@ def _approval_workflow(cp, *, slug="approval-flow"):
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "review", "node_type": "approval", "role_required": "qa", "max_attempts": 1, "instructions": "approve scope"},
-                {"node_key": "build", "node_type": "task", "role_required": "dev", "max_attempts": 1},
-                {"node_key": "rework", "node_type": "task", "role_required": "qa", "max_attempts": 1},
+                {
+                    "node_key": "review",
+                    "node_type": "approval",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                    "instructions": "approve scope",
+                },
+                {
+                    "node_key": "build",
+                    "node_type": "task",
+                    "role_required": "dev",
+                    "max_attempts": 1,
+                },
+                {
+                    "node_key": "rework",
+                    "node_type": "task",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
-                {"from_node_key": "review", "to_node_key": "build", "condition": "approved", "priority": 100},
-                {"from_node_key": "review", "to_node_key": "rework", "condition": "rejected", "priority": 90},
-                {"from_node_key": "build", "to_node_key": "", "condition": "success", "priority": 100},
-                {"from_node_key": "rework", "to_node_key": "", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "review",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "review",
+                    "to_node_key": "build",
+                    "condition": "approved",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "review",
+                    "to_node_key": "rework",
+                    "condition": "rejected",
+                    "priority": 90,
+                },
+                {
+                    "from_node_key": "build",
+                    "to_node_key": "",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "rework",
+                    "to_node_key": "",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -167,8 +228,7 @@ def test_pre_decision_rejected_skips_along_rejected_edge(cp):
     )
     assert run.current_node_key == "rework"  # the `rejected` edge target
     rows = cp.store.query_all(
-        "SELECT to_node_key, condition FROM workflow_run_history "
-        "WHERE run_id = ? ORDER BY seq",
+        "SELECT to_node_key, condition FROM workflow_run_history WHERE run_id = ? ORDER BY seq",
         (run.id,),
     )
     assert [r["to_node_key"] for r in rows] == ["review", "rework"]
@@ -225,9 +285,7 @@ def test_pre_decision_reached_after_task_can_complete_run(cp):
         pre_decisions={"gate": "approved"},
     )
 
-    completed = cp.workflow_runtime._advance(
-        run, "build", "success", task_id=run.current_task_id
-    )
+    completed = cp.workflow_runtime._advance(run, "build", "success", task_id=run.current_task_id)
 
     assert completed.state == "completed"
     assert completed.current_node_key is None
@@ -245,9 +303,7 @@ def test_advance_restores_reservation_when_task_spawn_fails(cp, monkeypatch):
 
     monkeypatch.setattr(cp.workflow_runtime, "_spawn_node_task", fail_spawn)
     with pytest.raises(RuntimeError, match="spawn failed"):
-        cp.workflow_runtime._advance(
-            run, "investigate", "success", task_id=original_task
-        )
+        cp.workflow_runtime._advance(run, "investigate", "success", task_id=original_task)
 
     restored = cp.workflow_runtime.get_run(run.id)
     assert restored.current_node_key == original_node
@@ -263,13 +319,40 @@ def test_plan_node_is_a_valid_node_type(cp):
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "plan", "node_type": "plan", "role_required": "qa", "max_attempts": 1, "instructions": "plan it"},
-                {"node_key": "execute", "node_type": "task", "role_required": "dev", "max_attempts": 1, "instructions": "static fallback"},
+                {
+                    "node_key": "plan",
+                    "node_type": "plan",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                    "instructions": "plan it",
+                },
+                {
+                    "node_key": "execute",
+                    "node_type": "task",
+                    "role_required": "dev",
+                    "max_attempts": 1,
+                    "instructions": "static fallback",
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "plan", "condition": "success", "priority": 100},
-                {"from_node_key": "plan", "to_node_key": "execute", "condition": "success", "priority": 100},
-                {"from_node_key": "execute", "to_node_key": "", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "plan",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "plan",
+                    "to_node_key": "execute",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "execute",
+                    "to_node_key": "",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -286,11 +369,27 @@ def test_plan_node_stamps_run_input_on_task_metadata(cp):
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "plan", "node_type": "plan", "role_required": "qa", "max_attempts": 1, "instructions": "plan it"},
+                {
+                    "node_key": "plan",
+                    "node_type": "plan",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                    "instructions": "plan it",
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "plan", "condition": "success", "priority": 100},
-                {"from_node_key": "plan", "to_node_key": "", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "plan",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "plan",
+                    "to_node_key": "",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -320,13 +419,40 @@ def test_plan_payloads_override_downstream_node_instructions(cp):
         workflow_type="custom",
         definition={
             "nodes": [
-                {"node_key": "plan", "node_type": "plan", "role_required": "qa", "max_attempts": 1, "instructions": "plan it"},
-                {"node_key": "execute", "node_type": "task", "role_required": "dev", "max_attempts": 1, "instructions": "static fallback instructions"},
+                {
+                    "node_key": "plan",
+                    "node_type": "plan",
+                    "role_required": "qa",
+                    "max_attempts": 1,
+                    "instructions": "plan it",
+                },
+                {
+                    "node_key": "execute",
+                    "node_type": "task",
+                    "role_required": "dev",
+                    "max_attempts": 1,
+                    "instructions": "static fallback instructions",
+                },
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "plan", "condition": "success", "priority": 100},
-                {"from_node_key": "plan", "to_node_key": "execute", "condition": "success", "priority": 100},
-                {"from_node_key": "execute", "to_node_key": "", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "plan",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "plan",
+                    "to_node_key": "execute",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "execute",
+                    "to_node_key": "",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -469,24 +595,18 @@ def test_cancel_run_cancels_current_task_and_marks_run_cancelled(cp):
     run = cp.workflow_runtime.start_run("bug-default", started_by="ops")
     first_task_id = run.current_task_id
 
-    cancelled = cp.workflow_runtime.cancel_run(
-        run.id, reason="operator abort", actor="ops"
-    )
+    cancelled = cp.workflow_runtime.cancel_run(run.id, reason="operator abort", actor="ops")
     assert cancelled.state == "cancelled"
     # The current task got cancelled too.
     assert cp.get_task(first_task_id).state == TaskState.CANCELLED.value
     workflow_tasks = [
-        task
-        for task in cp.list_tasks()
-        if task.metadata.get("workflow_run_id") == run.id
+        task for task in cp.list_tasks() if task.metadata.get("workflow_run_id") == run.id
     ]
     assert [task.id for task in workflow_tasks] == [first_task_id]
     assert cancelled.current_task_id == first_task_id
 
 
-def test_cancel_run_rolls_back_task_when_run_compare_and_swap_loses(
-    cp, monkeypatch
-):
+def test_cancel_run_rolls_back_task_when_run_compare_and_swap_loses(cp, monkeypatch):
     _two_node_workflow(cp, slug="cancel-race")
     run = cp.workflow_runtime.start_run("cancel-race", started_by="ops")
     task_id = run.current_task_id
@@ -567,14 +687,34 @@ def test_cyclic_workflow_terminates_when_max_attempts_exhausted(cp):
         workflow_type="bug",
         definition={
             "nodes": [
-                {"node_key": "investigate", "node_type": "task", "role_required": "qa", "max_attempts": 2},
+                {
+                    "node_key": "investigate",
+                    "node_type": "task",
+                    "role_required": "qa",
+                    "max_attempts": 2,
+                },
                 {"node_key": "fix", "node_type": "task", "role_required": "dev", "max_attempts": 2},
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "investigate",
+                    "condition": "success",
+                    "priority": 100,
+                },
                 # cycle: each side fails into the other on failure
-                {"from_node_key": "investigate", "to_node_key": "fix", "condition": "failure", "priority": 100},
-                {"from_node_key": "fix", "to_node_key": "investigate", "condition": "failure", "priority": 100},
+                {
+                    "from_node_key": "investigate",
+                    "to_node_key": "fix",
+                    "condition": "failure",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "fix",
+                    "to_node_key": "investigate",
+                    "condition": "failure",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -583,10 +723,14 @@ def test_cyclic_workflow_terminates_when_max_attempts_exhausted(cp):
 
     machine = cp.register_machine("h1")
     qa_soul = bind_soul(cp, persona_name="QA Soul", allowed_role_slugs=["qa"])
-    qa_agent = cp.register_agent(machine.id, "qa1", capabilities=["python", "qa"], hermes_instance_id=qa_soul)
+    qa_agent = cp.register_agent(
+        machine.id, "qa1", capabilities=["python", "qa"], hermes_instance_id=qa_soul
+    )
     cp.roles.assign_role(qa_agent.id, "qa")
     dev_soul = bind_soul(cp, persona_name="Dev Soul", allowed_role_slugs=["dev"])
-    dev_agent = cp.register_agent(machine.id, "dev1", capabilities=["python"], hermes_instance_id=dev_soul)
+    dev_agent = cp.register_agent(
+        machine.id, "dev1", capabilities=["python"], hermes_instance_id=dev_soul
+    )
     cp.roles.assign_role(dev_agent.id, "dev")
 
     # Drive the cycle: every task fails, looping between investigate ↔ fix.
@@ -641,9 +785,7 @@ def test_workflow_run_freezes_role_snapshots_against_mid_run_role_edits(cp):
     # role "dev" for fix, so role qa is now irrelevant. Let me re-route:
     # the right test is to start a fresh run after the role edit and
     # check the first task uses the snapshot (not the live edit).
-    cp.roles.update_role(
-        "qa", default_capabilities=["unrelated-cap-that-shouldnt-leak"]
-    )
+    cp.roles.update_role("qa", default_capabilities=["unrelated-cap-that-shouldnt-leak"])
     run2 = cp.workflow_runtime.start_run("bug-freeze", started_by="ops")
     task2 = cp.get_task(run2.current_task_id)
     # Per the snapshot embedded at start_run time, the task must carry
@@ -675,9 +817,24 @@ def test_find_cycles_detects_review_fix_loop():
                 {"node_key": "fix", "node_type": "task", "role_required": "dev"},
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "review", "condition": "success", "priority": 100},
-                {"from_node_key": "review", "to_node_key": "fix", "condition": "approved", "priority": 100},
-                {"from_node_key": "fix", "to_node_key": "review", "condition": "success", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "review",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "review",
+                    "to_node_key": "fix",
+                    "condition": "approved",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "fix",
+                    "to_node_key": "review",
+                    "condition": "success",
+                    "priority": 100,
+                },
             ],
         }
     )
@@ -709,8 +866,18 @@ def test_tick_times_out_stuck_node_and_advances_via_failure_edge(cp):
                 }
             ],
             "edges": [
-                {"from_node_key": "", "to_node_key": "investigate", "condition": "success", "priority": 100},
-                {"from_node_key": "investigate", "to_node_key": "", "condition": "cancelled", "priority": 100},
+                {
+                    "from_node_key": "",
+                    "to_node_key": "investigate",
+                    "condition": "success",
+                    "priority": 100,
+                },
+                {
+                    "from_node_key": "investigate",
+                    "to_node_key": "",
+                    "condition": "cancelled",
+                    "priority": 100,
+                },
             ],
         },
         created_by="human",
@@ -738,8 +905,12 @@ def test_indexed_deadline_and_cursor_helpers_handle_invalid_values(cp, monkeypat
         "2026-01-01T00:00:15"
     )
 
-    assert runtime._node_deadline({"timeout_minutes": 0}, "2026-01-01T00:00:00+00:00").startswith("9999-")
-    assert runtime._node_deadline({"timeout_minutes": "bad"}, "2026-01-01T00:00:00+00:00").startswith("9999-")
+    assert runtime._node_deadline({"timeout_minutes": 0}, "2026-01-01T00:00:00+00:00").startswith(
+        "9999-"
+    )
+    assert runtime._node_deadline(
+        {"timeout_minutes": "bad"}, "2026-01-01T00:00:00+00:00"
+    ).startswith("9999-")
     assert runtime._node_deadline({"timeout_minutes": 2}, "2026-01-01T00:00:00+00:00").startswith(
         "2026-01-01T00:02:00"
     )
@@ -771,8 +942,8 @@ def test_legacy_workflow_deadline_backfill_populates_indexed_field(cp):
 
 # --- relocated from test_workflow_runtime_edges.py (coverage companion folded in) ---
 
-class _Store:
 
+class _Store:
     def __init__(self, rows=None) -> None:
         self.rows = list(rows or [])
         self.executed = []
@@ -783,11 +954,11 @@ class _Store:
         return self.rows
 
     def query_one(self, sql, params=()):
-        if 'evidence' in sql:
-            return self.one.get('evidence')
-        if 'workflow_runs' in sql:
-            return self.one.get('run')
-        return self.one.get('other')
+        if "evidence" in sql:
+            return self.one.get("evidence")
+        if "workflow_runs" in sql:
+            return self.one.get("run")
+        return self.one.get("other")
 
     def execute(self, sql, params=()):
         self.executed.append((sql, params))
@@ -798,7 +969,16 @@ class _Store:
 
 def _runtime(store=None, **overrides):
     store = store or _Store()
-    values = {'store': store, 'observability': SimpleNamespace(), 'workflows': SimpleNamespace(), 'roles': SimpleNamespace(), 'create_task': lambda *_a, **_k: SimpleNamespace(id='task'), 'transition_task': lambda *_a, **_k: None, 'get_task': lambda _id: SimpleNamespace(id='task'), 'record_history': lambda *_a, **_k: None}
+    values = {
+        "store": store,
+        "observability": SimpleNamespace(),
+        "workflows": SimpleNamespace(),
+        "roles": SimpleNamespace(),
+        "create_task": lambda *_a, **_k: SimpleNamespace(id="task"),
+        "transition_task": lambda *_a, **_k: None,
+        "get_task": lambda _id: SimpleNamespace(id="task"),
+        "record_history": lambda *_a, **_k: None,
+    }
     values.update(overrides)
     return WorkflowRuntime(**values)
 
@@ -806,38 +986,63 @@ def _runtime(store=None, **overrides):
 def test_list_runs_builds_all_filters_and_clamps_limit() -> None:
     store = _Store()
     runtime = _runtime(store)
-    assert runtime.list_runs(state='running', workflow_id='workflow', tenant_id='tenant', limit=5000) == []
+    assert (
+        runtime.list_runs(state="running", workflow_id="workflow", tenant_id="tenant", limit=5000)
+        == []
+    )
     sql, params = store.last_query
-    assert 'state = ?' in sql
-    assert 'workflow_id = ?' in sql
-    assert 'tenant_id = ?' in sql
-    assert params == ('running', 'workflow', 'tenant', 1000)
+    assert "state = ?" in sql
+    assert "workflow_id = ?" in sql
+    assert "tenant_id = ?" in sql
+    assert params == ("running", "workflow", "tenant", 1000)
 
 
 def test_merge_plan_payloads_ignores_missing_and_malformed_evidence() -> None:
     store = _Store()
     runtime = _runtime(store)
-    runtime._merge_plan_payloads_from_evidence('run', 'task')
+    runtime._merge_plan_payloads_from_evidence("run", "task")
     assert store.executed == []
-    store.one['evidence'] = {'metadata': 'not-json'}
+    store.one["evidence"] = {"metadata": "not-json"}
     with pytest.raises(json.JSONDecodeError):
-        runtime._merge_plan_payloads_from_evidence('run', 'task')
-    store.one['evidence'] = {'metadata': json.dumps({'plan_payloads': []})}
-    runtime._merge_plan_payloads_from_evidence('run', 'task')
-    store.one['evidence'] = {'metadata': json.dumps({'verification': {'plan_payloads': {'node': 'bad'}}})}
-    runtime._merge_plan_payloads_from_evidence('run', 'task')
+        runtime._merge_plan_payloads_from_evidence("run", "task")
+    store.one["evidence"] = {"metadata": json.dumps({"plan_payloads": []})}
+    runtime._merge_plan_payloads_from_evidence("run", "task")
+    store.one["evidence"] = {
+        "metadata": json.dumps({"verification": {"plan_payloads": {"node": "bad"}}})
+    }
+    runtime._merge_plan_payloads_from_evidence("run", "task")
     assert store.executed == []
 
 
 def test_merge_plan_payloads_filters_and_merges_existing_context() -> None:
     store = _Store()
-    store.one['evidence'] = {'metadata': json.dumps({'verification': {'plan_payloads': {'node': {'instructions': 'dynamic', 'metadata': {'owner': 'planner'}, 'required_capabilities': ['gpu'], 'ignored': 'drop'}, 'bad': 'drop'}}})}
-    store.one['run'] = {'context': json.dumps({'plan_payloads': 'bad', 'keep': True})}
+    store.one["evidence"] = {
+        "metadata": json.dumps(
+            {
+                "verification": {
+                    "plan_payloads": {
+                        "node": {
+                            "instructions": "dynamic",
+                            "metadata": {"owner": "planner"},
+                            "required_capabilities": ["gpu"],
+                            "ignored": "drop",
+                        },
+                        "bad": "drop",
+                    }
+                }
+            }
+        )
+    }
+    store.one["run"] = {"context": json.dumps({"plan_payloads": "bad", "keep": True})}
     runtime = _runtime(store)
-    runtime._merge_plan_payloads_from_evidence('run', 'task')
+    runtime._merge_plan_payloads_from_evidence("run", "task")
     context = json.loads(store.executed[-1][1][0])
-    assert context['keep'] is True
-    assert context['plan_payloads']['node'] == {'instructions': 'dynamic', 'metadata': {'owner': 'planner'}, 'required_capabilities': ['gpu']}
+    assert context["keep"] is True
+    assert context["plan_payloads"]["node"] == {
+        "instructions": "dynamic",
+        "metadata": {"owner": "planner"},
+        "required_capabilities": ["gpu"],
+    }
 
 
 def test_spawn_node_task_applies_snapshot_plan_override_and_metadata() -> None:
@@ -845,52 +1050,135 @@ def test_spawn_node_task_applies_snapshot_plan_override_and_metadata() -> None:
 
     def create_task(title, **kwargs):
         captured.update(title=title, **kwargs)
-        return SimpleNamespace(id='created')
-    runtime = _runtime(store=_Store(), create_task=create_task, get_task=lambda task_id: SimpleNamespace(id=task_id, metadata=captured.get('metadata')))
-    node = {'node_key': 'plan', 'node_type': 'plan', 'role_required': 'dev', 'extra_capabilities': ['git'], 'instructions': 'static'}
-    task = runtime._spawn_node_task('run', node, workflow=SimpleNamespace(slug='flow'), started_by='actor', tenant_id='tenant', attempt=2, role_snapshots={'dev': {'slug': 'snapshot-dev', 'required_capabilities': ['python'], 'default_capabilities': ['lint'], 'hardware_requirements': {'gpu': True}}}, plan_payloads={'plan': {'instructions': 'dynamic', 'required_capabilities': ['ignored-by-role'], 'metadata': {'owner': 'planner', 'workflow_run_id': 'cannot-overwrite'}}}, run_input={'goal': 'build'})
-    assert task.id == 'created'
-    assert captured['title'] == 'flow :: plan'
-    assert captured['description'] == 'dynamic'
-    assert captured['required_capabilities'] == ['git', 'lint', 'python']
-    metadata = captured['metadata']
-    assert metadata['hardware'] == {'gpu': True}
-    assert metadata['origin']['tenant_id'] == 'tenant'
-    assert metadata['is_plan_node'] is True
-    assert metadata['plan_input'] == {'goal': 'build'}
-    assert metadata['owner'] == 'planner'
-    assert metadata['workflow_run_id'] == 'run'
+        return SimpleNamespace(id="created")
+
+    runtime = _runtime(
+        store=_Store(),
+        create_task=create_task,
+        get_task=lambda task_id: SimpleNamespace(id=task_id, metadata=captured.get("metadata")),
+    )
+    node = {
+        "node_key": "plan",
+        "node_type": "plan",
+        "role_required": "dev",
+        "extra_capabilities": ["git"],
+        "instructions": "static",
+    }
+    task = runtime._spawn_node_task(
+        "run",
+        node,
+        workflow=SimpleNamespace(slug="flow"),
+        started_by="actor",
+        tenant_id="tenant",
+        attempt=2,
+        role_snapshots={
+            "dev": {
+                "slug": "snapshot-dev",
+                "required_capabilities": ["python"],
+                "default_capabilities": ["lint"],
+                "hardware_requirements": {"gpu": True},
+            }
+        },
+        plan_payloads={
+            "plan": {
+                "instructions": "dynamic",
+                "required_capabilities": ["ignored-by-role"],
+                "metadata": {"owner": "planner", "workflow_run_id": "cannot-overwrite"},
+            }
+        },
+        run_input={"goal": "build"},
+    )
+    assert task.id == "created"
+    assert captured["title"] == "flow :: plan"
+    assert captured["description"] == "dynamic"
+    assert captured["required_capabilities"] == ["git", "lint", "python"]
+    metadata = captured["metadata"]
+    assert metadata["hardware"] == {"gpu": True}
+    assert metadata["origin"]["tenant_id"] == "tenant"
+    assert metadata["is_plan_node"] is True
+    assert metadata["plan_input"] == {"goal": "build"}
+    assert metadata["owner"] == "planner"
+    assert metadata["workflow_run_id"] == "run"
 
 
 def test_spawn_node_task_uses_live_role_and_rejects_missing_role() -> None:
-    role = SimpleNamespace(slug='dev', required_capabilities=['python'], default_capabilities=[], hardware_requirements={})
+    role = SimpleNamespace(
+        slug="dev",
+        required_capabilities=["python"],
+        default_capabilities=[],
+        hardware_requirements={},
+    )
     runtime = _runtime(roles=SimpleNamespace(get_role=lambda *_a, **_k: role))
-    node = {'node_key': 'gate', 'node_type': 'approval', 'role_required': 'dev'}
-    runtime._spawn_node_task('run', node, workflow=None, started_by='actor', tenant_id=None, attempt=1)
-    runtime.roles = SimpleNamespace(get_role=lambda *_a, **_k: (_ for _ in ()).throw(NotFoundError('missing')))
-    with pytest.raises(ValidationError, match='references missing role'):
-        runtime._spawn_node_task('run', node, workflow=None, started_by='actor', tenant_id=None, attempt=1)
+    node = {"node_key": "gate", "node_type": "approval", "role_required": "dev"}
+    runtime._spawn_node_task(
+        "run", node, workflow=None, started_by="actor", tenant_id=None, attempt=1
+    )
+    runtime.roles = SimpleNamespace(
+        get_role=lambda *_a, **_k: (_ for _ in ()).throw(NotFoundError("missing"))
+    )
+    with pytest.raises(ValidationError, match="references missing role"):
+        runtime._spawn_node_task(
+            "run", node, workflow=None, started_by="actor", tenant_id=None, attempt=1
+        )
 
 
 def test_runtime_lookup_and_condition_helpers_cover_fallbacks() -> None:
     runtime = _runtime()
     assert runtime._is_plan_node({}, None) is False
-    assert runtime._is_plan_node({'nodes': [{'node_key': 'x', 'node_type': 'task'}]}, 'missing') is False
-    assert runtime._terminal_to_condition('completed', metadata={'requires_approval': True, 'approval_decision': 'approved'}) == 'approved'
-    assert runtime._terminal_to_condition('completed', metadata={'requires_approval': True, 'approval_decision': 'rejected'}) == 'rejected'
-    assert runtime._terminal_to_condition('unknown', metadata={}) == 'failure'
-    with pytest.raises(ValidationError, match='missing start edge'):
-        runtime._find_start_edge({'edges': []})
-    assert runtime._node_by_key({'nodes': []}, 'missing') is None
+    assert (
+        runtime._is_plan_node({"nodes": [{"node_key": "x", "node_type": "task"}]}, "missing")
+        is False
+    )
+    assert (
+        runtime._terminal_to_condition(
+            "completed", metadata={"requires_approval": True, "approval_decision": "approved"}
+        )
+        == "approved"
+    )
+    assert (
+        runtime._terminal_to_condition(
+            "completed", metadata={"requires_approval": True, "approval_decision": "rejected"}
+        )
+        == "rejected"
+    )
+    assert runtime._terminal_to_condition("unknown", metadata={}) == "failure"
+    with pytest.raises(ValidationError, match="missing start edge"):
+        runtime._find_start_edge({"edges": []})
+    assert runtime._node_by_key({"nodes": []}, "missing") is None
 
 
 def test_walk_predecided_handles_nonapproval_missing_decision_and_terminal() -> None:
     runtime = _runtime()
     conn = _Store()
-    task = {'node_key': 'task', 'node_type': 'task'}
-    assert runtime._walk_through_pre_decided('run', {}, task, pre_decisions={}, actor='actor', conn=conn) is task
-    approval = {'node_key': 'gate', 'node_type': 'approval'}
-    assert runtime._walk_through_pre_decided('run', {'nodes': [approval], 'edges': []}, approval, pre_decisions={}, actor='actor', conn=conn) is approval
+    task = {"node_key": "task", "node_type": "task"}
+    assert (
+        runtime._walk_through_pre_decided(
+            "run", {}, task, pre_decisions={}, actor="actor", conn=conn
+        )
+        is task
+    )
+    approval = {"node_key": "gate", "node_type": "approval"}
+    assert (
+        runtime._walk_through_pre_decided(
+            "run",
+            {"nodes": [approval], "edges": []},
+            approval,
+            pre_decisions={},
+            actor="actor",
+            conn=conn,
+        )
+        is approval
+    )
     runtime._next_history_seq = lambda _run_id: 2
-    assert runtime._walk_through_pre_decided('run', {'nodes': [approval], 'edges': []}, approval, pre_decisions={'gate': 'approved'}, actor='actor', conn=conn) is None
+    assert (
+        runtime._walk_through_pre_decided(
+            "run",
+            {"nodes": [approval], "edges": []},
+            approval,
+            pre_decisions={"gate": "approved"},
+            actor="actor",
+            conn=conn,
+        )
+        is None
+    )
     assert conn.executed

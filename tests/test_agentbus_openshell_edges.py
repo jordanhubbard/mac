@@ -29,9 +29,7 @@ def test_agentbus_open_append_close_and_lookup_edges() -> None:
         stream_id="stream-1",
     )
     with pytest.raises(ValidationError, match="already exists"):
-        cp.agentbus.open_stream(
-            sender.id, recipient.id, stream_id="stream-1"
-        )
+        cp.agentbus.open_stream(sender.id, recipient.id, stream_id="stream-1")
     with pytest.raises(NotFoundError, match="stream not found"):
         cp.agentbus.append_chunk("missing", sender.id, {"x": 1})
     with pytest.raises(AuthorizationError, match="only the stream sender"):
@@ -107,9 +105,7 @@ def test_openshell_policy_validation_assignment_and_materialization(
     with pytest.raises(NotFoundError, match="no OpenShell policy assigned"):
         cp.openshell.materialize_assigned_policy(sender.id, tmp_path / "none.yaml")
 
-    cp.openshell.assign_policy(
-        policy.id, target_type="agent", target_id=sender.id
-    )
+    cp.openshell.assign_policy(policy.id, target_type="agent", target_id=sender.id)
     target = tmp_path / "policy" / "active.yaml"
     result = cp.openshell.materialize_assigned_policy(sender.id, target)
     assert target.read_text(encoding="utf-8") == _policy_text().strip()

@@ -99,8 +99,9 @@ def test_mood_set_replaces_prior_active_overlay(tmp_path):
     rc, first = _run(tmp_path, "admin", "mood", "set", agent["id"], "warm")
     assert rc == 0
 
-    rc, second = _run(tmp_path, "admin", "mood", "set", agent["id"], "irritated",
-                      "--reason", "task timed out")
+    rc, second = _run(
+        tmp_path, "admin", "mood", "set", agent["id"], "irritated", "--reason", "task timed out"
+    )
     assert rc == 0
     assert second["mode"] == "irritated"
 
@@ -113,8 +114,7 @@ def test_mood_set_replaces_prior_active_overlay(tmp_path):
 def test_mood_set_multiple_modes(tmp_path):
     """Each valid mood mode can be set without error."""
     agent = _register_agent(tmp_path)
-    for mode in ("warm", "cheerful", "sad", "curt", "cold", "irritated",
-                 "angry", "enraged"):
+    for mode in ("warm", "cheerful", "sad", "curt", "cold", "irritated", "angry", "enraged"):
         rc, overlay = _run(tmp_path, "admin", "mood", "set", agent["id"], mode)
         assert rc == 0, f"mood set failed for mode {mode!r}: {overlay}"
         assert overlay["mode"] == mode
@@ -128,8 +128,9 @@ def test_mood_set_multiple_modes(tmp_path):
 def test_mood_show_returns_current_overlay(tmp_path):
     """mood show returns the overlay set by the most recent mood set."""
     agent = _register_agent(tmp_path)
-    rc, overlay = _run(tmp_path, "admin", "mood", "set", agent["id"], "sad",
-                       "--reason", "rollback required")
+    rc, overlay = _run(
+        tmp_path, "admin", "mood", "set", agent["id"], "sad", "--reason", "rollback required"
+    )
     assert rc == 0
 
     rc, current = _run(tmp_path, "admin", "mood", "show", agent["id"])
@@ -221,8 +222,9 @@ def test_mood_history_returns_empty_list_when_no_overlays(tmp_path):
 def test_mood_history_contains_set_mood(tmp_path):
     """mood history lists the overlay after mood set."""
     agent = _register_agent(tmp_path)
-    rc, overlay = _run(tmp_path, "admin", "mood", "set", agent["id"], "cheerful",
-                       "--reason", "fast merge")
+    rc, overlay = _run(
+        tmp_path, "admin", "mood", "set", agent["id"], "cheerful", "--reason", "fast merge"
+    )
     assert rc == 0
 
     rc, history = _run(tmp_path, "admin", "mood", "history", agent["id"])
@@ -236,8 +238,8 @@ def test_mood_history_accumulates_across_transitions(tmp_path):
     """mood history includes both set and cleared overlays in order."""
     agent = _register_agent(tmp_path)
     _run(tmp_path, "admin", "mood", "set", agent["id"], "warm")
-    _run(tmp_path, "admin", "mood", "set", agent["id"], "sad")   # replaces first
-    _run(tmp_path, "admin", "mood", "clear", agent["id"])         # clears second
+    _run(tmp_path, "admin", "mood", "set", agent["id"], "sad")  # replaces first
+    _run(tmp_path, "admin", "mood", "clear", agent["id"])  # clears second
 
     rc, history = _run(tmp_path, "admin", "mood", "history", agent["id"])
     assert rc == 0

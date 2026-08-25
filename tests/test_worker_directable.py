@@ -219,9 +219,7 @@ def test_flag_on_peer_message_replies(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MAC_WORKER_DIRECTABLE", "1")
     client = _Client([_peer_stream()], {"bus_peer1": _peer_chunks()})
     worker = _worker(tmp_path, client)
-    monkeypatch.setattr(
-        MacWorker, "_run_directable_turn", lambda self, prompt, **kw: "build done"
-    )
+    monkeypatch.setattr(MacWorker, "_run_directable_turn", lambda self, prompt, **kw: "build done")
 
     worker._process_agentbus_control()
     assert _wait_for(lambda: len(_peer_replies(client)) == 1)

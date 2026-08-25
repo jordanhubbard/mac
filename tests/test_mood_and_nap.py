@@ -252,10 +252,7 @@ def test_nap_lifecycle_begin_complete_restores_agent_and_updates_schedule(cp):
     schedule = cp.get_nap_schedule(agent.id)
     assert schedule.last_completed_at is not None
 
-    types = [
-        e["event_type"]
-        for e in cp.list_events(subject_type="agent", subject_id=agent.id)
-    ]
+    types = [e["event_type"] for e in cp.list_events(subject_type="agent", subject_id=agent.id)]
     assert "agent.nap_started" in types
     assert "agent.nap_completed" in types
 
@@ -396,9 +393,7 @@ def test_config_flag_accepts_conversational_value_forms(cp):
     agent = _register_agent(cp)
     assert cp.set_config_flag(agent.id, "show_reasoning", "on")["value"] is True
     assert cp.set_config_flag(agent.id, "show_reasoning", "false")["value"] is False
-    assert (
-        cp.set_config_flag(agent.id, "tool_progress", "NEW")["value"] == "new"
-    )
+    assert cp.set_config_flag(agent.id, "tool_progress", "NEW")["value"] == "new"
 
 
 def test_list_config_flags_covers_registry_with_descriptions(cp):

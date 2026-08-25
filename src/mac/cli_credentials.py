@@ -29,6 +29,7 @@ hub ledger. The remote side writes files 0600, merges env into ``mac.env``
 (0600), then re-runs the coding-agent detector and prints the secret-free
 status JSON so the caller gets a verified verdict, not a hope.
 """
+
 from __future__ import annotations
 
 import base64
@@ -95,9 +96,7 @@ def _keychain_password(service: str, runner: Optional[Callable] = None) -> str:
     """Export a generic password from the macOS Keychain ('' when absent)."""
     if sys.platform != "darwin" and runner is None:
         return ""
-    run = runner or (
-        lambda argv: subprocess.run(argv, capture_output=True, text=True)
-    )
+    run = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True))
     try:
         proc = run(["security", "find-generic-password", "-s", service, "-w"])
     except OSError:
@@ -269,7 +268,7 @@ def build_sync_manifest(sources: Mapping[str, CredentialSource]) -> Dict[str, ob
 # only channel secrets travel), writes files 0600 under $HOME, merges env
 # entries into ~/.mac/mac.env (0600), then prints the secret-free detection
 # JSON so the caller verifies the sync actually satisfied the CLI gate.
-_REMOTE_APPLY = r'''
+_REMOTE_APPLY = r"""
 import base64, json, os, sys
 from pathlib import Path
 
@@ -302,13 +301,13 @@ if env_updates:
     os.environ.update(env_updates)
 from mac.coding_agent import detect_all
 print(json.dumps({"schema": "mac.cli_credentials_apply.v1", "clis": detect_all()}))
-'''
+"""
 
-_REMOTE_STATUS = r'''
+_REMOTE_STATUS = r"""
 import json
 from mac.coding_agent import detect_all
 print(json.dumps({"schema": "mac.cli_credentials_apply.v1", "clis": detect_all()}))
-'''
+"""
 
 
 def _remote_python_cmd(script: str) -> str:

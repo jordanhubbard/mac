@@ -73,9 +73,7 @@ def _child(cp, title="enumerate candidates"):
 
 
 def _finish(cp, task, state):
-    cp.store.execute(
-        "UPDATE tasks SET state = ? WHERE id = ?", (state, task.id)
-    )
+    cp.store.execute("UPDATE tasks SET state = ? WHERE id = ?", (state, task.id))
 
 
 # --------------------------------------------------------------------------
@@ -208,9 +206,7 @@ def test_a_cancelled_dependency_still_satisfies_the_join(cp):
 def test_all_success_is_unaffected(cp):
     """A non-integration parent must still refuse to run on a cancelled child."""
     child = _child(cp)
-    parent = cp.create_task(
-        "ordinary downstream work", project="mac", dependencies=[child.id]
-    )
+    parent = cp.create_task("ordinary downstream work", project="mac", dependencies=[child.id])
     _finish(cp, child, TaskState.CANCELLED.value)
 
     assert cp._dependencies_satisfied(cp.get_task(parent.id)) is False
@@ -241,9 +237,7 @@ def test_cancelling_a_child_warns_that_it_releases_the_parent(cp):
     )
     _finish(cp, child, TaskState.CANCELLED.value)
 
-    cp._resolve_waiting_dependents_of(
-        child.id, TaskState.CANCELLED.value, "operator"
-    )
+    cp._resolve_waiting_dependents_of(child.id, TaskState.CANCELLED.value, "operator")
 
     warnings = _warned(cp, "task.cancellation_releases_integration_parent")
     assert warnings, "cancelling a dependency released a parent with no warning"

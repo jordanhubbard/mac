@@ -150,7 +150,11 @@ def _prepare(tmp_path: Path) -> tuple[Path, Path, dict[str, str], Path, Path]:
 
 def _run(path: Path, env: dict[str, str], timeout: int = 120):
     return subprocess.run(
-        [str(path)], env=env, text=True, capture_output=True, check=False,
+        [str(path)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
         timeout=timeout,
     )
 
@@ -265,8 +269,7 @@ def test_a_clean_start_does_not_touch_a_sandbox_that_is_not_there(tmp_path):
     assert "created" in lines, "the gateway did not start: %s" % result.stderr[-1500:]
     before_create = lines[: lines.index("created")]
     assert not [line for line in before_create if line.startswith("sandbox delete")], (
-        "reclaim deleted a sandbox that did not exist.\ncalls before create: %s"
-        % before_create
+        "reclaim deleted a sandbox that did not exist.\ncalls before create: %s" % before_create
     )
     assert "reclaiming" not in result.stderr
 

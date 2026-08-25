@@ -121,10 +121,7 @@ def test_calibration_cli_writes_report(tmp_path):
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
-    assert (
-        json.loads(output.read_text())["schema"]
-        == "mac.activation_probe.calibration.v1"
-    )
+    assert json.loads(output.read_text())["schema"] == "mac.activation_probe.calibration.v1"
 
 
 def test_advisory_audit_is_disabled_by_default_and_attaches_when_enabled(tmp_path):
@@ -150,9 +147,7 @@ def test_advisory_audit_is_disabled_by_default_and_attaches_when_enabled(tmp_pat
 
 def test_advisory_error_never_propagates_to_worker_evidence(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_ACTIVATION_PROBE_ENABLED", "1")
-    monkeypatch.setenv(
-        "MAC_ACTIVATION_PROBE_CHECKPOINT", str(tmp_path / "missing.json")
-    )
+    monkeypatch.setenv("MAC_ACTIVATION_PROBE_CHECKPOINT", str(tmp_path / "missing.json"))
     instance = object.__new__(worker.MacWorker)
     instance.attestation_key = ""
     (tmp_path / "stdout.txt").write_text("")
@@ -165,9 +160,7 @@ def test_advisory_error_never_propagates_to_worker_evidence(monkeypatch, tmp_pat
 
 def test_worker_evidence_attaches_only_bounded_advisory_result(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_ACTIVATION_PROBE_ENABLED", "1")
-    monkeypatch.setenv(
-        "MAC_ACTIVATION_PROBE_CHECKPOINT", str(FIXTURES / "checkpoint.json")
-    )
+    monkeypatch.setenv("MAC_ACTIVATION_PROBE_CHECKPOINT", str(FIXTURES / "checkpoint.json"))
     instance = object.__new__(worker.MacWorker)
     instance.attestation_key = ""
     (tmp_path / "stdout.txt").write_text("")

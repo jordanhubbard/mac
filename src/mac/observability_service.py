@@ -129,8 +129,16 @@ class ObservabilityService:
         suppression. Use this for tests and for emitters that have
         genuinely changing state per call."""
         return self.record_observation(
-            "log", name, layer, source, level, None, "",
-            subject_type, subject_id, detail,
+            "log",
+            name,
+            layer,
+            source,
+            level,
+            None,
+            "",
+            subject_type,
+            subject_id,
+            detail,
         )
 
     def record_metric(
@@ -239,10 +247,7 @@ class ObservabilityService:
         else:
             sql += " ORDER BY sequence DESC LIMIT ?"
         params.append(min(max(1, int(limit)), 1000))
-        return [
-            self._from_row(row)
-            for row in self.store.query_all(sql, tuple(params))
-        ]
+        return [self._from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
     def task_llm_usage(self, task_id: str, *, limit: int = 1000) -> JsonDict:
         """Return task-attributed model routing and token usage ledger data.
@@ -326,13 +331,9 @@ class ObservabilityService:
                     "duration_ms": detail.get("duration_ms"),
                     "cost_usd": detail.get("cost_usd"),
                     "usage": (
-                        dict(detail.get("usage"))
-                        if isinstance(detail.get("usage"), dict)
-                        else {}
+                        dict(detail.get("usage")) if isinstance(detail.get("usage"), dict) else {}
                     ),
-                    "upstream_attempt_count": (
-                        len(attempts) if isinstance(attempts, list) else 0
-                    ),
+                    "upstream_attempt_count": (len(attempts) if isinstance(attempts, list) else 0),
                 }
             )
         return {
@@ -501,7 +502,9 @@ class ObservabilityService:
         sequence_row = result.fetchone()
         if sequence_row is None:
             raise RuntimeError("INSERT ... RETURNING sequence yielded no row")
-        sequence_value = sequence_row[0] if not hasattr(sequence_row, "keys") else sequence_row["sequence"]
+        sequence_value = (
+            sequence_row[0] if not hasattr(sequence_row, "keys") else sequence_row["sequence"]
+        )
         event = ObservabilityEvent(
             int(sequence_value),
             obs_id,

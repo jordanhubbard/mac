@@ -33,6 +33,7 @@ from pathlib import Path
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _cli_py_path() -> Path:
     """Return the absolute path to src/mac/cli.py."""
     here = Path(__file__).resolve()
@@ -62,18 +63,14 @@ def discover_cli_subcommands(cli_src: str) -> set[tuple[str, str]]:
     """
     # Step 1: collect (var, parent_var, subcommand_name) for every
     #         <var> = <parent>.add_parser("<name>") line.
-    var_pattern = re.compile(
-        r"(\w+)\s*=\s*(\w+)\.add_parser\(\s*[\"']([^\"']+)[\"']"
-    )
+    var_pattern = re.compile(r"(\w+)\s*=\s*(\w+)\.add_parser\(\s*[\"']([^\"']+)[\"']")
     var_matches = var_pattern.findall(cli_src)
 
     # Step 2: also collect ALL <parent>.add_parser("<name>") occurrences
     #         (including anonymous forms like ``_set(fn, sub.add_parser("init", ...))``)
     #         by matching the broader pattern that captures every call regardless
     #         of whether the result is assigned to a variable.
-    anon_pattern = re.compile(
-        r"(\w+)\.add_parser\(\s*[\"']([^\"']+)[\"']"
-    )
+    anon_pattern = re.compile(r"(\w+)\.add_parser\(\s*[\"']([^\"']+)[\"']")
     anon_parent_children: dict[str, list[str]] = {}
     for parent, name in anon_pattern.findall(cli_src):
         anon_parent_children.setdefault(parent, [])
@@ -127,9 +124,9 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
     for top-level invocations with no second positional argument.
     """
     run_pattern = re.compile(
-        r'_run\s*\([^,)]+,\s*["\']([^"\']+)["\']'   # captures domain
-        r'(?:\s*,\s*["\']([^"\']+)["\'])?'           # optionally captures sub
-        r'(?:\s*,\s*["\']([^"\']+)["\'])?'           # and a third, for `admin`
+        r'_run\s*\([^,)]+,\s*["\']([^"\']+)["\']'  # captures domain
+        r'(?:\s*,\s*["\']([^"\']+)["\'])?'  # optionally captures sub
+        r'(?:\s*,\s*["\']([^"\']+)["\'])?'  # and a third, for `admin`
     )
     covered: set[tuple[str, str]] = set()
     for test_file in sorted(test_dir.glob("test_*.py")):

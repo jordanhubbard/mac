@@ -32,9 +32,7 @@ def test_cancel_current_terminates_the_active_tree(monkeypatch) -> None:
     executor = SubprocessExecutor([sys.executable, "-c", "pass"])
     process = object()
     terminated = []
-    monkeypatch.setattr(
-        "mac.worker_subprocess._terminate_process_tree", terminated.append
-    )
+    monkeypatch.setattr("mac.worker_subprocess._terminate_process_tree", terminated.append)
     executor._active_process = process  # type: ignore[assignment]
 
     assert executor.cancel_current("operator stop") is True
@@ -44,9 +42,7 @@ def test_cancel_current_terminates_the_active_tree(monkeypatch) -> None:
 
 def test_executor_runs_command_and_emits_audit(tmp_path) -> None:
     records = []
-    executor = SubprocessExecutor(
-        [sys.executable, "-c", "print('subprocess-ok')"], timeout=5
-    )
+    executor = SubprocessExecutor([sys.executable, "-c", "print('subprocess-ok')"], timeout=5)
     executor.audit_sink = records.append
     executor.audit_context = {"task_id": "task_test", "lease_id": "lease_test"}
 
@@ -231,16 +227,12 @@ def test_executor_does_not_duplicate_existing_cargo_dir(tmp_path, monkeypatch) -
     assert entries.count(str(cargo_bin)) == 1
 
 
-def test_executor_injects_home_cargo_dir_when_cargo_home_unset(
-    tmp_path, monkeypatch
-) -> None:
+def test_executor_injects_home_cargo_dir_when_cargo_home_unset(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("CARGO_HOME", raising=False)
     home = tmp_path / "home"
     cargo_bin = home / ".cargo" / "bin"
     cargo_bin.mkdir(parents=True)
-    monkeypatch.setattr(
-        "mac.worker_subprocess.Path.home", classmethod(lambda cls: home)
-    )
+    monkeypatch.setattr("mac.worker_subprocess.Path.home", classmethod(lambda cls: home))
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
 
     executor = SubprocessExecutor(

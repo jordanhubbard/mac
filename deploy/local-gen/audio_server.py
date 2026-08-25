@@ -18,6 +18,7 @@ Configure via env:
 Run (on the GPU agent):
     LOCAL_AUDIO_TTS_MODEL=suno/bark ~/gen/venv/bin/python audio_server.py
 """
+
 from __future__ import annotations
 
 import io
@@ -77,7 +78,9 @@ def _pipeline(kind: str):
         if kind == "tts":
             pipe = pipeline("text-to-speech", model=_resolve_repo(TTS_MODEL), device=device)
         elif kind == "asr":
-            pipe = pipeline("automatic-speech-recognition", model=_resolve_repo(ASR_MODEL), device=device)
+            pipe = pipeline(
+                "automatic-speech-recognition", model=_resolve_repo(ASR_MODEL), device=device
+            )
         else:
             pipe = pipeline("text-to-audio", model=_resolve_repo(MUSIC_MODEL), device=device)
         _pipes[kind] = pipe
@@ -151,8 +154,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") in ("/health", "/healthz"):
-            self._json(200, {"ok": True, "tts": TTS_MODEL, "music": MUSIC_MODEL,
-                             "asr": ASR_MODEL, "device": _device})
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "tts": TTS_MODEL,
+                    "music": MUSIC_MODEL,
+                    "asr": ASR_MODEL,
+                    "device": _device,
+                },
+            )
         else:
             self._json(404, {"error": {"message": "not found"}})
 

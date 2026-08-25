@@ -396,8 +396,7 @@ def test_e2e_two_workers_race_for_one_task_serializes(tmp_path: Path, semantic_r
     needs_review_transitions = [
         h
         for h in final["history"]
-        if h["event_type"] == "task.transitioned"
-        and h["to_state"] == TaskState.NEEDS_REVIEW.value
+        if h["event_type"] == "task.transitioned" and h["to_state"] == TaskState.NEEDS_REVIEW.value
     ]
     assert len(needs_review_transitions) == 1
     assert needs_review_transitions[0]["from_state"] == TaskState.RUNNING.value
@@ -635,8 +634,18 @@ def test_e2e_workflow_runtime_drives_task_via_http(tmp_path: Path):
                     }
                 ],
                 "edges": [
-                    {"from_node_key": "", "to_node_key": "run", "condition": "success", "priority": 100},
-                    {"from_node_key": "run", "to_node_key": "", "condition": "failure", "priority": 100},
+                    {
+                        "from_node_key": "",
+                        "to_node_key": "run",
+                        "condition": "success",
+                        "priority": 100,
+                    },
+                    {
+                        "from_node_key": "run",
+                        "to_node_key": "",
+                        "condition": "failure",
+                        "priority": 100,
+                    },
                 ],
             },
         },
@@ -674,14 +683,10 @@ def test_e2e_workflow_runtime_drives_task_via_http(tmp_path: Path):
         },
     ).json()
     # Assign role so dispatcher accepts the workflow's required_role pin.
-    resp = client.post(
-        "/agents/%s/role" % agent["id"], json={"role_id_or_slug": "qa"}
-    )
+    resp = client.post("/agents/%s/role" % agent["id"], json={"role_id_or_slug": "qa"})
     assert resp.status_code == 200, resp.text
 
-    run = client.post(
-        "/workflows/smoke/start", json={"started_by": "ops"}
-    ).json()
+    run = client.post("/workflows/smoke/start", json={"started_by": "ops"}).json()
     assert run["state"] == "running"
     assert run["current_node_key"] == "run"
 

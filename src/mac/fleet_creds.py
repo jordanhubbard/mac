@@ -25,6 +25,7 @@ remote process listings) and never stdout (callers see fingerprints, not the
 token). The SSH runner is injectable so the logic is unit-testable without
 shelling out.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -58,7 +59,7 @@ class FleetCredsError(Exception):
 # the flat (unscoped) names (mac.api note at _load_auth_tokens_from_env).
 _READ_HUB_AUTH_CMD = (
     'set -a; . "$HOME/.mac/mac.env" 2>/dev/null; set +a; '
-    "printf '%s\\x1f%s' \"${MAC_API_TOKEN:-}\" \"${MAC_API_TOKENS:-}\""
+    'printf \'%s\\x1f%s\' "${MAC_API_TOKEN:-}" "${MAC_API_TOKENS:-}"'
 )
 
 # Idempotent multi-key writer run on the hub. Reads a JSON object {key: value}
@@ -210,8 +211,7 @@ def sync_token(
     if not token:
         raise FleetCredsError(
             "hub %s has no MAC_API_TOKEN in ~/.mac/mac.env (auth may be open, or "
-            "the hub uses only MAC_API_TOKENS — rotate-token --prune to reduce to one)"
-            % hub.target
+            "the hub uses only MAC_API_TOKENS — rotate-token --prune to reduce to one)" % hub.target
         )
     env_file = Path(env_path).expanduser() if env_path else mac_paths.deploy_env_file()
     key = scoped_var("MAC_API_TOKEN", fleet)
@@ -361,9 +361,7 @@ def rotate_token(
         _write_hub_env(hub, {"MAC_API_TOKENS": ""}, runner=runner)
         plan["applied"] = True
         plan["restart_note"] = (
-            "run restart_command on the hub to drop the old tokens"
-            if not restart
-            else "restarted"
+            "run restart_command on the hub to drop the old tokens" if not restart else "restarted"
         )
         if restart:
             rres = runner(ssh_command(hub, restart_cmd), input=None)

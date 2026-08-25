@@ -118,7 +118,9 @@ def _run_gatewayless_worker_self_test(tmp_path, monkeypatch):
     return exit_code, report
 
 
-def test_gatewayless_worker_missing_openclaw_artifacts_does_not_block_startup(tmp_path, monkeypatch):
+def test_gatewayless_worker_missing_openclaw_artifacts_does_not_block_startup(
+    tmp_path, monkeypatch
+):
     exit_code, report = _run_gatewayless_worker_self_test(tmp_path, monkeypatch)
 
     # The self-test must NOT exit non-zero and must NOT mark blocking problems

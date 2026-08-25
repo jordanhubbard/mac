@@ -67,18 +67,27 @@ class NapTickerConfig:
         interval_set = bool(raw_interval)
 
         enabled_flag = str(env.get("MAC_NAP_TICK_ENABLED") or "").strip().lower() in {
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
             return bounded_env_number(env, name, default, low, high, errors=errors)
 
-        interval = _num("MAC_NAP_TICK_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS,
-                        MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
-        initial_delay = _num("MAC_NAP_TICK_INITIAL_DELAY_SECONDS",
-                             DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0)
-        max_agents = int(_num("MAC_NAP_TICK_MAX_AGENTS_PER_TICK",
-                              DEFAULT_MAX_AGENTS_PER_TICK, 1, 100))
+        interval = _num(
+            "MAC_NAP_TICK_INTERVAL_SECONDS",
+            DEFAULT_INTERVAL_SECONDS,
+            MIN_INTERVAL_SECONDS,
+            MAX_INTERVAL_SECONDS,
+        )
+        initial_delay = _num(
+            "MAC_NAP_TICK_INITIAL_DELAY_SECONDS", DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0
+        )
+        max_agents = int(
+            _num("MAC_NAP_TICK_MAX_AGENTS_PER_TICK", DEFAULT_MAX_AGENTS_PER_TICK, 1, 100)
+        )
         # A positive interval value implicitly enables the ticker so operators
         # need only one env var.  Explicit MAC_NAP_TICK_ENABLED=1 also works.
         enabled = enabled_flag or (interval_set and not errors)
@@ -108,8 +117,11 @@ class NapTicker:
     def start(self) -> bool:
         if not self.config.active:
             if self.config.configuration_error:
-                self._observe("nap.tick.configuration_invalid", "warning",
-                              {"error": self.config.configuration_error})
+                self._observe(
+                    "nap.tick.configuration_invalid",
+                    "warning",
+                    {"error": self.config.configuration_error},
+                )
             return False
         with self._state_lock:
             if self._thread is not None and self._thread.is_alive():

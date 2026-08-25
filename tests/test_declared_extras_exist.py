@@ -104,14 +104,11 @@ def test_install_sites_only_request_extras_that_exist(relpath):
         % (relpath, ", ".join(unknown), sorted(declared), unknown[0])
     )
 
-    resurrected = sorted(
-        name for name in _referenced_extras(text) if name in once_ours
-    )
+    resurrected = sorted(name for name in _referenced_extras(text) if name in once_ours)
     assert not resurrected, (
         "%s references the removed extra(s) %s. These were dropped with the "
         "vendored Hermes runtime in #377; src/mac imports none of "
-        "slack_bolt, discord, telegram or aiohttp."
-        % (relpath, ", ".join(resurrected))
+        "slack_bolt, discord, telegram or aiohttp." % (relpath, ", ".join(resurrected))
     )
 
 

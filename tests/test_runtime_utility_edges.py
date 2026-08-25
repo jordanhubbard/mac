@@ -30,17 +30,16 @@ def test_fleet_env_malformed_quotes_chmod_and_scoped_listing(
 
     monkeypatch.setenv("MAC_API_TOKEN__FLEET", "token")
     monkeypatch.setenv("UNSCOPED", "ignored")
-    assert ("MAC_API_TOKEN", "FLEET", "token") in list(
-        fleet_env.list_scoped_vars()
-    )
+    assert ("MAC_API_TOKEN", "FLEET", "token") in list(fleet_env.list_scoped_vars())
 
 
 def test_coding_agent_probe_json_detection_and_public_error_edges(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    assert coding_agent._which(
-        "broken", lambda _name: (_ for _ in ()).throw(RuntimeError("probe"))
-    ) is None
+    assert (
+        coding_agent._which("broken", lambda _name: (_ for _ in ()).throw(RuntimeError("probe")))
+        is None
+    )
 
     invalid = tmp_path / "invalid.json"
     invalid.write_text("not-json", encoding="utf-8")

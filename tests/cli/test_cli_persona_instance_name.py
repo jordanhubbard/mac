@@ -10,6 +10,7 @@ an audience.
 strings and the integration docs all still spell it that way, and renaming
 those is a separate, larger piece of work (task_2a7df680).
 """
+
 from __future__ import annotations
 
 import io

@@ -70,12 +70,8 @@ def _reviewing_task(cp, *, metadata=None, project="mac", title="approved work"):
 
 def _age(cp, task_id, seconds):
     """Backdate the task so it reads as parked for ``seconds``."""
-    when = (parse_time(utcnow()) - timedelta(seconds=seconds)).isoformat(
-        timespec="microseconds"
-    )
-    cp.store.execute(
-        "UPDATE tasks SET updated_at = ? WHERE id = ?", (when, task_id)
-    )
+    when = (parse_time(utcnow()) - timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+    cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (when, task_id))
 
 
 # --------------------------------------------------------------------------
@@ -140,9 +136,7 @@ def test_a_task_someone_is_holding_is_not_parked(cp):
     task = _reviewing_task(cp)
     machine = cp.register_machine("reviewer-host")
     agent = cp.register_agent(machine.id, "reviewer", capabilities=["python"])
-    cp.store.execute(
-        "UPDATE tasks SET owner_agent_id = ? WHERE id = ?", (agent.id, task.id)
-    )
+    cp.store.execute("UPDATE tasks SET owner_agent_id = ? WHERE id = ?", (agent.id, task.id))
 
     assert cp.parked_reviewing_tasks() == []
 

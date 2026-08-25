@@ -1,4 +1,5 @@
 """Behavioral tests for `mac fleet creds-status` / `mac fleet creds-sync`."""
+
 from __future__ import annotations
 
 import io
@@ -182,10 +183,15 @@ def test_fleet_creds_sync_dry_run_moves_no_secret(tmp_path, monkeypatch):
 
     rc, out = _run(
         tmp_path,
-        "admin", "fleet", "creds-sync",
-        "--fleet", "demo",
-        "--fleets-config", str(fleets),
-        "--cli", "claude",
+        "admin",
+        "fleet",
+        "creds-sync",
+        "--fleet",
+        "demo",
+        "--fleets-config",
+        str(fleets),
+        "--cli",
+        "claude",
         "--dry-run",
     )
     assert rc in (None, 0)

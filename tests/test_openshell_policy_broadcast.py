@@ -81,12 +81,15 @@ network_policies:
 """
 
 # Same policy plus one endpoint: nothing the running sandbox holds is revoked.
-WIDER = WIDE + """  pypi:
+WIDER = (
+    WIDE
+    + """  pypi:
     name: pypi
     endpoints:
       - host: pypi.org
         port: 443
 """
+)
 
 
 def _agent(cp: ControlPlane):

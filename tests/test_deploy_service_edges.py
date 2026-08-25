@@ -41,22 +41,28 @@ def test_runtime_delta_pinning_matrix() -> None:
     for dependency, manager in accepted:
         assert deploy._runtime_delta_dependency_pinned(dependency, manager) is True
     for dependency, manager in [
-        ("", "pip"), ("one*", "pip"), ("latest", "npm"),
-        ("one@latest", "npm"), ("@scope/one", "npm"), ("one", "other"),
+        ("", "pip"),
+        ("one*", "pip"),
+        ("latest", "npm"),
+        ("one@latest", "npm"),
+        ("@scope/one", "npm"),
+        ("one", "other"),
     ]:
         assert deploy._runtime_delta_dependency_pinned(dependency, manager) is False
 
 
 def test_runtime_delta_dependency_shape_problems() -> None:
     deploy = ControlPlane.in_memory().deploy
-    delta = _delta(added_dependencies=[
-        {"requirement": "one"},
-        {"name": "two"},
-        {"name": "three", "version": "latest"},
-        {"name": "four", "specifier": "4.0"},
-        "five",
-        "six==6",
-    ])
+    delta = _delta(
+        added_dependencies=[
+            {"requirement": "one"},
+            {"name": "two"},
+            {"name": "three", "version": "latest"},
+            {"name": "four", "specifier": "4.0"},
+            "five",
+            "six==6",
+        ]
+    )
     problems = deploy._runtime_delta_dependency_problems(delta)
     assert any("one" in item for item in problems)
     assert any("name and version" in item for item in problems)
@@ -67,13 +73,15 @@ def test_runtime_delta_dependency_shape_problems() -> None:
 
 def test_runtime_delta_command_problem_matrix() -> None:
     deploy = ControlPlane.in_memory().deploy
-    delta = _delta(commands=[
-        "sudo apt-get install curl",
-        "tool token=value",
-        "npm install -g package",
-        "python -m pip install one==1",
-        ".venv/bin/python -m pip install safe==1",
-    ])
+    delta = _delta(
+        commands=[
+            "sudo apt-get install curl",
+            "tool token=value",
+            "npm install -g package",
+            "python -m pip install one==1",
+            ".venv/bin/python -m pip install safe==1",
+        ]
+    )
     problems = deploy._runtime_delta_command_problems(delta)
     assert any("host/shared" in item for item in problems)
     assert any("secret" in item for item in problems)
@@ -139,10 +147,13 @@ def test_runtime_delta_list_filters_and_invalid_status(monkeypatch) -> None:
     with pytest.raises(ValidationError, match="unsupported runtime delta status"):
         deploy.list_runtime_deltas(status="unknown")
     captured = []
-    monkeypatch.setattr(deploy.store, "query_all", lambda sql, params: captured.append((sql, params)) or [])
-    assert deploy.list_runtime_deltas(
-        status="proposed", task_id="task", project="project", limit=5000
-    ) == []
+    monkeypatch.setattr(
+        deploy.store, "query_all", lambda sql, params: captured.append((sql, params)) or []
+    )
+    assert (
+        deploy.list_runtime_deltas(status="proposed", task_id="task", project="project", limit=5000)
+        == []
+    )
     assert "status = ?" in captured[0][0]
     assert captured[0][1][-1] == 1000
 

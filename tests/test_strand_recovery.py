@@ -9,6 +9,7 @@ integration parent waited forever on it.
 Fixing the migration stops new stranding. It does not re-supervise the 240
 tasks already reverted on the live hub, which is what this sweep is for.
 """
+
 from __future__ import annotations
 
 from mac.models import TaskState
@@ -171,9 +172,7 @@ def test_a_chain_unwinds_and_frees_the_parent():
 
     report = cp.recover_stranded_dependents(dry_run=False)
 
-    assert report["supervised"] == 0, (
-        "nothing is stranded any more, so the sweep must find no work"
-    )
+    assert report["supervised"] == 0, "nothing is stranded any more, so the sweep must find no work"
     assert cp.get_task(verify).state == TaskState.BLOCKED.value
 
     parent_task = cp.get_task(parent.id)

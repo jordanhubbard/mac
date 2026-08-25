@@ -513,15 +513,11 @@ class BroadcastService:
             return body
         # Over the cap: keep the identifying fields, drop the rest, and SAY so.
         # Silent truncation would make a consumer trust a partial payload.
-        kept: JsonDict = {
-            key: body[key] for key in BROADCAST_COALESCE_FIELDS if key in body
-        }
+        kept: JsonDict = {key: body[key] for key in BROADCAST_COALESCE_FIELDS if key in body}
         kept["truncated"] = True
         return kept
 
-    def _admit(
-        self, agent_id: str, event_type: str, body: JsonDict
-    ) -> Tuple[bool, str]:
+    def _admit(self, agent_id: str, event_type: str, body: JsonDict) -> Tuple[bool, str]:
         """Decide whether this announcement gets a row. Lock-scoped and pure."""
         key = (
             agent_id,

@@ -176,9 +176,7 @@ def test_start_rejects_invalid_or_disabled_configuration():
     plane = _Plane()
     invalid = RepositoryRefReconciler(
         plane,
-        RepositoryRefReconcilerConfig(
-            mode="off", configuration_error="invalid configuration"
-        ),
+        RepositoryRefReconcilerConfig(mode="off", configuration_error="invalid configuration"),
     )
     assert invalid.start() is False
     assert plane.logs[-1][0][0] == "repository.ref.reconciler.configuration_invalid"
@@ -289,9 +287,7 @@ def test_repository_opt_out_is_skipped(tmp_path):
     assert report["repositories"][0]["status"] == "skipped"
 
 
-def test_repository_failures_are_isolated_and_errors_are_redacted(
-    tmp_path, monkeypatch
-):
+def test_repository_failures_are_isolated_and_errors_are_redacted(tmp_path, monkeypatch):
     bad = tmp_path / "bad"
     good = tmp_path / "good"
     bad.mkdir()
@@ -413,9 +409,7 @@ def test_last_report_is_persisted_to_the_store(tmp_path, monkeypatch):
 
     report = reconciler.run_once(trigger="test")
 
-    persisted = store.get_pipeline_cursor(
-        "repository_ref_reconciler", "last_report", None
-    )
+    persisted = store.get_pipeline_cursor("repository_ref_reconciler", "last_report", None)
     assert persisted is not None
     assert persisted["run_id"] == report["run_id"]
 

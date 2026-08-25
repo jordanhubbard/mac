@@ -52,9 +52,7 @@ def test_communication_api_shared_identity_lease_and_delivery_round_trip() -> No
     assert account_response.status_code == 200
     account = account_response.json()
 
-    resolution = client.get(
-        "/agents/%s/representation" % origin.id, headers=_headers("reader")
-    )
+    resolution = client.get("/agents/%s/representation" % origin.id, headers=_headers("reader"))
     assert resolution.status_code == 200
     assert resolution.json()["identity"]["name"] == "mac-hive"
 

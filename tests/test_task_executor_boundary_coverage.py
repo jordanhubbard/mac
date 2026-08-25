@@ -112,7 +112,9 @@ def test_hub_helpers_swallow_transport_and_parse_errors(monkeypatch, helper: str
 def test_run_audited_command_records_completion(monkeypatch, tmp_path, returncode: int) -> None:
     audits = []
     monkeypatch.setattr(te, "local_agent_id", lambda: "agent-a")
-    monkeypatch.setattr(te, "post_command_audit", lambda agent, payload: audits.append((agent, payload)))
+    monkeypatch.setattr(
+        te, "post_command_audit", lambda agent, payload: audits.append((agent, payload))
+    )
     monkeypatch.setattr(
         te,
         "_run_captured",
@@ -220,9 +222,10 @@ def test_auto_decompose_rejects_malformed_and_normalizes_children(monkeypatch, t
     assert te.maybe_auto_decompose(tmp_path, {"id": "task"}) is False
     evidence.write_text(json.dumps({"plan_steps": [{"title": "child"}]}))
     assert te.maybe_auto_decompose(tmp_path, {"id": ""}) is False
-    assert te.maybe_auto_decompose(
-        tmp_path, {"id": "task", "metadata": {"no_decompose": True}}
-    ) is False
+    assert (
+        te.maybe_auto_decompose(tmp_path, {"id": "task", "metadata": {"no_decompose": True}})
+        is False
+    )
 
     captured = {}
     evidence.write_text(

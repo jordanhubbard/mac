@@ -34,9 +34,7 @@ CANCELLATION_DISPOSITIONS = (
     "failed_attempt",
     "preserve",
 )
-AUTO_CLEANUP_DISPOSITIONS = frozenset(
-    {"duplicate", "superseded", "not_applicable"}
-)
+AUTO_CLEANUP_DISPOSITIONS = frozenset({"duplicate", "superseded", "not_applicable"})
 
 _TASK_ID_RE = re.compile(r"^task_[0-9a-f]{32}$")
 _REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -47,18 +45,14 @@ _MANAGED_BRANCH_RE = re.compile(
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _AUTHORITY_RE = re.compile(r"(?P<scheme>https?://)[^/@\s]+@", re.IGNORECASE)
-_SCP_REMOTE_RE = re.compile(
-    r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>[^\s]+)$"
-)
+_SCP_REMOTE_RE = re.compile(r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>[^\s]+)$")
 
 ACTIVE_TASK_STATES = frozenset(
     {"open", "waiting", "claimed", "running", "needs_review", "reviewing"}
 )
 
 TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cancelled"})
-DISPATCHABLE_TASK_STATES = frozenset(
-    {"open", "claimed", "running", "needs_review", "reviewing"}
-)
+DISPATCHABLE_TASK_STATES = frozenset({"open", "claimed", "running", "needs_review", "reviewing"})
 
 _REPLACEMENT_CHAIN_DEPTH_LIMIT = 10
 
@@ -177,11 +171,7 @@ class _BoundedTaskLoader:
         # Effective per-lookup budget is the smaller of the per-task timeout
         # and whatever remains of the overall audit deadline.
         remaining = self._remaining()
-        candidates = [
-            value
-            for value in (self._per_task_timeout, remaining)
-            if value is not None
-        ]
+        candidates = [value for value in (self._per_task_timeout, remaining) if value is not None]
         if not candidates:
             return None
         return max(0.0, min(candidates))
@@ -205,10 +195,7 @@ class _BoundedTaskLoader:
             return
         executor = ThreadPoolExecutor(max_workers=self._concurrency)
         try:
-            futures = {
-                executor.submit(self._task_loader, task_id): task_id
-                for task_id in pending
-            }
+            futures = {executor.submit(self._task_loader, task_id): task_id for task_id in pending}
             for future, task_id in futures.items():
                 timeout = self._lookup_timeout()
                 try:
@@ -291,17 +278,13 @@ def normalize_cancellation_detail(
     replacement = str(normalized.get("replacement_task_id") or "").strip()
     if disposition in {"duplicate", "superseded"}:
         if not replacement or not _TASK_ID_RE.fullmatch(replacement):
-            raise ValidationError(
-                "%s cancellation requires replacement_task_id" % disposition
-            )
+            raise ValidationError("%s cancellation requires replacement_task_id" % disposition)
     elif replacement and not _TASK_ID_RE.fullmatch(replacement):
         raise ValidationError("replacement_task_id must be a task_<32 hex> identifier")
     if not reason:
         raise ValidationError("task cancellation requires a reason (non-empty)")
 
-    raw_grace = normalized.get(
-        "cleanup_grace_seconds", DEFAULT_CLEANUP_GRACE_SECONDS
-    )
+    raw_grace = normalized.get("cleanup_grace_seconds", DEFAULT_CLEANUP_GRACE_SECONDS)
     try:
         grace = int(raw_grace)
     except (TypeError, ValueError) as exc:
@@ -359,17 +342,13 @@ def repository_ref_lifecycle_for_transition(
         }
 
     if state == "completed":
-        raw_grace = (detail or {}).get(
-            "cleanup_grace_seconds", DEFAULT_CLEANUP_GRACE_SECONDS
-        )
+        raw_grace = (detail or {}).get("cleanup_grace_seconds", DEFAULT_CLEANUP_GRACE_SECONDS)
         try:
             grace = int(raw_grace)
         except (TypeError, ValueError) as exc:
             raise ValidationError("cleanup_grace_seconds must be an integer") from exc
         if grace < 0 or grace > 365 * 24 * 60 * 60:
-            raise ValidationError(
-                "cleanup_grace_seconds must be between 0 and 31536000"
-            )
+            raise ValidationError("cleanup_grace_seconds must be between 0 and 31536000")
         return {
             "schema": REPOSITORY_REF_LIFECYCLE_SCHEMA,
             "task_state": state,
@@ -571,9 +550,7 @@ def _validate_base_ref(
 ) -> str:
     prefix = "%s/" % remote
     if not base_ref.startswith(prefix):
-        raise RepositoryHygieneError(
-            "canonical base ref must belong to remote %s" % remote
-        )
+        raise RepositoryHygieneError("canonical base ref must belong to remote %s" % remote)
     branch = base_ref[len(prefix) :]
     if not branch or branch.startswith("-"):
         raise RepositoryHygieneError("canonical base branch is invalid")
@@ -741,9 +718,7 @@ def retire_protected_remote_ref_exact(
         validate_git_ref(ref)
     except ValueError as exc:
         raise RepositoryHygieneError("invalid protected work-package ref") from exc
-    if not ref.startswith(
-        ("refs/mac/attempts/", "refs/mac/integration/", "refs/mac/candidates/")
-    ):
+    if not ref.startswith(("refs/mac/attempts/", "refs/mac/integration/", "refs/mac/candidates/")):
         raise RepositoryHygieneError("ref is outside protected work-package namespaces")
     if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", expected_sha):
         raise RepositoryHygieneError("invalid expected protected-ref SHA")
@@ -767,8 +742,7 @@ def retire_protected_remote_ref_exact(
         if not values:
             return None
         if len(values) != 1 or not all(
-            re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", value)
-            for value in values
+            re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", value) for value in values
         ):
             raise RepositoryHygieneError("protected remote ref resolved ambiguously")
         return next(iter(values))
@@ -777,9 +751,7 @@ def retire_protected_remote_ref_exact(
     if current is None:
         return "missing"
     if current != expected_sha:
-        raise RepositoryHygieneError(
-            "protected remote ref changed identity; refusing cleanup"
-        )
+        raise RepositoryHygieneError("protected remote ref changed identity; refusing cleanup")
     if not execute:
         return "eligible"
     pushed = runner(
@@ -882,7 +854,11 @@ def audit_repository_refs_result(
     repo = Path(repo).expanduser().resolve()
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     clock = monotonic or time.monotonic
-    deadline = None if audit_deadline_seconds is None else clock() + max(0.0, float(audit_deadline_seconds))
+    deadline = (
+        None
+        if audit_deadline_seconds is None
+        else clock() + max(0.0, float(audit_deadline_seconds))
+    )
     loaded: Dict[str, Any] = {}
     audits: List[RepositoryRefAudit] = []
     pull_request_check_complete = open_pull_requests is not None
@@ -894,9 +870,7 @@ def audit_repository_refs_result(
         loaded,
         deadline=deadline,
         per_task_timeout=(
-            None
-            if per_task_timeout_seconds is None
-            else max(0.0, float(per_task_timeout_seconds))
+            None if per_task_timeout_seconds is None else max(0.0, float(per_task_timeout_seconds))
         ),
         concurrency=lookup_concurrency,
         monotonic=clock,
@@ -1411,9 +1385,7 @@ def walk_replacement_chain(
                 if isinstance(metadata.get("repository_ref_lifecycle"), dict)
                 else {}
             )
-            next_id: Optional[str] = str(
-                lifecycle.get("replacement_task_id") or ""
-            ).strip() or None
+            next_id: Optional[str] = str(lifecycle.get("replacement_task_id") or "").strip() or None
             if next_id and _TASK_ID_RE.fullmatch(next_id):
                 current_id = next_id
                 continue
@@ -1483,9 +1455,7 @@ def validate_replacement_target(
         return
 
     if not replacement_task_id or not _TASK_ID_RE.fullmatch(str(replacement_task_id)):
-        raise ValidationError(
-            "replacement_task_id must be a task_<32 hex> identifier"
-        )
+        raise ValidationError("replacement_task_id must be a task_<32 hex> identifier")
 
     try:
         raw = get_task_fn(replacement_task_id)
@@ -1505,7 +1475,8 @@ def validate_replacement_target(
     if state in {"cancelled", "failed"}:
         raise ValidationError(
             "replacement_task_id %s is already terminal (state=%s); "
-            "use archival_override=True only when this is intentional" % (replacement_task_id, state)
+            "use archival_override=True only when this is intentional"
+            % (replacement_task_id, state)
         )
 
     if no_dispatch:

@@ -106,13 +106,9 @@ def test_an_admin_can_refile_an_existing_task():
     recorded filers, and without this none of them can ever run on a private
     agent -- the gate would refuse work that is unambiguously its owner's."""
     _cp, client, _alice, bob = _fixture(principal_human="alice", admin=True)
-    task_id = client.post(
-        "/tasks", json={"title": "historic", "project": "mac"}
-    ).json()["id"]
+    task_id = client.post("/tasks", json={"title": "historic", "project": "mac"}).json()["id"]
 
-    response = client.put(
-        "/tasks/%s" % task_id, json={"created_by_human": bob.id}
-    )
+    response = client.put("/tasks/%s" % task_id, json={"created_by_human": bob.id})
 
     assert response.status_code in (200, 201), response.text
     assert response.json()["created_by_human"] == bob.id
@@ -121,9 +117,7 @@ def test_an_admin_can_refile_an_existing_task():
 def test_a_non_admin_cannot_refile_a_task():
     _cp, client, _alice, bob = _fixture(principal_human="alice")
     cp2, admin_client, _a, _b = _fixture(principal_human="alice", admin=True)
-    task_id = admin_client.post(
-        "/tasks", json={"title": "historic", "project": "mac"}
-    ).json()["id"]
+    task_id = admin_client.post("/tasks", json={"title": "historic", "project": "mac"}).json()["id"]
 
     response = client.put("/tasks/%s" % task_id, json={"created_by_human": bob.id})
 
@@ -153,9 +147,7 @@ def _agent_fixture():
     token = "agent-token"
     app = create_app(
         control_plane=cp,
-        auth_tokens={
-            token: TokenPrincipal(scopes=frozenset({"write"}), agent_id=agent.id)
-        },
+        auth_tokens={token: TokenPrincipal(scopes=frozenset({"write"}), agent_id=agent.id)},
     )
     client = TestClient(app)
     client.headers.update({"Authorization": "Bearer %s" % token})
@@ -224,9 +216,7 @@ def test_a_principal_from_a_reloaded_module_is_still_understood():
 
     import mac.api as api_module
 
-    stale = api_module.TokenPrincipal(
-        scopes=frozenset({"admin"}), human_id="human_abc"
-    )
+    stale = api_module.TokenPrincipal(scopes=frozenset({"admin"}), human_id="human_abc")
     api_module.__dict__.pop("app", None)
     importlib.reload(api_module)
 

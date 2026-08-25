@@ -37,8 +37,7 @@ def test_no_new_home_literal_hardcodes():
     offenders = _offenders()
     new = sorted(offenders - _BASELINE)
     assert not new, (
-        "New hard-coded .mac/.hermes home literal(s) — resolve via mac.mac_paths "
-        "instead: %s" % new
+        "New hard-coded .mac/.hermes home literal(s) — resolve via mac.mac_paths instead: %s" % new
     )
 
 

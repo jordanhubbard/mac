@@ -72,9 +72,7 @@ Transport = Callable[[str, str, Optional[Dict[str, Any]]], Dict[str, Any]]
 def urllib_transport(timeout: float = 5.0) -> Transport:
     """Return the default stdlib-backed :data:`Transport`."""
 
-    def _call(
-        method: str, url: str, body: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    def _call(method: str, url: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(url, data=data, method=method)
         if data is not None:
@@ -153,9 +151,9 @@ def _scan_payloads(
         if offset is not None:
             body["offset"] = offset
         result = (
-            transport(
-                "POST", "%s/collections/%s/points/scroll" % (base, collection), body
-            ).get("result")
+            transport("POST", "%s/collections/%s/points/scroll" % (base, collection), body).get(
+                "result"
+            )
             or {}
         )
         points = result.get("points") or []
@@ -209,9 +207,7 @@ def probe_collection(
     entry: Dict[str, Any] = {"tier": tier}
 
     try:
-        info = call("GET", "%s/collections/%s" % (base, collection), None).get(
-            "result"
-        ) or {}
+        info = call("GET", "%s/collections/%s" % (base, collection), None).get("result") or {}
     except Exception as exc:  # noqa: BLE001 - best-effort probe
         entry["error"] = str(exc)
         return entry
@@ -230,9 +226,7 @@ def probe_collection(
         return entry
 
     try:
-        scan = _scan_payloads(
-            call, base, collection, scan_limit=_scan_limit(scan_limit)
-        )
+        scan = _scan_payloads(call, base, collection, scan_limit=_scan_limit(scan_limit))
     except Exception as exc:  # noqa: BLE001 - best-effort probe
         entry["scan_error"] = str(exc)
         entry["newest_embedded_at"] = None
@@ -301,11 +295,7 @@ def evaluate_qdrant_alerts(
     """
 
     alerts: List[Dict[str, Any]] = []
-    written = [
-        name
-        for name, entry in collections.items()
-        if (entry.get("points_count") or 0) > 0
-    ]
+    written = [name for name, entry in collections.items() if (entry.get("points_count") or 0) > 0]
 
     for name in sorted(collections):
         entry = collections[name]

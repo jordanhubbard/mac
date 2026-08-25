@@ -55,46 +55,58 @@ def test_evidence_validators_are_registry_backed_by_type():
         "review_verdict",
         "test",
     ]
-    assert validate_evidence_type(
-        "repo_change",
-        _repo_manifest(),
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            _repo_manifest(),
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
-    assert validate_evidence_type(
-        "operator_result",
-        {
-            "schema": "mac.verification.v1",
-            "status": "complete",
-            "evidence_type": "operator_result",
-            "summary": "Plan produced",
-            "result": "Story graph produced.",
-        },
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "operator_result",
+            {
+                "schema": "mac.verification.v1",
+                "status": "complete",
+                "evidence_type": "operator_result",
+                "summary": "Plan produced",
+                "result": "Story graph produced.",
+            },
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 def test_investigation_reuses_substantive_operator_result_gate():
-    assert validate_evidence_type(
-        "investigation",
-        {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "investigation",
-            "summary": "Verified the historical failure no longer reproduces.",
-            "findings": [{"status": "not_actionable"}],
-        },
-        passed_check_count=_passed_check_count,
-    ) == []
-    assert "requires summary" in validate_evidence_type(
-        "investigation",
-        {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "investigation",
-        },
-        passed_check_count=_passed_check_count,
-    )[0]
+    assert (
+        validate_evidence_type(
+            "investigation",
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "investigation",
+                "summary": "Verified the historical failure no longer reproduces.",
+                "findings": [{"status": "not_actionable"}],
+            },
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
+    assert (
+        "requires summary"
+        in validate_evidence_type(
+            "investigation",
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "investigation",
+            },
+            passed_check_count=_passed_check_count,
+        )[0]
+    )
 
 
 def test_plan_decomposed_requires_routable_children_and_rationale():
@@ -113,12 +125,15 @@ def test_plan_decomposed_requires_routable_children_and_rationale():
         "ordering_rationale": "Inspect before modifying.",
         "coverage_claim": "The children cover diagnosis and implementation.",
     }
-    assert validate_evidence_type(
-        "plan_decomposed",
-        manifest,
-        passed_check_count=_passed_check_count,
-        repo_coupled=True,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "plan_decomposed",
+            manifest,
+            passed_check_count=_passed_check_count,
+            repo_coupled=True,
+        )
+        == []
+    )
     problems = validate_evidence_type(
         "plan_decomposed",
         {
@@ -151,11 +166,14 @@ def test_repo_change_requires_codegraph_for_source_changes():
         }
     )
     docs_only.pop("codegraph")
-    assert validate_evidence_type(
-        "repo_change",
-        docs_only,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            docs_only,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 def test_repo_change_rejects_faked_codegraph_pass_without_command_records():
@@ -204,7 +222,10 @@ def test_operator_result_rejected_for_repo_coupled_task():
         "summary": "Produced the rollout plan and identified the three blocking dependencies.",
     }
     # Not repo-coupled (default): a substantive planning result is accepted.
-    assert validate_evidence_type("operator_result", manifest, passed_check_count=_passed_check_count) == []
+    assert (
+        validate_evidence_type("operator_result", manifest, passed_check_count=_passed_check_count)
+        == []
+    )
     # Repo-coupled: rejected, with guidance to use a pushed repo anchor.
     problems = validate_evidence_type(
         "operator_result", manifest, passed_check_count=_passed_check_count, repo_coupled=True
@@ -225,8 +246,9 @@ def test_operator_result_rejects_degenerate_and_placeholder_text():
         }
 
     # The literal jam payload.
-    bad = validate_evidence_type("operator_result", _op(summary="hello hello hello"),
-                                 passed_check_count=_passed_check_count)
+    bad = validate_evidence_type(
+        "operator_result", _op(summary="hello hello hello"), passed_check_count=_passed_check_count
+    )
     assert bad and "not substantive" in bad[0]
     # The fallback writer's own placeholder.
     bad2 = validate_evidence_type(
@@ -250,7 +272,12 @@ def test_operator_result_rejects_degenerate_and_placeholder_text():
         "summary": "ok",
         "findings": [{"id": 1, "note": "x"}],
     }
-    assert validate_evidence_type("operator_result", structured, passed_check_count=_passed_check_count) == []
+    assert (
+        validate_evidence_type(
+            "operator_result", structured, passed_check_count=_passed_check_count
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -298,9 +325,7 @@ def test_operator_result_rejects_empty_or_malformed_nested_content(nested):
         passed_check_count=_passed_check_count,
     )
 
-    assert problems == [
-        "operator_result evidence requires summary, result, findings, or artifacts"
-    ]
+    assert problems == ["operator_result evidence requires summary, result, findings, or artifacts"]
 
 
 def test_operator_result_live_host_requires_check_and_reviewable_anchor():
@@ -434,10 +459,15 @@ def test_repo_change_requires_tests_only_when_contract_demands():
         "repo_change", base, passed_check_count=_passed_check_count, require_tests=True
     )
     assert any("tests is null/missing" in p for p in problems)
-    with_tests = _repo_manifest(tests=[{"command": "scripts/run-contract-tests.sh", "returncode": 0}])
-    assert validate_evidence_type(
-        "repo_change", with_tests, passed_check_count=_passed_check_count, require_tests=True
-    ) == []
+    with_tests = _repo_manifest(
+        tests=[{"command": "scripts/run-contract-tests.sh", "returncode": 0}]
+    )
+    assert (
+        validate_evidence_type(
+            "repo_change", with_tests, passed_check_count=_passed_check_count, require_tests=True
+        )
+        == []
+    )
 
 
 def test_repo_change_validator_reuses_repo_anchor_and_check_gates():
@@ -462,11 +492,14 @@ def test_non_code_validators_keep_type_specific_requirements():
         evidence_type="deployment",
         targets=["rocky"],
     )
-    assert validate_evidence_type(
-        "deployment",
-        deployment,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "deployment",
+            deployment,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
     artifact = _repo_manifest(evidence_type="artifact")
     problems = validate_evidence_type(
@@ -481,11 +514,14 @@ def test_non_code_validators_keep_type_specific_requirements():
         repo={**_repo_manifest()["repo"], "files_changed": []},
         reason="already implemented",
     )
-    assert validate_evidence_type(
-        "no_change",
-        no_change,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "no_change",
+            no_change,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
     local_no_change = _repo_manifest(
         evidence_type="no_change",
@@ -497,11 +533,14 @@ def test_non_code_validators_keep_type_specific_requirements():
         },
         reason="The requested behavior is already present at the inspected commit.",
     )
-    assert validate_evidence_type(
-        "no_change",
-        local_no_change,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "no_change",
+            local_no_change,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 def test_review_verdict_validator_requires_verdict_anchor_and_digest():
@@ -512,11 +551,14 @@ def test_review_verdict_validator_requires_verdict_anchor_and_digest():
         worktree_digest="sha256:" + "a" * 64,
     )
 
-    assert validate_evidence_type(
-        "review_verdict",
-        manifest,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "review_verdict",
+            manifest,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
     manifest.pop("reviewed_evidence_id")
     manifest["worktree_digest"] = "not-a-digest"
@@ -540,11 +582,14 @@ def test_review_verdict_validator_allows_repo_less_operator_result_verdict():
         "checks": [{"name": "reviewer independent verification", "returncode": 0}],
     }
 
-    assert validate_evidence_type(
-        "review_verdict",
-        manifest,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "review_verdict",
+            manifest,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +601,7 @@ def test_review_verdict_validator_allows_repo_less_operator_result_verdict():
 def _patch_remote_ref_check(monkeypatch, result):
     """Replace the real git ls-remote call with a stub returning ``result``."""
     import mac.evidence_validators as ev
+
     monkeypatch.setattr(ev, "_verify_remote_ref_resolves", lambda url, ref: result)
 
 
@@ -568,11 +614,14 @@ def test_remote_ref_resolution_disabled_when_env_off(monkeypatch):
     manifest = _repo_manifest()
     manifest["repo"]["remote_url"] = "https://example.invalid/repo.git"
     manifest["repo"]["remote_ref"] = "refs/heads/main"
-    assert validate_evidence_type(
-        "repo_change",
-        manifest,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            manifest,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 def test_remote_ref_resolves_clean_manifest(monkeypatch):
@@ -583,11 +632,14 @@ def test_remote_ref_resolves_clean_manifest(monkeypatch):
     manifest = _repo_manifest()
     manifest["repo"]["remote_url"] = "https://example.com/repo.git"
     manifest["repo"]["remote_ref"] = "refs/heads/feature/x"
-    assert validate_evidence_type(
-        "repo_change",
-        manifest,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            manifest,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 def test_remote_ref_resolution_rejects_phantom_push(monkeypatch):
@@ -623,11 +675,14 @@ def test_remote_ref_resolution_best_effort_on_network_failure(monkeypatch):
     manifest["repo"]["remote_ref"] = "refs/heads/main"
     # Other checks should still run normally; an empty problems list
     # means the network-failure best-effort path didn't reject.
-    assert validate_evidence_type(
-        "repo_change",
-        manifest,
-        passed_check_count=_passed_check_count,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            manifest,
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
 
 
 def test_remote_ref_resolution_uses_environment_backed_auth(monkeypatch):
@@ -796,9 +851,7 @@ def _adr_task_style_manifest():
             "failed": 0,
             "status": "pass",
         },
-        "checks": [
-            {"name": "contract_tests", "returncode": 0, "status": "pass"}
-        ],
+        "checks": [{"name": "contract_tests", "returncode": 0, "status": "pass"}],
     }
 
 
@@ -849,9 +902,7 @@ def test_dag_schema_task_evidence_with_dict_tests_passes_require_tests():
             "failed": 0,
             "status": "pass",
         },
-        "checks": [
-            {"name": "contract_tests", "returncode": 0, "status": "pass"}
-        ],
+        "checks": [{"name": "contract_tests", "returncode": 0, "status": "pass"}],
     }
     problems = validate_evidence_type(
         "repo_change",
@@ -866,9 +917,10 @@ def test_require_tests_still_fails_when_tests_absent():
     """Normalization must not accidentally accept a truly missing tests field."""
     manifest = _repo_manifest()  # no 'tests' key — only 'checks'
     # Without require_tests: valid (checks alone suffice).
-    assert validate_evidence_type(
-        "repo_change", manifest, passed_check_count=_passed_check_count
-    ) == []
+    assert (
+        validate_evidence_type("repo_change", manifest, passed_check_count=_passed_check_count)
+        == []
+    )
     # With require_tests: must still report tests null/missing.
     problems = validate_evidence_type(
         "repo_change", manifest, passed_check_count=_passed_check_count, require_tests=True
@@ -890,6 +942,9 @@ def test_tests_list_with_one_item_passes_require_tests():
     manifest = _repo_manifest(
         tests=[{"command": "scripts/run-contract-tests.sh", "returncode": 0, "status": "pass"}]
     )
-    assert validate_evidence_type(
-        "repo_change", manifest, passed_check_count=_passed_check_count, require_tests=True
-    ) == []
+    assert (
+        validate_evidence_type(
+            "repo_change", manifest, passed_check_count=_passed_check_count, require_tests=True
+        )
+        == []
+    )

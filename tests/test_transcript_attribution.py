@@ -103,8 +103,7 @@ def test_every_invocation_path_attributes(monkeypatch):
 
     assert source.count("_opts_with_route") == 3, (
         "expected all three runner call sites (sandboxed, failover, "
-        "unsandboxed) to attribute; found %d"
-        % source.count("_opts_with_route")
+        "unsandboxed) to attribute; found %d" % source.count("_opts_with_route")
     )
     assert "_opts_with_route(opts, fallback_route)" in source, (
         "the failover path must attribute to the FALLBACK route. Using the "

@@ -37,8 +37,9 @@ def _setup_task_and_agent(tmp_path):
     assert rc == 0
     rc, machine = _run(tmp_path, "admin", "machine", "register", "mem-host")
     assert rc == 0
-    rc, agent = _run(tmp_path, "agent", "register", machine["id"], "mem-worker",
-                     "--agent-id", "agent_mem")
+    rc, agent = _run(
+        tmp_path, "agent", "register", machine["id"], "mem-worker", "--agent-id", "agent_mem"
+    )
     assert rc == 0
     return task["id"], agent["id"]
 
@@ -53,13 +54,21 @@ def test_memory_add_and_search(tmp_path):
 
     rc, record = _run(
         tmp_path,
-        "admin", "memory", "add",
-        "--task-id", task_id,
-        "--subject-type", "agent",
-        "--subject-id", agent_id,
-        "--record-type", "observation",
-        "--content", "deployed to prod successfully",
-        "--created-by", "test",
+        "admin",
+        "memory",
+        "add",
+        "--task-id",
+        task_id,
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        agent_id,
+        "--record-type",
+        "observation",
+        "--content",
+        "deployed to prod successfully",
+        "--created-by",
+        "test",
     )
     assert rc == 0
     assert record["content"] == "deployed to prod successfully"
@@ -67,10 +76,15 @@ def test_memory_add_and_search(tmp_path):
 
     rc, results = _run(
         tmp_path,
-        "admin", "memory", "search",
-        "--task-id", task_id,
-        "--subject-type", "agent",
-        "--subject-id", agent_id,
+        "admin",
+        "memory",
+        "search",
+        "--task-id",
+        task_id,
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        agent_id,
     )
     assert rc == 0
     assert isinstance(results, list)
@@ -79,20 +93,36 @@ def test_memory_add_and_search(tmp_path):
 
 def test_memory_search_by_record_type_prefix(tmp_path):
     task_id, agent_id = _setup_task_and_agent(tmp_path)
-    _run(tmp_path, "admin", "memory", "add",
-         "--task-id", task_id,
-         "--subject-type", "agent",
-         "--subject-id", agent_id,
-         "--record-type", "obs:deploy",
-         "--content", "prefix test",
-         "--created-by", "test")
+    _run(
+        tmp_path,
+        "admin",
+        "memory",
+        "add",
+        "--task-id",
+        task_id,
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        agent_id,
+        "--record-type",
+        "obs:deploy",
+        "--content",
+        "prefix test",
+        "--created-by",
+        "test",
+    )
 
     rc, results = _run(
         tmp_path,
-        "admin", "memory", "search",
-        "--subject-type", "agent",
-        "--subject-id", agent_id,
-        "--record-type-prefix", "obs:",
+        "admin",
+        "memory",
+        "search",
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        agent_id,
+        "--record-type-prefix",
+        "obs:",
     )
     assert rc == 0
     assert isinstance(results, list)
@@ -102,18 +132,37 @@ def test_memory_search_by_record_type_prefix(tmp_path):
 def test_memory_add_multiple_and_search_order(tmp_path):
     task_id, agent_id = _setup_task_and_agent(tmp_path)
     for i in range(3):
-        _run(tmp_path, "admin", "memory", "add",
-             "--task-id", task_id,
-             "--subject-type", "agent",
-             "--subject-id", agent_id,
-             "--record-type", "note",
-             "--content", f"note {i}",
-             "--created-by", "test")
+        _run(
+            tmp_path,
+            "admin",
+            "memory",
+            "add",
+            "--task-id",
+            task_id,
+            "--subject-type",
+            "agent",
+            "--subject-id",
+            agent_id,
+            "--record-type",
+            "note",
+            "--content",
+            f"note {i}",
+            "--created-by",
+            "test",
+        )
 
-    rc, results = _run(tmp_path, "admin", "memory", "search",
-                       "--subject-type", "agent",
-                       "--subject-id", agent_id,
-                       "--limit", "10")
+    rc, results = _run(
+        tmp_path,
+        "admin",
+        "memory",
+        "search",
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        agent_id,
+        "--limit",
+        "10",
+    )
     assert rc == 0
     assert len(results) >= 3
 
@@ -127,13 +176,24 @@ def test_memory_decay_dry_run(tmp_path):
     """decay without --apply is a dry-run — returns candidate count."""
     task_id, agent_id = _setup_task_and_agent(tmp_path)
     # Seed a memory record to ensure the table exists
-    _run(tmp_path, "admin", "memory", "add",
-         "--task-id", task_id,
-         "--subject-type", "agent",
-         "--subject-id", agent_id,
-         "--record-type", "observation",
-         "--content", "stale note",
-         "--created-by", "test")
+    _run(
+        tmp_path,
+        "admin",
+        "memory",
+        "add",
+        "--task-id",
+        task_id,
+        "--subject-type",
+        "agent",
+        "--subject-id",
+        agent_id,
+        "--record-type",
+        "observation",
+        "--content",
+        "stale note",
+        "--created-by",
+        "test",
+    )
 
     rc, result = _run(tmp_path, "admin", "memory", "decay", "--ttl-days", "1")
     assert rc == 0
@@ -146,9 +206,11 @@ def test_memory_health(tmp_path):
     assert rc == 0
     assert result is not None
 
+
 def test_memory_summarize_actions_empty(tmp_path):
     _, agent_id = _setup_task_and_agent(tmp_path)
-    rc, result = _run(tmp_path, "admin", "memory", "summarize-actions",
-                      "--agent", agent_id, "--dry-run")
+    rc, result = _run(
+        tmp_path, "admin", "memory", "summarize-actions", "--agent", agent_id, "--dry-run"
+    )
     assert rc == 0
     assert result is not None

@@ -20,7 +20,8 @@ from mac.api import _required_scope, create_app
 from mac.services import ControlPlane
 
 SECRET_HOST = "hub-internal.example.invalid"
-POLICY_TEXT = """version: 1
+POLICY_TEXT = (
+    """version: 1
 
 network_policies:
   mac_hub:
@@ -28,7 +29,9 @@ network_policies:
     endpoints:
       - host: %s
         port: 8789
-""" % SECRET_HOST
+"""
+    % SECRET_HOST
+)
 
 #: Everything that mutates the guardrail resource.
 WRITES = [
@@ -120,19 +123,21 @@ def test_an_operator_can_still_do_the_full_lifecycle(fleet):
     assert created.status_code == 200
     new_id = created.json()["id"]
 
-    assert client.put(
-        "/openshell/policies/%s" % new_id,
-        headers=_headers("admin"),
-        json={"policy_text": POLICY_TEXT.replace("8789", "9999")},
-    ).status_code == 200
+    assert (
+        client.put(
+            "/openshell/policies/%s" % new_id,
+            headers=_headers("admin"),
+            json={"policy_text": POLICY_TEXT.replace("8789", "9999")},
+        ).status_code
+        == 200
+    )
     # ...and read back exactly what was written.
-    fetched = client.get(
-        "/openshell/policies/%s" % new_id, headers=_headers("admin")
-    ).json()
+    fetched = client.get("/openshell/policies/%s" % new_id, headers=_headers("admin")).json()
     assert "9999" in fetched["policy_text"]
-    assert client.delete(
-        "/openshell/policies/%s" % new_id, headers=_headers("admin")
-    ).status_code == 200
+    assert (
+        client.delete("/openshell/policies/%s" % new_id, headers=_headers("admin")).status_code
+        == 200
+    )
 
 
 def test_write_and_read_back_is_coherent_for_the_one_scope_that_has_it(fleet):

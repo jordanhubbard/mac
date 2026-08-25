@@ -20,9 +20,7 @@ RuntimeError: observer proof at 0xdef456 pid=9999
 
 def _agent(cp: ControlPlane, name: str):
     machine = cp.register_machine("%s-host" % name)
-    return cp.register_agent(
-        machine.id, name, capabilities=["python", "ops", "testing"]
-    )
+    return cp.register_agent(machine.id, name, capabilities=["python", "ops", "testing"])
 
 
 def _payload(event_id: str, stack: str = STACK_A, revision: str = "abc123"):

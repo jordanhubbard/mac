@@ -56,9 +56,7 @@ def _isolated_provisioner(calls: list | None = None):
 
 def _cp(provisioner=None) -> ControlPlane:
     cp = ControlPlane.in_memory()
-    cp.openclaw_direct_execution._provision_worktree = (
-        provisioner or _isolated_provisioner()
-    )
+    cp.openclaw_direct_execution._provision_worktree = provisioner or _isolated_provisioner()
     return cp
 
 
@@ -71,7 +69,9 @@ def _direct_directive() -> HumanDirective:
     return HumanDirective(human_id="human_1", authenticated=True, text="fix the bug")
 
 
-def _slack(thread_ts: str = "1700000000.0001", message_ts: str = "1700000000.0002") -> SlackProvenance:
+def _slack(
+    thread_ts: str = "1700000000.0001", message_ts: str = "1700000000.0002"
+) -> SlackProvenance:
     return SlackProvenance(
         workspace_id="W1",
         channel_id="C1",
@@ -96,6 +96,7 @@ def _begin(cp: ControlPlane, instance, **overrides):
 
 
 # --- Direct human execution without manual task filing -------------------
+
 
 def test_direct_request_begins_immediately_without_manual_filing():
     cp = _cp()
@@ -126,7 +127,11 @@ def test_direct_request_cannot_escalate_to_publish_capability():
     execution = _begin(
         cp,
         instance,
-        requested_capabilities=[Capability.WRITE_WORKTREE, Capability.PUBLISH_BRANCH, Capability.MERGE],
+        requested_capabilities=[
+            Capability.WRITE_WORKTREE,
+            Capability.PUBLISH_BRANCH,
+            Capability.MERGE,
+        ],
     )
     # A direct human directive can only grant inspection + write_worktree.
     assert Capability.PUBLISH_BRANCH not in execution.granted_capabilities
@@ -148,6 +153,7 @@ def test_unauthenticated_request_does_not_execute_directly():
 
 
 # --- Automatic task-keyed bookkeeping ------------------------------------
+
 
 def test_direct_execution_auto_materializes_bookkeeping_task():
     cp = _cp()
@@ -180,6 +186,7 @@ def test_bookkeeping_task_binds_full_provenance():
 
 # --- Conversation idempotency --------------------------------------------
 
+
 def test_thread_followup_attaches_to_same_execution():
     calls: list = []
     cp = _cp(_isolated_provisioner(calls))
@@ -207,6 +214,7 @@ def test_different_thread_creates_distinct_execution():
 
 
 # --- Isolated writable worktree at attested base -------------------------
+
 
 def test_worktree_bound_to_attested_base_sha():
     cp = _cp()
@@ -267,6 +275,7 @@ def test_missing_repository_identity_fails_closed():
 
 # --- Candidate review keyed to exact candidate SHA -----------------------
 
+
 def _pass_all_gates(svc: OpenClawDirectExecutionService, execution_id: str) -> None:
     svc.record_gate_result(execution_id, "tests", True)
     svc.record_gate_result(execution_id, "evidence", True)
@@ -307,9 +316,7 @@ def test_review_of_wrong_sha_does_not_count_as_passed():
     svc = cp.openclaw_direct_execution
     instance = _persona(cp)
     execution = _begin(cp, instance)
-    svc.record_candidate(
-        execution.id, candidate_ref="refs/x", candidate_sha=CANDIDATE_SHA
-    )
+    svc.record_candidate(execution.id, candidate_ref="refs/x", candidate_sha=CANDIDATE_SHA)
     reviewed = svc.record_review(execution.id, reviewed_sha=OTHER_SHA, passed=True)
     # Passed review against a different tree is not a review of this candidate.
     assert reviewed.gate_results["review"] is False
@@ -345,6 +352,7 @@ def test_candidate_requires_valid_sha():
 
 # --- Deferred / handoff work files a visible task ------------------------
 
+
 @pytest.mark.parametrize(
     "flag,mode",
     [
@@ -379,6 +387,7 @@ def test_classify_request_prioritizes_explicit_handoff_over_direct():
 
 # --- Legacy Hermes-name containment --------------------------------------
 
+
 def test_legacy_hermes_instance_id_accepted_only_behind_adapter():
     cp = _cp()
     instance = _persona(cp)
@@ -412,6 +421,7 @@ def test_execution_dict_uses_first_class_openclaw_terminology():
 
 
 # --- HTTP surface --------------------------------------------------------
+
 
 def _client(cp: ControlPlane) -> TestClient:
     return TestClient(create_app(control_plane=cp))
@@ -498,6 +508,7 @@ def test_persistence_survives_reload_from_store():
 
 
 # --- Validation edges -----------------------------------------------------
+
 
 def test_missing_persona_instance_id_is_rejected():
     cp = _cp()

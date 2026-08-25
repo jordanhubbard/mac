@@ -20,9 +20,13 @@ def test_max_tokens_floor_rescues_large_chat_generations(monkeypatch):
     # single-turn file generations don't get capped (finish_reason=length).
     monkeypatch.delenv("MAC_ROUTER_MAX_TOKENS_FLOOR", raising=False)
     assert _ensure_max_tokens_floor({"model": "x"}, "/chat/completions")["max_tokens"] == 32000
-    assert _ensure_max_tokens_floor({"max_tokens": 4096}, "/chat/completions")["max_tokens"] == 32000
+    assert (
+        _ensure_max_tokens_floor({"max_tokens": 4096}, "/chat/completions")["max_tokens"] == 32000
+    )
     # an already-generous request is left alone
-    assert _ensure_max_tokens_floor({"max_tokens": 50000}, "/chat/completions")["max_tokens"] == 50000
+    assert (
+        _ensure_max_tokens_floor({"max_tokens": 50000}, "/chat/completions")["max_tokens"] == 50000
+    )
     # embeddings are never touched
     assert "max_tokens" not in _ensure_max_tokens_floor({"model": "e"}, "/embeddings")
     # configurable + disable
@@ -34,7 +38,10 @@ def test_max_tokens_floor_rescues_large_chat_generations(monkeypatch):
 
 def _router():
     return ProviderRouter(
-        [Provider("primary", "http://p/v1", priority=0), Provider("secondary", "http://s/v1", priority=1)],
+        [
+            Provider("primary", "http://p/v1", priority=0),
+            Provider("secondary", "http://s/v1", priority=1),
+        ],
         failure_threshold=1,
         cooldown_seconds=1000.0,
     )
@@ -103,12 +110,14 @@ def test_records_secret_free_llm_route_observation_with_context():
 
 def test_fails_over_to_secondary_on_5xx():
     r = _router()
-    fwd, calls = _fake_forward({"primary": (503, {"error": "down"}), "secondary": (200, {"ok": True})})
+    fwd, calls = _fake_forward(
+        {"primary": (503, {"error": "down"}), "secondary": (200, {"ok": True})}
+    )
     proxy = ProviderProxy(r, fwd)
     status, body = proxy.complete("/chat/completions", {"model": "*"})
     assert status == 200 and body == {"ok": True}
-    assert [c[0] for c in calls] == ["primary", "secondary"]   # tried primary, failed over
-    assert r.status()["primary"]["state"] == "open"            # breaker tripped on primary
+    assert [c[0] for c in calls] == ["primary", "secondary"]  # tried primary, failed over
+    assert r.status()["primary"]["state"] == "open"  # breaker tripped on primary
 
 
 def test_429_is_treated_as_failure_and_fails_over():
@@ -133,8 +142,12 @@ def test_transient_401_is_retried_once_on_same_provider():
     the SAME provider once; if the retry succeeds, the client never sees the
     blip."""
     r = _router()
-    seq = iter([(401, {"error": {"message": "Can't reach database server", "code": "401"}}),
-                (200, {"ok": True})])
+    seq = iter(
+        [
+            (401, {"error": {"message": "Can't reach database server", "code": "401"}}),
+            (200, {"ok": True}),
+        ]
+    )
 
     def fwd(provider, path, payload, *, timeout=60.0):
         return next(seq)
@@ -167,8 +180,8 @@ def test_4xx_is_returned_not_failed_over():
     fwd, calls = _fake_forward({"primary": (400, {"error": "bad request"})})
     status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": "*"})
     assert status == 400 and body == {"error": "bad request"}
-    assert [c[0] for c in calls] == ["primary"]                # no failover
-    assert r.status()["primary"]["state"] == "closed"          # provider stays healthy
+    assert [c[0] for c in calls] == ["primary"]  # no failover
+    assert r.status()["primary"]["state"] == "closed"  # provider stays healthy
 
 
 def test_all_providers_failing_returns_503_failfast():
@@ -195,7 +208,11 @@ def test_strips_unsupported_reasoning_summary_param_before_forwarding():
     proxy = ProviderProxy(r, fwd)
     status, _ = proxy.complete(
         "/chat/completions",
-        {"model": "gpt-5.5", "messages": [{"role": "user", "content": "hi"}], "reasoningSummary": "auto"},
+        {
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoningSummary": "auto",
+        },
     )
     assert status == 200
     assert "reasoningSummary" not in seen  # stripped
@@ -365,7 +382,9 @@ def test_mount_router_endpoint_surface_is_reachable_and_content_correct(monkeypa
     }
 
     client = TestClient(app)
-    chat = client.post("/v1/chat/completions", json={"model": "*", "messages": [{"role": "user", "content": "hi"}]})
+    chat = client.post(
+        "/v1/chat/completions", json={"model": "*", "messages": [{"role": "user", "content": "hi"}]}
+    )
     assert chat.status_code == 200
     assert chat.json()["choices"][0]["message"]["content"] == "ready"
     assert calls[-1][1] == "/chat/completions"
@@ -495,7 +514,10 @@ def test_route_logging_is_configured_to_emit_info():
 
 
 def test_build_proxy_from_env_reads_providers():
-    env = {"MAC_ROUTER_PROVIDERS": "p=http://p/v1,0,key=P_KEY;s=http://s/v1,1", "MAC_ROUTER_BACKEND": "inproc"}
+    env = {
+        "MAC_ROUTER_PROVIDERS": "p=http://p/v1,0,key=P_KEY;s=http://s/v1,1",
+        "MAC_ROUTER_BACKEND": "inproc",
+    }
     proxy = build_proxy_from_env(env)
     assert proxy is not None
     assert build_proxy_from_env({}) is None  # no providers configured
@@ -530,7 +552,7 @@ def test_empty_model_resolves_and_concrete_model_passes_through():
     r = _router()
     fwd, seen = _capturing_forward(200, {"ok": True})
     proxy = ProviderProxy(r, fwd, default_model="meta/llama-3.3-70b-instruct")
-    proxy.complete("/chat/completions", {})                       # missing model -> default
+    proxy.complete("/chat/completions", {})  # missing model -> default
     proxy.complete("/chat/completions", {"model": "azure/openai/o4-mini"})  # concrete -> untouched
     assert seen[0]["model"] == "meta/llama-3.3-70b-instruct"
     assert seen[1]["model"] == "azure/openai/o4-mini"
@@ -540,7 +562,7 @@ def test_no_default_model_leaves_wildcard_untouched():
     r = _router()
     fwd, seen = _capturing_forward(200, {"ok": True})
     ProviderProxy(r, fwd).complete("/chat/completions", {"model": "*"})
-    assert seen[0]["model"] == "*"   # no default configured -> unchanged (back-compat)
+    assert seen[0]["model"] == "*"  # no default configured -> unchanged (back-compat)
 
 
 # -- streaming passthrough (th-merge-02b) ------------------------------------
@@ -559,15 +581,16 @@ def _fake_stream(responses):
 
 def test_stream_returns_iterator_on_2xx_and_records_success():
     r = _router()
-    chunks = iter([b"data: {\"x\":1}\n\n", b"data: [DONE]\n\n"])
+    chunks = iter([b'data: {"x":1}\n\n', b"data: [DONE]\n\n"])
     sfwd, calls = _fake_stream({"primary": (200, chunks)})
-    proxy = ProviderProxy(r, _fake_forward({})[0], stream_forward_fn=sfwd,
-                          default_model="meta/llama-3.3-70b-instruct")
+    proxy = ProviderProxy(
+        r, _fake_forward({})[0], stream_forward_fn=sfwd, default_model="meta/llama-3.3-70b-instruct"
+    )
     status, obj = proxy.stream_complete("/chat/completions", {"model": "*"})
     assert status == 200
-    assert b"".join(obj) == b"data: {\"x\":1}\n\ndata: [DONE]\n\n"
-    assert calls[0][1] == "meta/llama-3.3-70b-instruct"   # wildcard resolved
-    assert calls[0][2] is True                            # stream forced on
+    assert b"".join(obj) == b'data: {"x":1}\n\ndata: [DONE]\n\n'
+    assert calls[0][1] == "meta/llama-3.3-70b-instruct"  # wildcard resolved
+    assert calls[0][2] is True  # stream forced on
     assert r.status()["primary"]["state"] == "closed"
 
 
@@ -593,7 +616,7 @@ def test_stream_failfast_when_all_providers_down():
 def test_stream_without_transport_degrades_to_buffered_completion():
     r = _router()
     fwd, calls = _fake_forward({"primary": (200, {"ok": True})})
-    proxy = ProviderProxy(r, fwd)   # no stream_forward_fn
+    proxy = ProviderProxy(r, fwd)  # no stream_forward_fn
     status, body = proxy.stream_complete("/chat/completions", {"model": "*", "stream": True})
     assert status == 200 and body == {"ok": True}
     assert calls == [("primary", "/chat/completions")]
@@ -617,12 +640,12 @@ def test_resolve_provider_key_from_secret_store():
 
 def test_resolve_provider_key_secret_missing_resolver_or_value():
     p = Provider("nvidia", "http://u/v1", api_key_env="secret:absent")
-    assert resolve_provider_key(p, None) == ""              # no resolver wired
-    assert resolve_provider_key(p, {}.get) == ""            # resolver returns None
+    assert resolve_provider_key(p, None) == ""  # no resolver wired
+    assert resolve_provider_key(p, {}.get) == ""  # resolver returns None
     p2 = Provider("nvidia", "http://u/v1", api_key_env="")
-    assert resolve_provider_key(p2) == ""                   # no key spec
+    assert resolve_provider_key(p2) == ""  # no key spec
     p3 = Provider("local", "http://127.0.0.1:8000/v1", api_key_env="none")
-    assert resolve_provider_key(p3) == ""                   # explicit private no-auth
+    assert resolve_provider_key(p3) == ""  # explicit private no-auth
 
 
 def test_urllib_forwarder_uses_secret_resolver(monkeypatch):
@@ -650,7 +673,10 @@ def test_urllib_forwarder_uses_secret_resolver(monkeypatch):
     monkeypatch.setattr(router_app.urllib.request, "urlopen", fake_urlopen)
     p = Provider("nvidia", "http://u/v1", api_key_env="secret:nvidia-upstream")
     status, body = router_app.urllib_forwarder(
-        p, "/chat/completions", {"model": "x"}, secret_resolver={"nvidia-upstream": "escrowed-key"}.get
+        p,
+        "/chat/completions",
+        {"model": "x"},
+        secret_resolver={"nvidia-upstream": "escrowed-key"}.get,
     )
     assert status == 200 and body == {"ok": True}
     assert captured["auth"] == "Bearer escrowed-key"
@@ -691,7 +717,10 @@ def test_image_proxy_forwards_to_upstream_with_vault_key(monkeypatch):
         "MAC_ROUTER_IMAGE_KEY": "secret:nvidia-image",
     }
     # image proxy mounts even with NO chat providers configured
-    assert mount_router(app, env=env, secret_resolver={"nvidia-image": "escrowed-image-key"}.get) is True
+    assert (
+        mount_router(app, env=env, secret_resolver={"nvidia-image": "escrowed-image-key"}.get)
+        is True
+    )
 
     client = TestClient(app)
     r = client.post("/v1/genai/black-forest-labs/flux.1-dev", json={"prompt": "a cat"})
@@ -724,8 +753,11 @@ def test_audio_and_video_proxies_forward_to_their_upstreams(monkeypatch):
             return False
 
     monkeypatch.setattr(
-        router_app.urllib.request, "urlopen",
-        lambda req, timeout=60.0: captured.append((req.full_url, req.headers.get("Authorization"))) or _Resp(),
+        router_app.urllib.request,
+        "urlopen",
+        lambda req, timeout=60.0: (
+            captured.append((req.full_url, req.headers.get("Authorization"))) or _Resp()
+        ),
     )
 
     app = FastAPI()
@@ -763,9 +795,11 @@ def test_mount_streams_through_fastapi():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    sse = [b"data: {\"delta\":\"hi\"}\n\n", b"data: [DONE]\n\n"]
+    sse = [b'data: {"delta":"hi"}\n\n', b"data: [DONE]\n\n"]
     sfwd, _ = _fake_stream({"primary": (200, iter(sse))})
-    proxy = ProviderProxy(_router(), _fake_forward({"primary": (200, {})})[0], stream_forward_fn=sfwd)
+    proxy = ProviderProxy(
+        _router(), _fake_forward({"primary": (200, {})})[0], stream_forward_fn=sfwd
+    )
     app = FastAPI()
     assert mount_router(app, env={"MAC_ROUTER_BACKEND": "inproc"}, proxy=proxy) is True
     client = TestClient(app)
@@ -796,8 +830,8 @@ def test_wildcard_ladder_substitutes_on_model_unavailable():
     proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2", "m3"))
     status, body = proxy.complete("/chat/completions", {"model": "*"})
     assert status == 200 and body == {"ok": 1}
-    assert calls[:2] == ["m1", "m2"]                      # rank-0 404 -> substitute rank-1
-    assert r.status()["primary"]["state"] == "closed"     # 404 is not a provider failure
+    assert calls[:2] == ["m1", "m2"]  # rank-0 404 -> substitute rank-1
+    assert r.status()["primary"]["state"] == "closed"  # 404 is not a provider failure
 
 
 def test_wildcard_ladder_exhausted_returns_last_model_response():
@@ -805,7 +839,7 @@ def test_wildcard_ladder_exhausted_returns_last_model_response():
     fwd, calls = _model_forward({"m1": (404, {"e": 1}), "m2": (422, {"e": 2})})
     proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2"))
     status, body = proxy.complete("/chat/completions", {"model": "*"})
-    assert status == 422 and body == {"e": 2}             # last candidate returned as-is
+    assert status == 422 and body == {"e": 2}  # last candidate returned as-is
     assert calls == ["m1", "m2"]
 
 
@@ -814,7 +848,7 @@ def test_concrete_model_is_not_laddered():
     fwd, calls = _model_forward({"gpt-x": (404, {"e": 1})})
     proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2"))
     status, _ = proxy.complete("/chat/completions", {"model": "gpt-x"})
-    assert status == 404 and calls == ["gpt-x"]           # concrete request: ladder not consulted
+    assert status == 404 and calls == ["gpt-x"]  # concrete request: ladder not consulted
 
 
 def test_400_is_not_a_model_retry_code():
@@ -829,11 +863,11 @@ def test_400_is_not_a_model_retry_code():
 
 def test_wildcard_ladder_failfast_when_providers_down_does_not_walk_models():
     r = _router()  # failure_threshold=1
-    fwd, calls = _model_forward({}, default=(503, {"down": 1}))   # every model -> provider failure
+    fwd, calls = _model_forward({}, default=(503, {"down": 1}))  # every model -> provider failure
     proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2", "m3"))
     status, body = proxy.complete("/chat/completions", {"model": "*"})
     assert status == 503 and body["error"]["type"] == "all_providers_unavailable"
-    assert "m2" not in calls and "m3" not in calls        # dead providers -> don't walk the ladder
+    assert "m2" not in calls and "m3" not in calls  # dead providers -> don't walk the ladder
 
 
 def test_build_proxy_reads_wildcard_models():
@@ -864,6 +898,7 @@ def test_build_proxy_never_uses_gpt_41_mini_for_wildcard_default():
 # ---------------------------------------------------------------------------
 # mac_route_context_headers
 # ---------------------------------------------------------------------------
+
 
 def test_mac_route_context_headers_explicit_values():
     """Explicit arguments are echoed as lowercase header keys."""
@@ -934,12 +969,14 @@ def test_mac_route_context_headers_only_nonempty_keys_included():
 def test_mac_route_context_headers_is_exported():
     """mac_route_context_headers must appear in __all__."""
     from mac import router_app
+
     assert "mac_route_context_headers" in router_app.__all__
 
 
 # ---------------------------------------------------------------------------
 # Principal-mismatch hardening — _is_principal_mismatch_rejected() + 403 gate
 # ---------------------------------------------------------------------------
+
 
 def test_reject_mismatch_env_var_truthy_values():
     """All truthy env var spellings activate the mismatch gate."""
@@ -1076,10 +1113,17 @@ def test_llm_route_rows_carry_attribution_in_observation():
     """
     observed = []
     r = _router()
-    fwd, _ = _fake_forward({"primary": (200, {
-        "model": "test-model",
-        "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
-    })})
+    fwd, _ = _fake_forward(
+        {
+            "primary": (
+                200,
+                {
+                    "model": "test-model",
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+                },
+            )
+        }
+    )
     proxy = ProviderProxy(r, fwd, route_observer=observed.append)
 
     proxy.complete(
@@ -1097,7 +1141,7 @@ def test_llm_route_rows_carry_attribution_in_observation():
     ev = observed[0]
     # All attribution fields must survive unchanged.
     assert ev["agent_id"] == "agent_live_test", "agent_id missing from llm.route observation"
-    assert ev["task_id"] == "task_live_test",   "task_id missing from llm.route observation"
+    assert ev["task_id"] == "task_live_test", "task_id missing from llm.route observation"
     assert ev["lease_id"] == "lease_live_test", "lease_id missing from llm.route observation"
     assert ev["persona_instance_id"] == "persona_live_test", "persona_instance_id missing"
     # Usage must propagate for cost attribution.

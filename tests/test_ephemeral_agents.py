@@ -33,12 +33,8 @@ def _ephemeral(cp: ControlPlane, name: str, ttl: int = 60):
 
 
 def _age_last_seen(cp: ControlPlane, agent_id: str, seconds: int) -> None:
-    stale = (parse_time(utcnow()) - timedelta(seconds=seconds)).isoformat(
-        timespec="microseconds"
-    )
-    cp.store.execute(
-        "UPDATE agents SET last_seen_at = ? WHERE id = ?", (stale, agent_id)
-    )
+    stale = (parse_time(utcnow()) - timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+    cp.store.execute("UPDATE agents SET last_seen_at = ? WHERE id = ?", (stale, agent_id))
 
 
 def test_lapsed_ephemeral_is_tombstoned_with_streams_closed(cp: ControlPlane) -> None:
@@ -93,9 +89,7 @@ def test_deregister_leaves_a_final_message_that_outlives_the_agent(
     machine = cp.register_machine("host-gateway")
     gateway = cp.register_agent(machine.id, "gateway-agent")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
-    account = cp.configure_communication_account(
-        hive.id, "slack", config={"default": True}
-    )
+    account = cp.configure_communication_account(hive.id, "slack", config={"default": True})
     cp.acquire_gateway_identity_lease(account.id, gateway.id)
 
     result = cp.deregister_agent(
@@ -138,9 +132,7 @@ def test_fleet_snapshot_is_capability_aware(cp: ControlPlane) -> None:
             }
         },
     )
-    cpu_agent = cp.register_agent(
-        machine.id, "cpu-worker", capabilities=["python", "review"]
-    )
+    cpu_agent = cp.register_agent(machine.id, "cpu-worker", capabilities=["python", "review"])
 
     snapshot = cp.fleet_snapshot()
     members = {m["agent_id"]: m for m in snapshot["members"]}

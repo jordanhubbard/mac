@@ -77,9 +77,7 @@ def test_owner_only_authority_is_frozen_and_scoped_to_exact_cohort(tmp_path):
 @pytest.mark.parametrize("mode", [0o640, 0o604, 0o644])
 def test_authority_rejects_group_or_other_permissions(tmp_path, mode):
     source = write_authority(tmp_path / "authority.json", mode=mode)
-    result = run_helper(
-        "snapshot", source, tmp_path / "snapshot.json", "--source-commit", COMMIT
-    )
+    result = run_helper("snapshot", source, tmp_path / "snapshot.json", "--source-commit", COMMIT)
     assert result.returncode == 2
     assert "group or other permission" in result.stderr
 
@@ -88,9 +86,7 @@ def test_authority_rejects_symlink_and_oversize_input(tmp_path):
     target = write_authority(tmp_path / "target.json")
     link = tmp_path / "authority-link.json"
     link.symlink_to(target)
-    linked = run_helper(
-        "snapshot", link, tmp_path / "linked.json", "--source-commit", COMMIT
-    )
+    linked = run_helper("snapshot", link, tmp_path / "linked.json", "--source-commit", COMMIT)
     assert linked.returncode == 2
     assert not (tmp_path / "linked.json").exists()
 
@@ -137,9 +133,7 @@ def test_authority_rejects_ambiguous_or_non_exact_json(tmp_path, raw, message):
     source = tmp_path / "authority.json"
     source.write_text(raw, encoding="utf-8")
     source.chmod(0o600)
-    result = run_helper(
-        "snapshot", source, tmp_path / "snapshot.json", "--source-commit", COMMIT
-    )
+    result = run_helper("snapshot", source, tmp_path / "snapshot.json", "--source-commit", COMMIT)
     assert result.returncode == 2
     assert message in result.stderr
 
@@ -151,10 +145,7 @@ def test_authority_rejects_commit_hub_fleet_and_selected_agent_drift(tmp_path):
     assert wrong_commit.returncode == 2
     assert "does not match deploy commit" in wrong_commit.stderr
 
-    assert (
-        run_helper("snapshot", source, snapshot, "--source-commit", COMMIT).returncode
-        == 0
-    )
+    assert run_helper("snapshot", source, snapshot, "--source-commit", COMMIT).returncode == 0
     wrong_hub = run_helper(
         "validate-selected",
         snapshot,
@@ -215,16 +206,10 @@ def test_deploy_contract_has_explicit_adoption_and_exact_release_mode():
     )
 
     main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
-    typed = deploy.split("run_typed_cohort() {", 1)[1].split(
-        "\n}\n\nmain()", 1
-    )[0]
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
     preflight = typed.index("preflight_cohort_hold_adoptions")
-    restore_arm = typed.index(
-        'run_bounded_node_phase "$selected_specs_file" phase1-prepare'
-    )
-    prerequisite = typed.index(
-        'run_bounded_node_phase "$selected_specs_file" prerequisites'
-    )
+    restore_arm = typed.index('run_bounded_node_phase "$selected_specs_file" phase1-prepare')
+    prerequisite = typed.index('run_bounded_node_phase "$selected_specs_file" prerequisites')
     hub_open = typed.index("build_and_open_hub_epoch")
     assert preflight < restore_arm < prerequisite < hub_open
     phase1_worker = deploy.split("typed_phase1_prepare_worker() {", 1)[1].split(
@@ -248,9 +233,9 @@ def test_deploy_contract_has_explicit_adoption_and_exact_release_mode():
     assert "expected_reason=authorized_prior_reason" in adoption
     assert "if not changed:" in adoption
     assert "expected_hold=False" not in adoption
-    exact_prepare = gate.split('if phase == "prepare":', 1)[1].split(
-        'elif phase == "verify":', 1
-    )[0]
+    exact_prepare = gate.split('if phase == "prepare":', 1)[1].split('elif phase == "verify":', 1)[
+        0
+    ]
     assert "MAC_DEPLOY_GATE_REQUIRE_OWNED" in gate
     assert exact_prepare.index("if require_owned_after_prepare and not owns_hold:") < (
         exact_prepare.index("post_drain()")
@@ -272,8 +257,7 @@ def test_successor_hold_is_frozen_and_proved_before_any_cohort_mutation():
     assert "MAC_DEPLOY_SUCCESSOR_HOLD_REASON" in deploy
     assert "--successor-hold-reason" in deploy
     assert (
-        "readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED SUCCESSOR_HOLD_REASON"
-        in deploy
+        "readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED SUCCESSOR_HOLD_REASON" in deploy
     )
 
     parser = deploy.split('while [ "$#" -gt 0 ]; do', 1)[1].split(
@@ -290,22 +274,18 @@ def test_successor_hold_is_frozen_and_proved_before_any_cohort_mutation():
     assert "not character.isprintable()" in normalization
     assert "REQUIRE_RELEASE_ALL_SELECTED=1" in normalization
 
-    availability = deploy.split("hub_dispatch_hold_transition_available() {", 1)[
-        1
-    ].split("preflight_cohort_hold_adoptions() {", 1)[0]
+    availability = deploy.split("hub_dispatch_hold_transition_available() {", 1)[1].split(
+        "preflight_cohort_hold_adoptions() {", 1
+    )[0]
     assert 'paths.get("/agents/dispatch-hold/transition-batch")' in availability
     assert 'operation.get("post")' in availability
 
     main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
-    typed = deploy.split("run_typed_cohort() {", 1)[1].split(
-        "\n}\n\nmain()", 1
-    )[0]
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
     hub_open = deploy.split("build_and_open_hub_epoch() {", 1)[1].split(
         "\n}\n\nprove_and_commit_hub_epoch", 1
     )[0]
-    assert typed.index("preflight_cohort_hold_adoptions") < typed.index(
-        "build_and_open_hub_epoch"
-    )
+    assert typed.index("preflight_cohort_hold_adoptions") < typed.index("build_and_open_hub_epoch")
     assert '"$SUCCESSOR_HOLD_REASON"' in hub_open
     assert '"$REQUIRE_RELEASE_ALL_SELECTED"' in hub_open
     assert "run_typed_cohort" in main
@@ -386,9 +366,7 @@ def test_embedded_epoch_commit_atomically_transitions_or_releases(
     function_start = deploy.index("commit_fleet_release_epoch() {")
     marker = "\"$HOME/.mac/venv/bin/python\" - <<'PY'\n"
     python_start = deploy.index(marker, function_start) + len(marker)
-    embedded = deploy[
-        python_start : deploy.index("\nPY\nREMOTE_RELEASE_EPOCH", python_start)
-    ]
+    embedded = deploy[python_start : deploy.index("\nPY\nREMOTE_RELEASE_EPOCH", python_start)]
 
     generation = "generation-1"
     deployment_id = "1" * 40 + ":worker-1:20260718T000000Z:controller"
@@ -603,9 +581,7 @@ def test_remote_ssh_heredocs_keep_stdin_open():
     ]
 
 
-def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(
-    monkeypatch, capsys
-):
+def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(monkeypatch, capsys):
     deploy = DEPLOY.read_text(encoding="utf-8")
     gate_start = deploy.index("hub_agent_restart_gate() {")
     python_marker = "\"$HOME/.mac/venv/bin/python\" - <<'PY'\n"
@@ -639,9 +615,9 @@ def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(
 
     def urlopen(request, timeout=0):
         del timeout
-        if request.full_url.endswith(
-            "/tasks?state=claimed"
-        ) or request.full_url.endswith("/tasks?state=running"):
+        if request.full_url.endswith("/tasks?state=claimed") or request.full_url.endswith(
+            "/tasks?state=running"
+        ):
             return Response([])
         if request.full_url.endswith("/agents/" + AGENT):
             if request.get_method() == "PUT":
@@ -727,9 +703,7 @@ def test_post_preflight_operator_hold_race_fails_before_drain(
 
     def urlopen(request, timeout=0):
         calls.append((request.get_method(), request.full_url, request.data))
-        if request.get_method() == "GET" and request.full_url.endswith(
-            "/agents/" + AGENT
-        ):
+        if request.get_method() == "GET" and request.full_url.endswith("/agents/" + AGENT):
             return Response()
         raise AssertionError("hold-race rejection attempted a mutation")
 

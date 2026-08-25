@@ -119,12 +119,12 @@ class PredispatchVerdict:
     would_conflict: bool
     base_ref: str
     topic_ref: str
-    conflicting_ref: str = ""          # "" == vs base tip; else the in-flight ref
+    conflicting_ref: str = ""  # "" == vs base tip; else the in-flight ref
     conflicted_files: List[str] = field(default_factory=list)
-    advisory: bool = True              # True == fail-open (warn, do not block)
+    advisory: bool = True  # True == fail-open (warn, do not block)
     error: str = ""
 
-    def to_dict(self) -> dict: ...     # schema: "mac.predispatch_conflict.v1"
+    def to_dict(self) -> dict: ...  # schema: "mac.predispatch_conflict.v1"
 
 
 def check_predispatch_conflict(

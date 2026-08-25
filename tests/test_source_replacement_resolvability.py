@@ -26,6 +26,7 @@ and ``tests/test_repository_recovery.py``: the ``MAC_HOME`` relocation knob and
 the ``git_runner`` seam are the only interfaces the tests reach through, so the
 real candidate resolver runs without touching a fleet host's live ``~/.mac``.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -107,9 +108,7 @@ def test_resolves_declared_path_when_it_exists(tmp_path, _hermetic_mac_home):
     assert resolved == declared
 
 
-def test_resolves_mac_home_relative_fallback_after_replacement(
-    tmp_path, _hermetic_mac_home
-):
+def test_resolves_mac_home_relative_fallback_after_replacement(tmp_path, _hermetic_mac_home):
     # Declared path lives under a ``.mac`` root that no longer exists, but the
     # same suffix under the (relocated) MAC_HOME does -> the .mac-home relative
     # candidate keeps the replaced source resolvable.
@@ -137,9 +136,7 @@ def test_resolves_mac_home_src_name_candidate(tmp_path, _hermetic_mac_home):
     assert resolved == by_name
 
 
-def test_self_update_repo_is_preferred_for_repository_name_mac(
-    tmp_path, _hermetic_mac_home
-):
+def test_self_update_repo_is_preferred_for_repository_name_mac(tmp_path, _hermetic_mac_home):
     # For repository_name == 'mac' the self_update_repo is inserted at the FRONT
     # of the candidate list, so it wins even when the declared path also exists.
     declared = tmp_path / "declared_mac"
@@ -153,9 +150,7 @@ def test_self_update_repo_is_preferred_for_repository_name_mac(
     assert resolved == self_update_repo
 
 
-def test_self_update_repo_is_preferred_for_source_repo_beads_mac(
-    tmp_path, _hermetic_mac_home
-):
+def test_self_update_repo_is_preferred_for_source_repo_beads_mac(tmp_path, _hermetic_mac_home):
     declared = tmp_path / "declared_beads"
     declared.mkdir()
     self_update_repo = tmp_path / "self_update_repo"
@@ -167,9 +162,7 @@ def test_self_update_repo_is_preferred_for_source_repo_beads_mac(
     assert resolved == self_update_repo
 
 
-def test_declared_path_wins_over_self_update_for_non_mac_source(
-    tmp_path, _hermetic_mac_home
-):
+def test_declared_path_wins_over_self_update_for_non_mac_source(tmp_path, _hermetic_mac_home):
     # A regular project does NOT promote self_update_repo to the front, so an
     # existing declared path is resolved even though self_update_repo exists.
     declared = tmp_path / "declared_widget"
@@ -188,9 +181,7 @@ def test_declared_path_wins_over_self_update_for_non_mac_source(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_falls_back_to_declared_when_no_candidate_exists(
-    tmp_path, _hermetic_mac_home
-):
+def test_resolve_falls_back_to_declared_when_no_candidate_exists(tmp_path, _hermetic_mac_home):
     declared = tmp_path / "declared" / "gone"
     origin = {"repository_path": str(declared), "repository_name": "widget"}
 
@@ -201,9 +192,7 @@ def test_resolve_falls_back_to_declared_when_no_candidate_exists(
     assert not resolved.exists()
 
 
-def test_decide_fails_closed_when_resolved_source_missing(
-    tmp_path, _hermetic_mac_home
-):
+def test_decide_fails_closed_when_resolved_source_missing(tmp_path, _hermetic_mac_home):
     declared = tmp_path / "declared" / "gone"
     origin = {"repository_path": str(declared), "repository_name": "widget"}
     runner, _calls = _runner_for(declared)  # never reached; resolution fails first
@@ -217,9 +206,7 @@ def test_decide_fails_closed_when_resolved_source_missing(
         )
 
 
-def test_decide_fails_closed_on_worktree_enumeration_error(
-    tmp_path, _hermetic_mac_home
-):
+def test_decide_fails_closed_on_worktree_enumeration_error(tmp_path, _hermetic_mac_home):
     source = _hermetic_mac_home / "src" / "widget"
     source.mkdir(parents=True)
     origin = {"repository_path": str(tmp_path / "gone"), "repository_name": "widget"}
@@ -241,9 +228,7 @@ def test_decide_fails_closed_on_worktree_enumeration_error(
 # ---------------------------------------------------------------------------
 
 
-def test_replaced_source_preserves_existing_linked_worktree(
-    tmp_path, _hermetic_mac_home
-):
+def test_replaced_source_preserves_existing_linked_worktree(tmp_path, _hermetic_mac_home):
     # Source has moved to the mac_home/src/<name> candidate; the old declared
     # path is gone.  A linked worktree tied to the (now relocated) source must
     # be preserved, not orphaned.
@@ -269,9 +254,7 @@ def test_replaced_source_preserves_existing_linked_worktree(
     assert calls and calls[0][1][:2] == ("worktree", "list")
 
 
-def test_unchanged_source_does_not_request_preservation(
-    tmp_path, _hermetic_mac_home
-):
+def test_unchanged_source_does_not_request_preservation(tmp_path, _hermetic_mac_home):
     source = _hermetic_mac_home / "src" / "widget"
     source.mkdir(parents=True)
     linked = tmp_path / "worktrees" / "task-a"
@@ -289,9 +272,7 @@ def test_unchanged_source_does_not_request_preservation(
     assert decision.preserve is False
 
 
-def test_changed_source_without_linked_worktrees_does_not_preserve(
-    tmp_path, _hermetic_mac_home
-):
+def test_changed_source_without_linked_worktrees_does_not_preserve(tmp_path, _hermetic_mac_home):
     source = _hermetic_mac_home / "src" / "widget"
     source.mkdir(parents=True)
     origin = {"repository_path": str(tmp_path / "gone"), "repository_name": "widget"}

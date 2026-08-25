@@ -72,8 +72,15 @@ def test_it_times_out_with_a_cursor_rather_than_hanging(fleet):
     re-read the backlog or skip past an unread message."""
     tmp, _cp, worker, _peer = fleet
     result = _run(
-        tmp, "admin", "agentbus", "wait", worker.id,
-        "--timeout-seconds", "1", "--poll-interval-seconds", "0.1",
+        tmp,
+        "admin",
+        "agentbus",
+        "wait",
+        worker.id,
+        "--timeout-seconds",
+        "1",
+        "--poll-interval-seconds",
+        "0.1",
     )
     assert result["status"] == "timeout"
     assert result["count"] == 0
@@ -88,8 +95,15 @@ def test_a_correction_reaches_an_agent_that_is_already_waiting(fleet):
 
     def watcher():
         captured["result"] = _run(
-            tmp, "admin", "agentbus", "wait", worker.id,
-            "--timeout-seconds", "20", "--poll-interval-seconds", "0.2",
+            tmp,
+            "admin",
+            "agentbus",
+            "wait",
+            worker.id,
+            "--timeout-seconds",
+            "20",
+            "--poll-interval-seconds",
+            "0.2",
         )
 
     thread = threading.Thread(target=watcher)
@@ -99,10 +113,7 @@ def test_a_correction_reaches_an_agent_that_is_already_waiting(fleet):
     thread.join(timeout=25)
 
     assert captured["result"]["status"] == "message"
-    assert (
-        captured["result"]["messages"][0]["payload"]["text"]
-        == "the schema changed under you"
-    )
+    assert captured["result"]["messages"][0]["payload"]["text"] == "the schema changed under you"
 
 
 def test_resuming_from_the_cursor_does_not_replay(fleet):
@@ -111,9 +122,17 @@ def test_resuming_from_the_cursor_does_not_replay(fleet):
     first = _run(tmp, "admin", "agentbus", "wait", worker.id, "--timeout-seconds", "5")
 
     again = _run(
-        tmp, "admin", "agentbus", "wait", worker.id,
-        "--after-cursor", first["next_cursor"],
-        "--timeout-seconds", "1", "--poll-interval-seconds", "0.1",
+        tmp,
+        "admin",
+        "agentbus",
+        "wait",
+        worker.id,
+        "--after-cursor",
+        first["next_cursor"],
+        "--timeout-seconds",
+        "1",
+        "--poll-interval-seconds",
+        "0.1",
     )
     assert again["status"] == "timeout"
     assert again["count"] == 0
@@ -125,7 +144,14 @@ def test_an_agent_is_not_woken_by_its_own_message(fleet):
     cp.agentbus.append_chunk(stream.id, worker.id, {"text": "worker talking"})
 
     result = _run(
-        tmp, "admin", "agentbus", "wait", worker.id,
-        "--timeout-seconds", "1", "--poll-interval-seconds", "0.1",
+        tmp,
+        "admin",
+        "agentbus",
+        "wait",
+        worker.id,
+        "--timeout-seconds",
+        "1",
+        "--poll-interval-seconds",
+        "0.1",
     )
     assert result["status"] == "timeout"

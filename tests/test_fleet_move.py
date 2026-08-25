@@ -4,6 +4,7 @@ Covers the pure, testable core: registry mutation, idempotency, error cases,
 plan generation, and the dry-run execution path.  No real SSH, deploy, or DB
 calls are made.
 """
+
 from __future__ import annotations
 
 import json
@@ -370,15 +371,16 @@ def test_execute_live_hub_url_override(tmp_path):
     """Explicit hub_url overrides the inherited target fleet hub_url."""
     p = _write_registry(tmp_path, _registry())
     result = execute_fleet_move(
-        "worker-1", "old-hub", "mac",
-        fleets_config=p, dry_run=False,
+        "worker-1",
+        "old-hub",
+        "mac",
+        fleets_config=p,
+        dry_run=False,
         hub_url="http://custom:9000",
     )
     assert result["ok"] is True
     new_reg = yaml.safe_load(p.read_text())
-    moved = next(
-        a for a in new_reg["fleets"]["mac"]["agents"] if a["name"] == "worker-1"
-    )
+    moved = next(a for a in new_reg["fleets"]["mac"]["agents"] if a["name"] == "worker-1")
     assert moved.get("hub_url") == "http://custom:9000"
 
 
@@ -456,7 +458,11 @@ def test_execute_hub_url_override_satisfies_validation(tmp_path):
     reg["fleets"]["mac"].pop("hub_url")
     p = _write_registry(tmp_path, reg)
     result = execute_fleet_move(
-        "worker-1", "old-hub", "mac", fleets_config=p, dry_run=True,
+        "worker-1",
+        "old-hub",
+        "mac",
+        fleets_config=p,
+        dry_run=True,
         hub_url="http://10.0.0.9:8789",
     )
     assert result["ok"] is True
@@ -477,8 +483,13 @@ def test_execute_runs_redeploy_with_injected_runner(tmp_path):
         return SimpleNamespace(returncode=0, stderr="")
 
     result = execute_fleet_move(
-        "worker-1", "old-hub", "mac", fleets_config=p,
-        dry_run=False, run_redeploy=True, runner=fake_runner,
+        "worker-1",
+        "old-hub",
+        "mac",
+        fleets_config=p,
+        dry_run=False,
+        run_redeploy=True,
+        runner=fake_runner,
     )
     assert result["ok"] is True
     assert result["redeployed"] is True
@@ -502,8 +513,13 @@ def test_execute_redeploy_failure_surfaces_loudly(tmp_path):
         return SimpleNamespace(returncode=2, stderr="boom: deploy blew up")
 
     result = execute_fleet_move(
-        "worker-1", "old-hub", "mac", fleets_config=p,
-        dry_run=False, run_redeploy=True, runner=failing_runner,
+        "worker-1",
+        "old-hub",
+        "mac",
+        fleets_config=p,
+        dry_run=False,
+        run_redeploy=True,
+        runner=failing_runner,
     )
     assert result["ok"] is False
     assert result["redeploy_returncode"] == 2
@@ -522,8 +538,13 @@ def test_execute_no_redeploy_emits_command_only(tmp_path):
         return SimpleNamespace(returncode=0)
 
     result = execute_fleet_move(
-        "worker-1", "old-hub", "mac", fleets_config=p,
-        dry_run=False, run_redeploy=False, runner=runner,
+        "worker-1",
+        "old-hub",
+        "mac",
+        fleets_config=p,
+        dry_run=False,
+        run_redeploy=False,
+        runner=runner,
     )
     assert result["ok"] is True
     assert sentinel == []  # runner NOT invoked
@@ -540,14 +561,13 @@ def test_cli_fleet_move_agent_is_registered():
     """The 'mac admin fleet move-agent' subcommand must be registered in the CLI."""
     import subprocess
     import sys
+
     result = subprocess.run(
         [sys.executable, "-m", "mac.cli", "admin", "fleet", "move-agent", "--help"],
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        "mac admin fleet move-agent --help failed:\n%s" % result.stderr
-    )
+    assert result.returncode == 0, "mac admin fleet move-agent --help failed:\n%s" % result.stderr
     assert "--agent" in result.stdout
     assert "--from" in result.stdout
     assert "--to" in result.stdout

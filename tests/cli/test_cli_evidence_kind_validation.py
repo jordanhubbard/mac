@@ -69,12 +69,19 @@ def test_evidence_rejects_unsupported_kind_at_cli(tmp_path):
 
     rc, out, err = _run(
         tmp_path,
-        "task", "evidence", task["id"],
-        "--kind", "bogus",
-        "--uri", "ci://build/1",
-        "--summary", "should be rejected",
-        "--created-by", agent["id"],
-        "--lease-id", lease_id,
+        "task",
+        "evidence",
+        task["id"],
+        "--kind",
+        "bogus",
+        "--uri",
+        "ci://build/1",
+        "--summary",
+        "should be rejected",
+        "--created-by",
+        agent["id"],
+        "--lease-id",
+        lease_id,
     )
     assert rc == 1
     assert out is None
@@ -88,12 +95,19 @@ def test_evidence_normalizes_case_and_whitespace(tmp_path):
 
     rc, ev, _ = _run(
         tmp_path,
-        "task", "evidence", task["id"],
-        "--kind", "  TEST ",
-        "--uri", "ci://build/2",
-        "--summary", "case-insensitive kind",
-        "--created-by", agent["id"],
-        "--lease-id", lease_id,
+        "task",
+        "evidence",
+        task["id"],
+        "--kind",
+        "  TEST ",
+        "--uri",
+        "ci://build/2",
+        "--summary",
+        "case-insensitive kind",
+        "--created-by",
+        agent["id"],
+        "--lease-id",
+        lease_id,
     )
     assert rc == 0
     assert ev["kind"] == "test"

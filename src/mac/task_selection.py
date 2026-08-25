@@ -137,12 +137,7 @@ class TaskSelector:
 
     def group_names(self) -> Tuple[str, ...]:
         """Saved groups this selector references, in order."""
-        return tuple(
-            value
-            for term in self.terms
-            if term.key == _GROUP
-            for value in term.values
-        )
+        return tuple(value for term in self.terms if term.key == _GROUP for value in term.values)
 
     def sql_complete(self) -> bool:
         """Whether SQL alone decides this selector, exactly.
@@ -168,9 +163,7 @@ class TaskSelector:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "expression": self.expression,
-            "terms": [
-                {"key": t.key, "op": t.op, "values": list(t.values)} for t in self.terms
-            ],
+            "terms": [{"key": t.key, "op": t.op, "values": list(t.values)} for t in self.terms],
             "limit": self.limit,
             "requires_fleet_evaluation": self.requires_fleet_evaluation(),
         }
@@ -208,9 +201,7 @@ def parse_selector(expression: str, *, limit: Optional[int] = None) -> TaskSelec
             # `state~=open` otherwise parses as contains "=open" -- a term that
             # silently means something other than what was typed, on the input
             # that decides what a bulk mutation touches.
-            raise SelectorError(
-                "unknown operator in %r: use =, !=, ~, >= or <=" % token
-            )
+            raise SelectorError("unknown operator in %r: use =, !=, ~, >= or <=" % token)
         _validate_key(key, op, token)
         values = tuple(part.strip() for part in raw.split(",") if part.strip())
         if not values:
@@ -221,9 +212,7 @@ def parse_selector(expression: str, *, limit: Optional[int] = None) -> TaskSelec
             try:
                 int(values[0])
             except ValueError:
-                raise SelectorError(
-                    "%r expects a number, got %r" % (token, values[0])
-                ) from None
+                raise SelectorError("%r expects a number, got %r" % (token, values[0])) from None
         if key == _UNMET:
             _validate_unmet(values, token)
         if key == "state":
@@ -293,9 +282,7 @@ def _normalise_numbers(values: Sequence[str], token: str) -> Tuple[str, ...]:
         try:
             normalised.append(str(int(value)))
         except ValueError:
-            raise SelectorError(
-                "%r expects a number, got %r" % (token, value)
-            ) from None
+            raise SelectorError("%r expects a number, got %r" % (token, value)) from None
     return tuple(normalised)
 
 
@@ -326,15 +313,10 @@ def _validate_key(key: str, op: str, token: str) -> None:
         if len(key) <= len(_METADATA_PREFIX):
             raise SelectorError("%r needs a path, e.g. metadata.origin=..." % token)
         return
-    known = (
-        set(_TEXT_COLUMNS)
-        | set(_NUMERIC_COLUMNS)
-        | {_TEXT_SEARCH, _CAPABILITY, _UNMET, _GROUP}
-    )
+    known = set(_TEXT_COLUMNS) | set(_NUMERIC_COLUMNS) | {_TEXT_SEARCH, _CAPABILITY, _UNMET, _GROUP}
     if key not in known:
         raise SelectorError(
-            "unknown selector key %r in %r. Valid keys: %s"
-            % (key, token, ", ".join(VALID_KEYS))
+            "unknown selector key %r in %r. Valid keys: %s" % (key, token, ", ".join(VALID_KEYS))
         )
     if op in {">=", "<="} and key not in _NUMERIC_COLUMNS:
         raise SelectorError(
@@ -403,14 +385,11 @@ def expand_groups(
             expanded.append(term)
             continue
         if term.op != "=":
-            raise SelectorError(
-                "group only supports '=', not %r" % term.op
-            )
+            raise SelectorError("group only supports '=', not %r" % term.op)
         for name in term.values:
             if name in seen:
                 raise SelectorError(
-                    "task group %r references itself (via %s)"
-                    % (name, " -> ".join(sorted(seen)))
+                    "task group %r references itself (via %s)" % (name, " -> ".join(sorted(seen)))
                 )
             expression = resolve(name)
             if not expression:
@@ -449,8 +428,7 @@ def compile_term(term: Term) -> Optional[Tuple[str, List[Any]]]:
             return ("(%s)" % clauses, list(term.values))
         if term.op == "~":
             return (
-                "(%s)"
-                % " OR ".join("%s ILIKE ? ESCAPE '\\'" % column for _ in term.values),
+                "(%s)" % " OR ".join("%s ILIKE ? ESCAPE '\\'" % column for _ in term.values),
                 [_like_pattern(value) for value in term.values],
             )
         return None
@@ -573,9 +551,7 @@ def _term_matches(term: Term, task: Any, unmet_codes: Optional[Sequence[str]]) -
             # The grammar documents ~ as "contains", so honour it per
             # capability rather than quietly meaning equality.
             hit = any(
-                value.lower() in capability.lower()
-                for capability in have
-                for value in term.values
+                value.lower() in capability.lower() for capability in have for value in term.values
             )
         else:
             hit = bool(have & set(term.values))

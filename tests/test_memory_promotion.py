@@ -7,6 +7,7 @@ pin the writer that closes that: what counts as settled, that a bounded pass
 drains oldest-first, that promotion is idempotent, and that retiring the
 medium copy only ever happens after the long-tier write succeeded.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -72,8 +73,7 @@ class _FakeQdrant:
             return {"result": {"status": "ok"}}
         if method == "POST" and suffix == "points/scroll":
             points = [
-                {"id": p["id"], "payload": p["payload"]}
-                for p in self.collections[coll].values()
+                {"id": p["id"], "payload": p["payload"]} for p in self.collections[coll].values()
             ]
             return {"result": {"points": points, "next_page_offset": None}}
         if method == "POST" and suffix == "points/delete":
@@ -127,12 +127,10 @@ def _embed_aged(cp, writer, content, *, age_days: float):
         created_by="agent_one",
     )
     ref = writer.embed_memory(record.id, tier=MacMemoryTier.MEDIUM.value)
-    stamp = (
-        datetime.now(tz=timezone.utc) - timedelta(days=age_days)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cp.store.execute(
-        "UPDATE vector_refs SET created_at = ? WHERE id = ?", (stamp, ref.id)
+    stamp = (datetime.now(tz=timezone.utc) - timedelta(days=age_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
     )
+    cp.store.execute("UPDATE vector_refs SET created_at = ? WHERE id = ?", (stamp, ref.id))
     return record
 
 
@@ -204,9 +202,7 @@ def test_dry_run_writes_nothing(cp, writer, promoter, fake_qdrant):
     assert cp.memory.list_vector_refs(collection=LONG) == []
 
 
-def test_drop_medium_retires_the_source_point_and_its_ref(
-    cp, writer, promoter, fake_qdrant
-):
+def test_drop_medium_retires_the_source_point_and_its_ref(cp, writer, promoter, fake_qdrant):
     record = _embed_aged(cp, writer, "an old lesson", age_days=90)
     assert len(fake_qdrant.collections[MEDIUM]) == 1
 
@@ -219,9 +215,7 @@ def test_drop_medium_retires_the_source_point_and_its_ref(
     assert len(cp.memory.list_vector_refs(memory_id=record.id, collection=LONG)) == 1
 
 
-def test_medium_is_never_dropped_when_the_long_write_failed(
-    cp, writer, promoter, fake_qdrant
-):
+def test_medium_is_never_dropped_when_the_long_write_failed(cp, writer, promoter, fake_qdrant):
     """Copy-then-verify: a failed promotion must not destroy the only copy."""
     _embed_aged(cp, writer, "an old lesson", age_days=90)
     fake_qdrant.fail_on_collection = LONG
@@ -276,9 +270,7 @@ def test_promotion_can_be_switched_off_without_a_redeploy(raw):
 
 
 def test_out_of_range_settings_fall_back_and_say_so():
-    settings = promotion_settings(
-        {"MAC_MEMORY_PROMOTION_MIN_AGE_DAYS": "-5"}
-    )
+    settings = promotion_settings({"MAC_MEMORY_PROMOTION_MIN_AGE_DAYS": "-5"})
     assert settings["min_age_days"] == DEFAULT_MIN_AGE_DAYS
     assert settings["configuration_errors"]
 
@@ -288,9 +280,7 @@ def test_out_of_range_settings_fall_back_and_say_so():
 # ---------------------------------------------------------------------------
 
 
-def test_control_plane_promotes_through_the_configured_writer(
-    cp, writer, fake_qdrant, monkeypatch
-):
+def test_control_plane_promotes_through_the_configured_writer(cp, writer, fake_qdrant, monkeypatch):
     monkeypatch.delenv("MAC_MEMORY_PROMOTION_ENABLED", raising=False)
     record = _embed_aged(cp, writer, "an old lesson", age_days=90)
 

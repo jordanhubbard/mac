@@ -103,9 +103,7 @@ def test_k8s_clients_cover_normal_terminal_and_error_paths(monkeypatch):
                     Record(
                         {
                             "metadata": {"name": "done"},
-                            "status": {
-                                "conditions": [{"type": "Complete", "status": "True"}]
-                            },
+                            "status": {"conditions": [{"type": "Complete", "status": "True"}]},
                         }
                     ),
                 ]
@@ -141,9 +139,7 @@ def test_k8s_clients_cover_normal_terminal_and_error_paths(monkeypatch):
 
     jobs = module.K8sJobsClient()
     assert jobs.create("ns", {"name": "job"}) == {"metadata": {"name": "job"}}
-    assert [item["metadata"]["name"] for item in jobs.list_active("ns", "app=mac")] == [
-        "active"
-    ]
+    assert [item["metadata"]["name"] for item in jobs.list_active("ns", "app=mac")] == ["active"]
     jobs.delete("ns", "job")
     assert jobs.read("ns", "job") == {"metadata": {"name": "job"}}
     batch.delete_error = ApiException(status=404)
@@ -258,27 +254,35 @@ def test_openshell_collector_file_post_and_modes(tmp_path, monkeypatch, capsys):
     assert list(module.iter_json_lines(events))[0]["name"] == "read"
 
     posted = []
-    monkeypatch.setattr(module, "post_action_event", lambda *args, **kwargs: posted.append((args, kwargs)))
-    assert module.collect_once(
-        [{"outcome": "denied", "name": "write"}],
-        base_url="https://hub",
-        token="token",
-        agent_id="agent",
-        sandbox_id="sandbox",
-    ) == 1
+    monkeypatch.setattr(
+        module, "post_action_event", lambda *args, **kwargs: posted.append((args, kwargs))
+    )
+    assert (
+        module.collect_once(
+            [{"outcome": "denied", "name": "write"}],
+            base_url="https://hub",
+            token="token",
+            agent_id="agent",
+            sandbox_id="sandbox",
+        )
+        == 1
+    )
     assert posted[-1][0][2]["outcome"] == "denied"
 
     assert module.main(["--events-file", str(events)]) == 2
     assert "required" in capsys.readouterr().err
-    assert module.main(
-        ["--events-file", str(events), "--hub-url", "https://hub", "--token", "token"]
-    ) == 0
+    assert (
+        module.main(["--events-file", str(events), "--hub-url", "https://hub", "--token", "token"])
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["posted"] == 1
 
     class StopFollowing(Exception):
         pass
 
-    monkeypatch.setattr(module.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopFollowing()))
+    monkeypatch.setattr(
+        module.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopFollowing())
+    )
     with pytest.raises(StopFollowing):
         module.main(
             [

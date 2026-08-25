@@ -247,9 +247,7 @@ def reconcile_stale_sandboxes(
 # acceptance: a sandbox that cannot prove full, valid MAC ownership plus a dead
 # recorded PID is never reaped by this path.
 
-MANAGED_KINDS = frozenset(
-    {"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"}
-)
+MANAGED_KINDS = frozenset({"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"})
 
 _FALSEY_KEEP = {"0", "false", "no", "off"}
 
@@ -348,8 +346,7 @@ def orphan_task_sandbox_candidates(
     return [
         record
         for record in (
-            classify_orphan_task_sandbox(row, pid_is_alive=pid_is_alive)
-            for row in sandboxes
+            classify_orphan_task_sandbox(row, pid_is_alive=pid_is_alive) for row in sandboxes
         )
         if record["reap"]
     ]
@@ -634,9 +631,7 @@ def reconcile_task_sandboxes_from_lease_authority(
     if not isinstance(payload, list):
         raise RuntimeError("OpenShell sandbox list JSON is not an array")
 
-    candidates = lease_orphan_task_sandbox_candidates(
-        payload, lookup_task, now=now
-    )
+    candidates = lease_orphan_task_sandbox_candidates(payload, lookup_task, now=now)
     protected = sum(1 for row in payload if isinstance(row, Mapping)) - len(candidates)
 
     deleted: List[str] = []
@@ -858,9 +853,7 @@ def leftover_task_sandbox_candidates(
             except Exception as exc:  # noqa: BLE001 - fail closed on lookup failure
                 lookup_error = str(exc)
                 task = None
-        record = classify_leftover_task_sandbox(
-            raw, task, now=current, pid_is_alive=pid_is_alive
-        )
+        record = classify_leftover_task_sandbox(raw, task, now=current, pid_is_alive=pid_is_alive)
         if lookup_error and not record["reap"]:
             record["lease_reason"] = "task lookup failed: %s" % lookup_error[-200:]
             record["reason"] = "lease-authority proof withheld: %s" % record["lease_reason"]
@@ -919,15 +912,11 @@ def reconcile_leftover_task_sandboxes(
     failures: List[Dict[str, str]] = []
     if apply:
         for record in candidates:
-            result = delete_named_sandbox(
-                str(record["name"]), openshell_bin=openshell_bin
-            )
+            result = delete_named_sandbox(str(record["name"]), openshell_bin=openshell_bin)
             if result["deleted"]:
                 deleted.append(result["name"])
             else:
-                failures.append(
-                    {"name": result["name"], "error": result["error"]}
-                )
+                failures.append({"name": result["name"], "error": result["error"]})
 
     return {
         "schema": "mac.openshell.sandbox_leftover_reconcile.v1",
@@ -985,9 +974,7 @@ _LIFECYCLE_ACTION_REAP = "reap"
 _LIFECYCLE_ACTION_KEEP = "keep"
 
 
-def _sandbox_age_seconds(
-    sandbox: Mapping[str, Any], now: datetime
-) -> Optional[int]:
+def _sandbox_age_seconds(sandbox: Mapping[str, Any], now: datetime) -> Optional[int]:
     created = _created_at(sandbox.get("created_at"))
     if created is None:
         return None
@@ -1095,9 +1082,7 @@ def lifecycle_orphan_task_sandbox_candidates(
             except Exception as exc:  # noqa: BLE001 - fail closed on lookup failure
                 lookup_error = str(exc)
                 task = None
-        record = classify_lifecycle_orphan_sandbox(
-            raw, task, trigger=clean_trigger, now=current
-        )
+        record = classify_lifecycle_orphan_sandbox(raw, task, trigger=clean_trigger, now=current)
         if lookup_error and record["action"] != _LIFECYCLE_ACTION_REAP:
             record["ownership"] = "task-unresolved"
             record["reason"] = "task lookup failed: %s" % lookup_error[-200:]
@@ -1165,6 +1150,7 @@ def reconcile_task_sandbox_lifecycle(
 
     delete = delete_sandbox
     if delete is None:
+
         def delete(name: str) -> Dict[str, Any]:
             return delete_named_sandbox(name, openshell_bin=openshell_bin)
 

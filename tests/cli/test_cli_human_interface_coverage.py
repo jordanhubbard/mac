@@ -42,8 +42,16 @@ def test_coverage_reports_solid_when_everything_arrives(tmp_path):
     _profile(tmp_path, "hermes", files)
 
     rc, out = _run(
-        tmp_path, "admin", "human-interface", "coverage",
-        "--from", "openclaw", "--to", "hermes", "--home", str(tmp_path),
+        tmp_path,
+        "admin",
+        "human-interface",
+        "coverage",
+        "--from",
+        "openclaw",
+        "--to",
+        "hermes",
+        "--home",
+        str(tmp_path),
     )
 
     assert rc in (None, 0)
@@ -57,8 +65,16 @@ def test_coverage_names_what_would_be_left_behind(tmp_path):
     _profile(tmp_path, "hermes", {"SOUL.md": "s"})
 
     rc, out = _run(
-        tmp_path, "admin", "human-interface", "coverage",
-        "--from", "openclaw", "--to", "hermes", "--home", str(tmp_path),
+        tmp_path,
+        "admin",
+        "human-interface",
+        "coverage",
+        "--from",
+        "openclaw",
+        "--to",
+        "hermes",
+        "--home",
+        str(tmp_path),
     )
 
     assert rc in (None, 0)
@@ -73,8 +89,16 @@ def test_coverage_reports_telegram_alongside_slack(tmp_path):
     _profile(tmp_path, "hermes", {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "m"})
 
     _rc, out = _run(
-        tmp_path, "admin", "human-interface", "coverage",
-        "--from", "openclaw", "--to", "hermes", "--home", str(tmp_path),
+        tmp_path,
+        "admin",
+        "human-interface",
+        "coverage",
+        "--from",
+        "openclaw",
+        "--to",
+        "hermes",
+        "--home",
+        str(tmp_path),
     )
 
     named = {item["artefact"] for item in out["items"]}

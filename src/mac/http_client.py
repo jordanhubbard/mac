@@ -7,6 +7,7 @@ the only documented way to drive this.
 The transport hook (``transport`` argument) lets tests intercept calls
 without round-tripping through ``urllib``.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,8 +57,7 @@ def _note_hub_version(hub_version: Optional[str]) -> None:
     print(
         "mac: this client is %s but the hub is %s. Re-run `make install` in "
         "your mac checkout if commands start failing in ways that name "
-        "internal methods. (MAC_SUPPRESS_VERSION_WARNING=1 to silence.)"
-        % (__version__, hub),
+        "internal methods. (MAC_SUPPRESS_VERSION_WARNING=1 to silence.)" % (__version__, hub),
         file=sys.stderr,
     )
 
@@ -100,9 +100,7 @@ class HubClient:
         headers = {"Accept": "application/x-ndjson"}
         if self.token:
             headers["Authorization"] = "Bearer %s" % self.token
-        request = urllib.request.Request(
-            self.base_url + path, headers=headers, method="GET"
-        )
+        request = urllib.request.Request(self.base_url + path, headers=headers, method="GET")
         try:
             response = urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as exc:
@@ -164,7 +162,5 @@ class HubClient:
             # surfaced a bare ``TimeoutError`` instead of ``HubClientError``.
             # Wrapping it here makes a transient hub failure uniformly recoverable
             # so callers retry instead of crashing.
-            raise HubClientError(
-                "transient transport error: %s" % exc
-            ) from exc
+            raise HubClientError("transient transport error: %s" % exc) from exc
         return json.loads(payload) if payload else None

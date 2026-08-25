@@ -118,15 +118,26 @@ class ReviewVerdict:
     raw: str = ""
 
     @classmethod
-    def approve(cls, *, reviewer: str = "", findings: Optional[List[str]] = None, raw: str = "") -> "ReviewVerdict":
+    def approve(
+        cls, *, reviewer: str = "", findings: Optional[List[str]] = None, raw: str = ""
+    ) -> "ReviewVerdict":
         return cls("approve", list(findings or []), reviewer, raw)
 
     @classmethod
-    def reject(cls, *, reviewer: str = "", findings: Optional[List[str]] = None, raw: str = "") -> "ReviewVerdict":
+    def reject(
+        cls, *, reviewer: str = "", findings: Optional[List[str]] = None, raw: str = ""
+    ) -> "ReviewVerdict":
         return cls("reject", list(findings or []), reviewer, raw)
 
     @classmethod
-    def of(cls, raw_verdict: Any, *, reviewer: str = "", findings: Optional[List[str]] = None, raw: str = "") -> "ReviewVerdict":
+    def of(
+        cls,
+        raw_verdict: Any,
+        *,
+        reviewer: str = "",
+        findings: Optional[List[str]] = None,
+        raw: str = "",
+    ) -> "ReviewVerdict":
         return cls(normalize_verdict(raw_verdict), list(findings or []), reviewer, raw)
 
     @property
@@ -266,7 +277,8 @@ def decide_land(
         return _decision(
             land=False,
             gate="independence",
-            reason="reviewer (%s) is the author; a change must not approve itself; default-to-reject" % reviewer,
+            reason="reviewer (%s) is the author; a change must not approve itself; default-to-reject"
+            % reviewer,
         )
 
     # All gates green.
@@ -477,8 +489,7 @@ def run_adversarial_review(
         return ReviewVerdict.reject(
             reviewer=reviewer_id,
             findings=[
-                "reviewer (%s) is the author; independence violated; failing closed"
-                % reviewer_id
+                "reviewer (%s) is the author; independence violated; failing closed" % reviewer_id
             ],
         )
 
@@ -597,9 +608,7 @@ def safe_do_land(
         # If the branch tip moved after the contract gate + review, the earlier
         # green no longer applies — fail closed rather than land unreviewed code.
         if decision.head_sha:
-            current_sha = _resolve_head_sha(
-                branch, repo_dir=repo_dir, git_runner=git_runner
-            )
+            current_sha = _resolve_head_sha(branch, repo_dir=repo_dir, git_runner=git_runner)
             result["gated_head_sha"] = decision.head_sha
             result["current_head_sha"] = current_sha
             if not current_sha:
@@ -705,7 +714,8 @@ def notify_human(
         "findings": list(decision.findings),
         "blocking": False,
         "summary": (
-            "AUTO-LANDED %s (head=%s, reviewer=%s)" % (target, decision.head_sha or "?", decision.reviewer or "?")
+            "AUTO-LANDED %s (head=%s, reviewer=%s)"
+            % (target, decision.head_sha or "?", decision.reviewer or "?")
             if landed
             else "auto-land BLOCKED %s at %s gate: %s" % (target, decision.gate, decision.reason)
         ),

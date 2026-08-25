@@ -168,7 +168,9 @@ def _retain_core(
     reference: str, metadata: Dict[str, Any], mac_home: Path, event_id: str, env: Dict[str, str]
 ) -> tuple[str, Dict[str, Any]]:
     """Hard-link/copy a filesystem core into bounded MAC-owned retention."""
-    source = Path(reference) if reference and not reference.startswith("systemd-coredump:") else None
+    source = (
+        Path(reference) if reference and not reference.startswith("systemd-coredump:") else None
+    )
     if source is None:
         return reference, metadata
     try:
@@ -269,9 +271,7 @@ def _spool_payload(spool_dir: Path, payload: Dict[str, Any]) -> Path:
     return destination
 
 
-def _flush_spool(
-    spool_dir: Path, base_url: str, token: str, agent_id: str
-) -> int:
+def _flush_spool(spool_dir: Path, base_url: str, token: str, agent_id: str) -> int:
     sent = 0
     if not spool_dir.is_dir():
         return sent
@@ -350,7 +350,9 @@ def observe(supervisor: str, command: Iterable[str]) -> int:
     env["PYTHONFAULTHANDLER"] = "1"
     env.setdefault("PYTHONUNBUFFERED", "1")
     agent_name = env.get("MAC_WORKER_AGENT_NAME") or platform.node().split(".")[0]
-    agent_id = env.get("MAC_WORKER_AGENT_ID") or env.get("MAC_AGENT_ID") or _stable_agent_id(agent_name)
+    agent_id = (
+        env.get("MAC_WORKER_AGENT_ID") or env.get("MAC_AGENT_ID") or _stable_agent_id(agent_name)
+    )
     base_url = env.get("MAC_HUB_URL") or env.get("MAC_URL", "")
     token = env.get("MAC_WORKER_TOKEN", "")
     spool_dir = Path(env.get("MAC_CRASH_SPOOL_DIR") or (mac_home / "crash-spool"))
@@ -448,7 +450,9 @@ def observe(supervisor: str, command: Iterable[str]) -> int:
 def main(argv: Optional[Iterable[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--supervisor", required=True, choices=["systemd", "launchd", "supervisord", "kubernetes", "manual"]
+        "--supervisor",
+        required=True,
+        choices=["systemd", "launchd", "supervisord", "kubernetes", "manual"],
     )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(list(argv) if argv is not None else None)

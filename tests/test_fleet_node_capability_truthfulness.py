@@ -86,8 +86,7 @@ def _capability_harness(tmp_path: Path, *, has_gpu: bool) -> str:
     if has_gpu:
         nvidia = fake_bin / "nvidia-smi"
         nvidia.write_text(
-            "#!/bin/sh\n"
-            'echo "GPU 0: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-x)"\n',
+            '#!/bin/sh\necho "GPU 0: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-x)"\n',
             encoding="utf-8",
         )
         nvidia.chmod(0o755)
@@ -110,8 +109,7 @@ def test_gpu_is_advertised_when_the_sandbox_smoke_proved_it(tmp_path, flag):
     assert result.returncode == 0, result.stderr
     caps = result.stdout.strip().split(",")
     assert "gpu" in caps and "cuda" in caps, (
-        "a host whose OpenShell GPU smoke passed must still advertise gpu: %s"
-        % result.stdout
+        "a host whose OpenShell GPU smoke passed must still advertise gpu: %s" % result.stdout
     )
     assert "cpu" in caps
 
@@ -139,9 +137,7 @@ def test_gpu_is_withheld_when_the_sandbox_cannot_use_it(tmp_path, flag):
 
 def test_an_unset_flag_is_treated_as_unproved(tmp_path):
     """Unset must match env_bool's default=False, which is what the executor uses."""
-    result = _run_bash(
-        _capability_harness(tmp_path, has_gpu=True), {}, tmp_path
-    )
+    result = _run_bash(_capability_harness(tmp_path, has_gpu=True), {}, tmp_path)
     assert result.returncode == 0, result.stderr
     caps = result.stdout.strip().split(",")
     assert "gpu" not in caps, (
@@ -176,10 +172,10 @@ def _health_harness(tmp_path: Path, report: object | None) -> str:
             report if isinstance(report, str) else json.dumps(report),
             encoding="utf-8",
         )
-    return (
-        'LOG_DIR="%s"\nPY="%s"\n%s\nstartup_probe_health_status\n'
-        % (log_dir, shutil.which("python3") or "python3",
-           _extract_function("startup_probe_health_status"))
+    return 'LOG_DIR="%s"\nPY="%s"\n%s\nstartup_probe_health_status\n' % (
+        log_dir,
+        shutil.which("python3") or "python3",
+        _extract_function("startup_probe_health_status"),
     )
 
 
@@ -193,15 +189,12 @@ def test_a_not_ready_node_reports_degraded(tmp_path):
     result = _run_bash(_health_harness(tmp_path, report), {}, tmp_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "degraded", (
-        "a node that failed its own readiness probe reported healthy: %s"
-        % result.stdout
+        "a node that failed its own readiness probe reported healthy: %s" % result.stdout
     )
 
 
 def test_a_ready_node_reports_healthy(tmp_path):
-    result = _run_bash(
-        _health_harness(tmp_path, {"ready": True, "warnings": []}), {}, tmp_path
-    )
+    result = _run_bash(_health_harness(tmp_path, {"ready": True, "warnings": []}), {}, tmp_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "healthy"
 
@@ -230,12 +223,10 @@ def test_the_drain_clear_sends_the_measured_health(tmp_path):
         "clear_mac_agent_drain_after_deploy no longer consults the startup "
         "probe, so a not-ready node would register healthy again"
     )
-    assert '"health_status\\":\\"$health' in body or '$health' in body, (
+    assert '"health_status\\":\\"$health' in body or "$health" in body, (
         "the measured health must be interpolated into the heartbeat payload"
     )
-    assert '"health_status":"healthy"' not in body, (
-        "the heartbeat still hardcodes healthy"
-    )
+    assert '"health_status":"healthy"' not in body, "the heartbeat still hardcodes healthy"
 
 
 # --------------------------------------------------------------------------

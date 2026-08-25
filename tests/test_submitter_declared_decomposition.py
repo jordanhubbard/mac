@@ -84,7 +84,9 @@ def test_the_budget_is_a_ceiling_not_a_quota():
 
 def test_a_plan_verdict_without_authorisation_asks_rather_than_splits():
     """The detector disagreeing is a question for the submitter, not a licence."""
-    section = _plan_detection_section(_task(), )
+    section = _plan_detection_section(
+        _task(),
+    )
     # Force the plan branch directly, since the fixture text is deliberately atomic.
     from mac.task_decomposition import prompt_section
 
@@ -182,7 +184,7 @@ def _agent_adds_children(cp, parent, children):
     """
     machine = cp.register_machine("decomp-host")
     agent = cp.register_agent(machine.id, "decomp-worker")
-    _task, lease = cp.claim_task(parent.id, agent.id)   # returns (Task, Lease)
+    _task, lease = cp.claim_task(parent.id, agent.id)  # returns (Task, Lease)
     lease_id = lease.id
     return cp.add_child_tasks(
         parent.id,
@@ -219,7 +221,8 @@ def test_an_agent_cannot_exceed_the_ceiling(cp):
 
     with pytest.raises(ValidationError) as excinfo:
         _agent_adds_children(
-            cp, parent,
+            cp,
+            parent,
             [{"title": "a", "description": "x"}, {"title": "b", "description": "y"}],
         )
 

@@ -144,9 +144,7 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
     repo, _remote = _repository(tmp_path)
     rc, task, _error = _run(tmp_path, "task", "create", "obsolete work")
     assert rc == 0
-    rc, replacement_task, _error = _run(
-        tmp_path, "task", "create", "replacement work"
-    )
+    rc, replacement_task, _error = _run(tmp_path, "task", "create", "replacement work")
     assert rc == 0
     rc, _completed, error = _run(
         tmp_path,
@@ -181,7 +179,8 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     rc, audit, error = _run(
         tmp_path,
-        "admin", "repo",
+        "admin",
+        "repo",
         "refs",
         "audit",
         "--repo",
@@ -195,7 +194,8 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     rc, dry_run, error = _run(
         tmp_path,
-        "admin", "repo",
+        "admin",
+        "repo",
         "refs",
         "prune",
         "--repo",
@@ -210,7 +210,8 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     rc, executed, error = _run(
         tmp_path,
-        "admin", "repo",
+        "admin",
+        "repo",
         "refs",
         "prune",
         "--repo",
@@ -224,9 +225,7 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
     assert rc == 0, error
     assert executed["mode"] == "execute"
     assert executed["count"] == 1
-    assert not _git(
-        repo, "ls-remote", "--heads", "origin", "refs/heads/%s" % branch
-    )
+    assert not _git(repo, "ls-remote", "--heads", "origin", "refs/heads/%s" % branch)
 
     rc, detail, error = _run(tmp_path, "task", "show", task["id"])
     assert rc == 0, error
@@ -251,7 +250,8 @@ def test_repo_refs_execute_requires_pull_request_verification(tmp_path, monkeypa
 
     rc, result, error = _run(
         tmp_path,
-        "admin", "repo",
+        "admin",
+        "repo",
         "refs",
         "prune",
         "--repo",
@@ -275,9 +275,7 @@ def test_open_pull_request_probe_parses_and_validates_output(tmp_path, monkeypat
     monkeypatch.setattr(
         cli.subprocess,
         "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, json.dumps(payload), ""
-        ),
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, json.dumps(payload), ""),
     )
 
     heads, warning = cli._repository_open_pull_requests(tmp_path)
@@ -331,10 +329,9 @@ def test_repository_ref_audit_filters_tasks_and_reports_warning(tmp_path, monkey
     monkeypatch.setattr(
         cli,
         "audit_repository_refs_result",
-        lambda _repo, selected, _loader, **kwargs: captured.update(
-            selected=list(selected), kwargs=kwargs
-        )
-        or RepositoryRefAuditResult(),
+        lambda _repo, selected, _loader, **kwargs: (
+            captured.update(selected=list(selected), kwargs=kwargs) or RepositoryRefAuditResult()
+        ),
     )
     args = SimpleNamespace(
         repo_path=str(tmp_path),
@@ -376,19 +373,22 @@ def test_repo_refs_reconciler_status_and_trigger_commands(monkeypatch, capsys):
     assert main(["--json", "admin", "repo", "refs", "status"]) == 0
     assert json.loads(capsys.readouterr().out) == {"status": "idle"}
 
-    assert main(
-        [
-            "--json",
-            "admin",
-            "repo",
-            "refs",
-            "reconcile",
-            "--mode",
-            "audit",
-            "--actor",
-            "operator",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "--json",
+                "admin",
+                "repo",
+                "refs",
+                "reconcile",
+                "--mode",
+                "audit",
+                "--actor",
+                "operator",
+            ]
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out) == {
         "status": "completed",
         "mode": "audit",

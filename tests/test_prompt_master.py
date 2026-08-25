@@ -38,22 +38,41 @@ def test_executor_compiles_after_route_selection_before_private_file(monkeypatch
     monkeypatch.setattr(executor_sandbox, "_executor_backend", lambda: "cli")
     monkeypatch.setattr(executor_sandbox, "_openshell_enabled", lambda: False)
     monkeypatch.setattr(executor_sandbox, "_openshell_required_for_local_agent", lambda: False)
-    monkeypatch.setattr(executor_sandbox, "_validated_host_break_glass_authorization", lambda task: {"id": "bg"})
-    monkeypatch.setattr(executor_sandbox, "_prepare_host_break_glass_environment", lambda auth: None)
-    monkeypatch.setattr(executor_sandbox, "_agent_argv", lambda *a, **kw: kw["chosen"].update({"agent": "claude", "model": "m", "fingerprint": "fp"}) or ["claude", "PROMPT"])
+    monkeypatch.setattr(
+        executor_sandbox, "_validated_host_break_glass_authorization", lambda task: {"id": "bg"}
+    )
+    monkeypatch.setattr(
+        executor_sandbox, "_prepare_host_break_glass_environment", lambda auth: None
+    )
+    monkeypatch.setattr(
+        executor_sandbox,
+        "_agent_argv",
+        lambda *a, **kw: (
+            kw["chosen"].update({"agent": "claude", "model": "m", "fingerprint": "fp"})
+            or ["claude", "PROMPT"]
+        ),
+    )
     monkeypatch.setattr(executor_sandbox, "_unsandboxed_agent_argv", lambda argv, **kw: argv)
 
     def fake_bundle(workspace, prompt, argv):
         captured["prompt"] = prompt
+
         class Bundle:
-            def argv(self, **kwargs): return argv
-            def cleanup(self): pass
+            def argv(self, **kwargs):
+                return argv
+
+            def cleanup(self):
+                pass
+
         return Bundle()
 
     monkeypatch.setattr(executor_sandbox, "_write_agent_command_bundle", fake_bundle)
     result = executor_sandbox._invoke_agent(
         lambda *args: type("R", (), {"returncode": 0})(),
-        "Do work. TOKEN=secret", tmp_path, "task_1", {"task": {"id": "task_1"}},
+        "Do work. TOKEN=secret",
+        tmp_path,
+        "task_1",
+        {"task": {"id": "task_1"}},
     )
     assert result.returncode == 0
     assert captured["prompt"].startswith("<!-- mac.prompt_master.v1 -->")

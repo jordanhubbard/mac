@@ -104,9 +104,7 @@ def _repository_contract(workspace_path: Path) -> Dict[str, Any]:
             "bootstrap_command": str(bootstrap.get("command") or ""),
             "test_command": str(test.get("command") or contract["test_command"]),
             "evidence_required": sorted(
-                str(item)
-                for item in (evidence.get("required") or [])
-                if str(item).strip()
+                str(item) for item in (evidence.get("required") or []) if str(item).strip()
             ),
         }
     )
@@ -214,9 +212,13 @@ def _session_capability_contract(
             "name": "web_search",
             "kind": "service",
             "required": True,
-            "command": "mac-hermes web-search \"mac release notes\" --limit 1",
+            "command": 'mac-hermes web-search "mac release notes" --limit 1',
             "expected_path": str(mac_home / "venv" / "bin" / "mac-hermes"),
-            "environment": ["FIRECRAWL_API_URL", "FIRECRAWL_GATEWAY_URL", "MAC_WEB_SEARCH_PROVIDER"],
+            "environment": [
+                "FIRECRAWL_API_URL",
+                "FIRECRAWL_GATEWAY_URL",
+                "MAC_WEB_SEARCH_PROVIDER",
+            ],
             "purpose": "Web search, extraction, and crawl access through the Hermes bridge to the hub Firecrawl-compatible service.",
         },
     ]
@@ -245,7 +247,7 @@ def _session_capability_contract(
         "mac-hermes add-child-task {task_id} --title <child>",
         "mac-hermes claim-next %s --dry-run" % agent_id,
         "mac-hermes command-audit list --agent-id %s --limit 5" % agent_id,
-        "mac-hermes web-search \"project dependency release notes\" --limit 5",
+        'mac-hermes web-search "project dependency release notes" --limit 5',
     ]
     if webdav_method.get("enabled"):
         direct_session_workflow.append(str(webdav_method.get("example_upload") or ""))
@@ -256,7 +258,7 @@ def _session_capability_contract(
             "git status --short --branch",
             test_command,
             "git add <files>",
-            "git commit -m \"<message>\"",
+            'git commit -m "<message>"',
             "git pull --rebase",
             "git push",
         ]
@@ -297,11 +299,15 @@ def _webdav_publish_method() -> Dict[str, Any]:
         "on",
     }
     public_url = (
-        os.environ.get("MAC_PUBLISH_PUBLIC_URL")
-        or os.environ.get("MAC_PUBLISH_WEBDAV_URL")
-        or os.environ.get("MAC_WEBDAV_PUBLIC_URL")
-        or ""
-    ).strip().rstrip("/")
+        (
+            os.environ.get("MAC_PUBLISH_PUBLIC_URL")
+            or os.environ.get("MAC_PUBLISH_WEBDAV_URL")
+            or os.environ.get("MAC_WEBDAV_PUBLIC_URL")
+            or ""
+        )
+        .strip()
+        .rstrip("/")
+    )
     if not enabled or not public_url:
         return {"enabled": False}
     public_path = os.environ.get("MAC_WEBDAV_PUBLIC_PATH") or "/artifacts/"
@@ -547,11 +553,7 @@ def build_runtime_context(
     )
     publication = {
         "schema": "mac.hermes.publication_methods.v1",
-        "methods": [
-            method
-            for method in [_webdav_publish_method()]
-            if method.get("enabled")
-        ],
+        "methods": [method for method in [_webdav_publish_method()] if method.get("enabled")],
     }
     return {
         "schema": RUNTIME_CONTEXT_SCHEMA,
@@ -624,7 +626,7 @@ def build_runtime_context(
                 "mac-hermes command-audit list --agent-id %s --limit 20" % resolved_agent_id,
             ],
             "web_research": [
-                "mac-hermes web-search \"current project dependency release notes\" --limit 5",
+                'mac-hermes web-search "current project dependency release notes" --limit 5',
                 "mac-hermes web-scrape https://example.com --format markdown",
                 "mac-hermes web-crawl https://example.com --limit 1",
                 "mac-hermes web-crawl-status {crawl_id}",
@@ -641,7 +643,7 @@ def build_runtime_context(
                 "mac-hermes add-child-task {task_id} <child-title> --description <summary>",
                 "mac-hermes evidence {task_id} --kind test --uri artifact://... --summary ... --created-by %s"
                 % resolved_agent_id,
-                "mac-hermes command-audit record %s --phase started --argv-json '[\"git\",\"status\"]' --cwd %s --task-id {task_id}"
+                'mac-hermes command-audit record %s --phase started --argv-json \'["git","status"]\' --cwd %s --task-id {task_id}'
                 % (resolved_agent_id, resolved_workspace),
                 "mac-hermes submit-review {task_id} %s" % resolved_agent_id,
                 "mac-hermes request-review {task_id} {reviewer_agent_id}",
@@ -668,7 +670,8 @@ def build_runtime_context(
         "runtime_rules": [
             "MAC is authoritative for fleet, agent, task, project, dependency, assignment, review, and publication state.",
             "Hermes is authoritative for soul, personality, private memory, and conversation state.",
-            "Identity is exclusive to this Hermes instance: answer only as %s; do not impersonate, proxy for, or relay as another agent." % agent_name,
+            "Identity is exclusive to this Hermes instance: answer only as %s; do not impersonate, proxy for, or relay as another agent."
+            % agent_name,
             "Refresh MAC work context before selecting, changing, or reporting on work.",
             "If a claimed task is too large, create child tasks; the parent is blocked until those children complete.",
             "Record MAC command audit entries for shell phases that produce task evidence or change repository state.",
@@ -693,12 +696,12 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         if isinstance(context.get("first_class_objects"), dict)
         else {}
     )
-    object_map = (
-        first_class.get("objects")
-        if isinstance(first_class.get("objects"), dict)
+    object_map = first_class.get("objects") if isinstance(first_class.get("objects"), dict) else {}
+    session = (
+        context.get("session_capabilities")
+        if isinstance(context.get("session_capabilities"), dict)
         else {}
     )
-    session = context.get("session_capabilities") if isinstance(context.get("session_capabilities"), dict) else {}
     publication = context.get("publication") if isinstance(context.get("publication"), dict) else {}
     workspace = session.get("workspace") if isinstance(session.get("workspace"), dict) else {}
     project_contract = (
@@ -706,11 +709,7 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         if isinstance(workspace.get("project_contract"), dict)
         else {}
     )
-    capabilities = [
-        item
-        for item in (session.get("capabilities") or [])
-        if isinstance(item, dict)
-    ]
+    capabilities = [item for item in (session.get("capabilities") or []) if isinstance(item, dict)]
     lines = [
         "# MAC Task and Project Runtime",
         "",
@@ -738,8 +737,7 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         "- Watch your own inbox in the BACKGROUND while you work: "
         "`mac admin agentbus wait %s`. It blocks until someone messages you, prints it, "
         "and exits; restart it afterwards with `--after-cursor` from the previous "
-        "run. A message may be a correction, so read it before continuing."
-        % agent["agent_id"],
+        "run. A message may be a correction, so read it before continuing." % agent["agent_id"],
         "- Announce what you will touch and answer direct questions. Do not narrate "
         "progress -- an inbox of status updates is one everybody learns to ignore.",
         "",
@@ -765,7 +763,9 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
                 object_contract.get("source_of_truth") or "unconfigured",
             )
         )
-    vocabulary = first_class.get("vocabulary") if isinstance(first_class.get("vocabulary"), dict) else {}
+    vocabulary = (
+        first_class.get("vocabulary") if isinstance(first_class.get("vocabulary"), dict) else {}
+    )
     if vocabulary:
         relationships = "; ".join(str(item) for item in vocabulary.get("task_relationships") or [])
         supporting = ", ".join(str(item) for item in vocabulary.get("supporting_objects") or [])
@@ -797,9 +797,7 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
     for command in operations["create_task"] + operations["task_lifecycle"]:
         lines.append("- `%s`" % command)
     publish_methods = [
-        item
-        for item in (publication.get("methods") or [])
-        if isinstance(item, dict)
+        item for item in (publication.get("methods") or []) if isinstance(item, dict)
     ]
     if publish_methods:
         lines.extend(["", "## Artifact Publication", ""])
@@ -818,7 +816,14 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
             if method.get("example_upload"):
                 lines.append("- `%s`" % method["example_upload"])
     lines.extend(["", "## Direct Session Parity", ""])
-    lines.append("- Workspace: `%s`" % (workspace.get("path") or context["environment"].get("MAC_HERMES_WORKSPACE") or "unconfigured"))
+    lines.append(
+        "- Workspace: `%s`"
+        % (
+            workspace.get("path")
+            or context["environment"].get("MAC_HERMES_WORKSPACE")
+            or "unconfigured"
+        )
+    )
     lines.append("- Repository contract: `%s`" % (project_contract.get("path") or "unconfigured"))
     if project_contract.get("project"):
         lines.append("- Project: `%s`" % project_contract["project"])
@@ -835,7 +840,9 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
                 command,
             )
         )
-    workflow = [str(item) for item in (session.get("direct_session_workflow") or []) if str(item).strip()]
+    workflow = [
+        str(item) for item in (session.get("direct_session_workflow") or []) if str(item).strip()
+    ]
     if workflow:
         lines.extend(["", "### Direct Work Loop", ""])
         lines.extend("- `%s`" % command for command in workflow)
@@ -881,7 +888,8 @@ def render_fleet_section(snapshot: Dict[str, Any]) -> str:
         if not doing:
             doing = ("task %s" % m.get("current_task_id")) if m.get("current_task_id") else "idle"
         lines.append(
-            "- **%s** [%s/%s] — %s" % (m.get("name", "?"), m.get("status", "?"), m.get("health", "?"), doing)
+            "- **%s** [%s/%s] — %s"
+            % (m.get("name", "?"), m.get("status", "?"), m.get("health", "?"), doing)
         )
     lines.append(FLEET_SECTION_END)
     return "\n".join(lines)
@@ -920,7 +928,9 @@ def render_mood_section(overlay: Optional[Dict[str, Any]]) -> str:
         body = render_mood_overlay(str(overlay.get("mode") or ""), overlay.get("reason"))
     if not body:
         return "%s\n%s" % (MOOD_SECTION_BEGIN, MOOD_SECTION_END)
-    return "\n".join([MOOD_SECTION_BEGIN, "## Mood — how you feel right now", "", body, MOOD_SECTION_END])
+    return "\n".join(
+        [MOOD_SECTION_BEGIN, "## Mood — how you feel right now", "", body, MOOD_SECTION_END]
+    )
 
 
 def refresh_mood_section(markdown_path: Path, section: str) -> None:
@@ -996,7 +1006,9 @@ def write_runtime_context(
         for item in (context.get("publication", {}).get("methods") or [])
         if isinstance(item, dict)
     ]
-    webdav = next((item for item in methods if item.get("name") == "hub_webdav_public_artifact"), None)
+    webdav = next(
+        (item for item in methods if item.get("name") == "hub_webdav_public_artifact"), None
+    )
     if webdav:
         env_updates["MAC_PUBLISH_WEBDAV_ENABLED"] = "1"
         env_updates["MAC_PUBLISH_WEBDAV_URL"] = str(webdav.get("public_url") or "")
@@ -1017,9 +1029,14 @@ def _main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("context_path")
     parser.add_argument("markdown_path")
     parser.add_argument("hermes_env_path")
-    parser.add_argument("--agent-name", default=os.environ.get("AGENT") or os.environ.get("MAC_WORKER_AGENT_NAME", "agent"))
+    parser.add_argument(
+        "--agent-name",
+        default=os.environ.get("AGENT") or os.environ.get("MAC_WORKER_AGENT_NAME", "agent"),
+    )
     parser.add_argument("--fleet-name", default=os.environ.get("FLEET_NAME", "mac"))
-    parser.add_argument("--mac-url", default=os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL", ""))
+    parser.add_argument(
+        "--mac-url", default=os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL", "")
+    )
     parser.add_argument("--hermes-home", default=str(mac_paths.gateway_home()))
     parser.add_argument("--mac-home", default=str(mac_paths.mac_home()))
     parser.add_argument("--tenant-id", default=os.environ.get("MAC_FLEET_TENANT_ID"))

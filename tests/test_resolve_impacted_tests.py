@@ -89,7 +89,9 @@ def policy() -> "R.SelectionPolicy":
     )
 
 
-def _resolve(repo, policy, impact_map, changed, base_lines=None, *, fresh=True, cg=(), cg_problem=None):
+def _resolve(
+    repo, policy, impact_map, changed, base_lines=None, *, fresh=True, cg=(), cg_problem=None
+):
     # ``fresh`` models the IO-layer freshness decision: True => every mapped file
     # is trustworthy for this base (exact match), False => none (stale/divergent).
     fresh_files = list(impact_map.get("file_tests", {})) if (fresh and impact_map) else []
@@ -125,9 +127,7 @@ def test_opaque_infra_file_forces_full(repo, policy, impact_map):
         assert result["reason"] == "unmappable_non_code_change"
 
 
-def test_reviewed_opaque_path_selects_owning_contract_and_guards(
-    repo, policy, impact_map
-):
+def test_reviewed_opaque_path_selects_owning_contract_and_guards(repo, policy, impact_map):
     result = _resolve(
         repo,
         policy,
@@ -217,9 +217,7 @@ def test_fleet_installer_contract_includes_every_direct_test_owner():
     }
     direct_owners.discard("tests/test_resolve_impacted_tests.py")
 
-    assert direct_owners <= set(
-        R.PATH_TEST_CONTRACTS["deploy/fleet-node-install.sh"]
-    )
+    assert direct_owners <= set(R.PATH_TEST_CONTRACTS["deploy/fleet-node-install.sh"])
 
 
 def test_documentation_only_selects_no_tests(repo, policy, impact_map):
@@ -231,9 +229,7 @@ def test_documentation_only_selects_no_tests(repo, policy, impact_map):
 
 def test_line_level_hit_selects_only_intersecting_tests(repo, policy, impact_map):
     # Change line 10 of foo.py -> only test_a executed line 10.
-    result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}}
-    )
+    result = _resolve(repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}})
     assert result["mode"] == "focused"
     assert "tests/test_foo.py::test_a" in result["tests"]
     assert "tests/test_foo.py::test_b" not in result["tests"]
@@ -243,9 +239,7 @@ def test_line_level_hit_selects_only_intersecting_tests(repo, policy, impact_map
 
 
 def test_shared_line_selects_both_tests(repo, policy, impact_map):
-    result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {12}}
-    )
+    result = _resolve(repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {12}})
     assert {"tests/test_foo.py::test_a", "tests/test_foo.py::test_b"} <= set(result["tests"])
 
 
@@ -258,8 +252,13 @@ def test_additions_only_falls_back_to_file_level(repo, policy, impact_map):
 
 def test_stale_map_uses_codegraph(repo, policy, impact_map):
     result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}},
-        fresh=False, cg=["tests/test_bar.py::test_c"],
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/foo.py"],
+        {"src/mac/foo.py": {10}},
+        fresh=False,
+        cg=["tests/test_bar.py::test_c"],
     )
     assert result["mode"] == "focused"
     assert result["map_fresh"] is False
@@ -268,8 +267,14 @@ def test_stale_map_uses_codegraph(repo, policy, impact_map):
 
 def test_stale_map_without_codegraph_fails_closed(repo, policy, impact_map):
     result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}},
-        fresh=False, cg=(), cg_problem="codegraph_unavailable",
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/foo.py"],
+        {"src/mac/foo.py": {10}},
+        fresh=False,
+        cg=(),
+        cg_problem="codegraph_unavailable",
     )
     assert result["mode"] == "full"
     assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
@@ -277,8 +282,14 @@ def test_stale_map_without_codegraph_fails_closed(repo, policy, impact_map):
 
 def test_stale_map_with_empty_codegraph_fails_closed(repo, policy, impact_map):
     result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}},
-        fresh=False, cg=(), cg_problem=None,
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/foo.py"],
+        {"src/mac/foo.py": {10}},
+        fresh=False,
+        cg=(),
+        cg_problem=None,
     )
     assert result["mode"] == "full"
     assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
@@ -286,8 +297,14 @@ def test_stale_map_with_empty_codegraph_fails_closed(repo, policy, impact_map):
 
 def test_new_source_file_not_in_map_fails_closed_without_codegraph(repo, policy, impact_map):
     result = _resolve(
-        repo, policy, impact_map, ["src/mac/brand_new.py"], {"src/mac/brand_new.py": {1}},
-        fresh=True, cg=(), cg_problem=None,
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/brand_new.py"],
+        {"src/mac/brand_new.py": {1}},
+        fresh=True,
+        cg=(),
+        cg_problem=None,
     )
     assert result["mode"] == "full"
 
@@ -300,17 +317,21 @@ def test_changed_test_file_is_selected_directly(repo, policy, impact_map):
 
 def test_nonexistent_always_run_is_filtered(repo, policy, impact_map):
     impact_map["always_run"] = ["tests/test_does_not_exist.py"]
-    result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}}
-    )
+    result = _resolve(repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}})
     assert "tests/test_does_not_exist.py" not in result["tests"]
 
 
 def test_missing_map_treats_all_source_as_unresolved(repo, policy):
     # No map at all: a source change relies entirely on codegraph; none -> full.
     result = _resolve(
-        repo, policy, None, ["src/mac/foo.py"], {"src/mac/foo.py": {10}},
-        fresh=False, cg=(), cg_problem=None,
+        repo,
+        policy,
+        None,
+        ["src/mac/foo.py"],
+        {"src/mac/foo.py": {10}},
+        fresh=False,
+        cg=(),
+        cg_problem=None,
     )
     assert result["mode"] == "full"
 
@@ -350,7 +371,9 @@ def mapped_repo(tmp_path: Path):
     # The map's node ids must be collectable, or the resolver drops them as
     # stale and the selection under test never happens.
     _commit_file(
-        g, tmp_path, "tests/test_foo.py",
+        g,
+        tmp_path,
+        "tests/test_foo.py",
         "def test_a():\n    assert True\n\n\ndef test_b():\n    assert True\n",
     )
     base = _commit_file(g, tmp_path, "src/mac/bar.py", "y = 2\n")
@@ -493,9 +516,7 @@ def test_a_drifted_file_resolves_by_scope_instead_of_going_full(
     repo, policy, scoped_map, monkeypatch
 ):
     """The case that cost the most: a mapped file whose line numbers moved."""
-    monkeypatch.setattr(
-        R, "touched_scope_names", lambda *a, **k: {"build_parser"}
-    )
+    monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: {"build_parser"})
 
     result = _resolve(repo, policy, scoped_map, ["src/mac/foo.py"], fresh=False)
 
@@ -505,9 +526,7 @@ def test_a_drifted_file_resolves_by_scope_instead_of_going_full(
 
 def test_only_the_touched_scope_is_charged(repo, policy, scoped_map, monkeypatch):
     """Otherwise scope resolution is just the file answer with extra steps."""
-    monkeypatch.setattr(
-        R, "touched_scope_names", lambda *a, **k: {"OtherClass.method"}
-    )
+    monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: {"OtherClass.method"})
 
     result = _resolve(repo, policy, scoped_map, ["src/mac/foo.py"], fresh=False)
 
@@ -547,32 +566,24 @@ def test_a_pruned_line_falls_back_to_the_file_rather_than_selecting_nothing(
     index, standing in for a line pruned for high fanout."""
     monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: None)
 
-    result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {99}}
-    )
+    result = _resolve(repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {99}})
 
     assert result["mode"] == "focused"
-    assert {"tests/test_foo.py::test_a", "tests/test_foo.py::test_b"} <= set(
-        result["tests"]
-    )
+    assert {"tests/test_foo.py::test_a", "tests/test_foo.py::test_b"} <= set(result["tests"])
 
 
 def test_a_known_line_is_still_answered_by_line(repo, policy, impact_map, monkeypatch):
     """The narrow answer must not be lost to the new fallback."""
     monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: None)
 
-    result = _resolve(
-        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}}
-    )
+    result = _resolve(repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}})
 
     assert "tests/test_foo.py::test_a" in result["tests"]
     assert "tests/test_foo.py::test_b" not in result["tests"]
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
-    )
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
 
 
 def _sandbox_shaped_repo(tmp_path: Path) -> tuple[Path, str]:
@@ -595,7 +606,9 @@ def _sandbox_shaped_repo(tmp_path: Path) -> tuple[Path, str]:
     _git(repo, "commit", "-q", "-m", "MAC OpenShell sandbox baseline")
     baseline = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     return repo, baseline
 

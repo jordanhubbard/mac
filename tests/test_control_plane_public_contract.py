@@ -164,8 +164,7 @@ def _explicit_public_methods() -> list[tuple[str, Any]]:
             continue
         parameters = list(inspect.signature(method).parameters.values())[1:]
         if any(
-            parameter.kind
-            in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+            parameter.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
             for parameter in parameters
         ):
             continue

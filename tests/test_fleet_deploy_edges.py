@@ -67,24 +67,36 @@ def test_parse_ssh_target_rejects_invalid_values(value, port, message) -> None:
 
 
 def test_mesh_target_replaces_only_local_mdns_and_preserves_user_and_port() -> None:
-    assert canonicalize_mesh_ssh_target(
-        "jkh@puck.local:2201",
-        provider="tailscale",
-        status=MESH_STATUS,
-    ) == "jkh@100.72.16.110:2201"
-    assert canonicalize_mesh_ssh_target(
-        "puck.local",
-        provider="headscale",
-        status=MESH_STATUS,
-    ) == "100.72.16.110"
-    assert canonicalize_mesh_ssh_target(
-        "jkh@host.example.com:2201",
-        provider="none",
-    ) == "jkh@host.example.com:2201"
-    assert canonicalize_mesh_ssh_target(
-        "jkh@192.0.2.10",
-        provider="none",
-    ) == "jkh@192.0.2.10"
+    assert (
+        canonicalize_mesh_ssh_target(
+            "jkh@puck.local:2201",
+            provider="tailscale",
+            status=MESH_STATUS,
+        )
+        == "jkh@100.72.16.110:2201"
+    )
+    assert (
+        canonicalize_mesh_ssh_target(
+            "puck.local",
+            provider="headscale",
+            status=MESH_STATUS,
+        )
+        == "100.72.16.110"
+    )
+    assert (
+        canonicalize_mesh_ssh_target(
+            "jkh@host.example.com:2201",
+            provider="none",
+        )
+        == "jkh@host.example.com:2201"
+    )
+    assert (
+        canonicalize_mesh_ssh_target(
+            "jkh@192.0.2.10",
+            provider="none",
+        )
+        == "jkh@192.0.2.10"
+    )
 
 
 def test_mesh_target_rejects_local_mdns_without_a_resolvable_mesh_peer() -> None:

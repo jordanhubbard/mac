@@ -34,7 +34,7 @@ def test_env_bool():
         assert env_bool("F", environ={"F": token}) is True
     for token in ("0", "false", "no", "off"):
         assert env_bool("F", True, environ={"F": token}) is False
-    assert env_bool("F", True, environ={}) is True          # unset -> default
+    assert env_bool("F", True, environ={}) is True  # unset -> default
     assert env_bool("F", True, environ={"F": "garbage"}) is True  # invalid -> default
 
 
@@ -69,16 +69,15 @@ def test_generated_registry_exports_typed_named_accessors():
     assert isinstance(MAC_API_ALLOW_OPEN, EnvVar)
     assert MAC_API_ALLOW_OPEN.kind == "bool"
     assert MAC_API_ALLOW_OPEN(environ={"MAC_API_ALLOW_OPEN": "yes"}) is True
-    assert ENV_VARS["MAC_API_URL"](environ={"MAC_API_URL": " http://hub:8789 "}) == "http://hub:8789"
+    assert (
+        ENV_VARS["MAC_API_URL"](environ={"MAC_API_URL": " http://hub:8789 "}) == "http://hub:8789"
+    )
     assert environment_catalog() == sorted(environment_catalog(), key=lambda item: item.name)
 
 
 def test_retired_registry_entry_is_documented_but_never_resolved():
     assert MAC_BEADS_BRIDGE_HUB_AGENT.retired is True
-    assert (
-        MAC_BEADS_BRIDGE_HUB_AGENT(environ={"MAC_BEADS_BRIDGE_HUB_AGENT": "stale"})
-        is None
-    )
+    assert MAC_BEADS_BRIDGE_HUB_AGENT(environ={"MAC_BEADS_BRIDGE_HUB_AGENT": "stale"}) is None
     assert MAC_BEADS_BRIDGE_HUB_AGENT not in environment_catalog(include_retired=False)
 
 

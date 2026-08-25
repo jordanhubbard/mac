@@ -179,9 +179,7 @@ class TestWorkflowDefinitionParse:
 
     def test_requires_exactly_one_start_edge(self):
         with pytest.raises(ValidationError, match="exactly one start edge"):
-            WorkflowDefinition.parse(
-                _definition([_valid_node(node_key="a")], [])
-            )
+            WorkflowDefinition.parse(_definition([_valid_node(node_key="a")], []))
 
     def test_rejects_unreachable_node(self):
         with pytest.raises(ValidationError, match="unreachable"):

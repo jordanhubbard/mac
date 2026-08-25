@@ -56,8 +56,7 @@ def test_one_task_with_many_blockers_does_not_starve_every_title():
     title_width = 100 - title_start
 
     assert title_width >= 40, (
-        "titles were squeezed to %d columns by one task's dependency list"
-        % title_width
+        "titles were squeezed to %d columns by one task's dependency list" % title_width
     )
 
 

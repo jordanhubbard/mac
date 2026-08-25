@@ -57,13 +57,9 @@ def _task(excluded=(), target=None, capabilities=CAPABLE):
 
 
 def _fleet(*, extra_capable=False, capable_count=1):
-    agents = [
-        AllocationAgent(id="agent_worker5", capabilities=CAPABLE, capacity=4)
-    ]
+    agents = [AllocationAgent(id="agent_worker5", capabilities=CAPABLE, capacity=4)]
     if extra_capable:
-        agents.append(
-            AllocationAgent(id="agent_worker9", capabilities=CAPABLE, capacity=4)
-        )
+        agents.append(AllocationAgent(id="agent_worker9", capabilities=CAPABLE, capacity=4))
     # The rest of the fleet: identically configured, python/testing only.
     agents += [
         AllocationAgent(id="agent_%d" % i, capabilities=frozenset({"testing"}), capacity=4)
@@ -153,9 +149,7 @@ def test_both_codes_still_classify_on_their_stem():
     assert rejection_kind("agent_target_mismatch:excluded") == rejection_kind(
         "agent_target_mismatch"
     )
-    assert rejection_kind("agent_target_mismatch:pinned") == rejection_kind(
-        "agent_target_mismatch"
-    )
+    assert rejection_kind("agent_target_mismatch:pinned") == rejection_kind("agent_target_mismatch")
 
 
 # --------------------------------------------------------------------------
@@ -171,9 +165,7 @@ def test_an_excluded_agent_is_counted_not_skipped():
     capable agent met them perfectly and was barred -- pointing the operator at
     agent capabilities instead of at the bar.
     """
-    verdict = classify_requirement_eligibility(
-        _task(excluded={"agent_worker5"}), _fleet()
-    )
+    verdict = classify_requirement_eligibility(_task(excluded={"agent_worker5"}), _fleet())
 
     assert "agent_target_mismatch:excluded" in verdict.unmet_requirements
     assert "agent_worker5" in verdict.considered_agent_ids
@@ -181,14 +173,10 @@ def test_an_excluded_agent_is_counted_not_skipped():
 
 def test_a_pinned_task_still_reports_only_the_pinned_agent():
     """A pin genuinely is routing, and must not be reported as a fleet defect."""
-    verdict = classify_requirement_eligibility(
-        _task(target="agent_worker5"), _fleet()
-    )
+    verdict = classify_requirement_eligibility(_task(target="agent_worker5"), _fleet())
 
     assert verdict.considered_agent_ids == ("agent_worker5",)
-    assert not any(
-        code.startswith("agent_target_mismatch") for code in verdict.unmet_requirements
-    )
+    assert not any(code.startswith("agent_target_mismatch") for code in verdict.unmet_requirements)
 
 
 def test_a_pin_survives_even_when_the_task_also_has_an_exclusion():

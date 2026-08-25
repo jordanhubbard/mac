@@ -68,9 +68,7 @@ def test_discovers_all_complete_slack_workspaces_with_primary_first() -> None:
         "slack.bullwinkle.offtera.bot",
         "slack.bullwinkle.offtera.app",
     ]
-    assert module.discover_slack_account_secrets(
-        names, "bullwinkle", "bullwinkle", "offtera"
-    ) == [
+    assert module.discover_slack_account_secrets(names, "bullwinkle", "bullwinkle", "offtera") == [
         (
             "offtera",
             "slack.bullwinkle.offtera.bot",
@@ -87,9 +85,7 @@ def test_discovers_all_complete_slack_workspaces_with_primary_first() -> None:
 def test_headless_runtime_clears_credentials_without_vault_access(tmp_path: Path) -> None:
     credentials = tmp_path / "credentials.env"
     credentials.write_text(
-        "SLACK_BOT_TOKEN=xoxb-stale\n"
-        "SLACK_APP_TOKEN=xapp-stale\n"
-        "TELEGRAM_BOT_TOKEN=123:stale\n",
+        "SLACK_BOT_TOKEN=xoxb-stale\nSLACK_APP_TOKEN=xapp-stale\nTELEGRAM_BOT_TOKEN=123:stale\n",
         encoding="utf-8",
     )
     env = {

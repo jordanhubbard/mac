@@ -143,8 +143,7 @@ class MessagingService:
             clauses.append("message_type = ?")
             params.append(message_type_value)
         rows = self.store.query_all(
-            "SELECT * FROM messages WHERE %s ORDER BY created_at, id"
-            % " AND ".join(clauses),
+            "SELECT * FROM messages WHERE %s ORDER BY created_at, id" % " AND ".join(clauses),
             tuple(params),
         )
         if not payload_contains:
@@ -266,9 +265,7 @@ class MessagingService:
             for index, nested in enumerate(value):
                 self._check_json_safe(nested, path + (str(index),))
         elif not isinstance(value, (str, int, float, bool, type(None))):
-            raise ValidationError(
-                "message payload contains non-JSON value at %s" % ".".join(path)
-            )
+            raise ValidationError("message payload contains non-JSON value at %s" % ".".join(path))
 
     # Row hydration ------------------------------------------------------
 

@@ -33,13 +33,8 @@ def _function(name: str) -> str:
 def test_direct_mesh_flag_reaches_remote_deploy() -> None:
     text = _script()
     assert 'direct_mesh_hub_flag="${6:-0}"' in text
-    assert (
-        'add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"' in text
-    )
-    assert (
-        '"$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2'
-        in text
-    )
+    assert 'add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"' in text
+    assert '"$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2' in text
 
 
 def test_direct_hub_guard_precedes_reverse_tunnel_poll() -> None:
@@ -61,9 +56,7 @@ def test_direct_hub_guard_returns_without_polling() -> None:
             "wait_for_hub_reverse_tunnel",
         ]
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
     assert result.returncode == 0
     assert "skipping reverse-tunnel wait" in result.stdout
 
@@ -100,14 +93,9 @@ def test_mac_authority_prefers_mac_database_url_over_mac_db(tmp_path: Path) -> N
             "mac_authority admin init",
         ]
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert (
-        "--db postgresql://mac:secret@127.0.0.1:5432/mac admin init"
-        in result.stdout
-    )
+    assert "--db postgresql://mac:secret@127.0.0.1:5432/mac admin init" in result.stdout
 
 
 def test_mac_authority_fails_closed_with_neither_dsn_variable_set() -> None:
@@ -122,9 +110,7 @@ def test_mac_authority_fails_closed_with_neither_dsn_variable_set() -> None:
             "mac_authority admin init",
         ]
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
     assert result.returncode != 0
     assert "neither MAC_DATABASE_URL nor MAC_DB is set" in result.stderr
 
@@ -148,17 +134,13 @@ def test_reachable_nonmesh_route_is_direct_hub_eligible() -> None:
             'uses_direct_mesh_hub none "http://100.72.16.110:8789"',
         ]
     )
-    result = subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, check=False)
     assert result.returncode == 0
 
 
 def test_nonmesh_shared_services_keep_direct_urls_when_proven() -> None:
     text = _script()
-    assert (
-        'if [ "$NETWORK_PROVIDER" = "none" ] \\\n  && [ "$DEPLOY_DIRECT_HUB" != "1" ]' in text
-    )
+    assert 'if [ "$NETWORK_PROVIDER" = "none" ] \\\n  && [ "$DEPLOY_DIRECT_HUB" != "1" ]' in text
 
 
 def test_remote_fallback_derives_mesh_path_but_not_tunnel_path() -> None:

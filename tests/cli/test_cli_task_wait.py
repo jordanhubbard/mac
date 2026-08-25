@@ -11,6 +11,7 @@ an operator API by design (needs_input is fenced to an active worker lease,
 blocked is set by dependency supervision), so reproducing them at CLI level
 would mean manufacturing a state the control plane deliberately guards.
 """
+
 from __future__ import annotations
 
 import io
@@ -69,8 +70,9 @@ def test_a_still_running_task_holds_the_wait_open_until_the_timeout(tmp_path):
     cp.create_task("still going", project="mac")
 
     with pytest.raises(SystemExit) as excinfo:
-        _run(tmp_path, "task", "wait", "--project", "mac", "--timeout", "2",
-             "--poll-interval", "0.2")
+        _run(
+            tmp_path, "task", "wait", "--project", "mac", "--timeout", "2", "--poll-interval", "0.2"
+        )
 
     assert excinfo.value.code == 1
 
@@ -83,16 +85,30 @@ def test_the_initial_feed_names_what_is_being_waited_on(tmp_path):
     task = cp.create_task("open work", project="mac")
 
     with pytest.raises(SystemExit):
-        _run(tmp_path, "task", "wait", "--project", "mac", "--timeout", "1",
-             "--poll-interval", "0.2")
+        _run(
+            tmp_path, "task", "wait", "--project", "mac", "--timeout", "1", "--poll-interval", "0.2"
+        )
 
     # The feed is written before the timeout, so re-run capturing it.
     out = io.StringIO()
     old = sys.stdout
     sys.stdout = out
     try:
-        main(["--db", dsn_for(tmp_path), "--json", "task", "wait",
-              "--project", "mac", "--timeout", "1", "--poll-interval", "0.2"])
+        main(
+            [
+                "--db",
+                dsn_for(tmp_path),
+                "--json",
+                "task",
+                "wait",
+                "--project",
+                "mac",
+                "--timeout",
+                "1",
+                "--poll-interval",
+                "0.2",
+            ]
+        )
     except SystemExit:
         pass
     finally:

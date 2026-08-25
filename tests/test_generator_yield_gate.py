@@ -13,6 +13,7 @@ Measured on the live ledger 2026-08-02 (7,781 tasks), by task origin:
 The gate's job is to stop the bottom of that table without touching the top,
 and to keep working for generators nobody has thought of yet.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -46,9 +47,7 @@ def _file(cp, origin_type, *, count, completed, title="generated"):
 
 
 def _gate(cp, **kwargs):
-    policy = YieldPolicy(
-        enabled=True, min_sample=10, floor=0.05, cache_ttl_seconds=0, **kwargs
-    )
+    policy = YieldPolicy(enabled=True, min_sample=10, floor=0.05, cache_ttl_seconds=0, **kwargs)
     return GeneratorYieldGate(cp.store, policy)
 
 

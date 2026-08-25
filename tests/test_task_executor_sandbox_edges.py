@@ -123,7 +123,9 @@ def test_progress_monitor_transitions_and_stop(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "old")
     monkeypatch.setattr(te, "_sandbox_progress_snapshot", lambda *_a: next(snapshots))
     telemetry = []
-    monkeypatch.setattr(te, "emit_telemetry", lambda event, **kwargs: telemetry.append((event, kwargs)))
+    monkeypatch.setattr(
+        te, "emit_telemetry", lambda event, **kwargs: telemetry.append((event, kwargs))
+    )
     monitor = te._SandboxProgressMonitor("name", "work", tmp_path, "task")
     monitor.observe()
     monitor.observe()
@@ -171,9 +173,7 @@ def test_progress_monitor_does_not_claim_clean_when_snapshot_is_unavailable(
 
     monitor.stop()
 
-    assert [event for event, _detail in telemetry] == [
-        "sandbox_observation_unavailable"
-    ]
+    assert [event for event, _detail in telemetry] == ["sandbox_observation_unavailable"]
     assert telemetry[0][1]["state"] == "unknown"
     assert monitor.evidence()["ready_observed"] is False
 
@@ -192,9 +192,7 @@ def test_build_probe_argv_validation_and_openshell_probe(monkeypatch, tmp_path) 
     monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--gpu")
     monkeypatch.setattr(te, "_openshell_bin", lambda: "openshell")
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy")
-    argv = te._build_sandbox_probe_argv(
-        "name", ["python", "-m", "mac.agent_command"], tmp_path
-    )
+    argv = te._build_sandbox_probe_argv("name", ["python", "-m", "mac.agent_command"], tmp_path)
     assert "--gpu" not in argv
     monkeypatch.setattr(
         te.subprocess,
@@ -202,11 +200,15 @@ def test_build_probe_argv_validation_and_openshell_probe(monkeypatch, tmp_path) 
         lambda *_a, **_k: subprocess.CompletedProcess([], 2, "out", "err"),
     )
     assert te._openshell_probe(argv, timeout=1) == (2, "outerr")
-    monkeypatch.setattr(te.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("offline")))
+    monkeypatch.setattr(
+        te.subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(OSError("offline"))
+    )
     assert te._openshell_probe(argv, timeout=1) == (1, "offline")
 
 
 def test_runner_choice_telemetry_failure_is_best_effort(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(te, "emit_telemetry", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr(
+        te, "emit_telemetry", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("down"))
+    )
     te._record_runner_choice("hermes", [])
     assert "no rationale" in capsys.readouterr().err

@@ -70,9 +70,7 @@ def test_nudge_is_a_noop_without_the_event_consumer():
 
     cp.nudge("task_frozen")
 
-    assert cp._advance_queued == set(), (
-        "a dropped nudge must not even be marked queued"
-    )
+    assert cp._advance_queued == set(), "a dropped nudge must not even be marked queued"
 
 
 def test_nudge_enqueues_when_the_consumer_is_running():
@@ -165,7 +163,7 @@ def test_hub_verifiable_evidence_holds_the_merge_gate():
     falls through to the agent-nudge path. This distinguishes C2 from the
     intended no-evidence behavior."""
     src = inspect.getsource(ControlPlane.advance_default_review_workflow)
-    assert "hub_verifiable = (" in src
+    assert "hub_verifiable =" in src
     assert "self._hub_verify_repo_info(task, evidence) is not None" in src
     assert "if hub_verifiable:" in src
 
@@ -250,15 +248,19 @@ def test_hub_agent_matches_by_name_or_id():
 def test_resolve_hub_agent_returns_the_configured_value_verbatim():
     """R2: no transformation of the configured hub-agent value that could cause
     a name/id mismatch."""
-    assert resolve_hub_agent(
-        "MAC_REVIEW_TICK_HUB_AGENT", environ={"MAC_REVIEW_TICK_HUB_AGENT": "rocky"}
-    ) == "rocky"
-    assert resolve_hub_agent(
-        "MAC_REVIEW_TICK_HUB_AGENT", environ={"MAC_REVIEW_TICK_HUB_AGENT": " rocky "}
-    ) == "rocky"
-    assert resolve_hub_agent(
-        "MAC_REVIEW_TICK_HUB_AGENT", environ={}
-    ) == ""
+    assert (
+        resolve_hub_agent(
+            "MAC_REVIEW_TICK_HUB_AGENT", environ={"MAC_REVIEW_TICK_HUB_AGENT": "rocky"}
+        )
+        == "rocky"
+    )
+    assert (
+        resolve_hub_agent(
+            "MAC_REVIEW_TICK_HUB_AGENT", environ={"MAC_REVIEW_TICK_HUB_AGENT": " rocky "}
+        )
+        == "rocky"
+    )
+    assert resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT", environ={}) == ""
 
 
 def test_heartbeat_review_tick_is_off_by_default():
@@ -321,9 +323,7 @@ class _FakeConn:
             if row is None:
                 self._fetch = None
             else:
-                self._fetch = _FakeRow(
-                    cursor=row["cursor"], lease_owner=row["lease_owner"]
-                )
+                self._fetch = _FakeRow(cursor=row["cursor"], lease_owner=row["lease_owner"])
             return self
         raise AssertionError("unexpected sql: %s" % sql_norm)
 
@@ -408,9 +408,7 @@ def test_lease_release_requires_the_owning_claim_id():
     # A different coordinator cannot release A's lease via a forged claim.
     from mac.reconciliation import ReconciliationClaim
 
-    forged = ReconciliationClaim(
-        name="default-review-sweep", owner_id="someone-else", cursor=None
-    )
+    forged = ReconciliationClaim(name="default-review-sweep", owner_id="someone-else", cursor=None)
     b = ReconciliationCoordinator(store, owner_id="owner-b", lease_seconds=3600)
     assert b.complete(forged, cursor=None) is False
     # The real owner can.

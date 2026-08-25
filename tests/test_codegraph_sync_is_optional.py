@@ -51,9 +51,7 @@ def _run(env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess
     env["MAC_CODEGRAPH_BIN"] = "definitely-not-a-real-codegraph-binary"
     env.pop("MAC_REQUIRE_CODEGRAPH", None)
     env.update(env_extra or {})
-    return subprocess.run(
-        ["sh", str(SCRIPT)], capture_output=True, text=True, timeout=60, env=env
-    )
+    return subprocess.run(["sh", str(SCRIPT)], capture_output=True, text=True, timeout=60, env=env)
 
 
 def test_a_missing_codegraph_does_not_fail_the_build():
@@ -62,8 +60,7 @@ def test_a_missing_codegraph_does_not_fail_the_build():
 
     assert result.returncode == 0, (
         "sync-codegraph.sh exited %d; every make target that depends on it "
-        "(install, build, test, deploy) fails on a machine without CodeGraph"
-        % result.returncode
+        "(install, build, test, deploy) fails on a machine without CodeGraph" % result.returncode
     )
 
 
@@ -102,17 +99,13 @@ def test_strict_mode_is_off_by_default():
     assert _run().returncode == 0
 
 
-@pytest.mark.parametrize(
-    "target", ["install", "install-cli", "install-gui", "build-cli", "test"]
-)
+@pytest.mark.parametrize("target", ["install", "install-cli", "install-gui", "build-cli", "test"])
 def test_the_affected_targets_still_depend_on_the_sync(target):
     """The fix is to the script, NOT to the wiring. These targets should still
     refresh the index when CodeGraph IS present -- degrading is about the
     machine that lacks it, not about dropping the step."""
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    line = next(
-        line for line in makefile.splitlines() if line.startswith(target + ":")
-    )
+    line = next(line for line in makefile.splitlines() if line.startswith(target + ":"))
     assert "codegraph-sync" in line or target == "install"
 
 
@@ -153,10 +146,12 @@ def test_an_already_installed_codegraph_is_left_alone():
 
 def test_it_can_be_declined():
     """Air-gapped machines, or an operator choosing their own method."""
-    result = _install({
-        "MAC_CODEGRAPH_BIN": "definitely-not-real-codegraph",
-        "MAC_SKIP_CODEGRAPH_INSTALL": "1",
-    })
+    result = _install(
+        {
+            "MAC_CODEGRAPH_BIN": "definitely-not-real-codegraph",
+            "MAC_SKIP_CODEGRAPH_INSTALL": "1",
+        }
+    )
 
     assert result.returncode == 0
     assert "skipping" in result.stderr
@@ -166,10 +161,12 @@ def test_it_can_be_declined():
 
 def test_declining_still_leaves_a_working_build():
     """The CLI the user asked for must install either way."""
-    result = _install({
-        "MAC_CODEGRAPH_BIN": "definitely-not-real-codegraph",
-        "MAC_SKIP_CODEGRAPH_INSTALL": "1",
-    })
+    result = _install(
+        {
+            "MAC_CODEGRAPH_BIN": "definitely-not-real-codegraph",
+            "MAC_SKIP_CODEGRAPH_INSTALL": "1",
+        }
+    )
 
     assert result.returncode == 0
     assert "without it" in result.stderr

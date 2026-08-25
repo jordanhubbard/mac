@@ -7,6 +7,7 @@ the narrower classes that steer an operator (or an automated retry) to the right
 repair: transient throttling, a missing CLI, or an unavailable sandbox must not
 be reported as a broken endpoint route.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -38,14 +39,13 @@ _binary_status = executor_sandbox._coding_agent_binary_status
         (
             1,
             'HTTP 403 {"error":"policy_denied","detail":"POST '
-            'host.openshell.internal:8789/v1/responses not permitted by '
+            "host.openshell.internal:8789/v1/responses not permitted by "
             'policy"}',
             "sandbox_policy_denied",
         ),
         (
             1,
-            "POST host.openshell.internal:8789/v1/responses not permitted "
-            "by policy",
+            "POST host.openshell.internal:8789/v1/responses not permitted by policy",
             "sandbox_policy_denied",
         ),
         (1, "DENIED: egress blocked by policy", "sandbox_policy_denied"),
@@ -133,13 +133,9 @@ def test_policy_denial_does_not_shadow_more_specific_sandbox_classes() -> None:
     )
     # A throttled or faulting upstream keeps its own retry signal even when the
     # CLI also echoes the sandbox policy path in the same blob.
+    assert _classify(1, "429 too many requests (policy_denied retry advisory)") == "rate_limited"
     assert (
-        _classify(1, "429 too many requests (policy_denied retry advisory)")
-        == "rate_limited"
-    )
-    assert (
-        _classify(1, "openshell: failed to create sandbox: policy_denied")
-        == "sandbox_unavailable"
+        _classify(1, "openshell: failed to create sandbox: policy_denied") == "sandbox_unavailable"
     )
 
 
@@ -149,10 +145,7 @@ def test_genuine_auth_failure_survives_the_policy_class() -> None:
     # repair, so operators are not sent to edit an egress policy that is fine.
     assert _classify(1, "HTTP 401 Unauthorized") == "authentication_failed"
     assert _classify(1, "403 forbidden") == "authentication_failed"
-    assert (
-        _classify(1, "Warning: The provided API key is invalid.")
-        == "authentication_failed"
-    )
+    assert _classify(1, "Warning: The provided API key is invalid.") == "authentication_failed"
 
 
 def test_policy_denial_is_distinct_from_authentication_failure() -> None:

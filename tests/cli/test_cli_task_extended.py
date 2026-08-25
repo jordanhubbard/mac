@@ -156,15 +156,10 @@ def test_task_throughput_reports_active_flow_and_slo(tmp_path):
     assert report["stranding"]["episodes"] == []
     assert report["contention"]["count"] == 0
     assert report["snapshot_id"].startswith("flowsnap_")
-    assert any(
-        row["task_id"] == task["id"]
-        for row in report["stranding"]["episodes"]
-    ) is False
+    assert any(row["task_id"] == task["id"] for row in report["stranding"]["episodes"]) is False
 
 
-def test_task_recover_finalizer_forwards_explicit_recovery_contract(
-    tmp_path, monkeypatch
-):
+def test_task_recover_finalizer_forwards_explicit_recovery_contract(tmp_path, monkeypatch):
     seen = {}
 
     def fake_recover(
@@ -214,9 +209,7 @@ def test_task_recover_finalizer_forwards_explicit_recovery_contract(
     }
 
 
-def test_task_recover_stalled_finalizer_forwards_recovery_contract(
-    tmp_path, monkeypatch
-):
+def test_task_recover_stalled_finalizer_forwards_recovery_contract(tmp_path, monkeypatch):
     seen = {}
 
     def fake_recover(
@@ -424,9 +417,7 @@ def test_task_break_glass_authorize_list_and_revoke(tmp_path):
     assert authorization["agent_id"] == agent["id"]
     assert authorization["status"] == "active"
 
-    rc, authorizations = _run(
-        tmp_path, "task", "break-glass-list", task["id"]
-    )
+    rc, authorizations = _run(tmp_path, "task", "break-glass-list", task["id"])
     assert rc == 0
     assert [item["id"] for item in authorizations] == [authorization["id"]]
 
@@ -491,9 +482,14 @@ def test_task_reopen_with_reason(tmp_path):
     _run(tmp_path, "task", "close", task["id"], "--cancelled", "--reason", "reopen fixture")
 
     rc, reopened = _run(
-        tmp_path, "task", "reopen", task["id"],
-        "--reason", "requeue after infrastructure fix",
-        "--actor", "hub",
+        tmp_path,
+        "task",
+        "reopen",
+        task["id"],
+        "--reason",
+        "requeue after infrastructure fix",
+        "--actor",
+        "hub",
     )
     assert rc == 0
     assert reopened["state"] == "open"
@@ -548,12 +544,19 @@ def test_task_evidence_adds_test_evidence(tmp_path):
 
     rc, ev = _run(
         tmp_path,
-        "task", "evidence", task["id"],
-        "--kind", "test",
-        "--uri", "ci://build/42/test-results",
-        "--summary", "all 86 tests passed",
-        "--created-by", agent["id"],
-        "--lease-id", lease_id,
+        "task",
+        "evidence",
+        task["id"],
+        "--kind",
+        "test",
+        "--uri",
+        "ci://build/42/test-results",
+        "--summary",
+        "all 86 tests passed",
+        "--created-by",
+        agent["id"],
+        "--lease-id",
+        lease_id,
     )
     assert rc == 0
     assert ev["id"].startswith("ev_")
@@ -569,12 +572,19 @@ def test_task_evidence_adds_artifact_evidence(tmp_path):
 
     rc, ev = _run(
         tmp_path,
-        "task", "evidence", task["id"],
-        "--kind", "artifact",
-        "--uri", "s3://bucket/output/report.json",
-        "--summary", "generated report artifact",
-        "--created-by", agent["id"],
-        "--lease-id", lease_id,
+        "task",
+        "evidence",
+        task["id"],
+        "--kind",
+        "artifact",
+        "--uri",
+        "s3://bucket/output/report.json",
+        "--summary",
+        "generated report artifact",
+        "--created-by",
+        agent["id"],
+        "--lease-id",
+        lease_id,
     )
     assert rc == 0
     assert ev["kind"] == "artifact"
@@ -587,12 +597,19 @@ def test_task_evidence_appears_in_task_show(tmp_path):
     agent, lease_id = _claim_for_evidence(tmp_path, task)
     _run(
         tmp_path,
-        "task", "evidence", task["id"],
-        "--kind", "log",
-        "--uri", "logs://run/999",
-        "--summary", "execution log",
-        "--created-by", agent["id"],
-        "--lease-id", lease_id,
+        "task",
+        "evidence",
+        task["id"],
+        "--kind",
+        "log",
+        "--uri",
+        "logs://run/999",
+        "--summary",
+        "execution log",
+        "--created-by",
+        agent["id"],
+        "--lease-id",
+        lease_id,
     )
 
     rc, detail = _run(tmp_path, "task", "show", task["id"])
@@ -660,7 +677,8 @@ def _register_project_repo(tmp_path, project="reportproj", name="report-repo"):
     (contract_dir / "project.yaml").write_text(_PROJECT_CONTRACT_YAML, encoding="utf-8")
     rc, repo = _run(
         tmp_path,
-        "admin", "bridge",
+        "admin",
+        "bridge",
         "repository",
         "register",
         name,

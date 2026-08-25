@@ -45,8 +45,6 @@ from mac.services import ControlPlane
 JsonDict = Dict[str, Any]
 
 
-
-
 @dataclass
 class MigrationReport:
     """Summary of what the importer did."""
@@ -93,9 +91,7 @@ class Migrator:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
-                report.errors.append(
-                    {"line": line_number, "error": "invalid JSON: %s" % exc}
-                )
+                report.errors.append({"line": line_number, "error": "invalid JSON: %s" % exc})
                 continue
             try:
                 self._apply(record, report)
@@ -291,7 +287,9 @@ class Migrator:
         self.cp.add_memory(
             task_id,
             subject_type=record.get("subject_type") or "migration",
-            subject_id=record.get("subject_id") or record.get("event_id") or record.get("event_type"),
+            subject_id=record.get("subject_id")
+            or record.get("event_id")
+            or record.get("event_type"),
             record_type=record.get("event_type") or "imported",
             content=record.get("content") or json.dumps(record),
             evidence_id=None,
@@ -308,9 +306,7 @@ class Migrator:
         if ref in self._task_ref_to_id:
             return self._task_ref_to_id[ref]
         if ":" not in ref:
-            raise ValidationError(
-                "task_ref must be 'source:external_id' (got %r)" % ref
-            )
+            raise ValidationError("task_ref must be 'source:external_id' (got %r)" % ref)
         source, external_id = ref.split(":", 1)
         row = self.cp.store.query_one(
             "SELECT task_id FROM project_items WHERE source = ? AND external_id = ?",
@@ -365,4 +361,3 @@ def _string(value: Any) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
-

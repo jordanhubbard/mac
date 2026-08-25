@@ -117,10 +117,7 @@ else:
         check=False,
         env=env,
     )
-    calls = [
-        json.loads(line)
-        for line in calls_path.read_text(encoding="utf-8").splitlines()
-    ]
+    calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
     return result, {"calls": calls, "plan_path": plan_path}
 
 
@@ -128,9 +125,7 @@ def test_mac_continuity_plugin_mirrors_fleet_conversation_to_home_channel() -> N
     """The conversation-mirroring feature: gated by the mirror_fleet_conversation
     flag, summarized via the gateway model, delivered through the sanctioned
     OpenClaw human-message outbox to the home channel."""
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     # Gated by the config flag (natural-language toggle wires through the LLM
     # + mac_config_flag_set, so the flag name must be exactly this).
     assert '"mirror_fleet_conversation"' in plugin
@@ -152,7 +147,9 @@ def _seed_hermes_identity(home: Path, name: str = "Test Agent") -> None:
     memories = hermes / "memories"
     memories.mkdir(parents=True)
     (hermes / "SOUL.md").write_text(f"# {name}\n\nDistinct test soul.\n", encoding="utf-8")
-    (memories / "USER.md").write_text("# User\n\nLearn preferences from evidence.\n", encoding="utf-8")
+    (memories / "USER.md").write_text(
+        "# User\n\nLearn preferences from evidence.\n", encoding="utf-8"
+    )
     (memories / "MEMORY.md").write_text("# Memory\n\nContinuity seed.\n", encoding="utf-8")
 
 
@@ -162,7 +159,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "ghcr.io/openclaw/openclaw:2026.6.11@sha256:" in container
     assert 'OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"' in container
-    assert 'ARG MAC_OPENCLAW_IMAGE_REVISION=' in container
+    assert "ARG MAC_OPENCLAW_IMAGE_REVISION=" in container
     assert "/etc/mac-openclaw-image-revision" in container
     # OpenShell's sandbox supervisor creates an isolated network namespace
     # inside the image and fails closed when no trusted `ip` helper exists.
@@ -180,15 +177,17 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "PIP_BREAK_SYSTEM_PACKAGES=1" in container
     assert "rm -f /usr/lib/python3*/EXTERNALLY-MANAGED" in container
     assert (
-        "COPY deploy/verify-bash-contract.sh "
-        "/usr/local/bin/mac-verify-bash-contract" in container
+        "COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract" in container
     )
     assert container.count("/usr/local/bin/mac-verify-bash-contract") >= 2
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
     assert 'OPENCLAW_IMAGE_REVISION="19"' in installer
-    assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
+    assert (
+        'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"'
+        in installer
+    )
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
     assert 'docker_path="$(dirname "$docker_bin"):$PATH"' in installer
@@ -228,8 +227,13 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     assert "- /home/sandbox\n" not in read_only
     # Curated developer package-repo egress — enables install/build while the
     # deny-by-default guard still blocks every other host.
-    for repo in ("pypi.org", "files.pythonhosted.org", "github.com",
-                 "download.pytorch.org", "developer.download.nvidia.com"):
+    for repo in (
+        "pypi.org",
+        "files.pythonhosted.org",
+        "github.com",
+        "download.pytorch.org",
+        "developer.download.nvidia.com",
+    ):
         assert f"host: {repo}" in text
     assert "dev-repos" in text
     # OpenShell's proxy is per-binary; the dev-repos egress must allowlist the
@@ -312,16 +316,9 @@ def test_stuck_session_recovery_patch_is_wired_exact_and_fail_closed(
     patcher = OPENCLAW_DIR / "patches" / "patch-stuck-session-recovery.py"
     container = CONTAINERFILE.read_text(encoding="utf-8")
     # Wired into the image build, applied as root before USER sandbox.
-    assert (
-        "COPY deploy/openclaw/patches/patch-stuck-session-recovery.py" in container
-    )
-    assert (
-        "RUN python3 /opt/mac-openclaw/patches/patch-stuck-session-recovery.py"
-        in container
-    )
-    assert container.index("patch-stuck-session-recovery.py") < container.index(
-        "USER sandbox"
-    )
+    assert "COPY deploy/openclaw/patches/patch-stuck-session-recovery.py" in container
+    assert "RUN python3 /opt/mac-openclaw/patches/patch-stuck-session-recovery.py" in container
+    assert container.index("patch-stuck-session-recovery.py") < container.index("USER sandbox")
 
     import importlib.util
 
@@ -399,9 +396,7 @@ def test_installer_consolidates_agent_geek_knobs_and_plugin_reports_them(
         timeout=20,
     )
     # Consolidated on-host document.
-    summary = (mac_home / "openclaw" / "agent-config.yaml").read_text(
-        encoding="utf-8"
-    )
+    summary = (mac_home / "openclaw" / "agent-config.yaml").read_text(encoding="utf-8")
     assert "schema: mac.agent_deploy_config.v1" in summary
     assert "agent_id: agent_knobs" in summary
     assert "image: localhost/mac-openclaw:" in summary
@@ -413,24 +408,21 @@ def test_installer_consolidates_agent_geek_knobs_and_plugin_reports_them(
     # runtime.env now carries the knobs into the sandbox process env —
     # including the home channel, whose omission silently killed the
     # conversation mirror on reinstall.
-    runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text(
-        encoding="utf-8"
-    )
+    runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text(encoding="utf-8")
     assert "MAC_OPENCLAW_HOME_CHANNEL=channel:C0TEST" in runtime
     assert "MAC_OPENCLAW_IMAGE=localhost/mac-openclaw:" in runtime
     assert "MAC_OPENCLAW_SANDBOX=mac-openclaw-knobs" in runtime
     assert "MAC_OPENCLAW_GATEWAY_HOST=" in runtime
     # The plugin self-reports the same document to the hub at startup.
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     assert "reportDeployConfig" in plugin
     assert '"/deploy-config"' in plugin
     assert "mac.agent_deploy_config.v1" in plugin
     # Never ship the router key in the reported document.
-    assert "token: cfg.token" not in plugin.split("reportDeployConfig", 1)[1].split(
-        "function mutateMood", 1
-    )[0]
+    assert (
+        "token: cfg.token"
+        not in plugin.split("reportDeployConfig", 1)[1].split("function mutateMood", 1)[0]
+    )
 
 
 def test_workspace_context_routes_agent_coordination_over_agentbus(
@@ -468,9 +460,7 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
         check=True,
         timeout=20,
     )
-    context = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text(
-        encoding="utf-8"
-    )
+    context = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text(encoding="utf-8")
     # SOUL.md stays authoritative — coordination guidance must not displace it.
     assert "SOUL.md" in context
     assert context.index("SOUL.md") < context.index("mac_agent_send")
@@ -515,9 +505,7 @@ def test_peer_bridge_uses_hub_durable_cursors_and_request_endpoint() -> None:
     """Contract layer (task_0d50e190): bridge read positions persist via the
     hub cursor endpoint (sandbox rebuilds resume, not reset), and single-
     recipient waits go through the hub's first-class /agentbus/request."""
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     assert "loadPeerStateFromHub" in plugin
     assert "persistPeerState" in plugin
     assert '"/agentbus-cursor"' in plugin
@@ -540,9 +528,7 @@ def test_every_registered_tool_is_declared_in_the_plugin_manifest() -> None:
     superset of every name registered in index.js."""
     import re
 
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     manifest = json.loads(
         (OPENCLAW_DIR / "plugins" / "mac-continuity" / "openclaw.plugin.json").read_text(
             encoding="utf-8"
@@ -561,7 +547,9 @@ def test_every_registered_tool_is_declared_in_the_plugin_manifest() -> None:
         % (plugin.count("registerTool("), len(names))
     )
     missing = registered - declared
-    assert not missing, "tools registered but not declared in openclaw.plugin.json: %s" % sorted(missing)
+    assert not missing, "tools registered but not declared in openclaw.plugin.json: %s" % sorted(
+        missing
+    )
     # The DEPLOYMENT gate must also cover every tool, or a manifest regression
     # deploys 'successfully' again: extract the required-tools set from the
     # installer's live plugin inspection and require it to be complete.
@@ -607,9 +595,7 @@ def test_apply_cron_plan_defers_script_backed_jobs() -> None:
     # Honest description instead of the lossless claim for script jobs.
     assert "NOT yet ported to OpenClaw" in apply
     # The lossless description only applies to genuinely message-only jobs.
-    losslessline = next(
-        line for line in apply.splitlines() if "Migrated losslessly" in line
-    )
+    losslessline = next(line for line in apply.splitlines() if "Migrated losslessly" in line)
     assert "hasScript" not in losslessline
     # Surfaces how many jobs were deferred (operator + summary visibility).
     assert "deferred_script_jobs" in apply
@@ -659,9 +645,7 @@ def test_apply_cron_plan_receipt_reports_device_approval_deferrals(tmp_path: Pat
     assert "GatewayClientRequestError" not in result.stderr
     assert "a9ee718d-708b-4426-b155-9f28c3c29f92" not in result.stderr
     host_spec = json.loads(
-        (evidence["plan_path"].parent / "host-script-jobs.json").read_text(
-            encoding="utf-8"
-        )
+        (evidence["plan_path"].parent / "host-script-jobs.json").read_text(encoding="utf-8")
     )
     assert host_spec["schema"] == "mac.openclaw_host_script_jobs.v1"
     assert [job["name"] for job in host_spec["jobs"]] == ["script-job"]
@@ -677,10 +661,7 @@ def test_apply_cron_plan_receipt_distinguishes_mixed_outcomes(tmp_path: Path) ->
     assert receipt["device_approval_deferred_jobs"] == 1
     assert receipt["deferred_script_jobs"] == 1
     assert receipt["host_script_jobs"] == 1
-    assert (
-        "openclaw cron deferred until device approval: pairing_required"
-        in result.stderr
-    )
+    assert "openclaw cron deferred until device approval: pairing_required" in result.stderr
     assert "GatewayTransportError" not in result.stderr
 
 
@@ -709,9 +690,7 @@ def test_headless_agents_have_a_human_voice() -> None:
     have no Slack presence). mac_notify_human sends through the hub delivery
     proxy with automatic attribution when represented, and AGENTS.md tells
     agents this voice exists and that reporting is expected."""
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     tool = plugin.split('name: "mac_notify_human"', 1)[1].split("registerTool", 1)[0]
     assert "/communication/deliveries" in tool
     assert "MAC_OPENCLAW_HOME_CHANNEL" in tool
@@ -785,9 +764,7 @@ def test_media_sharing_travels_typed_and_chunked_over_the_bus(tmp_path) -> None:
         timeout=15,
     )
     # Receive side is wired into the bridge poll.
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     assert "pollMediaShares" in plugin
     assert "reassembleMediaChunks" in plugin
     assert "receiveMediaShare" in plugin
@@ -799,9 +776,7 @@ def test_mac_agent_send_supports_group_conversations() -> None:
     stream (participant_agent_ids); members reply as chunks on that same
     stream; the bridge polls group streams with a per-stream cursor; the
     mirror dedupes per reply, not per stream."""
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     assert "publishGroupMessage" in plugin
     assert "participant_agent_ids" in plugin
     assert "waitForGroupReplies" in plugin
@@ -821,9 +796,7 @@ def test_fleet_status_tool_is_capability_aware() -> None:
     """Discovery (task_7debcc9c): the agent-facing fleet tool must surface
     capabilities + hardware from the hub snapshot and accept a capability
     filter, so 'which agents have GPUs?' never needs a human."""
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     tool = plugin.split('name: "mac_fleet_status"', 1)[1].split("registerTool", 1)[0]
     assert "/fleet/snapshot" in tool
     assert "capability" in tool
@@ -1104,9 +1077,7 @@ def test_peer_bridge_signs_embedded_turn_failure_as_non_ok(tmp_path: Path) -> No
 def test_peer_bridge_reply_and_mirror_expose_honest_semantics_source() -> None:
     """Static contract: the plugin classifies turn outcomes, signs the honest
     status, and stamps mirror provenance (mirrors src/mac/agentbus_outcomes.py)."""
-    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
-        encoding="utf-8"
-    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(encoding="utf-8")
     assert "classifyTurnOutcome" in plugin
     assert "replyStatusForOutcome" in plugin
     assert "deliveryOutcome" in plugin
@@ -1162,7 +1133,11 @@ def test_mac_image_generate_posts_to_hub_media_router_and_writes_png() -> None:
     }
     subprocess.run(
         ["node", "--input-type=module", "--eval", script],
-        env=env, check=True, text=True, capture_output=True, timeout=10,
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=10,
     )
 
 
@@ -1279,9 +1254,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "allowConversationAccess": True,
         "allowPromptInjection": True,
     }
-    assert config["plugins"]["load"]["paths"] == [
-        "/opt/mac-openclaw/plugins/mac-continuity"
-    ]
+    assert config["plugins"]["load"]["paths"] == ["/opt/mac-openclaw/plugins/mac-continuity"]
     assert config["agents"]["defaults"]["workspace"] == "/sandbox/workspace"
     assert "memorySearch" not in config["agents"]["defaults"]
     assert config["plugins"]["slots"]["memory"] == "mac-continuity"
@@ -1339,16 +1312,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     ).strip() == "channel:C123HOME"
     wrapper = wrapper_path.read_text(encoding="utf-8")
     stop_wrapper = stop_wrapper_path.read_text(encoding="utf-8")
-    message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(
-        encoding="utf-8"
-    )
-    agent_wrapper = (mac_home / "bin" / "openclaw-agent").read_text(
-        encoding="utf-8"
-    )
+    message_wrapper = (mac_home / "bin" / "openclaw-message").read_text(encoding="utf-8")
+    agent_wrapper = (mac_home / "bin" / "openclaw-agent").read_text(encoding="utf-8")
     managed_entrypoint = (managed / "entrypoint.sh").read_text(encoding="utf-8")
-    checkpoint_quiescer = (managed / "checkpoint-quiesce.sh").read_text(
-        encoding="utf-8"
-    )
+    checkpoint_quiescer = (managed / "checkpoint-quiesce.sh").read_text(encoding="utf-8")
     assert "sandbox create" in wrapper
     # GPU passthrough is self-detecting per host: --gpu on CUDA machines, a
     # no-op on GPU-less hosts (Apple Silicon). Scalar (not array) so an empty
@@ -1356,7 +1323,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "nvidia-smi -L" in wrapper
     assert "GPU_ARG=--gpu" in wrapper
     assert "sandbox create $GPU_ARG" in wrapper
-    assert "-- env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
+    assert (
+        "-- env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh"
+        in wrapper
+    )
     assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
     assert "mac-openclaw-gateway.pid" in managed_entrypoint
     assert "runtime_token" in managed_entrypoint
@@ -1380,13 +1350,13 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "stop_gateway" in wrapper
     assert '--upload "$WORKSPACE:/sandbox"' in wrapper
     assert '--upload "$STATE:/sandbox"' in wrapper
-    assert "checkpoint-quiesce.sh:/home/sandbox/.config/mac-openclaw/checkpoint-quiesce.sh" in wrapper
+    assert (
+        "checkpoint-quiesce.sh:/home/sandbox/.config/mac-openclaw/checkpoint-quiesce.sh" in wrapper
+    )
     subprocess.run(["bash", "-n", str(wrapper_path)], check=True, timeout=10)
     subprocess.run(["bash", "-n", str(stop_wrapper_path)], check=True, timeout=10)
     subprocess.run(["bash", "-n", str(managed / "checkpoint-quiesce.sh")], check=True, timeout=10)
-    assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
-        message_wrapper
-    )
+    assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (message_wrapper)
     assert "env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c" in message_wrapper
     assert "/usr/local/bin/openclaw agent" in agent_wrapper
     assert "env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c" in agent_wrapper
@@ -1396,9 +1366,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "nemoclaw" not in wrapper.lower()
     assert all(secret not in wrapper for secret in secrets)
 
-    rendered_policy = (mac_home / "openclaw" / "openclaw-policy.yaml").read_text(
-        encoding="utf-8"
-    )
+    rendered_policy = (mac_home / "openclaw" / "openclaw-policy.yaml").read_text(encoding="utf-8")
     assert "host: 100.64.0.1" in rendered_policy
     assert "port: 8789" in rendered_policy
     assert "__MAC_" not in rendered_policy
@@ -1536,9 +1504,7 @@ def _seed_checkpoint_source(root: Path) -> tuple[Path, sqlite3.Connection]:
 def test_stop_wrapper_quiesces_validates_and_promotes_wal_checkpoint(
     tmp_path: Path,
 ) -> None:
-    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
-        tmp_path
-    )
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(tmp_path)
     mac_home = Path(base_env["MAC_HOME"])
     state_file = tmp_path / "sandbox-state"
     state_file.write_text("active\n", encoding="utf-8")
@@ -1564,21 +1530,17 @@ def test_stop_wrapper_quiesces_validates_and_promotes_wal_checkpoint(
     quiesce_index = next(
         index for index, call in enumerate(calls) if "checkpoint-quiesce.sh" in call
     )
-    download_indexes = [
-        index for index, call in enumerate(calls) if "sandbox download" in call
-    ]
-    delete_index = next(
-        index for index, call in enumerate(calls) if "sandbox delete" in call
-    )
+    download_indexes = [index for index, call in enumerate(calls) if "sandbox download" in call]
+    delete_index = next(index for index, call in enumerate(calls) if "sandbox delete" in call)
     assert quiesce_index < min(download_indexes) < max(download_indexes) < delete_index
     assert state_file.read_text(encoding="utf-8").strip() == "absent"
     promoted = mac_home / "openclaw" / "state" / "state" / "openclaw.sqlite"
     with sqlite3.connect(promoted) as checked:
         assert checked.execute("PRAGMA quick_check").fetchone() == ("ok",)
         assert checked.execute("SELECT body FROM messages").fetchone() == ("from WAL",)
-    assert (
-        mac_home / "openclaw" / "workspace" / "candidate.txt"
-    ).read_text(encoding="utf-8") == "candidate workspace\n"
+    assert (mac_home / "openclaw" / "workspace" / "candidate.txt").read_text(
+        encoding="utf-8"
+    ) == "candidate workspace\n"
     archives = sorted((mac_home / "openclaw" / "archive").glob("checkpoint-*"))
     assert len(archives) == 1
     assert (archives[0] / "workspace" / "AGENTS.md").is_file()
@@ -1587,17 +1549,13 @@ def test_stop_wrapper_quiesces_validates_and_promotes_wal_checkpoint(
 def test_stop_wrapper_rejects_malformed_sqlite_without_replacing_last_good(
     tmp_path: Path,
 ) -> None:
-    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
-        tmp_path
-    )
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(tmp_path)
     mac_home = Path(base_env["MAC_HOME"])
     host_root = mac_home / "openclaw"
     (host_root / "workspace" / "last-good.txt").write_text(
         "last good workspace\n", encoding="utf-8"
     )
-    (host_root / "state" / "last-good.txt").write_text(
-        "last good state\n", encoding="utf-8"
-    )
+    (host_root / "state" / "last-good.txt").write_text("last good state\n", encoding="utf-8")
     archive = host_root / "archive" / "checkpoint-existing"
     archive.mkdir()
     (archive / "marker").write_text("existing archive\n", encoding="utf-8")
@@ -1651,9 +1609,7 @@ def test_stop_wrapper_rejects_malformed_sqlite_without_replacing_last_good(
 def test_stop_wrapper_download_failure_preserves_last_good(
     tmp_path: Path, failed_source: str, diagnostic: str
 ) -> None:
-    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
-        tmp_path
-    )
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(tmp_path)
     host_root = Path(base_env["MAC_HOME"]) / "openclaw"
     (host_root / "workspace" / "last-good.txt").write_text("workspace\n", encoding="utf-8")
     (host_root / "state" / "last-good.txt").write_text("state\n", encoding="utf-8")
@@ -1688,9 +1644,7 @@ def test_stop_wrapper_download_failure_preserves_last_good(
 
 
 def test_stop_wrapper_serializes_concurrent_checkpoint_attempts(tmp_path: Path) -> None:
-    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
-        tmp_path
-    )
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(tmp_path)
     state_file = tmp_path / "sandbox-state"
     state_file.write_text("active\n", encoding="utf-8")
     env = {
@@ -1728,9 +1682,7 @@ def test_stop_wrapper_fails_closed_without_sandbox_absence_proof(
     sandbox_mode: str,
     expected_error: str,
 ) -> None:
-    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
-        tmp_path
-    )
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(tmp_path)
     env = {
         **base_env,
         "MAC_TEST_SANDBOX_MODE": sandbox_mode,
@@ -1754,12 +1706,8 @@ def test_stop_wrapper_fails_closed_without_sandbox_absence_proof(
         assert not any("sandbox download" in call for call in calls)
         assert not any("sandbox delete" in call for call in calls)
     else:
-        download_indexes = [
-            index for index, call in enumerate(calls) if "sandbox download" in call
-        ]
-        delete_index = next(
-            index for index, call in enumerate(calls) if "sandbox delete" in call
-        )
+        download_indexes = [index for index, call in enumerate(calls) if "sandbox download" in call]
+        delete_index = next(index for index, call in enumerate(calls) if "sandbox delete" in call)
         assert len(download_indexes) == 2
         assert max(download_indexes) < delete_index
         assert "sandbox remained present after deletion" in result.stderr
@@ -1767,9 +1715,7 @@ def test_stop_wrapper_fails_closed_without_sandbox_absence_proof(
 
 @pytest.mark.process_e2e
 def test_stop_wrapper_bounds_hung_openshell_inspection(tmp_path: Path) -> None:
-    stop_wrapper, base_env, _calls_path = _render_stop_wrapper_with_fake_openshell(
-        tmp_path
-    )
+    stop_wrapper, base_env, _calls_path = _render_stop_wrapper_with_fake_openshell(tmp_path)
     env = {
         **base_env,
         "MAC_TEST_SANDBOX_MODE": "sleeping-inspection",
@@ -1930,19 +1876,19 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     openshell = bin_dir / "openshell"
     openshell.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$*\" >> \"$MAC_TEST_CALLS\"\n"
+        'printf \'%s\\n\' "$*" >> "$MAC_TEST_CALLS"\n'
         "counter=${MAC_TEST_ATTEMPTS:?}\n"
-        "attempts=$(cat \"$counter\" 2>/dev/null || echo 0)\n"
-        "case \"$1:$2\" in\n"
+        'attempts=$(cat "$counter" 2>/dev/null || echo 0)\n'
+        'case "$1:$2" in\n'
         "  sandbox:get)\n"
-        "    attempts=$((attempts + 1)); echo \"$attempts\" > \"$counter\"\n"
-        "    [ \"$attempts\" -ge 3 ]\n"
+        '    attempts=$((attempts + 1)); echo "$attempts" > "$counter"\n'
+        '    [ "$attempts" -ge 3 ]\n'
         "    ;;\n"
-            "  sandbox:exec)\n"
-            "    case \"$*\" in\n"
-            "      *'OPENCLAW_CONTROL_PROBE_OK'*) printf '%s\\n' 'OPENCLAW_CONTROL_PROBE_OK' ;;\n"
-            "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
-            "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_fleet_status\", \"mac_agent_send\", \"mac_agent_share\", \"mac_notify_human\", \"mac_fs_put\", \"mac_fs_get\", \"mac_directive_verify\", \"mac_agent_inbox\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"mac_image_generate\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
+        "  sandbox:exec)\n"
+        '    case "$*" in\n'
+        "      *'OPENCLAW_CONTROL_PROBE_OK'*) printf '%s\\n' 'OPENCLAW_CONTROL_PROBE_OK' ;;\n"
+        '      *\'channels status\'*) printf \'%s\\n\' \'{"channelAccounts": {"slack": [{"accountId": "offtera", "enabled": true, "configured": true, "probe": {"ok": true, "team": {"id": "T123"}}}, {"accountId": "omgjkh", "enabled": true, "configured": true, "probe": {"ok": true, "team": {"id": "T456"}}}]}, "channelDefaultAccountId": {"slack": "offtera"}}\' ;;\n'
+        '      *\'plugins inspect mac-continuity\'*) printf \'%s\\n\' \'{"plugin": {"imported": true, "status": "loaded", "toolNames": ["memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"], "hookNames": ["before_prompt_build"]}}\' ;;\n'
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"
@@ -2004,9 +1950,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     assert int(counter.read_text(encoding="utf-8")) >= 3
     assert "verified stock OpenClaw runtime" in result.stdout
     pending = json.loads(
-        (mac_home / "openclaw" / "verification-pending.json").read_text(
-            encoding="utf-8"
-        )
+        (mac_home / "openclaw" / "verification-pending.json").read_text(encoding="utf-8")
     )
     assert pending["openclaw_runtime"]["verified"] is True
     assert pending["chat_gateway"]["channels"]["slack"] == {
@@ -2022,7 +1966,9 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
 
 def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     config = FLEET_CONFIG.read_text(encoding="utf-8")
-    deploy = DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    deploy = (
+        DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    )
     unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
     assert "gateway_impl: openclaw" in config
     assert 'openclaw|"")\n      install_linux_openclaw_service' in deploy
@@ -2064,9 +2010,13 @@ def test_openclaw_prefers_reviewed_cli_over_stale_configured_runtime(
     reviewed.chmod(0o700)
     stale.chmod(0o700)
     source = INSTALLER.read_text(encoding="utf-8")
-    function = "find_openshell() {" + source.split("find_openshell() {", 1)[1].split(
-        "\n}\n\nopenclaw_subprocess_timeout()", 1
-    )[0] + "\n}\n"
+    function = (
+        "find_openshell() {"
+        + source.split("find_openshell() {", 1)[1].split("\n}\n\nopenclaw_subprocess_timeout()", 1)[
+            0
+        ]
+        + "\n}\n"
+    )
 
     result = subprocess.run(
         ["/bin/bash", "-c", function + "\nfind_openshell"],
@@ -2095,7 +2045,7 @@ def test_openclaw_verification_probes_then_advertises_after_exclusive_cutover() 
     assert 'rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"' in installer
     assert '"schema": "mac.gateway_ownership.v1"' in installer
     assert '"exclusive_channel_owner"' in installer
-    assert 'finalize) finalize' in installer
+    assert "finalize) finalize" in installer
     assert '"endpoint": "openshell://%s"' in installer
     assert '"access": "sandbox_exec"' in installer
     assert "http://127.0.0.1:${GATEWAY_PORT}/healthz" not in installer
@@ -2114,9 +2064,7 @@ def _run_launchd_finalizer(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     launchctl = bin_dir / "launchctl"
     launchctl.write_text(
         "#!/bin/sh\n" + launchctl_script,
@@ -2126,7 +2074,7 @@ def _run_launchd_finalizer(
     openshell = bin_dir / "openshell"
     openshell.write_text(
         "#!/bin/sh\n"
-        "case \"${MAC_TEST_SANDBOX_MODE:-active}:$1:$2\" in\n"
+        'case "${MAC_TEST_SANDBOX_MODE:-active}:$1:$2" in\n'
         "  active:sandbox:get) exit 0 ;;\n"
         "  absent:sandbox:get)\n"
         "    printf '%s\\n' \"Error:   × code: 'Some requested entity was not found', message: \\\"sandbox not found\\\"\" >&2\n"
@@ -2136,7 +2084,7 @@ def _run_launchd_finalizer(
         "    echo 'synthetic OpenShell inspection failure' >&2\n"
         "    exit 70\n"
         "    ;;\n"
-        "  *) echo \"unexpected openshell invocation: $*\" >&2; exit 99 ;;\n"
+        '  *) echo "unexpected openshell invocation: $*" >&2; exit 99 ;;\n'
         "esac\n",
         encoding="utf-8",
     )
@@ -2245,9 +2193,10 @@ esac
     assert result.returncode != 0
     assert expected_error in result.stderr
     assert not (openclaw_home / "service-advertisement.json").exists()
-    assert json.loads(
-        (openclaw_home / "verification-pending.json").read_text(encoding="utf-8")
-    ) == pending
+    assert (
+        json.loads((openclaw_home / "verification-pending.json").read_text(encoding="utf-8"))
+        == pending
+    )
 
 
 @pytest.mark.parametrize("failed_service", ["hermes", "nemoclaw"])
@@ -2274,8 +2223,7 @@ esac
 
     assert result.returncode != 0
     assert (
-        f"could not inspect launchd job com.mac.{failed_service}-gateway (exit 70)"
-        in result.stderr
+        f"could not inspect launchd job com.mac.{failed_service}-gateway (exit 70)" in result.stderr
     )
     assert "synthetic launchctl transport failure" in result.stderr
     assert not (openclaw_home / "service-advertisement.json").exists()
@@ -2315,9 +2263,10 @@ esac
         assert "exit 70" in result.stderr
         assert "synthetic OpenShell inspection failure" in result.stderr
     assert not (openclaw_home / "service-advertisement.json").exists()
-    assert json.loads(
-        (openclaw_home / "verification-pending.json").read_text(encoding="utf-8")
-    ) == pending
+    assert (
+        json.loads((openclaw_home / "verification-pending.json").read_text(encoding="utf-8"))
+        == pending
+    )
 
 
 def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
@@ -2333,19 +2282,17 @@ def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     sudo = bin_dir / "sudo"
     sudo.write_text(
-        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
         encoding="utf-8",
     )
     sudo.chmod(0o700)
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
-        "case \"$2\" in\n"
+        'case "$2" in\n'
         "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
         "  *) printf 'LoadState=loaded\\nActiveState=inactive\\n' ;;\n"
         "esac\n",
@@ -2420,9 +2367,7 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
         check=True,
         timeout=20,
     )
-    config = json.loads(
-        (mac_home / "openclaw" / "managed" / "openclaw.json").read_text()
-    )
+    config = json.loads((mac_home / "openclaw" / "managed" / "openclaw.json").read_text())
     runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text()
     workspace = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text()
     assert config["channels"] == {}
@@ -2449,7 +2394,7 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
     installer = INSTALLER.read_text(encoding="utf-8")
     assert 'MAC_OPENCLAW_CHANNELS=""' in installer
     assert "local channels=()" not in installer
-    assert 'printf \'%s\' "${channels[*]}"' not in installer
+    assert "printf '%s' \"${channels[*]}\"" not in installer
 
 
 def test_public_identity_without_any_channel_credentials_fails_closed(
@@ -2504,19 +2449,17 @@ def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     sudo = bin_dir / "sudo"
     sudo.write_text(
-        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
         encoding="utf-8",
     )
     sudo.chmod(0o700)
     supervisorctl = bin_dir / "supervisorctl"
     supervisorctl.write_text(
         "#!/bin/sh\n"
-        "case \"$2\" in\n"
+        'case "$2" in\n'
         "  *-openclaw-gateway) echo 'mac-openclaw-gateway     RUNNING   pid 1234'; exit 0 ;;\n"
         "  *-hermes-gateway)   echo 'mac-hermes-gateway       STOPPED'; exit 0 ;;\n"
         "  *-nemoclaw-gateway) echo 'mac-nemoclaw-gateway: ERROR (no such process)'; exit 1 ;;\n"
@@ -2570,19 +2513,17 @@ def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     sudo = bin_dir / "sudo"
     sudo.write_text(
-        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
         encoding="utf-8",
     )
     sudo.chmod(0o700)
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
-        "case \"$2\" in\n"
+        'case "$2" in\n'
         "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
         "  *-hermes-gateway.service) printf 'LoadState=loaded\\nActiveState=inactive\\n' ;;\n"
         "  *-nemoclaw-gateway.service) printf 'LoadState=not-found\\nActiveState=inactive\\n' ;;\n"
@@ -2638,12 +2579,10 @@ def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     sudo = bin_dir / "sudo"
     sudo.write_text(
-        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
         encoding="utf-8",
     )
     sudo.chmod(0o700)
@@ -2652,7 +2591,7 @@ def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
-        "case \"$2\" in\n"
+        'case "$2" in\n'
         "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
         "  *-hermes-gateway.service) printf 'LoadState=loaded\\nActiveState=failed\\n' ;;\n"
         "  *-nemoclaw-gateway.service) printf 'LoadState=not-found\\nActiveState=inactive\\n' ;;\n"
@@ -2712,12 +2651,10 @@ def test_finalize_systemd_hermes_active_still_dies(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     sudo = bin_dir / "sudo"
     sudo.write_text(
-        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
         encoding="utf-8",
     )
     sudo.chmod(0o700)
@@ -2725,7 +2662,7 @@ def test_finalize_systemd_hermes_active_still_dies(
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
-        "case \"$2\" in\n"
+        'case "$2" in\n'
         "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
         "  *-hermes-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
         "  *-nemoclaw-gateway.service) printf 'LoadState=not-found\\nActiveState=inactive\\n' ;;\n"
@@ -2777,9 +2714,7 @@ def _run_linux_finalizer_with_probe(
         "openclaw_runtime": {"implementation": "openclaw", "verified": True},
         "chat_gateway": {"implementation": "openclaw", "verified": True},
     }
-    (openclaw_home / "verification-pending.json").write_text(
-        json.dumps(pending), encoding="utf-8"
-    )
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
     sudo = bin_dir / "sudo"
     sudo.write_text(
         '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
@@ -2852,9 +2787,10 @@ def test_finalize_linux_legacy_probe_errors_are_unknown_not_absent(
     assert result.returncode != 0
     assert expected_error in result.stderr
     assert not (openclaw_home / "service-advertisement.json").exists()
-    assert json.loads(
-        (openclaw_home / "verification-pending.json").read_text(encoding="utf-8")
-    ) == pending
+    assert (
+        json.loads((openclaw_home / "verification-pending.json").read_text(encoding="utf-8"))
+        == pending
+    )
 
 
 def _run_rollback(
@@ -3103,9 +3039,7 @@ esac
         # The sandbox-timeout case must reach the OpenShell probe. Giving the
         # unrelated launchctl shim the same tiny contention-sensitive budget
         # can fail at supervisor inspection first and test the wrong boundary.
-        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": (
-            "2" if scenario == "sandbox-timeout" else "0.2"
-        ),
+        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": ("2" if scenario == "sandbox-timeout" else "0.2"),
         "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.3",
         "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         "MAC_TEST_CALLS": str(calls),
@@ -3255,8 +3189,7 @@ def test_rollback_rejects_unsafe_runtime_identity_artifacts_without_disclosure(
     (
         ("", "runtime sandbox identity is missing"),
         (
-            "MAC_OPENCLAW_SANDBOX='mac-openclaw-one'\n"
-            "MAC_OPENCLAW_SANDBOX='mac-openclaw-two'\n",
+            "MAC_OPENCLAW_SANDBOX='mac-openclaw-one'\nMAC_OPENCLAW_SANDBOX='mac-openclaw-two'\n",
             "runtime sandbox identity is ambiguous",
         ),
         (
@@ -3333,9 +3266,7 @@ def test_rollback_restores_hermes_only_after_supervisor_and_sandbox_absence(
             or "supervisorctl start mac-hermes-gateway" in call
         )
     )
-    sandbox_probes = [
-        index for index, call in enumerate(calls) if "openshell sandbox get" in call
-    ]
+    sandbox_probes = [index for index, call in enumerate(calls) if "openshell sandbox get" in call]
     assert sandbox_probes
     assert max(sandbox_probes) < hermes_start
     assert any("openshell sandbox delete" in call for call in calls)
@@ -3372,12 +3303,8 @@ def test_rollback_uses_bounded_exact_system_scope_and_proves_hermes_running(
 
 
 @pytest.mark.parametrize("supervisor", ["systemd", "supervisord"])
-def test_rollback_propagates_bounded_hermes_start_failure(
-    tmp_path: Path, supervisor: str
-) -> None:
-    result, calls, _ = _run_rollback(
-        tmp_path, supervisor, "hermes-start-failure"
-    )
+def test_rollback_propagates_bounded_hermes_start_failure(tmp_path: Path, supervisor: str) -> None:
+    result, calls, _ = _run_rollback(tmp_path, supervisor, "hermes-start-failure")
 
     assert result.returncode == 72
     assert f"bounded {supervisor} Hermes restore failed (exit 72)" in result.stderr
@@ -3412,12 +3339,8 @@ def test_rollback_rejects_incomplete_hermes_running_state_proof(
 
 
 @pytest.mark.parametrize("supervisor", ["systemd", "supervisord"])
-def test_rollback_bounds_hung_hermes_restore_command(
-    tmp_path: Path, supervisor: str
-) -> None:
-    result, _calls, _ = _run_rollback(
-        tmp_path, supervisor, "hermes-start-timeout"
-    )
+def test_rollback_bounds_hung_hermes_restore_command(tmp_path: Path, supervisor: str) -> None:
+    result, _calls, _ = _run_rollback(tmp_path, supervisor, "hermes-start-timeout")
 
     assert result.returncode == 124
     assert "OpenClaw subprocess timed out" in result.stderr
@@ -3432,9 +3355,7 @@ def test_rollback_bounds_hung_hermes_restore_command(
 
 def test_rollback_restore_has_no_unbounded_or_cross_scope_linux_fallback() -> None:
     installer = INSTALLER.read_text(encoding="utf-8")
-    restore = installer.split("restore_hermes_gateway() {", 1)[1].split(
-        "\n}\n\nwithdraw()", 1
-    )[0]
+    restore = installer.split("restore_hermes_gateway() {", 1)[1].split("\n}\n\nwithdraw()", 1)[0]
 
     assert "run_systemd_system_scope enable --now" in restore
     assert "run_supervisord_system_scope start" in restore
@@ -3443,29 +3364,23 @@ def test_rollback_restore_has_no_unbounded_or_cross_scope_linux_fallback() -> No
     assert "sudo systemctl" not in restore
     assert "sudo supervisorctl" not in restore
     assert "systemctl --user" not in restore
-    assert "supervisorctl \"$@\" ||" not in restore
+    assert 'supervisorctl "$@" ||' not in restore
 
 
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
-def test_withdraw_removes_openclaw_without_starting_hermes(
-    tmp_path: Path, supervisor: str
-) -> None:
-    result, calls, openclaw_home = _run_rollback(
-        tmp_path, supervisor, action="withdraw"
-    )
+def test_withdraw_removes_openclaw_without_starting_hermes(tmp_path: Path, supervisor: str) -> None:
+    result, calls, openclaw_home = _run_rollback(tmp_path, supervisor, action="withdraw")
 
     assert result.returncode == 0, result.stderr
     if supervisor == "systemd":
         assert "systemctl disable --now mac-openclaw-gateway.service" in calls
     elif supervisor == "launchd":
         assert any(
-            call.startswith("launchctl bootout gui/")
-            and call.endswith("/com.mac.openclaw-gateway")
+            call.startswith("launchctl bootout gui/") and call.endswith("/com.mac.openclaw-gateway")
             for call in calls
         )
         assert any(
-            call.startswith("launchctl disable gui/")
-            and call.endswith("/com.mac.openclaw-gateway")
+            call.startswith("launchctl disable gui/") and call.endswith("/com.mac.openclaw-gateway")
             for call in calls
         )
     else:
@@ -3477,8 +3392,7 @@ def test_withdraw_removes_openclaw_without_starting_hermes(
         if "openshell sandbox delete mac-openclaw-rollback-contract" in call
     )
     assert any(
-        index > delete_index
-        and "openshell sandbox get mac-openclaw-rollback-contract" in call
+        index > delete_index and "openshell sandbox get mac-openclaw-rollback-contract" in call
         for index, call in enumerate(calls)
     )
     assert not any("mac-hermes-gateway" in call for call in calls)
@@ -3491,13 +3405,12 @@ def test_withdraw_removes_openclaw_without_starting_hermes(
 def test_rollback_propagates_supervisor_stop_failure_without_starting_hermes(
     tmp_path: Path, supervisor: str
 ) -> None:
-    result, calls, _ = _run_rollback(
-        tmp_path, supervisor, "supervisor-stop-failure"
-    )
+    result, calls, _ = _run_rollback(tmp_path, supervisor, "supervisor-stop-failure")
 
     assert result.returncode != 0
     assert not any(
-        "mac-hermes-gateway" in call and ("enable" in call or "start" in call or "bootstrap" in call)
+        "mac-hermes-gateway" in call
+        and ("enable" in call or "start" in call or "bootstrap" in call)
         for call in calls
     )
     assert not any("openshell" in call for call in calls)
@@ -3523,7 +3436,8 @@ def test_rollback_fails_closed_on_absence_proof_delete_or_inspection_failure(
     assert result.returncode != 0
     assert expected_error in result.stderr
     assert not any(
-        "mac-hermes-gateway" in call and ("enable" in call or "start" in call or "bootstrap" in call)
+        "mac-hermes-gateway" in call
+        and ("enable" in call or "start" in call or "bootstrap" in call)
         for call in calls
     )
 

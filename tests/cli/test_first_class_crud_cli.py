@@ -128,9 +128,7 @@ def test_task_update_reads_a_description_from_a_file(tmp_path, project):
     body = tmp_path / "body.txt"
     body.write_text("a description with `backticks` and $VARS\nand a newline\n", encoding="utf-8")
 
-    rc, updated = _run(
-        tmp_path, "task", "update", task["id"], "--description-file", str(body)
-    )
+    rc, updated = _run(tmp_path, "task", "update", task["id"], "--description-file", str(body))
 
     assert rc == 0
     assert "backticks" in updated["description"]
@@ -223,7 +221,7 @@ def _state(tmp_path, task_id):
 
 
 def test_cancelling_a_failed_task_succeeds(tmp_path, project):
-    """"Cancel" means make this stop and go away, and that intent does not
+    """ "Cancel" means make this stop and go away, and that intent does not
     change because the task already failed.
 
     The state machine only allows failed -> open, so this used to return
@@ -243,6 +241,7 @@ def test_cancelling_a_failed_task_succeeds(tmp_path, project):
 def test_the_reopen_is_recorded_as_part_of_the_cancellation(tmp_path, project):
     """The history must not read as though someone intended a retry."""
     from mac.models import TaskState
+
     task = _task(tmp_path, project)
     _force_state(tmp_path, task["id"], TaskState.FAILED.value)
     _run(tmp_path, "task", "cancel", task["id"], "--reason", "no licence-clean asset")
@@ -260,6 +259,7 @@ def test_the_reopen_is_recorded_as_part_of_the_cancellation(tmp_path, project):
 def test_cancelling_an_already_cancelled_task_is_not_an_error(tmp_path, project):
     """It is already where the operator wants it; saying so beats a 400."""
     from mac.models import TaskState
+
     task = _task(tmp_path, project)
     _force_state(tmp_path, task["id"], TaskState.CANCELLED.value)
 
@@ -276,6 +276,7 @@ def test_cancelling_a_completed_task_is_refused(tmp_path, project):
     it. Quietly erasing that is not what anyone means by "cancel".
     """
     from mac.models import TaskState
+
     task = _task(tmp_path, project)
     _force_state(tmp_path, task["id"], TaskState.COMPLETED.value)
 
@@ -289,6 +290,7 @@ def test_cancelling_a_completed_task_is_refused(tmp_path, project):
 def test_delete_is_the_same_command_and_gets_the_same_behaviour(tmp_path, project):
     """`task delete` aliases `cancel`, so it must inherit this too."""
     from mac.models import TaskState
+
     task = _task(tmp_path, project)
     _force_state(tmp_path, task["id"], TaskState.FAILED.value)
 

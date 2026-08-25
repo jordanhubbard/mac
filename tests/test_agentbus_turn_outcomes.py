@@ -72,11 +72,17 @@ def test_failed_find_tool_is_tool_failed() -> None:
 
 
 def test_output_length_stop_is_truncated() -> None:
-    assert classify_turn_result({"finish_reason": "length"}, "a long answer...") == TURN_OUTPUT_TRUNCATED
-    assert classify_turn_result(
-        {"payloads": [{"text": "answer"}]},
-        "answer (response truncated: output length limit reached)",
-    ) == TURN_OUTPUT_TRUNCATED
+    assert (
+        classify_turn_result({"finish_reason": "length"}, "a long answer...")
+        == TURN_OUTPUT_TRUNCATED
+    )
+    assert (
+        classify_turn_result(
+            {"payloads": [{"text": "answer"}]},
+            "answer (response truncated: output length limit reached)",
+        )
+        == TURN_OUTPUT_TRUNCATED
+    )
     assert reply_status_for_outcome(TURN_OUTPUT_TRUNCATED) == "truncated"
 
 
@@ -104,27 +110,29 @@ def test_every_non_completed_outcome_maps_to_a_non_ok_status() -> None:
 # --------------------------------------------------------------------------- #
 def test_20s_and_30s_wait_expiry_then_late_reply_is_correlated_not_lost() -> None:
     # The synchronous 20s and 30s waits expired before a valid reply arrived.
-    assert delivery_outcome(
-        wait_budget_seconds=20, reply_present=False, reply_within_budget=False
-    ) == DELIVERY_WAIT_EXPIRED
-    assert delivery_outcome(
-        wait_budget_seconds=30, reply_present=False, reply_within_budget=False
-    ) == DELIVERY_WAIT_EXPIRED
+    assert (
+        delivery_outcome(wait_budget_seconds=20, reply_present=False, reply_within_budget=False)
+        == DELIVERY_WAIT_EXPIRED
+    )
+    assert (
+        delivery_outcome(wait_budget_seconds=30, reply_present=False, reply_within_budget=False)
+        == DELIVERY_WAIT_EXPIRED
+    )
 
     # The valid reply arriving later is surfaced as LATE (still correlated),
     # not as a fresh success and not lost/duplicated.
-    late = delivery_outcome(
-        wait_budget_seconds=30, reply_present=True, reply_within_budget=False
-    )
+    late = delivery_outcome(wait_budget_seconds=30, reply_present=True, reply_within_budget=False)
     assert late == DELIVERY_LATE_REPLY
 
     # Within-budget and fire-and-forget stay distinct.
-    assert delivery_outcome(
-        wait_budget_seconds=30, reply_present=True, reply_within_budget=True
-    ) == DELIVERY_REPLIED
-    assert delivery_outcome(
-        wait_budget_seconds=0, reply_present=False, reply_within_budget=False
-    ) == DELIVERY_ACKNOWLEDGED
+    assert (
+        delivery_outcome(wait_budget_seconds=30, reply_present=True, reply_within_budget=True)
+        == DELIVERY_REPLIED
+    )
+    assert (
+        delivery_outcome(wait_budget_seconds=0, reply_present=False, reply_within_budget=False)
+        == DELIVERY_ACKNOWLEDGED
+    )
 
 
 def test_late_reply_payload_stays_correlated_to_original_stream() -> None:

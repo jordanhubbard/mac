@@ -72,9 +72,9 @@ def _root_anchored_gitignore_names() -> set[str]:
 
 def test_canonical_set_is_non_empty_and_unique() -> None:
     assert PER_RUN_INVESTIGATION_ARTIFACTS, "canonical artifact set must not be empty"
-    assert len(PER_RUN_INVESTIGATION_ARTIFACTS) == len(
-        set(PER_RUN_INVESTIGATION_ARTIFACTS)
-    ), "canonical artifact set has duplicate entries"
+    assert len(PER_RUN_INVESTIGATION_ARTIFACTS) == len(set(PER_RUN_INVESTIGATION_ARTIFACTS)), (
+        "canonical artifact set has duplicate entries"
+    )
 
 
 def test_every_canonical_artifact_is_ignored_at_repo_root() -> None:
@@ -105,8 +105,7 @@ def test_root_anchored_patterns_do_not_mask_nested_product_files() -> None:
             if result.returncode == 0:
                 masked.append(nested)
     assert not masked, (
-        "root-anchored ignore rules unexpectedly mask nested product paths: %s"
-        % sorted(masked)
+        "root-anchored ignore rules unexpectedly mask nested product paths: %s" % sorted(masked)
     )
 
 
@@ -120,9 +119,7 @@ def test_no_canonical_artifact_is_tracked() -> None:
         result = _git("ls-files", "--error-unmatch", "--", name)
         if result.returncode == 0:
             tracked.append(name)
-    assert not tracked, (
-        "per-run artifacts are tracked by git and must not be: %s" % sorted(tracked)
-    )
+    assert not tracked, "per-run artifacts are tracked by git and must not be: %s" % sorted(tracked)
 
 
 def test_canonical_set_and_gitignore_block_stay_in_sync() -> None:
@@ -137,8 +134,7 @@ def test_canonical_set_and_gitignore_block_stay_in_sync() -> None:
     missing_from_canonical = sorted(ignore_names - canonical_names)
 
     assert not missing_from_gitignore, (
-        "canonical artifacts with no root-anchored .gitignore entry: %s"
-        % missing_from_gitignore
+        "canonical artifacts with no root-anchored .gitignore entry: %s" % missing_from_gitignore
     )
     assert not missing_from_canonical, (
         "root-anchored .gitignore file entries not in the canonical set "

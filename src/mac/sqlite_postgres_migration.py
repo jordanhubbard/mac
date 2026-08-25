@@ -147,11 +147,7 @@ def _migration_source_tables(conn: sqlite3.Connection) -> tuple[List[str], List[
         if table not in EMPTY_LEGACY_SOURCE_TABLES:
             migrated.append(table)
             continue
-        count = int(
-            conn.execute(
-                "SELECT COUNT(*) FROM %s" % _quote_sqlite(table)
-            ).fetchone()[0]
-        )
+        count = int(conn.execute("SELECT COUNT(*) FROM %s" % _quote_sqlite(table)).fetchone()[0])
         if count:
             raise SQLitePostgresMigrationError(
                 "legacy SQLite-only table %s contains %d row(s); "
@@ -311,7 +307,7 @@ def _destination_table_digest(conn: Any, plan: TablePlan) -> tuple[int, str]:
     for column in ordering:
         expression = sql.Identifier(column)
         if _is_textual_type(plan.destination_types[column]):
-            expression = sql.SQL("{} COLLATE \"C\"").format(expression)
+            expression = sql.SQL('{} COLLATE "C"').format(expression)
         order_expressions.append(expression)
     query = sql.SQL("SELECT {} FROM {} ORDER BY {}").format(
         sql.SQL(", ").join(sql.Identifier(column) for column in plan.columns),

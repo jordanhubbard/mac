@@ -112,7 +112,7 @@ exit 0
                 "",
                 stubs,
                 "",
-                'SPECS=%s' % shlex.quote(str(specs_file)),
+                "SPECS=%s" % shlex.quote(str(specs_file)),
                 body,
             ]
         )
@@ -133,7 +133,7 @@ exit 0
     )
 
 
-UNREACHABLE_HUB = 'probe_remote_hub_tcp() { return 1; }'
+UNREACHABLE_HUB = "probe_remote_hub_tcp() { return 1; }"
 
 
 @pytest.mark.parametrize(
@@ -150,9 +150,7 @@ UNREACHABLE_HUB = 'probe_remote_hub_tcp() { return 1; }'
     ],
 )
 def test_first_deploy_state_is_classified_fail_closed(tmp_path, mode, expected):
-    result = run_harness(
-        tmp_path, 'probe_remote_first_deploy_state hazel', mode
-    )
+    result = run_harness(tmp_path, "probe_remote_first_deploy_state hazel", mode)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
@@ -161,7 +159,7 @@ def test_first_deploy_state_is_classified_fail_closed(tmp_path, mode, expected):
 def test_first_deploy_marker_is_the_installer_written_mac_env():
     probe = extract_function("probe_remote_first_deploy_state")
 
-    assert '$HOME/.mac/mac.env' in probe
+    assert "$HOME/.mac/mac.env" in probe
     assert "echo deployed" in probe and "echo fresh" in probe
 
 
@@ -183,7 +181,7 @@ def test_only_a_fresh_hub_agent_may_defer_its_own_route(
 ):
     result = run_harness(
         tmp_path,
-        'if hub_route_prerequisite_is_deferrable %s %s; then echo defer; else echo refuse; fi'
+        "if hub_route_prerequisite_is_deferrable %s %s; then echo defer; else echo refuse; fi"
         % (shlex.quote(agent), shlex.quote(hub_agent)),
         mode,
     )
@@ -219,7 +217,10 @@ def test_gate_still_refuses_a_hub_that_is_not_on_a_fresh_node(tmp_path, mode):
     assert "refused deferred=" in result.stdout
     assert "passed" not in result.stdout
     assert "hub route prerequisite is unreachable" in result.stderr
-    assert "first-deploy state: %s" % ("deployed" if mode == "deployed" else "unknown") in result.stderr
+    assert (
+        "first-deploy state: %s" % ("deployed" if mode == "deployed" else "unknown")
+        in result.stderr
+    )
 
 
 def test_gate_still_refuses_an_unreachable_worker_on_a_fresh_node(tmp_path):
@@ -257,7 +258,7 @@ def test_reachable_route_is_never_deferred(tmp_path):
         'classify_network_prerequisites "$SPECS" hazel;'
         ' echo "deferred=[$DEFERRED_HUB_ROUTE_AGENT]"',
         "fresh",
-        stubs='probe_remote_hub_tcp() { return 0; }',
+        stubs="probe_remote_hub_tcp() { return 0; }",
     )
 
     assert result.returncode == 0, result.stderr
@@ -270,18 +271,18 @@ def test_deferred_route_is_re_proved_after_the_hub_service_starts(tmp_path):
     """Deferred, not deleted: the promise is collected once the hub is running."""
     result = run_harness(
         tmp_path,
-        'DEFERRED_HUB_ROUTE_AGENT=hazel;'
+        "DEFERRED_HUB_ROUTE_AGENT=hazel;"
         ' reprove_deferred_hub_route "$SPECS";'
         ' echo "attempts=$(cat attempts)";'
         ' echo "deferred=[$DEFERRED_HUB_ROUTE_AGENT]"',
         "fresh",
         stubs=(
-            'echo 0 > attempts\n'
-            'probe_remote_hub_tcp() {\n'
-            '  local n; IFS= read -r n < attempts; n=$((n + 1));\n'
+            "echo 0 > attempts\n"
+            "probe_remote_hub_tcp() {\n"
+            "  local n; IFS= read -r n < attempts; n=$((n + 1));\n"
             '  printf "%s\\n" "$n" > attempts\n'
             '  [ "$n" -ge 3 ]\n'
-            '}'
+            "}"
         ),
         env={
             "MAC_DEPLOY_HUB_ROUTE_PROOF_ATTEMPTS": "6",
@@ -298,7 +299,7 @@ def test_deferred_route_is_re_proved_after_the_hub_service_starts(tmp_path):
 def test_a_hub_that_never_answers_is_a_failed_deploy(tmp_path):
     result = run_harness(
         tmp_path,
-        'DEFERRED_HUB_ROUTE_AGENT=hazel;'
+        "DEFERRED_HUB_ROUTE_AGENT=hazel;"
         ' if reprove_deferred_hub_route "$SPECS"; then echo passed; else echo failed; fi',
         "fresh",
         stubs=UNREACHABLE_HUB,
@@ -332,7 +333,8 @@ def test_preparation_reports_nothing_to_repair_for_a_fresh_hub(tmp_path):
         tmp_path,
         'prepare_network_prerequisites "$SPECS" hazel',
         "fresh",
-        stubs=UNREACHABLE_HUB + '\nprepare_remote_tailscale_prerequisite() { echo "must not repair" >&2; return 1; }',
+        stubs=UNREACHABLE_HUB
+        + '\nprepare_remote_tailscale_prerequisite() { echo "must not repair" >&2; return 1; }',
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -374,7 +376,7 @@ def test_phase1_route_tunnel_check_honours_the_single_deferral_verdict():
     assert 'MAC_PREREQ_ROUTE_HUB_REQUIRED=$(shell_quote "$route_hub_required")' in builder
     assert 'os.environ["MAC_PREREQ_ROUTE_HUB_REQUIRED"]' in builder
     # Still a real TCP proof for every node the gate did not exempt.
-    assert 'service_check(' in builder
+    assert "service_check(" in builder
     assert '"route-hub",' in builder
     assert 'os.environ["MAC_PREREQ_HUB_URL"]' in builder
 
@@ -396,9 +398,7 @@ def test_both_gates_receive_the_hub_agent_and_the_route_is_re_proved_after_cutov
     main = deploy.split("\nmain() {", 1)[1]
 
     assert 'classify_network_prerequisites "$selected_specs_file" "$hub_agent"' in main
-    assert (
-        'prepare_network_prerequisites "$selected_specs_file" "$hub_agent"' in main
-    )
+    assert 'prepare_network_prerequisites "$selected_specs_file" "$hub_agent"' in main
     assert main.index("run_typed_cohort ") < main.index(
         'reprove_deferred_hub_route "$selected_specs_file"'
     )

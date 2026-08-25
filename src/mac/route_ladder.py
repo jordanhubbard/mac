@@ -140,13 +140,13 @@ LADDER_FILE_ENV = "MAC_CODING_ROUTE_LADDER_FILE"
 # --------------------------------------------------------------------------- #
 # Closed set. A consumer switches on these; it never parses provider prose to
 # decide whether the ladder should move.
-FAILURE_QUOTA_EXHAUSTED = "quota_exhausted"   # monthly/account credits are gone
-FAILURE_RATE_LIMITED = "rate_limited"         # transient throttle; retry soon
-FAILURE_AUTH = "auth"                         # credential missing/expired/denied
-FAILURE_PROVIDER_OUTAGE = "provider_outage"   # upstream 5xx / declared incident
+FAILURE_QUOTA_EXHAUSTED = "quota_exhausted"  # monthly/account credits are gone
+FAILURE_RATE_LIMITED = "rate_limited"  # transient throttle; retry soon
+FAILURE_AUTH = "auth"  # credential missing/expired/denied
+FAILURE_PROVIDER_OUTAGE = "provider_outage"  # upstream 5xx / declared incident
 FAILURE_MODEL_UNAVAILABLE = "model_unavailable"  # route is fine, this model is not
-FAILURE_TRANSPORT = "transport"               # harness/CLI/network broke
-FAILURE_SEMANTIC = "semantic"                 # the MODEL answered; the work failed
+FAILURE_TRANSPORT = "transport"  # harness/CLI/network broke
+FAILURE_SEMANTIC = "semantic"  # the MODEL answered; the work failed
 
 FAILURE_CLASSES = frozenset(
     {
@@ -354,12 +354,10 @@ def classify_route_failure(
 # --------------------------------------------------------------------------- #
 #: Endpoint classes. A *class*, not a URL: "which kind of endpoint does this
 #: route talk to", which is what an operator needs and what is safe to publish.
-ENDPOINT_SUBSCRIPTION = "subscription"   # CLI authenticated by a seat/plan
-ENDPOINT_DIRECT_API = "direct_api"       # metered provider API
-ENDPOINT_SELF_HOSTED = "self_hosted"     # fleet-operated inference
-ENDPOINT_CLASSES = frozenset(
-    {ENDPOINT_SUBSCRIPTION, ENDPOINT_DIRECT_API, ENDPOINT_SELF_HOSTED}
-)
+ENDPOINT_SUBSCRIPTION = "subscription"  # CLI authenticated by a seat/plan
+ENDPOINT_DIRECT_API = "direct_api"  # metered provider API
+ENDPOINT_SELF_HOSTED = "self_hosted"  # fleet-operated inference
+ENDPOINT_CLASSES = frozenset({ENDPOINT_SUBSCRIPTION, ENDPOINT_DIRECT_API, ENDPOINT_SELF_HOSTED})
 
 
 @dataclass(frozen=True)
@@ -576,9 +574,7 @@ class RouteCost:
     def observable(self) -> Dict[str, Any]:
         return {
             "known": self.known,
-            "usd_per_million_tokens": (
-                self.usd_per_million_tokens if self.known else None
-            ),
+            "usd_per_million_tokens": (self.usd_per_million_tokens if self.known else None),
             "observed_at": self.observed_at,
             "source": self.source,
         }
@@ -725,8 +721,7 @@ def load_ladder(
             raw = reader(inline)
         except OSError as exc:
             raise LadderConfigError(
-                "%s=%s is neither inline JSON nor a readable path: %s"
-                % (LADDER_ENV, inline, exc)
+                "%s=%s is neither inline JSON nor a readable path: %s" % (LADDER_ENV, inline, exc)
             )
     else:
         return None
@@ -902,9 +897,7 @@ class RouteLadder:
         self._agent_id = agent_id
         self._clock = clock
         self._wall_clock = wall_clock
-        self._state: Dict[str, _RouteState] = {
-            r.identity: _RouteState() for r in self._routes
-        }
+        self._state: Dict[str, _RouteState] = {r.identity: _RouteState() for r in self._routes}
         self._pinned: Optional[LadderRoute] = None
         # Local incapability is not a health signal, so it is expressed as a
         # DISABLED provider rather than an open breaker: a route this host
@@ -1210,9 +1203,7 @@ class RouteLadder:
         evidence: str,
     ) -> float:
         cooldown, immediate = cooldown_for_failure(failure_class, self._policy)
-        self._breaker.record_failure(
-            identity, cooldown_seconds=cooldown, immediate=immediate
-        )
+        self._breaker.record_failure(identity, cooldown_seconds=cooldown, immediate=immediate)
         state = self._state[identity]
         state.suppressed_reason = failure_class
         state.suppressed_by = by

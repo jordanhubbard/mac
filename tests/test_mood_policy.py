@@ -1,6 +1,7 @@
 """Mood engine: a stored mood overlay (mac mood set) must render into prompt
 text and splice into the agent's runtime context so it actually changes how the
 agent behaves — the piece that was missing (moods were stored but inert)."""
+
 from __future__ import annotations
 
 from mac import mood_policy
@@ -25,7 +26,7 @@ def test_render_overlay_for_each_mode():
         out = mood_policy.render_mood_overlay(mode)
         assert mode in out
         assert "emotional layer over your stable soul" in out  # not a soul rewrite
-        assert "Boundaries that hold in any mood" in out        # can't be weaponised
+        assert "Boundaries that hold in any mood" in out  # can't be weaponised
 
 
 def test_unknown_or_empty_mode_renders_nothing():
@@ -46,7 +47,10 @@ def test_render_section_with_and_without_overlay():
     # no active mood -> empty delimiters (so a refresh clears any stale block)
     assert render_mood_section(None) == "%s\n%s" % (MOOD_SECTION_BEGIN, MOOD_SECTION_END)
     # unknown mode -> also empty
-    assert render_mood_section({"mode": "ecstatic"}) == "%s\n%s" % (MOOD_SECTION_BEGIN, MOOD_SECTION_END)
+    assert render_mood_section({"mode": "ecstatic"}) == "%s\n%s" % (
+        MOOD_SECTION_BEGIN,
+        MOOD_SECTION_END,
+    )
 
 
 def test_refresh_is_idempotent_replaces_and_clears(tmp_path):

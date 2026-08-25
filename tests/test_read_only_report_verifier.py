@@ -108,9 +108,7 @@ def test_permanent_tracked_mutation_cannot_produce_pass(tmp_path: Path) -> None:
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="inotify is Linux-only")
 def test_transient_modify_pass_restore_is_latched(tmp_path: Path) -> None:
     workspace, repo, _expected = _repository(tmp_path)
-    monitor = verifier.ProtectedInputMonitor(
-        workspace, repo, verifier.tracked_paths(repo)
-    )
+    monitor = verifier.ProtectedInputMonitor(workspace, repo, verifier.tracked_paths(repo))
     original = (repo / "tracked.txt").read_text(encoding="utf-8")
     try:
         (repo / "tracked.txt").write_text("transient mutation\n", encoding="utf-8")
@@ -125,9 +123,7 @@ def test_transient_modify_pass_restore_is_latched(tmp_path: Path) -> None:
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="inotify is Linux-only")
 def test_ignored_compile_output_passes_and_is_cleaned(tmp_path: Path) -> None:
     workspace, repo, expected = _repository(tmp_path)
-    monitor = verifier.ProtectedInputMonitor(
-        workspace, repo, verifier.tracked_paths(repo)
-    )
+    monitor = verifier.ProtectedInputMonitor(workspace, repo, verifier.tracked_paths(repo))
     try:
         output = repo / "build" / "object.o"
         output.parent.mkdir()
@@ -228,9 +224,7 @@ def test_cgroup_selection_ignores_sessions_and_process_groups(
     process(1, 0)
     process(200, 1)  # double-forked/reparented peer, no ancestry relationship
     process(300, 1, "/other")
-    assert verifier.sandbox_cgroup_candidates(
-        current_pid=100, proc_root=proc
-    ) == [200]
+    assert verifier.sandbox_cgroup_candidates(current_pid=100, proc_root=proc) == [200]
 
 
 def test_clip_and_trusted_git_fail_closed(monkeypatch, tmp_path: Path) -> None:
@@ -245,16 +239,12 @@ def test_clip_and_trusted_git_fail_closed(monkeypatch, tmp_path: Path) -> None:
     writable = tmp_path / "git"
     writable.write_text("not really git", encoding="utf-8")
     writable.chmod(0o777)
-    monkeypatch.setattr(
-        verifier.shutil, "which", lambda *_args, **_kwargs: str(writable)
-    )
+    monkeypatch.setattr(verifier.shutil, "which", lambda *_args, **_kwargs: str(writable))
     with pytest.raises(verifier.VerificationError, match="immutable regular file"):
         verifier._absolute_git()
 
 
-def test_git_helpers_reject_untrusted_or_failed_controls(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_git_helpers_reject_untrusted_or_failed_controls(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
@@ -371,9 +361,7 @@ def test_cgroup_selection_filters_uid_metadata_and_nested_cgroups(
     process(203, 1, cgroups="0::/sandbox\n1:name:/extra\n")
     (proc / "not-a-pid").mkdir()
 
-    assert verifier.sandbox_cgroup_candidates(
-        current_pid=100, proc_root=proc
-    ) == [200]
+    assert verifier.sandbox_cgroup_candidates(current_pid=100, proc_root=proc) == [200]
 
     with pytest.raises(verifier.VerificationError, match="identify verifier"):
         verifier.sandbox_cgroup_candidates(current_pid=999, proc_root=proc)
@@ -437,16 +425,12 @@ def test_bounded_command_fences_credentials_and_records_failure(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("GH_TOKEN", "must-not-leak")
-    passed = verifier._run_bounded(
-        'printf "%s" "${GH_TOKEN-unset}"', tmp_path, timeout=5
-    )
+    passed = verifier._run_bounded('printf "%s" "${GH_TOKEN-unset}"', tmp_path, timeout=5)
     assert passed["status"] == "pass"
     assert passed["stdout"] == "unset"
     assert passed["returncode"] == 0
 
-    failed = verifier._run_bounded(
-        "printf failure >&2; exit 3", tmp_path, timeout=5
-    )
+    failed = verifier._run_bounded("printf failure >&2; exit 3", tmp_path, timeout=5)
     assert failed["status"] == "fail"
     assert failed["stderr"] == "failure"
     assert failed["returncode"] == 3
@@ -555,9 +539,7 @@ def test_expected_exact_base_environment_requires_every_value(monkeypatch) -> No
         verifier._expected_from_environment()
     for key, name in names.items():
         monkeypatch.setenv(name, key)
-    assert verifier._expected_from_environment() == {
-        key: key for key in names
-    }
+    assert verifier._expected_from_environment() == {key: key for key in names}
 
 
 def test_revalidation_records_missing_test_bootstrap_and_mutation(
@@ -582,12 +564,8 @@ def test_revalidation_records_missing_test_bootstrap_and_mutation(
     assert payload["status"] == "fail"
     assert payload["bootstrap"]["returncode"] == 9
     assert payload["integrity"]["immutable_inputs"] is False
-    assert "repository contract test.command is missing" in payload["integrity"][
-        "problems"
-    ]
-    assert "repository bootstrap command failed" in payload["integrity"][
-        "problems"
-    ]
+    assert "repository contract test.command is missing" in payload["integrity"]["problems"]
+    assert "repository bootstrap command failed" in payload["integrity"]["problems"]
 
 
 def test_revalidation_rejects_missing_or_non_directory_descriptors(
@@ -604,17 +582,13 @@ def test_revalidation_rejects_missing_or_non_directory_descriptors(
     second_fd = os.open(second, os.O_RDONLY)
     try:
         with pytest.raises(verifier.VerificationError, match="changed type"):
-            verifier.revalidate_and_write(
-                {"workspace_fd": first_fd, "worktree_fd": second_fd}
-            )
+            verifier.revalidate_and_write({"workspace_fd": first_fd, "worktree_fd": second_fd})
     finally:
         os.close(first_fd)
         os.close(second_fd)
 
 
-def test_main_fails_closed_for_bad_controls_and_orchestrator_errors(
-    monkeypatch, capsys
-) -> None:
+def test_main_fails_closed_for_bad_controls_and_orchestrator_errors(monkeypatch, capsys) -> None:
     monkeypatch.setattr(verifier.sys, "stdin", io.StringIO("[]"))
     assert verifier.main(["--revalidate"]) == 70
     assert "not an object" in capsys.readouterr().err
@@ -703,9 +677,7 @@ def test_orchestrate_fails_bootstrap_missing_outputs_and_preserves_evidence(
     monkeypatch.setenv("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "invalid")
     toolchain = tmp_path / "toolchain"
     toolchain.mkdir()
-    (toolchain / "environment-delta.json").write_text(
-        '{"added": ["qemu"]}\n', encoding="utf-8"
-    )
+    (toolchain / "environment-delta.json").write_text('{"added": ["qemu"]}\n', encoding="utf-8")
     monkeypatch.setenv("MAC_TOOLCHAIN_ROOT", str(toolchain))
     monkeypatch.setattr(
         verifier,
@@ -732,17 +704,13 @@ def test_orchestrate_fails_bootstrap_missing_outputs_and_preserves_evidence(
     control = controls[0]
     assert control["bootstrap"]["status"] == "fail"
     assert control["bootstrap"]["missing_after"] == ["build/output"]
-    assert control["test"]["stderr"] == (
-        "repository bootstrap failed before verification tests"
-    )
+    assert control["test"]["stderr"] == ("repository bootstrap failed before verification tests")
     assert control["problems"] == ["transient mutation"]
     assert control["environment_delta"] == {"added": ["qemu"]}
     assert not (workspace / verifier.RESULT_NAME).exists()
 
 
-def test_orchestrate_skips_existing_bootstrap_and_runs_test(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_orchestrate_skips_existing_bootstrap_and_runs_test(monkeypatch, tmp_path: Path) -> None:
     _workspace, worktree, _expected, controls, quiescence = _orchestrator_fixture(
         monkeypatch, tmp_path
     )
@@ -776,16 +744,12 @@ def test_orchestrate_skips_existing_bootstrap_and_runs_test(
     assert quiescence == ["quiesced", "quiesced"]
     control = controls[0]
     assert control["bootstrap"]["status"] == "skipped"
-    assert control["bootstrap"]["reason"] == (
-        "declared bootstrap outputs already exist"
-    )
+    assert control["bootstrap"]["reason"] == ("declared bootstrap outputs already exist")
     assert control["test"]["stdout"] == "tested"
     assert control["environment_delta"] == {}
 
 
-def test_orchestrate_records_missing_test_without_bootstrap(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_orchestrate_records_missing_test_without_bootstrap(monkeypatch, tmp_path: Path) -> None:
     _workspace, _worktree, _expected, controls, quiescence = _orchestrator_fixture(
         monkeypatch, tmp_path
     )
@@ -808,9 +772,7 @@ def test_orchestrate_records_missing_test_without_bootstrap(
     assert control["environment_delta"] == {}
 
 
-def test_orchestrate_rejects_initial_identity_before_monitor(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_orchestrate_rejects_initial_identity_before_monitor(monkeypatch, tmp_path: Path) -> None:
     _workspace, _worktree, _expected, controls, quiescence = _orchestrator_fixture(
         monkeypatch, tmp_path
     )

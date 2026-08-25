@@ -8,6 +8,7 @@ budget. Observed live: 175 of 267 new tasks in 12h were repair tasks while only
 5 tasks completed. A repair task that exhausts its attempts must dead-letter
 (FAILED, manual_repair_required) instead of recursing.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -84,9 +85,9 @@ def test_repair_task_dead_letters_instead_of_recursing(cp):
     assert after - before == {repair.id}, "no repair-of-repair task may be created"
     # the dead-letter reason is explicit in history
     events = [e for e in cp.task_history(repair.id) if e.to_state == TaskState.FAILED.value]
-    assert any(
-        "repair_task_exhausted_no_recursion" in str(e.detail) for e in events
-    ), "expected the recursion-guard reason in the FAILED transition detail"
+    assert any("repair_task_exhausted_no_recursion" in str(e.detail) for e in events), (
+        "expected the recursion-guard reason in the FAILED transition detail"
+    )
 
 
 def test_contract_prerequisite_repair_also_dead_letters(cp):

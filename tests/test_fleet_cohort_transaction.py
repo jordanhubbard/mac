@@ -36,9 +36,7 @@ HUB_PROOF_SHA256 = "sha256:" + "f" * 64
 
 @pytest.fixture
 def journal_module() -> Any:
-    spec = importlib.util.spec_from_file_location(
-        "mac_fleet_cohort_transaction", SCRIPT
-    )
+    spec = importlib.util.spec_from_file_location("mac_fleet_cohort_transaction", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -175,9 +173,7 @@ class Scenario:
         self.revision = 0
         self.sequence = 0
         self.hub_identity = ssh_identity("hub", hub=True)
-        self.node_identities = {
-            node["name"]: ssh_identity(node["name"]) for node in self.nodes
-        }
+        self.node_identities = {node["name"]: ssh_identity(node["name"]) for node in self.nodes}
         cohort_file = write_json(tmp_path / "cohort.json", self.nodes)
         _result, payload = run_cli(
             self.directory,
@@ -224,9 +220,7 @@ class Scenario:
                 "source_commit": SOURCE_COMMIT,
                 "require_release_all_selected": True,
                 "successor_hold_reason": "synchronized successor hold",
-                "desired_worker_credential_mode": (
-                    self.desired_worker_credential_mode
-                ),
+                "desired_worker_credential_mode": (self.desired_worker_credential_mode),
                 "agents": [
                     {
                         "agent_id": node["stable_id"],
@@ -516,13 +510,9 @@ class Scenario:
                 "nodes": [
                     {
                         "stable_id": node["stable_id"],
-                        "generation": generations.get(
-                            node["stable_id"], node["generation"]
-                        ),
+                        "generation": generations.get(node["stable_id"], node["generation"]),
                         "deployment_lock_held": deployment_lock_held,
-                        "startup_attestation_sha256": digest(
-                            f"startup:{node['stable_id']}"
-                        ),
+                        "startup_attestation_sha256": digest(f"startup:{node['stable_id']}"),
                         "idle": idle,
                         "healthy": healthy,
                         "active_work": active_work,
@@ -551,9 +541,7 @@ class Scenario:
         return payload
 
 
-def recovery(
-    scenario: Scenario, *, policy: str = "retain-forward"
-) -> dict[str, Any]:
+def recovery(scenario: Scenario, *, policy: str = "retain-forward") -> dict[str, Any]:
     _result, payload = run_cli(
         scenario.directory,
         "recovery",
@@ -628,9 +616,7 @@ def advance_one_node_to(scenario: Scenario, checkpoint: str) -> None:
     scenario.call("finalize-start", node=node)
     if checkpoint == "finalize-start":
         return
-    scenario.call(
-        "finalized-node", node=node, evidence_file=scenario.evidence("finalized")
-    )
+    scenario.call("finalized-node", node=node, evidence_file=scenario.evidence("finalized"))
     if checkpoint == "finalized-node":
         return
     scenario.call("finalize")
@@ -706,13 +692,8 @@ def test_every_durable_transition_has_deterministic_crash_recovery(
     if rollback_action is None:
         assert result["candidates"] == []
     else:
-        assert [item["recovery_action"] for item in result["candidates"]] == [
-            rollback_action
-        ]
-        assert (
-            result["candidates"][0]["route_identity"]
-            == scenario.node_identities["node-0"]
-        )
+        assert [item["recovery_action"] for item in result["candidates"]] == [rollback_action]
+        assert result["candidates"][0]["route_identity"] == scenario.node_identities["node-0"]
 
 
 def test_forward_lifecycle_is_durable_secret_free_and_requires_finalization(
@@ -754,10 +735,7 @@ def test_forward_lifecycle_is_durable_secret_free_and_requires_finalization(
     assert commit_evidence["status"] == "committed"
     assert commit_evidence["identity_sha256"] == HUB_IDENTITY_SHA256
     assert commit_evidence["proof_sha256"] == HUB_PROOF_SHA256
-    assert (
-        commit_evidence["release_plan_sha256"]
-        == scenario.journal["release_plan"]["sha256"]
-    )
+    assert commit_evidence["release_plan_sha256"] == scenario.journal["release_plan"]["sha256"]
     assert len(scenario.journal["operations"]) == scenario.revision
     journal_file = next(scenario.directory.glob("transaction-*.json"))
     serialized = journal_file.read_text(encoding="utf-8")
@@ -904,9 +882,7 @@ def test_typed_exact_epoch_release_plan_preserves_other_bindings(
 ) -> None:
     scenario = Scenario(tmp_path)
     scenario.reach_prepared()
-    plan = json.loads(
-        scenario.release_plan(epoch_id=EPOCH).read_text(encoding="utf-8")
-    )
+    plan = json.loads(scenario.release_plan(epoch_id=EPOCH).read_text(encoding="utf-8"))
     if field in {"generation", "deployment_id"}:
         plan["agents"][0][field] = replacement
     else:
@@ -950,9 +926,7 @@ def test_commit_requires_exact_bound_committed_receipt_and_never_bare_flip(
     assert rejected["error"]["code"] == "invalid_evidence"
 
     mismatched = json.loads(
-        scenario.hub_receipt("committed", label="mismatched-commit").read_text(
-            encoding="utf-8"
-        )
+        scenario.hub_receipt("committed", label="mismatched-commit").read_text(encoding="utf-8")
     )
     mismatched["hub_authority_id"] = "123e4567-e89b-12d3-a456-426614174999"
     mismatch_file = write_json(tmp_path / "hub-receipt-mismatch.json", mismatched)
@@ -984,9 +958,7 @@ def test_commit_not_applied_requires_exact_matching_proved_get_receipt(
     scenario.begin_commit()
 
     wrong_status = scenario.hub_receipt("open", label="not-applied-open")
-    rejected = scenario.call(
-        "commit-not-applied", evidence_file=wrong_status, check=False
-    )
+    rejected = scenario.call("commit-not-applied", evidence_file=wrong_status, check=False)
     assert rejected["error"]["code"] == "invalid_evidence"
 
     absent = write_json(
@@ -1004,9 +976,7 @@ def test_commit_not_applied_requires_exact_matching_proved_get_receipt(
     mismatched = json.loads(scenario.commit_not_applied().read_text(encoding="utf-8"))
     mismatched["identity_sha256"] = "sha256:" + "0" * 64
     mismatch_file = write_json(tmp_path / "not-applied-mismatch.json", mismatched)
-    rejected = scenario.call(
-        "commit-not-applied", evidence_file=mismatch_file, check=False
-    )
+    rejected = scenario.call("commit-not-applied", evidence_file=mismatch_file, check=False)
     assert rejected["error"]["code"] == "evidence_binding_conflict"
 
     _result, status = run_cli(scenario.directory, "status", "--epoch", EPOCH)
@@ -1027,9 +997,7 @@ def test_hub_open_receipt_must_match_exact_prior_hold_ownership(
     scenario.call("hub-open-start", open_plan=scenario.hub_open_plan())
 
     mismatched = json.loads(
-        scenario.hub_receipt("open", label="ownership-mismatch").read_text(
-            encoding="utf-8"
-        )
+        scenario.hub_receipt("open", label="ownership-mismatch").read_text(encoding="utf-8")
     )
     mismatched["agents"][0]["prior_dispatch_hold"] = True
     mismatched["agents"][0]["prior_hold_reason"] = "another-controller"
@@ -1054,9 +1022,7 @@ def test_explicit_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
     scenario.arm_phase2()
     first, second = scenario.nodes
     scenario.call("phase2-start", node=first)
-    scenario.call(
-        "prepared", node=first, evidence_file=scenario.evidence("prepared-first")
-    )
+    scenario.call("prepared", node=first, evidence_file=scenario.evidence("prepared-first"))
 
     result = recovery(scenario, policy="rollback")
     assert [item["agent_name"] for item in result["candidates"]] == [
@@ -1104,9 +1070,7 @@ def test_default_recovery_retains_every_mutated_node_and_binds_that_policy(
         second["name"],
         first["name"],
     ]
-    assert {item["recovery_action"] for item in result["candidates"]} == {
-        "retain_forward"
-    }
+    assert {item["recovery_action"] for item in result["candidates"]} == {"retain_forward"}
 
     scenario.call("hub-aborted", evidence_file=scenario.hub_receipt("aborted"))
     scenario.call("abort-start", node=second, recovery_action="retain_forward")
@@ -1338,9 +1302,7 @@ def test_cas_and_operation_id_retries_are_fenced_and_idempotent(tmp_path: Path) 
     assert retry["changed"] is False
     assert retry["journal"]["revision"] == 1
 
-    changed_identity = scenario.identity_file(
-        "other-hub", ssh_identity("different-hub", hub=True)
-    )
+    changed_identity = scenario.identity_file("other-hub", ssh_identity("different-hub", hub=True))
     conflict_args = operation("hub-route-bound", 1, "fixed-op") + [
         "--identity-file",
         str(changed_identity),
@@ -1398,10 +1360,7 @@ def test_owner_is_bound_to_boot_and_process_incarnation_and_can_be_adopted(
     ]
     _result, adopted = run_cli(scenario.directory, *adopt_args)
     assert adopted["journal"]["owner"]["nonce"] == OWNER_NONCE
-    assert (
-        adopted["journal"]["owner"]["process_start_sha256"]
-        != owner["process_start_sha256"]
-    )
+    assert adopted["journal"]["owner"]["process_start_sha256"] != owner["process_start_sha256"]
 
 
 def test_process_identity_mismatch_fences_mutation_even_when_pid_is_live(
@@ -1454,9 +1413,7 @@ def test_auxiliary_plan_tamper_is_detected_on_status(tmp_path: Path) -> None:
     plan.write_text("{}\n", encoding="utf-8")
     plan.chmod(0o600)
 
-    _result, rejected = run_cli(
-        scenario.directory, "status", "--epoch", EPOCH, check=False
-    )
+    _result, rejected = run_cli(scenario.directory, "status", "--epoch", EPOCH, check=False)
     assert rejected["error"]["code"] in {
         "invalid_release_plan",
         "release_plan_binding_conflict",
@@ -1470,9 +1427,7 @@ def test_invalid_transition_order_fails_closed(tmp_path: Path) -> None:
     assert rejected["error"]["code"] == "invalid_transition"
     rejected = scenario.call("phase2-start", node=node, check=False)
     assert rejected["error"]["code"] == "invalid_transition"
-    rejected = scenario.call(
-        "commit-start", release_plan=scenario.release_plan(), check=False
-    )
+    rejected = scenario.call("commit-start", release_plan=scenario.release_plan(), check=False)
     assert rejected["error"]["code"] == "invalid_transition"
 
     scenario.bind_routes()
@@ -1558,9 +1513,7 @@ def _gate_requires_bound_identities(recovery: dict[str, Any]) -> list[tuple[str,
             continue
         seen.add(key)
         if not agent or not isinstance(identity, dict):
-            raise SystemExit(
-                "recovery mutation lacks a journal-bound endpoint identity"
-            )
+            raise SystemExit("recovery mutation lacks a journal-bound endpoint identity")
         verified.append((role, agent))
     return verified
 
@@ -1631,9 +1584,7 @@ def test_mutated_transaction_still_fails_closed_without_bound_identity(
         candidate["route_identity"] = None
     with pytest.raises(SystemExit) as excinfo:
         _gate_requires_bound_identities(stripped)
-    assert "recovery mutation lacks a journal-bound endpoint identity" in str(
-        excinfo.value
-    )
+    assert "recovery mutation lacks a journal-bound endpoint identity" in str(excinfo.value)
 
 
 def test_pre_route_classifier_rejects_any_hub_or_node_mutation(
@@ -1694,12 +1645,8 @@ def test_orphan_recovery_retires_absent_barrier_then_abort_closes_journal(
     # closes the journal -- orphan recovery only unblocked the hub barrier.
     report = recovery(scenario)
     for candidate in report["candidates"]:
-        node = next(
-            item for item in scenario.nodes if item["name"] == candidate["agent_name"]
-        )
-        scenario.call(
-            "abort-start", node=node, recovery_action=candidate["recovery_action"]
-        )
+        node = next(item for item in scenario.nodes if item["name"] == candidate["agent_name"])
+        scenario.call("abort-start", node=node, recovery_action=candidate["recovery_action"])
         scenario.call(
             "aborted-node",
             node=node,
@@ -1810,9 +1757,7 @@ def test_orphan_recovery_requires_full_cohort_quiescence(tmp_path: Path) -> None
     assert unhealthy["ok"] is False
 
     no_lock = scenario.orphan(
-        quiescence_file=scenario.quiescence_bundle(
-            deployment_lock_held=False, label="no-lock"
-        ),
+        quiescence_file=scenario.quiescence_bundle(deployment_lock_held=False, label="no-lock"),
         check=False,
     )
     assert no_lock["ok"] is False

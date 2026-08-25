@@ -55,9 +55,15 @@ NEW = "b" * 40
 
 def _git_ok_sequence(monkeypatch, *, calls=None):
     """inside-worktree, clean, before-sha, pull ok, after-sha (updated)."""
-    results = iter([
-        _cp(stdout="true"), _cp(), _cp(stdout=OLD), _cp(stdout="ok"), _cp(stdout=NEW),
-    ])
+    results = iter(
+        [
+            _cp(stdout="true"),
+            _cp(),
+            _cp(stdout=OLD),
+            _cp(stdout="ok"),
+            _cp(stdout=NEW),
+        ]
+    )
     log = calls if calls is not None else []
 
     def run(_repo, args, **_kwargs):
@@ -74,9 +80,7 @@ def _git_ok_sequence(monkeypatch, *, calls=None):
 def test_update_defers_and_stashes_while_agent_is_mid_task(tmp_path, monkeypatch):
     instance = _instance(tmp_path, _Client({"current_task_id": "task_busy"}))
     git_calls = []
-    monkeypatch.setattr(
-        worker, "_run_git", lambda *_a, **_k: git_calls.append(1) or _cp()
-    )
+    monkeypatch.setattr(worker, "_run_git", lambda *_a, **_k: git_calls.append(1) or _cp())
     result = instance._execute_repo_update({"branch": "main"}, "s1")
     assert result["status"] == "deferred"
     assert result["active_task_id"] == "task_busy"
@@ -122,9 +126,7 @@ def test_pending_update_applies_once_idle_and_clears_stash(tmp_path, monkeypatch
 def test_run_once_applies_pending_update_before_claiming(tmp_path, monkeypatch):
     instance = _instance(tmp_path, _Client({"current_task_id": None}))
     instance._stash_pending_repo_update({}, "s1")
-    monkeypatch.setattr(
-        instance, "_process_agentbus_control", lambda **_kwargs: None
-    )
+    monkeypatch.setattr(instance, "_process_agentbus_control", lambda **_kwargs: None)
     monkeypatch.setattr(instance, "_poll_debug_terminal_sessions", lambda: None)
     monkeypatch.setattr(instance, "_heartbeat", lambda: None)
     monkeypatch.setattr(instance, "_maybe_sync_service_claims", lambda: None)
@@ -229,9 +231,7 @@ def test_failed_self_test_unverified_rollback_persists_dispatch_hold(
     assert blocker.stat().st_mode & 0o777 == 0o600
     hold = instance._local_repo_update_dispatch_blocker()
     assert hold is not None
-    assert hold["reason"] == (
-        "checkout rollback failed after post-update self-test failure"
-    )
+    assert hold["reason"] == ("checkout rollback failed after post-update self-test failure")
     assert hold["detail"]["attempted_after_sha"] == NEW
 
 
@@ -247,9 +247,7 @@ def test_self_test_runs_real_python_and_can_be_disabled(tmp_path, monkeypatch):
     assert verdict["ok"] is False
 
 
-def test_self_test_uses_isolated_hub_role_instead_of_live_client_state(
-    tmp_path, monkeypatch
-):
+def test_self_test_uses_isolated_hub_role_instead_of_live_client_state(tmp_path, monkeypatch):
     instance = _instance(tmp_path, _Client({}))
     captured = {}
 

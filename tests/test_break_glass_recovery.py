@@ -61,9 +61,7 @@ def test_break_glass_binds_held_task_to_exact_held_agent(monkeypatch):
     assignment = cp.claim_next_for_agent(recovery.id)
     assert assignment is not None
     assert assignment["task"]["id"] == task.id
-    projected = assignment["task"]["metadata"]["runtime"][
-        "break_glass_authorization"
-    ]
+    projected = assignment["task"]["metadata"]["runtime"]["break_glass_authorization"]
     assert projected["id"] == authorization.id
     assert projected["status"] == "claimed"
     assert projected["lease_id"] == assignment["lease"]["id"]
@@ -74,10 +72,7 @@ def test_break_glass_binds_held_task_to_exact_held_agent(monkeypatch):
     assert "break_glass_authorization" not in durable_runtime
 
     cp.release_lease(assignment["lease"]["id"], recovery.id)
-    assert (
-        cp.get_task_break_glass_authorization(authorization.id).status
-        == "consumed"
-    )
+    assert cp.get_task_break_glass_authorization(authorization.id).status == "consumed"
     assert cp.claim_next_for_agent(recovery.id) is None
 
 
@@ -152,9 +147,7 @@ def test_executor_uses_direct_host_path_only_for_valid_claimed_projection(
         "id": task_id,
         "metadata": {
             "runtime": {
-                "break_glass_authorization": _claimed_projection(
-                    task_id, agent_id, lease_id
-                )
+                "break_glass_authorization": _claimed_projection(task_id, agent_id, lease_id)
             }
         },
     }
@@ -225,9 +218,7 @@ def test_break_glass_prepares_host_path_without_mutating_legacy_runtime_python(
         lambda event, **detail: emitted.append((event, detail)) or True,
     )
 
-    te._prepare_host_break_glass_environment(
-        {"id": "breakglass_1234567890abcdef"}
-    )
+    te._prepare_host_break_glass_environment({"id": "breakglass_1234567890abcdef"})
 
     assert str(host_bin) == os.environ["PATH"].split(os.pathsep)[0]
     assert os.environ["MAC_HERMES_PYTHON"] == "/sandbox/does-not-exist/python"
@@ -302,8 +293,6 @@ def test_held_worker_reports_hold_once_instead_of_no_task(tmp_path: Path):
     assert worker.run_once().status == "held"
     assert worker.run_once().status == "held"
     hold_logs = [
-        event
-        for event in cp.list_observability(limit=100)
-        if event.name == "worker.dispatch_held"
+        event for event in cp.list_observability(limit=100) if event.name == "worker.dispatch_held"
     ]
     assert len(hold_logs) == 1

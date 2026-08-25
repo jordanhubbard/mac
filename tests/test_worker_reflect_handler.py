@@ -71,9 +71,7 @@ def _reflect_stream(**extra) -> Dict:
 class TestHandleReflectRequestStream:
     def test_happy_path_publishes_result(self, tmp_path: Path, monkeypatch) -> None:
         """A successful reflect round-trip should post a REFLECT_RESULT chunk."""
-        client = _Client(
-            chunks=[{"payload": {"query": "What are you?", "request_id": "req-1"}}]
-        )
+        client = _Client(chunks=[{"payload": {"query": "What are you?", "request_id": "req-1"}}])
         inst = _instance(tmp_path, client)
         monkeypatch.setattr(inst, "_run_reflect_query", lambda q, **kw: "I am a mac worker.")
         observations = []
@@ -101,7 +99,9 @@ class TestHandleReflectRequestStream:
         inst = _instance(tmp_path, client)
         monkeypatch.setenv("MAC_REFLECT_ENABLED", "false")
         query_called = []
-        monkeypatch.setattr(inst, "_run_reflect_query", lambda *a, **kw: query_called.append(1) or "")
+        monkeypatch.setattr(
+            inst, "_run_reflect_query", lambda *a, **kw: query_called.append(1) or ""
+        )
         observations = []
         monkeypatch.setattr(inst, "_observe_log", lambda name, **kw: observations.append(name))
 
@@ -121,9 +121,7 @@ class TestHandleReflectRequestStream:
         client = _Client(chunks=[{"payload": {}}])
         inst = _instance(tmp_path, client)
         captured = []
-        monkeypatch.setattr(
-            inst, "_run_reflect_query", lambda q, **kw: captured.append(q) or "ok"
-        )
+        monkeypatch.setattr(inst, "_run_reflect_query", lambda q, **kw: captured.append(q) or "ok")
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
 
         inst._handle_reflect_request_stream(_reflect_stream())
@@ -311,17 +309,13 @@ class TestRunReflectQuery:
         assert "reflect query failed" in response
         assert "worker.agentbus.reflect.error" in observations
 
-    def test_stream_id_is_sanitized_for_openclaw_session(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_stream_id_is_sanitized_for_openclaw_session(self, tmp_path: Path, monkeypatch) -> None:
         inst = _instance(tmp_path)
         captured_argv = []
 
         def _capture_run(argv, *, env, **kw):
             captured_argv.extend(argv)
-            return subprocess.CompletedProcess(
-                args=argv, returncode=0, stdout="ok", stderr=""
-            )
+            return subprocess.CompletedProcess(args=argv, returncode=0, stdout="ok", stderr="")
 
         monkeypatch.setattr(worker.subprocess, "run", _capture_run)
         monkeypatch.setattr(inst, "_observe_log", lambda *a, **kw: None)
@@ -356,7 +350,9 @@ class TestProcessAgentbusControlReflectDispatch:
         monkeypatch.setattr(
             inst,
             "_handle_reflect_request_stream",
-            lambda s: handled.append(s) or {"status": "completed", "summary": "ok", "stream_id": "s1"},
+            lambda s: (
+                handled.append(s) or {"status": "completed", "summary": "ok", "stream_id": "s1"}
+            ),
         )
 
         inst._process_agentbus_control()

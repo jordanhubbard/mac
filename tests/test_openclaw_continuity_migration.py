@@ -47,10 +47,14 @@ def test_imports_identity_history_skills_and_cron_without_mutating_hermes(tmp_pa
     skills.mkdir(parents=True)
     cron.mkdir(parents=True)
     curiosity.mkdir(parents=True)
-    (hermes / "SOUL.md").write_text("# Testy\n\nDry humor and careful judgment.\n", encoding="utf-8")
+    (hermes / "SOUL.md").write_text(
+        "# Testy\n\nDry humor and careful judgment.\n", encoding="utf-8"
+    )
     (hermes / "USER.md").write_text("legacy user variant\n", encoding="utf-8")
     (memories / "USER.md").write_text("# User\n\nCall the operator J.\n", encoding="utf-8")
-    (memories / "MEMORY.md").write_text("# Memory\n\nThe fleet values evidence.\n", encoding="utf-8")
+    (memories / "MEMORY.md").write_text(
+        "# Memory\n\nThe fleet values evidence.\n", encoding="utf-8"
+    )
     (skills / "SKILL.md").write_text(
         "# Fleet lore\n\nAPI_TOKEN=actual-secret-like-value-that-must-not-migrate\n",
         encoding="utf-8",
@@ -94,7 +98,9 @@ def test_imports_identity_history_skills_and_cron_without_mutating_hermes(tmp_pa
                 "2026-07-01T12:00:00Z",
             ),
         )
-    before = {path.relative_to(hermes): _digest(path) for path in hermes.rglob("*") if path.is_file()}
+    before = {
+        path.relative_to(hermes): _digest(path) for path in hermes.rglob("*") if path.is_file()
+    }
 
     result = _run(home)
 
@@ -110,9 +116,9 @@ def test_imports_identity_history_skills_and_cron_without_mutating_hermes(tmp_pa
     assert report["counts"]["curiosity_files_preserved"] == 1
     assert "Dry humor" in (workspace / "SOUL.md").read_text(encoding="utf-8")
     assert "Call the operator J" in (workspace / "USER.md").read_text(encoding="utf-8")
-    assert "legacy user variant" in (
-        workspace / "memory/hermes-legacy/.hermes-USER.md"
-    ).read_text(encoding="utf-8")
+    assert "legacy user variant" in (workspace / "memory/hermes-legacy/.hermes-USER.md").read_text(
+        encoding="utf-8"
+    )
     assert "actual-secret-like-value-that-must-not-migrate" not in (
         workspace / "skills/fleet-lore/SKILL.md"
     ).read_text(encoding="utf-8")
@@ -120,8 +126,7 @@ def test_imports_identity_history_skills_and_cron_without_mutating_hermes(tmp_pa
     assert "github_pat_" not in history
     assert "[REDACTED_SECRET]" in history
     preserved_curiosity = (
-        home
-        / ".mac/openclaw/state/mac-curiosity/hermes-import/curiosity/quarantine/candidate.json"
+        home / ".mac/openclaw/state/mac-curiosity/hermes-import/curiosity/quarantine/candidate.json"
     ).read_text(encoding="utf-8")
     assert "preserve me" in preserved_curiosity
     assert "github_pat_" not in preserved_curiosity
@@ -130,7 +135,9 @@ def test_imports_identity_history_skills_and_cron_without_mutating_hermes(tmp_pa
         ("dream-cycle", True),
         ("old-disabled", False),
     ]
-    after = {path.relative_to(hermes): _digest(path) for path in hermes.rglob("*") if path.is_file()}
+    after = {
+        path.relative_to(hermes): _digest(path) for path in hermes.rglob("*") if path.is_file()
+    }
     assert after == before
 
 
@@ -179,5 +186,7 @@ def test_blank_agent_requires_and_applies_valid_mentor_proposal(tmp_path: Path) 
     workspace = home / ".mac/openclaw/workspace"
     assert report["mode"] == "mentor_bootstrap"
     assert "Quill" in (workspace / "IDENTITY.md").read_text(encoding="utf-8")
-    provenance = json.loads((home / ".mac/openclaw/migration/personality-provenance.json").read_text())
+    provenance = json.loads(
+        (home / ".mac/openclaw/migration/personality-provenance.json").read_text()
+    )
     assert provenance["mentor_agent_id"] == "agent_rocky"

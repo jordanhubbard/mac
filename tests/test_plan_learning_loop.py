@@ -11,6 +11,7 @@ Covers:
 - _run_executor integration: plan lesson recorded after planning_phase_completed
 - _run_executor integration: recalled plan lessons injected into planning prompt
 """
+
 from __future__ import annotations
 
 import json
@@ -70,7 +71,7 @@ def _large_task(task_id: str = "task_large_plan") -> Dict[str, Any]:
                 "estimated_units": 3,
                 "signals": ["desc_words:300"],
                 "rationale": "large",
-            }
+            },
         },
     )
 
@@ -182,7 +183,9 @@ class TestBuildPlanLearningRecord:
 class TestRecordPlanOutcome:
     def test_records_learning_from_valid_manifest(self, tmp_path, monkeypatch):
         posted = []
-        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append(payload) or True)
+        monkeypatch.setattr(
+            memory, "_hub_post", lambda path, payload: posted.append(payload) or True
+        )
         task = _task()
         manifest = _plan_manifest(children_count=3)
         (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -218,7 +221,9 @@ class TestRecordPlanOutcome:
 
     def test_wall_clock_ms_passed_through(self, tmp_path, monkeypatch):
         posted = []
-        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append(payload) or True)
+        monkeypatch.setattr(
+            memory, "_hub_post", lambda path, payload: posted.append(payload) or True
+        )
         (tmp_path / "mac-evidence.json").write_text(json.dumps(_plan_manifest()), encoding="utf-8")
         record_plan_outcome(_task(), tmp_path, wall_clock_ms=42000.0)
         content = json.loads(posted[0]["content"])
@@ -403,17 +408,29 @@ def _patch_run_executor_planning(monkeypatch, *, tmp_path: Path) -> Dict[str, li
 
     monkeypatch.setattr(te, "recall_deployment_lessons", lambda task: [])
     monkeypatch.setattr(te, "recall_plan_lessons", lambda task, limit=3: [])
-    monkeypatch.setattr(te, "emit_telemetry", lambda event, **kw: state["telemetry"].append(event) or True)
+    monkeypatch.setattr(
+        te, "emit_telemetry", lambda event, **kw: state["telemetry"].append(event) or True
+    )
     monkeypatch.setattr(te, "_openshell_enabled", lambda: False)
     monkeypatch.setattr(te, "_openshell_required_for_local_agent", lambda: False)
     monkeypatch.setattr(te, "_invoke_agent", fake_invoke_agent)
     monkeypatch.setattr(te, "run_deterministic_git_finalizer", lambda *a, **kw: None)
     monkeypatch.setattr(te, "maybe_auto_decompose", lambda *a, **kw: False)
     monkeypatch.setattr(te, "write_fallback_evidence_manifest", lambda *a, **kw: None)
-    monkeypatch.setattr(te, "classify_outcome", lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []})
+    monkeypatch.setattr(
+        te,
+        "classify_outcome",
+        lambda *a, **kw: {"outcome": "success", "evidence_type": "plan_decomposed", "signals": []},
+    )
     monkeypatch.setattr(te, "record_deployment_learning", lambda *a, **kw: True)
     monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
-    monkeypatch.setattr(te, "record_plan_outcome", lambda task, workspace, wall_clock_ms: state["plan_outcome_calls"].append(wall_clock_ms) or True)
+    monkeypatch.setattr(
+        te,
+        "record_plan_outcome",
+        lambda task, workspace, wall_clock_ms: (
+            state["plan_outcome_calls"].append(wall_clock_ms) or True
+        ),
+    )
     monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda task: None)
     monkeypatch.setattr(
         te,
@@ -463,9 +480,7 @@ class TestRunExecutorPlanLearningIntegration:
         # wall_clock_ms must be a positive number
         assert state["plan_outcome_calls"][0] > 0
 
-    def test_recall_plan_lessons_called_for_planning_prompt(
-        self, monkeypatch, tmp_path: Path
-    ):
+    def test_recall_plan_lessons_called_for_planning_prompt(self, monkeypatch, tmp_path: Path):
         """recall_plan_lessons must be called when building the planning prompt."""
         state = _patch_run_executor_planning(monkeypatch, tmp_path=tmp_path)
         plan_recall_calls = []
@@ -491,13 +506,13 @@ class TestRunExecutorPlanLearningIntegration:
             "recall_plan_lessons must be called when building the planning prompt"
         )
 
-    def test_plan_lesson_injected_into_planning_prompt(
-        self, monkeypatch, tmp_path: Path
-    ):
+    def test_plan_lesson_injected_into_planning_prompt(self, monkeypatch, tmp_path: Path):
         """Recalled plan lessons must appear in the planning prompt text."""
         state = _patch_run_executor_planning(monkeypatch, tmp_path=tmp_path)
 
-        plan_lesson = "[plan] Database schema migration -> 4 children. ordering: leaves before cores"
+        plan_lesson = (
+            "[plan] Database schema migration -> 4 children. ordering: leaves before cores"
+        )
         monkeypatch.setattr(te, "recall_plan_lessons", lambda task, limit=3: [plan_lesson])
 
         task = _large_task(task_id="task_plan_inject_001")
@@ -516,9 +531,7 @@ class TestRunExecutorPlanLearningIntegration:
             "The recalled plan lesson must appear verbatim in the planning prompt"
         )
 
-    def test_record_plan_outcome_not_called_for_normal_task(
-        self, monkeypatch, tmp_path: Path
-    ):
+    def test_record_plan_outcome_not_called_for_normal_task(self, monkeypatch, tmp_path: Path):
         """record_plan_outcome must NOT be called for non-planning (small) tasks."""
         state = _patch_run_executor_planning(monkeypatch, tmp_path=tmp_path)
 
@@ -635,6 +648,7 @@ def test_plan_lesson_recorded_and_recalled_e2e(tmp_path: Path, monkeypatch):
     # Stub the hub_get to use the in-memory ControlPlane
     def fake_hub_get(path):
         from urllib.parse import urlparse, parse_qs
+
         # Parse the query string from path like /memory?subject_type=project&...
         parts = urlparse("http://hub" + path)
         qs = parse_qs(parts.query)

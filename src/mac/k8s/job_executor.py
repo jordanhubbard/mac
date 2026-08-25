@@ -21,8 +21,10 @@ from urllib.parse import quote
 from mac.models import metadata_declares_read_only_report_repository
 from mac.fleet_env import resolve_first
 
+
 def _q(value: str) -> str:
     return quote(value, safe="")
+
 
 JsonDict = Dict[str, Any]
 log = logging.getLogger(__name__)
@@ -31,9 +33,8 @@ DEFAULT_EXECUTOR_TIMEOUT_SECONDS = 1500  # 25 min < default activeDeadline 30 mi
 
 DEFAULT_EVIDENCE_MANIFEST_PATH = "/tmp/mac-evidence.json"
 
-READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = (
-    "read_only_report_requires_openshell_isolation"
-)
+READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = "read_only_report_requires_openshell_isolation"
+
 
 @dataclass
 class JobExecutionResult:
@@ -50,6 +51,7 @@ class JobExecutionResult:
         if self.status in ("submitted-for-review", "blocked", "failed"):
             return 0
         return 2
+
 
 def _resolve_mac_and_executor(
     env: Dict[str, str],
@@ -127,8 +129,7 @@ def run_one_lease(
 
     try:
         mac.post(
-            "/tasks/%s/start?agent_id=%s&lease_id=%s"
-            % (_q(task_id), _q(agent_id), _q(lease_id)),
+            "/tasks/%s/start?agent_id=%s&lease_id=%s" % (_q(task_id), _q(agent_id), _q(lease_id)),
             {},
         )
     except Exception as exc:  # noqa: BLE001
@@ -210,6 +211,7 @@ def run_one_lease(
         stdout_sha256=exec_result.stdout_sha256,
     )
 
+
 @dataclass
 class _ExecResult:
     returncode: int
@@ -219,6 +221,7 @@ class _ExecResult:
     verification_manifest: Optional[Dict[str, Any]] = None
     manifest_path: Optional[str] = None
     manifest_error: Optional[str] = None
+
 
 def _run_one_review(
     *,
@@ -355,7 +358,8 @@ def _run_one_review(
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "post-review tick failed for review=%s (evidence already recorded): %s",
-                review_id, exc,
+                review_id,
+                exc,
             )
 
     if exec_result.returncode != 0:
@@ -396,17 +400,14 @@ def _prepare_canonical_review_environment(
     """Materialize the exact executor evidence and checkout for a review Job."""
     from mac.worker import MacWorker
 
-    workspace_root = Path(
-        env.get("MAC_REVIEW_WORKSPACE_ROOT") or "/tmp/mac-review-workspaces"
-    )
+    workspace_root = Path(env.get("MAC_REVIEW_WORKSPACE_ROOT") or "/tmp/mac-review-workspaces")
     preparer = MacWorker(
         mac,
         reviewer_agent_id,
         workspace_root,
         lambda *_args: None,
         agentbus_control_enabled=False,
-        attestation_key=env.get("MAC_AGENT_ATTESTATION_KEY")
-        or env.get("MAC_ATTESTATION_KEY"),
+        attestation_key=env.get("MAC_AGENT_ATTESTATION_KEY") or env.get("MAC_ATTESTATION_KEY"),
     )
     task_dir = preparer._prepare_review_workspace(
         task_id,
@@ -432,9 +433,7 @@ def _prepare_canonical_review_environment(
     prepared = dict(env)
     prepared["MAC_TASK_WORKSPACE"] = str(task_dir)
     prepared["MAC_TASK_FILE"] = str(task_dir / "task.json")
-    prepared["MAC_TASK_EVIDENCE_MANIFEST_PATH"] = str(
-        task_dir / "mac-evidence.json"
-    )
+    prepared["MAC_TASK_EVIDENCE_MANIFEST_PATH"] = str(task_dir / "mac-evidence.json")
     prepared["MAC_WORKER_AGENT_ID"] = reviewer_agent_id
     if prepared.get("MAC_AGENT_ATTESTATION_KEY"):
         prepared["MAC_ATTESTATION_KEY"] = prepared["MAC_AGENT_ATTESTATION_KEY"]
@@ -446,15 +445,10 @@ def _prepare_canonical_review_environment(
 def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _ExecResult]:
     """Returns a callable that runs the configured task executor command."""
     cmd = (env.get("MAC_TASK_EXECUTOR_COMMAND") or "").strip()
-    timeout = int(
-        env.get("MAC_TASK_EXECUTOR_TIMEOUT_SECONDS")
-        or DEFAULT_EXECUTOR_TIMEOUT_SECONDS
-    )
-    manifest_path = (
-        env.get("MAC_TASK_EVIDENCE_MANIFEST_PATH")
-        or DEFAULT_EVIDENCE_MANIFEST_PATH
-    )
+    timeout = int(env.get("MAC_TASK_EXECUTOR_TIMEOUT_SECONDS") or DEFAULT_EXECUTOR_TIMEOUT_SECONDS)
+    manifest_path = env.get("MAC_TASK_EVIDENCE_MANIFEST_PATH") or DEFAULT_EVIDENCE_MANIFEST_PATH
     if not cmd:
+
         def _noop(_task: JsonDict) -> _ExecResult:
             return _ExecResult(
                 returncode=1,
@@ -504,6 +498,7 @@ def _default_subprocess_executor(env: Dict[str, str]) -> Callable[[JsonDict], _E
 
     return _run
 
+
 POD_LOG_FORWARD_TAIL_BYTES = 16000
 
 
@@ -533,6 +528,7 @@ def _forward_to_pod_logs(
     except Exception:  # noqa: BLE001 — best-effort pod logging
         pass
 
+
 def _read_verification_manifest(
     path: str,
 ) -> "tuple[Optional[Dict[str, Any]], Optional[str]]":
@@ -550,15 +546,15 @@ def _read_verification_manifest(
     except json.JSONDecodeError as exc:
         return None, "manifest is not valid JSON: %s" % exc
     if not isinstance(loaded, dict):
-        return None, (
-            "manifest must be a JSON object, got %s" % type(loaded).__name__
-        )
+        return None, ("manifest must be a JSON object, got %s" % type(loaded).__name__)
     return loaded, None
+
 
 def _default_mac_client(mac_url: str, token: str) -> Any:
     from mac.api_client import MacApiClient
 
     return MacApiClient(mac_url, token=token)
+
 
 def _submit_execution_evidence(
     mac: Any,
@@ -597,6 +593,7 @@ def _submit_execution_evidence(
     except Exception as exc:  # noqa: BLE001
         log.error("evidence POST failed for task=%s: %s", task_id, exc)
         return None
+
 
 def _record_failure_evidence(
     mac: Any,
@@ -689,6 +686,7 @@ def _block_task_after_evidence(
         stdout_sha256=stdout_sha256,
     )
 
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Run the task runner entry point and return its exit code."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -705,6 +703,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     )
     return result.exit_code()
+
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

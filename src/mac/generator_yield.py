@@ -32,6 +32,7 @@ blocking work on a statistic that does not exist.
 The gate is advisory-off by default in tests (``ControlPlane.in_memory``
 has no history to measure), and enforcing wherever a real ledger exists.
 """
+
 from __future__ import annotations
 
 import threading
@@ -182,8 +183,7 @@ class GeneratorYieldGate:
             fresh_enough = (
                 self._cache is not None
                 and not refresh
-                and (time.monotonic() - self._cached_at)
-                < self.policy.cache_ttl_seconds
+                and (time.monotonic() - self._cached_at) < self.policy.cache_ttl_seconds
             )
             if fresh_enough:
                 return dict(self._cache or {})

@@ -41,6 +41,7 @@ Promote safety, exactly like the ledger path: a restored artifact becomes the
 fleet authority only through the documented promote procedure (fence the old
 hub first). Nothing here ever starts a second live authority.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,13 +77,13 @@ DEFAULT_KEEP_LAST = 14
 # Globs are expanded newest-version-first: pg_dump must be at least the server's
 # major version, so preferring the highest installed one is the safe default.
 _PG_BIN_SEARCH: tuple[str, ...] = (
-    "/opt/homebrew/opt/postgresql@*/bin",   # Homebrew, versioned (Apple silicon)
-    "/usr/local/opt/postgresql@*/bin",      # Homebrew, versioned (Intel)
-    "/opt/homebrew/bin",                    # Homebrew, current
-    "/usr/local/bin",                       # Homebrew (Intel) / manual installs
-    "/usr/lib/postgresql/*/bin",            # Debian / Ubuntu
-    "/usr/pgsql-*/bin",                     # PGDG RPM
-    "/Library/PostgreSQL/*/bin",            # EDB installer (macOS)
+    "/opt/homebrew/opt/postgresql@*/bin",  # Homebrew, versioned (Apple silicon)
+    "/usr/local/opt/postgresql@*/bin",  # Homebrew, versioned (Intel)
+    "/opt/homebrew/bin",  # Homebrew, current
+    "/usr/local/bin",  # Homebrew (Intel) / manual installs
+    "/usr/lib/postgresql/*/bin",  # Debian / Ubuntu
+    "/usr/pgsql-*/bin",  # PGDG RPM
+    "/Library/PostgreSQL/*/bin",  # EDB installer (macOS)
     "/usr/bin",
 )
 
@@ -144,6 +145,7 @@ def pg_binary(name: str, env: Optional[Mapping[str, str]] = None) -> str:
         "(PATH was %r)." % (name, BIN_DIR_ENV, environ.get("PATH", ""))
     )
 
+
 # Representative authority tables whose presence + row counts prove a scratch
 # restore rehydrated the schema and real data, not just an empty database.
 # These are core control-plane tables that always exist on a live hub; the
@@ -174,9 +176,9 @@ VERIFY_TOLERANCE_ENV = "MAC_PG_BACKUP_VERIFY_TOLERANCE"
 
 
 def _verify_tolerance(environ: Optional[Mapping[str, str]] = None) -> float:
-    raw = str((environ if environ is not None else os.environ).get(
-        VERIFY_TOLERANCE_ENV
-    ) or "").strip()
+    raw = str(
+        (environ if environ is not None else os.environ).get(VERIFY_TOLERANCE_ENV) or ""
+    ).strip()
     try:
         value = float(raw) if raw else DEFAULT_VERIFY_TOLERANCE
     except ValueError:
@@ -196,6 +198,7 @@ def _counts_are_consistent(live: int, restored: int, tolerance: float) -> bool:
     if live <= 0:
         return restored == 0
     return abs(restored - live) <= max(1.0, live * tolerance)
+
 
 # subprocess runner indirection so the pure backup logic is unit-testable
 # without a live cluster or the pg client binaries on PATH.
@@ -433,8 +436,15 @@ def verify_restore(
 
     def _psql(target_dsn: str, sql: str) -> "subprocess.CompletedProcess[str]":
         return run(
-            [_binary_for("psql", env, runner), "--no-psqlrc", "--tuples-only", "--no-align",
-             "--command", sql, target_dsn],
+            [
+                _binary_for("psql", env, runner),
+                "--no-psqlrc",
+                "--tuples-only",
+                "--no-align",
+                "--command",
+                sql,
+                target_dsn,
+            ],
             env,
         )
 
@@ -444,14 +454,18 @@ def verify_restore(
         proc = _psql(admin_dsn, 'CREATE DATABASE "%s"' % scratch)
         if proc.returncode != 0:
             raise PgBackupError(
-                "restore verify could not create scratch db: %s"
-                % (proc.stderr or "").strip()[:300]
+                "restore verify could not create scratch db: %s" % (proc.stderr or "").strip()[:300]
             )
         created = True
 
         restore = run(
-            [_binary_for("pg_restore", env, runner), "--no-owner", "--no-privileges",
-             "--dbname=%s" % scratch_dsn, str(artifact)],
+            [
+                _binary_for("pg_restore", env, runner),
+                "--no-owner",
+                "--no-privileges",
+                "--dbname=%s" % scratch_dsn,
+                str(artifact),
+            ],
             env,
         )
         # pg_restore can emit non-fatal warnings (e.g. missing role GRANTs we
@@ -544,13 +558,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m mac.pg_backup")
     parser.add_argument(
         "--dsn",
-        default=os.environ.get("MAC_PG_BACKUP_URL")
-        or os.environ.get("MAC_DATABASE_URL", ""),
+        default=os.environ.get("MAC_PG_BACKUP_URL") or os.environ.get("MAC_DATABASE_URL", ""),
     )
     parser.add_argument(
         "--out",
-        default=os.environ.get("MAC_PG_BACKUP_DIR")
-        or os.environ.get("MAC_LEDGER_BACKUP_DIR", ""),
+        default=os.environ.get("MAC_PG_BACKUP_DIR") or os.environ.get("MAC_LEDGER_BACKUP_DIR", ""),
     )
     parser.add_argument("--keep-last", type=int, default=DEFAULT_KEEP_LAST)
     parser.add_argument("--sync-cmd", default=None)
@@ -581,10 +593,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         verify=not ns.no_verify,
         sync_cmd=ns.sync_cmd,
     )
-    print(
-        "pg backup written: %s (restore_verified=%s)"
-        % (result.path, result.verified)
-    )
+    print("pg backup written: %s (restore_verified=%s)" % (result.path, result.verified))
     return 0
 
 

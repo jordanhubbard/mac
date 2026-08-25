@@ -111,6 +111,12 @@ def test_openshell_collector_normalizes_denials_and_supervisor_command():
         child_argv=["mac-hermes-gateway"],
         openshell_bin="/usr/bin/openshell",
     )
-    assert argv[:5] == ["/usr/bin/openshell", "sandbox", "create", "--no-auto-providers", "--policy"]
+    assert argv[:5] == [
+        "/usr/bin/openshell",
+        "sandbox",
+        "create",
+        "--no-auto-providers",
+        "--policy",
+    ]
     assert "--name" in argv
     assert argv[argv.index("--") + 1 :] == ["mac-hermes-gateway"]

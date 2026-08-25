@@ -143,9 +143,7 @@ def test_full_session_over_ws_client():
     fake WS connection: negotiated version, streamed updates, and stop reason."""
 
     backend = StreamingBackend()
-    fake = FakeWSConnection(
-        backend, agent_info={"name": "remote-agent", "version": "7"}
-    )
+    fake = FakeWSConnection(backend, agent_info={"name": "remote-agent", "version": "7"})
 
     peer = connect_acp_websocket(connection=fake)
     client = ACPClient(peer)
@@ -168,9 +166,7 @@ def test_full_session_over_ws_client():
         assert session_id in fake.server.session_ids()
 
         # --- session/prompt drives the backend, which streams two updates ---
-        t, box = _run_in_thread(
-            client.session_prompt, session_id, "do the thing", timeout=5
-        )
+        t, box = _run_in_thread(client.session_prompt, session_id, "do the thing", timeout=5)
         result = _await(t, box)
         assert isinstance(result, PromptResult)
         assert result.stop_reason == StopReason.END_TURN

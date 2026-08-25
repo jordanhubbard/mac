@@ -70,9 +70,7 @@ def test_provision_from_fresh_volume_is_deployable(mod, tmp_path):
     interp = _fake_interpreter(tmp_path)
     layout = mod.VolumeLayout.for_home(home)
 
-    receipt = mod.provision(
-        layout, interpreter=interp, apply_ownership=False, instance="worker1"
-    )
+    receipt = mod.provision(layout, interpreter=interp, apply_ownership=False, instance="worker1")
 
     assert receipt["status"] == "deployable"
     assert receipt["schema"] == mod.RECEIPT_SCHEMA

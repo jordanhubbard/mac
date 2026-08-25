@@ -108,9 +108,7 @@ def test_a_write_token_previously_reached_the_service_layer(client):
     TypeError from inside DirectiveService — proof it was executing business
     logic, not merely failing validation."""
     api, _agent = client
-    response = api.post(
-        "/directives/d1/check", headers=_headers("writer"), json={}
-    )
+    response = api.post("/directives/d1/check", headers=_headers("writer"), json={})
     assert response.status_code == 403
 
 

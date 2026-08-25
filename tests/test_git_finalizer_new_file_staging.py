@@ -29,9 +29,7 @@ from mac import task_executor as te
 
 
 def _git(cwd, *args):
-    return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False
-    )
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
 
 
 def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
@@ -54,7 +52,7 @@ def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
                 "    ;;",
                 "  affected)",
                 "    cat >/dev/null",
-                '    echo \'{"affected":[]}\'',
+                "    echo '{\"affected\":[]}'",
                 "    ;;",
                 "  unlock)",
                 "    ;;",
@@ -172,9 +170,7 @@ def test_finalizer_commits_staged_but_uncommitted_new_files(tmp_path, monkeypatc
     porcelain = _git(work, "status", "--porcelain").stdout
     assert "A  staged_source.py" in porcelain  # precondition: staged-new, uncommitted
 
-    manifest = _run_finalizer(
-        tmp_path, monkeypatch, work, _finalizer_task("t-staged-only", origin)
-    )
+    manifest = _run_finalizer(tmp_path, monkeypatch, work, _finalizer_task("t-staged-only", origin))
 
     assert manifest["status"] == "complete"
     assert manifest["repo"]["pushed"] is True
@@ -190,9 +186,7 @@ def test_finalizer_commits_staged_but_uncommitted_new_files(tmp_path, monkeypatc
 # 3. A mix of untracked-new, staged-new, and modified-tracked files lands in a
 #    single finalizer commit.
 # ---------------------------------------------------------------------------
-def test_finalizer_commits_mixed_untracked_staged_and_modified_together(
-    tmp_path, monkeypatch
-):
+def test_finalizer_commits_mixed_untracked_staged_and_modified_together(tmp_path, monkeypatch):
     origin, work = _seed_worktree(tmp_path, branch="task/mixed")
     # Seed a tracked file to later modify.
     (work / "tracked.py").write_text("ORIGINAL = 1\n", encoding="utf-8")
@@ -209,9 +203,7 @@ def test_finalizer_commits_mixed_untracked_staged_and_modified_together(
 
     head_before = _git(work, "rev-parse", "HEAD").stdout.strip()
 
-    manifest = _run_finalizer(
-        tmp_path, monkeypatch, work, _finalizer_task("t-mixed", origin)
-    )
+    manifest = _run_finalizer(tmp_path, monkeypatch, work, _finalizer_task("t-mixed", origin))
 
     assert manifest["status"] == "complete"
     assert manifest["repo"]["pushed"] is True
@@ -282,9 +274,7 @@ def test_split_porcelain_status_empty_input_is_all_empty():
 # 5. Gitignored generated artifacts stay uncommitted while intended new source
 #    is still staged and committed (guard against over-staging).
 # ---------------------------------------------------------------------------
-def test_finalizer_stages_new_source_but_never_commits_gitignored_artifacts(
-    tmp_path, monkeypatch
-):
+def test_finalizer_stages_new_source_but_never_commits_gitignored_artifacts(tmp_path, monkeypatch):
     origin, work = _seed_worktree(
         tmp_path, branch="task/ignore-guard", gitignore="generated/\n*.log\n"
     )

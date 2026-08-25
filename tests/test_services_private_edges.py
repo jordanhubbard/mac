@@ -31,14 +31,22 @@ def test_blocked_manual_repair_history_paths(monkeypatch) -> None:
     task.state = TaskState.BLOCKED.value
     monkeypatch.setattr(cp, "task_history", lambda *_a, **_k: [])
     assert cp._blocked_task_requires_manual_repair(task) is False
-    monkeypatch.setattr(cp, "task_history", lambda *_a, **_k: [
-        SimpleNamespace(to_state="open", detail={}),
-        SimpleNamespace(to_state="blocked", detail={"manual_repair_required": True}),
-    ])
+    monkeypatch.setattr(
+        cp,
+        "task_history",
+        lambda *_a, **_k: [
+            SimpleNamespace(to_state="open", detail={}),
+            SimpleNamespace(to_state="blocked", detail={"manual_repair_required": True}),
+        ],
+    )
     assert cp._blocked_task_requires_manual_repair(task) is True
-    monkeypatch.setattr(cp, "task_history", lambda *_a, **_k: [
-        SimpleNamespace(to_state="blocked", detail={"reason": "executor_failed"})
-    ])
+    monkeypatch.setattr(
+        cp,
+        "task_history",
+        lambda *_a, **_k: [
+            SimpleNamespace(to_state="blocked", detail={"reason": "executor_failed"})
+        ],
+    )
     assert cp._blocked_task_requires_manual_repair(task) is True
 
 
@@ -59,9 +67,7 @@ def test_allocator_v2_uses_canonical_task_and_agent_gates() -> None:
     blocked = cp.explain_task_dispatch(missing_capability.id)
     assert blocked["task_ready"] is True
     assert blocked["dispatchable"] is False
-    assert blocked["candidates"][0]["reasons"][0]["code"] == (
-        "agent_capabilities_missing"
-    )
+    assert blocked["candidates"][0]["reasons"][0]["code"] == ("agent_capabilities_missing")
 
 
 def test_agent_available_remaining_resource_and_role_gates(monkeypatch) -> None:
@@ -84,9 +90,15 @@ def test_agent_available_remaining_resource_and_role_gates(monkeypatch) -> None:
     assert cp._agent_available_for(agent, role_task) is False
     target_role = SimpleNamespace(slug="builder", required_capabilities=["gpu"])
     monkeypatch.setattr(cp.roles, "get_role", lambda *_a: target_role)
-    assert cp._agent_available_for(agent, replace(task, metadata={"required_role": "builder"})) is False
+    assert (
+        cp._agent_available_for(agent, replace(task, metadata={"required_role": "builder"}))
+        is False
+    )
     capable = replace(agent, capabilities=["python", "review", "gpu"])
-    assert cp._agent_available_for(capable, replace(task, metadata={"required_role": "builder"})) is True
+    assert (
+        cp._agent_available_for(capable, replace(task, metadata={"required_role": "builder"}))
+        is True
+    )
 
 
 def test_reviewer_time_identity_and_executor_helpers(monkeypatch) -> None:
@@ -103,14 +115,28 @@ def test_reviewer_time_identity_and_executor_helpers(monkeypatch) -> None:
 
     assert cp._agent_tenant_and_persona(agent) == (None, None)
     attached = replace(agent, hermes_instance_id="persona")
-    monkeypatch.setattr(cp.identity, "get_persona_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
+    monkeypatch.setattr(
+        cp.identity, "get_persona_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError())
+    )
     assert cp._agent_tenant_and_persona(attached) == (None, None)
-    monkeypatch.setattr(cp.identity, "get_persona_instance", lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id=None))
+    monkeypatch.setattr(
+        cp.identity,
+        "get_persona_instance",
+        lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id=None),
+    )
     assert cp._agent_tenant_and_persona(attached) == ("tenant", None)
-    monkeypatch.setattr(cp.identity, "get_persona_instance", lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id="persona"))
-    monkeypatch.setattr(cp.identity, "get_persona", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
+    monkeypatch.setattr(
+        cp.identity,
+        "get_persona_instance",
+        lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id="persona"),
+    )
+    monkeypatch.setattr(
+        cp.identity, "get_persona", lambda *_a: (_ for _ in ()).throw(NotFoundError())
+    )
     assert cp._agent_tenant_and_persona(attached) == ("tenant", None)
-    monkeypatch.setattr(cp.identity, "get_persona", lambda *_a: SimpleNamespace(name="Code Reviewer"))
+    monkeypatch.setattr(
+        cp.identity, "get_persona", lambda *_a: SimpleNamespace(name="Code Reviewer")
+    )
     assert cp._agent_tenant_and_persona(attached) == ("tenant", "code-reviewer")
 
     monkeypatch.setattr(cp.store, "query_one", lambda *_a, **_k: None)
@@ -131,9 +157,22 @@ def test_publication_target_and_project_metadata_edges(monkeypatch) -> None:
     cp.update_project(project.id, metadata={"publication": {"target": "nested"}})
     assert cp._project_publication_target(configured) == "nested"
 
-    assert cp._default_publication_target(replace(task, metadata={"publish_target": " direct "})) == "direct"
-    assert cp._default_publication_target(replace(task, metadata={"publication": {"target": " nested "}})) == "nested"
-    assert cp._default_publication_target(replace(task, metadata={"acc_metadata": {"beads_id": " abc "}})) == "beads://abc"
+    assert (
+        cp._default_publication_target(replace(task, metadata={"publish_target": " direct "}))
+        == "direct"
+    )
+    assert (
+        cp._default_publication_target(
+            replace(task, metadata={"publication": {"target": " nested "}})
+        )
+        == "nested"
+    )
+    assert (
+        cp._default_publication_target(
+            replace(task, metadata={"acc_metadata": {"beads_id": " abc "}})
+        )
+        == "beads://abc"
+    )
     monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "artifact://archive")
     assert cp._default_publication_target(task) == "artifact://archive"
 
@@ -158,21 +197,26 @@ def test_machine_tenant_policy_matrix(labels, tenant, expected) -> None:
 def test_service_role_eligibility_and_holder_edges(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     _machine, agent, _task = _fixture(cp)
-    role = SimpleNamespace(
-        required_capabilities=["gpu"], hardware_requirements={}, model_id=None
-    )
+    role = SimpleNamespace(required_capabilities=["gpu"], hardware_requirements={}, model_id=None)
     assert cp._agent_eligible_for_service(agent, role) is False
     role.required_capabilities = ["python"]
     role.hardware_requirements = {"gpu": True}
-    monkeypatch.setattr("mac.roles_service.machine_hardware_satisfies", lambda *_a: (False, ["gpu"]))
+    monkeypatch.setattr(
+        "mac.roles_service.machine_hardware_satisfies", lambda *_a: (False, ["gpu"])
+    )
     assert cp._agent_eligible_for_service(agent, role) is False
     role.hardware_requirements = {}
     role.model_id = "unknown"
-    monkeypatch.setattr("mac.local_gen_catalog.get_model", lambda *_a: (_ for _ in ()).throw(RuntimeError("catalog")))
+    monkeypatch.setattr(
+        "mac.local_gen_catalog.get_model",
+        lambda *_a: (_ for _ in ()).throw(RuntimeError("catalog")),
+    )
     assert cp._agent_eligible_for_service(agent, role) is True
     monkeypatch.setattr(cp, "get_agent", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
     assert cp._service_holder_live("missing") is False
-    monkeypatch.setattr(cp, "get_agent", lambda *_a: replace(agent, status=AgentStatus.OFFLINE.value))
+    monkeypatch.setattr(
+        cp, "get_agent", lambda *_a: replace(agent, status=AgentStatus.OFFLINE.value)
+    )
     assert cp._service_holder_live("offline") is False
 
 
@@ -232,12 +276,16 @@ def _base_verdict(**extra):
 def test_review_verdict_rejection_matrix(monkeypatch, manifest, metadata, problem) -> None:
     cp = ControlPlane.in_memory()
     monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))
-    evidence_metadata = metadata if metadata is not None else {"returncode": 0, "verification": manifest}
+    evidence_metadata = (
+        metadata if metadata is not None else {"returncode": 0, "verification": manifest}
+    )
     item = _verdict(_base_verdict(), metadata=evidence_metadata)
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [item])
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
-    monkeypatch.setattr(cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}}))
+    monkeypatch.setattr(
+        cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}})
+    )
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
     monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
     found, problems = cp._find_review_verdict_evidence(
@@ -252,32 +300,44 @@ def test_review_verdict_filters_signature_cross_llm_rejection_and_success(monkey
     monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: None)
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [_verdict(_base_verdict())])
-    found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
     assert found is None and "no attestation key" in problems[0]
 
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: False)
     monkeypatch.setattr(cp.store, "query_one", lambda *_a, **_k: None)
-    found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
     assert found is None and "does not verify" in problems[0]
 
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
-    monkeypatch.setattr(cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}}))
+    monkeypatch.setattr(
+        cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}})
+    )
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: ["same model"])
-    found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
     assert found is None and "same model" in problems[0]
 
     rejected = _verdict(_base_verdict(verdict="rejected"))
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [rejected])
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
     monkeypatch.setattr(services, "rejected_verdict_feedback_problems", lambda *_a: [])
-    found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
     assert found is rejected and problems == []
 
     approved = _verdict(_base_verdict())
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [approved])
     monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
-    found, problems = cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
+    found, problems = cp._find_review_verdict_evidence(
+        "task", "reviewer", executor_evidence_id="executor"
+    )
     assert found is approved and problems == []
 
 
@@ -318,9 +378,7 @@ def test_pushed_executor_commit_skips_ephemeral_reachability_probe(monkeypatch, 
         monkeypatch.setattr(
             cp, "list_evidence", lambda *_a: [_verdict(_base_verdict(repo=dict(repo)))]
         )
-        return cp._find_review_verdict_evidence(
-            "task", "reviewer", executor_evidence_id="executor"
-        )
+        return cp._find_review_verdict_evidence("task", "reviewer", executor_evidence_id="executor")
 
     # Pushed executor commit: the ephemeral probe is skipped -> verdict accepted.
     found, problems = _run_case(True)
@@ -359,9 +417,7 @@ def test_review_verdict_reports_deep_validation_failures(monkeypatch) -> None:
     monkeypatch.setattr(cp, "get_task", lambda *_a: task)
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: evidence)
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
-    monkeypatch.setattr(
-        services, "verify_verification_manifest_signature", lambda *_a: True
-    )
+    monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
     monkeypatch.setattr(cp, "get_evidence", lambda *_a: executor)
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
     monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
@@ -410,12 +466,8 @@ def test_reviewer_independence_problem_edges(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     task = SimpleNamespace(metadata={})
     reviewer = SimpleNamespace(id="reviewer", machine_id="machine")
-    monkeypatch.setattr(
-        cp, "_coordination_excluded_agent_ids", lambda *_a: {"reviewer"}
-    )
-    assert "cooperative work family" in cp._reviewer_independence_problem(
-        task, reviewer
-    )
+    monkeypatch.setattr(cp, "_coordination_excluded_agent_ids", lambda *_a: {"reviewer"})
+    assert "cooperative work family" in cp._reviewer_independence_problem(task, reviewer)
 
     monkeypatch.setattr(cp, "_coordination_excluded_agent_ids", lambda *_a: set())
     monkeypatch.setattr(cp, "_task_tenant_id", lambda *_a: "tenant-a")
@@ -431,16 +483,10 @@ def test_reviewer_independence_problem_edges(monkeypatch) -> None:
     monkeypatch.setattr(cp, "_machine_allows_tenant", lambda *_a: False)
     assert "tenant boundary" in cp._reviewer_independence_problem(task, reviewer)
 
-    monkeypatch.setattr(
-        cp, "_agent_tenant_and_persona", lambda *_a: ("tenant-b", None)
-    )
+    monkeypatch.setattr(cp, "_agent_tenant_and_persona", lambda *_a: ("tenant-b", None))
     assert "tenant boundary" in cp._reviewer_independence_problem(task, reviewer)
 
     monkeypatch.setattr(cp, "_task_tenant_id", lambda *_a: None)
-    monkeypatch.setattr(
-        cp, "_agent_tenant_and_persona", lambda *_a: (None, "shared-persona")
-    )
-    monkeypatch.setattr(
-        cp, "_task_executor_persona_slug", lambda *_a: "shared-persona"
-    )
+    monkeypatch.setattr(cp, "_agent_tenant_and_persona", lambda *_a: (None, "shared-persona"))
+    monkeypatch.setattr(cp, "_task_executor_persona_slug", lambda *_a: "shared-persona")
     assert "same persona" in cp._reviewer_independence_problem(task, reviewer)

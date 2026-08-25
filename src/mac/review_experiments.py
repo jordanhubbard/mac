@@ -6,6 +6,7 @@ behavior is reconstructed from signed evidence, reviews, history, and
 publications.  Reports are therefore derivable again after the reporting code
 changes; there is no second telemetry database to drift away from the ledger.
 """
+
 from __future__ import annotations
 
 import copy
@@ -129,9 +130,7 @@ def build_assignment(
     if not explicit_arm and not arms:
         raise ValidationError("review experiment arm or weighted arms are required")
     if arms and assignment_probability is not None:
-        raise ValidationError(
-            "assignment_probability is computed for weighted arms"
-        )
+        raise ValidationError("assignment_probability is computed for weighted arms")
 
     distribution: Dict[str, float]
     if arms:
@@ -141,8 +140,10 @@ def build_assignment(
         method = "deterministic_weighted"
     else:
         chosen = explicit_arm
-        probability = 1.0 if assignment_probability is None else _finite_nonnegative(
-            assignment_probability, "assignment_probability"
+        probability = (
+            1.0
+            if assignment_probability is None
+            else _finite_nonnegative(assignment_probability, "assignment_probability")
         )
         if probability <= 0 or probability > 1:
             raise ValidationError("assignment_probability must be greater than 0 and at most 1")
@@ -153,8 +154,7 @@ def build_assignment(
     unknown_blind_arms = sorted(set(blind_arm_names) - set(distribution))
     if unknown_blind_arms:
         raise ValidationError(
-            "blind_arms are not present in the arm distribution: %s"
-            % ", ".join(unknown_blind_arms)
+            "blind_arms are not present in the arm distribution: %s" % ", ".join(unknown_blind_arms)
         )
     return {
         "schema": ASSIGNMENT_SCHEMA,
@@ -202,9 +202,7 @@ def build_outcome(
     if not status_value:
         raise ValidationError("review outcome status is required")
     if status_value not in _OUTCOME_STATUSES:
-        raise ValidationError(
-            "review outcome status must be confirmed, refuted, or pending"
-        )
+        raise ValidationError("review outcome status must be confirmed, refuted, or pending")
     detail_value = _object(detail)
     if len(json.dumps(detail_value, sort_keys=True).encode("utf-8")) > _MAX_DETAIL_BYTES:
         raise ValidationError("review outcome detail exceeds 24 KiB")
@@ -263,7 +261,16 @@ def _model_identity(manifest: Mapping[str, Any]) -> Dict[str, str]:
                 provider = candidate
                 break
     if not family:
-        for candidate in ("claude", "gpt", "gemini", "grok", "qwen", "deepseek", "llama", "mistral"):
+        for candidate in (
+            "claude",
+            "gpt",
+            "gemini",
+            "grok",
+            "qwen",
+            "deepseek",
+            "llama",
+            "mistral",
+        ):
             if candidate in normalized_model:
                 family = candidate
                 break
@@ -273,7 +280,10 @@ def _model_identity(manifest: Mapping[str, Any]) -> Dict[str, str]:
         "provider": provider,
         "identity_source": (
             "declared"
-            if llm.get("family") or llm.get("provider") or manifest.get("llm_family") or manifest.get("llm_provider")
+            if llm.get("family")
+            or llm.get("provider")
+            or manifest.get("llm_family")
+            or manifest.get("llm_provider")
             else "derived_from_model_id"
         ),
         "tool": _text(llm.get("tool")),
@@ -471,9 +481,7 @@ def build_observation(
     reviews = [_object(item) for item in _list(task_detail.get("reviews"))]
     routes = list(llm_routes or [])
     review_by_evidence = {
-        _text(item.get("evidence_id")): item
-        for item in reviews
-        if _text(item.get("evidence_id"))
+        _text(item.get("evidence_id")): item for item in reviews if _text(item.get("evidence_id"))
     }
     outcome_items = _outcomes(metadata)
     protocol_invalidations = [
@@ -505,8 +513,7 @@ def build_observation(
         executor_route = _route_summary(
             routes,
             agent_id=_text(
-                executor_evidence.get("created_by")
-                or executor_manifest.get("signed_by")
+                executor_evidence.get("created_by") or executor_manifest.get("signed_by")
             ),
             since=_text(task.get("created_at")),
             until=_text(executor_evidence.get("created_at")),
@@ -542,9 +549,7 @@ def build_observation(
         manifest_usage = _usage(manifest)
         if not any(manifest_usage.values()):
             manifest_usage = _object(reviewer_route.get("usage"))
-        experiment_protocol = copy.deepcopy(
-            _object(manifest.get("review_experiment"))
-        )
+        experiment_protocol = copy.deepcopy(_object(manifest.get("review_experiment")))
         if protocol_invalidations:
             protocol = _object(experiment_protocol.get("protocol"))
             protocol.update(
@@ -623,8 +628,7 @@ def build_observation(
         executor_attempt_count = sum(
             1
             for item in evidence
-            if _text(_verification(item).get("evidence_type")).lower()
-            in _executor_evidence_types
+            if _text(_verification(item).get("evidence_type")).lower() in _executor_evidence_types
         )
 
     # review_attempt_count: total number of review records (approved, rejected,
@@ -653,8 +657,7 @@ def build_observation(
             "review_passes": len(review_passes),
             "findings": len(findings),
             "independent_findings": sum(
-                len(_list(item.get("independent_findings")))
-                for item in review_passes
+                len(_list(item.get("independent_findings"))) for item in review_passes
             ),
             "confirmed_findings": confirmed,
             "refuted_findings": refuted,
@@ -716,9 +719,7 @@ def build_report(
 ) -> Dict[str, Any]:
     """Build an aggregated review experiment report from observations."""
     experiment = _text(experiment_id)
-    task_threshold = _integer_threshold(
-        min_tasks_per_arm, "min_tasks_per_arm", minimum=1
-    )
+    task_threshold = _integer_threshold(min_tasks_per_arm, "min_tasks_per_arm", minimum=1)
     outcome_threshold = _integer_threshold(
         min_validated_outcomes_per_arm,
         "min_validated_outcomes_per_arm",
@@ -774,9 +775,7 @@ def build_report(
                 arm["protocol_compliant_passes"] += 1
             else:
                 arm["protocol_noncompliant_passes"] += 1
-            arm["discovery_duration_ms"] += float(
-                protocol.get("discovery_duration_ms") or 0
-            )
+            arm["discovery_duration_ms"] += float(protocol.get("discovery_duration_ms") or 0)
             usage = _object(review_value.get("usage"))
             for key in ("cost_usd", "input_tokens", "output_tokens", "latency_ms"):
                 arm[key] += float(usage.get(key) or 0)
@@ -802,13 +801,9 @@ def build_report(
         tasks = max(1, int(arm["tasks"]))
         labelled = int(arm["confirmed_findings"]) + int(arm["refuted_findings"])
         arm["completion_rate"] = arm["completed_tasks"] / tasks
-        arm["finding_precision"] = (
-            arm["confirmed_findings"] / labelled if labelled else None
-        )
+        arm["finding_precision"] = arm["confirmed_findings"] / labelled if labelled else None
         arm["score_per_task"] = (
-            arm["confirmed_severity"]
-            - arm["refuted_severity"]
-            - (5.0 * arm["escaped_severity"])
+            arm["confirmed_severity"] - arm["refuted_severity"] - (5.0 * arm["escaped_severity"])
         ) / tasks
 
     ordered_arms = [arms[key] for key in sorted(arms)]
@@ -839,9 +834,7 @@ def build_report(
             key=lambda item: (float(item["score_per_task"]), float(item["completion_rate"])),
             reverse=True,
         )
-        score_margin = float(ranked[0]["score_per_task"]) - float(
-            ranked[1]["score_per_task"]
-        )
+        score_margin = float(ranked[0]["score_per_task"]) - float(ranked[1]["score_per_task"])
         if score_margin <= 0:
             policy = {
                 "status": "inconclusive",

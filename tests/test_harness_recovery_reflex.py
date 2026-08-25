@@ -111,9 +111,9 @@ class TestUnrecognisedLLMResponse:
             "restart",
             "reboot",
             "undefined",
-            "retry fetch",          # space instead of underscore - not in whitelist
+            "retry fetch",  # space instead of underscore - not in whitelist
             "{}",
-            "escalate\nextra",      # extra content (strip doesn't remove embedded newlines fully)
+            "escalate\nextra",  # extra content (strip doesn't remove embedded newlines fully)
             "",
             "   ",
         ],
@@ -419,9 +419,7 @@ class TestNoRecoveryOnSubmissionProblems:
     detect any unwanted call during the post-execution verification branch.
     """
 
-    def test_try_recovery_not_called_when_submission_problems_present(
-        self, tmp_path, monkeypatch
-    ):
+    def test_try_recovery_not_called_when_submission_problems_present(self, tmp_path, monkeypatch):
         """When the executor succeeds but submission_problems exist, the worker
         transitions to 'blocked' via the verification path. try_recovery must
         NOT be invoked in that branch."""
@@ -495,9 +493,7 @@ class TestNoRecoveryOnSubmissionProblems:
             % recovery_calls
         )
 
-    def test_try_recovery_not_called_when_executor_fails(
-        self, tmp_path, monkeypatch
-    ):
+    def test_try_recovery_not_called_when_executor_fails(self, tmp_path, monkeypatch):
         """When the executor itself fails (returncode != 0), the worker
         transitions to 'blocked'. try_recovery must not fire from the
         standard worker harness for executor failures either."""
@@ -550,9 +546,7 @@ class TestNoRecoveryOnSubmissionProblems:
         result = worker.execute_assignment(assignment["task"], assignment["lease"])
 
         assert result.status == "blocked"
-        assert recovery_calls == [], (
-            "try_recovery was unexpectedly called: %r" % recovery_calls
-        )
+        assert recovery_calls == [], "try_recovery was unexpectedly called: %r" % recovery_calls
 
 
 class TestRecoveryOnNonStandardPrepFailure:
@@ -600,9 +594,7 @@ class TestRecoveryOnNonStandardPrepFailure:
         assert assignment is not None
         return worker, assignment
 
-    def test_non_oserror_prep_failure_routes_through_recovery(
-        self, tmp_path, monkeypatch
-    ):
+    def test_non_oserror_prep_failure_routes_through_recovery(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAC_RECOVERY_REFLEX_ENABLED", "1")
         worker, assignment = self._make_worker(tmp_path)
 
@@ -626,14 +618,11 @@ class TestRecoveryOnNonStandardPrepFailure:
         # transition. Capture the re-raise so we can assert on both effects.
         task_id = assignment["task"]["id"]
         with pytest.raises(KeyError):
-            worker.execute_assignment(
-                assignment["task"], assignment["lease"]
-            )
+            worker.execute_assignment(assignment["task"], assignment["lease"])
 
         # try_recovery MUST have been consulted for the prep failure.
         assert len(recovery_calls) == 1, (
-            "try_recovery was not invoked for a non-OSError prep failure: %r"
-            % recovery_calls
+            "try_recovery was not invoked for a non-OSError prep failure: %r" % recovery_calls
         )
         # The task is blocked with a diagnosable worker_exception (traceback in
         # output_tail), not a silent, output-less wedge.
@@ -644,9 +633,7 @@ class TestRecoveryOnNonStandardPrepFailure:
         assert detail.get("output_tail")
         assert not detail.get("output_tail_unavailable_reason")
 
-    def test_recovered_prep_failure_retries_preparation(
-        self, tmp_path, monkeypatch
-    ):
+    def test_recovered_prep_failure_retries_preparation(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAC_RECOVERY_REFLEX_ENABLED", "1")
         worker, assignment = self._make_worker(tmp_path)
 
@@ -666,9 +653,7 @@ class TestRecoveryOnNonStandardPrepFailure:
 
         monkeypatch.setattr(hrr, "try_recovery", spy_try_recovery)
 
-        result = worker.execute_assignment(
-            assignment["task"], assignment["lease"]
-        )
+        result = worker.execute_assignment(assignment["task"], assignment["lease"])
 
         # Preparation was retried after a successful recovery decision.
         assert calls["n"] == 2

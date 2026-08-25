@@ -5,6 +5,7 @@ codegraph, large git) and documents the CARGO_HOME/Rust toolchain pitfall where
 symlinks it into MAC_TOOLCHAIN_BIN. These guards fail loudly if the skill is
 removed, malformed, or loses the Rust-toolchain diagnostic guidance a blocked
 agent relies on to recover."""
+
 from __future__ import annotations
 
 from pathlib import Path

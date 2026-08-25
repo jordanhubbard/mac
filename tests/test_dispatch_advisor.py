@@ -16,9 +16,7 @@ from mac.test_support import ephemeral_store
 def test_agent_scoring_prefers_lower_load_then_capability_best_fit() -> None:
     store = ephemeral_store()
     try:
-        cp = ControlPlane(
-            store=store, secret_key="assignment-score-secret-key-value-0001"
-        )
+        cp = ControlPlane(store=store, secret_key="assignment-score-secret-key-value-0001")
         machine = cp.register_machine("allocator-score-host")
         exact = cp.register_agent(
             machine.id,
@@ -66,17 +64,11 @@ def test_agent_scoring_prefers_lower_load_then_capability_best_fit() -> None:
 def test_ordinary_task_order_falls_back_to_priority_aging_and_age() -> None:
     store = ephemeral_store()
     try:
-        cp = ControlPlane(
-            store=store, secret_key="assignment-order-secret-key-value-0001"
-        )
+        cp = ControlPlane(store=store, secret_key="assignment-order-secret-key-value-0001")
         older = cp.create_task("older", priority=0)
         high = cp.create_task("higher", priority=1)
-        created_at = (parse_time(utcnow()) - timedelta(hours=6)).isoformat(
-            timespec="microseconds"
-        )
-        store.execute(
-            "UPDATE tasks SET created_at = ? WHERE id = ?", (created_at, older.id)
-        )
+        created_at = (parse_time(utcnow()) - timedelta(hours=6)).isoformat(timespec="microseconds")
+        store.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (created_at, older.id))
 
         ordered = cp._dispatch_ordered_tasks()
 
@@ -88,9 +80,7 @@ def test_ordinary_task_order_falls_back_to_priority_aging_and_age() -> None:
 def test_agent_score_ties_use_stable_agent_id() -> None:
     store = ephemeral_store()
     try:
-        cp = ControlPlane(
-            store=store, secret_key="assignment-tie-secret-key-value-0001"
-        )
+        cp = ControlPlane(store=store, secret_key="assignment-tie-secret-key-value-0001")
         machine = cp.register_machine("allocator-tie-host")
         later = cp.register_agent(
             machine.id,
@@ -126,9 +116,7 @@ def test_agent_score_ties_use_stable_agent_id() -> None:
 def test_recent_repository_access_success_is_a_bounded_advisory_signal() -> None:
     store = ephemeral_store()
     try:
-        cp = ControlPlane(
-            store=store, secret_key="assignment-learning-secret-key-value-0001"
-        )
+        cp = ControlPlane(store=store, secret_key="assignment-learning-secret-key-value-0001")
         machine = cp.register_machine("allocator-learning-host")
         unknown = cp.register_agent(
             machine.id,
@@ -147,9 +135,7 @@ def test_recent_repository_access_success_is_a_bounded_advisory_signal() -> None
             project="allocator",
             required_capabilities=["python"],
             metadata={
-                "repository_contract": {
-                    "canonical_remote_url": "git@github.com:example/repo.git"
-                }
+                "repository_contract": {"canonical_remote_url": "git@github.com:example/repo.git"}
             },
         )
         cp.add_memory(
@@ -174,10 +160,7 @@ def test_recent_repository_access_success_is_a_bounded_advisory_signal() -> None
         )
 
         assert ranked[0].agent.id == known.id
-        assert (
-            ranked[0].decision["agent_score"]["repository_access_learning"]
-            == "success"
-        )
+        assert ranked[0].decision["agent_score"]["repository_access_learning"] == "success"
         assert ranked[0].score <= 1_000_001
     finally:
         store.close()
@@ -206,9 +189,7 @@ def test_dispatch_snapshots_batch_queries_and_bound_learning_per_agent(
         assert sum("ROW_NUMBER() OVER" in sql for sql in calls) == 3
         assert sum("COUNT(*) AS active_count" in sql for sql in calls) == 1
         assert all(
-            "dispatch_learning_rank <= ?" in sql
-            for sql in calls
-            if "ROW_NUMBER() OVER" in sql
+            "dispatch_learning_rank <= ?" in sql for sql in calls if "ROW_NUMBER() OVER" in sql
         )
     finally:
         store.close()
@@ -220,9 +201,7 @@ def test_no_eligible_agent_records_capacity_demand_without_assigning(
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     store = ephemeral_store()
     try:
-        cp = ControlPlane(
-            store=store, secret_key="assignment-unclaimed-secret-key-value-0001"
-        )
+        cp = ControlPlane(store=store, secret_key="assignment-unclaimed-secret-key-value-0001")
         task = cp.create_task("needs a worker", required_capabilities=["python"])
 
         assert cp.dispatch_once() is None

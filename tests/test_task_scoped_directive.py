@@ -62,17 +62,60 @@ def test_ownership_verdict_deliverable_for_current_lease_holder() -> None:
 @pytest.mark.parametrize(
     "kwargs,status",
     [
-        (dict(task_found=False, task_state=None, owner_agent_id=None, lease_id=None, leased_until=None), "no_task"),
-        (dict(task_found=True, task_state="open", owner_agent_id=None, lease_id=None, leased_until=None), "no_executor"),
-        (dict(task_found=True, task_state="running", owner_agent_id="agent_b", lease_id="l", leased_until="2999-01-01T00:00:00+00:00"), "agent_task_mismatch"),
-        (dict(task_found=True, task_state="running", owner_agent_id="agent_a", lease_id="l", leased_until="2000-01-01T00:00:00+00:00"), "lease_expired"),
-        (dict(task_found=True, task_state="done", owner_agent_id="agent_a", lease_id="l", leased_until="2999-01-01T00:00:00+00:00"), "lease_expired"),
+        (
+            dict(
+                task_found=False,
+                task_state=None,
+                owner_agent_id=None,
+                lease_id=None,
+                leased_until=None,
+            ),
+            "no_task",
+        ),
+        (
+            dict(
+                task_found=True,
+                task_state="open",
+                owner_agent_id=None,
+                lease_id=None,
+                leased_until=None,
+            ),
+            "no_executor",
+        ),
+        (
+            dict(
+                task_found=True,
+                task_state="running",
+                owner_agent_id="agent_b",
+                lease_id="l",
+                leased_until="2999-01-01T00:00:00+00:00",
+            ),
+            "agent_task_mismatch",
+        ),
+        (
+            dict(
+                task_found=True,
+                task_state="running",
+                owner_agent_id="agent_a",
+                lease_id="l",
+                leased_until="2000-01-01T00:00:00+00:00",
+            ),
+            "lease_expired",
+        ),
+        (
+            dict(
+                task_found=True,
+                task_state="done",
+                owner_agent_id="agent_a",
+                lease_id="l",
+                leased_until="2999-01-01T00:00:00+00:00",
+            ),
+            "lease_expired",
+        ),
     ],
 )
 def test_ownership_verdict_fails_closed(kwargs, status) -> None:
-    v = task_ownership_verdict(
-        task_id="task_1", target_agent_id="agent_a", now=_now(), **kwargs
-    )
+    v = task_ownership_verdict(task_id="task_1", target_agent_id="agent_a", now=_now(), **kwargs)
     assert v.deliverable is False
     assert v.status == status
     assert v.reason  # actionable reason present
@@ -138,9 +181,7 @@ def test_hub_rejects_directive_when_agent_does_not_own_task() -> None:
 def test_hub_rejects_directive_for_unknown_task() -> None:
     cp, executor, _other, _task = _cp_with_leased_task()
     with pytest.raises(ValidationError) as exc:
-        cp.publish_human_directive(
-            executor.id, "steer", issued_by="jkh", task_id="task_deadbeef"
-        )
+        cp.publish_human_directive(executor.id, "steer", issued_by="jkh", task_id="task_deadbeef")
     assert "no_task" in str(exc.value)
 
 
@@ -154,9 +195,7 @@ def test_hub_non_task_directive_stays_persona_scoped() -> None:
 
 def test_verify_surfaces_task_ownership_for_executor_scoped_directive() -> None:
     cp, executor, _other, task = _cp_with_leased_task()
-    published = cp.publish_human_directive(
-        executor.id, "rerun", issued_by="jkh", task_id=task.id
-    )
+    published = cp.publish_human_directive(executor.id, "rerun", issued_by="jkh", task_id=task.id)
     v = cp.verify_human_directive(published["stream"]["id"])
     assert v["verified"] is True
     assert v["executor_scoped"] is True

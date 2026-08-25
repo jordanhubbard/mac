@@ -208,8 +208,7 @@ def test_the_known_gaps_are_still_gaps():
 
     assert not consumers, (
         "something now consumes AgentBus traffic (%s) -- update "
-        "docs/guide/03-advanced.md, which still tells operators nothing does"
-        % consumers
+        "docs/guide/03-advanced.md, which still tells operators nothing does" % consumers
     )
 
 

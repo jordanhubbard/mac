@@ -23,7 +23,9 @@ def test_append_task_activity_caps_trims_and_orders():
     assert act[-1].get("at"), "entry is timestamped"
 
     # multi-line prose is trimmed to a few lines (glanceable)
-    cp.append_task_activity(t.id, "review", "agent_natasha", "\n".join("l%d" % j for j in range(20)))
+    cp.append_task_activity(
+        t.id, "review", "agent_natasha", "\n".join("l%d" % j for j in range(20))
+    )
     assert len(_activity(cp, t.id)[-1]["summary"].splitlines()) <= 6
 
     # empty/whitespace summary is a no-op (doesn't pollute the narrative)
@@ -87,9 +89,7 @@ def test_task_detail_includes_attributed_resolved_llm_usage():
 
     assert usage["schema"] == "mac.task_llm_usage.v1"
     assert usage["observed_route_count"] == 1
-    assert usage["resolved_models"] == [
-        "azure/anthropic/claude-sonnet-4-6"
-    ]
+    assert usage["resolved_models"] == ["azure/anthropic/claude-sonnet-4-6"]
     assert usage["response_models"] == ["claude-sonnet-4-6"]
     assert usage["providers"] == ["nvidia"]
     assert usage["input_tokens"] == 100
@@ -109,14 +109,16 @@ def test_task_detail_includes_attributed_resolved_llm_usage():
 
 def test_prose_tail_prefers_agent_prose_over_diff_noise():
     """Worker narrative should read like the agent's recap, not raw diff lines."""
-    out = "\n".join([
-        "Created sandbox: mac-task-x",
-        "+    } else {}",
-        '     (println "ALL OK")',
-        "diff --git a/x b/x",
-        "I added mathx_lcm and a shadow test; make test-quick passes.",
-        "Pushed the branch and recorded evidence.",
-    ])
+    out = "\n".join(
+        [
+            "Created sandbox: mac-task-x",
+            "+    } else {}",
+            '     (println "ALL OK")',
+            "diff --git a/x b/x",
+            "I added mathx_lcm and a shadow test; make test-quick passes.",
+            "Pushed the branch and recorded evidence.",
+        ]
+    )
     tail = _prose_tail(out, 2)
     assert tail == [
         "I added mathx_lcm and a shadow test; make test-quick passes.",
@@ -132,15 +134,17 @@ def test_extract_marked_summary_prefers_the_agents_delimited_recap():
     executor injects, tolerates ANSI, and returns '' when absent (so the caller
     falls back to _prose_tail)."""
     recap = "Added mathx_lcm + a shadow test; make test-quick passed; pushed the branch."
-    out = "\n".join([
-        "Created sandbox: x",
-        "+ some diff line",
-        '(println "ALL OK")',
-        MAC_TASK_SUMMARY_BEGIN,
-        recap,
-        MAC_TASK_SUMMARY_END,
-        "make test-quick: 6 passed",  # trailing test output AFTER the block
-    ])
+    out = "\n".join(
+        [
+            "Created sandbox: x",
+            "+ some diff line",
+            '(println "ALL OK")',
+            MAC_TASK_SUMMARY_BEGIN,
+            recap,
+            MAC_TASK_SUMMARY_END,
+            "make test-quick: 6 passed",  # trailing test output AFTER the block
+        ]
+    )
     assert _extract_marked_summary(out) == recap
     # tolerant of ANSI styling around the markers
     ansi = "\x1b[1m%s\x1b[0m\nclean recap line\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END)

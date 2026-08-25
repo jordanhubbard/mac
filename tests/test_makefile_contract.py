@@ -106,7 +106,7 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert '"$(PYTHON)" -m mac.ide_launcher' in makefile
     assert "IDE auth token: %s" not in makefile
     assert "ensure_session(selected_profile)" in launcher
-    assert 'load_profile(selected_profile, include_token=True)' in launcher
+    assert "load_profile(selected_profile, include_token=True)" in launcher
     assert "load_handoff_connection" in launcher
     assert 'child["MAC_IDE_PROXY_TOKEN"] = connection.token' in launcher
     assert 'child.pop("VITE_MAC_TOKEN"' not in launcher

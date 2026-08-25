@@ -121,10 +121,7 @@ def test_controller_holds_dispatches_exact_sha_and_clears_after_attestation(
     converged = cp.tick_source_convergence()
     assert converged["converged"] == 1
     assert cp.get_agent(agent.id).dispatch_hold is False
-    assert (
-        cp.source_convergence_status(fleet_id=fleet.id)["nodes"][0]["phase"]
-        == "converged"
-    )
+    assert cp.source_convergence_status(fleet_id=fleet.id)["nodes"][0]["phase"] == "converged"
 
 
 def test_controller_fails_closed_without_impact_plan(monkeypatch):
@@ -158,9 +155,7 @@ def test_controller_preserves_unrelated_operator_hold(monkeypatch):
 def test_control_plane_tick_places_source_hold_before_dispatch(monkeypatch):
     cp, _fleet, agent = _fixture()
     monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", agent.id)
-    task = cp.create_task(
-        "must not run on stale source", required_capabilities=["python"]
-    )
+    task = cp.create_task("must not run on stale source", required_capabilities=["python"])
 
     result = cp.tick(limit=1)
 

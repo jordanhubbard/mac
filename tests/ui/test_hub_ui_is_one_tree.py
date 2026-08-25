@@ -61,8 +61,9 @@ def test_the_console_source_builds_into_the_directory_the_hub_serves() -> None:
     assert match, "observe/vite.config.ts declares no build.outDir"
 
     out_dir = (OBSERVE_DIR / match.group(1)).resolve()
-    assert out_dir == SERVED_BUNDLE.resolve(), (
-        "observe/ builds into %s but the hub serves %s" % (out_dir, SERVED_BUNDLE)
+    assert out_dir == SERVED_BUNDLE.resolve(), "observe/ builds into %s but the hub serves %s" % (
+        out_dir,
+        SERVED_BUNDLE,
     )
     assert (SERVED_BUNDLE / "index.html").is_file(), "the committed bundle is missing"
 

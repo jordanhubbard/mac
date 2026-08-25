@@ -71,8 +71,13 @@ def test_it_points_at_the_next_step_not_back_at_itself():
     worse than none: it reads like an answer.
     """
     text = "\n".join(
-        _blocking_dependency_lines({"metadata": {"dependency_resolution": {
-            "unsatisfied": {"task_dep": {"state": "failed"}}}}})
+        _blocking_dependency_lines(
+            {
+                "metadata": {
+                    "dependency_resolution": {"unsatisfied": {"task_dep": {"state": "failed"}}}
+                }
+            }
+        )
     )
 
     assert "join:" in text, "the advice must be grounded in this task's join"
@@ -191,7 +196,7 @@ def test_a_hub_refusal_renders_as_one_line_not_a_traceback():
 
 
 def test_the_refusal_names_what_is_actually_possible():
-    """"cannot transition from failed to cancelled" is true and still leaves
+    """ "cannot transition from failed to cancelled" is true and still leaves
     the reader guessing. The legal moves are in TASK_TRANSITIONS."""
     from mac.cli import _hub_error_message
     from mac.http_client import HubClientError

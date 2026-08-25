@@ -31,7 +31,9 @@ def test_remote_directive_lifecycle_uses_public_http_contract() -> None:
         actor="operator",
     )
 
-    assert [(method, url.removeprefix("https://hub.example")) for method, url, _body, _token in calls] == [
+    assert [
+        (method, url.removeprefix("https://hub.example")) for method, url, _body, _token in calls
+    ] == [
         ("POST", "/directives"),
         ("GET", "/directives"),
         ("POST", "/directives/build.bazel-first/check"),

@@ -47,13 +47,13 @@ JsonDict = Dict[str, Any]
 # Turn-execution outcomes (what happened inside the peer's one-shot turn)
 # --------------------------------------------------------------------------- #
 # Closed set. A consumer can switch on these without parsing prose.
-TURN_COMPLETED = "completed"          # ordinary successful completion
-TURN_TIMEOUT = "turn_timeout"         # embedded turn/step limit or deadline hit
+TURN_COMPLETED = "completed"  # ordinary successful completion
+TURN_TIMEOUT = "turn_timeout"  # embedded turn/step limit or deadline hit
 TURN_OUTPUT_TRUNCATED = "output_truncated"  # output/length stop cut the answer
-TURN_TOOL_FAILED = "tool_failed"      # a tool the turn invoked errored
-TURN_MODEL_FAILED = "model_failed"    # the model/LLM request itself failed
-TURN_REFUSED = "refused"              # the turn declined (policy/safety/verify)
-TURN_ERROR = "error"                  # any other structured failure
+TURN_TOOL_FAILED = "tool_failed"  # a tool the turn invoked errored
+TURN_MODEL_FAILED = "model_failed"  # the model/LLM request itself failed
+TURN_REFUSED = "refused"  # the turn declined (policy/safety/verify)
+TURN_ERROR = "error"  # any other structured failure
 
 TURN_OUTCOMES = frozenset(
     {
@@ -172,9 +172,18 @@ def classify_turn_result(
 
     if isinstance(result, dict):
         # An explicit structured outcome/status wins if it names a known code.
-        for key in ("turn_outcome", "outcome", "stop_reason", "finish_reason", "stopReason", "finishReason"):
+        for key in (
+            "turn_outcome",
+            "outcome",
+            "stop_reason",
+            "finish_reason",
+            "stopReason",
+            "finishReason",
+        ):
             mapped = _stop_reason_outcome(result.get(key))
-            if mapped is not None and not (mapped == TURN_COMPLETED and _has_embedded_failure(text)):
+            if mapped is not None and not (
+                mapped == TURN_COMPLETED and _has_embedded_failure(text)
+            ):
                 if mapped != TURN_COMPLETED:
                     return mapped
 
@@ -184,7 +193,9 @@ def classify_turn_result(
             kind = ""
             detail = ""
             if isinstance(error_obj, dict):
-                kind = _norm(error_obj.get("kind") or error_obj.get("type") or error_obj.get("code"))
+                kind = _norm(
+                    error_obj.get("kind") or error_obj.get("type") or error_obj.get("code")
+                )
                 detail = str(error_obj.get("message") or error_obj.get("detail") or "")
             else:
                 detail = str(error_obj)
@@ -237,9 +248,9 @@ def _classify_text(text: str) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 # Closed set so a caller can distinguish delivery from execution without prose.
 DELIVERY_ACKNOWLEDGED = "acknowledged"  # published/queued; no wait requested
-DELIVERY_REPLIED = "replied"            # a reply arrived within the wait budget
+DELIVERY_REPLIED = "replied"  # a reply arrived within the wait budget
 DELIVERY_WAIT_EXPIRED = "wait_expired"  # sync wait budget elapsed, no reply yet
-DELIVERY_LATE_REPLY = "late"            # reply arrived AFTER the budget (not lost)
+DELIVERY_LATE_REPLY = "late"  # reply arrived AFTER the budget (not lost)
 
 DELIVERY_OUTCOMES = frozenset(
     {

@@ -59,23 +59,27 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     assert quiescence.count("while IFS= read -r spec; do") == 1
     assert 'run_bounded_node_phase "$selected_specs_file" quiesce' not in quiescence
 
-    phase2_apply = typed.split(
-        'echo "==> fleet: applying and proving the held cohort"', 1
-    )[1].split("prove_and_commit_hub_epoch", 1)[0]
+    phase2_apply = typed.split('echo "==> fleet: applying and proving the held cohort"', 1)[
+        1
+    ].split("prove_and_commit_hub_epoch", 1)[0]
     assert phase2_apply.count("while IFS= read -r spec; do") == 1
     assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' not in phase2_apply
-    assert phase2_apply.index("cohort_journal_mutate phase2-start") < phase2_apply.index(
-        'typed_phase2_apply_worker "$spec"'
-    ) < phase2_apply.index("cohort_journal_mutate prepared")
+    assert (
+        phase2_apply.index("cohort_journal_mutate phase2-start")
+        < phase2_apply.index('typed_phase2_apply_worker "$spec"')
+        < phase2_apply.index("cohort_journal_mutate prepared")
+    )
 
-    finalization = typed.split(
-        'echo "==> fleet: finalizing committed node generations"', 1
-    )[1].split("cohort_journal_mutate finalize ", 1)[0]
+    finalization = typed.split('echo "==> fleet: finalizing committed node generations"', 1)[
+        1
+    ].split("cohort_journal_mutate finalize ", 1)[0]
     assert finalization.count("while IFS= read -r spec; do") == 1
     assert 'run_bounded_node_phase "$selected_specs_file" finalize-node' not in finalization
-    assert finalization.index("cohort_journal_mutate finalize-start") < finalization.index(
-        'typed_finalize_worker "$spec" "$hub_agent"'
-    ) < finalization.index("cohort_journal_mutate finalized-node")
+    assert (
+        finalization.index("cohort_journal_mutate finalize-start")
+        < finalization.index('typed_finalize_worker "$spec" "$hub_agent"')
+        < finalization.index("cohort_journal_mutate finalized-node")
+    )
 
     workers = source.split("typed_phase1_prepare_worker() {", 1)[1].split(
         "\nrun_typed_cohort() {", 1
@@ -99,9 +103,7 @@ def test_phase2_controller_rollback_uses_intent_before_optional_post_manifest(
         "rollback_remote_phase2_generation",
         "write_cohort_recovery_probe_evidence() {",
     )
-    controller = rollback.split("code=\"$(command cat <<'PY'\n", 1)[1].split(
-        "\nPY\n)\"", 1
-    )[0]
+    controller = rollback.split("code=\"$(command cat <<'PY'\n", 1)[1].split('\nPY\n)"', 1)[0]
 
     generation = "generation-1"
     revision = "a" * 40
@@ -173,7 +175,7 @@ PY
     assert receipt["status"] == "restored"
     assert receipt["intent_sha256"] == hashlib.sha256(intent_path.read_bytes()).hexdigest()
     assert not (logs / f"deploy-manifest-{deploy_ts}-post.json").exists()
-    assert 'except FileNotFoundError:' in controller
+    assert "except FileNotFoundError:" in controller
     assert 'receipt.get("post_manifest_sha256")' not in controller
 
 
@@ -194,9 +196,7 @@ set +e
 if cohort_journal_mutate phase epoch 7 operation owner >/dev/null; then result=0; else result=$?; fi
 printf '%s|%s\n' "$result" "$COHORT_JOURNAL_REVISION"
 """
-    result = subprocess.run(
-        ["bash", "-c", snippet], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "1|7"
 
@@ -410,13 +410,13 @@ def test_typed_arm_and_apply_reuse_one_digest_verified_stage() -> None:
     assert "existing staged item differs from controller digest" in source
     assert 'if [ "$typed_staged_bundle" = 0 ]' in deploy_host
     assert "reusing digest-bound staged deployment bundle" in deploy_host
-    assert r'python3 -c \"\$_mac_verify\"' in deploy_host
-    assert deploy_host.index(r'python3 -c \"\$_mac_verify\"') < deploy_host.index(
-        r'bash \"\$_mac_script\" \"\$_mac_action\"'
+    assert r"python3 -c \"\$_mac_verify\"" in deploy_host
+    assert deploy_host.index(r"python3 -c \"\$_mac_verify\"") < deploy_host.index(
+        r"bash \"\$_mac_script\" \"\$_mac_action\""
     )
     assert "O_NOFOLLOW" in verifier
     assert "manifest_digest != expected_manifest_digest" in verifier
-    assert "receipt.get(\"items\") != proved" in verifier
+    assert 'receipt.get("items") != proved' in verifier
 
 
 def test_stage_cleanup_is_terminal_for_finalize_and_skipped_for_forward_repair() -> None:
@@ -519,10 +519,10 @@ def test_finalizer_install_is_destination_atomic_and_phase_workers_fail_fast(
     apply = source.split("typed_phase2_apply_worker() {", 1)[1].split(
         "\n}\n\ntyped_finalize_worker", 1
     )[0]
-    finalize = source.split("typed_finalize_worker() {", 1)[1].split(
-        "\n}\n\nrun_typed_cohort", 1
-    )[0]
-    assert "install_remote_node_finalizer \"$agent\" || return 1" in arm
+    finalize = source.split("typed_finalize_worker() {", 1)[1].split("\n}\n\nrun_typed_cohort", 1)[
+        0
+    ]
+    assert 'install_remote_node_finalizer "$agent" || return 1' in arm
     assert arm.count("|| return 1") >= 3
     assert apply.count("|| return 1") >= 4
     assert finalize.count("|| return 1") >= 4
@@ -618,9 +618,7 @@ def test_preflight_receipt_is_read_only_canonical_and_rejects_aliases() -> None:
     assert "assert_unique_selected_endpoint_identities" in preflight
     assert "BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1" in preflight
     assert "selected aliases resolve to one physical endpoint" in unique
-    preflight_branch = main.rsplit('if [ "$PREFLIGHT_ONLY" = 1 ]; then', 1)[1].split(
-        "\n  fi", 1
-    )[0]
+    preflight_branch = main.rsplit('if [ "$PREFLIGHT_ONLY" = 1 ]; then', 1)[1].split("\n  fi", 1)[0]
     assert "initialize_cohort_transaction" not in preflight_branch
     assert "cohort_journal_mutate" not in preflight_branch
     assert "run_preflight_qualification" in preflight_branch

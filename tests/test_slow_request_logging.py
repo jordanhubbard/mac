@@ -64,7 +64,7 @@ def test_a_bad_threshold_does_not_break_requests():
 
 
 def test_the_line_says_which_request_and_how_long():
-    """"something was slow" is what the previous three investigations already
+    """ "something was slow" is what the previous three investigations already
     knew. The route and the duration are the parts that were missing."""
     source = _middleware_module_source()
     helper = source[source.index("def _log_slow_request") :]
@@ -91,10 +91,9 @@ def test_the_client_timeout_is_overridable(monkeypatch):
     assert MacApiClient("http://example.invalid").timeout == 45.0
 
     monkeypatch.setenv("MAC_API_TIMEOUT_SECONDS", "not-a-number")
-    assert (
-        MacApiClient("http://example.invalid").timeout
-        == MacApiClient.DEFAULT_TIMEOUT_SECONDS
-    ), "a malformed override must fall back, not crash the client"
+    assert MacApiClient("http://example.invalid").timeout == MacApiClient.DEFAULT_TIMEOUT_SECONDS, (
+        "a malformed override must fall back, not crash the client"
+    )
 
 
 def test_an_explicit_timeout_still_wins():

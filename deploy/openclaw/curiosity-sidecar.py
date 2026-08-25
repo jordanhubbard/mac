@@ -147,7 +147,11 @@ class CuriosityStore:
             unsigned = dict(event)
             unsigned.pop("event_sha256", None)
             actual = hashlib.sha256(canonical(unsigned)).hexdigest()
-            if event.get("sequence") != sequence or event.get("previous_sha256") != previous or claimed != actual:
+            if (
+                event.get("sequence") != sequence
+                or event.get("previous_sha256") != previous
+                or claimed != actual
+            ):
                 return {"valid": False, "failed_sequence": sequence}
             previous = claimed
         return {"valid": True, "events": len(self._events()), "head_sha256": previous}
@@ -167,9 +171,12 @@ class CuriosityStore:
                 cleaned[key] = safe
                 redactions += count
         created = now()
-        candidate_id = "cur_%s" % hashlib.sha256(
-            canonical({"agent_id": self.agent_id, "created_at": created, **cleaned})
-        ).hexdigest()[:20]
+        candidate_id = (
+            "cur_%s"
+            % hashlib.sha256(
+                canonical({"agent_id": self.agent_id, "created_at": created, **cleaned})
+            ).hexdigest()[:20]
+        )
         candidate = {
             "schema": SCHEMA,
             "id": candidate_id,
@@ -180,7 +187,14 @@ class CuriosityStore:
             **cleaned,
         }
         atomic_json(self.quarantine / f"{candidate_id}.json", candidate)
-        self.append("candidate.quarantined", {"candidate_id": candidate_id, "candidate_sha256": hashlib.sha256(canonical(candidate)).hexdigest(), "redactions": redactions})
+        self.append(
+            "candidate.quarantined",
+            {
+                "candidate_id": candidate_id,
+                "candidate_sha256": hashlib.sha256(canonical(candidate)).hexdigest(),
+                "redactions": redactions,
+            },
+        )
         return candidate
 
     def candidate(self, candidate_id: str) -> tuple[Path, dict[str, Any]]:
@@ -191,17 +205,33 @@ class CuriosityStore:
             raise ValueError("curiosity candidate not found")
         return path, json.loads(path.read_text(encoding="utf-8"))
 
-    def decide(self, candidate_id: str, *, decision: str, actor: str, reason: str, approval_id: str) -> dict[str, Any]:
+    def decide(
+        self, candidate_id: str, *, decision: str, actor: str, reason: str, approval_id: str
+    ) -> dict[str, Any]:
         if not actor.strip() or not reason.strip() or not approval_id.strip():
             raise ValueError("actor, reason, and external approval id are required")
         path, candidate = self.candidate(candidate_id)
         if candidate.get("status") != "quarantined":
             raise ValueError("candidate has already been decided")
-        candidate.update({"status": decision, "decided_at": now(), "decided_by": actor, "decision_reason": reason, "approval_id": approval_id})
+        candidate.update(
+            {
+                "status": decision,
+                "decided_at": now(),
+                "decided_by": actor,
+                "decision_reason": reason,
+                "approval_id": approval_id,
+            }
+        )
         atomic_json(path, candidate)
         if decision == "approved":
-            items = "\n".join(f"- {item}" for item in candidate.get("evidence", [])) or "- No evidence supplied."
-            provenance = "\n".join(f"- {item}" for item in candidate.get("provenance", [])) or "- No provenance supplied."
+            items = (
+                "\n".join(f"- {item}" for item in candidate.get("evidence", []))
+                or "- No evidence supplied."
+            )
+            provenance = (
+                "\n".join(f"- {item}" for item in candidate.get("provenance", []))
+                or "- No provenance supplied."
+            )
             memory = (
                 f"# Approved curiosity memory: {candidate_id}\n\n"
                 f"- Approved by: {actor}\n- External approval: {approval_id}\n- Reason: {reason}\n"
@@ -209,8 +239,18 @@ class CuriosityStore:
                 f"## Evidence\n\n{items}\n\n## Provenance\n\n{provenance}\n\n"
                 f"## Test and remaining unknowns\n\n{candidate.get('test', '')}\n"
             )
-            atomic_text(self.workspace / "memory" / "curiosity-approved" / f"{candidate_id}.md", memory)
-        self.append(f"candidate.{decision}", {"candidate_id": candidate_id, "actor": actor, "reason": reason, "approval_id": approval_id})
+            atomic_text(
+                self.workspace / "memory" / "curiosity-approved" / f"{candidate_id}.md", memory
+            )
+        self.append(
+            f"candidate.{decision}",
+            {
+                "candidate_id": candidate_id,
+                "actor": actor,
+                "reason": reason,
+                "approval_id": approval_id,
+            },
+        )
         return candidate
 
 
@@ -251,8 +291,16 @@ def abuse_frame(args: argparse.Namespace) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--state-dir", type=Path, default=Path(os.environ.get("OPENCLAW_STATE_DIR", "~/.openclaw")).expanduser())
-    parser.add_argument("--workspace", type=Path, default=Path(os.environ.get("MAC_OPENCLAW_WORKSPACE", "/sandbox/workspace")))
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=Path(os.environ.get("OPENCLAW_STATE_DIR", "~/.openclaw")).expanduser(),
+    )
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path(os.environ.get("MAC_OPENCLAW_WORKSPACE", "/sandbox/workspace")),
+    )
     parser.add_argument("--agent-id", default=os.environ.get("MAC_OPENCLAW_AGENT_ID", "unknown"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("policy")
@@ -268,7 +316,9 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--counterevidence", action="append", default=[])
     submit.add_argument("--unknown", action="append", default=[])
     submit.add_argument("--confidence", choices=["low", "medium", "high"], default="low")
-    submit.add_argument("--mode", choices=["curiosity", "angry-librarian", "moral-clarity"], default="curiosity")
+    submit.add_argument(
+        "--mode", choices=["curiosity", "angry-librarian", "moral-clarity"], default="curiosity"
+    )
     for name in ("approve", "reject"):
         decision = commands.add_parser(name)
         decision.add_argument("candidate_id")
@@ -305,9 +355,30 @@ def main(argv: Iterable[str] | None = None) -> int:
             if not args.status or item.get("status") == args.status:
                 result.append(item)
     elif args.command == "submit":
-        result = store.submit({key: getattr(args, key) for key in ("hypothesis", "question", "test", "evidence", "provenance", "counterevidence", "unknown", "confidence", "mode")})
+        result = store.submit(
+            {
+                key: getattr(args, key)
+                for key in (
+                    "hypothesis",
+                    "question",
+                    "test",
+                    "evidence",
+                    "provenance",
+                    "counterevidence",
+                    "unknown",
+                    "confidence",
+                    "mode",
+                )
+            }
+        )
     elif args.command in {"approve", "reject"}:
-        result = store.decide(args.candidate_id, decision="approved" if args.command == "approve" else "rejected", actor=args.actor, reason=args.reason, approval_id=args.approval_id)
+        result = store.decide(
+            args.candidate_id,
+            decision="approved" if args.command == "approve" else "rejected",
+            actor=args.actor,
+            reason=args.reason,
+            approval_id=args.approval_id,
+        )
     else:  # pragma: no cover
         raise AssertionError(args.command)
     print(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False))

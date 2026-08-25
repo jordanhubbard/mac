@@ -78,9 +78,7 @@ def repository_transport(remote: str) -> str:
     if "://" in value:
         scheme = urlsplit(value).scheme.lower()
         return "local" if scheme == "file" else (scheme or "unknown")
-    if re.match(r"^(?:[^@/:]+@)?[^/:]+:.+$", value) and not re.match(
-        r"^[A-Za-z]:[\\/]", value
-    ):
+    if re.match(r"^(?:[^@/:]+@)?[^/:]+:.+$", value) and not re.match(r"^[A-Za-z]:[\\/]", value):
         return "ssh"
     if value.startswith(("/", "./", "../", "~")):
         return "local"
@@ -186,9 +184,7 @@ def classify_repository_access_failure(error: str) -> str:
         )
     ):
         return "network"
-    if any(
-        marker in text for marker in ("non-fast-forward", "fetch first", "stale info")
-    ):
+    if any(marker in text for marker in ("non-fast-forward", "fetch first", "stale info")):
         return "conflict"
     return "other"
 
@@ -236,10 +232,7 @@ def build_repository_access_learning(
     failure_value = (
         ""
         if outcome_value == "success"
-        else (
-            str(failure_class or "").strip()
-            or classify_repository_access_failure(safe_error)
-        )
+        else (str(failure_class or "").strip() or classify_repository_access_failure(safe_error))
     )
     host = repository_host(remote)
     return {
@@ -350,9 +343,9 @@ def repository_access_state(
             continue
         if str(learning.get("operation") or "") != expected_operation:
             continue
-        timestamp = _parse_timestamp(
-            _record_value(record, "created_at")
-        ) or _parse_timestamp(learning.get("at"))
+        timestamp = _parse_timestamp(_record_value(record, "created_at")) or _parse_timestamp(
+            learning.get("at")
+        )
         if timestamp is not None:
             candidates.append((timestamp, learning))
     if not candidates:
@@ -365,9 +358,9 @@ def repository_access_state(
         if age_seconds <= max(0, int(success_ttl_seconds)):
             return "success", learning
         return "unknown", learning
-    if str(
-        learning.get("failure_class") or ""
-    ) in AUTH_FAILURE_CLASSES and age_seconds <= max(0, int(failure_cooldown_seconds)):
+    if str(learning.get("failure_class") or "") in AUTH_FAILURE_CLASSES and age_seconds <= max(
+        0, int(failure_cooldown_seconds)
+    ):
         return "failure", learning
     return "unknown", learning
 
@@ -375,11 +368,7 @@ def repository_access_state(
 def task_repository_remote(task: Any) -> str:
     """Resolve a task's declared canonical remote without local-state fallback."""
 
-    metadata = (
-        task.get("metadata")
-        if isinstance(task, Mapping)
-        else getattr(task, "metadata", {})
-    )
+    metadata = task.get("metadata") if isinstance(task, Mapping) else getattr(task, "metadata", {})
     if not isinstance(metadata, Mapping):
         return ""
     execution = metadata.get("execution_contract")

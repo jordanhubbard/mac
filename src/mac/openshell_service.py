@@ -181,7 +181,9 @@ class OpenShellService:
         sql += " ORDER BY active DESC, name, version DESC"
         return [self._policy_from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
-    def get_policy(self, policy_id_or_name: str, *, include_deleted: bool = False) -> OpenShellPolicy:
+    def get_policy(
+        self, policy_id_or_name: str, *, include_deleted: bool = False
+    ) -> OpenShellPolicy:
         row = self.store.query_one(
             """
             SELECT * FROM openshell_policies
@@ -423,9 +425,7 @@ class OpenShellService:
             target_type=target_type_value, target_id=target_id_value, active_only=True
         )
         prior = superseded[0] if superseded else None
-        prior_text = (
-            self.version_text(prior.policy_id, prior.policy_version) if prior else None
-        )
+        prior_text = self.version_text(prior.policy_id, prior.policy_version) if prior else None
         now = utcnow()
         assignment_id = new_id("ospola")
         with self.store.transaction() as conn:
@@ -463,9 +463,7 @@ class OpenShellService:
             to_text=policy.policy_text,
             from_version=prior.policy_version if prior else None,
             to_version=policy.version,
-            from_checksum=(
-                policy_checksum(prior_text) if isinstance(prior_text, str) else ""
-            ),
+            from_checksum=(policy_checksum(prior_text) if isinstance(prior_text, str) else ""),
             to_checksum=policy.checksum,
             target_type=target_type_value,
             target_id=target_id_value,
@@ -574,7 +572,8 @@ class OpenShellService:
                     agent_id,
                     ", ".join(
                         sorted(
-                            "%s@%s via fleet %s" % (item.policy_id, item.policy_version, item.target_id)
+                            "%s@%s via fleet %s"
+                            % (item.policy_id, item.policy_version, item.target_id)
                             for item in candidates
                         )
                     ),
@@ -604,7 +603,9 @@ class OpenShellService:
             raise ValidationError("unsupported OpenShell status: %s" % status)
         if policy_id:
             self.get_policy(policy_id, include_deleted=True)
-        required_value = self.agent_requires_openshell(agent_id) if required is None else bool(required)
+        required_value = (
+            self.agent_requires_openshell(agent_id) if required is None else bool(required)
+        )
         now = utcnow()
         existing = self.store.query_one(
             "SELECT agent_id FROM openshell_agent_status WHERE agent_id = ?",
@@ -674,7 +675,8 @@ class OpenShellService:
             "effective": {
                 "assigned": assignment is not None,
                 "deployed": deployed is not None and deployed.status == "active",
-                "fail_closed": required and not (deployed is not None and deployed.status == "active"),
+                "fail_closed": required
+                and not (deployed is not None and deployed.status == "active"),
             },
         }
 

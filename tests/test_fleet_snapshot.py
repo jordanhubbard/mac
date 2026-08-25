@@ -50,7 +50,12 @@ def test_render_and_refresh_fleet_section_is_idempotent(tmp_path):
     snap = {
         "generated_at": "2026-05-31T00:00:00Z",
         "members": [
-            {"name": "rocky", "status": "busy", "health": "healthy", "current_task_title": "Ship X"},
+            {
+                "name": "rocky",
+                "status": "busy",
+                "health": "healthy",
+                "current_task_title": "Ship X",
+            },
             {"name": "natasha", "status": "idle", "health": "healthy", "current_task_id": None},
         ],
     }

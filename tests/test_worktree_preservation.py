@@ -76,9 +76,7 @@ def test_resolve_source_path_prefers_first_existing_candidate(tmp_path: Path):
     def candidates(_origin, _self_update):
         return [missing, existing]
 
-    resolved = resolve_source_path(
-        origin, tmp_path / "self", candidate_provider=candidates
-    )
+    resolved = resolve_source_path(origin, tmp_path / "self", candidate_provider=candidates)
     assert resolved == existing
 
 
@@ -195,8 +193,7 @@ def test_git_runner_seam_is_injectable(tmp_path: Path):
             [],
             returncode=0,
             stdout="worktree %s\nHEAD deadbeef\nbranch refs/heads/main\n\n"
-            "worktree %s/../linked\nHEAD deadbeef\nbranch refs/heads/wt\n"
-            % (existing, existing),
+            "worktree %s/../linked\nHEAD deadbeef\nbranch refs/heads/wt\n" % (existing, existing),
             stderr="",
         )
 

@@ -62,7 +62,9 @@ class Transport(Protocol):
     def backup(self, target: str, relpath: str, *, stamp: str) -> Optional[str]:
         """Copy the current file aside; return the backup path, or None if absent."""
 
-    def stat(self, target: str, relpath: str, *, checksum: bool = False) -> Optional[Dict[str, Any]]:
+    def stat(
+        self, target: str, relpath: str, *, checksum: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Return {bytes, mtime[, sha256]} for a file WITHOUT transferring it, or
         None if absent. ``checksum`` adds sha256 (reads the file; can be slow on
         large blobs)."""
@@ -87,7 +89,11 @@ class SSHTransport:
         self._connect_timeout = connect_timeout
         self._routes = dict(routes or {})
         self._ssh = [
-            "ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}",
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            f"ConnectTimeout={connect_timeout}",
             *(ssh_extra or []),
         ]
 
@@ -122,19 +128,26 @@ class SSHTransport:
         cmd = "if [ -f %s ]; then cp -f %s %s && echo COPIED; fi" % (path, path, bak)
         proc = subprocess.run(self._argv(target, cmd), capture_output=True, text=True)
         if proc.returncode != 0:
-            raise RuntimeError("backup %s on %s failed: %s" % (relpath, target, proc.stderr.strip()))
+            raise RuntimeError(
+                "backup %s on %s failed: %s" % (relpath, target, proc.stderr.strip())
+            )
         return ("%s.bak.%s" % (relpath, stamp)) if "COPIED" in proc.stdout else None
 
     def write_text(self, target: str, relpath: str, content: str) -> None:
         path = self._remote(relpath)
         cmd = 'mkdir -p "$(dirname %s)" && cat > %s' % (path, path)
         proc = subprocess.run(
-            self._argv(target, cmd), input=content, capture_output=True, text=True,
+            self._argv(target, cmd),
+            input=content,
+            capture_output=True,
+            text=True,
         )
         if proc.returncode != 0:
             raise RuntimeError("write %s on %s failed: %s" % (relpath, target, proc.stderr.strip()))
 
-    def stat(self, target: str, relpath: str, *, checksum: bool = False) -> Optional[Dict[str, Any]]:
+    def stat(
+        self, target: str, relpath: str, *, checksum: bool = False
+    ) -> Optional[Dict[str, Any]]:
         path = self._remote(relpath)
         # Emit size+mtime on one line (instant), sha256 on the next (opt-in; it
         # reads the whole file). Direct commands — no nested echo "$(...)" whose
@@ -154,7 +167,6 @@ class SSHTransport:
         if checksum and len(parts) >= 3:
             meta["sha256"] = parts[2]
         return meta
-
 
     def list_dir(self, target: str) -> List[str]:
         """Return a list of relative paths under ``~/.hermes`` by running
@@ -182,7 +194,7 @@ class SSHTransport:
             # Find the hermes subdir boundary and strip everything up to it.
             idx = line.find(hermes_sub)
             if idx >= 0:
-                results.append(line[idx + len(hermes_sub):])
+                results.append(line[idx + len(hermes_sub) :])
             else:
                 results.append(line)
         return results
@@ -206,7 +218,6 @@ def load_fleet_agents(fleets_config: dict, fleet_name: str) -> List[Tuple[str, s
         if name and target:
             out.append((name, target))
     return out
-
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +323,9 @@ def pull_snapshot(
             meta = transport.stat(target, rel, checksum=memory_checksum)
             memory_meta[rel] = meta if meta is not None else {"present": False}
         manifest["agents"][name] = {
-            "target": target, "files": files_meta, "memory": memory_meta,
+            "target": target,
+            "files": files_meta,
+            "memory": memory_meta,
         }
     return manifest
 
@@ -395,6 +408,7 @@ def _as_plain(obj: Any) -> Any:
 
 def _yaml_dump(obj: Any) -> str:
     import yaml  # local import keeps the module import light for the SSH path
+
     return yaml.safe_dump(obj, sort_keys=False, default_flow_style=False)
 
 
@@ -466,8 +480,12 @@ def plan_and_push(
             else:
                 status = "changed"
             change = FileChange(
-                agent=name, target=target, relpath=rel, status=status,
-                local_sha=local_sha, remote_sha=remote_sha,
+                agent=name,
+                target=target,
+                relpath=rel,
+                status=status,
+                local_sha=local_sha,
+                remote_sha=remote_sha,
             )
             if status in ("changed", "new") and not dry_run:
                 change.backup_path = transport.backup(target, rel, stamp=stamp)

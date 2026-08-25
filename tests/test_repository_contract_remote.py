@@ -20,9 +20,7 @@ def test_contract_remote_is_authoritative_over_drifted_legacy_source() -> None:
             "metadata": json.dumps(
                 {
                     "repository_contract": {
-                        "canonical_remote_url": (
-                            "ssh://git@example.invalid/current/repository.git"
-                        )
+                        "canonical_remote_url": ("ssh://git@example.invalid/current/repository.git")
                     }
                 }
             ),
@@ -79,9 +77,7 @@ def test_canonical_remote_rejects_embedded_secret_material(remote: str) -> None:
 def test_remote_identity_normalizes_transport_and_default_port() -> None:
     assert canonical_git_remote_identity(
         "git@example.invalid:Org/repository.git"
-    ) == canonical_git_remote_identity(
-        "ssh://git@example.invalid:22/Org/repository"
-    )
+    ) == canonical_git_remote_identity("ssh://git@example.invalid:22/Org/repository")
 
 
 def test_task_branch_uses_current_execution_contract_without_legacy_copy() -> None:
@@ -130,9 +126,7 @@ def test_task_branch_rejects_incomplete_or_contradictory_contracts() -> None:
                         "type": "repository",
                         "repository_contract": {"default_branch": "feature/one"},
                     },
-                    "origin": {
-                        "repository_contract": {"default_branch": "main"}
-                    },
+                    "origin": {"repository_contract": {"default_branch": "main"}},
                 }
             }
         )

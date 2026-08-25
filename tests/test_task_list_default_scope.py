@@ -73,8 +73,7 @@ def test_list_tasks_accepts_a_sequence_of_states(cp):
 
     assert open_task.id in listed
     assert done_task.id not in listed, (
-        "a cancelled task appeared in the active list; the sequence filter is "
-        "not being applied"
+        "a cancelled task appeared in the active list; the sequence filter is not being applied"
     )
 
 

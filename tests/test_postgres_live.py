@@ -138,9 +138,7 @@ def test_postgres_successor_hold_epoch_converges_under_concurrent_retry(
     for result in results:
         assert {agent.id for agent in result} == {first.id, second.id}
         assert all(agent.dispatch_hold is True for agent in result)
-        assert {agent.dispatch_hold_reason for agent in result} == {
-            "synchronized successor hold"
-        }
+        assert {agent.dispatch_hold_reason for agent in result} == {"synchronized successor hold"}
     assert (
         postgres_store.query_one(
             "SELECT COUNT(*) AS count FROM agent_lifecycle_events WHERE event_type = ?",
@@ -180,21 +178,18 @@ def test_postgres_dispatch_hold_epoch_status_is_exact_and_read_only(
         successor_reason=None,
     )
     digest = control_plane._dispatch_hold_epoch_identity_sha256(identity)
-    event_count = postgres_store.query_one(
-        "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
-    )["count"]
+    event_count = postgres_store.query_one("SELECT COUNT(*) AS count FROM agent_lifecycle_events")[
+        "count"
+    ]
 
     status = control_plane.agent_dispatch_hold_epoch_status(epoch_id, digest)
     assert status["status"] == "committed"
     assert status["agent_ids"] == [agent.id]
     assert (
-        control_plane.agent_dispatch_hold_epoch_status(epoch_id, "f" * 64)["status"]
-        == "mismatch"
+        control_plane.agent_dispatch_hold_epoch_status(epoch_id, "f" * 64)["status"] == "mismatch"
     )
     assert (
-        postgres_store.query_one(
-            "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
-        )["count"]
+        postgres_store.query_one("SELECT COUNT(*) AS count FROM agent_lifecycle_events")["count"]
         == event_count
     )
 
@@ -433,10 +428,7 @@ def test_postgres_delete_agent_serializes_before_credential_revocation(
                 return result
 
             if thread_name == "agent-deleter":
-                if (
-                    "worker_credentials" in statement
-                    and not delete_attempted_agent_lock.is_set()
-                ):
+                if "worker_credentials" in statement and not delete_attempted_agent_lock.is_set():
                     delete_touched_credentials_first.set()
                 if touches_agent_row:
                     # Signal before executing: the real PostgreSQL call blocks
@@ -565,18 +557,13 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
             thread_name = threading.current_thread().name
             touches_agent_row = statement.startswith("update agents ")
             if thread_name == "credential-activator":
-                if (
-                    "worker_credentials" in statement
-                    and not activation_has_agent_lock.is_set()
-                ):
+                if "worker_credentials" in statement and not activation_has_agent_lock.is_set():
                     activation_touched_credentials_first.set()
                 if touches_agent_row:
                     result = self._connection.execute(sql, params)
                     activation_has_agent_lock.set()
                     if not permit_activation_to_commit.wait(timeout=10):
-                        raise AssertionError(
-                            "test did not release credential activation"
-                        )
+                        raise AssertionError("test did not release credential activation")
                     return result
             if thread_name == "agent-deleter" and touches_agent_row:
                 delete_attempted_agent_lock.set()
@@ -611,9 +598,7 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
             with result_lock:
                 errors.append(exc)
 
-    activator = threading.Thread(
-        target=activate_credential, name="credential-activator"
-    )
+    activator = threading.Thread(target=activate_credential, name="credential-activator")
     deleter = threading.Thread(target=delete_agent, name="agent-deleter")
     activator.start()
     assert activation_has_agent_lock.wait(timeout=10)
@@ -635,12 +620,7 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
 
 def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:
     schema_path = (
-        Path(__file__).resolve().parent.parent
-        / "src"
-        / "mac"
-        / "data"
-        / "postgres"
-        / "schema.sql"
+        Path(__file__).resolve().parent.parent / "src" / "mac" / "data" / "postgres" / "schema.sql"
     )
     expected = len(
         set(
@@ -715,9 +695,7 @@ def test_postgres_task_create_idempotency_reservation_is_exact_and_portable(
 
     assert retry.id == first.id
     assert (
-        postgres_store.query_one(
-            "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
-        )["n"]
+        postgres_store.query_one("SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,))["n"]
         == 1
     )
     with pytest.raises(ValidationError, match="already bound to a different request"):
@@ -726,13 +704,11 @@ def test_postgres_task_create_idempotency_reservation_is_exact_and_portable(
 
 def test_placeholder_translation_handles_in_clause(postgres_store) -> None:
     postgres_store.execute(
-        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) VALUES (?,?,?,?,?)",
         ("t1", "acme", "{}", "now", "now"),
     )
     postgres_store.execute(
-        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) VALUES (?,?,?,?,?)",
         ("t2", "globex", "{}", "now", "now"),
     )
     rows = postgres_store.query_all(
@@ -758,8 +734,7 @@ def test_on_conflict_upsert(postgres_store) -> None:
 
 def test_row_supports_named_and_positional_access(postgres_store) -> None:
     postgres_store.execute(
-        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) VALUES (?,?,?,?,?)",
         ("t1", "acme", "{}", "now", "now"),
     )
     row = postgres_store.query_one("SELECT id, name FROM tenants WHERE id = ?", ("t1",))
@@ -771,13 +746,11 @@ def test_row_supports_named_and_positional_access(postgres_store) -> None:
 
 def test_json_extract_filters_text_json_column(postgres_store) -> None:
     postgres_store.execute(
-        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) VALUES (?,?,?,?,?)",
         ("t1", "acme", '{"plan":"free"}', "now", "now"),
     )
     postgres_store.execute(
-        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) "
-        "VALUES (?,?,?,?,?)",
+        "INSERT INTO tenants (id, name, metadata, created_at, updated_at) VALUES (?,?,?,?,?)",
         ("t2", "globex", '{"plan":"pro"}', "now", "now"),
     )
     row = postgres_store.query_one(
@@ -797,9 +770,7 @@ def test_task_state_trigger_rejects_bad_insert(postgres_store) -> None:
 def test_task_state_trigger_rejects_bad_update(postgres_store) -> None:
     _insert_task(postgres_store, id="ok")
     with pytest.raises(StoreError) as exc:
-        postgres_store.execute(
-            "UPDATE tasks SET state = ? WHERE id = ?", ("NOPE", "ok")
-        )
+        postgres_store.execute("UPDATE tasks SET state = ? WHERE id = ?", ("NOPE", "ok"))
     assert "invalid task state" in str(exc.value)
 
 
@@ -823,8 +794,7 @@ def test_partial_unique_index_active_lease_per_task(postgres_store) -> None:
 def test_transaction_commit_on_clean_exit(postgres_store) -> None:
     with postgres_store.transaction() as conn:
         conn.execute(
-            "INSERT INTO tenants (id, name, metadata, created_at, updated_at) "
-            "VALUES (?,?,?,?,?)",
+            "INSERT INTO tenants (id, name, metadata, created_at, updated_at) VALUES (?,?,?,?,?)",
             ("t-commit", "ok", "{}", "now", "now"),
         )
     row = postgres_store.query_one("SELECT id FROM tenants WHERE id = ?", ("t-commit",))
@@ -843,10 +813,7 @@ def test_transaction_rollback_on_exception(postgres_store) -> None:
                 ("t-rollback", "nope", "{}", "now", "now"),
             )
             raise _Boom("rollback me")
-    assert (
-        postgres_store.query_one("SELECT id FROM tenants WHERE id = ?", ("t-rollback",))
-        is None
-    )
+    assert postgres_store.query_one("SELECT id FROM tenants WHERE id = ?", ("t-rollback",)) is None
 
 
 def test_events_view_projects_task_history(postgres_store) -> None:
@@ -857,8 +824,7 @@ def test_events_view_projects_task_history(postgres_store) -> None:
         ("h1", "task-1", "created", "op", None, "open", "{}", "now"),
     )
     row = postgres_store.query_one(
-        "SELECT id, subject_type, subject_id, event_type, actor, detail "
-        "FROM events WHERE id = ?",
+        "SELECT id, subject_type, subject_id, event_type, actor, detail FROM events WHERE id = ?",
         ("h1",),
     )
     assert row is not None
@@ -881,9 +847,7 @@ def test_ensure_column_adds_missing_column(postgres_store) -> None:
         "VALUES (?,?,?,?,?,?)",
         ("t1", "with-extra", "{}", "hello", "now", "now"),
     )
-    row = postgres_store.query_one(
-        "SELECT extra_label FROM tenants WHERE id = ?", ("t1",)
-    )
+    row = postgres_store.query_one("SELECT extra_label FROM tenants WHERE id = ?", ("t1",))
     assert row["extra_label"] == "hello"
 
 

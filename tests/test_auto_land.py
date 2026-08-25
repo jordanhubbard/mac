@@ -238,9 +238,7 @@ def test_adversarial_review_parses_approve():
 def test_adversarial_review_parses_reject_with_findings():
     verdict = run_adversarial_review(
         "task_x",
-        runner=lambda argv, cwd=None: _Proc(
-            0, "VERDICT: REJECT\nFINDINGS: bug A; weak test B"
-        ),
+        runner=lambda argv, cwd=None: _Proc(0, "VERDICT: REJECT\nFINDINGS: bug A; weak test B"),
         resolve=lambda env=None: _Choice(),
         build_argv=lambda choice, prompt, env=None: ["true"],
     )
@@ -277,9 +275,7 @@ class _FakePlane:
     def __init__(self):
         self.evidence = []
 
-    def add_evidence(
-        self, target, kind, uri, summary, created_by, metadata=None, **_kwargs
-    ):
+    def add_evidence(self, target, kind, uri, summary, created_by, metadata=None, **_kwargs):
         self.evidence.append((target, kind, summary, metadata))
 
 

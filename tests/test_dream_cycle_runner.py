@@ -93,7 +93,9 @@ def test_resolve_delivery_target_decision() -> None:
 
 
 def test_message_args_targets_channel_with_account_and_text() -> None:
-    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", "hello", account="acct1")
+    args = runner.message_args(
+        "/bin/openclaw-message", "slack", "C0123ABC", "hello", account="acct1"
+    )
     assert args[0] == "/bin/openclaw-message"
     assert "--channel" in args and "slack" in args
     assert "--account" in args and "acct1" in args
@@ -249,9 +251,7 @@ def test_load_job_selects_by_name_from_jobs_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    args = runner.parser().parse_args(
-        ["--jobs-file", str(specs), "--name", "kslug-nightly-news"]
-    )
+    args = runner.parser().parse_args(["--jobs-file", str(specs), "--name", "kslug-nightly-news"])
     job = runner.load_job(args)
     assert job["legacy_script"] == "kslug_collect.py"
 
@@ -278,7 +278,7 @@ def test_installer_schedules_script_jobs_via_launchd_and_systemd() -> None:
     # The runner is installed to a host bin path (mode 0700) and invoked.
     assert "mac-cron-script-runner" in installer
     assert "run-script-cron-job.py" in installer
-    assert "chmod 0700 \"$runner_dst\"" in installer
+    assert 'chmod 0700 "$runner_dst"' in installer
     assert "install_host_script_runner" in installer
     # The installer consumes / emits the host-script-jobs spec.
     assert "host-script-jobs.json" in installer
@@ -300,7 +300,9 @@ def test_runner_and_installer_are_syntactically_valid() -> None:
     subprocess.run(["bash", "-n", str(INSTALLER)], check=True, timeout=30)
 
 
-def test_a_multi_line_prompt_is_staged_in_the_sandbox_not_passed_as_argv(tmp_path, monkeypatch) -> None:
+def test_a_multi_line_prompt_is_staged_in_the_sandbox_not_passed_as_argv(
+    tmp_path, monkeypatch
+) -> None:
     """The other half of the newline defect.
 
     openclaw-agent is the same sandbox wrapper as openclaw-message, so a
@@ -338,7 +340,7 @@ def test_staging_falls_back_rather_than_losing_the_run(tmp_path) -> None:
     """A path that is not a sandbox wrapper must degrade to the argv form, not
     raise: a non-sandboxed deployment still has to work."""
     plain = tmp_path / "not-a-wrapper"
-    plain.write_text("#!/bin/sh\nexec openclaw agent \"$@\"\n", encoding="utf-8")
+    plain.write_text('#!/bin/sh\nexec openclaw agent "$@"\n', encoding="utf-8")
 
     assert runner.stage_prompt_in_sandbox(str(plain), "one\ntwo") == ""
     assert runner.sandbox_wrapper_settings(str(plain)) == ("", "")

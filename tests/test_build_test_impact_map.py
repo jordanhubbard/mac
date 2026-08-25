@@ -40,12 +40,8 @@ def _write_coverage_db(path: Path) -> None:
         conn.execute("INSERT INTO meta VALUES('has_arcs','1')")
         conn.execute("INSERT INTO file VALUES(1,'src/mac/foo.py')")
         conn.execute("INSERT INTO file VALUES(2,'tests/test_foo.py')")
-        conn.execute(
-            "INSERT INTO context VALUES(1,'test|tests/test_foo.py::test_a')"
-        )
-        conn.execute(
-            "INSERT INTO context VALUES(2,'test|tests/test_foo.py::test_b')"
-        )
+        conn.execute("INSERT INTO context VALUES(1,'test|tests/test_foo.py::test_a')")
+        conn.execute("INSERT INTO context VALUES(2,'test|tests/test_foo.py::test_b')")
         # Session/unattributed context (no test| prefix).
         conn.execute("INSERT INTO context VALUES(3,'')")
         # test_a executes src/mac/foo.py lines 10,11,12.
@@ -175,9 +171,7 @@ def test_output_is_written_compact(tmp_path):
     _write_coverage_db(db)
     _write_timings(timings)
     out = tmp_path / "map.json"
-    rc = BUILDER.main(
-        ["--coverage-file", str(db), "--timings", str(timings), "--output", str(out)]
-    )
+    rc = BUILDER.main(["--coverage-file", str(db), "--timings", str(timings), "--output", str(out)])
     assert rc == 0
     text = out.read_text(encoding="utf-8")
     # Compact separators leave no ", " or ": " spacing and no newline indentation.
@@ -195,6 +189,8 @@ def test_missing_coverage_file_is_a_clean_error(tmp_path):
         ]
     )
     assert rc == 2
+
+
 def test_committed_impact_map_has_no_stale_node_ids():
     """The map must not reference tests that no longer exist.
 
@@ -253,18 +249,18 @@ def _write_source_file(tmp_path: Path) -> None:
     target.write_text(
         "\n".join(
             [
-                "import os",                       # 1
-                "",                                # 2
-                "",                                # 3
-                "def other():",                    # 4
-                "    return 1",                    # 5
-                "",                                # 6
-                "",                                # 7
-                "def build_parser():",             # 8
-                "    parser = None",               # 9
-                "    parser = object()",           # 10
-                "    value = 1",                   # 11
-                "    return parser, value",        # 12
+                "import os",  # 1
+                "",  # 2
+                "",  # 3
+                "def other():",  # 4
+                "    return 1",  # 5
+                "",  # 6
+                "",  # 7
+                "def build_parser():",  # 8
+                "    parser = None",  # 9
+                "    parser = object()",  # 10
+                "    value = 1",  # 11
+                "    return parser, value",  # 12
                 "",
             ]
         ),
@@ -368,9 +364,7 @@ def test_committed_impact_map_ids_actually_collect():
         % result.stdout[-2000:]
     )
     document = json.loads(
-        (root / "src" / "mac" / "data" / "test_impact_map.json").read_text(
-            encoding="utf-8"
-        )
+        (root / "src" / "mac" / "data" / "test_impact_map.json").read_text(encoding="utf-8")
     )
     stale = sorted(
         node_id

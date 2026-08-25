@@ -187,10 +187,7 @@ def token_for_host(host_kind: str, *, fallback_env: str = "MAC_TASK_GIT_TOKEN") 
             or os.environ.get(fallback_env, "").strip()
         )
     if host_kind == "gitea":
-        return (
-            os.environ.get("GITEA_TOKEN", "").strip()
-            or os.environ.get(fallback_env, "").strip()
-        )
+        return os.environ.get("GITEA_TOKEN", "").strip() or os.environ.get(fallback_env, "").strip()
     return os.environ.get(fallback_env, "").strip()
 
 
@@ -498,25 +495,18 @@ def resolve_canonical_publication_target(
         raise ValueError("prepared repository base SHA is missing")
     if not _GIT_SHA_RE.fullmatch(prepared):
         raise ValueError("prepared repository base SHA is invalid: %r" % prepared)
-    prepared_commit = _run_git(
-        root, ["rev-parse", "--verify", "%s^{commit}" % prepared]
-    )
+    prepared_commit = _run_git(root, ["rev-parse", "--verify", "%s^{commit}" % prepared])
     if prepared_commit.returncode != 0 or prepared_commit.stdout.strip() != prepared:
         raise ValueError("prepared repository base is not a commit: %s" % prepared)
 
     head = _run_git(root, ["rev-parse", "--verify", "HEAD^{commit}"])
     task_head = head.stdout.strip()
     if head.returncode != 0 or not _GIT_SHA_RE.fullmatch(task_head):
-        raise ValueError(
-            "could not resolve task HEAD: %s" % _git_failure(head, "invalid SHA")
-        )
-    prepared_ancestor = _run_git(
-        root, ["merge-base", "--is-ancestor", prepared, task_head]
-    )
+        raise ValueError("could not resolve task HEAD: %s" % _git_failure(head, "invalid SHA"))
+    prepared_ancestor = _run_git(root, ["merge-base", "--is-ancestor", prepared, task_head])
     if prepared_ancestor.returncode != 0:
         raise ValueError(
-            "prepared base %s is not an ancestor of task HEAD %s"
-            % (prepared[:12], task_head[:12])
+            "prepared base %s is not an ancestor of task HEAD %s" % (prepared[:12], task_head[:12])
         )
 
     key = str(isolation_key or "").strip()
@@ -581,7 +571,9 @@ def _canonical_freshness_locked(
     head_sha = head.stdout.strip()
     if head.returncode != 0 or not _GIT_SHA_RE.fullmatch(head_sha):
         return CanonicalFreshnessResult(
-            False, target, error="could not resolve task HEAD: %s" % _git_failure(head, "invalid SHA")
+            False,
+            target,
+            error="could not resolve task HEAD: %s" % _git_failure(head, "invalid SHA"),
         )
     if head_sha != target.task_head_sha:
         return CanonicalFreshnessResult(
@@ -600,8 +592,7 @@ def _canonical_freshness_locked(
             False,
             target,
             head_sha=head_sha,
-            error="prepared repository base is not a commit: %s"
-            % target.prepared_base_sha,
+            error="prepared repository base is not a commit: %s" % target.prepared_base_sha,
         )
 
     fetch_ref = target.isolated_ref
@@ -639,9 +630,7 @@ def _canonical_freshness_locked(
                 % _git_failure(resolve, "invalid SHA"),
             )
         else:
-            ancestor = _run_git(
-                worktree, ["merge-base", "--is-ancestor", canonical_tip, head_sha]
-            )
+            ancestor = _run_git(worktree, ["merge-base", "--is-ancestor", canonical_tip, head_sha])
             if ancestor.returncode != 0:
                 result = CanonicalFreshnessResult(
                     False,
@@ -694,9 +683,7 @@ def _canonical_freshness_locked(
         return result
 
     destination_ref = "refs/heads/%s" % target.destination_branch
-    pushed = _run_git(
-        worktree, ["push", target.remote, "HEAD:%s" % destination_ref]
-    )
+    pushed = _run_git(worktree, ["push", target.remote, "HEAD:%s" % destination_ref])
     if pushed.returncode != 0:
         return CanonicalFreshnessResult(
             False,
@@ -719,8 +706,7 @@ def _canonical_freshness_locked(
             head_sha=result.head_sha,
             canonical_tip_sha=result.canonical_tip_sha,
             files_changed=result.files_changed,
-            error="push completed but remote branch verification failed for %s"
-            % destination_ref,
+            error="push completed but remote branch verification failed for %s" % destination_ref,
             push_returncode=0,
             push_stdout=redact_git_remote_auth_in_text(pushed.stdout or ""),
             push_stderr=redact_git_remote_auth_in_text(pushed.stderr or ""),
@@ -767,9 +753,7 @@ def sync_worktree_with_canonical(
     if fetch.returncode != 0:
         return {
             "status": "fetch_failed",
-            "reason": redact_git_remote_auth_in_text(
-                _git_failure(fetch, "non-zero exit")
-            )[:500],
+            "reason": redact_git_remote_auth_in_text(_git_failure(fetch, "non-zero exit"))[:500],
         }
     tip_res = _run_git(worktree, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"])
     tip = tip_res.stdout.strip()
@@ -779,8 +763,7 @@ def sync_worktree_with_canonical(
         return {"status": "fresh", "canonical_tip": tip}
     rebase = _run_git(
         worktree,
-        ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet",
-         "rebase", tip],
+        ["-c", "user.email=mac-fleet@nvidia.com", "-c", "user.name=MAC fleet", "rebase", tip],
     )
     if rebase.returncode != 0:
         _run_git(worktree, ["rebase", "--abort"])
@@ -829,7 +812,10 @@ def _canonical_publication_operation(
         lock = target.lock_path.open("a+", encoding="utf-8")
     except OSError as exc:
         return CanonicalFreshnessResult(
-            False, target, head_sha=target.task_head_sha, error="could not open publication lock: %s" % exc
+            False,
+            target,
+            head_sha=target.task_head_sha,
+            error="could not open publication lock: %s" % exc,
         )
     result: Optional[CanonicalFreshnessResult] = None
     try:
@@ -851,9 +837,7 @@ def _canonical_publication_operation(
                                 head_sha=target.task_head_sha,
                                 error="timed out acquiring canonical publication lock",
                             )
-                        time.sleep(
-                            min(0.05, remaining) if remaining is not None else 0.05
-                        )
+                        time.sleep(min(0.05, remaining) if remaining is not None else 0.05)
         except OSError as exc:
             return CanonicalFreshnessResult(
                 False,
@@ -918,9 +902,7 @@ def _http_post_json(url: str, headers: dict, body: dict, timeout: float = 20.0) 
 
 
 def _http_get_json(url: str, headers: dict, timeout: float = 20.0) -> dict:
-    req = urllib.request.Request(
-        url, headers=headers, method="GET"
-    )
+    req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = resp.read().decode("utf-8")
         return json.loads(data) if data else {}
@@ -965,9 +947,7 @@ def open_pull_request(
         }
 
     if not base:
-        repo_meta = _http_get_json(
-            "%s/repos/%s/%s" % (api_base, owner, repo), headers
-        )
+        repo_meta = _http_get_json("%s/repos/%s/%s" % (api_base, owner, repo), headers)
         base = str(repo_meta.get("default_branch") or "main")
 
     title = title or ("mac: %s" % head)
@@ -980,7 +960,11 @@ def open_pull_request(
         pr = _http_post_json(create_url, headers, payload)
     except RuntimeError as exc:
         msg = str(exc).lower()
-        if "already exists" in msg or "pull request already exists" in msg or "exists for these targets" in msg:
+        if (
+            "already exists" in msg
+            or "pull request already exists" in msg
+            or "exists for these targets" in msg
+        ):
             existing = _find_existing_pr(api_base, headers, owner, repo, host_kind, head, base)
             if existing is not None:
                 return existing
@@ -1005,7 +989,12 @@ def _find_existing_pr(
 ) -> Optional[PullRequestResult]:
     if host_kind == "github":
         list_url = "%s/repos/%s/%s/pulls?head=%s:%s&base=%s&state=open" % (
-            api_base, owner, repo, owner, head, base
+            api_base,
+            owner,
+            repo,
+            owner,
+            head,
+            base,
         )
     else:
         list_url = "%s/repos/%s/%s/pulls?state=open" % (api_base, owner, repo)
@@ -1022,9 +1011,7 @@ def _find_existing_pr(
     for pr in data:
         if not isinstance(pr, dict):
             continue
-        head_ref = (
-            (pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else None
-        )
+        head_ref = (pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else None
         if head_ref == head:
             return PullRequestResult(
                 host=host_kind,
@@ -1180,8 +1167,10 @@ def _http_put_json(
         message = ""
         if isinstance(decoded, dict):
             message = str(decoded.get("message") or "")
-        return int(exc.code), (decoded if isinstance(decoded, dict) else {}), (
-            message or raw[:500] or str(exc.reason)
+        return (
+            int(exc.code),
+            (decoded if isinstance(decoded, dict) else {}),
+            (message or raw[:500] or str(exc.reason)),
         )
     except urllib.error.URLError as exc:
         return 0, {}, str(exc.reason)
@@ -1258,9 +1247,7 @@ def merge_pull_request(
         merged_sha = str(decoded.get("sha") or "").strip()
         if not merged_sha and host_kind != "github":
             merged_sha = _merged_sha_for(api_base, headers, owner, repo, int(number))
-        return PullRequestMergeResult(
-            merged=True, number=int(number), sha=merged_sha
-        )
+        return PullRequestMergeResult(merged=True, number=int(number), sha=merged_sha)
 
     reason = _scrub_secret(error or ("HTTP %d" % status), token)
     lowered = reason.lower()
@@ -1268,21 +1255,15 @@ def merge_pull_request(
         marker in lowered for marker in _MERGE_BLOCKED_MARKERS
     )
     if blocked:
-        return PullRequestMergeResult(
-            merged=False, number=int(number), blocked=True, reason=reason
-        )
+        return PullRequestMergeResult(merged=False, number=int(number), blocked=True, reason=reason)
     raise RuntimeError(
         "merge of pull request #%d failed (HTTP %d): %s" % (int(number), status, reason)
     )
 
 
-def _merged_sha_for(
-    api_base: str, headers: dict, owner: str, repo: str, number: int
-) -> str:
+def _merged_sha_for(api_base: str, headers: dict, owner: str, repo: str, number: int) -> str:
     try:
-        pr = _http_get_json(
-            "%s/repos/%s/%s/pulls/%d" % (api_base, owner, repo, number), headers
-        )
+        pr = _http_get_json("%s/repos/%s/%s/pulls/%d" % (api_base, owner, repo, number), headers)
     except Exception:  # noqa: BLE001 - the merge already succeeded
         return ""
     if not isinstance(pr, dict):
@@ -1399,9 +1380,7 @@ def required_check_verdicts(
             failed.append(context)
         else:
             pending.append(context)
-    verdict.update(
-        {"known": True, "passed": passed, "pending": pending, "failed": failed}
-    )
+    verdict.update({"known": True, "passed": passed, "pending": pending, "failed": failed})
     return verdict
 
 
@@ -1471,9 +1450,7 @@ def _graphql_url(host_kind: str, repo_url: str) -> str:
     return "%s://%s%s/api/graphql" % (scheme, parsed.hostname or "", port)
 
 
-def _graphql(
-    url: str, headers: dict, query: str, variables: dict, token: str
-) -> Tuple[dict, str]:
+def _graphql(url: str, headers: dict, query: str, variables: dict, token: str) -> Tuple[dict, str]:
     """POST a GraphQL document; return ``(data, error_text)`` without raising.
 
     GitHub answers a rejected mutation with HTTP 200 and an ``errors`` array,
@@ -1491,9 +1468,7 @@ def _graphql(
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        return {}, _scrub_secret(
-            "HTTP %d %s: %s" % (exc.code, exc.reason, raw[:500]), token
-        )
+        return {}, _scrub_secret("HTTP %d %s: %s" % (exc.code, exc.reason, raw[:500]), token)
     except urllib.error.URLError as exc:
         return {}, _scrub_secret(str(exc.reason), token)
     try:
@@ -1504,11 +1479,7 @@ def _graphql(
         return {}, _scrub_secret("unexpected GraphQL response", token)
     errors = decoded.get("errors")
     if errors:
-        messages = [
-            str(err.get("message") or "")
-            for err in errors
-            if isinstance(err, dict)
-        ]
+        messages = [str(err.get("message") or "") for err in errors if isinstance(err, dict)]
         return _ensure_mapping(decoded.get("data")), _scrub_secret(
             "; ".join(m for m in messages if m)[:500] or "GraphQL error", token
         )
@@ -1595,9 +1566,7 @@ def pull_request_state(
     return {
         "known": True,
         "merged": bool(pr.get("merged") or pr.get("merged_at")),
-        "sha": str(
-            pr.get("merge_commit_sha") or pr.get("merged_commit_id") or ""
-        ).strip(),
+        "sha": str(pr.get("merge_commit_sha") or pr.get("merged_commit_id") or "").strip(),
         "state": str(pr.get("state") or ""),
         "head_sha": str((head or {}).get("sha") or "").strip(),
         "host": host_kind,
@@ -1682,9 +1651,7 @@ def enqueue_pull_request(
             serialization="merge_queue",
             reason=error,
         )
-    raise RuntimeError(
-        "enqueue of pull request #%d failed: %s" % (int(number), error)
-    )
+    raise RuntimeError("enqueue of pull request #%d failed: %s" % (int(number), error))
 
 
 def request_pull_request_merge(

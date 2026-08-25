@@ -9,6 +9,7 @@ The worker may verify its installed key but key replacement belongs to the
 fenced deployment controller. A bound worker must never rotate/adopt/persist
 fresh signing authority itself.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -68,7 +69,7 @@ def test_heal_refuses_to_rotate_a_valid_key(tmp_path, monkeypatch):
     client = _HealClient(key_valid=True)
     w = _worker(tmp_path, client)
     assert w._heal_attestation_key() is False
-    assert client.rotations == 0                   # a good key is never rotated
+    assert client.rotations == 0  # a good key is never rotated
     assert w.attestation_key == "K1-stale"
 
 

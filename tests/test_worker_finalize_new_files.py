@@ -2,6 +2,7 @@
 files BEFORE checking cleanliness, so a task that leaves intended new source or
 test files does not waste an attempt on a "repository worktree has uncommitted
 changes" refusal (task_1965d289821d45dd86af10b52123e298)."""
+
 from __future__ import annotations
 
 import json
@@ -309,8 +310,8 @@ def test_split_repository_porcelain_status_classifies_lines():
         "M  staged_modified.txt\n"
         "R  old.txt -> renamed.txt\n"
     )
-    tracked_lines, untracked_paths, staged_new_paths = (
-        worker._split_repository_porcelain_status(status_text)
+    tracked_lines, untracked_paths, staged_new_paths = worker._split_repository_porcelain_status(
+        status_text
     )
 
     assert untracked_paths == ["untracked_module.py"]

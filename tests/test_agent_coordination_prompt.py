@@ -30,9 +30,7 @@ from mac.executor_prompt import build_task_prompt
 
 TASK = {
     "id": "task_1",
-    "metadata": {
-        "origin": {"repository_contract": {"schema": "mac.repository_contract.v1"}}
-    },
+    "metadata": {"origin": {"repository_contract": {"schema": "mac.repository_contract.v1"}}},
 }
 
 

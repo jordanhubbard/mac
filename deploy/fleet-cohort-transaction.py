@@ -148,9 +148,7 @@ TOP_LEVEL_KEYS = frozenset(
         "updated_at",
     }
 )
-OWNER_KEYS = frozenset(
-    {"nonce", "pid", "boot_id_sha256", "process_start_sha256", "acquired_at"}
-)
+OWNER_KEYS = frozenset({"nonce", "pid", "boot_id_sha256", "process_start_sha256", "acquired_at"})
 NODE_KEYS = frozenset(
     {
         "ordinal",
@@ -227,13 +225,9 @@ HUB_RECEIPT_AGENT_KEYS = frozenset(
     }
 )
 ENDPOINT_IDENTITY_KEYS = frozenset({"schema", "adapter", "authority", "observation"})
-SSH_AUTHORITY_KEYS = frozenset(
-    {"ssh_host_key_sha256", "instance_id_kind", "instance_id_sha256"}
-)
+SSH_AUTHORITY_KEYS = frozenset({"ssh_host_key_sha256", "instance_id_kind", "instance_id_sha256"})
 SSH_HUB_AUTHORITY_KEYS = SSH_AUTHORITY_KEYS | {"durable_store_uuid_sha256"}
-K8S_AUTHORITY_KEYS = frozenset(
-    {"cluster_uid_sha256", "workload_kind", "workload_uid_sha256"}
-)
+K8S_AUTHORITY_KEYS = frozenset({"cluster_uid_sha256", "workload_kind", "workload_uid_sha256"})
 K8S_HUB_AUTHORITY_KEYS = K8S_AUTHORITY_KEYS | {"durable_store_uuid_sha256"}
 K8S_OBSERVATION_KEYS = frozenset({"pod_uid_sha256"})
 HUB_STATES = frozenset(
@@ -348,9 +342,7 @@ def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
-def _require_exact_keys(
-    value: dict[str, Any], keys: frozenset[str], context: str
-) -> None:
+def _require_exact_keys(value: dict[str, Any], keys: frozenset[str], context: str) -> None:
     actual = frozenset(value)
     if actual != keys:
         missing = sorted(keys - actual)
@@ -406,9 +398,7 @@ def _release_epoch_matches(journal_epoch: str, release_epoch: Any) -> bool:
 def _deployment_identity(value: Any, field: str, *, max_bytes: int = 512) -> str:
     parsed = _text(value, field, max_bytes=max_bytes)
     if "://" in parsed.lower() or "@" in parsed or "/" in parsed or "\\" in parsed:
-        raise JournalError(
-            "invalid_input", f"{field} must be an identity, not a host target"
-        )
+        raise JournalError("invalid_input", f"{field} must be an identity, not a host target")
     return parsed
 
 
@@ -472,9 +462,7 @@ def _identity_probe(argv: list[str], context: str) -> str:
 
 def _boot_id_sha256() -> str:
     try:
-        value = (
-            Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
-        )
+        value = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
     except OSError:
         value = _identity_probe(["ps", "-o", "lstart=", "-p", "1"], "boot identity")
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -572,21 +560,15 @@ def _validate_evidence(value: Any, context: str) -> None:
     if value is None:
         return
     if not isinstance(value, dict):
-        raise JournalError(
-            "invalid_schema", f"{context} evidence must be an object or null"
-        )
+        raise JournalError("invalid_schema", f"{context} evidence must be an object or null")
     _require_exact_keys(value, EVIDENCE_KEYS, f"{context} evidence")
     _text(value["schema"], f"{context} evidence schema", allow_empty=True)
-    if not isinstance(value["sha256"], str) or not HEX_SHA256.fullmatch(
-        value["sha256"]
-    ):
+    if not isinstance(value["sha256"], str) or not HEX_SHA256.fullmatch(value["sha256"]):
         raise JournalError("invalid_schema", f"{context} evidence sha256 is invalid")
     if not isinstance(value["size"], int) or isinstance(value["size"], bool):
         raise JournalError("invalid_schema", f"{context} evidence size is invalid")
     if value["size"] < 2 or value["size"] > MAX_EVIDENCE_BYTES:
-        raise JournalError(
-            "invalid_schema", f"{context} evidence size is outside bounds"
-        )
+        raise JournalError("invalid_schema", f"{context} evidence size is outside bounds")
     _text(value["generation"], f"{context} evidence generation")
 
 
@@ -597,9 +579,7 @@ def _validate_endpoint_identity(value: Any, context: str) -> None:
         raise JournalError("invalid_schema", f"{context} identity must be an object")
     _require_exact_keys(value, ENDPOINT_IDENTITY_KEYS, f"{context} identity")
     if value["schema"] != "mac.fleet_endpoint_identity.v1":
-        raise JournalError(
-            "invalid_schema", f"{context} identity schema is unsupported"
-        )
+        raise JournalError("invalid_schema", f"{context} identity schema is unsupported")
     adapter = value["adapter"]
     authority = value["authority"]
     observation = value["observation"]
@@ -627,19 +607,13 @@ def _validate_endpoint_identity(value: Any, context: str) -> None:
             )
     elif adapter in {"kubernetes-workload", "kubernetes-hub"}:
         if not isinstance(authority, dict) or not isinstance(observation, dict):
-            raise JournalError(
-                "invalid_schema", f"{context} Kubernetes identity is malformed"
-            )
+            raise JournalError("invalid_schema", f"{context} Kubernetes identity is malformed")
         _require_exact_keys(
             authority,
-            K8S_HUB_AUTHORITY_KEYS
-            if adapter == "kubernetes-hub"
-            else K8S_AUTHORITY_KEYS,
+            K8S_HUB_AUTHORITY_KEYS if adapter == "kubernetes-hub" else K8S_AUTHORITY_KEYS,
             f"{context} Kubernetes authority",
         )
-        _require_exact_keys(
-            observation, K8S_OBSERVATION_KEYS, f"{context} Kubernetes observation"
-        )
+        _require_exact_keys(observation, K8S_OBSERVATION_KEYS, f"{context} Kubernetes observation")
         _digest(authority["cluster_uid_sha256"], f"{context} cluster uid")
         _text(
             authority["workload_kind"],
@@ -655,9 +629,7 @@ def _validate_endpoint_identity(value: Any, context: str) -> None:
             )
         _digest(observation["pod_uid_sha256"], f"{context} pod uid")
     else:
-        raise JournalError(
-            "invalid_schema", f"{context} identity adapter is unsupported"
-        )
+        raise JournalError("invalid_schema", f"{context} identity adapter is unsupported")
 
 
 def _endpoint_identity(path: str) -> dict[str, Any]:
@@ -665,9 +637,7 @@ def _endpoint_identity(path: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise JournalError(
-            "invalid_evidence", "endpoint identity is not valid UTF-8 JSON"
-        ) from exc
+        raise JournalError("invalid_evidence", "endpoint identity is not valid UTF-8 JSON") from exc
     _validate_endpoint_identity(parsed, "endpoint")
     return parsed
 
@@ -676,24 +646,16 @@ def _validate_release_plan_metadata(value: Any, epoch_id: str) -> None:
     if value is None:
         return
     if not isinstance(value, dict):
-        raise JournalError(
-            "invalid_schema", "release plan metadata must be an object or null"
-        )
+        raise JournalError("invalid_schema", "release plan metadata must be an object or null")
     _require_exact_keys(value, RELEASE_PLAN_KEYS, "release plan metadata")
     expected_filename = _release_plan_name(epoch_id)
     if value["filename"] != expected_filename:
-        raise JournalError(
-            "invalid_schema", "release plan filename is not bound to the epoch"
-        )
+        raise JournalError("invalid_schema", "release plan filename is not bound to the epoch")
     if value["schema"] != "mac.fleet_release_epoch.v1" or not _release_epoch_matches(
         epoch_id, value["epoch_id"]
     ):
-        raise JournalError(
-            "invalid_schema", "release plan metadata identity is invalid"
-        )
-    if not isinstance(value["sha256"], str) or not HEX_SHA256.fullmatch(
-        value["sha256"]
-    ):
+        raise JournalError("invalid_schema", "release plan metadata identity is invalid")
+    if not isinstance(value["sha256"], str) or not HEX_SHA256.fullmatch(value["sha256"]):
         raise JournalError("invalid_schema", "release plan digest is invalid")
     if not isinstance(value["size"], int) or isinstance(value["size"], bool):
         raise JournalError("invalid_schema", "release plan size is invalid")
@@ -710,28 +672,20 @@ def _validate_hub_plan_metadata(
     if value is None:
         return
     if not isinstance(value, dict):
-        raise JournalError(
-            "invalid_schema", f"hub {phase} plan metadata must be an object or null"
-        )
+        raise JournalError("invalid_schema", f"hub {phase} plan metadata must be an object or null")
     _require_exact_keys(
         value,
         HUB_OPEN_PLAN_KEYS if phase == "open" else HUB_PLAN_KEYS,
         f"hub {phase} plan metadata",
     )
     expected_name = (
-        _hub_open_plan_name(epoch_id)
-        if phase == "open"
-        else _hub_prove_plan_name(epoch_id)
+        _hub_open_plan_name(epoch_id) if phase == "open" else _hub_prove_plan_name(epoch_id)
     )
     if value["filename"] != expected_name:
-        raise JournalError(
-            "invalid_schema", f"hub {phase} plan filename is not bound to the epoch"
-        )
+        raise JournalError("invalid_schema", f"hub {phase} plan filename is not bound to the epoch")
     expected_schema = f"mac.fleet_epoch_{phase}_intent.v1"
     if value["schema"] != expected_schema or value["epoch_id"] != epoch_id:
-        raise JournalError(
-            "invalid_schema", f"hub {phase} plan metadata identity is invalid"
-        )
+        raise JournalError("invalid_schema", f"hub {phase} plan metadata identity is invalid")
     _digest(value["sha256"], f"hub {phase} plan digest")
     if phase == "open":
         _digest(value["ownership_sha256"], "hub open ownership digest")
@@ -758,9 +712,7 @@ def _validate_hub_receipt_evidence(value: Any, context: str) -> None:
     if value is None:
         return
     if not isinstance(value, dict):
-        raise JournalError(
-            "invalid_schema", f"{context} evidence must be an object or null"
-        )
+        raise JournalError("invalid_schema", f"{context} evidence must be an object or null")
     _require_exact_keys(value, HUB_RECEIPT_EVIDENCE_KEYS, f"{context} evidence")
     if value["schema"] != "mac.fleet_hub_receipt_evidence.v1":
         raise JournalError("invalid_schema", f"{context} evidence schema is invalid")
@@ -770,9 +722,7 @@ def _validate_hub_receipt_evidence(value: Any, context: str) -> None:
     if not isinstance(value["size"], int) or isinstance(value["size"], bool):
         raise JournalError("invalid_schema", f"{context} evidence size is invalid")
     if value["size"] < 2 or value["size"] > MAX_EVIDENCE_BYTES:
-        raise JournalError(
-            "invalid_schema", f"{context} evidence size is outside bounds"
-        )
+        raise JournalError("invalid_schema", f"{context} evidence size is outside bounds")
     _epoch(value["epoch_id"])
     _digest(value["hub_authority_id_sha256"], f"{context} hub authority")
     _hub_digest(value["identity_sha256"], f"{context} hub identity")
@@ -786,9 +736,7 @@ def _validate_hub_orphan_evidence(value: Any) -> None:
     if value is None:
         return
     if not isinstance(value, dict):
-        raise JournalError(
-            "invalid_schema", "hub orphan evidence must be an object or null"
-        )
+        raise JournalError("invalid_schema", "hub orphan evidence must be an object or null")
     _require_exact_keys(value, ORPHAN_ABORT_EVIDENCE_KEYS, "hub orphan")
     if value["schema"] != ORPHAN_ABORT_EVIDENCE_SCHEMA:
         raise JournalError("invalid_schema", "hub orphan evidence schema is invalid")
@@ -796,16 +744,12 @@ def _validate_hub_orphan_evidence(value: Any) -> None:
     _digest(value["hub_authority_id_sha256"], "hub orphan authority")
     _hub_digest(value["identity_sha256"], "hub orphan identity")
     if value["from_hub_state"] not in ORPHAN_ELIGIBLE_HUB_STATES:
-        raise JournalError(
-            "invalid_schema", "hub orphan evidence from-state is invalid"
-        )
+        raise JournalError("invalid_schema", "hub orphan evidence from-state is invalid")
     _digest(value["absence_sha256"], "hub orphan absence receipt")
     _digest(value["quiescence_sha256"], "hub orphan quiescence bundle")
 
 
-def _validate_journal(
-    journal: Any, *, expected_epoch: str | None = None
-) -> dict[str, Any]:
+def _validate_journal(journal: Any, *, expected_epoch: str | None = None) -> dict[str, Any]:
     if not isinstance(journal, dict):
         raise JournalError("invalid_schema", "journal root must be an object")
     # Backward-compatible default: journals written before orphan-authority
@@ -825,16 +769,9 @@ def _validate_journal(
     _text(journal["hub_agent"], "hub_agent", max_bytes=128, token=True)
     _successor_hold(journal["successor_hold"])
     if not isinstance(journal["require_release_all_selected"], bool):
-        raise JournalError(
-            "invalid_schema", "require_release_all_selected must be a boolean"
-        )
-    if (
-        journal["successor_hold"] is not None
-        and not journal["require_release_all_selected"]
-    ):
-        raise JournalError(
-            "invalid_schema", "successor hold requires exact full-cohort release"
-        )
+        raise JournalError("invalid_schema", "require_release_all_selected must be a boolean")
+    if journal["successor_hold"] is not None and not journal["require_release_all_selected"]:
+        raise JournalError("invalid_schema", "successor hold requires exact full-cohort release")
     _validate_endpoint_identity(journal["hub_route_identity"], "hub route")
     if journal["hub_state"] not in HUB_STATES:
         raise JournalError("invalid_schema", "journal hub state is invalid")
@@ -846,14 +783,10 @@ def _validate_journal(
     _validate_hub_receipt_evidence(journal["hub_abort_evidence"], "hub abort")
     _validate_hub_orphan_evidence(journal["hub_orphan_evidence"])
     _validate_release_plan_metadata(journal["release_plan"], epoch_id)
-    _validate_hub_receipt_evidence(
-        journal["commit_not_applied_evidence"], "commit not applied"
-    )
+    _validate_hub_receipt_evidence(journal["commit_not_applied_evidence"], "commit not applied")
     if journal["state"] not in GLOBAL_STATES or journal["phase"] not in PHASES:
         raise JournalError("invalid_schema", "journal state or phase is invalid")
-    if not isinstance(journal["revision"], int) or isinstance(
-        journal["revision"], bool
-    ):
+    if not isinstance(journal["revision"], int) or isinstance(journal["revision"], bool):
         raise JournalError("invalid_schema", "journal revision must be an integer")
     if journal["revision"] < 0:
         raise JournalError("invalid_schema", "journal revision must not be negative")
@@ -878,17 +811,11 @@ def _validate_journal(
     seen_ids: set[str] = set()
     for ordinal, node in enumerate(cohort):
         if not isinstance(node, dict):
-            raise JournalError(
-                "invalid_schema", f"cohort node {ordinal} must be an object"
-            )
+            raise JournalError("invalid_schema", f"cohort node {ordinal} must be an object")
         _require_exact_keys(node, NODE_KEYS, f"cohort node {ordinal}")
         if node["ordinal"] != ordinal:
-            raise JournalError(
-                "invalid_schema", "cohort ordinals must be exact and contiguous"
-            )
-        name = _text(
-            node["name"], f"cohort node {ordinal} name", max_bytes=128, token=True
-        )
+            raise JournalError("invalid_schema", "cohort ordinals must be exact and contiguous")
+        name = _text(node["name"], f"cohort node {ordinal} name", max_bytes=128, token=True)
         stable_id = _text(
             node["stable_id"],
             f"cohort node {ordinal} stable_id",
@@ -896,14 +823,10 @@ def _validate_journal(
             token=True,
         )
         if name in seen_names or stable_id in seen_ids:
-            raise JournalError(
-                "invalid_schema", "cohort names and stable ids must be unique"
-            )
+            raise JournalError("invalid_schema", "cohort names and stable ids must be unique")
         seen_names.add(name)
         seen_ids.add(stable_id)
-        _deployment_identity(
-            node["generation"], f"cohort node {ordinal} generation", max_bytes=256
-        )
+        _deployment_identity(node["generation"], f"cohort node {ordinal} generation", max_bytes=256)
         _deployment_identity(
             node["deployment_id"], f"cohort node {ordinal} deployment_id", max_bytes=512
         )
@@ -920,9 +843,7 @@ def _validate_journal(
                 f"cohort node {ordinal} report executor requirement is invalid",
             )
         if node["state"] not in NODE_STATES:
-            raise JournalError(
-                "invalid_schema", f"cohort node {ordinal} state is invalid"
-            )
+            raise JournalError("invalid_schema", f"cohort node {ordinal} state is invalid")
         if node["abort_kind"] not in (
             None,
             "cleanup_only",
@@ -930,20 +851,15 @@ def _validate_journal(
             "phase2_rollback",
             "retain_forward",
         ):
-            raise JournalError(
-                "invalid_schema", f"cohort node {ordinal} abort_kind is invalid"
-            )
+            raise JournalError("invalid_schema", f"cohort node {ordinal} abort_kind is invalid")
         if node["abort_from_state"] not in (None, *NODE_STATES):
             raise JournalError(
                 "invalid_schema", f"cohort node {ordinal} abort source state is invalid"
             )
-        _validate_endpoint_identity(
-            node["route_identity"], f"cohort node {ordinal} route"
-        )
+        _validate_endpoint_identity(node["route_identity"], f"cohort node {ordinal} route")
         restore_digest = node["restore_contract_sha256"]
         if restore_digest is not None and (
-            not isinstance(restore_digest, str)
-            or not HEX_SHA256.fullmatch(restore_digest)
+            not isinstance(restore_digest, str) or not HEX_SHA256.fullmatch(restore_digest)
         ):
             raise JournalError(
                 "invalid_schema",
@@ -951,8 +867,7 @@ def _validate_journal(
             )
         rollback_digest = node["rollback_intent_sha256"]
         if rollback_digest is not None and (
-            not isinstance(rollback_digest, str)
-            or not HEX_SHA256.fullmatch(rollback_digest)
+            not isinstance(rollback_digest, str) or not HEX_SHA256.fullmatch(rollback_digest)
         ):
             raise JournalError(
                 "invalid_schema",
@@ -960,22 +875,15 @@ def _validate_journal(
             )
         finalizer_digest = node["finalizer_sha256"]
         if finalizer_digest is not None and (
-            not isinstance(finalizer_digest, str)
-            or not HEX_SHA256.fullmatch(finalizer_digest)
+            not isinstance(finalizer_digest, str) or not HEX_SHA256.fullmatch(finalizer_digest)
         ):
             raise JournalError(
                 "invalid_schema",
                 f"cohort node {ordinal} finalizer digest is invalid",
             )
-        _validate_evidence(
-            node["phase1_arm_evidence"], f"cohort node {ordinal} phase1 arm"
-        )
-        _validate_evidence(
-            node["quiescence_evidence"], f"cohort node {ordinal} quiescence"
-        )
-        _validate_evidence(
-            node["phase2_arm_evidence"], f"cohort node {ordinal} phase2 arm"
-        )
+        _validate_evidence(node["phase1_arm_evidence"], f"cohort node {ordinal} phase1 arm")
+        _validate_evidence(node["quiescence_evidence"], f"cohort node {ordinal} quiescence")
+        _validate_evidence(node["phase2_arm_evidence"], f"cohort node {ordinal} phase2 arm")
         _validate_evidence(node["prepared_evidence"], f"cohort node {ordinal} prepared")
         _validate_evidence(node["abort_evidence"], f"cohort node {ordinal} abort")
         _validate_evidence(node["finalize_evidence"], f"cohort node {ordinal} finalize")
@@ -989,9 +897,7 @@ def _validate_journal(
         if not isinstance(operation, dict):
             raise JournalError("invalid_schema", "journal operation must be an object")
         _require_exact_keys(operation, OPERATION_KEYS, "journal operation")
-        operation_id = _text(
-            operation["operation_id"], "operation id", max_bytes=256, token=True
-        )
+        operation_id = _text(operation["operation_id"], "operation id", max_bytes=256, token=True)
         if operation_id in operation_ids:
             raise JournalError("invalid_schema", "journal operation ids must be unique")
         operation_ids.add(operation_id)
@@ -999,24 +905,16 @@ def _validate_journal(
         if not isinstance(operation["fingerprint"], str) or not HEX_SHA256.fullmatch(
             operation["fingerprint"]
         ):
-            raise JournalError(
-                "invalid_schema", "journal operation fingerprint is invalid"
-            )
+            raise JournalError("invalid_schema", "journal operation fingerprint is invalid")
         if operation["revision"] != expected_revision:
-            raise JournalError(
-                "invalid_schema", "journal operation revisions are not contiguous"
-            )
+            raise JournalError("invalid_schema", "journal operation revisions are not contiguous")
         _text(operation["at"], "operation timestamp")
     if journal["revision"] != len(operations):
-        raise JournalError(
-            "invalid_schema", "journal revision does not match its operation log"
-        )
+        raise JournalError("invalid_schema", "journal revision does not match its operation log")
 
     expected_binding = _sha256(_binding_projection(journal))
     if journal["binding_sha256"] != expected_binding:
-        raise JournalError(
-            "invalid_schema", "journal immutable binding digest does not match"
-        )
+        raise JournalError("invalid_schema", "journal immutable binding digest does not match")
     _validate_state_consistency(journal)
     return journal
 
@@ -1060,9 +958,7 @@ def _validate_node_consistency(node: dict[str, Any], ordinal: int) -> None:
                 "invalid_schema", f"cohort node {ordinal} abort evidence arrived early"
             )
         if state == "aborted" and node["abort_evidence"] is None:
-            raise JournalError(
-                "invalid_schema", f"cohort node {ordinal} lacks abort evidence"
-            )
+            raise JournalError("invalid_schema", f"cohort node {ordinal} lacks abort evidence")
         effective = source
     else:
         if any(
@@ -1073,9 +969,7 @@ def _validate_node_consistency(node: dict[str, Any], ordinal: int) -> None:
                 node["abort_evidence"],
             )
         ):
-            raise JournalError(
-                "invalid_schema", f"cohort node {ordinal} has stray abort state"
-            )
+            raise JournalError("invalid_schema", f"cohort node {ordinal} has stray abort state")
         effective = "prepared" if state in {"finalizing", "finalized"} else state
 
     rank = _NODE_PROGRESS[effective]
@@ -1105,13 +999,9 @@ def _validate_node_consistency(node: dict[str, Any], ordinal: int) -> None:
             )
     elif state == "finalized":
         if node["finalize_evidence"] is None:
-            raise JournalError(
-                "invalid_schema", f"cohort node {ordinal} lacks finalize evidence"
-            )
+            raise JournalError("invalid_schema", f"cohort node {ordinal} lacks finalize evidence")
     elif node["finalize_evidence"] is not None:
-        raise JournalError(
-            "invalid_schema", f"cohort node {ordinal} has stray finalize evidence"
-        )
+        raise JournalError("invalid_schema", f"cohort node {ordinal} has stray finalize evidence")
 
 
 def _validate_state_consistency(journal: dict[str, Any]) -> None:
@@ -1209,18 +1099,13 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
                 "invalid_schema", "hub orphan evidence requires a proven-orphan abort"
             )
         if orphaned["from_hub_state"] not in ORPHAN_ELIGIBLE_HUB_STATES:
-            raise JournalError(
-                "invalid_schema", "hub orphan evidence from-state is invalid"
-            )
+            raise JournalError("invalid_schema", "hub orphan evidence from-state is invalid")
         if isinstance(opened, dict) and (
             orphaned["epoch_id"] != opened["epoch_id"]
-            or orphaned["hub_authority_id_sha256"]
-            != opened["hub_authority_id_sha256"]
+            or orphaned["hub_authority_id_sha256"] != opened["hub_authority_id_sha256"]
             or orphaned["identity_sha256"] != opened["identity_sha256"]
         ):
-            raise JournalError(
-                "invalid_schema", "hub orphan evidence identity changed"
-            )
+            raise JournalError("invalid_schema", "hub orphan evidence identity changed")
 
     for evidence, expected_status in (
         (opened, "open"),
@@ -1229,9 +1114,7 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
         (hub_aborted, "aborted"),
     ):
         if evidence is not None and evidence["status"] != expected_status:
-            raise JournalError(
-                "invalid_schema", "hub receipt status differs from state"
-            )
+            raise JournalError("invalid_schema", "hub receipt status differs from state")
     if isinstance(opened, dict) and (
         opened["proof_sha256"] is not None or opened["release_plan_sha256"] is not None
     ):
@@ -1244,25 +1127,19 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
         for evidence in (proved, committed, hub_aborted):
             if evidence is not None and (
                 evidence["epoch_id"] != opened["epoch_id"]
-                or evidence["hub_authority_id_sha256"]
-                != opened["hub_authority_id_sha256"]
+                or evidence["hub_authority_id_sha256"] != opened["hub_authority_id_sha256"]
                 or evidence["identity_sha256"] != opened["identity_sha256"]
             ):
                 raise JournalError("invalid_schema", "hub receipt identity changed")
     if isinstance(proved, dict):
         for evidence in (committed, hub_aborted):
-            if (
-                evidence is not None
-                and evidence["proof_sha256"] != proved["proof_sha256"]
-            ):
+            if evidence is not None and evidence["proof_sha256"] != proved["proof_sha256"]:
                 raise JournalError("invalid_schema", "hub receipt proof changed")
 
     release_plan = journal["release_plan"]
     not_applied = journal["commit_not_applied_evidence"]
     if not_applied is not None and release_plan is None:
-        raise JournalError(
-            "invalid_schema", "commit-not-applied proof lacks a release plan"
-        )
+        raise JournalError("invalid_schema", "commit-not-applied proof lacks a release plan")
     if not_applied is not None:
         if (
             not_applied["status"] != "proved"
@@ -1270,23 +1147,17 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
             or not isinstance(proved, dict)
             or not_applied["proof_sha256"] != proved["proof_sha256"]
             or not_applied["identity_sha256"] != proved["identity_sha256"]
-            or not_applied["hub_authority_id_sha256"]
-            != proved["hub_authority_id_sha256"]
+            or not_applied["hub_authority_id_sha256"] != proved["hub_authority_id_sha256"]
         ):
-            raise JournalError(
-                "invalid_schema", "commit-not-applied proof differs from plan"
-            )
+            raise JournalError("invalid_schema", "commit-not-applied proof differs from plan")
     if committed is not None and (
-        release_plan is None
-        or committed["release_plan_sha256"] != release_plan["sha256"]
+        release_plan is None or committed["release_plan_sha256"] != release_plan["sha256"]
     ):
         raise JournalError("invalid_schema", "hub commit proof lacks release plan")
     if hub_aborted is not None and hub_aborted["release_plan_sha256"] != (
         release_plan["sha256"] if release_plan is not None else None
     ):
-        raise JournalError(
-            "invalid_schema", "hub abort proof differs from release intent"
-        )
+        raise JournalError("invalid_schema", "hub abort proof differs from release intent")
 
     if state == "finalized":
         if not (
@@ -1345,12 +1216,8 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
 
     if state != "preparing" or release_plan is not None or not_applied is not None:
         raise JournalError("invalid_schema", "preparing journal is inconsistent")
-    if any(
-        item in {"aborting", "aborted", "finalizing", "finalized"} for item in states
-    ):
-        raise JournalError(
-            "invalid_schema", "preparing journal has terminal node state"
-        )
+    if any(item in {"aborting", "aborted", "finalizing", "finalized"} for item in states):
+        raise JournalError("invalid_schema", "preparing journal has terminal node state")
     if hub_state in {"aborted", "committed"}:
         raise JournalError("invalid_schema", "preparing journal has terminal hub state")
     if any(
@@ -1414,9 +1281,7 @@ class JournalDirectory:
 
     def __enter__(self) -> JournalDirectory:
         if not self.path.is_absolute():
-            raise JournalError(
-                "insecure_directory", "journal directory must be absolute"
-            )
+            raise JournalError("insecure_directory", "journal directory must be absolute")
         created = False
         try:
             os.mkdir(self.path, 0o700)
@@ -1434,9 +1299,7 @@ class JournalDirectory:
                 "insecure_directory", f"cannot create journal directory: {exc}"
             ) from exc
 
-        flags = (
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        )
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
             self.directory_fd = os.open(self.path, flags)
@@ -1465,9 +1328,7 @@ class JournalDirectory:
             fcntl.flock(self.lock_fd, fcntl.LOCK_EX)
         except OSError as exc:
             self.close()
-            raise JournalError(
-                "lock_failed", f"cannot lock journal directory: {exc}"
-            ) from exc
+            raise JournalError("lock_failed", f"cannot lock journal directory: {exc}") from exc
         return self
 
     def __exit__(self, _type: Any, _value: Any, _traceback: Any) -> None:
@@ -1485,9 +1346,7 @@ class JournalDirectory:
             self.directory_fd = -1
 
     def _fsync_parent(self) -> None:
-        flags = (
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-        )
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
         parent_fd = os.open(self.path.parent, flags)
         try:
             os.fsync(parent_fd)
@@ -1495,9 +1354,7 @@ class JournalDirectory:
             os.close(parent_fd)
 
     def _open_lock(self) -> int:
-        base_flags = (
-            os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        )
+        base_flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(
                 LOCK_NAME,
@@ -1560,23 +1417,17 @@ class JournalDirectory:
         except FileNotFoundError:
             return
         except OSError as exc:
-            raise JournalError(
-                "write_failed", f"cannot remove {name}: {exc}"
-            ) from exc
+            raise JournalError("write_failed", f"cannot remove {name}: {exc}") from exc
         os.fsync(self.directory_fd)
 
-    def read_name(
-        self, name: str, *, expected_epoch: str | None = None
-    ) -> dict[str, Any]:
+    def read_name(self, name: str, *, expected_epoch: str | None = None) -> dict[str, Any]:
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(name, flags, dir_fd=self.directory_fd)
         except FileNotFoundError:
             raise
         except OSError as exc:
-            raise JournalError(
-                "insecure_journal", f"cannot securely open {name}: {exc}"
-            ) from exc
+            raise JournalError("insecure_journal", f"cannot securely open {name}: {exc}") from exc
         try:
             raw = _read_bounded_owner_file(
                 descriptor,
@@ -1590,18 +1441,14 @@ class JournalDirectory:
         try:
             decoded = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise JournalError(
-                "invalid_schema", f"{name} is not valid UTF-8 JSON"
-            ) from exc
+            raise JournalError("invalid_schema", f"{name} is not valid UTF-8 JSON") from exc
         return _validate_journal(decoded, expected_epoch=expected_epoch)
 
     def read_epoch(self, epoch_id: str) -> dict[str, Any]:
         try:
             return self.read_name(_journal_name(epoch_id), expected_epoch=epoch_id)
         except FileNotFoundError as exc:
-            raise JournalError(
-                "not_found", f"cohort epoch {epoch_id!r} does not exist"
-            ) from exc
+            raise JournalError("not_found", f"cohort epoch {epoch_id!r} does not exist") from exc
 
     def all(self) -> list[dict[str, Any]]:
         return [self.read_name(name) for name in self.names()]
@@ -1658,9 +1505,7 @@ class JournalDirectory:
             while view:
                 written = os.write(descriptor, view)
                 if written <= 0:
-                    raise JournalError(
-                        "write_failed", f"{context} write made no progress"
-                    )
+                    raise JournalError("write_failed", f"{context} write made no progress")
                 view = view[written:]
             os.fsync(descriptor)
             os.close(descriptor)
@@ -1677,9 +1522,7 @@ class JournalDirectory:
         except JournalError:
             raise
         except OSError as exc:
-            raise JournalError(
-                "write_failed", f"cannot durably write {context}: {exc}"
-            ) from exc
+            raise JournalError("write_failed", f"cannot durably write {context}: {exc}") from exc
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
@@ -1698,9 +1541,7 @@ class JournalDirectory:
             )
             or not name.endswith(".json")
         ):
-            raise JournalError(
-                "invalid_release_plan", "auxiliary plan filename is invalid"
-            )
+            raise JournalError("invalid_release_plan", "auxiliary plan filename is invalid")
         if name.startswith("hub-open-plan-"):
             context = "hub open plan"
         elif name.startswith("hub-prove-plan-"):
@@ -1708,9 +1549,7 @@ class JournalDirectory:
         else:
             context = "release plan"
         if len(payload) < 2 or len(payload) > MAX_EVIDENCE_BYTES:
-            raise JournalError(
-                "invalid_release_plan", "release plan size is outside bounds"
-            )
+            raise JournalError("invalid_release_plan", "release plan size is outside bounds")
         try:
             existing = self.read_auxiliary(name)
         except JournalError as exc:
@@ -1729,9 +1568,7 @@ class JournalDirectory:
         _validate_journal(journal, expected_epoch=journal["epoch_id"])
         payload = _canonical(journal)
         if len(payload) > MAX_JOURNAL_BYTES:
-            raise JournalError(
-                "journal_too_large", "journal exceeds its durable size bound"
-            )
+            raise JournalError("journal_too_large", "journal exceeds its durable size bound")
         name = _journal_name(journal["epoch_id"])
         try:
             self.read_name(name, expected_epoch=journal["epoch_id"])
@@ -1741,9 +1578,7 @@ class JournalDirectory:
             name,
             payload,
             "journal",
-            lambda: _canonical(
-                self.read_name(name, expected_epoch=journal["epoch_id"])
-            ),
+            lambda: _canonical(self.read_name(name, expected_epoch=journal["epoch_id"])),
         )
 
 
@@ -1751,38 +1586,28 @@ def _parse_cohort(path: str) -> list[dict[str, Any]]:
     if path == "-":
         raw = sys.stdin.buffer.read(MAX_EVIDENCE_BYTES + 1)
     else:
-        raw = _read_secure_file(
-            Path(path), MAX_EVIDENCE_BYTES, "cohort file", require_mode=False
-        )
+        raw = _read_secure_file(Path(path), MAX_EVIDENCE_BYTES, "cohort file", require_mode=False)
     if len(raw) > MAX_EVIDENCE_BYTES:
         raise JournalError("invalid_input", "cohort file exceeds its size bound")
     try:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise JournalError(
-            "invalid_input", "cohort file is not valid UTF-8 JSON"
-        ) from exc
+        raise JournalError("invalid_input", "cohort file is not valid UTF-8 JSON") from exc
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_COHORT_NODES:
-        raise JournalError(
-            "invalid_input", "cohort must be a non-empty bounded JSON array"
-        )
+        raise JournalError("invalid_input", "cohort must be a non-empty bounded JSON array")
     result: list[dict[str, Any]] = []
     names: set[str] = set()
     stable_ids: set[str] = set()
     for ordinal, raw_node in enumerate(value):
         if not isinstance(raw_node, dict):
-            raise JournalError(
-                "invalid_input", f"cohort node {ordinal} must be an object"
-            )
+            raise JournalError("invalid_input", f"cohort node {ordinal} must be an object")
         actual = frozenset(raw_node)
         if not COHORT_REQUIRED_KEYS <= actual <= COHORT_INPUT_KEYS:
             raise JournalError(
                 "invalid_input",
                 f"cohort node {ordinal} has missing or unsupported fields",
             )
-        name = _text(
-            raw_node["name"], f"cohort node {ordinal} name", max_bytes=128, token=True
-        )
+        name = _text(raw_node["name"], f"cohort node {ordinal} name", max_bytes=128, token=True)
         stable_id = _text(
             raw_node["stable_id"],
             f"cohort node {ordinal} stable_id",
@@ -1790,9 +1615,7 @@ def _parse_cohort(path: str) -> list[dict[str, Any]]:
             token=True,
         )
         if name in names or stable_id in stable_ids:
-            raise JournalError(
-                "invalid_input", "cohort names and stable ids must be unique"
-            )
+            raise JournalError("invalid_input", "cohort names and stable ids must be unique")
         names.add(name)
         stable_ids.add(stable_id)
         report_executor_required = raw_node.get("report_executor_required", False)
@@ -1854,9 +1677,7 @@ def _read_secure_file(
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
-        raise JournalError(
-            "insecure_evidence", f"cannot securely open {context}: {exc}"
-        ) from exc
+        raise JournalError("insecure_evidence", f"cannot securely open {context}: {exc}") from exc
     try:
         return _read_bounded_owner_file(
             descriptor,
@@ -1875,16 +1696,12 @@ def _evidence(path: str, generation: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise JournalError(
-            "invalid_evidence", "evidence file is not valid UTF-8 JSON"
-        ) from exc
+        raise JournalError("invalid_evidence", "evidence file is not valid UTF-8 JSON") from exc
     if not isinstance(parsed, dict):
         raise JournalError("invalid_evidence", "evidence file root must be an object")
     schema = parsed.get("schema", "")
     if not isinstance(schema, str):
-        raise JournalError(
-            "invalid_evidence", "evidence schema must be a string when present"
-        )
+        raise JournalError("invalid_evidence", "evidence schema must be a string when present")
     _text(schema, "evidence schema", max_bytes=256, allow_empty=True)
     return {
         "schema": schema,
@@ -1919,9 +1736,7 @@ def _reject_secret_or_target_fields(value: Any, context: str = "release plan") -
     if isinstance(value, dict):
         for key, child in value.items():
             if not isinstance(key, str):
-                raise JournalError(
-                    "invalid_release_plan", f"{context} has a non-string key"
-                )
+                raise JournalError("invalid_release_plan", f"{context} has a non-string key")
             normalized = key.lower().replace("-", "_")
             if normalized in forbidden or normalized.endswith("_target"):
                 raise JournalError(
@@ -1941,19 +1756,13 @@ def _reject_secret_or_target_fields(value: Any, context: str = "release plan") -
             )
 
 
-def _release_plan(
-    raw: bytes, journal: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any]]:
+def _release_plan(raw: bytes, journal: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
         parsed = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise JournalError(
-            "invalid_release_plan", "release plan is not valid UTF-8 JSON"
-        ) from exc
+        raise JournalError("invalid_release_plan", "release plan is not valid UTF-8 JSON") from exc
     if not isinstance(parsed, dict):
-        raise JournalError(
-            "invalid_release_plan", "release plan root must be an object"
-        )
+        raise JournalError("invalid_release_plan", "release plan root must be an object")
     if frozenset(parsed) != frozenset(
         {
             "schema",
@@ -1964,32 +1773,24 @@ def _release_plan(
             "agents",
         }
     ):
-        raise JournalError(
-            "invalid_release_plan", "release plan top-level schema is not exact"
-        )
+        raise JournalError("invalid_release_plan", "release plan top-level schema is not exact")
     if (
         parsed["schema"] != "mac.fleet_release_epoch.v1"
         or not _release_epoch_matches(journal["epoch_id"], parsed["epoch_id"])
         or parsed["source_commit"] != journal["source_commit"]
         or parsed["successor_hold_reason"] != journal["successor_hold"]
-        or parsed["require_release_all_selected"]
-        is not journal["require_release_all_selected"]
+        or parsed["require_release_all_selected"] is not journal["require_release_all_selected"]
     ):
         raise JournalError(
             "release_plan_binding_conflict", "release plan differs from cohort epoch"
         )
     agents = parsed["agents"]
     if not isinstance(agents, list) or len(agents) != len(journal["cohort"]):
-        raise JournalError(
-            "release_plan_binding_conflict", "release plan cohort size differs"
-        )
+        raise JournalError("release_plan_binding_conflict", "release plan cohort size differs")
     if any(not isinstance(item, dict) for item in agents):
-        raise JournalError(
-            "invalid_release_plan", "release plan agents must be objects"
-        )
+        raise JournalError("invalid_release_plan", "release plan agents must be objects")
     expected = {
-        node["stable_id"]: (node["generation"], node["deployment_id"])
-        for node in journal["cohort"]
+        node["stable_id"]: (node["generation"], node["deployment_id"]) for node in journal["cohort"]
     }
     observed: dict[str, tuple[Any, Any]] = {}
     for item in agents:
@@ -2056,38 +1857,29 @@ def _hub_plan(
         )
     if phase == "open" and (
         parsed["successor_hold_reason"] != journal["successor_hold"]
-        or parsed["require_release_all_selected"]
-        is not journal["require_release_all_selected"]
-        or parsed["desired_worker_credential_mode"]
-        not in {None, "compatibility", "enforced"}
+        or parsed["require_release_all_selected"] is not journal["require_release_all_selected"]
+        or parsed["desired_worker_credential_mode"] not in {None, "compatibility", "enforced"}
     ):
         raise JournalError(
             "release_plan_binding_conflict", "hub open plan differs from cohort hold"
         )
     if phase == "prove":
         opened = journal["hub_open_evidence"]
-        if (
-            not isinstance(opened, dict)
-            or parsed["identity_sha256"] != opened["identity_sha256"]
-        ):
+        if not isinstance(opened, dict) or parsed["identity_sha256"] != opened["identity_sha256"]:
             raise JournalError(
                 "release_plan_binding_conflict",
                 "hub prove plan differs from opened hub identity",
             )
     agents = parsed["agents"]
     if not isinstance(agents, list) or len(agents) != len(journal["cohort"]):
-        raise JournalError(
-            "release_plan_binding_conflict", f"hub {phase} cohort size differs"
-        )
+        raise JournalError("release_plan_binding_conflict", f"hub {phase} cohort size differs")
     expected: dict[str, tuple[Any, ...]] = {}
     for node in journal["cohort"]:
         values: tuple[Any, ...] = (node["generation"], node["deployment_id"])
         if phase == "prove":
             evidence = node["prepared_evidence"]
             if not isinstance(evidence, dict):
-                raise JournalError(
-                    "invalid_transition", "hub prove requires every node prepared"
-                )
+                raise JournalError("invalid_transition", "hub prove requires every node prepared")
             values += (evidence["sha256"],)
         expected[node["stable_id"]] = values
     observed: dict[str, tuple[Any, ...]] = {}
@@ -2105,9 +1897,7 @@ def _hub_plan(
     ownership: list[dict[str, Any]] = []
     for item in agents:
         if not isinstance(item, dict) or frozenset(item) != frozenset(agent_keys):
-            raise JournalError(
-                "invalid_release_plan", f"hub {phase} agent schema is not exact"
-            )
+            raise JournalError("invalid_release_plan", f"hub {phase} agent schema is not exact")
         agent_id = item["agent_id"]
         if not isinstance(agent_id, str) or agent_id in observed:
             raise JournalError(
@@ -2126,9 +1916,7 @@ def _hub_plan(
             reason = item["expected_hold_reason"]
             held_at = item["expected_hold_at"]
             if not isinstance(expected_hold, bool):
-                raise JournalError(
-                    "invalid_release_plan", "expected dispatch hold must be boolean"
-                )
+                raise JournalError("invalid_release_plan", "expected dispatch hold must be boolean")
             if expected_hold:
                 _text(reason, "expected hold reason")
                 timestamp = _text(held_at, "expected hold timestamp", max_bytes=128)
@@ -2170,12 +1958,8 @@ def _hub_plan(
         "size": len(raw),
     }
     if phase == "open":
-        metadata["ownership_sha256"] = _sha256(
-            sorted(ownership, key=lambda item: item["agent_id"])
-        )
-        metadata["desired_worker_credential_mode"] = parsed[
-            "desired_worker_credential_mode"
-        ]
+        metadata["ownership_sha256"] = _sha256(sorted(ownership, key=lambda item: item["agent_id"]))
+        metadata["desired_worker_credential_mode"] = parsed["desired_worker_credential_mode"]
     return parsed, metadata
 
 
@@ -2193,15 +1977,11 @@ def _verified_hub_plan_path(
     raw = directory.read_auxiliary(metadata["filename"])
     _parsed, observed = _hub_plan(raw, journal, phase=phase)
     if observed != metadata:
-        raise JournalError(
-            "invalid_release_plan", f"durable hub {phase} plan metadata changed"
-        )
+        raise JournalError("invalid_release_plan", f"durable hub {phase} plan metadata changed")
     return str(directory.path / metadata["filename"])
 
 
-def _verified_release_plan_path(
-    directory: JournalDirectory, journal: dict[str, Any]
-) -> str | None:
+def _verified_release_plan_path(directory: JournalDirectory, journal: dict[str, Any]) -> str | None:
     metadata = journal["release_plan"]
     if metadata is None:
         return None
@@ -2210,9 +1990,7 @@ def _verified_release_plan_path(
     raw = directory.read_auxiliary(metadata["filename"])
     _parsed, observed = _release_plan(raw, journal)
     if observed != metadata:
-        raise JournalError(
-            "invalid_release_plan", "durable release plan metadata changed"
-        )
+        raise JournalError("invalid_release_plan", "durable release plan metadata changed")
     return str(directory.path / metadata["filename"])
 
 
@@ -2227,9 +2005,7 @@ def _hub_receipt_evidence(
     try:
         parsed = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise JournalError(
-            "invalid_evidence", "hub receipt is not valid UTF-8 JSON"
-        ) from exc
+        raise JournalError("invalid_evidence", "hub receipt is not valid UTF-8 JSON") from exc
     if not isinstance(parsed, dict):
         raise JournalError("invalid_evidence", "hub receipt root must be an object")
     status_fields = {
@@ -2247,9 +2023,7 @@ def _hub_receipt_evidence(
             HUB_RECEIPT_BASE_KEYS | proved_abort_fields | {"abort_disposition"},
         }
         if frozenset(parsed) not in allowed:
-            raise JournalError(
-                "invalid_evidence", "aborted hub receipt schema is not exact"
-            )
+            raise JournalError("invalid_evidence", "aborted hub receipt schema is not exact")
     else:
         expected_keys = HUB_RECEIPT_BASE_KEYS | status_fields[expected_status]
         if frozenset(parsed) != expected_keys:
@@ -2259,24 +2033,18 @@ def _hub_receipt_evidence(
         or parsed["status"] != expected_status
         or parsed["epoch_id"] != journal["epoch_id"]
     ):
-        raise JournalError(
-            "evidence_binding_conflict", "hub receipt differs from the cohort epoch"
-        )
+        raise JournalError("evidence_binding_conflict", "hub receipt differs from the cohort epoch")
     try:
         authority_id = str(uuid.UUID(str(parsed["hub_authority_id"])))
     except (TypeError, ValueError, AttributeError) as exc:
-        raise JournalError(
-            "invalid_evidence", "hub authority id is not a UUID"
-        ) from exc
+        raise JournalError("invalid_evidence", "hub authority id is not a UUID") from exc
     authority_digest = hashlib.sha256(authority_id.lower().encode()).hexdigest()
     route = journal["hub_route_identity"]
     if (
         not isinstance(route, dict)
         or route["authority"].get("durable_store_uuid_sha256") != authority_digest
     ):
-        raise JournalError(
-            "evidence_binding_conflict", "hub receipt belongs to another authority"
-        )
+        raise JournalError("evidence_binding_conflict", "hub receipt belongs to another authority")
     identity_sha256 = _hub_digest(parsed["identity_sha256"], "hub receipt identity")
     opened = journal["hub_open_evidence"]
     if isinstance(opened, dict) and identity_sha256 != opened["identity_sha256"]:
@@ -2297,13 +2065,9 @@ def _hub_receipt_evidence(
     if expected_status == "open" and proof_sha256 is not None:
         raise JournalError("invalid_evidence", "open hub receipt contains proof")
     if parsed["cohort_size"] != len(journal["cohort"]):
-        raise JournalError(
-            "evidence_binding_conflict", "hub receipt cohort size differs"
-        )
+        raise JournalError("evidence_binding_conflict", "hub receipt cohort size differs")
     if parsed["successor_hold_reason"] != journal["successor_hold"]:
-        raise JournalError(
-            "evidence_binding_conflict", "hub receipt successor hold differs"
-        )
+        raise JournalError("evidence_binding_conflict", "hub receipt successor hold differs")
     open_plan = journal["hub_open_plan"]
     if not isinstance(open_plan, dict):
         raise JournalError("invalid_transition", "hub receipt lacks open intent")
@@ -2313,13 +2077,8 @@ def _hub_receipt_evidence(
         "enforced",
     }:
         raise JournalError("invalid_evidence", "hub receipt policy mode is invalid")
-    if (
-        parsed["desired_worker_credential_mode"]
-        != open_plan["desired_worker_credential_mode"]
-    ):
-        raise JournalError(
-            "evidence_binding_conflict", "hub receipt policy mode differs"
-        )
+    if parsed["desired_worker_credential_mode"] != open_plan["desired_worker_credential_mode"]:
+        raise JournalError("evidence_binding_conflict", "hub receipt policy mode differs")
     _text(parsed["prepared_at"], "hub prepared timestamp", max_bytes=128)
     for timestamp in ("proved_at", "committed_at", "aborted_at"):
         if timestamp in parsed:
@@ -2331,22 +2090,16 @@ def _hub_receipt_evidence(
         "retain_installed",
         "discard_installed",
     }:
-        raise JournalError(
-            "invalid_evidence", "hub abort disposition is invalid"
-        )
+        raise JournalError("invalid_evidence", "hub abort disposition is invalid")
     agents = parsed["agents"]
     if not isinstance(agents, list) or len(agents) != len(journal["cohort"]):
         raise JournalError("evidence_binding_conflict", "hub receipt agents differ")
-    expected_agents = {
-        node["stable_id"]: node["generation"] for node in journal["cohort"]
-    }
+    expected_agents = {node["stable_id"]: node["generation"] for node in journal["cohort"]}
     observed_agents: dict[str, str] = {}
     ownership: list[dict[str, Any]] = []
     for item in agents:
         if not isinstance(item, dict) or frozenset(item) != HUB_RECEIPT_AGENT_KEYS:
-            raise JournalError(
-                "invalid_evidence", "hub receipt agent schema is not exact"
-            )
+            raise JournalError("invalid_evidence", "hub receipt agent schema is not exact")
         agent_id = item["agent_id"]
         if not isinstance(agent_id, str) or agent_id in observed_agents:
             raise JournalError("invalid_evidence", "hub receipt agent id is invalid")
@@ -2361,9 +2114,7 @@ def _hub_receipt_evidence(
                 max_bytes=128,
             )
         elif item["prior_hold_reason"] is not None or item["prior_hold_at"] is not None:
-            raise JournalError(
-                "invalid_evidence", "unheld hub receipt agent has prior ownership"
-            )
+            raise JournalError("invalid_evidence", "unheld hub receipt agent has prior ownership")
         ownership.append(
             {
                 "agent_id": agent_id,
@@ -2375,9 +2126,7 @@ def _hub_receipt_evidence(
         if not isinstance(item["principal_version"], int) or isinstance(
             item["principal_version"], bool
         ):
-            raise JournalError(
-                "invalid_evidence", "hub receipt principal version is invalid"
-            )
+            raise JournalError("invalid_evidence", "hub receipt principal version is invalid")
         for field in (
             "epoch_hold_reason",
             "epoch_hold_at",
@@ -2393,9 +2142,7 @@ def _hub_receipt_evidence(
         _sha256(sorted(ownership, key=lambda item: item["agent_id"]))
         != open_plan["ownership_sha256"]
     ):
-        raise JournalError(
-            "evidence_binding_conflict", "hub receipt prior hold ownership differs"
-        )
+        raise JournalError("evidence_binding_conflict", "hub receipt prior hold ownership differs")
     release_plan_sha256: str | None = None
     if bind_release_plan:
         metadata = journal["release_plan"]
@@ -2449,9 +2196,7 @@ def _mutate(
     if (journal["state"], action) in {("finalized", "finalize"), ("aborted", "abort")}:
         return journal, False
     if check_owner:
-        supplied_nonce = _text(
-            args.owner_nonce, "owner nonce", max_bytes=256, token=True
-        )
+        supplied_nonce = _text(args.owner_nonce, "owner nonce", max_bytes=256, token=True)
         if supplied_nonce != journal["owner"]["nonce"]:
             raise JournalError(
                 "owner_fenced",
@@ -2490,9 +2235,7 @@ def _mutate(
     journal["updated_at"] = now
     journal["operations"].append(
         {
-            "operation_id": _text(
-                operation_id, "operation id", max_bytes=256, token=True
-            ),
+            "operation_id": _text(operation_id, "operation id", max_bytes=256, token=True),
             "action": action,
             "fingerprint": fingerprint,
             "revision": revision,
@@ -2505,9 +2248,7 @@ def _mutate(
 
 def _require_nonterminal(journal: dict[str, Any]) -> None:
     if journal["state"] in TERMINAL_STATES:
-        raise JournalError(
-            "terminal_journal", "terminal cohort journal is immutable", exit_code=3
-        )
+        raise JournalError("terminal_journal", "terminal cohort journal is immutable", exit_code=3)
 
 
 def _require_forward_direction(journal: dict[str, Any]) -> None:
@@ -2544,9 +2285,7 @@ def _refresh_phase(journal: dict[str, Any]) -> None:
         journal["phase"] = "quiesced"
     elif any(state in {"quiesce_started", "quiesced"} for state in states):
         journal["phase"] = "quiescing"
-    elif any(
-        state in {"phase1_prepare_started", "phase1_armed"} for state in states
-    ):
+    elif any(state in {"phase1_prepare_started", "phase1_armed"} for state in states):
         journal["phase"] = "arming_phase1"
     else:
         journal["phase"] = "routing"
@@ -2591,9 +2330,7 @@ def _rollback_candidates(journal: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
-def _recovery_candidates(
-    journal: dict[str, Any], policy: str
-) -> list[dict[str, Any]]:
+def _recovery_candidates(journal: dict[str, Any], policy: str) -> list[dict[str, Any]]:
     """Return recovery work with one journal-wide, durably bound policy.
 
     Roll-forward retention is the safe operational default: it leaves the
@@ -2607,9 +2344,7 @@ def _recovery_candidates(
     if policy not in {"retain-forward", "rollback"}:
         raise JournalError("invalid_input", "unsupported cohort recovery policy")
     bound_kinds = {
-        node["abort_kind"]
-        for node in journal["cohort"]
-        if node["abort_kind"] is not None
+        node["abort_kind"] for node in journal["cohort"] if node["abort_kind"] is not None
     }
     if "retain_forward" in bound_kinds:
         bound_policy = "retain-forward"
@@ -2790,12 +2525,8 @@ def _diagnosis(journal: dict[str, Any]) -> dict[str, Any]:
                 "stable_id": node["stable_id"],
                 "generation": node["generation"],
                 "state": node["state"],
-                "mutated": any(
-                    node[key] is not None for key in _NODE_MUTATION_EVIDENCE_KEYS
-                ),
-                "applied": any(
-                    node[key] is not None for key in _NODE_APPLIED_EVIDENCE_KEYS
-                ),
+                "mutated": any(node[key] is not None for key in _NODE_MUTATION_EVIDENCE_KEYS),
+                "applied": any(node[key] is not None for key in _NODE_APPLIED_EVIDENCE_KEYS),
             }
             for node in cohort
         ],
@@ -2838,9 +2569,7 @@ def _diagnose_directory(directory: JournalDirectory) -> dict[str, Any]:
     }
 
 
-def command_diagnose(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_diagnose(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     if args.epoch_id:
         journal = directory.read_epoch(_epoch(args.epoch_id))
         diagnosis = _diagnosis(journal)
@@ -2872,9 +2601,7 @@ def _retention_keep(value: Any) -> int:
     try:
         keep = int(str(value).strip())
     except (TypeError, ValueError) as exc:
-        raise JournalError(
-            "invalid_input", "retention keep count must be a whole number"
-        ) from exc
+        raise JournalError("invalid_input", "retention keep count must be a whole number") from exc
     if not 0 <= keep <= MAX_RETENTION_KEEP:
         raise JournalError(
             "invalid_input",
@@ -2883,9 +2610,7 @@ def _retention_keep(value: Any) -> int:
     return keep
 
 
-def command_reap(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_reap(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     """Age out terminal journals and orphan plans; never a live transaction.
 
     Three invariants make this safe to run unattended on every deploy:
@@ -2968,9 +2693,7 @@ def command_reap(
     }, bool(removed or removed_plans) and not args.dry_run
 
 
-def command_init(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_init(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     epoch_id = _epoch(args.epoch_id)
     cohort = _parse_cohort(args.cohort_file)
     now = _utc_now()
@@ -3023,8 +2746,7 @@ def command_init(
             same_owner = (
                 existing["owner"]["nonce"] == journal["owner"]["nonce"]
                 and existing["owner"]["pid"] == journal["owner"]["pid"]
-                and existing["owner"]["boot_id_sha256"]
-                == journal["owner"]["boot_id_sha256"]
+                and existing["owner"]["boot_id_sha256"] == journal["owner"]["boot_id_sha256"]
                 and existing["owner"]["process_start_sha256"]
                 == journal["owner"]["process_start_sha256"]
             )
@@ -3061,9 +2783,7 @@ def command_hub_route_bound(
             raise JournalError("invalid_transition", "hub route must bind before open")
         if journal["hub_route_identity"] is not None:
             if journal["hub_route_identity"] != identity:
-                raise JournalError(
-                    "evidence_binding_conflict", "hub route identity changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub route identity changed")
             return False
         journal["hub_route_identity"] = identity
         _refresh_phase(journal)
@@ -3078,9 +2798,7 @@ def command_hub_route_bound(
     )
 
 
-def command_route_bound(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_route_bound(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     identity = _endpoint_identity(args.identity_file)
     if identity["adapter"] not in {"ssh-machine", "kubernetes-workload"}:
         raise JournalError("invalid_evidence", "node route identity uses a hub adapter")
@@ -3088,20 +2806,14 @@ def command_route_bound(
     def transition(journal: dict[str, Any]) -> bool:
         _require_forward_direction(journal)
         if journal["hub_route_identity"] is None or journal["hub_state"] != "unopened":
-            raise JournalError(
-                "invalid_transition", "node routes bind after the hub route"
-            )
+            raise JournalError("invalid_transition", "node routes bind after the hub route")
         node = _node(journal, args)
         if node["state"] == "route_bound":
             if node["route_identity"] != identity:
-                raise JournalError(
-                    "evidence_binding_conflict", "node route identity changed"
-                )
+                raise JournalError("evidence_binding_conflict", "node route identity changed")
             return False
         if node["state"] != "planned":
-            raise JournalError(
-                "invalid_transition", "route binding requires planned node"
-            )
+            raise JournalError("invalid_transition", "route binding requires planned node")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "route_bound" for item in earlier) or any(
@@ -3131,20 +2843,13 @@ def command_phase1_prepare_started(
         if node["state"] == "phase1_prepare_started":
             return False
         if node["state"] != "route_bound":
-            raise JournalError(
-                "invalid_transition", "phase1 prepare requires a bound route"
-            )
+            raise JournalError("invalid_transition", "phase1 prepare requires a bound route")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(
-            item["state"] not in {"phase1_prepare_started", "phase1_armed"}
-            for item in earlier
-        ) or any(
-            item["state"] != "route_bound" for item in later
-        ):
-            raise JournalError(
-                "invalid_transition", "phase1 prepares must follow cohort order"
-            )
+            item["state"] not in {"phase1_prepare_started", "phase1_armed"} for item in earlier
+        ) or any(item["state"] != "route_bound" for item in later):
+            raise JournalError("invalid_transition", "phase1 prepares must follow cohort order")
         node["state"] = "phase1_prepare_started"
         _refresh_phase(journal)
         return True
@@ -3158,9 +2863,7 @@ def command_phase1_prepare_started(
     )
 
 
-def command_phase1_armed(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_phase1_armed(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     evidence_record = _evidence(args.evidence_file, args.generation)
     restore_digest = _digest(args.restore_contract_sha256, "restore contract sha256")
 
@@ -3172,23 +2875,16 @@ def command_phase1_armed(
                 node["restore_contract_sha256"] != restore_digest
                 or node["phase1_arm_evidence"] != evidence_record
             ):
-                raise JournalError(
-                    "evidence_binding_conflict", "phase1 arm binding changed"
-                )
+                raise JournalError("evidence_binding_conflict", "phase1 arm binding changed")
             return False
         if node["state"] != "phase1_prepare_started":
-            raise JournalError(
-                "invalid_transition", "phase1 arm requires durable prepare intent"
-            )
+            raise JournalError("invalid_transition", "phase1 arm requires durable prepare intent")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "phase1_armed" for item in earlier) or any(
-            item["state"] not in {"route_bound", "phase1_prepare_started"}
-            for item in later
+            item["state"] not in {"route_bound", "phase1_prepare_started"} for item in later
         ):
-            raise JournalError(
-                "invalid_transition", "phase1 arms must follow cohort order"
-            )
+            raise JournalError("invalid_transition", "phase1 arms must follow cohort order")
         node["phase1_arm_evidence"] = evidence_record
         node["restore_contract_sha256"] = restore_digest
         node["state"] = "phase1_armed"
@@ -3206,18 +2902,14 @@ def command_phase1_armed(
 def command_hub_open_start(
     directory: JournalDirectory, args: argparse.Namespace
 ) -> tuple[Any, bool]:
-    raw = _read_secure_file(
-        Path(args.open_plan_file), MAX_EVIDENCE_BYTES, "hub open plan"
-    )
+    raw = _read_secure_file(Path(args.open_plan_file), MAX_EVIDENCE_BYTES, "hub open plan")
     current = directory.read_epoch(_epoch(args.epoch_id))
     _parsed, metadata = _hub_plan(raw, current, phase="open")
 
     def transition(journal: dict[str, Any]) -> bool:
         _require_forward_direction(journal)
         if any(node["state"] != "phase1_armed" for node in journal["cohort"]):
-            raise JournalError(
-                "invalid_transition", "hub open requires every phase1 restore arm"
-            )
+            raise JournalError("invalid_transition", "hub open requires every phase1 restore arm")
         if journal["hub_state"] == "open_intent":
             if journal["hub_open_plan"] != metadata:
                 raise JournalError("evidence_binding_conflict", "hub open plan changed")
@@ -3242,21 +2934,15 @@ def command_hub_open_start(
     )
 
 
-def command_hub_opened(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_hub_opened(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     current = directory.read_epoch(_epoch(args.epoch_id))
-    evidence_record = _hub_receipt_evidence(
-        args.evidence_file, current, expected_status="open"
-    )
+    evidence_record = _hub_receipt_evidence(args.evidence_file, current, expected_status="open")
 
     def transition(journal: dict[str, Any]) -> bool:
         _require_nonterminal(journal)
         if journal["hub_state"] == "open":
             if journal["hub_open_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "hub open receipt changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub open receipt changed")
             return False
         if journal["hub_state"] != "open_intent":
             raise JournalError("invalid_transition", "hub open receipt lacks intent")
@@ -3286,17 +2972,13 @@ def command_quiesce_start(
         if node["state"] == "quiesce_started":
             return False
         if node["state"] != "phase1_armed":
-            raise JournalError(
-                "invalid_transition", "quiesce start requires phase1 arm"
-            )
+            raise JournalError("invalid_transition", "quiesce start requires phase1 arm")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "quiesced" for item in earlier) or any(
             item["state"] != "phase1_armed" for item in later
         ):
-            raise JournalError(
-                "invalid_transition", "nodes must quiesce in cohort order"
-            )
+            raise JournalError("invalid_transition", "nodes must quiesce in cohort order")
         node["state"] = "quiesce_started"
         _refresh_phase(journal)
         return True
@@ -3304,9 +2986,7 @@ def command_quiesce_start(
     return _mutate(directory, args, "quiesce-start", _node_details(args), transition)
 
 
-def command_quiesced(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_quiesced(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     evidence_record = _evidence(args.evidence_file, args.generation)
 
     def transition(journal: dict[str, Any]) -> bool:
@@ -3314,9 +2994,7 @@ def command_quiesced(
         node = _node(journal, args)
         if node["state"] == "quiesced":
             if node["quiescence_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "quiescence proof changed"
-                )
+                raise JournalError("evidence_binding_conflict", "quiescence proof changed")
             return False
         if node["state"] != "quiesce_started":
             raise JournalError("invalid_transition", "quiescence proof lacks intent")
@@ -3334,9 +3012,7 @@ def command_quiesced(
     )
 
 
-def command_phase2_armed(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_phase2_armed(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     evidence_record = _evidence(args.evidence_file, args.generation)
     intent_digest = _digest(args.rollback_intent_sha256, "rollback intent sha256")
     finalizer_digest = _digest(args.finalizer_sha256, "finalizer sha256")
@@ -3359,9 +3035,7 @@ def command_phase2_armed(
         if any(item["state"] != "phase2_armed" for item in earlier) or any(
             item["state"] != "quiesced" for item in later
         ):
-            raise JournalError(
-                "invalid_transition", "phase2 arms must follow cohort order"
-            )
+            raise JournalError("invalid_transition", "phase2 arms must follow cohort order")
         node["rollback_intent_sha256"] = intent_digest
         node["finalizer_sha256"] = finalizer_digest
         node["phase2_arm_evidence"] = evidence_record
@@ -3383,26 +3057,20 @@ def command_phase2_armed(
     )
 
 
-def command_phase2_start(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_phase2_start(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     def transition(journal: dict[str, Any]) -> bool:
         _require_forward_direction(journal)
         node = _node(journal, args)
         if node["state"] == "phase2_started":
             return False
         if node["state"] != "phase2_armed":
-            raise JournalError(
-                "invalid_transition", "phase2 start lacks rollback intent"
-            )
+            raise JournalError("invalid_transition", "phase2 start lacks rollback intent")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "prepared" for item in earlier) or any(
             item["state"] != "phase2_armed" for item in later
         ):
-            raise JournalError(
-                "invalid_transition", "nodes must deploy in cohort order"
-            )
+            raise JournalError("invalid_transition", "nodes must deploy in cohort order")
         node["state"] = "phase2_started"
         _refresh_phase(journal)
         return True
@@ -3410,9 +3078,7 @@ def command_phase2_start(
     return _mutate(directory, args, "phase2-start", _node_details(args), transition)
 
 
-def command_prepared(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_prepared(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     evidence_record = _evidence(args.evidence_file, args.generation)
 
     def transition(journal: dict[str, Any]) -> bool:
@@ -3420,14 +3086,10 @@ def command_prepared(
         node = _node(journal, args)
         if node["state"] == "prepared":
             if node["prepared_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "prepared proof changed"
-                )
+                raise JournalError("evidence_binding_conflict", "prepared proof changed")
             return False
         if node["state"] != "phase2_started":
-            raise JournalError(
-                "invalid_transition", "prepared proof lacks phase2 intent"
-            )
+            raise JournalError("invalid_transition", "prepared proof lacks phase2 intent")
         node["prepared_evidence"] = evidence_record
         node["state"] = "prepared"
         _refresh_phase(journal)
@@ -3445,23 +3107,17 @@ def command_prepared(
 def command_hub_prove_start(
     directory: JournalDirectory, args: argparse.Namespace
 ) -> tuple[Any, bool]:
-    raw = _read_secure_file(
-        Path(args.prove_plan_file), MAX_EVIDENCE_BYTES, "hub prove plan"
-    )
+    raw = _read_secure_file(Path(args.prove_plan_file), MAX_EVIDENCE_BYTES, "hub prove plan")
     current = directory.read_epoch(_epoch(args.epoch_id))
     _parsed, metadata = _hub_plan(raw, current, phase="prove")
 
     def transition(journal: dict[str, Any]) -> bool:
         _require_forward_direction(journal)
         if any(node["state"] != "prepared" for node in journal["cohort"]):
-            raise JournalError(
-                "invalid_transition", "hub prove requires every node prepared"
-            )
+            raise JournalError("invalid_transition", "hub prove requires every node prepared")
         if journal["hub_state"] == "prove_intent":
             if journal["hub_prove_plan"] != metadata:
-                raise JournalError(
-                    "evidence_binding_conflict", "hub prove plan changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub prove plan changed")
             return False
         if journal["hub_state"] != "open":
             raise JournalError("invalid_transition", "hub prove requires open epoch")
@@ -3480,21 +3136,15 @@ def command_hub_prove_start(
     )
 
 
-def command_hub_proved(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_hub_proved(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     current = directory.read_epoch(_epoch(args.epoch_id))
-    evidence_record = _hub_receipt_evidence(
-        args.evidence_file, current, expected_status="proved"
-    )
+    evidence_record = _hub_receipt_evidence(args.evidence_file, current, expected_status="proved")
 
     def transition(journal: dict[str, Any]) -> bool:
         _require_nonterminal(journal)
         if journal["hub_state"] == "proved":
             if journal["hub_proved_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "hub proved receipt changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub proved receipt changed")
             return False
         if journal["hub_state"] != "prove_intent":
             raise JournalError("invalid_transition", "hub proved receipt lacks intent")
@@ -3513,24 +3163,18 @@ def command_hub_proved(
     )
 
 
-def command_abort_start(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_abort_start(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     def transition(journal: dict[str, Any]) -> bool:
         _require_nonterminal(journal)
         node = _node(journal, args)
         if node["state"] == "aborting":
             return False
         requested_policy = (
-            "retain-forward"
-            if args.recovery_action == "retain_forward"
-            else "rollback"
+            "retain-forward" if args.recovery_action == "retain_forward" else "rollback"
         )
         candidates = _recovery_candidates(journal, requested_policy)
         if not candidates or candidates[0]["agent_name"] != node["name"]:
-            raise JournalError(
-                "invalid_transition", "nodes must recover in reverse mutation order"
-            )
+            raise JournalError("invalid_transition", "nodes must recover in reverse mutation order")
         action = candidates[0]["recovery_action"]
         if args.recovery_action is not None and args.recovery_action != action:
             raise JournalError(
@@ -3548,9 +3192,7 @@ def command_abort_start(
     return _mutate(directory, args, "abort-start", details, transition)
 
 
-def command_aborted_node(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_aborted_node(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     evidence_record = _evidence(args.evidence_file, args.generation)
 
     def transition(journal: dict[str, Any]) -> bool:
@@ -3561,9 +3203,7 @@ def command_aborted_node(
                 raise JournalError("evidence_binding_conflict", "abort proof changed")
             return False
         if node["state"] != "aborting":
-            raise JournalError(
-                "invalid_transition", "abort proof lacks recovery intent"
-            )
+            raise JournalError("invalid_transition", "abort proof lacks recovery intent")
         node["abort_evidence"] = evidence_record
         node["state"] = "aborted"
         _refresh_phase(journal)
@@ -3578,9 +3218,7 @@ def command_aborted_node(
     )
 
 
-def command_hub_aborted(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_hub_aborted(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     current = directory.read_epoch(_epoch(args.epoch_id))
     evidence_record = _hub_receipt_evidence(
         args.evidence_file,
@@ -3592,9 +3230,7 @@ def command_hub_aborted(
     def transition(journal: dict[str, Any]) -> bool:
         if journal["hub_state"] == "aborted":
             if journal["hub_abort_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "hub abort proof changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub abort proof changed")
             return False
         _require_nonterminal(journal)
         if journal["state"] in {"commit_intent", "hub_committed"}:
@@ -3607,9 +3243,7 @@ def command_hub_aborted(
         # receipt.  The receipt is the abort proof; prove_intent must therefore
         # be recoverable just like its open/proved neighbours.
         if journal["hub_state"] not in {"open", "prove_intent", "proved"}:
-            raise JournalError(
-                "invalid_transition", "hub participant has no abort intent"
-            )
+            raise JournalError("invalid_transition", "hub participant has no abort intent")
         journal["hub_abort_evidence"] = evidence_record
         journal["hub_state"] = "aborted"
         journal["state"] = "aborting"
@@ -3637,9 +3271,7 @@ def _absence_receipt(path: str, journal: dict[str, Any]) -> dict[str, Any]:
 
     opened = journal["hub_open_evidence"]
     if not isinstance(opened, dict):
-        raise JournalError(
-            "invalid_transition", "orphan recovery requires a recorded open epoch"
-        )
+        raise JournalError("invalid_transition", "orphan recovery requires a recorded open epoch")
     raw = _read_secure_file(Path(path), MAX_EVIDENCE_BYTES, "hub absence receipt")
     try:
         parsed = json.loads(raw)
@@ -3648,13 +3280,9 @@ def _absence_receipt(path: str, journal: dict[str, Any]) -> dict[str, Any]:
             "invalid_evidence", "hub absence receipt is not valid UTF-8 JSON"
         ) from exc
     if not isinstance(parsed, dict) or frozenset(parsed) != HUB_STATUS_ABSENT_KEYS:
-        raise JournalError(
-            "invalid_evidence", "hub absence receipt schema is not exact"
-        )
+        raise JournalError("invalid_evidence", "hub absence receipt schema is not exact")
     if parsed["schema"] != HUB_STATUS_ABSENT_SCHEMA:
-        raise JournalError(
-            "invalid_evidence", "hub absence receipt schema is unsupported"
-        )
+        raise JournalError("invalid_evidence", "hub absence receipt schema is unsupported")
     if parsed["status"] != "absent":
         # ``mismatch`` and every other status is a live, contradicting epoch and
         # is never orphan evidence.  Only a proven absence retires the barrier.
@@ -3663,15 +3291,11 @@ def _absence_receipt(path: str, journal: dict[str, Any]) -> dict[str, Any]:
             "hub status receipt does not prove epoch absence",
         )
     if parsed["epoch_id"] != journal["epoch_id"]:
-        raise JournalError(
-            "evidence_binding_conflict", "hub absence receipt is for another epoch"
-        )
+        raise JournalError("evidence_binding_conflict", "hub absence receipt is for another epoch")
     try:
         authority_id = str(uuid.UUID(str(parsed["hub_authority_id"])))
     except (TypeError, ValueError, AttributeError) as exc:
-        raise JournalError(
-            "invalid_evidence", "hub absence authority id is not a UUID"
-        ) from exc
+        raise JournalError("invalid_evidence", "hub absence authority id is not a UUID") from exc
     authority_digest = hashlib.sha256(authority_id.lower().encode()).hexdigest()
     if authority_digest != opened["hub_authority_id_sha256"]:
         raise JournalError(
@@ -3689,9 +3313,7 @@ def _absence_receipt(path: str, journal: dict[str, Any]) -> dict[str, Any]:
         )
     identity_sha256 = _hub_digest(parsed["identity_sha256"], "hub absence identity")
     if identity_sha256 != opened["identity_sha256"]:
-        raise JournalError(
-            "evidence_binding_conflict", "hub absence receipt identity changed"
-        )
+        raise JournalError("evidence_binding_conflict", "hub absence receipt identity changed")
     return {
         "sha256": hashlib.sha256(raw).hexdigest(),
         "hub_authority_id_sha256": authority_digest,
@@ -3709,9 +3331,7 @@ def _quiescence_attestation(path: str, journal: dict[str, Any]) -> dict[str, Any
     closed, because a barrier must never be released under a live cohort.
     """
 
-    raw = _read_secure_file(
-        Path(path), MAX_EVIDENCE_BYTES, "orphan quiescence bundle"
-    )
+    raw = _read_secure_file(Path(path), MAX_EVIDENCE_BYTES, "orphan quiescence bundle")
     try:
         parsed = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -3719,67 +3339,44 @@ def _quiescence_attestation(path: str, journal: dict[str, Any]) -> dict[str, Any
             "invalid_evidence", "orphan quiescence bundle is not valid UTF-8 JSON"
         ) from exc
     if not isinstance(parsed, dict) or frozenset(parsed) != ORPHAN_QUIESCENCE_KEYS:
-        raise JournalError(
-            "invalid_evidence", "orphan quiescence bundle schema is not exact"
-        )
+        raise JournalError("invalid_evidence", "orphan quiescence bundle schema is not exact")
     if parsed["schema"] != ORPHAN_QUIESCENCE_SCHEMA:
-        raise JournalError(
-            "invalid_evidence", "orphan quiescence bundle schema is unsupported"
-        )
+        raise JournalError("invalid_evidence", "orphan quiescence bundle schema is unsupported")
     if parsed["epoch_id"] != journal["epoch_id"]:
         raise JournalError(
             "evidence_binding_conflict", "orphan quiescence bundle is for another epoch"
         )
     nodes = parsed["nodes"]
     if not isinstance(nodes, list) or len(nodes) != len(journal["cohort"]):
-        raise JournalError(
-            "evidence_binding_conflict", "orphan quiescence bundle cohort differs"
-        )
+        raise JournalError("evidence_binding_conflict", "orphan quiescence bundle cohort differs")
     expected = {node["stable_id"]: node["generation"] for node in journal["cohort"]}
     observed: dict[str, str] = {}
     for item in nodes:
-        if (
-            not isinstance(item, dict)
-            or frozenset(item) != ORPHAN_QUIESCENCE_NODE_KEYS
-        ):
-            raise JournalError(
-                "invalid_evidence", "orphan quiescence node schema is not exact"
-            )
+        if not isinstance(item, dict) or frozenset(item) != ORPHAN_QUIESCENCE_NODE_KEYS:
+            raise JournalError("invalid_evidence", "orphan quiescence node schema is not exact")
         stable_id = _text(item["stable_id"], "quiescence node stable id")
         generation = _text(item["generation"], "quiescence node generation")
         if stable_id in observed:
-            raise JournalError(
-                "invalid_evidence", "orphan quiescence node id is duplicated"
-            )
+            raise JournalError("invalid_evidence", "orphan quiescence node id is duplicated")
         observed[stable_id] = generation
         _digest(item["startup_attestation_sha256"], "quiescence startup attestation")
         for flag in ("deployment_lock_held", "idle", "healthy", "active_work"):
             if not isinstance(item[flag], bool):
-                raise JournalError(
-                    "invalid_evidence", f"quiescence node {flag} is not boolean"
-                )
+                raise JournalError("invalid_evidence", f"quiescence node {flag} is not boolean")
         if not item["deployment_lock_held"]:
             raise JournalError(
                 "invalid_transition", "quiescence node does not hold its deployment lock"
             )
         if not item["idle"] or not item["healthy"]:
-            raise JournalError(
-                "invalid_transition", "quiescence node is not idle and healthy"
-            )
+            raise JournalError("invalid_transition", "quiescence node is not idle and healthy")
         if item["active_work"]:
-            raise JournalError(
-                "invalid_transition", "quiescence node still has active work"
-            )
+            raise JournalError("invalid_transition", "quiescence node still has active work")
     if observed != expected:
-        raise JournalError(
-            "evidence_binding_conflict", "orphan quiescence generation differs"
-        )
+        raise JournalError("evidence_binding_conflict", "orphan quiescence generation differs")
     return {"sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def command_hub_orphaned(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_hub_orphaned(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     """Retire only a proven-orphan hub barrier after hub authority loss.
 
     The controller believed the hub epoch durable, but the hub returned an
@@ -3811,15 +3408,12 @@ def command_hub_orphaned(
             # ``from_hub_state`` is now ``aborted`` and must not be re-checked.
             if (
                 existing["epoch_id"] != orphan_record["epoch_id"]
-                or existing["hub_authority_id_sha256"]
-                != orphan_record["hub_authority_id_sha256"]
+                or existing["hub_authority_id_sha256"] != orphan_record["hub_authority_id_sha256"]
                 or existing["identity_sha256"] != orphan_record["identity_sha256"]
                 or existing["absence_sha256"] != orphan_record["absence_sha256"]
                 or existing["quiescence_sha256"] != orphan_record["quiescence_sha256"]
             ):
-                raise JournalError(
-                    "evidence_binding_conflict", "hub orphan proof changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub orphan proof changed")
             return False
         _require_nonterminal(journal)
         if journal["state"] in {"commit_intent", "hub_committed"}:
@@ -3836,9 +3430,7 @@ def command_hub_orphaned(
         # from-state must match what was proved so a stale controller cannot
         # replay an orphan record against a different barrier.
         if orphan_record["from_hub_state"] != journal["hub_state"]:
-            raise JournalError(
-                "evidence_binding_conflict", "hub orphan proof from-state changed"
-            )
+            raise JournalError("evidence_binding_conflict", "hub orphan proof from-state changed")
         journal["hub_orphan_evidence"] = orphan_record
         journal["hub_abort_evidence"] = None
         journal["hub_state"] = "aborted"
@@ -3858,21 +3450,14 @@ def command_hub_orphaned(
     )
 
 
-def command_commit_start(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
-    raw = _read_secure_file(
-        Path(args.release_plan_file), MAX_EVIDENCE_BYTES, "release plan file"
-    )
+def command_commit_start(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
+    raw = _read_secure_file(Path(args.release_plan_file), MAX_EVIDENCE_BYTES, "release plan file")
     raw_digest = hashlib.sha256(raw).hexdigest()
 
     def transition(journal: dict[str, Any]) -> bool:
         _require_forward_direction(journal)
         if journal["state"] == "commit_intent":
-            if (
-                journal["release_plan"]
-                and journal["release_plan"]["sha256"] == raw_digest
-            ):
+            if journal["release_plan"] and journal["release_plan"]["sha256"] == raw_digest:
                 return False
             raise JournalError("release_plan_conflict", "commit intent plan changed")
         if (
@@ -3933,9 +3518,7 @@ def command_commit_not_applied(
     )
 
 
-def command_commit(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_commit(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     current = directory.read_epoch(_epoch(args.epoch_id))
     evidence_record = _hub_receipt_evidence(
         args.evidence_file,
@@ -3947,9 +3530,7 @@ def command_commit(
     def transition(journal: dict[str, Any]) -> bool:
         if journal["state"] in {"hub_committed", "finalized"}:
             if journal["hub_commit_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "hub commit receipt changed"
-                )
+                raise JournalError("evidence_binding_conflict", "hub commit receipt changed")
             return False
         _require_nonterminal(journal)
         if journal["state"] != "commit_intent" or any(
@@ -3981,9 +3562,7 @@ def command_finalize_start(
 ) -> tuple[Any, bool]:
     def transition(journal: dict[str, Any]) -> bool:
         if journal["state"] != "hub_committed":
-            raise JournalError(
-                "invalid_transition", "finalization requires committed hub"
-            )
+            raise JournalError("invalid_transition", "finalization requires committed hub")
         node = _node(journal, args)
         if node["state"] == "finalizing":
             return False
@@ -3994,9 +3573,7 @@ def command_finalize_start(
         if any(item["state"] != "finalized" for item in earlier) or any(
             item["state"] != "prepared" for item in later
         ):
-            raise JournalError(
-                "invalid_transition", "nodes must finalize in exact cohort order"
-            )
+            raise JournalError("invalid_transition", "nodes must finalize in exact cohort order")
         node["state"] = "finalizing"
         _refresh_phase(journal)
         return True
@@ -4015,9 +3592,7 @@ def command_finalized_node(
         node = _node(journal, args)
         if node["state"] == "finalized":
             if node["finalize_evidence"] != evidence_record:
-                raise JournalError(
-                    "evidence_binding_conflict", "finalize proof changed"
-                )
+                raise JournalError("evidence_binding_conflict", "finalize proof changed")
             return False
         if node["state"] != "finalizing":
             raise JournalError("invalid_transition", "finalize proof lacks intent")
@@ -4035,9 +3610,7 @@ def command_finalized_node(
     )
 
 
-def command_finalize(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_finalize(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     def transition(journal: dict[str, Any]) -> bool:
         if journal["state"] == "finalized":
             return False
@@ -4045,9 +3618,7 @@ def command_finalize(
         if journal["state"] != "hub_committed" or any(
             node["state"] != "finalized" for node in journal["cohort"]
         ):
-            raise JournalError(
-                "invalid_transition", "every committed node must finalize first"
-            )
+            raise JournalError("invalid_transition", "every committed node must finalize first")
         journal["state"] = "finalized"
         journal["phase"] = "finalized"
         return True
@@ -4055,9 +3626,7 @@ def command_finalize(
     return _mutate(directory, args, "finalize", {}, transition)
 
 
-def command_abort(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_abort(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     def transition(journal: dict[str, Any]) -> bool:
         if journal["state"] == "aborted":
             return False
@@ -4071,8 +3640,7 @@ def command_abort(
                 "invalid_transition", "hub epoch cleanup must be proved before abort"
             )
         if any(
-            node["state"] not in {"planned", "route_bound", "aborted"}
-            for node in journal["cohort"]
+            node["state"] not in {"planned", "route_bound", "aborted"} for node in journal["cohort"]
         ):
             raise JournalError(
                 "invalid_transition", "every mutated cohort node needs recovery proof"
@@ -4084,9 +3652,7 @@ def command_abort(
     return _mutate(directory, args, "abort", {}, transition)
 
 
-def command_adopt(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_adopt(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     new_owner = _owner(args.new_owner_nonce, args.new_owner_pid)
     details = {
         "previous_owner_nonce": args.previous_owner_nonce,
@@ -4102,13 +3668,9 @@ def command_adopt(
             args.previous_owner_nonce, "previous owner nonce", max_bytes=256, token=True
         )
         if journal["owner"]["nonce"] != previous:
-            raise JournalError(
-                "owner_fenced", "previous owner nonce does not match", exit_code=3
-            )
+            raise JournalError("owner_fenced", "previous owner nonce does not match", exit_code=3)
         if _owner_alive(journal["owner"]):
-            raise JournalError(
-                "owner_live", "live journal owner cannot be adopted", exit_code=3
-            )
+            raise JournalError("owner_live", "live journal owner cannot be adopted", exit_code=3)
         journal["owner"] = new_owner
         return True
 
@@ -4122,9 +3684,7 @@ def command_adopt(
     )
 
 
-def command_status(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_status(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     journal = directory.read_epoch(_epoch(args.epoch_id))
     hub_open_plan_path = _verified_hub_plan_path(directory, journal, phase="open")
     hub_prove_plan_path = _verified_hub_plan_path(directory, journal, phase="prove")
@@ -4138,36 +3698,26 @@ def command_status(
     }, False
 
 
-def command_discover(
-    directory: JournalDirectory, _args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_discover(directory: JournalDirectory, _args: argparse.Namespace) -> tuple[Any, bool]:
     journals = directory.all()
     for journal in journals:
         _verified_hub_plan_path(directory, journal, phase="open")
         _verified_hub_plan_path(directory, journal, phase="prove")
         _verified_release_plan_path(directory, journal)
-    active = [
-        journal for journal in journals if journal["state"] not in TERMINAL_STATES
-    ]
+    active = [journal for journal in journals if journal["state"] not in TERMINAL_STATES]
     if len(active) > 1:
-        raise JournalError(
-            "multiple_active_epochs", "more than one incomplete cohort epoch exists"
-        )
+        raise JournalError("multiple_active_epochs", "more than one incomplete cohort epoch exists")
     return {
         "active": _summary(active[0]) if active else None,
         "journals": [_summary(journal) for journal in journals],
     }, False
 
 
-def command_recovery(
-    directory: JournalDirectory, args: argparse.Namespace
-) -> tuple[Any, bool]:
+def command_recovery(directory: JournalDirectory, args: argparse.Namespace) -> tuple[Any, bool]:
     if args.epoch_id:
         journal = directory.read_epoch(_epoch(args.epoch_id))
     else:
-        active = [
-            item for item in directory.all() if item["state"] not in TERMINAL_STATES
-        ]
+        active = [item for item in directory.all() if item["state"] not in TERMINAL_STATES]
         if not active:
             return {
                 "recovery_required": False,
@@ -4178,9 +3728,7 @@ def command_recovery(
                 "finalization_candidates": [],
             }, False
         if len(active) > 1:
-            raise JournalError(
-                "multiple_active_epochs", "more than one incomplete epoch exists"
-            )
+            raise JournalError("multiple_active_epochs", "more than one incomplete epoch exists")
         journal = active[0]
     hub_open_plan_path = _verified_hub_plan_path(directory, journal, phase="open")
     hub_prove_plan_path = _verified_hub_plan_path(directory, journal, phase="prove")
@@ -4199,32 +3747,20 @@ def command_recovery(
         # instead of demanding an endpoint identity that was never journalled.
         direction = "abort_unmutated"
     else:
-        direction = (
-            "retain_forward"
-            if args.policy == "retain-forward"
-            else "rollback"
-        )
+        direction = "retain_forward" if args.policy == "retain-forward" else "rollback"
     hub_action = {
         "unopened": "none",
         "open_intent": "resolve_open",
-        "open": (
-            "abort_epoch"
-            if direction in {"rollback", "retain_forward"}
-            else "none"
-        ),
+        "open": ("abort_epoch" if direction in {"rollback", "retain_forward"} else "none"),
         "prove_intent": "resolve_prove",
         "proved": (
-            "abort_epoch"
-            if direction in {"rollback", "retain_forward"}
-            else "resolve_commit"
+            "abort_epoch" if direction in {"rollback", "retain_forward"} else "resolve_commit"
         ),
         "aborted": "none",
         "committed": "none",
     }[journal["hub_state"]]
     candidates = (
-        []
-        if journal["state"] in TERMINAL_STATES
-        else _recovery_candidates(journal, args.policy)
+        [] if journal["state"] in TERMINAL_STATES else _recovery_candidates(journal, args.policy)
     )
     return {
         "recovery_required": journal["state"] not in TERMINAL_STATES,
@@ -4476,9 +4012,7 @@ def build_parser() -> argparse.ArgumentParser:
     reap = commands.add_parser("reap")
     reap.add_argument(
         "--max-age-days",
-        default=os.environ.get(
-            "MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS", DEFAULT_RETENTION_DAYS
-        ),
+        default=os.environ.get("MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS", DEFAULT_RETENTION_DAYS),
     )
     reap.add_argument(
         "--keep",

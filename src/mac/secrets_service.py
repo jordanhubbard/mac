@@ -107,16 +107,14 @@ class SecretsService:
         agent = self._get_agent(accessor_agent_id)
         machine = self._get_machine(agent.machine_id)
         granted = bool(
-            secret.enabled
-            and machine.trusted
-            and self._scope_allows(secret.scopes, agent)
+            secret.enabled and machine.trusted and self._scope_allows(secret.scopes, agent)
         )
         expires_at: Optional[str] = None
         if granted:
             ttl = max(1, int(ttl_seconds))
-            expires_at = (
-                parse_time(utcnow()) + timedelta(seconds=ttl)
-            ).isoformat(timespec="microseconds")
+            expires_at = (parse_time(utcnow()) + timedelta(seconds=ttl)).isoformat(
+                timespec="microseconds"
+            )
         audit = self.record_access(
             secret.id,
             accessor_agent_id,
@@ -164,7 +162,12 @@ class SecretsService:
         secret = self.get_secret(secret_id_or_name)
         with self.store.transaction() as conn:
             conn.execute("DELETE FROM secrets WHERE id = ?", (secret.id,))
-        return {"id": secret.id, "name": secret.name, "deleted": True, "deleted_by": actor or "operator"}
+        return {
+            "id": secret.id,
+            "name": secret.name,
+            "deleted": True,
+            "deleted_by": actor or "operator",
+        }
 
     def list_audits(self, secret_id: Optional[str] = None) -> List[SecretAccess]:
         if secret_id:
@@ -173,9 +176,7 @@ class SecretsService:
                 (secret_id,),
             )
         else:
-            rows = self.store.query_all(
-                "SELECT * FROM secret_access_audit ORDER BY created_at, id"
-            )
+            rows = self.store.query_all("SELECT * FROM secret_access_audit ORDER BY created_at, id")
         return [self._access_from_row(row) for row in rows]
 
     def reveal_secret(self, secret_id: str, audit_id: str, accessor_agent_id: str) -> str:

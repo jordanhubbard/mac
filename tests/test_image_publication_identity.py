@@ -38,9 +38,7 @@ def _copy_sources(path: Path) -> set[str]:
 
 def _from_lines(path: Path) -> list[str]:
     return [
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.startswith("FROM ")
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("FROM ")
     ]
 
 
@@ -152,9 +150,7 @@ def test_frozen_contract_covers_every_copy_arg_and_base_digest_boundary() -> Non
     ):
         lines = _from_lines(dockerfile)
         assert lines
-        assert all(
-            re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in lines
-        )
+        assert all(re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in lines)
 
 
 def test_plan_digest_changes_only_for_frozen_material(tmp_path: Path) -> None:
@@ -174,9 +170,7 @@ def test_plan_digest_changes_only_for_frozen_material(tmp_path: Path) -> None:
     copied.write_text("value = 2\n", encoding="utf-8")
     second = module.build_plan(root, "mac", revision, [])
     assert second["frozen_inputs_sha256"] != first["frozen_inputs_sha256"]
-    assert second["content_tag"].endswith(
-        second["frozen_inputs_sha256"].removeprefix("sha256:")
-    )
+    assert second["content_tag"].endswith(second["frozen_inputs_sha256"].removeprefix("sha256:"))
 
 
 def test_plan_uses_the_validators_canonical_relative_path_order(tmp_path: Path) -> None:
@@ -212,16 +206,12 @@ def test_runtime_plan_requires_the_complete_reviewed_arg_set(tmp_path: Path) -> 
 
 
 def test_runtime_image_carries_checksum_locked_buildx_for_both_architectures() -> None:
-    containerfile = (
-        ROOT / "deploy/openshell/mac-hermes.Containerfile"
-    ).read_text(encoding="utf-8")
-    preparer = (
-        ROOT / "deploy/openshell/prepare-runtime-image-assets.sh"
-    ).read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    identity = (ROOT / "scripts/image-publication-identity.py").read_text(
+    containerfile = (ROOT / "deploy/openshell/mac-hermes.Containerfile").read_text(encoding="utf-8")
+    preparer = (ROOT / "deploy/openshell/prepare-runtime-image-assets.sh").read_text(
         encoding="utf-8"
     )
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    identity = (ROOT / "scripts/image-publication-identity.py").read_text(encoding="utf-8")
 
     assert 'ARG BUILDX_VERSION="0.30.1"' in containerfile
     assert "buildx-${asset_arch}" in containerfile
@@ -298,9 +288,7 @@ def test_publication_receipt_binds_runtime_input_identity_independent_of_commit(
     assert receipt["requested_revision"] == requested
     assert receipt["frozen_inputs_sha256"] == plan["frozen_inputs_sha256"]
     assert receipt["content_tag"] == plan["content_tag"]
-    assert receipt["content_tag"].endswith(
-        receipt["frozen_inputs_sha256"].removeprefix("sha256:")
-    )
+    assert receipt["content_tag"].endswith(receipt["frozen_inputs_sha256"].removeprefix("sha256:"))
     assert requested not in receipt["content_tag"]
     # A reuse whose original build revision equals the current controller commit
     # is still valid: decoupling permits equality, it does not require difference.
@@ -403,9 +391,7 @@ def test_ci_reuses_only_verified_content_identity_and_still_emits_receipts() -> 
             "openshell-runtime",
         ),
     ):
-        job = workflow.split(f"\n  {job_name}:\n", 1)[1].split(f"\n  {next_job}:\n", 1)[
-            0
-        ]
+        job = workflow.split(f"\n  {job_name}:\n", 1)[1].split(f"\n  {next_job}:\n", 1)[0]
         assert f"--kind {kind}" in job
         assert "scripts/image-publication-identity.py probe" in job
         assert "scripts/image-publication-identity.py qualify-reuse" in job

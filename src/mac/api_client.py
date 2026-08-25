@@ -109,7 +109,6 @@ class MacApiClient:
             # Wrapping it here makes a transient hub failure uniformly recoverable
             # (e.g. _assignment_is_current fails safe, renewal retries next tick).
             raise MacApiError(
-                "mac API %s %s failed (transient transport error): %s"
-                % (method, path, exc)
+                "mac API %s %s failed (transient transport error): %s" % (method, path, exc)
             ) from exc
         return json.loads(raw) if raw else None

@@ -94,8 +94,7 @@ def _check_ignore(relpath: str) -> bool:
 @pytest.mark.parametrize("name", IGNORED_ROOT_ARTIFACTS)
 def test_root_anchored_artifact_is_ignored(name: str) -> None:
     assert _check_ignore(name), (
-        f"repo-root artifact {name!r} should be ignored by the checked-in "
-        ".gitignore but is not"
+        f"repo-root artifact {name!r} should be ignored by the checked-in .gitignore but is not"
     )
 
 
@@ -114,8 +113,7 @@ def test_root_anchored_artifact_does_not_mask_nested_files(name: str) -> None:
     for parent in ("src", "tests"):
         relpath = f"{parent}/{name}"
         assert not _check_ignore(relpath), (
-            f"root-anchored rule for {name!r} is masking nested product path "
-            f"{relpath!r}"
+            f"root-anchored rule for {name!r} is masking nested product path {relpath!r}"
         )
 
 

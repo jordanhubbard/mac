@@ -98,8 +98,7 @@ class ServiceNames:
         return (
             primary
             + tuple(
-                (f"auxiliary_{index}", identity)
-                for index, identity in enumerate(self.auxiliary)
+                (f"auxiliary_{index}", identity) for index, identity in enumerate(self.auxiliary)
             )
             + tuple(
                 (f"absent_auxiliary_{index}", identity)
@@ -108,10 +107,7 @@ class ServiceNames:
         )
 
     def absent_logicals(self) -> Tuple[str, ...]:
-        return tuple(
-            f"absent_auxiliary_{index}"
-            for index in range(len(self.absent_auxiliary))
-        )
+        return tuple(f"absent_auxiliary_{index}" for index in range(len(self.absent_auxiliary)))
 
 
 @dataclass(frozen=True)
@@ -126,9 +122,7 @@ class SystemdState:
     @property
     def inactive(self) -> bool:
         return (not self.present) or (
-            self.active == "inactive"
-            and self.sub in {"dead", "exited"}
-            and self.pid == 0
+            self.active == "inactive" and self.sub in {"dead", "exited"} and self.pid == 0
         )
 
     @property
@@ -207,9 +201,7 @@ class CommandRunner:
         clean: Dict[str, str] = {}
         for name in SAFE_ENV_NAMES:
             value = os.environ.get(name)
-            if value and not any(
-                name.startswith(prefix) for prefix in UNSAFE_ENV_PREFIXES
-            ):
+            if value and not any(name.startswith(prefix) for prefix in UNSAFE_ENV_PREFIXES):
                 clean[name] = value
         # Never resolve a privileged manager through a caller-controlled PATH.
         # Non-standard installations remain supported via an explicit absolute
@@ -227,9 +219,7 @@ class CommandRunner:
         except ProcessLookupError:
             return
         except PermissionError as exc:
-            raise ProtocolError(
-                "could not terminate timed out manager process group"
-            ) from exc
+            raise ProtocolError("could not terminate timed out manager process group") from exc
         # Wait on the group, not merely the leader: a manager can fork a child
         # and then exit in response to TERM while leaving that child alive.
         grace_ends = time.monotonic() + 0.5
@@ -239,18 +229,14 @@ class CommandRunner:
             except ProcessLookupError:
                 break
             except PermissionError as exc:
-                raise ProtocolError(
-                    "could not inspect timed out manager process group"
-                ) from exc
+                raise ProtocolError("could not inspect timed out manager process group") from exc
             time.sleep(0.02)
         try:
             os.killpg(pgid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         except PermissionError as exc:
-            raise ProtocolError(
-                "could not kill timed out manager process group"
-            ) from exc
+            raise ProtocolError("could not kill timed out manager process group") from exc
         try:
             proc.wait(timeout=0.5)
         except subprocess.TimeoutExpired:
@@ -284,16 +270,12 @@ class CommandRunner:
                     start_new_session=True,
                 )
             except OSError as exc:
-                raise ProtocolError(
-                    "could not execute manager command for " + context
-                ) from exc
+                raise ProtocolError("could not execute manager command for " + context) from exc
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
                 self._terminate_group(proc)
-                raise ProtocolError(
-                    "manager command timed out while " + context
-                ) from exc
+                raise ProtocolError("manager command timed out while " + context) from exc
             stdout = self._read_capped(stdout_file)
             stderr = self._read_capped(stderr_file)
         return CommandResult(proc.returncode, stdout, stderr)
@@ -386,9 +368,7 @@ class BaseSupervisor:
         for logical, identity in self.names.items():
             if logical in absent_logicals:
                 continue
-            (active if logical in active_logicals else inactive).append(
-                (logical, identity)
-            )
+            (active if logical in active_logicals else inactive).append((logical, identity))
         return active, inactive
 
     def _wait(self, probe: object, predicate: object, context: str) -> object:
@@ -458,9 +438,7 @@ class SystemdSupervisor(BaseSupervisor):
             pid = int(values["MainPID"])
             restarts = int(values["NRestarts"])
         except (TypeError, ValueError) as exc:
-            raise ProtocolError(
-                "systemd returned a malformed numeric service property"
-            ) from exc
+            raise ProtocolError("systemd returned a malformed numeric service property") from exc
         if pid < 0 or restarts < 0:
             raise ProtocolError("systemd returned an invalid numeric service property")
         load = values["LoadState"]
@@ -479,9 +457,7 @@ class SystemdSupervisor(BaseSupervisor):
             raise ProtocolError("systemd service inspection failed")
         if load not in {"loaded", "masked", "error"}:
             raise ProtocolError("systemd returned an unrecognized load state")
-        return SystemdState(
-            True, load, values["ActiveState"], values["SubState"], pid, restarts
-        )
+        return SystemdState(True, load, values["ActiveState"], values["SubState"], pid, restarts)
 
     def _stop_and_prove(self, identity: str) -> SystemdState:
         initial = self.inspect(identity)
@@ -500,9 +476,7 @@ class SystemdSupervisor(BaseSupervisor):
             state = self._stop_and_prove(identity)
             if logical in absent_logicals:
                 if state.present:
-                    raise ProtocolError(
-                        "prior-absent auxiliary service is still present"
-                    )
+                    raise ProtocolError("prior-absent auxiliary service is still present")
                 observations[logical] = {
                     "identity": identity,
                     "expected": "absent",
@@ -592,9 +566,7 @@ class SystemdSupervisor(BaseSupervisor):
                 raise ProtocolError("could not disable inactive restored service")
         for _logical, identity in active:
             self._require_ok(["enable", identity], "enabling restored systemd service")
-            self._require_ok(
-                ["restart", identity], "restarting restored systemd service"
-            )
+            self._require_ok(["restart", identity], "restarting restored systemd service")
 
         samples: List[Dict[str, SystemdState]] = []
         for index in range(self.stable_observations):
@@ -611,22 +583,16 @@ class SystemdSupervisor(BaseSupervisor):
             for logical, identity in inactive:
                 state = self.inspect(identity)
                 if not state.inactive:
-                    raise ProtocolError(
-                        "successor gateway became active during restore"
-                    )
+                    raise ProtocolError("successor gateway became active during restore")
                 sample[logical] = state
             for logical, identity in absent_items:
                 state = self.inspect(identity)
                 if state.present:
-                    raise ProtocolError(
-                        "prior-absent auxiliary service reappeared during restore"
-                    )
+                    raise ProtocolError("prior-absent auxiliary service reappeared during restore")
                 sample[logical] = state
             samples.append(sample)
             if index + 1 < self.stable_observations:
-                self.deadline.pause(
-                    self.poll_seconds, "sampling restored systemd topology"
-                )
+                self.deadline.pause(self.poll_seconds, "sampling restored systemd topology")
         first = samples[0]
         for sample in samples[1:]:
             for logical, _identity in active:
@@ -690,11 +656,7 @@ class SupervisordSupervisor(BaseSupervisor):
         if result.returncode != 0 or len(lines) != 1:
             raise ProtocolError("supervisord returned ambiguous program state")
         fields = lines[0].split(None, 2)
-        if (
-            len(fields) < 2
-            or fields[0] != identity
-            or fields[1] not in self.KNOWN_STATES
-        ):
+        if len(fields) < 2 or fields[0] != identity or fields[1] not in self.KNOWN_STATES:
             raise ProtocolError("supervisord returned malformed program state")
         state = fields[1]
         pid = 0
@@ -750,9 +712,7 @@ class SupervisordSupervisor(BaseSupervisor):
                     lambda current: current.inactive,
                     "waiting to restart supervisord program",
                 )
-            self._require_ok(
-                ["start", identity], "starting restored supervisord program"
-            )
+            self._require_ok(["start", identity], "starting restored supervisord program")
 
         samples: List[Dict[str, SupervisordState]] = []
         for index in range(self.stable_observations):
@@ -767,15 +727,11 @@ class SupervisordSupervisor(BaseSupervisor):
             for logical, identity in inactive:
                 state = self.inspect(identity)
                 if not state.inactive:
-                    raise ProtocolError(
-                        "successor gateway became active during restore"
-                    )
+                    raise ProtocolError("successor gateway became active during restore")
                 sample[logical] = state
             samples.append(sample)
             if index + 1 < self.stable_observations:
-                self.deadline.pause(
-                    self.poll_seconds, "sampling restored supervisord topology"
-                )
+                self.deadline.pause(self.poll_seconds, "sampling restored supervisord topology")
         first = samples[0]
         for sample in samples[1:]:
             for logical, _identity in active:
@@ -865,16 +821,14 @@ class LaunchdSupervisor(BaseSupervisor):
         target = domain + "/" + identity
         result = self._run(domain, ["print", target], "inspecting launchd job")
         if result.returncode == 113:
-            lines = [
-                line.strip() for line in result.combined.splitlines() if line.strip()
-            ]
+            lines = [line.strip() for line in result.combined.splitlines() if line.strip()]
             legacy_absent = len(lines) == 1 and "Could not find service" in lines[0]
             current_macos_absent = (
                 len(lines) == 2
                 and lines[0] == "Bad request."
                 and re.fullmatch(
                     r'Could not find service "[^"\r\n]+" in domain for '
-                    r'(?:system|user gui: [0-9]+)',
+                    r"(?:system|user gui: [0-9]+)",
                     lines[1],
                 )
                 is not None
@@ -903,9 +857,7 @@ class LaunchdSupervisor(BaseSupervisor):
     def _stop_and_prove(self, domain: str, identity: str) -> LaunchdState:
         initial = self.inspect(domain, identity)
         if initial.present:
-            self._run(
-                domain, ["bootout", domain + "/" + identity], "stopping launchd job"
-            )
+            self._run(domain, ["bootout", domain + "/" + identity], "stopping launchd job")
         return self._wait(
             lambda: self.inspect(domain, identity),
             lambda state: not state.present,
@@ -991,15 +943,11 @@ class LaunchdSupervisor(BaseSupervisor):
                 self._stop_and_prove(domain, identity)
 
         if self.control_domain is not None:
-            control_key = (
-                "control_system" if self.control_domain == "system" else "control_gui"
-            )
+            control_key = "control_system" if self.control_domain == "system" else "control_gui"
             self._start(self.control_domain, self.names.control_plane, control_key)
         if self.system_supervisor_active:
             if not self.system_supervisor:
-                raise ProtocolError(
-                    "active launchd system supervisor lacks an identity"
-                )
+                raise ProtocolError("active launchd system supervisor lacks an identity")
             self._start("system", self.system_supervisor, "system_supervisor")
         if self.active_gateway != "none":
             gateway_identity = {
@@ -1017,9 +965,7 @@ class LaunchdSupervisor(BaseSupervisor):
             for target, active in expected.items():
                 domain, identity = target
                 state = self._wait(
-                    lambda domain=domain, identity=identity: self.inspect(
-                        domain, identity
-                    ),
+                    lambda domain=domain, identity=identity: self.inspect(domain, identity),
                     (
                         (lambda current: current.healthy)
                         if active
@@ -1030,9 +976,7 @@ class LaunchdSupervisor(BaseSupervisor):
                 sample[target] = state  # type: ignore[assignment]
             samples.append(sample)
             if index + 1 < self.stable_observations:
-                self.deadline.pause(
-                    self.poll_seconds, "sampling restored launchd topology"
-                )
+                self.deadline.pause(self.poll_seconds, "sampling restored launchd topology")
         first = samples[0]
         for sample in samples[1:]:
             for target, active in expected.items():
@@ -1042,11 +986,7 @@ class LaunchdSupervisor(BaseSupervisor):
         observations: Dict[str, object] = {}
         for (domain, identity), active in expected.items():
             logical = next(
-                (
-                    name
-                    for name, candidate in self.names.items()
-                    if candidate == identity
-                ),
+                (name for name, candidate in self.names.items() if candidate == identity),
                 "system_supervisor",
             )
             key = logical + "@" + ("gui" if domain.startswith("gui/") else domain)
@@ -1084,14 +1024,10 @@ def wait_http_healthy(
     successes = 0
     while successes < stable_observations:
         remaining = deadline.require("proving control-plane health")
-        connection = http.client.HTTPConnection(
-            "127.0.0.1", port, timeout=min(2.0, remaining)
-        )
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=min(2.0, remaining))
         healthy = False
         try:
-            connection.request(
-                "GET", path, headers={"Host": "127.0.0.1", "Connection": "close"}
-            )
+            connection.request("GET", path, headers={"Host": "127.0.0.1", "Connection": "close"})
             response = connection.getresponse()
             healthy = 200 <= response.status < 300
             response.read(1024)
@@ -1158,50 +1094,31 @@ def build_supervisor(
         raise ProtocolError("launchd uid must be non-negative")
     system_supervisor = args.launchd_system_supervisor
     if system_supervisor:
-        system_supervisor = validate_identity(
-            system_supervisor, "launchd system supervisor"
-        )
+        system_supervisor = validate_identity(system_supervisor, "launchd system supervisor")
     control_domain: Optional[str] = None
     if args.control_plane_mode != "inactive":
-        control_domain = (
-            "system" if args.control_plane_mode == "system" else "gui/" + str(uid)
-        )
-        if (
-            args.launchd_system_supervisor_was_active
-            and args.control_plane_mode != "system"
-        ):
-            raise ProtocolError(
-                "launchd system supervisor requires system control-plane topology"
-            )
+        control_domain = "system" if args.control_plane_mode == "system" else "gui/" + str(uid)
+        if args.launchd_system_supervisor_was_active and args.control_plane_mode != "system":
+            raise ProtocolError("launchd system supervisor requires system control-plane topology")
     elif args.launchd_system_supervisor_was_active:
         raise ProtocolError(
             "inactive launchd control plane cannot have an active system supervisor"
         )
     plists = {
         "control_system": (
-            Path(args.launchd_control_system_plist)
-            if args.launchd_control_system_plist
-            else None
+            Path(args.launchd_control_system_plist) if args.launchd_control_system_plist else None
         ),
         "control_gui": (
-            Path(args.launchd_control_gui_plist)
-            if args.launchd_control_gui_plist
-            else None
+            Path(args.launchd_control_gui_plist) if args.launchd_control_gui_plist else None
         ),
         "system_supervisor": (
             Path(args.launchd_system_supervisor_plist)
             if args.launchd_system_supervisor_plist
             else None
         ),
-        "hermes": Path(args.launchd_hermes_plist)
-        if args.launchd_hermes_plist
-        else None,
-        "openclaw": (
-            Path(args.launchd_openclaw_plist) if args.launchd_openclaw_plist else None
-        ),
-        "nemoclaw": (
-            Path(args.launchd_nemoclaw_plist) if args.launchd_nemoclaw_plist else None
-        ),
+        "hermes": Path(args.launchd_hermes_plist) if args.launchd_hermes_plist else None,
+        "openclaw": (Path(args.launchd_openclaw_plist) if args.launchd_openclaw_plist else None),
+        "nemoclaw": (Path(args.launchd_nemoclaw_plist) if args.launchd_nemoclaw_plist else None),
         "agent": Path(args.launchd_agent_plist) if args.launchd_agent_plist else None,
     }
     return LaunchdSupervisor(
@@ -1271,22 +1188,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--compensation-deadline-seconds",
         type=float,
         help=(
-            "fresh bounded budget for re-quiescing a failed restore; "
-            "defaults to --deadline-seconds"
+            "fresh bounded budget for re-quiescing a failed restore; defaults to --deadline-seconds"
         ),
     )
     parser.add_argument("--command-timeout-seconds", type=float, default=8.0)
     parser.add_argument("--poll-seconds", type=float, default=0.5)
     parser.add_argument("--stable-observations", type=int, default=2)
-    parser.add_argument(
-        "--sudo-mode", choices=("auto", "always", "never"), default="auto"
-    )
+    parser.add_argument("--sudo-mode", choices=("auto", "always", "never"), default="auto")
     parser.add_argument("--sudo-bin", default="sudo")
     parser.add_argument("--systemctl", default="systemctl")
     parser.add_argument("--supervisorctl", default="supervisorctl")
-    parser.add_argument(
-        "--supervisord-scope", choices=("user", "system"), default="user"
-    )
+    parser.add_argument("--supervisord-scope", choices=("user", "system"), default="user")
     parser.add_argument("--launchctl", default="launchctl")
     parser.add_argument("--launchd-uid", type=int)
     parser.add_argument("--launchd-system-supervisor")
@@ -1308,10 +1220,7 @@ def validate_args(args: argparse.Namespace) -> ServiceNames:
         raise ProtocolError("health path must be a query-free absolute HTTP path")
     if args.poll_seconds <= 0:
         raise ProtocolError("poll interval must be positive")
-    if (
-        args.compensation_deadline_seconds is not None
-        and args.compensation_deadline_seconds <= 0
-    ):
+    if args.compensation_deadline_seconds is not None and args.compensation_deadline_seconds <= 0:
         raise ProtocolError("compensation deadline must be positive")
     if args.stable_observations < 2:
         raise ProtocolError("at least two stable observations are required")
@@ -1326,9 +1235,7 @@ def validate_args(args: argparse.Namespace) -> ServiceNames:
                 "systemd and supervisord require active or inactive control-plane mode"
             )
     elif args.control_plane_mode not in {"system", "gui", "inactive"}:
-        raise ProtocolError(
-            "launchd requires system, gui, or inactive control-plane mode"
-        )
+        raise ProtocolError("launchd requires system, gui, or inactive control-plane mode")
     receipt = Path(args.receipt)
     if not receipt.is_absolute():
         raise ProtocolError("receipt path must be absolute")
@@ -1336,15 +1243,12 @@ def validate_args(args: argparse.Namespace) -> ServiceNames:
         receipt.unlink()
     except FileNotFoundError:
         pass
-    if (
-        args.auxiliary_service or args.absent_auxiliary_service
-    ) and args.supervisor != "systemd":
+    if (args.auxiliary_service or args.absent_auxiliary_service) and args.supervisor != "systemd":
         raise ProtocolError("auxiliary rollback services are systemd-only")
     if len(args.auxiliary_service) + len(args.absent_auxiliary_service) > 16:
         raise ProtocolError("too many auxiliary rollback services")
     auxiliary = tuple(
-        validate_identity(value, "auxiliary service")
-        for value in args.auxiliary_service
+        validate_identity(value, "auxiliary service") for value in args.auxiliary_service
     )
     absent_auxiliary = tuple(
         validate_identity(value, "prior-absent auxiliary service")
@@ -1377,9 +1281,7 @@ def requiesce_after_restore_failure(
     action-sized deadline while retaining the same scrubbed manager contract.
     """
 
-    deadline = Deadline(
-        args.compensation_deadline_seconds or args.deadline_seconds
-    )
+    deadline = Deadline(args.compensation_deadline_seconds or args.deadline_seconds)
     runner = CommandRunner(deadline, args.command_timeout_seconds)
     supervisor = build_supervisor(args, names, runner, deadline)
     supervisor.quiesce()
@@ -1402,9 +1304,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             try:
                 services = supervisor.restore()
                 if args.control_plane_mode == "inactive":
-                    wait_port_closed(
-                        args.control_plane_port, deadline, args.poll_seconds
-                    )
+                    wait_port_closed(args.control_plane_port, deadline, args.poll_seconds)
                     health = "closed"
                 else:
                     wait_http_healthy(
@@ -1458,9 +1358,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         }
         receipt = Path(args.receipt)
         atomic_write_receipt(receipt, payload)
-        sys.stdout.write(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
-        )
+        sys.stdout.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
         return 0
     except ProtocolError as exc:
         # Failure text is intentionally classification-only; never echo manager

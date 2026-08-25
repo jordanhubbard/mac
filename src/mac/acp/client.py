@@ -77,9 +77,7 @@ class ACPClient:
 
         # Wire the agent-initiated channels into the peer.
         peer.on_notification(Method.SESSION_UPDATE, self._dispatch_update)
-        peer.on_request(
-            Method.SESSION_REQUEST_PERMISSION, self._dispatch_request_permission
-        )
+        peer.on_request(Method.SESSION_REQUEST_PERMISSION, self._dispatch_request_permission)
 
     # -- handler registration ------------------------------------------------
 
@@ -99,9 +97,7 @@ class ACPClient:
         if self._update_handler is not None:
             self._update_handler(params or {})
 
-    def _dispatch_request_permission(
-        self, params: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _dispatch_request_permission(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         parsed = RequestPermissionParams.from_dict(params or {})
         if self._permission_handler is None:
             # No policy registered -> decline by cancelling, the safe default.
@@ -111,9 +107,7 @@ class ACPClient:
 
     # -- baseline client methods --------------------------------------------
 
-    def initialize(
-        self, *, timeout: Optional[float] = None
-    ) -> InitializeResult:
+    def initialize(self, *, timeout: Optional[float] = None) -> InitializeResult:
         """Negotiate the protocol version and capabilities with the agent."""
 
         params = InitializeParams(
@@ -125,9 +119,7 @@ class ACPClient:
         self.agent_capabilities = result
         return result
 
-    def authenticate(
-        self, method_id: str, *, timeout: Optional[float] = None
-    ) -> None:
+    def authenticate(self, method_id: str, *, timeout: Optional[float] = None) -> None:
         """Authenticate using one of the agent-advertised auth methods."""
 
         params = AuthenticateParams(method_id=method_id)
@@ -161,9 +153,7 @@ class ACPClient:
 
         blocks = self._normalize_prompt(prompt)
         params = PromptParams(session_id=session_id, prompt=blocks)
-        raw = self._peer.request(Method.SESSION_PROMPT, params.to_dict()).result(
-            timeout
-        )
+        raw = self._peer.request(Method.SESSION_PROMPT, params.to_dict()).result(timeout)
         return PromptResult.from_dict(raw or {})
 
     def cancel(self, session_id: str) -> None:

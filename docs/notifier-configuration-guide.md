@@ -127,7 +127,7 @@ mac platform-binding create \
 cp.notifiers.configure_channel(
     "ops-telegram",
     "telegram",
-    event_types=["task.*"],      # wildcard: all task events
+    event_types=["task.*"],  # wildcard: all task events
     target={"platform_binding_id": "<binding-id>"},
 )
 ```
@@ -368,7 +368,7 @@ MAC_LOG_LEVEL=debug mac admin notifier deliver --once
 ```python
 from mac.services import ControlPlane
 
-cp = ControlPlane.in_memory()   # or load from config in production
+cp = ControlPlane.in_memory()  # or load from config in production
 
 # Create a Slack notifier channel
 ch = cp.notifiers.configure_channel(

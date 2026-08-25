@@ -7,6 +7,7 @@ Contains:
 These are imported back into worker.py and re-exported so callers that import
 from mac.worker see no change.
 """
+
 from __future__ import annotations
 
 import json
@@ -51,47 +52,25 @@ def _assert_approved_read_only_report_host_executor(
     """Revalidate every host-side executable/import artifact before spawn."""
 
     if len(argv) != 1 or Path(argv[0]).name != "mac-task-executor":
-        raise RuntimeError(
-            "read-only repository reports require the approved direct executor"
-        )
+        raise RuntimeError("read-only repository reports require the approved direct executor")
     expected = {
-        "executor_path": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH", ""
-        ),
-        "executor_sha256": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256", ""
-        ),
-        "python_path": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH", ""
-        ),
-        "python_sha256": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256", ""
-        ),
-        "script_path": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH", ""
-        ),
-        "script_sha256": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256", ""
-        ),
-        "source_root": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT", ""
-        ),
-        "source_sha256": environment.get(
-            "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256", ""
-        ),
+        "executor_path": environment.get("MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH", ""),
+        "executor_sha256": environment.get("MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256", ""),
+        "python_path": environment.get("MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH", ""),
+        "python_sha256": environment.get("MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256", ""),
+        "script_path": environment.get("MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH", ""),
+        "script_sha256": environment.get("MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256", ""),
+        "source_root": environment.get("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT", ""),
+        "source_sha256": environment.get("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256", ""),
     }
     if not all(expected.values()):
-        raise RuntimeError(
-            "read-only repository report lacks approved host artifact identities"
-        )
+        raise RuntimeError("read-only repository report lacks approved host artifact identities")
     executor_path, executor_sha256 = nofollow_regular_file_identity(argv[0])
     python_candidate = environment.get("MAC_TASK_EXECUTOR_PYTHON", "")
     script_candidate = environment.get("MAC_TASK_EXECUTOR_SCRIPT", "")
     source_candidate = environment.get("MAC_SELF_UPDATE_REPO", "")
     if not python_candidate or not script_candidate or not source_candidate:
-        raise RuntimeError(
-            "read-only repository report host artifact paths are not configured"
-        )
+        raise RuntimeError("read-only repository report host artifact paths are not configured")
     python_path, python_sha256 = nofollow_regular_file_identity(
         Path(python_candidate).expanduser().resolve(strict=True)
     )
@@ -108,14 +87,10 @@ def _assert_approved_read_only_report_host_executor(
         "source_sha256": source_sha256,
     }
     if observed != expected:
-        raise RuntimeError(
-            "read-only repository report host artifacts differ from hub approval"
-        )
+        raise RuntimeError("read-only repository report host artifacts differ from hub approval")
 
 
-def _terminate_process_tree(
-    process: subprocess.Popen[Any], *, grace_seconds: float = 1.0
-) -> None:
+def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: float = 1.0) -> None:
     """Terminate *process* and every descendant, including new sessions.
 
     Executor children are allowed to create their own process groups (the test
@@ -141,9 +116,7 @@ def _terminate_process_tree(
         # Do not let psutil reap the direct child: ``subprocess.Popen`` must do
         # that itself or CPython can observe ChildProcessError and substitute a
         # false zero return code.  Waiting on descendants is safe.
-        _, alive = psutil.wait_procs(
-            descendants, timeout=max(0.0, float(grace_seconds))
-        )
+        _, alive = psutil.wait_procs(descendants, timeout=max(0.0, float(grace_seconds)))
         for item in alive:
             try:
                 item.kill()
@@ -176,9 +149,7 @@ def _cargo_path_dirs() -> List[str]:
     on disk are returned, and duplicates are dropped while preserving order.
     """
     cargo_home = os.environ.get("CARGO_HOME")
-    cargo_bin = (
-        Path(cargo_home) / "bin" if cargo_home else Path.home() / ".cargo" / "bin"
-    )
+    cargo_bin = Path(cargo_home) / "bin" if cargo_home else Path.home() / ".cargo" / "bin"
     candidates = [cargo_bin, Path("/usr/local/bin"), Path("/opt/homebrew/bin")]
     dirs: List[str] = []
     seen: set[str] = set()
@@ -306,9 +277,7 @@ class SubprocessExecutor:
             # fenced even when no repository context is attached.
             env["MAC_TASK_REPO_ACCESS_SCHEMA"] = REPORT_REPOSITORY_ACCESS_SCHEMA
             env["MAC_TASK_REPO_ACCESS_MODE"] = REPORT_REPOSITORY_READ_ONLY_MODE
-        if read_only_repository or _repository_context_is_read_only_report(
-            repository_context
-        ):
+        if read_only_repository or _repository_context_is_read_only_report(repository_context):
             # Repository authentication has no role in an inspection-only
             # report.  Withhold every supported Git credential source from the
             # executor before it enters OpenShell (or an approved direct test
@@ -429,7 +398,9 @@ class SubprocessExecutor:
                 "phase": (
                     "cancelled"
                     if cancelled
-                    else "completed" if completed.returncode == 0 else "failed"
+                    else "completed"
+                    if completed.returncode == 0
+                    else "failed"
                 ),
                 "completed_at": completed_at,
                 "duration_ms": (time.monotonic() - started_monotonic) * 1000.0,

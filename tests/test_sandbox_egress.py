@@ -148,9 +148,7 @@ def test_host_in_both_tiers_is_attributed_to_the_stronger_one():
 
 
 def test_malformed_hosts_are_refused_from_both_tiers():
-    decision = classify_egress_hosts(
-        derived=["**.evil.example"], declared=["also bad\nhost: x"]
-    )
+    decision = classify_egress_hosts(derived=["**.evil.example"], declared=["also bad\nhost: x"])
     assert decision.is_empty
     assert {item.reason for item in decision.rejected} == {REJECT_MALFORMED}
 
@@ -162,9 +160,7 @@ def test_no_proposals_yields_an_empty_decision():
 
 
 def test_grants_are_sorted_and_deduplicated():
-    decision = classify_egress_hosts(
-        derived=["pypi.org", "registry.npmjs.org", "pypi.org"]
-    )
+    decision = classify_egress_hosts(derived=["pypi.org", "registry.npmjs.org", "pypi.org"])
     assert decision.granted_hosts == ["pypi.org", "registry.npmjs.org"]
 
 
@@ -196,9 +192,7 @@ def test_default_allowlist_contains_only_wellformed_hosts():
 def test_decision_audit_shape_retains_rejections():
     """A repo whose legitimate dependency was denied and a repo probing for an
     exfiltration path are indistinguishable in a log that records only grants."""
-    payload = classify_egress_hosts(
-        derived=["registry.npmjs.org", "evil.example"]
-    ).to_dict()
+    payload = classify_egress_hosts(derived=["registry.npmjs.org", "evil.example"]).to_dict()
     assert payload["granted_count"] == 1
     assert payload["rejected_count"] == 1
     assert payload["rejected"][0]["host"] == "evil.example"
@@ -251,13 +245,16 @@ def test_expansion_cannot_relax_the_base_posture():
     """Expansion appends; it never rewrites. Landlock, run_as_user and the
     filesystem rules must survive byte for byte."""
     yaml = pytest.importorskip("yaml")
-    base = BASE_POLICY + """
+    base = (
+        BASE_POLICY
+        + """
 landlock:
   compatibility: hard_requirement
 
 process:
   run_as_user: sandbox
 """
+    )
     decision = classify_egress_hosts(derived=["pypi.org"])
     expanded = expand_policy_text(base, decision, binaries=BINARIES)
     assert expanded.startswith(base.rstrip("\n"))
@@ -267,7 +264,9 @@ process:
 
 
 def test_empty_decision_returns_base_policy_byte_for_byte():
-    assert expand_policy_text(BASE_POLICY, classify_egress_hosts(), binaries=BINARIES) is BASE_POLICY
+    assert (
+        expand_policy_text(BASE_POLICY, classify_egress_hosts(), binaries=BINARIES) is BASE_POLICY
+    )
 
 
 def test_expansion_refuses_a_policy_with_no_network_policies_key():
@@ -303,10 +302,7 @@ def test_expansion_of_the_real_operator_template_parses():
     from mac.openshell_policy import render_policy
 
     template = (
-        Path(__file__).resolve().parents[1]
-        / "deploy"
-        / "openshell"
-        / "mac-hermes-policy.yaml"
+        Path(__file__).resolve().parents[1] / "deploy" / "openshell" / "mac-hermes-policy.yaml"
     )
     base = render_policy(
         template.read_text(encoding="utf-8"),
@@ -315,9 +311,7 @@ def test_expansion_of_the_real_operator_template_parses():
         hub_port=8789,
     )
     decision = classify_egress_hosts(derived=["registry.npmjs.org"])
-    parsed = yaml.safe_load(
-        expand_policy_text(base, decision, binaries=BINARIES)
-    )
+    parsed = yaml.safe_load(expand_policy_text(base, decision, binaries=BINARIES))
     added = parsed["network_policies"]["repo_declared_egress"]
     assert [e["host"] for e in added["endpoints"]] == ["registry.npmjs.org"]
     # The template's own blocks survive.
@@ -343,9 +337,7 @@ def test_injection_attempt_never_reaches_the_rendered_policy():
     form, escaped or otherwise."""
     yaml = pytest.importorskip("yaml")
     hostile = "evil.example\n  attacker_block:\n    name: pwned"
-    decision = classify_egress_hosts(
-        derived=["registry.npmjs.org", hostile]
-    )
+    decision = classify_egress_hosts(derived=["registry.npmjs.org", hostile])
     expanded = expand_policy_text(BASE_POLICY, decision, binaries=BINARIES)
     assert "attacker_block" not in expanded
     assert "pwned" not in expanded

@@ -6,6 +6,7 @@ Provides:
 * Plan-outcome learning: record and recall plan decomposition patterns
 * classify_outcome: derive run outcome from evidence manifest
 """
+
 from __future__ import annotations
 
 import json
@@ -44,9 +45,14 @@ def build_telemetry_record(
     }
 
 
-def emit_telemetry(event: str, *, task_id: Optional[str] = None, level: str = "info", **detail: Any) -> bool:
+def emit_telemetry(
+    event: str, *, task_id: Optional[str] = None, level: str = "info", **detail: Any
+) -> bool:
     """Emit one executor lifecycle observation (best-effort)."""
-    return _hub_post("/observability/logs", build_telemetry_record(event, task_id=task_id, level=level, detail=detail))
+    return _hub_post(
+        "/observability/logs",
+        build_telemetry_record(event, task_id=task_id, level=level, detail=detail),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +62,23 @@ def emit_telemetry(event: str, *, task_id: Optional[str] = None, level: str = "i
 DEPLOYMENT_LEARNING_PREFIX = "deployment_learning"
 _LESSON_PROMPT_BUDGET = 1600
 _LESSON_STOPWORDS = {
-    "add", "build", "change", "create", "deploy", "deployment", "fix", "implement",
-    "improve", "make", "next", "task", "test", "the", "this", "update", "with",
+    "add",
+    "build",
+    "change",
+    "create",
+    "deploy",
+    "deployment",
+    "fix",
+    "implement",
+    "improve",
+    "make",
+    "next",
+    "task",
+    "test",
+    "the",
+    "this",
+    "update",
+    "with",
 }
 
 
@@ -133,9 +154,7 @@ def _format_learning_content(raw: str) -> str:
     return line[:300]
 
 
-def _structured_lesson_content(
-    raw: str, *, record_type: str, project: str
-) -> str:
+def _structured_lesson_content(raw: str, *, record_type: str, project: str) -> str:
     """Render only executor-produced, schema-valid operational memories.
 
     Semantic recall can return any project-scoped memory. Worker prompts must
@@ -247,9 +266,7 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
             return lessons[:limit]
         dream_records = _hub_get(
             "/memory?%s"
-            % urlencode(
-                {"record_type": "dream_memory:%s" % kind, "order": "desc", "limit": 20}
-            )
+            % urlencode({"record_type": "dream_memory:%s" % kind, "order": "desc", "limit": 20})
         )
         if not isinstance(dream_records, list):
             continue
@@ -282,15 +299,8 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
             if not isinstance(item, dict):
                 continue
             payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-            record_type = str(
-                payload.get("record_type") or item.get("record_type") or ""
-            ).strip()
-            raw = str(
-                item.get("content")
-                or item.get("text")
-                or item.get("summary")
-                or ""
-            ).strip()
+            record_type = str(payload.get("record_type") or item.get("record_type") or "").strip()
+            raw = str(item.get("content") or item.get("text") or item.get("summary") or "").strip()
             text = _structured_lesson_content(
                 raw,
                 record_type=record_type,
@@ -318,7 +328,8 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
         learnings = [
             r
             for r in records
-            if isinstance(r, dict) and str(r.get("record_type") or "").startswith(DEPLOYMENT_LEARNING_PREFIX)
+            if isinstance(r, dict)
+            and str(r.get("record_type") or "").startswith(DEPLOYMENT_LEARNING_PREFIX)
         ]
         learnings.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
         for record in learnings:
@@ -368,9 +379,7 @@ def recall_prior_attempt_lessons(task: Dict[str, Any], *, limit: int = 2) -> Lis
     project = _task_project(task)
     from urllib.parse import urlencode
 
-    records = _hub_get(
-        "/memory?%s" % urlencode({"subject_type": "project", "subject_id": project})
-    )
+    records = _hub_get("/memory?%s" % urlencode({"subject_type": "project", "subject_id": project}))
     if not isinstance(records, list):
         return []
     own: List[Dict[str, Any]] = []
@@ -528,11 +537,48 @@ def _plan_family_terms(task: Dict[str, Any]) -> List[str]:
     can be extracted (fallback: caller skips content_contains search).
     """
     stop = {
-        "a", "an", "the", "and", "or", "for", "of", "to", "in", "on",
-        "at", "by", "as", "is", "be", "do", "it", "its", "with",
-        "add", "fix", "build", "make", "run", "get", "set", "use",
-        "task", "tasks", "from", "into", "this", "that", "each",
-        "all", "new", "old", "can", "not", "has", "have", "are",
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "for",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "by",
+        "as",
+        "is",
+        "be",
+        "do",
+        "it",
+        "its",
+        "with",
+        "add",
+        "fix",
+        "build",
+        "make",
+        "run",
+        "get",
+        "set",
+        "use",
+        "task",
+        "tasks",
+        "from",
+        "into",
+        "this",
+        "that",
+        "each",
+        "all",
+        "new",
+        "old",
+        "can",
+        "not",
+        "has",
+        "have",
+        "are",
     }
     title = str(task.get("title") or "")
     desc = str(task.get("description") or "")[:300]
@@ -583,7 +629,7 @@ def recall_plan_lessons(task: Dict[str, Any], *, limit: int = 3) -> List[str]:
 
     lessons: List[str] = []
 
-    for term in (family_terms or [""]):
+    for term in family_terms or [""]:
         params: Dict[str, Any] = {
             "subject_type": "project",
             "subject_id": project,
@@ -633,9 +679,7 @@ Write 1-3 NEW lessons, ONE PER LINE, no bullets or numbering. Each lesson must b
 """
 
 
-def curate_lessons_from_outcome(
-    task: Dict[str, Any], outcome: Dict[str, Any]
-) -> List[str]:
+def curate_lessons_from_outcome(task: Dict[str, Any], outcome: Dict[str, Any]) -> List[str]:
     """LLM-curated lessons from a finished run (the Hermes background-review
     pattern, made outcome-grounded and fleet-shared).
 
@@ -650,8 +694,13 @@ def curate_lessons_from_outcome(
     failure returns [] and the run's outcome is unaffected."""
     if not env_bool("MAC_LESSON_CURATION_ENABLED"):
         return []
-    router_url = resolve_env_chain("MAC_ROUTER_URL", "MAC_ROUTER_INTERNAL_URL") or os.environ.get("OPENAI_BASE_URL", "").strip()
-    model = resolve_env_chain("MAC_LESSON_CURATION_MODEL", "MAC_TASK_MODEL", "MAC_HERMES_GATEWAY_MODEL")
+    router_url = (
+        resolve_env_chain("MAC_ROUTER_URL", "MAC_ROUTER_INTERNAL_URL")
+        or os.environ.get("OPENAI_BASE_URL", "").strip()
+    )
+    model = resolve_env_chain(
+        "MAC_LESSON_CURATION_MODEL", "MAC_TASK_MODEL", "MAC_HERMES_GATEWAY_MODEL"
+    )
     if not router_url or not model:
         return []
     try:
@@ -677,10 +726,7 @@ def curate_lessons_from_outcome(
         # (mac-g55y). Preserve the previous trim/empty-default behavior.
         caller = router_model_caller(
             router_url,
-            token=(
-                fleet_resolve("MAC_API_TOKEN", fleet=os.environ.get("MAC_FLEET"))
-                or ""
-            ).strip(),
+            token=(fleet_resolve("MAC_API_TOKEN", fleet=os.environ.get("MAC_FLEET")) or "").strip(),
         )
         answer, _cites, _ms = caller(model, prompt, "")
     except Exception:  # noqa: BLE001 - curation is advisory.

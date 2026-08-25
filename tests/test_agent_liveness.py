@@ -15,6 +15,7 @@ four dead rows made the whole fleet undeployable. Three separate attempts
 failed on `could not establish bounded direct SSH route` before the hub was
 touched at all.
 """
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -31,12 +32,8 @@ def cp() -> ControlPlane:
 
 
 def _age_last_seen(cp: ControlPlane, agent_id: str, seconds: int) -> None:
-    stale = (parse_time(utcnow()) - timedelta(seconds=seconds)).isoformat(
-        timespec="microseconds"
-    )
-    cp.store.execute(
-        "UPDATE agents SET last_seen_at = ? WHERE id = ?", (stale, agent_id)
-    )
+    stale = (parse_time(utcnow()) - timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+    cp.store.execute("UPDATE agents SET last_seen_at = ? WHERE id = ?", (stale, agent_id))
 
 
 def _agent(cp: ControlPlane, name: str, **kwargs):
@@ -45,6 +42,7 @@ def _agent(cp: ControlPlane, name: str, **kwargs):
 
 
 # --- the sweep must not refresh the clock it is reading ---------------------
+
 
 def test_marking_an_agent_offline_does_not_refresh_its_last_seen(cp) -> None:
     """The defect that made the TTL unfireable.
@@ -84,6 +82,7 @@ def test_a_real_heartbeat_still_refreshes_last_seen(cp) -> None:
 
 # --- a disposable worker must actually be disposable -----------------------
 
+
 def test_a_fungible_agent_expires_without_anyone_setting_a_resources_flag(cp) -> None:
     """Expiry keyed on `resources.ephemeral`, which no registration path
     writes -- while `instance_kind` is a real column carrying exactly this
@@ -109,6 +108,7 @@ def test_a_static_agent_is_never_expired_by_the_ttl(cp) -> None:
 
 
 # --- a hub-side agent is alive exactly as long as the hub is ---------------
+
 
 def test_a_virtual_agent_is_kept_alive_by_the_hub(cp) -> None:
     """`operator` and `hub-reviewer` are hub-side constructs: no process, so

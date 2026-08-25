@@ -74,7 +74,9 @@ def _load_timings(path: Path) -> dict[str, dict[str, Any]]:
     return {str(item["nodeid"]): dict(item) for item in document.get("tests", [])}
 
 
-def _coverage_contributions(data_file: Path) -> tuple[dict[str, set[tuple[Any, ...]]], dict[str, set[tuple[Any, ...]]], int]:
+def _coverage_contributions(
+    data_file: Path,
+) -> tuple[dict[str, set[tuple[Any, ...]]], dict[str, set[tuple[Any, ...]]], int]:
     """Read context-owned lines/arcs from coverage.py's documented SQLite data.
 
     Coverage stores branch runs as one row per (file, context, arc). Deriving
@@ -180,7 +182,9 @@ def build_report(data_file: Path, timings_file: Path) -> dict[str, Any]:
             "passed": sum(item["outcome"] == "passed" for item in tests),
             "failed": sum(item["outcome"] == "failed" for item in tests),
             "skipped": sum(item["outcome"] == "skipped" for item in tests),
-            "total_duration_seconds": round(sum(float(item["duration_seconds"]) for item in tests), 6),
+            "total_duration_seconds": round(
+                sum(float(item["duration_seconds"]) for item in tests), 6
+            ),
             "tests_with_unique_lines": sum(int(item["unique_lines"]) > 0 for item in tests),
             "tests_with_unique_arcs": sum(int(item["unique_arcs"]) > 0 for item in tests),
             "zero_unique_contribution_candidates": len(candidates),

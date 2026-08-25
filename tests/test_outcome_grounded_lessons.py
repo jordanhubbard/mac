@@ -17,8 +17,11 @@ def _cp() -> ControlPlane:
 
 def test_review_outcome_lesson_lands_in_deployment_learning(monkeypatch):
     cp = _cp()
-    task = cp.create_task("Fix the thing", required_capabilities=["python"],
-                          metadata={"publication_target": "test://x"})
+    task = cp.create_task(
+        "Fix the thing",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://x"},
+    )
     cp._record_review_outcome_lesson(
         task.id, outcome="review_rejected", detail="hub contract verification failed: 1 failed"
     )
@@ -42,10 +45,24 @@ def test_review_outcome_lesson_never_breaks_workflow(monkeypatch):
 def test_memory_search_content_contains():
     cp = _cp()
     task = cp.create_task("T", required_capabilities=["python"])
-    cp.add_memory(task.id, "project", "mac", "deployment_learning:mac",
-                  json.dumps({"error_signature": "git merge-tree needs 2.38"}), None, "t")
-    cp.add_memory(task.id, "project", "mac", "deployment_learning:mac",
-                  json.dumps({"error_signature": "unrelated"}), None, "t")
+    cp.add_memory(
+        task.id,
+        "project",
+        "mac",
+        "deployment_learning:mac",
+        json.dumps({"error_signature": "git merge-tree needs 2.38"}),
+        None,
+        "t",
+    )
+    cp.add_memory(
+        task.id,
+        "project",
+        "mac",
+        "deployment_learning:mac",
+        json.dumps({"error_signature": "unrelated"}),
+        None,
+        "t",
+    )
     hits = cp.search_memory(content_contains="MERGE-TREE")
     assert len(hits) == 1 and "merge-tree" in hits[0].content
     assert len(cp.search_memory(content_contains="nomatchxyz")) == 0
@@ -65,15 +82,25 @@ def test_curation_parses_lessons_and_caps(monkeypatch):
         def call(model, question, context):
             assert model == "test-model"
             assert "Outcome: failure" in question
-            return ("- lesson one about the venv\nNOTHING\nlesson two\nlesson three\nlesson four", [], 5.0)
+            return (
+                "- lesson one about the venv\nNOTHING\nlesson two\nlesson three\nlesson four",
+                [],
+                5.0,
+            )
+
         return call
 
     import mac.eval_runner as er
+
     monkeypatch.setattr(er, "router_model_caller", fake_caller_factory)
     lessons = te.curate_lessons_from_outcome(
         {"title": "t", "metadata": {}},
-        {"outcome": "failure", "evidence_type": "repo_change",
-         "signals": {"tests": "fail"}, "error_signature": "boom"},
+        {
+            "outcome": "failure",
+            "evidence_type": "repo_change",
+            "signals": {"tests": "fail"},
+            "error_signature": "boom",
+        },
     )
     assert lessons == ["lesson one about the venv", "lesson two", "lesson three"]
 
@@ -83,22 +110,32 @@ def test_curation_nothing_and_errors_yield_empty(monkeypatch):
     monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
     monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
     import mac.eval_runner as er
-    monkeypatch.setattr(er, "router_model_caller",
-                        lambda url, token="": lambda m, q, c: ("NOTHING", [], 1.0))
+
+    monkeypatch.setattr(
+        er, "router_model_caller", lambda url, token="": lambda m, q, c: ("NOTHING", [], 1.0)
+    )
     assert te.curate_lessons_from_outcome({"title": "t"}, {"outcome": "success"}) == []
+
     def raising_factory(url, token=""):
         def call(m, q, c):
             raise ConnectionError("router down")
+
         return call
+
     monkeypatch.setattr(er, "router_model_caller", raising_factory)
     assert te.curate_lessons_from_outcome({"title": "t"}, {"outcome": "success"}) == []
 
 
 def test_record_curated_lessons_posts_learning_records(monkeypatch):
-    monkeypatch.setattr(memory, "curate_lessons_from_outcome",
-                        lambda task, outcome: ["use the ppa git", "bootstrap needs --venv-only"])
+    monkeypatch.setattr(
+        memory,
+        "curate_lessons_from_outcome",
+        lambda task, outcome: ["use the ppa git", "bootstrap needs --venv-only"],
+    )
     posted = []
-    monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
+    monkeypatch.setattr(
+        memory, "_hub_post", lambda path, payload: posted.append((path, payload)) or True
+    )
     n = te.record_curated_lessons(
         {"id": "task_x", "title": "T", "metadata": {}},
         {"outcome": "failure", "evidence_type": "repo_change", "signals": {"tests": "fail"}},
@@ -117,17 +154,22 @@ def test_curation_prompt_includes_existing_lessons_for_dedup(monkeypatch):
     monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
     monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
     monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
-    monkeypatch.setattr(memory, "recall_deployment_lessons",
-                        lambda task, limit=8: ["pushed=false means the delivery step failed"])
+    monkeypatch.setattr(
+        memory,
+        "recall_deployment_lessons",
+        lambda task, limit=8: ["pushed=false means the delivery step failed"],
+    )
     captured = {}
 
     def factory(url, token=""):
         def call(model, question, context):
             captured["q"] = question
             return ("NOTHING", [], 1.0)
+
         return call
 
     import mac.eval_runner as er
+
     monkeypatch.setattr(er, "router_model_caller", factory)
     te.curate_lessons_from_outcome({"title": "t", "metadata": {}}, {"outcome": "failure"})
     assert "pushed=false means the delivery step failed" in captured["q"]
@@ -146,9 +188,7 @@ def test_publish_agent_reflection_forwards_deep_request():
     cp = ControlPlane.in_memory()
     target = register_agent(cp, "target", ["python"])
     requester = register_agent(cp, "requester", ["review"])
-    out = cp.publish_agent_reflection(
-        target.id, recipient_agent_id=requester.id, reflect_timeout=0
-    )
+    out = cp.publish_agent_reflection(target.id, recipient_agent_id=requester.id, reflect_timeout=0)
     # Two streams exist: inventory to requester, deep request to target.
     assert out["deep_request_stream"]
     assert out["count"] == 1 and out["payload"]["schema"] == "mac.agentbus.agent_reflection.v2"
@@ -173,9 +213,11 @@ def test_curation_prompt_includes_finalizer_refusal_kind_in_signals(monkeypatch)
         def call(model, question, context):
             captured["q"] = question
             return ("NOTHING", [], 1.0)
+
         return call
 
     import mac.eval_runner as er
+
     monkeypatch.setattr(er, "router_model_caller", factory)
 
     outcome = {
@@ -212,9 +254,11 @@ def test_curation_prompt_finalizer_refusal_staged_new_files(monkeypatch):
         def call(model, question, context):
             captured["q"] = question
             return ("NOTHING", [], 1.0)
+
         return call
 
     import mac.eval_runner as er
+
     monkeypatch.setattr(er, "router_model_caller", factory)
 
     outcome = {
@@ -246,29 +290,37 @@ def test_refusal_to_lesson_end_to_end(monkeypatch, tmp_path):
         def call(model, question, context):
             captured["q"] = question
             return ("Always commit new files before marking a task done.", [], 1.0)
+
         return call
 
     import mac.eval_runner as er
+
     monkeypatch.setattr(er, "router_model_caller", factory)
 
     posted = []
-    monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
+    monkeypatch.setattr(
+        memory, "_hub_post", lambda path, payload: posted.append((path, payload)) or True
+    )
 
-    (tmp_path / "mac-evidence.json").write_text(json.dumps({
-        "evidence_type": "repo_change",
-        "status": "fail",
-        "problems": [
-            "untracked files present at finalize time — agent must commit ALL new files before declaring done: generated.txt"
-        ],
-        "repo": {
-            "pushed": False,
-            "dirty": True,
-            "files_changed": [],
-            "untracked_files": ["generated.txt"],
-            "staged_new_files": [],
-        },
-        "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
-    }))
+    (tmp_path / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "evidence_type": "repo_change",
+                "status": "fail",
+                "problems": [
+                    "untracked files present at finalize time — agent must commit ALL new files before declaring done: generated.txt"
+                ],
+                "repo": {
+                    "pushed": False,
+                    "dirty": True,
+                    "files_changed": [],
+                    "untracked_files": ["generated.txt"],
+                    "staged_new_files": [],
+                },
+                "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
+            }
+        )
+    )
 
     task = {"id": "t_refusal", "title": "Add codegen output", "project": "mac", "metadata": {}}
     outcome = te.classify_outcome(tmp_path, task, 0)

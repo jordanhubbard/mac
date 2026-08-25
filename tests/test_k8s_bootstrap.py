@@ -24,6 +24,7 @@ from types import ModuleType, SimpleNamespace
 from mac.k8s import bootstrap
 from mac.k8s.config_loader import NotifierChannelConfig
 
+
 class _FakeMac:
     def __init__(
         self,
@@ -70,6 +71,7 @@ class _FakeMac:
             }
         return {}
 
+
 class _NotFound(Exception):
     def __init__(self) -> None:
         super().__init__("not found")
@@ -83,9 +85,8 @@ class _MacApiNotFound(RuntimeError):
     message, like worker.py does."""
 
     def __init__(self, path: str) -> None:
-        super().__init__(
-            'mac API GET %s failed: {"detail":"fleet not found: ai-k8s"}' % path
-        )
+        super().__init__('mac API GET %s failed: {"detail":"fleet not found: ai-k8s"}' % path)
+
 
 class _FakeCore:
     def __init__(self, initial_data: Optional[Dict[str, str]] = None) -> None:
@@ -105,18 +106,16 @@ class _FakeCore:
         self.created.append({"namespace": namespace, "body": body})
         return body
 
-    def patch_namespaced_secret(
-        self, name: str, namespace: str, body: Any
-    ) -> Any:
-        self.patched.append(
-            {"name": name, "namespace": namespace, "body": body}
-        )
+    def patch_namespaced_secret(self, name: str, namespace: str, body: Any) -> Any:
+        self.patched.append({"name": name, "namespace": namespace, "body": body})
         return body
+
 
 class _Obj:
     def __init__(self, **kwargs: Any) -> None:
         for k, v in kwargs.items():
             setattr(self, k, v)
+
 
 def _dict_factory(namespace: str, name: str, data: Dict[str, str]) -> Dict[str, Any]:
     return {
@@ -124,6 +123,7 @@ def _dict_factory(namespace: str, name: str, data: Dict[str, str]) -> Dict[str, 
         "type": "Opaque",
         "data": dict(data),
     }
+
 
 def _dispatcher_cfg() -> Dict[str, Any]:
     return {
@@ -139,6 +139,7 @@ def _dispatcher_cfg() -> Dict[str, Any]:
         },
     }
 
+
 def _role_machines() -> List[Dict[str, Any]]:
     return [
         {
@@ -147,6 +148,7 @@ def _role_machines() -> List[Dict[str, Any]]:
             "labels": {"kind": "virtual", "owner": "mac-k8s-bootstrap"},
         }
     ]
+
 
 def _roles_block() -> Dict[str, Any]:
     """Unified-schema ``roles`` map (one block per role)."""
@@ -177,6 +179,7 @@ def _roles_block() -> Dict[str, Any]:
         },
     }
 
+
 def _role_agents() -> List[Dict[str, Any]]:
     return [
         {
@@ -193,6 +196,7 @@ def _role_agents() -> List[Dict[str, Any]]:
         },
     ]
 
+
 def _attestation_keys() -> Dict[str, Any]:
     return {
         "namespace": "ai",
@@ -202,6 +206,7 @@ def _attestation_keys() -> Dict[str, Any]:
             "python-reviewer": "mac-worker-python-reviewer",
         },
     }
+
 
 def _config_yaml(**overrides: Any) -> Dict[str, Any]:
     """Build a full unified-schema YAML doc as a Python dict."""
@@ -222,10 +227,12 @@ def _config_yaml(**overrides: Any) -> Dict[str, Any]:
     doc.update(overrides)
     return doc
 
+
 def _write_yaml(tmp_path: Path, doc: Dict[str, Any]) -> Path:
     f = tmp_path / "config.yaml"
     f.write_text(yaml.safe_dump(doc))
     return f
+
 
 def _full_cfg(**overrides: Any) -> BootstrapConfig:
     cfg = BootstrapConfig(
@@ -239,19 +246,16 @@ def _full_cfg(**overrides: Any) -> BootstrapConfig:
         setattr(cfg, k, v)
     return cfg
 
+
 class TestBootstrapConfigFromFile:
     def test_happy_path(self, tmp_path: Path) -> None:
-        f = _write_yaml(tmp_path, _config_yaml(
-            mac_url="http://mac-api.ai.svc.cluster.local:8000/"
-        ))
+        f = _write_yaml(tmp_path, _config_yaml(mac_url="http://mac-api.ai.svc.cluster.local:8000/"))
         cfg = BootstrapConfig.from_file(str(f))
         # trailing slash stripped.
         assert cfg.mac_url == "http://mac-api.ai.svc.cluster.local:8000"
         assert cfg.dispatcher["machine"]["machine_id"] == "mac-runner"
         assert cfg.dispatcher["agent"]["agent_id"] == "mac-runner"
-        assert [m["machine_id"] for m in cfg.role_machines] == [
-            "mac-worker-machine"
-        ]
+        assert [m["machine_id"] for m in cfg.role_machines] == ["mac-worker-machine"]
         # role_agents derived from the unified `roles` block.
         assert len(cfg.role_agents) == 2
         assert cfg.role_agents[0]["agent_id"] == "mac-worker-python-coder"
@@ -338,9 +342,7 @@ class TestBootstrapConfigFromFile:
         monkeypatch.delenv("MAC_CONFIG_FILE", raising=False)
         from mac.k8s import config_loader
 
-        monkeypatch.setattr(
-            config_loader, "DEFAULT_CONFIG_PATH", str(tmp_path / "nope.yaml")
-        )
+        monkeypatch.setattr(config_loader, "DEFAULT_CONFIG_PATH", str(tmp_path / "nope.yaml"))
         with pytest.raises(SystemExit, match="is missing"):
             BootstrapConfig.from_env()
 
@@ -386,16 +388,13 @@ class TestBootstrapConfigFromFile:
         with pytest.raises(SystemExit, match="roles.python-coder.*executor"):
             BootstrapConfig.from_file(str(f))
 
-    def test_role_attestation_secret_missing_key_raises(
-        self, tmp_path: Path
-    ) -> None:
+    def test_role_attestation_secret_missing_key_raises(self, tmp_path: Path) -> None:
         doc = _config_yaml()
         doc["roles"]["python-coder"]["attestation_key_secret"] = {"name": "n"}
         f = _write_yaml(tmp_path, doc)
-        with pytest.raises(
-            SystemExit, match="attestation_key_secret.*requires.*key"
-        ):
+        with pytest.raises(SystemExit, match="attestation_key_secret.*requires.*key"):
             BootstrapConfig.from_file(str(f))
+
 
 class TestWaitForMacApi:
     def test_first_attempt_succeeds(self) -> None:
@@ -436,6 +435,7 @@ class TestWaitForMacApi:
         assert len(mac.gotten) == 4
         assert slept == [0.05, 0.05, 0.05]
 
+
 class TestRegisterDispatcher:
     def test_posts_machine_and_agent(self) -> None:
         mac = _FakeMac()
@@ -461,6 +461,7 @@ class TestRegisterDispatcher:
         mac = _FakeMac(responses={"POST /machines": {"hostname": "x"}})
         with pytest.raises(SystemExit, match="missing id"):
             register_dispatcher(mac, _full_cfg())
+
 
 class TestSeedRoleMachinesAndAgents:
     def test_posts_all_machines_and_agents(self) -> None:
@@ -523,6 +524,7 @@ class TestSeedRoleMachinesAndAgents:
         assert agent_posts[0]["body"]["machine_id"] == "db-m-a"
         assert agent_posts[1]["body"]["machine_id"] == "db-m-b"
 
+
 class TestRotateAttestationKeys:
     def test_skips_when_attestation_keys_none(self) -> None:
         cfg = _full_cfg(attestation_keys=None)
@@ -547,14 +549,10 @@ class TestRotateAttestationKeys:
             }
         )
         core = _FakeCore(initial_data=None)
-        rotate_attestation_keys(
-            mac, _full_cfg(), core, secret_factory=_dict_factory
-        )
+        rotate_attestation_keys(mac, _full_cfg(), core, secret_factory=_dict_factory)
         # Both roles rotated.
         rotate_paths = [
-            p["path"]
-            for p in mac.posted
-            if p["path"].endswith("/attestation-key/rotate")
+            p["path"] for p in mac.posted if p["path"].endswith("/attestation-key/rotate")
         ]
         assert sorted(rotate_paths) == [
             "/agents/mac-worker-python-coder/attestation-key/rotate",
@@ -566,14 +564,8 @@ class TestRotateAttestationKeys:
         body = core.created[0]["body"]
         # data should hold both keys base64-encoded.
         assert set(body["data"].keys()) == {"python-coder", "python-reviewer"}
-        assert (
-            base64.b64decode(body["data"]["python-coder"]).decode("utf-8")
-            == "key-AAA"
-        )
-        assert (
-            base64.b64decode(body["data"]["python-reviewer"]).decode("utf-8")
-            == "key-BBB"
-        )
+        assert base64.b64decode(body["data"]["python-coder"]).decode("utf-8") == "key-AAA"
+        assert base64.b64decode(body["data"]["python-reviewer"]).decode("utf-8") == "key-BBB"
 
     def test_patches_existing_secret_when_partial(self) -> None:
         already = base64.b64encode(b"old-coder-key").decode("ascii")
@@ -585,38 +577,25 @@ class TestRotateAttestationKeys:
             }
         )
         core = _FakeCore(initial_data={"python-coder": already})
-        rotate_attestation_keys(
-            mac, _full_cfg(), core, secret_factory=_dict_factory
-        )
+        rotate_attestation_keys(mac, _full_cfg(), core, secret_factory=_dict_factory)
         # Only the reviewer was rotated.
         rotate_paths = [
-            p["path"]
-            for p in mac.posted
-            if p["path"].endswith("/attestation-key/rotate")
+            p["path"] for p in mac.posted if p["path"].endswith("/attestation-key/rotate")
         ]
-        assert rotate_paths == [
-            "/agents/mac-worker-python-reviewer/attestation-key/rotate"
-        ]
+        assert rotate_paths == ["/agents/mac-worker-python-reviewer/attestation-key/rotate"]
         # Secret was PATCHED, not created.
         assert core.created == []
         assert len(core.patched) == 1
         body = core.patched[0]["body"]
         assert body["data"]["python-coder"] == already
-        assert (
-            base64.b64decode(body["data"]["python-reviewer"]).decode("utf-8")
-            == "key-NEW"
-        )
+        assert base64.b64decode(body["data"]["python-reviewer"]).decode("utf-8") == "key-NEW"
 
     def test_no_op_when_all_populated(self) -> None:
         coder = base64.b64encode(b"existing-coder").decode("ascii")
         reviewer = base64.b64encode(b"existing-reviewer").decode("ascii")
         mac = _FakeMac()
-        core = _FakeCore(
-            initial_data={"python-coder": coder, "python-reviewer": reviewer}
-        )
-        rotate_attestation_keys(
-            mac, _full_cfg(), core, secret_factory=_dict_factory
-        )
+        core = _FakeCore(initial_data={"python-coder": coder, "python-reviewer": reviewer})
+        rotate_attestation_keys(mac, _full_cfg(), core, secret_factory=_dict_factory)
         # No POSTs.
         assert mac.posted == []
         # Idempotent: neither create nor patch.
@@ -625,17 +604,11 @@ class TestRotateAttestationKeys:
 
     def test_rotate_response_missing_key_raises(self) -> None:
         mac = _FakeMac(
-            responses={
-                "POST /agents/mac-worker-python-coder/attestation-key/rotate": {
-                    "ok": True
-                }
-            }
+            responses={"POST /agents/mac-worker-python-coder/attestation-key/rotate": {"ok": True}}
         )
         core = _FakeCore(initial_data=None)
         with pytest.raises(SystemExit, match="missing attestation_key"):
-            rotate_attestation_keys(
-                mac, _full_cfg(), core, secret_factory=_dict_factory
-            )
+            rotate_attestation_keys(mac, _full_cfg(), core, secret_factory=_dict_factory)
 
     def test_secret_read_error_raises_systemexit(self) -> None:
         class _Boom:
@@ -667,6 +640,7 @@ class TestRotateAttestationKeys:
         # Valid base64 with content IS populated.
         assert _slot_already_populated(base64.b64encode(b"x").decode()) is True
 
+
 class _RecordingMac:
     def __init__(self) -> None:
         self.order: List[str] = []
@@ -693,6 +667,7 @@ class _RecordingMac:
             return {"attestation_key": "k-" + path.split("/")[2]}
         return {}
 
+
 def _set_config_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -705,6 +680,7 @@ def _set_config_env(
     f = _write_yaml(tmp_path, doc)
     monkeypatch.setenv("MAC_CONFIG_FILE", str(f))
     monkeypatch.setenv("MAC_WORKER_TOKEN", "fake-token")
+
 
 class TestMainCallOrder:
     def _drive(
@@ -724,9 +700,7 @@ class TestMainCallOrder:
         wait_for_mac_api(mac, attempts=2, delay_s=0.0, sleeper=lambda d: None)
         register_dispatcher(mac, cfg)
         seed_role_machines_and_agents(mac, cfg)
-        rotate_attestation_keys(
-            mac, cfg, core, secret_factory=_dict_factory
-        )
+        rotate_attestation_keys(mac, cfg, core, secret_factory=_dict_factory)
 
     def test_full_pipeline_order(self) -> None:
         mac = _RecordingMac()
@@ -821,9 +795,7 @@ class TestMainCallOrder:
         with pytest.raises(RuntimeError, match="role agent 500"):
             seed_role_machines_and_agents(mac, cfg)
         # rotate must NOT have run.
-        assert not any(
-            "attestation-key/rotate" in s for s in mac.order
-        )
+        assert not any("attestation-key/rotate" in s for s in mac.order)
         assert core.created == []
         assert core.patched == []
 
@@ -848,9 +820,7 @@ class TestMainCallOrder:
         register_dispatcher(mac, cfg)
         seed_role_machines_and_agents(mac, cfg)
         with pytest.raises(RuntimeError, match="rotate 500"):
-            rotate_attestation_keys(
-                mac, cfg, core, secret_factory=_dict_factory
-            )
+            rotate_attestation_keys(mac, cfg, core, secret_factory=_dict_factory)
         # No partial Secret write.
         assert core.created == []
         assert core.patched == []
@@ -871,7 +841,12 @@ class TestRegisterProjects:
             mac_url="http://x",
             dispatcher=_dispatcher_cfg(),
             projects=[
-                {"name": "ivan-plugin", "description": "ivan", "status": "active", "metadata": {"repository": "https://x/y.git"}},
+                {
+                    "name": "ivan-plugin",
+                    "description": "ivan",
+                    "status": "active",
+                    "metadata": {"repository": "https://x/y.git"},
+                },
                 {"name": "mac", "description": "", "status": "active", "metadata": {}},
             ],
         )
@@ -1091,7 +1066,9 @@ class TestRegisterFleet:
         posts: List[Dict[str, Any]] = []
         mac = _FakeMac(
             responses={
-                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_MacApiNotFound("/fleets/ai-k8s")),
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(
+                    _MacApiNotFound("/fleets/ai-k8s")
+                ),
                 "POST /fleets": lambda b: posts.append(b) or {"id": "f"},
             }
         )
@@ -1122,7 +1099,9 @@ class TestRegisterFleet:
     def test_non_object_post_response_raises(self) -> None:
         mac = _FakeMac(
             responses={
-                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(_MacApiNotFound("/fleets/ai-k8s")),
+                "GET /fleets/ai-k8s": lambda _b: (_ for _ in ()).throw(
+                    _MacApiNotFound("/fleets/ai-k8s")
+                ),
                 "POST /fleets": lambda _b: "not-an-object",
             }
         )
@@ -1149,8 +1128,8 @@ class TestRegisterFleet:
 
 # --- relocated from test_k8s_bootstrap_edges.py (coverage companion folded in) ---
 
-class _Mac:
 
+class _Mac:
     def __init__(self):
         self.posts = []
         self.puts = []
@@ -1174,12 +1153,24 @@ class _Mac:
 
 
 def _cfg(**extra):
-    values = {'mac_url': 'http://mac', 'dispatcher': {'machine': {'hostname': 'dispatcher', 'machine_id': 'machine'}, 'agent': {'name': 'dispatcher', 'agent_id': 'agent'}}}
+    values = {
+        "mac_url": "http://mac",
+        "dispatcher": {
+            "machine": {"hostname": "dispatcher", "machine_id": "machine"},
+            "agent": {"name": "dispatcher", "agent_id": "agent"},
+        },
+    }
     values.update(extra)
     return bootstrap.BootstrapConfig(**values)
 
 
-@pytest.mark.parametrize(('call', 'message'), [(lambda mac: bootstrap._post_machine(mac, {}), 'hostname and machine_id'), (lambda mac: bootstrap._post_agent(mac, {}, machine_db_id='m'), 'name and agent_id')])
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (lambda mac: bootstrap._post_machine(mac, {}), "hostname and machine_id"),
+        (lambda mac: bootstrap._post_agent(mac, {}, machine_db_id="m"), "name and agent_id"),
+    ],
+)
 def test_post_seed_validates_required_fields(call, message) -> None:
     with pytest.raises(SystemExit, match=message):
         call(_Mac())
@@ -1188,162 +1179,194 @@ def test_post_seed_validates_required_fields(call, message) -> None:
 def test_post_seed_rejects_non_object_responses() -> None:
     mac = _Mac()
     mac.post_value = []
-    with pytest.raises(SystemExit, match='POST /machines returned non-object'):
-        bootstrap._post_machine(mac, {'hostname': 'host', 'machine_id': 'm'})
-    with pytest.raises(SystemExit, match='POST /agents returned non-object'):
-        bootstrap._post_agent(mac, {'name': 'agent', 'agent_id': 'a'}, machine_db_id='m')
+    with pytest.raises(SystemExit, match="POST /machines returned non-object"):
+        bootstrap._post_machine(mac, {"hostname": "host", "machine_id": "m"})
+    with pytest.raises(SystemExit, match="POST /agents returned non-object"):
+        bootstrap._post_agent(mac, {"name": "agent", "agent_id": "a"}, machine_db_id="m")
 
 
 def test_dispatcher_and_role_seed_response_validation() -> None:
     mac = _Mac()
     mac.post_value = {}
-    with pytest.raises(SystemExit, match='response missing id'):
+    with pytest.raises(SystemExit, match="response missing id"):
         bootstrap.register_dispatcher(mac, _cfg())
-    with pytest.raises(SystemExit, match='requires machine_id'):
+    with pytest.raises(SystemExit, match="requires machine_id"):
         bootstrap.seed_role_machines_and_agents(mac, _cfg(role_machines=[{}]))
-    with pytest.raises(SystemExit, match='missing response id'):
-        bootstrap.seed_role_machines_and_agents(mac, _cfg(role_machines=[{'hostname': 'h', 'machine_id': 'seed'}]))
-    with pytest.raises(SystemExit, match='requires machine_id ref'):
+    with pytest.raises(SystemExit, match="missing response id"):
+        bootstrap.seed_role_machines_and_agents(
+            mac, _cfg(role_machines=[{"hostname": "h", "machine_id": "seed"}])
+        )
+    with pytest.raises(SystemExit, match="requires machine_id ref"):
         bootstrap.seed_role_machines_and_agents(mac, _cfg(role_agents=[{}]))
-    with pytest.raises(SystemExit, match='unknown machine_id'):
-        bootstrap.seed_role_machines_and_agents(mac, _cfg(role_agents=[{'name': 'a', 'agent_id': 'a', 'machine_id': 'missing'}]))
+    with pytest.raises(SystemExit, match="unknown machine_id"):
+        bootstrap.seed_role_machines_and_agents(
+            mac, _cfg(role_agents=[{"name": "a", "agent_id": "a", "machine_id": "missing"}])
+        )
 
 
 def test_role_project_and_metadata_reconcile_failures(monkeypatch) -> None:
     mac = _Mac()
     mac.post_value = []
-    with pytest.raises(SystemExit, match='POST /roles returned non-object'):
-        bootstrap.register_role_definitions(mac, _cfg(role_definitions=[{'slug': 'one'}]))
-    with pytest.raises(SystemExit, match='projects entry requires name'):
+    with pytest.raises(SystemExit, match="POST /roles returned non-object"):
+        bootstrap.register_role_definitions(mac, _cfg(role_definitions=[{"slug": "one"}]))
+    with pytest.raises(SystemExit, match="projects entry requires name"):
         bootstrap.register_projects(mac, _cfg(projects=[{}]))
-    with pytest.raises(SystemExit, match='POST /projects returned non-object'):
-        bootstrap.register_projects(mac, _cfg(projects=[{'name': 'one'}]))
-    mac.get_value = RuntimeError('offline')
-    bootstrap._reconcile_project_metadata(mac, 'one', {'x': 1})
-    mac.get_value = {'record': {'metadata': {'x': 1}}}
-    bootstrap._reconcile_project_metadata(mac, 'one', {'x': 1})
+    with pytest.raises(SystemExit, match="POST /projects returned non-object"):
+        bootstrap.register_projects(mac, _cfg(projects=[{"name": "one"}]))
+    mac.get_value = RuntimeError("offline")
+    bootstrap._reconcile_project_metadata(mac, "one", {"x": 1})
+    mac.get_value = {"record": {"metadata": {"x": 1}}}
+    bootstrap._reconcile_project_metadata(mac, "one", {"x": 1})
     assert mac.puts == []
-    mac.get_value = {'project': {'metadata': {'old': True}}}
-    mac.put = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError('write failed'))
-    bootstrap._reconcile_project_metadata(mac, 'one', {'x': 1})
+    mac.get_value = {"project": {"metadata": {"old": True}}}
+    mac.put = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("write failed"))
+    bootstrap._reconcile_project_metadata(mac, "one", {"x": 1})
 
 
 def test_notifier_channel_paths() -> None:
     mac = _Mac()
     bootstrap.register_notifier_channels(mac, _cfg())
-    channel = NotifierChannelConfig('alerts', 'webhook', ['task.*'], {'url': 'x'})
-    mac.post_value = RuntimeError('offline')
-    with pytest.raises(SystemExit, match='failed to register'):
+    channel = NotifierChannelConfig("alerts", "webhook", ["task.*"], {"url": "x"})
+    mac.post_value = RuntimeError("offline")
+    with pytest.raises(SystemExit, match="failed to register"):
         bootstrap.register_notifier_channels(mac, _cfg(notifier_channels=[channel]))
     mac.post_value = []
-    with pytest.raises(SystemExit, match='returned non-object'):
+    with pytest.raises(SystemExit, match="returned non-object"):
         bootstrap.register_notifier_channels(mac, _cfg(notifier_channels=[channel]))
-    mac.post_value = {'id': 'channel'}
+    mac.post_value = {"id": "channel"}
     bootstrap.register_notifier_channels(mac, _cfg(notifier_channels=[channel]))
-    assert mac.posts[-1][1]['event_types'] == ['task.*']
+    assert mac.posts[-1][1]["event_types"] == ["task.*"]
 
 
 def test_existing_secret_data_dict_and_non_404_failure() -> None:
 
     class Core:
-
         def read_namespaced_secret(self, *_a):
-            return {'data': {'one': 'MQ=='}}
-    assert bootstrap._existing_secret_data(Core(), 'ns', 'secret')[0] == {'one': 'MQ=='}
+            return {"data": {"one": "MQ=="}}
+
+    assert bootstrap._existing_secret_data(Core(), "ns", "secret")[0] == {"one": "MQ=="}
 
     class Bad:
-
         def read_namespaced_secret(self, *_a):
-            exc = RuntimeError('forbidden')
+            exc = RuntimeError("forbidden")
             exc.status = 403
             raise exc
-    with pytest.raises(SystemExit, match='reading Secret'):
-        bootstrap._existing_secret_data(Bad(), 'ns', 'secret')
+
+    with pytest.raises(SystemExit, match="reading Secret"):
+        bootstrap._existing_secret_data(Bad(), "ns", "secret")
 
 
 def test_rotate_configuration_and_write_failures() -> None:
     mac = _Mac()
     bootstrap.rotate_attestation_keys(mac, _cfg())
-    with pytest.raises(SystemExit, match='requires a CoreV1'):
+    with pytest.raises(SystemExit, match="requires a CoreV1"):
         bootstrap.rotate_attestation_keys(mac, _cfg(attestation_keys={}))
-    core = SimpleNamespace(read_namespaced_secret=lambda *_a: (_ for _ in ()).throw(SimpleNamespace(status=404)))
-    with pytest.raises(SystemExit, match='namespace and secret_name'):
+    core = SimpleNamespace(
+        read_namespaced_secret=lambda *_a: (_ for _ in ()).throw(SimpleNamespace(status=404))
+    )
+    with pytest.raises(SystemExit, match="namespace and secret_name"):
         bootstrap.rotate_attestation_keys(mac, _cfg(attestation_keys={}), core)
-    with pytest.raises(SystemExit, match='non-empty'):
-        bootstrap.rotate_attestation_keys(mac, _cfg(attestation_keys={'namespace': 'ns', 'secret_name': 's', 'roles': []}), core)
+    with pytest.raises(SystemExit, match="non-empty"):
+        bootstrap.rotate_attestation_keys(
+            mac, _cfg(attestation_keys={"namespace": "ns", "secret_name": "s", "roles": []}), core
+        )
 
     class MissingCore:
-
         def read_namespaced_secret(self, *_a):
-            exc = RuntimeError('missing')
+            exc = RuntimeError("missing")
             exc.status = 404
             raise exc
 
         def create_namespaced_secret(self, *_a):
-            raise RuntimeError('write failed')
+            raise RuntimeError("write failed")
+
     mac.post_value = []
-    spec = {'namespace': 'ns', 'secret_name': 's', 'roles': {'role': 'agent'}}
-    with pytest.raises(SystemExit, match='not an object'):
+    spec = {"namespace": "ns", "secret_name": "s", "roles": {"role": "agent"}}
+    with pytest.raises(SystemExit, match="not an object"):
         bootstrap.rotate_attestation_keys(mac, _cfg(attestation_keys=spec), MissingCore())
-    mac.post_value = {'attestation_key': 'key'}
-    with pytest.raises(SystemExit, match='writing Secret'):
-        bootstrap.rotate_attestation_keys(mac, _cfg(attestation_keys=spec), MissingCore(), secret_factory=lambda ns, name, data: {'data': data})
+    mac.post_value = {"attestation_key": "key"}
+    with pytest.raises(SystemExit, match="writing Secret"):
+        bootstrap.rotate_attestation_keys(
+            mac,
+            _cfg(attestation_keys=spec),
+            MissingCore(),
+            secret_factory=lambda ns, name, data: {"data": data},
+        )
 
 
 def test_build_secret_factory_and_token_precedence(monkeypatch) -> None:
-    assert bootstrap._build_secret_body('ns', 'name', {'one': 'MQ=='}, factory=lambda *args: args) == ('ns', 'name', {'one': 'MQ=='})
-    monkeypatch.delenv('MAC_WORKER_TOKEN', raising=False)
-    monkeypatch.delenv('MAC_API_TOKEN', raising=False)
-    with pytest.raises(SystemExit, match='is required'):
+    assert bootstrap._build_secret_body(
+        "ns", "name", {"one": "MQ=="}, factory=lambda *args: args
+    ) == ("ns", "name", {"one": "MQ=="})
+    monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_API_TOKEN", raising=False)
+    with pytest.raises(SystemExit, match="is required"):
         bootstrap._token_from_env()
-    monkeypatch.setenv('MAC_API_TOKEN', 'api')
-    assert bootstrap._token_from_env() == 'api'
-    monkeypatch.setenv('MAC_WORKER_TOKEN', 'worker')
-    assert bootstrap._token_from_env() == 'worker'
+    monkeypatch.setenv("MAC_API_TOKEN", "api")
+    assert bootstrap._token_from_env() == "api"
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "worker")
+    assert bootstrap._token_from_env() == "worker"
 
 
 def test_token_from_env_prefers_fleet_scoped_form(monkeypatch) -> None:
     """_token_from_env must resolve the scoped MAC_*__<FLEET> token ahead of the
     legacy flat form, fall back through the chain, treat an empty scoped value as
     set, and still raise SystemExit when nothing resolves (mac-g55y)."""
-    for name in ('MAC_FLEET', 'MAC_WORKER_TOKEN', 'MAC_WORKER_TOKEN__ROCKY', 'MAC_API_TOKEN', 'MAC_API_TOKEN__ROCKY'):
+    for name in (
+        "MAC_FLEET",
+        "MAC_WORKER_TOKEN",
+        "MAC_WORKER_TOKEN__ROCKY",
+        "MAC_API_TOKEN",
+        "MAC_API_TOKEN__ROCKY",
+    ):
         monkeypatch.delenv(name, raising=False)
-    with pytest.raises(SystemExit, match='is required'):
+    with pytest.raises(SystemExit, match="is required"):
         bootstrap._token_from_env()
-    monkeypatch.setenv('MAC_FLEET', 'rocky')
-    monkeypatch.setenv('MAC_API_TOKEN', 'api-flat')
-    assert bootstrap._token_from_env() == 'api-flat'
-    monkeypatch.setenv('MAC_WORKER_TOKEN', 'worker-flat')
-    assert bootstrap._token_from_env() == 'worker-flat'
-    monkeypatch.setenv('MAC_WORKER_TOKEN__ROCKY', 'worker-rocky')
-    assert bootstrap._token_from_env() == 'worker-rocky'
-    monkeypatch.setenv('MAC_WORKER_TOKEN__ROCKY', '')
-    with pytest.raises(SystemExit, match='is required'):
+    monkeypatch.setenv("MAC_FLEET", "rocky")
+    monkeypatch.setenv("MAC_API_TOKEN", "api-flat")
+    assert bootstrap._token_from_env() == "api-flat"
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-flat")
+    assert bootstrap._token_from_env() == "worker-flat"
+    monkeypatch.setenv("MAC_WORKER_TOKEN__ROCKY", "worker-rocky")
+    assert bootstrap._token_from_env() == "worker-rocky"
+    monkeypatch.setenv("MAC_WORKER_TOKEN__ROCKY", "")
+    with pytest.raises(SystemExit, match="is required"):
         bootstrap._token_from_env()
 
 
 def test_main_runs_full_pipeline_with_and_without_secret_rotation(monkeypatch) -> None:
     calls = []
     cfg = _cfg()
-    monkeypatch.setattr(bootstrap.BootstrapConfig, 'from_env', classmethod(lambda cls: cfg))
-    monkeypatch.setattr(bootstrap, '_token_from_env', lambda: 'token')
-    for name in ('wait_for_mac_api', 'register_dispatcher', 'register_role_definitions', 'seed_role_machines_and_agents', 'register_projects', 'register_fleet', 'register_notifier_channels'):
+    monkeypatch.setattr(bootstrap.BootstrapConfig, "from_env", classmethod(lambda cls: cfg))
+    monkeypatch.setattr(bootstrap, "_token_from_env", lambda: "token")
+    for name in (
+        "wait_for_mac_api",
+        "register_dispatcher",
+        "register_role_definitions",
+        "seed_role_machines_and_agents",
+        "register_projects",
+        "register_fleet",
+        "register_notifier_channels",
+    ):
         monkeypatch.setattr(bootstrap, name, lambda *_a, _name=name: calls.append(_name))
 
     class Client:
-
         def __init__(self, url, token):
             calls.append((url, token))
+
     import mac.hermes_adapter as adapter
     import mac.k8s.k8s_client as k8s_client
-    monkeypatch.setattr(adapter, 'MacApiClient', Client)
-    monkeypatch.setattr(k8s_client, 'load_in_cluster_config', lambda: calls.append('load'))
-    kubernetes = ModuleType('kubernetes')
-    kubernetes.client = SimpleNamespace(CoreV1Api=lambda: 'core')
-    monkeypatch.setitem(sys.modules, 'kubernetes', kubernetes)
+
+    monkeypatch.setattr(adapter, "MacApiClient", Client)
+    monkeypatch.setattr(k8s_client, "load_in_cluster_config", lambda: calls.append("load"))
+    kubernetes = ModuleType("kubernetes")
+    kubernetes.client = SimpleNamespace(CoreV1Api=lambda: "core")
+    monkeypatch.setitem(sys.modules, "kubernetes", kubernetes)
     assert bootstrap.main([]) == 0
-    assert 'register_dispatcher' in calls and 'load' not in calls
-    cfg.attestation_keys = {'configured': True}
-    monkeypatch.setattr(bootstrap, 'rotate_attestation_keys', lambda *a: calls.append(('rotate', a[-1])))
+    assert "register_dispatcher" in calls and "load" not in calls
+    cfg.attestation_keys = {"configured": True}
+    monkeypatch.setattr(
+        bootstrap, "rotate_attestation_keys", lambda *a: calls.append(("rotate", a[-1]))
+    )
     assert bootstrap.main([]) == 0
-    assert 'load' in calls and ('rotate', 'core') in calls
+    assert "load" in calls and ("rotate", "core") in calls

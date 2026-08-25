@@ -255,12 +255,16 @@ class TestListHumans:
     def test_list_all_returns_all_humans(self):
         store = _fresh_store()
         h1 = _make_human(
-            id=new_id("human"), username="alice",
-            github_login="alice-gh", groups=["eng"],
+            id=new_id("human"),
+            username="alice",
+            github_login="alice-gh",
+            groups=["eng"],
         )
         h2 = _make_human(
-            id=new_id("human"), username="bob",
-            github_login="bob-gh", groups=["ops"],
+            id=new_id("human"),
+            username="bob",
+            github_login="bob-gh",
+            groups=["ops"],
         )
         self._upsert(store, h1)
         self._upsert(store, h2)
@@ -271,12 +275,16 @@ class TestListHumans:
     def test_list_by_group_filters_correctly(self):
         store = _fresh_store()
         h1 = _make_human(
-            id=new_id("human"), username="alice",
-            github_login="alice-gh2", groups=["eng"],
+            id=new_id("human"),
+            username="alice",
+            github_login="alice-gh2",
+            groups=["eng"],
         )
         h2 = _make_human(
-            id=new_id("human"), username="bob",
-            github_login="bob-gh2", groups=["ops"],
+            id=new_id("human"),
+            username="bob",
+            github_login="bob-gh2",
+            groups=["ops"],
         )
         self._upsert(store, h1)
         self._upsert(store, h2)
@@ -338,9 +346,14 @@ class TestGroupMembership:
         self._upsert(store, h)
         # remove one group
         h2 = Human(
-            id=h.id, username=h.username, email=None, github_login=None,
-            display_name=None, groups=["eng"],
-            created_at=h.created_at, updated_at=utcnow(),
+            id=h.id,
+            username=h.username,
+            email=None,
+            github_login=None,
+            display_name=None,
+            groups=["eng"],
+            created_at=h.created_at,
+            updated_at=utcnow(),
         )
         self._upsert(store, h2)
         assert self._group_count(store, h.id) == 1
@@ -352,9 +365,14 @@ class TestGroupMembership:
         h = _make_human(groups=["eng"])
         self._upsert(store, h)
         h2 = Human(
-            id=h.id, username=h.username, email=None, github_login=None,
-            display_name=None, groups=["eng", "ops", "admins"],
-            created_at=h.created_at, updated_at=utcnow(),
+            id=h.id,
+            username=h.username,
+            email=None,
+            github_login=None,
+            display_name=None,
+            groups=["eng", "ops", "admins"],
+            created_at=h.created_at,
+            updated_at=utcnow(),
         )
         self._upsert(store, h2)
         assert self._group_count(store, h.id) == 3
@@ -368,9 +386,11 @@ class TestGroupMembership:
 class TestDeleteHuman:
     def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
-            h.id, h.username,
+            h.id,
+            h.username,
             groups=h.groups,
-            created_at=h.created_at, updated_at=h.updated_at,
+            created_at=h.created_at,
+            updated_at=h.updated_at,
         )
 
     def test_delete_returns_true_when_found(self):
@@ -469,7 +489,8 @@ class TestMigrationPath:
         store.initialize()
         h = _make_human(username="migrated_user", groups=["alpha"])
         store.upsert_human(
-            h.id, h.username,
+            h.id,
+            h.username,
             email=h.email,
             github_login=h.github_login,
             display_name=h.display_name,

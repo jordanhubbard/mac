@@ -92,9 +92,7 @@ def _row_dict(row: Any) -> JsonDict:
 
 
 def _stable_id(prefix: str, *parts: object) -> str:
-    digest = hashlib.sha256(
-        "\x00".join(str(part) for part in parts).encode("utf-8")
-    ).hexdigest()
+    digest = hashlib.sha256("\x00".join(str(part) for part in parts).encode("utf-8")).hexdigest()
     return "%s_%s" % (prefix, digest[:32])
 
 
@@ -191,9 +189,7 @@ class TaskFlowAnalyticsService:
         return compact[:byte_limit].decode("utf-8", errors="ignore")
 
     @classmethod
-    def _bounded_round_detail(
-        cls, items: Sequence[Mapping[str, Any]]
-    ) -> List[JsonDict]:
+    def _bounded_round_detail(cls, items: Sequence[Mapping[str, Any]]) -> List[JsonDict]:
         """Bound round evidence without dropping aggregate counts."""
 
         compact: List[JsonDict] = []
@@ -342,9 +338,9 @@ class TaskFlowAnalyticsService:
     ) -> bool:
         if task_id is None:
             return False
-        since = (
-            parse_time(observed_at) - timedelta(seconds=max(1.0, window_seconds))
-        ).isoformat(timespec="microseconds")
+        since = (parse_time(observed_at) - timedelta(seconds=max(1.0, window_seconds))).isoformat(
+            timespec="microseconds"
+        )
         return (
             self.store.query_one(
                 "SELECT 1 FROM observability_events "
@@ -384,8 +380,7 @@ class TaskFlowAnalyticsService:
             # resolve.
             candidate = _row_dict(
                 self.store.query_one(
-                    "SELECT * FROM dispatch_mismatch_state "
-                    "WHERE scope = ? AND resolved_at IS NULL",
+                    "SELECT * FROM dispatch_mismatch_state WHERE scope = ? AND resolved_at IS NULL",
                     (scope,),
                 )
             )
@@ -405,9 +400,7 @@ class TaskFlowAnalyticsService:
             active = bool(current and current.get("resolved_at") is None)
             if current:
                 try:
-                    stale = parse_time(observed_at) < parse_time(
-                        str(current["last_observed_at"])
-                    )
+                    stale = parse_time(observed_at) < parse_time(str(current["last_observed_at"]))
                 except Exception:
                     stale = observed_at < str(current["last_observed_at"])
                 if stale:
@@ -603,16 +596,12 @@ class TaskFlowAnalyticsService:
         started_at = str(payload.get("started_at") or utcnow())
         completed_at = str(payload.get("completed_at") or started_at)
         source = str(payload.get("source") or "authoritative-allocator")
-        allocator_version = str(
-            payload.get("allocator_version") or payload.get("version") or "v2"
-        )
+        allocator_version = str(payload.get("allocator_version") or payload.get("version") or "v2")
         project_value = payload.get("project")
         project = str(project_value) if project_value is not None else None
 
         assignments = self._round_items(payload.get("assignments"))
-        unmatched = self._round_items(
-            payload.get("unmatched_tasks") or payload.get("unmatched")
-        )
+        unmatched = self._round_items(payload.get("unmatched_tasks") or payload.get("unmatched"))
         if not unmatched:
             unmatched = self._round_items(payload.get("unmatched_task_ids"))
         stranded = self._round_items(
@@ -635,24 +624,18 @@ class TaskFlowAnalyticsService:
         ready_ids = [
             item_id
             for item in ready_items
-            if (
-                item_id := self._round_item_id(item, "task_id", "id")
-            )
+            if (item_id := self._round_item_id(item, "task_id", "id"))
         ]
         if not ready_ids:
             ready_ids = [
                 item_id
                 for item in assignments + unmatched
-                if (
-                    item_id := self._round_item_id(item, "task_id", "id")
-                )
+                if (item_id := self._round_item_id(item, "task_id", "id"))
             ]
         free_agent_ids = [
             item_id
             for item in free_items
-            if (
-                item_id := self._round_item_id(item, "agent_id", "id")
-            )
+            if (item_id := self._round_item_id(item, "agent_id", "id"))
         ]
         ready_count = max(
             0,
@@ -695,11 +678,7 @@ class TaskFlowAnalyticsService:
             "source": source,
             "project": project,
             "projects": sorted(
-                {
-                    str(item)
-                    for item in (payload.get("projects") or [])
-                    if str(item)
-                }
+                {str(item) for item in (payload.get("projects") or []) if str(item)}
             ),
             "started_at": started_at,
             "completed_at": completed_at,
@@ -737,10 +716,7 @@ class TaskFlowAnalyticsService:
         # exception: resolving stale operator-visible state needs one final
         # state write, but never a dispatch-round row.
         material_round = bool(
-            assignment_count
-            or unmatched_count
-            or stranded_count
-            or claim_failure_count
+            assignment_count or unmatched_count or stranded_count or claim_failure_count
         )
         if not material_round:
             return {
@@ -826,9 +802,7 @@ class TaskFlowAnalyticsService:
         try:
             self._prune_dispatch_rounds_if_due()
         except Exception as exc:  # Retention cannot invalidate allocator output.
-            retention_error = self._bounded_text_bytes(
-                "%s:%s" % (exc.__class__.__name__, str(exc))
-            )
+            retention_error = self._bounded_text_bytes("%s:%s" % (exc.__class__.__name__, str(exc)))
         return {
             **detail,
             "mismatch": mismatch,
@@ -901,16 +875,12 @@ class TaskFlowAnalyticsService:
         outcome: str = TaskFlowOutcome.COMPLETED.value,
     ) -> None:
         rows = source.execute(
-            "SELECT * FROM task_flow_spans "
-            "WHERE task_id = ? AND ended_at IS NULL",
+            "SELECT * FROM task_flow_spans WHERE task_id = ? AND ended_at IS NULL",
             (task_id,),
         ).fetchall()
         for row in rows:
             item = _row_dict(row)
-            if (
-                keep_attempt == int(item["attempt"])
-                and keep_stage == str(item["stage"])
-            ):
+            if keep_attempt == int(item["attempt"]) and keep_stage == str(item["stage"]):
                 continue
             metadata = json_loads(item.get("metadata"), {})
             accumulated = float(metadata.get("accumulated_duration_seconds") or 0.0)
@@ -945,8 +915,7 @@ class TaskFlowAnalyticsService:
         metadata: Optional[Mapping[str, Any]] = None,
     ) -> None:
         existing = source.execute(
-            "SELECT * FROM task_flow_spans "
-            "WHERE task_id = ? AND attempt = ? AND stage = ?",
+            "SELECT * FROM task_flow_spans WHERE task_id = ? AND attempt = ? AND stage = ?",
             (task_id, attempt, stage),
         ).fetchone()
         if existing is None:
@@ -986,8 +955,7 @@ class TaskFlowAnalyticsService:
                         **old_metadata,
                         **ensure_json_object(metadata),
                         "accumulated_duration_seconds": accumulated,
-                        "segment_count": int(old_metadata.get("segment_count") or 1)
-                        + 1,
+                        "segment_count": int(old_metadata.get("segment_count") or 1) + 1,
                     }
                 ),
                 when,
@@ -1161,8 +1129,7 @@ class TaskFlowAnalyticsService:
         history = [
             _row_dict(row)
             for row in self.store.query_all(
-                "SELECT * FROM task_history WHERE task_id = ? "
-                "ORDER BY created_at, id",
+                "SELECT * FROM task_history WHERE task_id = ? ORDER BY created_at, id",
                 (task_id,),
             )
         ]
@@ -1225,10 +1192,7 @@ class TaskFlowAnalyticsService:
                 and from_state in _TERMINAL_STATES
             ):
                 current_attempt = max(current_attempt + 1, claim_count + 1)
-            if (
-                event_type == "task.transitioned"
-                and str(to_state or "") in _TERMINAL_STATES
-            ):
+            if event_type == "task.transitioned" and str(to_state or "") in _TERMINAL_STATES:
                 terminal_outcome = self._outcome_for_state(str(to_state))
                 close_current(when, terminal_outcome)
                 start_stage(
@@ -1276,11 +1240,7 @@ class TaskFlowAnalyticsService:
                 duration = None if pending else sum(duration_values)
                 started_at = str(items[-1]["started_at"] if pending else items[0]["started_at"])
                 ended_at = None if pending else str(items[-1]["ended_at"])
-                outcome = (
-                    TaskFlowOutcome.PENDING.value
-                    if pending
-                    else str(items[-1]["outcome"])
-                )
+                outcome = TaskFlowOutcome.PENDING.value if pending else str(items[-1]["outcome"])
                 conn.execute(
                     "INSERT INTO task_flow_spans ("
                     "id, task_id, project, attempt, stage, started_at, ended_at, "
@@ -1318,9 +1278,7 @@ class TaskFlowAnalyticsService:
 
             attempts = sorted({int(item["attempt"]) for item in segments})
             for index, attempt in enumerate(attempts):
-                attempt_segments = [
-                    item for item in segments if int(item["attempt"]) == attempt
-                ]
+                attempt_segments = [item for item in segments if int(item["attempt"]) == attempt]
                 start = min(str(item["started_at"]) for item in attempt_segments)
                 is_latest = index == len(attempts) - 1
                 if is_latest and str(task.get("state")) not in _TERMINAL_STATES:
@@ -1341,9 +1299,7 @@ class TaskFlowAnalyticsService:
                 stage_durations: Dict[str, float] = defaultdict(float)
                 for item in attempt_segments:
                     if item["duration_seconds"] is not None:
-                        stage_durations[str(item["stage"])] += float(
-                            item["duration_seconds"]
-                        )
+                        stage_durations[str(item["stage"])] += float(item["duration_seconds"])
                 attempt_history = [
                     event
                     for event in history
@@ -1352,9 +1308,7 @@ class TaskFlowAnalyticsService:
                 ]
                 details = [json_loads(event.get("detail"), {}) for event in attempt_history]
                 route_count = sum(
-                    1
-                    for event in attempt_history
-                    if "route" in str(event.get("event_type") or "")
+                    1 for event in attempt_history if "route" in str(event.get("event_type") or "")
                 )
                 token_count = int(
                     sum(
@@ -1389,8 +1343,7 @@ class TaskFlowAnalyticsService:
                     (task_id, start),
                 ).fetchone()
                 review_count = conn.execute(
-                    "SELECT COUNT(*) AS n FROM reviews WHERE task_id = ? "
-                    "AND created_at >= ?",
+                    "SELECT COUNT(*) AS n FROM reviews WHERE task_id = ? AND created_at >= ?",
                     (task_id, start),
                 ).fetchone()
                 conn.execute(
@@ -1454,9 +1407,7 @@ class TaskFlowAnalyticsService:
             "LEFT JOIN (SELECT task_id, MAX(updated_at) AS materialized_at "
             "FROM task_flow_spans GROUP BY task_id) f ON f.task_id = t.id "
             "%s AND (f.materialized_at IS NULL OR t.updated_at > f.materialized_at) "
-            "ORDER BY t.updated_at DESC, t.id LIMIT ?" % (
-                where if where else "WHERE 1 = 1"
-            ),
+            "ORDER BY t.updated_at DESC, t.id LIMIT ?" % (where if where else "WHERE 1 = 1"),
             tuple(params),
         )
         refreshed: List[str] = []
@@ -1594,9 +1545,9 @@ class TaskFlowAnalyticsService:
         """Return and persist a bounded point-in-time throughput snapshot."""
 
         now = observed_at or utcnow()
-        since = (
-            parse_time(now) - timedelta(hours=max(0.01, float(since_hours)))
-        ).isoformat(timespec="microseconds")
+        since = (parse_time(now) - timedelta(hours=max(0.01, float(since_hours)))).isoformat(
+            timespec="microseconds"
+        )
         refresh = self.refresh_stale(
             project=project,
             limit=refresh_limit,
@@ -1610,25 +1561,16 @@ class TaskFlowAnalyticsService:
         completion_rows = [
             _row_dict(row)
             for row in self.store.query_all(
-                "SELECT * FROM task_completions WHERE %s ORDER BY ended_at"
-                % " AND ".join(clauses),
+                "SELECT * FROM task_completions WHERE %s ORDER BY ended_at" % " AND ".join(clauses),
                 tuple(params),
             )
         ]
         completed = [
-            row
-            for row in completion_rows
-            if row["outcome"] == TaskFlowOutcome.COMPLETED.value
+            row for row in completion_rows if row["outcome"] == TaskFlowOutcome.COMPLETED.value
         ]
-        failed = [
-            row
-            for row in completion_rows
-            if row["outcome"] == TaskFlowOutcome.FAILED.value
-        ]
+        failed = [row for row in completion_rows if row["outcome"] == TaskFlowOutcome.FAILED.value]
         cancelled = [
-            row
-            for row in completion_rows
-            if row["outcome"] == TaskFlowOutcome.CANCELLED.value
+            row for row in completion_rows if row["outcome"] == TaskFlowOutcome.CANCELLED.value
         ]
         durations = [
             float(row["duration_seconds"])
@@ -1653,8 +1595,7 @@ class TaskFlowAnalyticsService:
         for row in stage_rows:
             by_stage[str(row["stage"])].append(float(row["duration_seconds"]))
         stage_distributions = {
-            stage: _distribution(values)
-            for stage, values in sorted(by_stage.items())
+            stage: _distribution(values) for stage, values in sorted(by_stage.items())
         }
 
         active_clauses = [
@@ -1752,8 +1693,7 @@ class TaskFlowAnalyticsService:
             open_episode_clauses.append("project = ?")
             open_episode_params.append(project)
         open_episode_rows = self.store.query_all(
-            "SELECT id FROM task_stranding_episodes WHERE %s"
-            % " AND ".join(open_episode_clauses),
+            "SELECT id FROM task_stranding_episodes WHERE %s" % " AND ".join(open_episode_clauses),
             tuple(open_episode_params),
         )
         with self.store.transaction() as conn:
@@ -1788,8 +1728,7 @@ class TaskFlowAnalyticsService:
             _row_dict(row)
             for row in self.store.query_all(
                 "SELECT * FROM task_resource_contentions WHERE %s "
-                "ORDER BY created_at DESC LIMIT 500"
-                % " AND ".join(contention_clauses),
+                "ORDER BY created_at DESC LIMIT 500" % " AND ".join(contention_clauses),
                 tuple(contention_params),
             )
         ]
@@ -1821,8 +1760,7 @@ class TaskFlowAnalyticsService:
             _row_dict(row)
             for row in self.store.query_all(
                 "SELECT * FROM dispatch_rounds WHERE %s "
-                "ORDER BY completed_at DESC LIMIT 500"
-                % " AND ".join(dispatch_round_clauses),
+                "ORDER BY completed_at DESC LIMIT 500" % " AND ".join(dispatch_round_clauses),
                 tuple(dispatch_round_params),
             )
         ]
@@ -1833,11 +1771,7 @@ class TaskFlowAnalyticsService:
                     scoped_rounds.append(row)
                     continue
                 detail = json_loads(row.get("detail"), {})
-                projects = {
-                    str(value)
-                    for value in (detail.get("projects") or [])
-                    if str(value)
-                }
+                projects = {str(value) for value in (detail.get("projects") or []) if str(value)}
                 if project in projects:
                     scoped_rounds.append(row)
             dispatch_round_rows = scoped_rounds
@@ -1848,8 +1782,7 @@ class TaskFlowAnalyticsService:
             mismatch_params.append(project)
         mismatch_sql += " ORDER BY opened_at DESC"
         mismatch_rows = [
-            _row_dict(row)
-            for row in self.store.query_all(mismatch_sql, tuple(mismatch_params))
+            _row_dict(row) for row in self.store.query_all(mismatch_sql, tuple(mismatch_params))
         ]
         active_dispatch_mismatches = [
             row for row in mismatch_rows if row.get("resolved_at") is None
@@ -1887,9 +1820,7 @@ class TaskFlowAnalyticsService:
             },
             "stranding": {
                 "count": len(stranded),
-                "critical_count": sum(
-                    1 for item in stranded if item["severity"] == "critical"
-                ),
+                "critical_count": sum(1 for item in stranded if item["severity"] == "critical"),
                 "dispatch_explanation_count": dispatch_explanation_count,
                 "dispatch_explanation_limit": dispatch_explanation_limit,
                 "episodes": stranded,
@@ -1918,22 +1849,15 @@ class TaskFlowAnalyticsService:
                     int(row["false_ready_count"]) for row in dispatch_round_rows
                 ),
                 "round_duration": _distribution(
-                    [
-                        float(row["duration_seconds"])
-                        for row in dispatch_round_rows
-                    ]
+                    [float(row["duration_seconds"]) for row in dispatch_round_rows]
                 ),
                 "ready_free_capacity_mismatch": {
                     "active_count": len(active_dispatch_mismatches),
                     "warning_count": sum(
-                        1
-                        for row in active_dispatch_mismatches
-                        if row["severity"] == "warning"
+                        1 for row in active_dispatch_mismatches if row["severity"] == "warning"
                     ),
                     "critical_count": sum(
-                        1
-                        for row in active_dispatch_mismatches
-                        if row["severity"] == "critical"
+                        1 for row in active_dispatch_mismatches if row["severity"] == "critical"
                     ),
                     "episodes": [
                         {
@@ -1968,9 +1892,7 @@ class TaskFlowAnalyticsService:
         }
         snapshot_id = _stable_id("flowsnap", project or "*", now[:13])
         report["snapshot_id"] = snapshot_id
-        retention_cutoff = (
-            parse_time(now) - timedelta(days=90)
-        ).isoformat(timespec="microseconds")
+        retention_cutoff = (parse_time(now) - timedelta(days=90)).isoformat(timespec="microseconds")
         self.store.execute(
             "INSERT INTO task_flow_snapshots ("
             "id, project, observed_at, since_at, warning_seconds, critical_seconds, "

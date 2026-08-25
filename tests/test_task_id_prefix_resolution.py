@@ -9,6 +9,7 @@ Resolution is centralised in ControlPlane._resolve_task_id so every
 id-taking command (show, claim, close, summary, transition, …) inherits
 it automatically.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -168,12 +169,10 @@ class TestGetTaskPrefixResolution:
         detail = cp.task_detail("task_12345678")
 
         assert detail["task"]["id"] == full_id
-        assert [item["summary"] for item in detail["evidence"]] == [
-            "prefix evidence"
-        ]
+        assert [item["summary"] for item in detail["evidence"]] == ["prefix evidence"]
         assert any(
-            item["to_state"] == "cancelled" and item["detail"]["reason"]
-            == "prefix detail regression proof"
+            item["to_state"] == "cancelled"
+            and item["detail"]["reason"] == "prefix detail regression proof"
             for item in detail["history"]
         )
 
@@ -209,8 +208,7 @@ class TestGetTaskPrefixResolution:
         detail = cp.task_detail(full_id)
         assert [item["id"] for item in detail["evidence"]] == [evidence.id]
         assert any(
-            item["event_type"] == "task.evidence_added"
-            and item["task_id"] == full_id
+            item["event_type"] == "task.evidence_added" and item["task_id"] == full_id
             for item in detail["history"]
         )
 
@@ -255,6 +253,7 @@ class TestAmbiguousIdErrorModel:
 
     def test_is_mac_error_subclass(self):
         from mac.models import MACError
+
         err = AmbiguousIdError("x", [])
         assert isinstance(err, MACError)
 
@@ -278,9 +277,12 @@ class TestReplacementTaskIdPrefixResolution:
 
     def _insert_task(self, cp, hex_prefix: str, state: str = "open", title: str = "t") -> str:
         from mac.models import utcnow, TaskState
+
         full_id = "task_" + hex_prefix + "0" * (32 - len(hex_prefix))
         now = utcnow()
-        state_val = getattr(TaskState, state.upper()).value if hasattr(TaskState, state.upper()) else state
+        state_val = (
+            getattr(TaskState, state.upper()).value if hasattr(TaskState, state.upper()) else state
+        )
         cp.store.execute(
             """INSERT INTO tasks
                (id, title, description, state, project, priority, required_capabilities,
@@ -310,7 +312,12 @@ class TestReplacementTaskIdPrefixResolution:
 
         assert result.state == "cancelled"
         import json
-        metadata = result.metadata if isinstance(result.metadata, dict) else json.loads(result.metadata or "{}")
+
+        metadata = (
+            result.metadata
+            if isinstance(result.metadata, dict)
+            else json.loads(result.metadata or "{}")
+        )
         lifecycle = metadata.get("repository_ref_lifecycle", {})
         assert lifecycle.get("replacement_task_id") == replacement_id
 
@@ -375,6 +382,11 @@ class TestReplacementTaskIdPrefixResolution:
 
         assert result.state == "cancelled"
         import json
-        metadata = result.metadata if isinstance(result.metadata, dict) else json.loads(result.metadata or "{}")
+
+        metadata = (
+            result.metadata
+            if isinstance(result.metadata, dict)
+            else json.loads(result.metadata or "{}")
+        )
         lifecycle = metadata.get("repository_ref_lifecycle", {})
         assert lifecycle.get("replacement_task_id") == replacement_id

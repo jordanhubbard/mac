@@ -111,8 +111,10 @@ def test_machine_show_list_consistency(tmp_path):
     assert rc == 0
 
     for field in ("id", "hostname", "trusted"):
-        assert listed[field] == show_result[field], (
-            "field %r mismatch: list=%r show=%r" % (field, listed[field], show_result[field])
+        assert listed[field] == show_result[field], "field %r mismatch: list=%r show=%r" % (
+            field,
+            listed[field],
+            show_result[field],
         )
 
 
@@ -146,14 +148,16 @@ def test_machine_list_hardware_summary(tmp_path):
     import json as _json
     import mac.cli as _cli_mod
 
-    hw_resources = _json.dumps({
-        "hardware": {
-            "os": "linux",
-            "arch": "x86_64",
-            "cpu_count": 8,
-            "memory_mb": 16384,
+    hw_resources = _json.dumps(
+        {
+            "hardware": {
+                "os": "linux",
+                "arch": "x86_64",
+                "cpu_count": 8,
+                "memory_mb": 16384,
+            }
         }
-    })
+    )
     rc, machine = _run(
         tmp_path, "admin", "machine", "register", "hw-host", "--resources", hw_resources
     )

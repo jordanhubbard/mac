@@ -309,9 +309,7 @@ class HgxProvider:
                 env=self._env,
             )
         except FileNotFoundError as exc:
-            raise HgxCommandError(
-                "hgx binary %r not found" % self._binary, argv=argv
-            ) from exc
+            raise HgxCommandError("hgx binary %r not found" % self._binary, argv=argv) from exc
         except subprocess.TimeoutExpired as exc:
             raise HgxCommandError(
                 "hgx %s timed out after %ss" % (verb, self._timeout),
@@ -332,9 +330,7 @@ class HgxProvider:
         if not session_id:
             raise HgxError("hgx session payload is missing an immutable id")
         name = _first_str(payload, ("name", "display_name", "displayName", "label"))
-        flavor = _first_str(
-            payload, ("agent_type", "agentType", "flavor", "type", "image", "kind")
-        )
+        flavor = _first_str(payload, ("agent_type", "agentType", "flavor", "type", "image", "kind"))
         state = _first_str(payload, ("state", "status", "phase"))
 
         scrubbed = sorted(key for key in payload if _has_secret_hint(str(key)))
@@ -355,9 +351,7 @@ class HgxProvider:
 
     def _ssh_from_payload(self, payload: Mapping[str, Any]) -> Optional[HgxSshEndpoint]:
         port = _coerce_port(payload)
-        raw = _first_str(
-            payload, ("ssh", "ssh_target", "sshTarget", "endpoint", "host", "address")
-        )
+        raw = _first_str(payload, ("ssh", "ssh_target", "sshTarget", "endpoint", "host", "address"))
         if raw:
             endpoint = _try_endpoint(raw, port=port)
             if endpoint is not None:

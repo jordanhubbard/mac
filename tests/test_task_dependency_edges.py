@@ -249,9 +249,7 @@ def test_migration_preserves_prior_hold_provenance(
         )
         quarantined = repaired_control.get_task(consumer.id)
         assert (
-            quarantined.metadata["dependency_quarantine"][
-                "applied_no_dispatch"
-            ]
+            quarantined.metadata["dependency_quarantine"]["applied_no_dispatch"]
             is prior_migration_owned
         )
 
@@ -454,9 +452,7 @@ def test_force_delete_preserves_other_edges_when_json_projection_is_stale() -> N
     repaired = control.get_task(consumer.id)
     assert repaired.state == TaskState.WAITING.value
     assert repaired.dependencies == [retained_dependency.id]
-    assert control._canonical_task_dependency_ids(consumer.id) == [
-        retained_dependency.id
-    ]
+    assert control._canonical_task_dependency_ids(consumer.id) == [retained_dependency.id]
 
 
 def test_task_prefix_lookup_treats_underscore_literally() -> None:

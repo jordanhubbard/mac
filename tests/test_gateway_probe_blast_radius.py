@@ -37,7 +37,7 @@ def script() -> str:
 def test_the_probe_is_non_fatal_by_default(script: str):
     """Default 0. An operator can still demand a proven gateway, but the
     default must not be "one node's Slack account can stop the fleet"."""
-    assert 'MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0' in script
+    assert "MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0" in script
 
 
 def test_every_gateway_failure_consults_the_policy(script: str):
@@ -94,7 +94,5 @@ def test_the_script_still_parses():
     """A shell edit that does not parse fails every deploy on every host."""
     import subprocess
 
-    result = subprocess.run(
-        ["bash", "-n", str(INSTALLER)], capture_output=True, text=True
-    )
+    result = subprocess.run(["bash", "-n", str(INSTALLER)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

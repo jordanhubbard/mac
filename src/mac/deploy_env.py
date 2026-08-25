@@ -4,6 +4,7 @@ This module is intentionally dependency-free. ``deploy/deploy-mac-fleet.sh``
 imports it immediately after unpacking the source tree, before the mac package
 or deploy venv exists.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -69,7 +70,9 @@ GATEWAY_ROUTING_KEYS = (
 
 UPSTREAM_PROVIDER_KEYS = tuple(upstream_provider_env_vars())
 
-INPROC_MANAGED_KEYS = tuple(dict.fromkeys([*ROUTER_KEYS, *GATEWAY_ROUTING_KEYS, *UPSTREAM_PROVIDER_KEYS]))
+INPROC_MANAGED_KEYS = tuple(
+    dict.fromkeys([*ROUTER_KEYS, *GATEWAY_ROUTING_KEYS, *UPSTREAM_PROVIDER_KEYS])
+)
 
 # Runtime settings written by deploy/openshell/bootstrap-openshell.sh.  An
 # explicit optional-node deployment with MAC_DEPLOY_OPENSHELL=0 is a teardown
@@ -200,7 +203,7 @@ class DeployEnvConfig:
 def _raw_env_assignment(line: str) -> Optional[tuple[str, str]]:
     """Plain ``KEY=VALUE`` split for quote-free lines (no shell interpretation)."""
     if line.startswith("export "):
-        line = line[len("export "):]
+        line = line[len("export ") :]
     if "=" not in line:
         return None
     key, value = line.split("=", 1)
@@ -339,11 +342,11 @@ def _apply_openshell_deploy_config(
     requested = str(env.get("MAC_DEPLOY_OPENSHELL") or "").strip().lower()
     if requested not in {"0", "false", "no", "off"}:
         return False
-    required = str(
-        env.get("MAC_DEPLOY_OPENSHELL_REQUIRED")
-        or values.get("MAC_OPENSHELL_REQUIRED")
-        or ""
-    ).strip().lower()
+    required = (
+        str(env.get("MAC_DEPLOY_OPENSHELL_REQUIRED") or values.get("MAC_OPENSHELL_REQUIRED") or "")
+        .strip()
+        .lower()
+    )
     if required in {"1", "true", "yes", "on"}:
         return False
     _clear(values, OPENSHELL_MANAGED_RUNTIME_KEYS)
@@ -372,7 +375,9 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
         "MAC_HERMES_STARTUP_CHECK": "1",
         "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(paths.home / ".hermes" / "mac-runtime-context.json"),
-        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(paths.home / ".hermes" / "mac-runtime-context.md"),
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(
+            paths.home / ".hermes" / "mac-runtime-context.md"
+        ),
         "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
         "MAC_HERMES_WORKSPACE": str(paths.mac_home / "src" / "mac"),
         "MAC_PROJECT_CONTRACT_FILE": str(paths.mac_home / "src" / "mac" / ".mac" / "project.yaml"),
@@ -383,9 +388,7 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         values.update(
             {
                 "MAC_DB": str(paths.mac_home / "mac.db"),
-                "MAC_CLIENT_PRINCIPALS_FILE": str(
-                    paths.mac_home / "client-principals.json"
-                ),
+                "MAC_CLIENT_PRINCIPALS_FILE": str(paths.mac_home / "client-principals.json"),
             }
         )
     return values
@@ -491,9 +494,7 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
     return result
 
 
-def _chat_gateway_values(
-    cfg: DeployEnvConfig, env: Mapping[str, str]
-) -> Dict[str, str]:
+def _chat_gateway_values(cfg: DeployEnvConfig, env: Mapping[str, str]) -> Dict[str, str]:
     """Point worker registration at verified chat-gateway service metadata.
 
     OpenClaw is the sole chat gateway. The installer creates this file only
@@ -503,10 +504,10 @@ def _chat_gateway_values(
     pure worker); any other value is normalized to ``openclaw``.
     """
     implementation = (
-        env.get("MAC_CHAT_GATEWAY_IMPL")
-        or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL")
-        or "openclaw"
-    ).strip().lower()
+        (env.get("MAC_CHAT_GATEWAY_IMPL") or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL") or "openclaw")
+        .strip()
+        .lower()
+    )
     if implementation != "none":
         implementation = "openclaw"
     values = {"MAC_CHAT_GATEWAY_IMPL": implementation}
@@ -615,7 +616,9 @@ def _normalize_public_path(path: str) -> str:
     return out
 
 
-def _webdav_values(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]) -> Dict[str, str]:
+def _webdav_values(
+    values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]
+) -> Dict[str, str]:
     _clear(values, _WEBDAV_MANAGED_KEYS)
     services = cfg.services
     enabled = _enabled(services.webdav_enabled)
@@ -637,7 +640,9 @@ def _webdav_values(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: 
         "MAC_PUBLISH_WEBDAV_ENABLED": "1",
         "MAC_WEBDAV_PUBLIC_PATH": public_path,
         "MAC_WEBDAV_ROOT": root,
-        "MAC_WEBDAV_MAX_UPLOAD_BYTES": (env.get("MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES") or "536870912").strip(),
+        "MAC_WEBDAV_MAX_UPLOAD_BYTES": (
+            env.get("MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES") or "536870912"
+        ).strip(),
     }
     if public_url:
         out["MAC_PUBLISH_PUBLIC_URL"] = public_url
@@ -691,7 +696,9 @@ def _normalize_inproc_provider_specs(raw: str) -> str:
         if not spec:
             continue
         fields = [field.strip() for field in spec.split(",")]
-        if not any(field.startswith("key=") for field in fields[1:]) and _provider_allows_no_key(spec):
+        if not any(field.startswith("key=") for field in fields[1:]) and _provider_allows_no_key(
+            spec
+        ):
             spec += ",key=none"
         normalized.append(spec)
     return ";".join(normalized)
@@ -732,8 +739,11 @@ def _apply_inproc_router_hub(
     # MAC_DEPLOY_ROUTER_<M>_UPSTREAM. The key VALUE is escrowed separately
     # (deploy escrow → secret:nvidia-<m>).
     _modalities = (
-        ("image", "https://ai.api.nvidia.com/v1/genai",
-         (env.get("NVIDIA_IMAGE_API_KEY") or env.get("NVIDIA_API_KEY") or "").strip()),
+        (
+            "image",
+            "https://ai.api.nvidia.com/v1/genai",
+            (env.get("NVIDIA_IMAGE_API_KEY") or env.get("NVIDIA_API_KEY") or "").strip(),
+        ),
         ("audio", "", (env.get("NVIDIA_AUDIO_API_KEY") or "").strip()),
         ("video", "", (env.get("NVIDIA_VIDEO_API_KEY") or "").strip()),
     )
@@ -780,9 +790,7 @@ def _apply_inproc_router(
     if cfg.identity.is_hub:
         router["providers"] = _normalize_inproc_provider_specs(router["providers"])
         if not router["providers"]:
-            raise ValueError(
-                "inproc router hub requires MAC_DEPLOY_ROUTER_PROVIDERS"
-            )
+            raise ValueError("inproc router hub requires MAC_DEPLOY_ROUTER_PROVIDERS")
         invalid_specs = []
         for spec in router["providers"].split(";"):
             if not spec.strip():
@@ -797,17 +805,14 @@ def _apply_inproc_router(
         if invalid_specs:
             raise ValueError(
                 "inproc router providers must use key=secret:<name>, or explicit "
-                "key=none on a private endpoint: %s"
-                % ";".join(invalid_specs)
+                "key=none on a private endpoint: %s" % ";".join(invalid_specs)
             )
         if not (values.get("MAC_API_TOKEN") or "").strip():
             raise ValueError("inproc router hub requires a local MAC_API_TOKEN")
     else:
         hub_base = (values.get("MAC_HUB_URL") or cfg.control.hub_url or "").strip()
         local_token = (values.get("MAC_API_TOKEN") or "").strip()
-        hub_token = (
-            cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or ""
-        ).strip()
+        hub_token = (cfg.control.hub_token or values.get("MAC_WORKER_TOKEN") or "").strip()
         if not hub_base:
             raise ValueError("inproc router spoke requires MAC_HUB_URL")
         if not hub_token:
@@ -836,7 +841,9 @@ def _apply_non_inproc_router(values: MutableMapping[str, str], env: Mapping[str,
         values["MAC_ROUTER_WILDCARD_MODELS"] = router["wildcard_models"]
 
 
-def _apply_router(values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]) -> None:
+def _apply_router(
+    values: MutableMapping[str, str], cfg: DeployEnvConfig, env: Mapping[str, str]
+) -> None:
     backend = (env.get("MAC_DEPLOY_ROUTER_BACKEND") or "").strip()
     # "standalone" is the inproc router extracted into its own process; hub
     # validation, spoke wiring, and credential centralization are identical —
@@ -889,9 +896,7 @@ def build_mac_env(
         # Evidence artifact bytes live in a hub-local blob store so ledger DB
         # growth decouples from artifact volume (mac.evidence_blobs). setdefault
         # preserves an operator override across redeploys.
-        values.setdefault(
-            "MAC_EVIDENCE_BLOB_DIR", str(cfg.paths.mac_home / "evidence-blobs")
-        )
+        values.setdefault("MAC_EVIDENCE_BLOB_DIR", str(cfg.paths.mac_home / "evidence-blobs"))
         # HA: a hub may run against Postgres (already a first-class store
         # backend — make_store_from_env prefers MAC_DATABASE_URL) so ledger
         # availability becomes a database-replication problem instead of a
@@ -989,9 +994,7 @@ def build_mac_env(
     deployment_generation = (env.get("MAC_DEPLOY_GENERATION") or "").strip()
     if deployment_generation:
         values["MAC_WORKER_DEPLOY_GENERATION"] = deployment_generation
-        values["MAC_WORKER_DEPLOY_BARRIER_FILE"] = str(
-            cfg.paths.mac_home / "deploy-start-barrier"
-        )
+        values["MAC_WORKER_DEPLOY_BARRIER_FILE"] = str(cfg.paths.mac_home / "deploy-start-barrier")
         # A deployment-owned hub hold must survive transaction failure and the
         # rollback script's restored-service restart. The outer controller is
         # the only authority that may re-enable startup hold clearing after it
@@ -1044,9 +1047,7 @@ def build_mac_env(
     values["MAC_TASK_EXECUTOR_PYTHON"] = str(
         cfg.paths.mac_home / "venv" / "bin" / "mac-report-python"
     )
-    values["MAC_TASK_EXECUTOR_SCRIPT"] = str(
-        cfg.paths.mac_home / "bin" / "mac-task-executor.py"
-    )
+    values["MAC_TASK_EXECUTOR_SCRIPT"] = str(cfg.paths.mac_home / "bin" / "mac-task-executor.py")
     values["MAC_SELF_UPDATE_REPO"] = str(cfg.paths.mac_home / "src" / "mac")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
@@ -1170,10 +1171,10 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
     if gateway_model == "*":
         gateway_model = ""
     network_provider = (
-        env.get("MAC_DEPLOY_NETWORK_PROVIDER")
-        or env.get("NETWORK_PROVIDER")
-        or "tailscale"
-    ).strip().lower()
+        (env.get("MAC_DEPLOY_NETWORK_PROVIDER") or env.get("NETWORK_PROVIDER") or "tailscale")
+        .strip()
+        .lower()
+    )
     agent = a.agent.strip()
     return DeployEnvConfig(
         paths=DeployPaths(
@@ -1203,12 +1204,8 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
             claim_only_canary_tasks=a.worker_claim_only_canary_tasks.strip() or "0",
             token=(env.get("MAC_DEPLOY_WORKER_TOKEN") or "").strip(),
             credential_id=(env.get("MAC_DEPLOY_WORKER_CREDENTIAL_ID") or "").strip(),
-            credential_version=(
-                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_VERSION") or ""
-            ).strip(),
-            credential_agent_id=(
-                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID") or ""
-            ).strip(),
+            credential_version=(env.get("MAC_DEPLOY_WORKER_CREDENTIAL_VERSION") or "").strip(),
+            credential_agent_id=(env.get("MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID") or "").strip(),
             credential_fingerprint=(
                 env.get("MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT") or ""
             ).strip(),

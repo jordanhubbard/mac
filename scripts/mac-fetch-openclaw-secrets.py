@@ -36,11 +36,7 @@ def vault_list(base: str, token: str) -> list[str]:
     with urllib.request.urlopen(request, timeout=15) as response:
         payload = json.loads(response.read())
     rows = payload if isinstance(payload, list) else payload.get("items") or []
-    return [
-        str(row.get("name"))
-        for row in rows
-        if isinstance(row, dict) and row.get("name")
-    ]
+    return [str(row.get("name")) for row in rows if isinstance(row, dict) and row.get("name")]
 
 
 def vault_get(base: str, token: str, name: str) -> str:
@@ -79,11 +75,7 @@ def telegram_auth_test(token: str) -> tuple[bool, dict[str, object]]:
 
 
 def update_env_file(path: Path, updates: dict[str, str | None]) -> bool:
-    lines = (
-        path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        if path.exists()
-        else []
-    )
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines() if path.exists() else []
     output: list[str] = []
     seen: set[str] = set()
     changed = False
@@ -183,9 +175,7 @@ def stale_channel_env_updates(path: Path) -> dict[str, None]:
     if path.exists():
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             key = line.split("=", 1)[0].strip() if "=" in line else ""
-            if key.startswith("MAC_OPENCLAW_SLACK_") and key.endswith(
-                ("_BOT_TOKEN", "_APP_TOKEN")
-            ):
+            if key.startswith("MAC_OPENCLAW_SLACK_") and key.endswith(("_BOT_TOKEN", "_APP_TOKEN")):
                 stale.add(key)
     return {key: None for key in stale}
 
@@ -195,8 +185,8 @@ def main() -> int:
     identity = (os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY") or "").strip().lower()
     slack_account = (os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID") or "default").strip().lower()
     telegram_account = (
-        os.environ.get("MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID") or "default"
-    ).strip().lower()
+        (os.environ.get("MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID") or "default").strip().lower()
+    )
     base = (os.environ.get("MAC_SECRET_VAULT_URL") or "").strip()
     vault_token = (os.environ.get("MAC_SECRET_VAULT_TOKEN") or "").strip()
     output_path = Path(
@@ -229,17 +219,12 @@ def main() -> int:
         "telegram.%s.bot" % agent,
     )
     telegram_target_name = first_name(
-        "channel-identity.%s.telegram.%s.canary_target"
-        % (identity, telegram_account),
+        "channel-identity.%s.telegram.%s.canary_target" % (identity, telegram_account),
         "telegram.%s.canary_target" % agent,
     )
-    slack_secret_names = discover_slack_account_secrets(
-        names, identity, agent, slack_account
-    )
+    slack_secret_names = discover_slack_account_secrets(names, identity, agent, slack_account)
 
-    telegram_token = (
-        vault_get(base, vault_token, telegram_bot_name) if telegram_bot_name else ""
-    )
+    telegram_token = vault_get(base, vault_token, telegram_bot_name) if telegram_bot_name else ""
     telegram_identity: dict[str, object] = {}
     if telegram_token:
         ok, telegram_identity = telegram_auth_test(telegram_token)
@@ -249,11 +234,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 4
-    target = (
-        vault_get(base, vault_token, telegram_target_name)
-        if telegram_target_name
-        else ""
-    )
+    target = vault_get(base, vault_token, telegram_target_name) if telegram_target_name else ""
     slack_credentials: dict[str, tuple[str, str]] = {}
     for account, bot_name, app_name in slack_secret_names:
         bot = vault_get(base, vault_token, bot_name)

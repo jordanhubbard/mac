@@ -468,7 +468,9 @@ def _path_value(root: Mapping[str, Any], path: str) -> Any:
     return current
 
 
-def _render_template(template: str, *, facts: Mapping[str, Any], variables: Mapping[str, Any]) -> str:
+def _render_template(
+    template: str, *, facts: Mapping[str, Any], variables: Mapping[str, Any]
+) -> str:
     if len(template) > DIRECTIVE_MAX_TEMPLATE_LENGTH:
         raise ValidationError("directive template is too long")
 
@@ -581,7 +583,10 @@ def _reject_secret_material(value: Any, path: str = "directive") -> None:
         for key, item in value.items():
             key_text = str(key)
             if _SECRET_KEY_RE.search(key_text):
-                raise ValidationError("directive documents cannot contain credential material (%s.%s)" % (path, key_text))
+                raise ValidationError(
+                    "directive documents cannot contain credential material (%s.%s)"
+                    % (path, key_text)
+                )
             _reject_secret_material(item, "%s.%s" % (path, key_text))
     elif isinstance(value, list):
         for index, item in enumerate(value):

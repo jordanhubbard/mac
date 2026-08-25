@@ -117,9 +117,7 @@ def test_the_tick_emits_a_retention_heartbeat(cp):
     """Dormancy must be observable without waiting for a deletion."""
     cp.tick()
 
-    logs = cp.observability.list_observability(
-        name="retention.tick_ran", limit=500
-    )
+    logs = cp.observability.list_observability(name="retention.tick_ran", limit=500)
     assert logs, (
         "no retention.tick_ran heartbeat. Without it, a retention tick that "
         "never runs is indistinguishable from one that ran and found nothing, "
@@ -144,9 +142,7 @@ def test_the_heartbeat_is_throttled(cp):
     cp.tick()
     cp.tick()
 
-    logs = cp.observability.list_observability(
-        name="retention.tick_ran", limit=500
-    )
+    logs = cp.observability.list_observability(name="retention.tick_ran", limit=500)
     assert len(logs) == 1, (
         "expected the heartbeat to be throttled to one emission per "
         "RETENTION_HEARTBEAT_SECONDS, got %d across three ticks" % len(logs)
@@ -166,10 +162,7 @@ def test_the_heartbeat_throttle_survives_repeated_ticks(cp):
     for _ in range(4):
         cp.retention_prune_tick()  # must not raise
 
-    logs = cp.observability.list_observability(
-        name="retention.tick_ran", limit=500
-    )
+    logs = cp.observability.list_observability(name="retention.tick_ran", limit=500)
     assert len(logs) == 1, (
-        "expected exactly one throttled heartbeat across four ticks, got %d"
-        % len(logs)
+        "expected exactly one throttled heartbeat across four ticks, got %d" % len(logs)
     )

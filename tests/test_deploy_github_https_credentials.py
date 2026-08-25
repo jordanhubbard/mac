@@ -18,11 +18,7 @@ def _function() -> str:
     resolver_end = script.index("\ninstall_fleet_registry()", resolver_start)
     configure_start = script.index("configure_github_https_credentials()")
     configure_end = script.index("\n# On a brand-new spoke", configure_start)
-    return (
-        script[resolver_start:resolver_end]
-        + "\n"
-        + script[configure_start:configure_end]
-    )
+    return script[resolver_start:resolver_end] + "\n" + script[configure_start:configure_end]
 
 
 def _run(

@@ -56,22 +56,30 @@ def test_required_for_identity_explicit_and_resources_override():
     assert openshell_required_for_identity(agent_id="agent_alpha", explicit="1") is True
     assert openshell_required_for_identity(agent_id="agent_alpha", explicit="0") is False
     # resources.openshell_required is the data-driven signal
-    assert openshell_required_for_identity(
-        agent_id="agent_x", resources={"openshell_required": "true"}
-    ) is True
-    assert openshell_required_for_identity(
-        agent_id="agent_x", resources={"openshell_required": "false"}
-    ) is False
+    assert (
+        openshell_required_for_identity(
+            agent_id="agent_x", resources={"openshell_required": "true"}
+        )
+        is True
+    )
+    assert (
+        openshell_required_for_identity(
+            agent_id="agent_x", resources={"openshell_required": "false"}
+        )
+        is False
+    )
 
 
 def test_required_for_identity_matches_only_an_explicit_required_set():
     # name matching works against a caller-supplied set, not a hardcoded one
-    assert openshell_required_for_identity(
-        agent_id="agent_alpha", required_agent_names={"alpha"}
-    ) is True
-    assert openshell_required_for_identity(
-        agent_id="agent_beta", required_agent_names={"alpha"}
-    ) is False
+    assert (
+        openshell_required_for_identity(agent_id="agent_alpha", required_agent_names={"alpha"})
+        is True
+    )
+    assert (
+        openshell_required_for_identity(agent_id="agent_beta", required_agent_names={"alpha"})
+        is False
+    )
     # with the empty default set, an agent name alone never forces sandboxing
     assert openshell_required_for_identity(agent_id="agent_alpha") is False
 

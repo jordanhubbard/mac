@@ -6,6 +6,7 @@ reconciled them. On 2026-08-20 a task's acceptance criteria were rewritten
 mid-execution and correct work came within a hand-check of being judged
 against criteria written after it.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -35,6 +36,7 @@ def _running_task(cp, title="t", **kw):
 
 # --- the state itself -------------------------------------------------------
 
+
 def test_stopped_is_live_work_not_terminal():
     """Stopping is not cancelling. CANCELLED must keep meaning abandoned."""
     assert TaskState.STOPPED.value not in TERMINAL_TASK_STATES
@@ -51,6 +53,7 @@ def test_a_stopped_task_cannot_go_straight_back_to_running():
 
 
 # --- stop -------------------------------------------------------------------
+
 
 def test_stop_parks_a_running_task_and_records_the_abort_as_unconfirmed(tmp_path):
     """The abort is EVENTUAL -- the worker notices when its lease is no longer
@@ -82,9 +85,7 @@ def test_a_stopped_task_is_not_dispatchable(tmp_path):
 def test_stopping_a_terminal_task_is_refused(tmp_path):
     cp = _cp(tmp_path)
     task = cp.create_task(title="t", description="d")
-    cp._transition_task_internal(
-        task.id, TaskState.CANCELLED.value, "op", {"reason": "x"}
-    )
+    cp._transition_task_internal(task.id, TaskState.CANCELLED.value, "op", {"reason": "x"})
 
     with pytest.raises(TransitionError):
         cp.stop_task(task.id, actor="op")
@@ -99,6 +100,7 @@ def test_stop_is_idempotent(tmp_path):
 
 
 # --- start ------------------------------------------------------------------
+
 
 def test_start_returns_a_stopped_task_to_the_queue(tmp_path):
     cp = _cp(tmp_path)
@@ -132,6 +134,7 @@ def test_starting_a_task_that_is_not_stopped_is_refused(tmp_path):
 
 # --- the atomic update ------------------------------------------------------
 
+
 def test_updating_a_running_task_applies_the_edit_and_restarts_it(tmp_path):
     """The caller asks for an update and gets an update; the stop/restart is
     below the API so no caller can get the sequence wrong or abandon it."""
@@ -142,8 +145,8 @@ def test_updating_a_running_task_applies_the_edit_and_restarts_it(tmp_path):
 
     after = cp.get_task(task.id)
     assert after.description == "REWRITTEN CRITERIA"
-    assert after.state == TaskState.OPEN.value          # back in the queue
-    assert after.owner_agent_id is None                 # lease revoked
+    assert after.state == TaskState.OPEN.value  # back in the queue
+    assert after.owner_agent_id is None  # lease revoked
 
 
 def test_the_executor_is_aborted_rather_than_left_running(tmp_path):
@@ -186,6 +189,7 @@ def test_a_claimed_task_is_also_stopped_before_editing(tmp_path):
 
 
 # --- re-entry accounting ----------------------------------------------------
+
 
 def test_a_restart_does_not_consume_the_attempt_budget(tmp_path):
     """Stopping a task to correct its scope must not burn a retry: it failed
@@ -240,6 +244,7 @@ def test_the_next_agent_sees_the_new_text_not_the_old(tmp_path):
 
 # --- the blast radius that nearly shipped ----------------------------------
 
+
 def test_a_metadata_only_update_does_not_stop_a_running_task(tmp_path):
     """Only fields that change WHAT THE AGENT BUILDS trigger the cycle.
 
@@ -291,9 +296,7 @@ def test_lease_expiry_repair_does_not_revoke_the_lease_it_is_reconciling(tmp_pat
     lease_before = cp.get_task(task.id).lease_id
     assert lease_before
 
-    cp._update_task_fields(
-        task.id, dependencies=[blocker.id], actor="dispatcher.tick"
-    )
+    cp._update_task_fields(task.id, dependencies=[blocker.id], actor="dispatcher.tick")
 
     after = cp.get_task(task.id)
     assert after.lease_id == lease_before

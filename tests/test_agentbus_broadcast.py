@@ -79,9 +79,9 @@ def test_a_non_party_can_read_a_point_to_point_stream(fleet):
     stream = _say(cp, a, b, "rebasing onto main, do not push", stream_id="s1")
 
     assert cp.assert_agentbus_authorized(c.id, stream.id).id == stream.id
-    assert [
-        chunk.payload["text"] for chunk in cp.read_agentbus_chunks(c.id, stream.id)
-    ] == ["rebasing onto main, do not push"]
+    assert [chunk.payload["text"] for chunk in cp.read_agentbus_chunks(c.id, stream.id)] == [
+        "rebasing onto main, do not push"
+    ]
 
 
 def test_a_terminal_stream_stays_participant_scoped(fleet):
@@ -221,9 +221,7 @@ def test_group_membership_still_routes_the_inbox(fleet):
     cp, a, b, c = fleet
     _say(cp, a, b, "team update", stream_id="s1", participants=[b.id, c.id])
 
-    assert [chunk.payload["text"] for chunk in cp.read_agentbus_inbox(c.id)] == [
-        "team update"
-    ]
+    assert [chunk.payload["text"] for chunk in cp.read_agentbus_inbox(c.id)] == ["team update"]
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +246,7 @@ def test_roll_call_names_every_agent_on_the_bus_with_its_capabilities(fleet):
     assert sorted(by_id[a.id]["capabilities"]) == ["gpu", "repo"]
     assert by_id[b.id]["capabilities"] == []
     # The inventory shape agents already receive from agent_reflection_payload.
-    assert {"id", "name", "capabilities", "status", "current_task_id"} <= set(
-        by_id[a.id]
-    )
+    assert {"id", "name", "capabilities", "status", "current_task_id"} <= set(by_id[a.id])
 
 
 def test_roll_call_leaves_out_departed_agents_unless_asked(fleet):
@@ -258,10 +254,11 @@ def test_roll_call_leaves_out_departed_agents_unless_asked(fleet):
     cp.delete_agent(c.id)
 
     assert {entry["id"] for entry in cp.agentbus_roll_call()["agents"]} == {a.id, b.id}
-    assert {
-        entry["id"]
-        for entry in cp.agentbus_roll_call(include_departed=True)["agents"]
-    } == {a.id, b.id, c.id}
+    assert {entry["id"] for entry in cp.agentbus_roll_call(include_departed=True)["agents"]} == {
+        a.id,
+        b.id,
+        c.id,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +289,14 @@ def test_an_agent_can_tell_its_own_broadcast_from_a_peers(fleet):
     cp, a, _b, c = fleet
     cp.publish_agentbus_broadcast(a.id, "project.attention", project="mac")
 
-    assert cp.read_agentbus_broadcasts(a.id, event_types=["project.attention"])[0]["self_emitted"] is True
-    assert cp.read_agentbus_broadcasts(c.id, event_types=["project.attention"])[0]["self_emitted"] is False
+    assert (
+        cp.read_agentbus_broadcasts(a.id, event_types=["project.attention"])[0]["self_emitted"]
+        is True
+    )
+    assert (
+        cp.read_agentbus_broadcasts(c.id, event_types=["project.attention"])[0]["self_emitted"]
+        is False
+    )
 
 
 def test_the_vocabulary_is_closed(fleet):
@@ -372,9 +375,7 @@ def test_a_flood_of_distinct_events_is_rate_limited(fleet):
     flood = BROADCAST_RATE_LIMIT_EVENTS * 3
 
     outcomes = [
-        cp.publish_agentbus_broadcast(
-            a.id, "git.pushed", payload={"sha": "sha-%d" % index}
-        )
+        cp.publish_agentbus_broadcast(a.id, "git.pushed", payload={"sha": "sha-%d" % index})
         for index in range(flood)
     ]
 
@@ -387,13 +388,12 @@ def test_a_flood_of_distinct_events_is_rate_limited(fleet):
 def test_one_agents_flood_does_not_silence_another(fleet):
     cp, a, b, _c = fleet
     for index in range(BROADCAST_RATE_LIMIT_EVENTS * 2):
-        cp.publish_agentbus_broadcast(
-            a.id, "git.pushed", payload={"sha": "sha-%d" % index}
-        )
+        cp.publish_agentbus_broadcast(a.id, "git.pushed", payload={"sha": "sha-%d" % index})
 
-    assert cp.publish_agentbus_broadcast(
-        b.id, "git.pushed", payload={"sha": "quiet"}
-    )["accepted"] is True
+    assert (
+        cp.publish_agentbus_broadcast(b.id, "git.pushed", payload={"sha": "quiet"})["accepted"]
+        is True
+    )
 
 
 def test_an_oversized_payload_is_capped_and_says_so(fleet):
@@ -482,9 +482,7 @@ def test_the_hub_derives_a_ledger_fact_from_a_broadcast_alone(fleet):
 
     assert envelope["derived"] == ["bus.observed.git.pushed"]
     derived = [
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type == "bus.observed.git.pushed"
+        event for event in cp.task_history(task.id) if event.event_type == "bus.observed.git.pushed"
     ]
     assert len(derived) == 1
     assert derived[0].detail["branch"] == "certifier/x"
@@ -502,9 +500,7 @@ def test_chatty_events_do_not_reach_the_ledger(fleet):
 
     assert envelope["derived"] == []
     assert not [
-        event
-        for event in cp.task_history(task.id)
-        if event.event_type.startswith("bus.observed.")
+        event for event in cp.task_history(task.id) if event.event_type.startswith("bus.observed.")
     ]
 
 
@@ -517,13 +513,9 @@ def test_a_narrow_filter_scans_past_events_it_does_not_want(fleet):
     """
     cp, a, _b, c = fleet
     for index in range(30):
-        cp.publish_agentbus_broadcast(
-            a.id, "task.progress", payload={"sha": "noise-%d" % index}
-        )
+        cp.publish_agentbus_broadcast(a.id, "task.progress", payload={"sha": "noise-%d" % index})
     cp.publish_agentbus_broadcast(a.id, "git.merge_conflict", payload={"sha": "x"})
 
-    heard = cp.read_agentbus_broadcasts(
-        c.id, limit=5, event_types=["git.merge_conflict"]
-    )
+    heard = cp.read_agentbus_broadcasts(c.id, limit=5, event_types=["git.merge_conflict"])
 
     assert [item["event_type"] for item in heard] == ["git.merge_conflict"]

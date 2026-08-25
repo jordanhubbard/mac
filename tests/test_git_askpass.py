@@ -60,9 +60,7 @@ def test_askpass_fills_github_credentials_with_isolated_home(
     )
 
     assert completed.returncode == 0, completed.stderr
-    fields = dict(
-        line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line
-    )
+    fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert fields["username"] == "x-access-token"
     assert fields["password"] == token
     assert all(token not in argument for argument in completed.args)

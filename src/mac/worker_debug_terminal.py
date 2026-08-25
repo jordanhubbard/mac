@@ -8,6 +8,7 @@ Contains:
 These are imported back into worker.py; callers that import from mac.worker
 see no change.
 """
+
 from __future__ import annotations
 
 import base64
@@ -92,7 +93,9 @@ class DebugTerminalMixin:
                 "error",
                 "unsupported debug terminal schema: %s" % request.get("schema"),
             )
-            self._publish_debug_terminal_output(request, "error", message=result["summary"], close=True)
+            self._publish_debug_terminal_output(
+                request, "error", message=result["summary"], close=True
+            )
             return result
         if not self.debug_terminal_enabled:
             result = self._debug_terminal_result(
@@ -101,7 +104,9 @@ class DebugTerminalMixin:
                 "error",
                 "debug terminal is disabled on this worker",
             )
-            self._publish_debug_terminal_output(request, "error", message=result["summary"], close=True)
+            self._publish_debug_terminal_output(
+                request, "error", message=result["summary"], close=True
+            )
             return result
 
         session_id = str(request.get("session_id") or "").strip()
@@ -115,7 +120,9 @@ class DebugTerminalMixin:
                 "error",
                 "debug terminal request is missing session or stream identifiers",
             )
-            self._publish_debug_terminal_output(request, "error", message=result["summary"], close=True)
+            self._publish_debug_terminal_output(
+                request, "error", message=result["summary"], close=True
+            )
             return result
         if session_id in self._debug_terminal_sessions:
             result = self._debug_terminal_result(
@@ -124,7 +131,9 @@ class DebugTerminalMixin:
                 "error",
                 "debug terminal session already exists",
             )
-            self._publish_debug_terminal_output(request, "error", message=result["summary"], close=True)
+            self._publish_debug_terminal_output(
+                request, "error", message=result["summary"], close=True
+            )
             return result
 
         rows = _bounded_int(request.get("rows"), 8, 80, 32)
@@ -165,7 +174,9 @@ class DebugTerminalMixin:
                 "error",
                 "failed to open debug terminal: %s" % exc,
             )
-            self._publish_debug_terminal_output(request, "error", message=result["summary"], close=True)
+            self._publish_debug_terminal_output(
+                request, "error", message=result["summary"], close=True
+            )
             return result
         finally:
             if slave_fd is not None:
@@ -418,8 +429,7 @@ class DebugTerminalMixin:
         )
         try:
             self.client.post(
-                "/agentbus/streams/%s/chunks"
-                % quote(output_stream_id, safe=""),
+                "/agentbus/streams/%s/chunks" % quote(output_stream_id, safe=""),
                 {
                     "sender_agent_id": self.agent_id,
                     "content_type": DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,

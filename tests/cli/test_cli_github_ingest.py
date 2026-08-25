@@ -1,4 +1,5 @@
 """Behavioral tests for `mac fleet github-ingest enable/disable`."""
+
 from __future__ import annotations
 
 import io
@@ -33,7 +34,8 @@ def test_github_ingest_enable_sets_policy(tmp_path):
     _make_project(tmp_path)
     rc, out = _run(
         tmp_path,
-        "admin", "fleet",
+        "admin",
+        "fleet",
         "github-ingest",
         "enable",
         "mac",

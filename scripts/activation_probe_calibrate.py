@@ -18,9 +18,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument(
-        "--output", default="docs/activation-probe/calibration-report.json"
-    )
+    parser.add_argument("--output", default="docs/activation-probe/calibration-report.json")
     parser.add_argument("--bins", type=int, default=10)
     args = parser.parse_args()
 
@@ -32,9 +30,7 @@ def main() -> int:
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(output)
     return 0
 

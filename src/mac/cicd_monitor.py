@@ -80,9 +80,7 @@ _TERMINAL_FAILURE = frozenset(
         "timed_out",
     }
 )
-_PENDING_STATES = frozenset(
-    {"queued", "in_progress", "pending", "requested", "waiting"}
-)
+_PENDING_STATES = frozenset({"queued", "in_progress", "pending", "requested", "waiting"})
 
 _log = logging.getLogger("mac.cicd_monitor")
 
@@ -222,9 +220,7 @@ class CICDMonitorConfig:
     enabled: bool = True
     interval_seconds: float = DEFAULT_WAKE_INTERVAL_SECONDS
     initial_delay_seconds: float = DEFAULT_INITIAL_DELAY_SECONDS
-    default_post_publication_delay_hours: float = (
-        DEFAULT_POST_PUBLICATION_DELAY_HOURS
-    )
+    default_post_publication_delay_hours: float = DEFAULT_POST_PUBLICATION_DELAY_HOURS
     pending_retry_seconds: float = DEFAULT_PENDING_RETRY_SECONDS
     absent_recheck_seconds: float = DEFAULT_ABSENT_RECHECK_SECONDS
     api_timeout_seconds: float = DEFAULT_API_TIMEOUT_SECONDS
@@ -240,22 +236,16 @@ class CICDMonitorConfig:
         return {**asdict(self), "active": self.active}
 
     @classmethod
-    def from_env(
-        cls, environ: Optional[Mapping[str, str]] = None
-    ) -> "CICDMonitorConfig":
+    def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "CICDMonitorConfig":
         env = os.environ if environ is None else environ
         errors: List[str] = []
         raw_enabled = str(env.get("MAC_CICD_MONITOR_ENABLED", "1")).strip().lower()
         enabled = raw_enabled not in _FALSE_VALUES
         if raw_enabled and raw_enabled not in _FALSE_VALUES.union(_TRUE_VALUES):
-            errors.append(
-                "MAC_CICD_MONITOR_ENABLED must be a boolean value"
-            )
+            errors.append("MAC_CICD_MONITOR_ENABLED must be a boolean value")
 
         def number(name: str, default: float, low: float, high: float) -> float:
-            return bounded_env_number(
-                env, name, default, low, high, errors=errors
-            )
+            return bounded_env_number(env, name, default, low, high, errors=errors)
 
         interval = number(
             "MAC_CICD_MONITOR_INTERVAL_SECONDS",
@@ -311,9 +301,7 @@ class CICDMonitorConfig:
                 else _clamp(float(str(raw_delay).strip()), 1.0, 8.0)
             )
         except (TypeError, ValueError):
-            errors.append(
-                "MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS must be numeric"
-            )
+            errors.append("MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS must be numeric")
             delay = DEFAULT_POST_PUBLICATION_DELAY_HOURS
         return cls(
             enabled=enabled,
@@ -340,9 +328,7 @@ class ProjectCICDPolicy:
     priority: int = -10
 
     @classmethod
-    def from_metadata(
-        cls, metadata: Any, repository_url: str
-    ) -> "ProjectCICDPolicy":
+    def from_metadata(cls, metadata: Any, repository_url: str) -> "ProjectCICDPolicy":
         parsed = parse_github_owner_repo(repository_url)
         default_enabled = parsed is not None
         data = metadata if isinstance(metadata, Mapping) else {}
@@ -364,18 +350,19 @@ class ProjectCICDPolicy:
         else:
             raw_map = {}
 
-        branch = str(
-            raw_map.get("default_branch")
-            or data.get("default_branch")
-            or data.get("canonical_branch")
+        branch = (
+            str(
+                raw_map.get("default_branch")
+                or data.get("default_branch")
+                or data.get("canonical_branch")
+                or "main"
+            ).strip()
             or "main"
-        ).strip() or "main"
+        )
         delay: Optional[float] = None
         if raw_map.get("post_publication_delay_hours") not in {None, ""}:
             try:
-                delay = _clamp(
-                    float(raw_map.get("post_publication_delay_hours")), 1.0, 8.0
-                )
+                delay = _clamp(float(raw_map.get("post_publication_delay_hours")), 1.0, 8.0)
             except (TypeError, ValueError):
                 delay = None
         caps_raw = raw_map.get("required_capabilities") or []
@@ -389,11 +376,7 @@ class ProjectCICDPolicy:
             else ()
         )
         try:
-            priority = int(
-                raw_map.get("priority")
-                if raw_map.get("priority") is not None
-                else -10
-            )
+            priority = int(raw_map.get("priority") if raw_map.get("priority") is not None else -10)
         except (TypeError, ValueError):
             priority = -10
         return cls(
@@ -453,9 +436,7 @@ class CICDMonitor:
         self.control_plane = control_plane
         self.config = config
         self._actions_fetcher = actions_fetcher or _http_actions_status
-        self._token_provider = token_provider or (
-            lambda: gitops.token_for_host("github")
-        )
+        self._token_provider = token_provider or (lambda: gitops.token_for_host("github"))
         self._now = now or _utcnow
         if reconciliation is not None:
             self.reconciliation = reconciliation
@@ -491,9 +472,7 @@ class CICDMonitor:
             )
             self._thread = thread
             thread.start()
-        self._observe(
-            "cicd.monitor.started", "info", {"config": self.config.to_dict()}
-        )
+        self._observe("cicd.monitor.started", "info", {"config": self.config.to_dict()})
         return True
 
     def stop(self, timeout: float = 5.0) -> bool:
@@ -557,11 +536,7 @@ class CICDMonitor:
         metadata = getattr(record, "metadata", None) or {}
         repo_url = str(
             repository_url
-            or (
-                metadata.get("repository_url")
-                if isinstance(metadata, Mapping)
-                else ""
-            )
+            or (metadata.get("repository_url") if isinstance(metadata, Mapping) else "")
             or ""
         ).strip()
         policy = ProjectCICDPolicy.from_metadata(metadata, repo_url)
@@ -665,12 +640,8 @@ class CICDMonitor:
                 "started_at": started_at,
                 "finished_at": _iso(self._now()),
                 "checked_count": len(results),
-                "failure_count": sum(
-                    1 for result in results if result.get("status") == "failure"
-                ),
-                "pending_count": sum(
-                    1 for result in results if result.get("status") == "pending"
-                ),
+                "failure_count": sum(1 for result in results if result.get("status") == "failure"),
+                "pending_count": sum(1 for result in results if result.get("status") == "pending"),
                 "created_task_count": sum(
                     1 for result in results if result.get("cleanup_task_created")
                 ),
@@ -696,9 +667,7 @@ class CICDMonitor:
         finally:
             self._run_lock.release()
 
-    def _check_target(
-        self, target: _Target, *, token: str, actor: str
-    ) -> Dict[str, Any]:
+    def _check_target(self, target: _Target, *, token: str, actor: str) -> Dict[str, Any]:
         try:
             payload = self._actions_fetcher(
                 target.owner,
@@ -749,9 +718,7 @@ class CICDMonitor:
         self._record_check(target, result, actor=actor, pending=False)
         return result
 
-    def _classify(
-        self, payload: Mapping[str, Any], target: _Target
-    ) -> Dict[str, Any]:
+    def _classify(self, payload: Mapping[str, Any], target: _Target) -> Dict[str, Any]:
         workflows_payload = payload.get("workflows")
         runs_payload = payload.get("runs")
         workflows = (
@@ -770,8 +737,7 @@ class CICDMonitor:
             runs = [
                 run
                 for run in runs
-                if str(run.get("head_sha") or "").strip().lower()
-                == target.head_sha.lower()
+                if str(run.get("head_sha") or "").strip().lower() == target.head_sha.lower()
             ]
         latest = self._latest_runs(runs)
         durations = [
@@ -787,11 +753,7 @@ class CICDMonitor:
             "repository_url": target.repository_url,
             "branch": target.branch,
             "canonical_sha": target.head_sha
-            or (
-                str(latest[0].get("head_sha") or "").strip()
-                if latest
-                else ""
-            ),
+            or (str(latest[0].get("head_sha") or "").strip() if latest else ""),
             "trigger": target.trigger,
             "task_id": target.task_id,
             "publication_id": target.publication_id,
@@ -825,12 +787,8 @@ class CICDMonitor:
         failed = [
             run
             for run in latest
-            if str(run.get("conclusion") or "").strip().lower()
-            in _TERMINAL_FAILURE
-            or (
-                str(run.get("conclusion") or "").strip().lower()
-                not in _TERMINAL_SUCCESS
-            )
+            if str(run.get("conclusion") or "").strip().lower() in _TERMINAL_FAILURE
+            or (str(run.get("conclusion") or "").strip().lower() not in _TERMINAL_SUCCESS)
         ]
         if failed:
             failed_summaries = [self._run_summary(run) for run in failed]
@@ -851,12 +809,7 @@ class CICDMonitor:
     def _latest_runs(runs: Iterable[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
         by_workflow: Dict[str, Mapping[str, Any]] = {}
         for run in runs:
-            key = str(
-                run.get("workflow_id")
-                or run.get("name")
-                or run.get("id")
-                or "unknown"
-            )
+            key = str(run.get("workflow_id") or run.get("name") or run.get("id") or "unknown")
             current = by_workflow.get(key)
             if current is None or CICDMonitor._run_sort_key(run) > CICDMonitor._run_sort_key(
                 current
@@ -924,9 +877,7 @@ class CICDMonitor:
             ),
         }
         digest = hashlib.sha256(
-            json.dumps(material, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         return "sha256:%s" % digest
 
@@ -949,10 +900,7 @@ class CICDMonitor:
                     subject_id=target.project,
                 ):
                     detail = self._event_detail(event)
-                    if (
-                        str(detail.get("repository") or "").lower()
-                        != target.repository.lower()
-                    ):
+                    if str(detail.get("repository") or "").lower() != target.repository.lower():
                         continue
                     task_id = str(detail.get("task_id") or "")
                     if not task_id:
@@ -1029,9 +977,7 @@ class CICDMonitor:
         return task, True
 
     @staticmethod
-    def _cleanup_task_description(
-        target: _Target, result: Mapping[str, Any]
-    ) -> str:
+    def _cleanup_task_description(target: _Target, result: Mapping[str, Any]) -> str:
         failed = list(result.get("failed_runs") or [])
         run_lines = [
             "- %s: %s (%s)"
@@ -1048,8 +994,7 @@ class CICDMonitor:
                 "GitHub Actions failed for %s." % target.repository,
                 "Repository: %s" % target.repository_url,
                 "Branch: %s" % target.branch,
-                "Canonical SHA: %s"
-                % (result.get("canonical_sha") or target.head_sha or "unknown"),
+                "Canonical SHA: %s" % (result.get("canonical_sha") or target.head_sha or "unknown"),
                 "",
                 "Failed runs:",
                 *(run_lines or ["- no run details returned"]),
@@ -1057,8 +1002,7 @@ class CICDMonitor:
                 "This is background maintenance, not a release gate or incident. "
                 "Inspect each failed run and its failed logs (for example, `gh run "
                 "view <run-id> --log-failed --repo %s`). Classify the failure as "
-                "code, infrastructure, flaky test, or external dependency."
-                % target.repository,
+                "code, infrastructure, flaky test, or external dependency." % target.repository,
                 "",
                 "Fix the problem directly when the repair is bounded and useful. "
                 "If it is transient or intentionally accepted, record that evidence "
@@ -1071,9 +1015,7 @@ class CICDMonitor:
 
     def _due_followups(self) -> List[_Target]:
         now = self._now()
-        schedules = self._observations(
-            SCHEDULE_EVENT, limit=self.config.max_observations
-        )
+        schedules = self._observations(SCHEDULE_EVENT, limit=self.config.max_observations)
         targets: List[_Target] = []
         for event in reversed(schedules):
             detail = self._event_detail(event)
@@ -1090,9 +1032,7 @@ class CICDMonitor:
                 schedule_key=key,
             ):
                 continue
-            parsed = parse_github_owner_repo(
-                str(detail.get("repository_url") or "")
-            )
+            parsed = parse_github_owner_repo(str(detail.get("repository_url") or ""))
             if parsed is None:
                 continue
             owner, repo = parsed
@@ -1126,9 +1066,7 @@ class CICDMonitor:
             project = str(getattr(record, "name", "") or "")
             metadata = getattr(record, "metadata", None) or {}
             repo_url = str(
-                metadata.get("repository_url")
-                if isinstance(metadata, Mapping)
-                else ""
+                metadata.get("repository_url") if isinstance(metadata, Mapping) else ""
             ).strip()
             policy = ProjectCICDPolicy.from_metadata(metadata, repo_url)
             parsed = parse_github_owner_repo(repo_url)
@@ -1137,16 +1075,12 @@ class CICDMonitor:
             last = self._latest_check(project)
             if last is not None:
                 detail = self._event_detail(last)
-                checked_at = _parse_time(
-                    detail.get("checked_at") or self._event_created_at(last)
-                )
+                checked_at = _parse_time(detail.get("checked_at") or self._event_created_at(last))
                 if checked_at is not None:
                     if detail.get("status") == "ci_absent":
                         cadence = self.config.absent_recheck_seconds
                     else:
-                        average = self._float_or_none(
-                            detail.get("average_latency_seconds")
-                        )
+                        average = self._float_or_none(detail.get("average_latency_seconds"))
                         cadence = cadence_seconds_for_latency(average)
                     if (now - checked_at).total_seconds() < cadence:
                         continue
@@ -1241,9 +1175,7 @@ class CICDMonitor:
             detail=dict(detail),
         )
 
-    def _observe(
-        self, event_type: str, level: str, detail: Mapping[str, Any]
-    ) -> None:
+    def _observe(self, event_type: str, level: str, detail: Mapping[str, Any]) -> None:
         try:
             self._record(
                 event_type,
@@ -1292,19 +1224,14 @@ class CICDMonitor:
         key: str,
         value: str,
     ) -> Optional[Any]:
-        for event in self._observations(
-            name, subject_type=subject_type, subject_id=subject_id
-        ):
+        for event in self._observations(name, subject_type=subject_type, subject_id=subject_id):
             if str(self._event_detail(event).get(key) or "") == value:
                 return event
         return None
 
     def _followup_completed(self, schedule_key: str) -> bool:
         for event in self._observations(FOLLOWUP_COMPLETED_EVENT):
-            if (
-                str(self._event_detail(event).get("schedule_key") or "")
-                == schedule_key
-            ):
+            if str(self._event_detail(event).get("schedule_key") or "") == schedule_key:
                 return True
         return False
 
@@ -1317,9 +1244,7 @@ class CICDMonitor:
         schedule_key: str = "",
     ) -> bool:
         now = self._now()
-        for event in self._observations(
-            name, subject_type=subject_type, subject_id=subject_id
-        ):
+        for event in self._observations(name, subject_type=subject_type, subject_id=subject_id):
             detail = self._event_detail(event)
             if schedule_key and str(detail.get("schedule_key") or "") != schedule_key:
                 continue
@@ -1339,9 +1264,7 @@ class CICDMonitor:
         event = self._latest_check(project)
         if event is None:
             return None
-        return self._float_or_none(
-            self._event_detail(event).get("average_latency_seconds")
-        )
+        return self._float_or_none(self._event_detail(event).get("average_latency_seconds"))
 
     @staticmethod
     def _event_detail(event: Any) -> Dict[str, Any]:

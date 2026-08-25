@@ -27,9 +27,7 @@ REUSED_PATH_GATE = "steps.image-identity.outputs.disposition == 'reused'"
 
 def _ci_workflow() -> dict:
     yaml = pytest.importorskip("yaml")
-    return yaml.safe_load(
-        (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    )
+    return yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 
 
 def _workflow_job(workflow: str, name: str) -> str:
@@ -44,9 +42,7 @@ def test_deployment_image_uses_immutable_bases_and_frozen_lock() -> None:
     from_lines = [line for line in dockerfile.splitlines() if line.startswith("FROM ")]
     assert len(from_lines) == 3
     assert all("@sha256:" in line for line in from_lines)
-    assert all(
-        re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in from_lines
-    )
+    assert all(re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in from_lines)
     assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     # `hermes-gateway` was dropped from pyproject with the vendored Hermes
@@ -88,9 +84,7 @@ def test_deployment_build_context_excludes_secret_shaped_local_state() -> None:
 
 def test_deployment_image_ci_proves_nonroot_state_volume_writes() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    docker_job = workflow.split("\n  docker:\n", 1)[1].split(
-        "\n  openshell-runtime-image:\n", 1
-    )[0]
+    docker_job = workflow.split("\n  docker:\n", 1)[1].split("\n  openshell-runtime-image:\n", 1)[0]
 
     assert "type=volume,src=$state_volume,dst=/var/lib/mac" in docker_job
     assert 'test "$(id -u)" = 10001' in docker_job
@@ -102,9 +96,7 @@ def test_deployment_image_ci_proves_nonroot_state_volume_writes() -> None:
 
 def test_all_image_publication_smokes_use_valid_docker_label_templates() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    valid_template = (
-        "--format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}'"
-    )
+    valid_template = "--format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}'"
     invalid_template = (
         "--format='{{ index .Config.Labels "
         r"\"org.opencontainers.image.revision\" }}\'"
@@ -121,9 +113,9 @@ def test_all_image_publication_smokes_use_valid_docker_label_templates() -> None
 def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    job = workflow.split("\n  openshell-runtime-image:\n", 1)[1].split(
-        "\n  certifier-image:\n", 1
-    )[0]
+    job = workflow.split("\n  openshell-runtime-image:\n", 1)[1].split("\n  certifier-image:\n", 1)[
+        0
+    ]
     # The BUILD is deliberately NOT gated on the correctness jobs any more.
     # Building is cheap and reversible; deploying is not, so the gate moved to
     # the `tested-` tag (see the test below). Asserting the old `needs:` list
@@ -182,9 +174,9 @@ def test_plan_build_args_match_the_reviewed_identity_contract() -> None:
     reviewed = dict(module.IMAGE_SPECS["openshell-runtime"]["build_args"])
 
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    job = workflow.split("\n  openshell-runtime-image:\n", 1)[1].split(
-        "\n  certifier-image:\n", 1
-    )[0]
+    job = workflow.split("\n  openshell-runtime-image:\n", 1)[1].split("\n  certifier-image:\n", 1)[
+        0
+    ]
     plan_step = job.split("- id: image-reuse", 1)[0]
     passed = dict(re.findall(r"--build-arg ([A-Z_]+)=(\S+)", plan_step))
 
@@ -195,9 +187,7 @@ def test_plan_build_args_match_the_reviewed_identity_contract() -> None:
 
 
 def test_mainline_uses_fail_closed_impact_selection_between_nightly_full_runs() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     mainline = _workflow_job(workflow, "mainline")
     nightly = _workflow_job(workflow, "nightly")
 
@@ -211,9 +201,7 @@ def test_mainline_uses_fail_closed_impact_selection_between_nightly_full_runs() 
 def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    postgres = workflow.split("\n  postgres-contract:\n", 1)[1].split(
-        "\n  nightly:\n", 1
-    )[0]
+    postgres = workflow.split("\n  postgres-contract:\n", 1)[1].split("\n  nightly:\n", 1)[0]
     assert (
         "docker.io/library/postgres@sha256:"
         "33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20"
@@ -254,33 +242,24 @@ def test_manual_image_publication_is_restricted_to_protected_main() -> None:
 
     certifier_job = _workflow_job(workflow, "certifier-image")
     assert "github.ref == 'refs/heads/main'" in certifier_job
-    assert (
-        "needs.publication-scope.outputs.certifier_changed == 'true'" in certifier_job
-    )
+    assert "needs.publication-scope.outputs.certifier_changed == 'true'" in certifier_job
 
 
 def test_main_deployment_publication_is_anonymously_executable_on_both_arches() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    job = workflow.split("\n  docker:\n", 1)[1].split(
-        "\n  openshell-runtime-image:\n", 1
-    )[0]
+    job = workflow.split("\n  docker:\n", 1)[1].split("\n  openshell-runtime-image:\n", 1)[0]
 
     assert "gh api --method PATCH" not in job
     assert "gh api /user/packages/container/mac" in job
     assert 'test "$visibility" = public' in job
     assert "scripts/image-publication-identity.py verify" in job
     assert "--plan mac-image-publication/plan.json" in job
-    verifier = (ROOT / "scripts" / "image-publication-identity.py").read_text(
-        encoding="utf-8"
-    )
+    verifier = (ROOT / "scripts" / "image-publication-identity.py").read_text(encoding="utf-8")
     assert '"--network"' in verifier
     assert '"/bin/sh"' in verifier
     assert 'test "$(id -u)" = 10001' in verifier
     assert "test -x /opt/mac-venv/bin/mac-git-askpass" in verifier
-    assert (
-        "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml"
-        in verifier
-    )
+    assert "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml" in verifier
 
 
 def test_the_per_commit_image_tag_survives_image_reuse() -> None:
@@ -338,8 +317,7 @@ def test_the_per_commit_image_tag_survives_image_reuse() -> None:
         )
         step = retagged[0]
         assert step.get("if") == REUSED_PATH_GATE, (
-            f"{job_name}: the retag must run on exactly the path the "
-            "build-and-push step skips"
+            f"{job_name}: the retag must run on exactly the path the build-and-push step skips"
         )
         run = str(step["run"])
         # Retag by DIGEST off the identity the job actually verified, never by
@@ -355,9 +333,7 @@ def test_the_per_commit_image_tag_survives_image_reuse() -> None:
             str((step.get("env") or {}).get("IMAGE_DIGEST"))
             == "${{ steps.image-identity.outputs.digest }}"
         )
-        assert (
-            "printf '%s' \"$IMAGE_DIGEST\" | grep -Eq '^sha256:[0-9a-f]{64}$'" in run
-        )
+        assert "printf '%s' \"$IMAGE_DIGEST\" | grep -Eq '^sha256:[0-9a-f]{64}$'" in run
 
 
 def test_every_per_commit_tag_the_nightly_pulls_has_a_producer() -> None:

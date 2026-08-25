@@ -57,17 +57,13 @@ def test_live_matching_lease_is_kept():
 
 def test_terminal_task_is_reaped():
     for state in ("completed", "failed", "cancelled", "canceled"):
-        record = classify_lease_orphan_sandbox(
-            _sandbox(), _task(state=state), now=NOW
-        )
+        record = classify_lease_orphan_sandbox(_sandbox(), _task(state=state), now=NOW)
         assert record["reap"] is True, state
         assert "terminal" in record["reason"]
 
 
 def test_no_active_lease_is_reaped():
-    record = classify_lease_orphan_sandbox(
-        _sandbox(), _task(lease_id=""), now=NOW
-    )
+    record = classify_lease_orphan_sandbox(_sandbox(), _task(lease_id=""), now=NOW)
     assert record["reap"] is True
     assert record["reason"] == "task has no active lease"
 
@@ -84,17 +80,13 @@ def test_superseded_lease_is_reaped():
 
 def test_expired_lease_is_reaped():
     stale = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-    record = classify_lease_orphan_sandbox(
-        _sandbox(), _task(leased_until=stale), now=NOW
-    )
+    record = classify_lease_orphan_sandbox(_sandbox(), _task(leased_until=stale), now=NOW)
     assert record["reap"] is True
     assert record["reason"] == "task lease has expired"
 
 
 def test_missing_task_id_label_is_kept():
-    record = classify_lease_orphan_sandbox(
-        _sandbox(task_id=None), _task(), now=NOW
-    )
+    record = classify_lease_orphan_sandbox(_sandbox(task_id=None), _task(), now=NOW)
     assert record["reap"] is False
     assert record["reason"] == "mac.task.id label is missing"
 
@@ -106,18 +98,16 @@ def test_unresolvable_task_is_kept_fail_closed():
 
 
 def test_keep_true_protects_even_when_task_terminal():
-    record = classify_lease_orphan_sandbox(
-        _sandbox(keep="true"), _task(state="completed"), now=NOW
-    )
+    record = classify_lease_orphan_sandbox(_sandbox(keep="true"), _task(state="completed"), now=NOW)
     assert record["reap"] is False
     assert "keep" in record["reason"]
 
 
 def test_foreign_owner_and_kind_are_kept():
     assert (
-        classify_lease_orphan_sandbox(
-            _sandbox(owner="someone"), _task(state="completed"), now=NOW
-        )["reap"]
+        classify_lease_orphan_sandbox(_sandbox(owner="someone"), _task(state="completed"), now=NOW)[
+            "reap"
+        ]
         is False
     )
     assert (
@@ -164,9 +154,7 @@ def test_candidates_filter_reap_only_and_use_lookup():
         "task_live": _task(),
     }
 
-    candidates = lease_orphan_task_sandbox_candidates(
-        rows, lambda tid: tasks.get(tid), now=NOW
-    )
+    candidates = lease_orphan_task_sandbox_candidates(rows, lambda tid: tasks.get(tid), now=NOW)
     assert [c["name"] for c in candidates] == ["mac-task-terminal"]
 
 
@@ -174,9 +162,7 @@ def test_candidates_fail_closed_on_lookup_error():
     def boom(_tid):
         raise RuntimeError("hub unreachable")
 
-    candidates = lease_orphan_task_sandbox_candidates(
-        [_sandbox()], boom, now=NOW
-    )
+    candidates = lease_orphan_task_sandbox_candidates([_sandbox()], boom, now=NOW)
     assert candidates == []
 
 

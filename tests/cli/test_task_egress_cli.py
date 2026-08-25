@@ -99,13 +99,13 @@ def test_the_listing_names_the_tier_it_grants(tmp_path, task):
 @pytest.mark.parametrize(
     "bad",
     [
-        "https://api.example.com",   # scheme
-        "api.example.com:443",       # port
-        "api.example.com/v1",        # path
-        "*.example.com",             # glob
-        "10.0.0.1",                  # IP literal
-        "user:pw@example.com",       # credentials
-        "api example.com",           # whitespace
+        "https://api.example.com",  # scheme
+        "api.example.com:443",  # port
+        "api.example.com/v1",  # path
+        "*.example.com",  # glob
+        "10.0.0.1",  # IP literal
+        "user:pw@example.com",  # credentials
+        "api example.com",  # whitespace
         "",
     ],
 )
@@ -181,8 +181,14 @@ def test_listing_a_task_with_no_contract_is_empty_not_an_error(tmp_path, task):
 def test_a_reason_is_recorded_with_the_grant(tmp_path, task):
     """Why a host was opened is the thing a later reviewer needs."""
     _run(
-        tmp_path, "task", "egress", "grant", task["id"], "a.example.com",
-        "--reason", "aviation_apis moved per-repo",
+        tmp_path,
+        "task",
+        "egress",
+        "grant",
+        task["id"],
+        "a.example.com",
+        "--reason",
+        "aviation_apis moved per-repo",
     )
 
     _rc, listed = _run(tmp_path, "task", "egress", "list", task["id"])
@@ -193,8 +199,14 @@ def test_granting_preserves_unrelated_metadata(tmp_path):
     """A grant must not be a metadata overwrite."""
     _run(tmp_path, "project", "create", "mac")
     _rc, created = _run(
-        tmp_path, "task", "create", "keep my metadata", "--project", "mac",
-        "--metadata", json.dumps({"origin": {"kind": "operator"}}),
+        tmp_path,
+        "task",
+        "create",
+        "keep my metadata",
+        "--project",
+        "mac",
+        "--metadata",
+        json.dumps({"origin": {"kind": "operator"}}),
     )
 
     _run(tmp_path, "task", "egress", "grant", created["id"], "a.example.com")

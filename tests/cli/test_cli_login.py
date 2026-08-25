@@ -33,14 +33,16 @@ def test_login_cli_enroll_status_and_renew(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_login,
         "login",
-        lambda **kwargs: captured.update(login=kwargs)
-        or {"status": "logged_in", "profile": kwargs["profile"]},
+        lambda **kwargs: (
+            captured.update(login=kwargs) or {"status": "logged_in", "profile": kwargs["profile"]}
+        ),
     )
     rc, result, _ = _run(tmp_path, "admin", "login")
     assert rc == 0 and result["status"] == "logged_in"
     rc, result, _ = _run(
         tmp_path,
-        "admin", "login",
+        "admin",
+        "login",
         "--ssh",
         "mac@hub",
         "--identity-file",
@@ -83,8 +85,9 @@ def test_login_cli_local_console_uses_no_ssh_resolution(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_login,
         "local_console_login",
-        lambda **kwargs: captured.update(kwargs)
-        or {"status": "logged_in", "profile": kwargs["profile"]},
+        lambda **kwargs: (
+            captured.update(kwargs) or {"status": "logged_in", "profile": kwargs["profile"]}
+        ),
     )
     rc, result, error = _run(
         tmp_path,
@@ -106,8 +109,9 @@ def test_login_cli_local_console_uses_no_ssh_resolution(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_login,
         "renew_local_console_login",
-        lambda profile, **kwargs: captured.update(renew=(profile, kwargs))
-        or {"status": "renewed", "profile": profile},
+        lambda profile, **kwargs: (
+            captured.update(renew=(profile, kwargs)) or {"status": "renewed", "profile": profile}
+        ),
     )
     rc, result, error = _run(
         tmp_path,
@@ -164,8 +168,6 @@ def test_logout_cli_and_secret_safe_failure(tmp_path, monkeypatch):
             client_login.ClientLoginError("credential rejected")
         ),
     )
-    rc, result, error = _run(
-        tmp_path, "admin", "login", "status", "--profile", "prod"
-    )
+    rc, result, error = _run(tmp_path, "admin", "login", "status", "--profile", "prod")
     assert rc == 1 and result is None
     assert error.strip() == "credential rejected"

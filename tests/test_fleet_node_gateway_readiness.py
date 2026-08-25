@@ -87,7 +87,7 @@ def _fast_gateway_probe_python() -> str:
     assert source.count(command_wait) == 1
     assert source.count(observation_wait) == 1
     fast_command_wait = (
-        'process.wait(timeout=min(float(os.environ.get('
+        "process.wait(timeout=min(float(os.environ.get("
         '"MAC_TEST_GATEWAY_COMMAND_TIMEOUT", "8")), remaining()))'
     )
     source = source.replace(
@@ -435,9 +435,7 @@ def test_launchd_probe_accepts_current_macos_two_line_absent_state(
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd", "supervisord"])
-def test_exact_probe_rejects_a_competing_running_gateway(
-    tmp_path: Path, manager: str
-) -> None:
+def test_exact_probe_rejects_a_competing_running_gateway(tmp_path: Path, manager: str) -> None:
     completed, output = _run_probe(
         tmp_path,
         manager,
@@ -493,14 +491,9 @@ def test_exact_supervisord_probe_uses_only_the_system_manager(
     )
     assert completed.returncode == 0, completed.stderr
     assert output.is_file()
-    config = json.loads(
-        (tmp_path / "supervisor-state.json").read_text(encoding="utf-8")
-    )
+    config = json.loads((tmp_path / "supervisor-state.json").read_text(encoding="utf-8"))
     assert config["counts"]
-    assert all(
-        key.startswith("supervisorctl:privileged:")
-        for key in config["counts"]
-    )
+    assert all(key.startswith("supervisorctl:privileged:") for key in config["counts"])
     assert not any(":user:" in key for key in config["counts"])
 
 
@@ -655,9 +648,7 @@ def test_openclaw_supervisord_keeps_only_the_stopped_hermes_fallback(
     tmp_path: Path,
 ) -> None:
     states = _state("supervisord", "openclaw")
-    states[IDENTITIES["supervisord"]["hermes"]] = [
-        {"state": "stopped", "pid": 0, "restarts": 0}
-    ]
+    states[IDENTITIES["supervisord"]["hermes"]] = [{"state": "stopped", "pid": 0, "restarts": 0}]
     completed, output = _run_probe(tmp_path, "supervisord", "openclaw", states)
     assert completed.returncode == 0, completed.stderr
     receipt = json.loads(output.read_text(encoding="utf-8"))
@@ -666,9 +657,7 @@ def test_openclaw_supervisord_keeps_only_the_stopped_hermes_fallback(
     assert receipt["state"]["nemoclaw"]["state"] == "absent"
 
 
-def _valid_receipt(
-    manager: str = "systemd", implementation: str = "hermes"
-) -> dict[str, Any]:
+def _valid_receipt(manager: str = "systemd", implementation: str = "hermes") -> dict[str, Any]:
     states: dict[str, dict[str, Any]] = {}
     for offset, owner in enumerate(("hermes", "openclaw", "nemoclaw"), 1):
         selected = implementation != "none" and owner == implementation
@@ -776,9 +765,7 @@ def test_manifest_summary_rejects_wrong_schema_generation_or_permissions(
         lambda value: value.update(state={}),
         lambda value: value["state"]["hermes"].update(pid=0),
         lambda value: value["state"]["openclaw"].update(pid=999),
-        lambda value: value["state"]["openclaw"].update(
-            state="running", pid=999
-        ),
+        lambda value: value["state"]["openclaw"].update(state="running", pid=999),
     ],
 )
 def test_manifest_summary_independently_validates_receipt_semantics(
@@ -918,9 +905,9 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
     assert "media runtime readiness receipt changed while reading" in attest
     assert "stat.S_IMODE(phase1_metadata.st_mode) != 0o600" in attest
     assert "stat.S_IMODE(gateway_metadata.st_mode) != 0o600" in attest
-    assert "phase1_digest != phase1_summary.get(\"sha256\")" in attest
-    assert "hashlib.sha256(raw_gateway).hexdigest() != gateway_summary.get(\"sha256\")" in attest
-    assert "media_supervisor.get(\"media_resources\") != media_resources" in attest
+    assert 'phase1_digest != phase1_summary.get("sha256")' in attest
+    assert 'hashlib.sha256(raw_gateway).hexdigest() != gateway_summary.get("sha256")' in attest
+    assert 'media_supervisor.get("media_resources") != media_resources' in attest
     assert 'proof.get("stable_inactive_observations") != 2' in attest
     assert "live_gateway_sample()" in attest
     assert '"permission denied" in lowered' in attest
@@ -928,7 +915,7 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
     assert "selected gateway restarted during release attestation" in attest
     assert "assert_phase1_attestation_matches_controller" in source
     assert "evidence_digest = hashlib.sha256(" in epoch
-    assert epoch.count("epoch_id.rsplit(\":\", 1)[-1] != evidence_digest") == 2
+    assert epoch.count('epoch_id.rsplit(":", 1)[-1] != evidence_digest') == 2
 
 
 def test_outer_launchd_absence_accepts_multiline_not_found_diagnostic() -> None:
@@ -937,8 +924,7 @@ def test_outer_launchd_absence_accepts_multiline_not_found_diagnostic() -> None:
     proved = namespace["launchd_absence_is_proved"]
 
     actual_shape = (
-        "Bad request.\n"
-        "Could not find service com.mac.hermes-gateway in domain for user\n"
+        "Bad request.\nCould not find service com.mac.hermes-gateway in domain for user\n"
     )
     assert proved(113, actual_shape)
     assert proved(113, actual_shape.splitlines()[1])

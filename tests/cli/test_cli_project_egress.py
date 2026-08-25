@@ -50,8 +50,16 @@ def project(tmp_path):
 
 
 def test_grant_list_revoke_round_trip(project):
-    rc, _ = _run(project, "project", "egress", "grant", "Aviation",
-                 "opensky-network.org", "--reason", "ADS-B state vectors")
+    rc, _ = _run(
+        project,
+        "project",
+        "egress",
+        "grant",
+        "Aviation",
+        "opensky-network.org",
+        "--reason",
+        "ADS-B state vectors",
+    )
     assert rc == 0
 
     rc, listed = _run(project, "project", "egress", "list", "Aviation")
@@ -107,9 +115,7 @@ def test_the_declaration_lands_on_the_project_not_a_task(project):
     declaration would miss every one created before it."""
     _run(project, "project", "egress", "grant", "Aviation", "opensky-network.org")
     cp = control_plane_on(dsn_for(project))
-    row = cp.store.query_one(
-        "SELECT metadata FROM projects WHERE name = ?", ("Aviation",)
-    )
+    row = cp.store.query_one("SELECT metadata FROM projects WHERE name = ?", ("Aviation",))
     stored = json.loads(row["metadata"])["egress_contract"]
     assert stored["hosts"] == ["opensky-network.org"]
 

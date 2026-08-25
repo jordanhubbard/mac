@@ -58,14 +58,8 @@ _ALLOWLIST: dict[str, str] = {
 
 
 def _tracked_docs() -> list[Path]:
-    out = subprocess.check_output(
-        ["git", "ls-files", "docs/"], cwd=ROOT, text=True
-    )
-    return sorted(
-        ROOT / line
-        for line in out.splitlines()
-        if line.endswith((".md", ".mdx"))
-    )
+    out = subprocess.check_output(["git", "ls-files", "docs/"], cwd=ROOT, text=True)
+    return sorted(ROOT / line for line in out.splitlines() if line.endswith((".md", ".mdx")))
 
 
 def _is_allowlisted(path: Path) -> bool:
@@ -169,13 +163,9 @@ def check() -> list[str]:
     reachable, broken = _traverse(README)
     errors.extend(broken)
 
-    orphans = sorted(
-        p.relative_to(ROOT).as_posix() for p in docs_set if p not in reachable
-    )
+    orphans = sorted(p.relative_to(ROOT).as_posix() for p in docs_set if p not in reachable)
     for orphan in orphans:
-        errors.append(
-            f"orphaned current doc (not reachable from README.md): {orphan}"
-        )
+        errors.append(f"orphaned current doc (not reachable from README.md): {orphan}")
 
     # Historical material must be reachable specifically through the archive
     # index, not only via some incidental link, so it is quarantined and labelled.
@@ -220,9 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    reachable_docs = sum(
-        1 for p in _tracked_docs() if not _is_allowlisted(p)
-    )
+    reachable_docs = sum(1 for p in _tracked_docs() if not _is_allowlisted(p))
     print(
         "docs-graph gate passed: "
         f"{reachable_docs} current docs reachable from README.md, "
