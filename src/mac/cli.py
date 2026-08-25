@@ -799,9 +799,7 @@ def cmd_plugin_install(args: argparse.Namespace) -> None:
     from mac.harness_plugin import install
 
     if args.repo and args.scope == "global":
-        raise ValidationError(
-            "pass --scope repo with --repo, or omit --repo for a global install"
-        )
+        raise ValidationError("pass --scope repo with --repo, or omit --repo for a global install")
     if args.scope == "repo" and not args.repo:
         raise ValidationError("plugin install --repo is required for --scope repo")
     _print(
