@@ -163,7 +163,7 @@ def test_hub_verifiable_evidence_holds_the_merge_gate():
     falls through to the agent-nudge path. This distinguishes C2 from the
     intended no-evidence behavior."""
     src = inspect.getsource(ControlPlane.advance_default_review_workflow)
-    assert "hub_verifiable = (" in src
+    assert "hub_verifiable =" in src
     assert "self._hub_verify_repo_info(task, evidence) is not None" in src
     assert "if hub_verifiable:" in src
 

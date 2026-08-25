@@ -1215,8 +1215,8 @@ def test_linux_gateway_firewall_resolves_only_the_owned_docker_bridge(tmp_path):
 def test_runtime_publication_verifier_requires_anonymous_digest_readback():
     verifier = (ROOT / "scripts" / "verify-runtime-publication.py").read_text(encoding="utf-8")
     assert "mac-openshell-runtime@sha256:" in verifier
-    assert 'claude --version | grep -F \\"2.1.220\\"' in verifier
-    assert 'cursor-agent --version | grep -F \\"2026.07.23-e383d2b\\"' in verifier
+    assert 'claude --version | grep -F "2.1.220"' in verifier
+    assert 'cursor-agent --version | grep -F "2026.07.23-e383d2b"' in verifier
     assert "command -v codex; command -v claude; command -v cursor-agent;" in verifier
     assert 'anonymous_env["DOCKER_CONFIG"] = config' in verifier
     assert '"pull", args.image_ref' in verifier
