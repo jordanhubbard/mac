@@ -68,7 +68,9 @@ from mac.agentbus_control import (
     debug_terminal_output_payload,
     reflect_result_payload,
 )
+from mac.agent_inner_loop import PersistentAgentLoop
 from mac.env_config import resolve_hub_agent
+from mac.session_nudge import NUDGE_TOPIC
 
 # Shared with the hub's checksum helper on purpose: if the two ever computed the
 # digest differently the worker would rewrite its policy on every sweep and
@@ -352,6 +354,35 @@ class WorkerRunResult:
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
+
+
+def _emit_task_progress(
+    worker: Any,
+    task: JsonDict,
+    phase: str,
+    **payload: Any,
+) -> None:
+    """Emit a coarse progress boundary when the host supports AgentBus.
+
+    ``execute_assignment`` is intentionally reusable by small harnesses in
+    tests and K8s adapters. Those hosts implement the execution contract but
+    do not necessarily mix in worker observability, so progress remains
+    best-effort rather than becoming a new execution prerequisite.
+    """
+
+    emit = getattr(worker, "_emit_bus_event", None)
+    if not callable(emit):
+        return
+    emit(
+        "task.progress",
+        task_id=str(task.get("id") or "") or None,
+        project=str(task.get("project") or "") or None,
+        payload={
+            "schema": "mac.agent_inner_loop.progress.v1",
+            "phase": phase,
+            **payload,
+        },
+    )
 
 
 def _build_willing_media_routes(host: str, hardware: Optional[JsonDict]) -> List[JsonDict]:
@@ -918,6 +949,14 @@ class MacWorker(
         # signature rejections can never drive a rotation loop.
         self._last_attestation_heal_at = 0.0
         self.poll_interval_seconds = float(poll_interval_seconds)
+        self._inner_loop_wake = threading.Event()
+        self._inner_loop = PersistentAgentLoop(
+            base_delay_seconds=self.poll_interval_seconds,
+            max_delay_seconds=min(
+                5.0,
+                max(self.poll_interval_seconds, self.poll_interval_seconds * 8.0),
+            ),
+        )
         self.allowed_projects = list(allowed_projects or [])
         self.required_metadata = dict(required_metadata or {})
         self.claim_only_canary_tasks = bool(claim_only_canary_tasks)
@@ -1022,6 +1061,7 @@ class MacWorker(
     def stop(self) -> None:
         """Signal the run loop to exit after the current task."""
         self._stop = True
+        self._inner_loop_wake.set()
 
     def run_forever(self, max_iterations: Optional[int] = None) -> List[WorkerRunResult]:
         """Loop run_once() with sleep on empty. Bounded by max_iterations for tests.
@@ -1062,15 +1102,27 @@ class MacWorker(
                         level="error",
                         detail={"error": str(exc), "iteration": iterations},
                     )
-                    results.append(WorkerRunResult(status="error", error=str(exc)))
+                    outcome = WorkerRunResult(status="error", error=str(exc))
+                    results.append(outcome)
                     if max_iterations is None:
-                        time.sleep(self.poll_interval_seconds)
+                        decision = self._inner_loop.observe(outcome.status)
+                        self._inner_loop_wake.wait(decision.delay_seconds)
+                        self._inner_loop_wake.clear()
                     continue
-                if outcome.status in {"no_task", "held"}:
-                    if max_iterations is None:
-                        time.sleep(self.poll_interval_seconds)
-                    continue
-                results.append(outcome)
+                if outcome.status not in {"no_task", "held"}:
+                    results.append(outcome)
+                if max_iterations is None:
+                    decision = self._inner_loop.observe(outcome.status)
+                    self._observe_log(
+                        "worker.inner_loop.%s" % decision.mode,
+                        level="debug",
+                        subject_type="agent",
+                        subject_id=self.agent_id,
+                        detail=decision.to_dict(),
+                    )
+                    if decision.delay_seconds > 0:
+                        self._inner_loop_wake.wait(decision.delay_seconds)
+                        self._inner_loop_wake.clear()
         finally:
             self._restore_signal_handlers(prior_handlers)
             self._stop_delivery_drain_thread()
@@ -1514,6 +1566,12 @@ class MacWorker(
                     task_dir = self._prepare_task_workspace(task, lease)
                 else:
                     raise
+            _emit_task_progress(
+                self,
+                task,
+                "execution_started",
+                continuation="local",
+            )
             started = time.monotonic()
             execution = self._execute_with_lease_renewal(task, lease, task_dir)
             duration_ms = (time.monotonic() - started) * 1000.0
@@ -1531,6 +1589,13 @@ class MacWorker(
                 subject_type="task",
                 subject_id=task_id,
                 detail={"returncode": execution.returncode, "summary": execution.summary},
+            )
+            _emit_task_progress(
+                self,
+                task,
+                "execution_finished",
+                returncode=execution.returncode,
+                duration_ms=round(duration_ms, 3),
             )
             if not self._assignment_is_current(task_id, lease_id):
                 return self._stale_result(
@@ -2718,6 +2783,25 @@ class MacWorker(
                 result = self._handle_reflect_request_stream(stream)
                 processed.append(stream_id)
                 self._save_agentbus_control_state(processed)
+                continue
+            if topic == NUDGE_TOPIC and content_type == "application/json":
+                # A hub nudge is an independent recovery signal, not task
+                # authority. Wake the local scheduler; the normal heartbeat,
+                # hold, claim, task-state, and lease checks still decide
+                # whether this worker may do anything.
+                processed.append(stream_id)
+                self._save_agentbus_control_state(processed)
+                self._inner_loop_wake.set()
+                self._observe_log(
+                    "worker.inner_loop.hub_nudge_received",
+                    level="info",
+                    subject_type="task",
+                    subject_id=str(stream.get("task_id") or "") or None,
+                    detail={
+                        "agent_id": self.agent_id,
+                        "stream_id": stream_id,
+                    },
+                )
                 continue
             # Directable peer/directive handling (task_c6f02f06). Default OFF:
             # when MAC_WORKER_DIRECTABLE is unset these branches are not entered
