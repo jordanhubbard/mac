@@ -47,6 +47,7 @@ marked `historical archive` and must not be read as current behaviour.
 | architecture decision | [`adr/0029-the-route-search-path-is-a-fleet-contract.md`](../adr/0029-the-route-search-path-is-a-fleet-contract.md) | ADR 0029: The coding-route search path is a fleet contract, not per-worker environment |
 | architecture decision | [`adr/0030-langchain-extracts-before-qdrant.md`](../adr/0030-langchain-extracts-before-qdrant.md) | ADR 0030: LangChain extracts meaning on the agent; hub Qdrant only stores the extract |
 | architecture decision | [`adr/0031-codegraph-is-a-hint.md`](../adr/0031-codegraph-is-a-hint.md) | ADR 0031: CodeGraph is a hint when the tool and `.codegraph/` exist, not a hard gate |
+| architecture decision | [`adr/0032-cli-session-hooks-not-tmux.md`](../adr/0032-cli-session-hooks-not-tmux.md) | ADR 0032: CLI sessions use each harness's hooks, not tmux, for recording and AgentBus injection |
 | supplemental reference | [`agent-lifecycle-proof.md`](../agent-lifecycle-proof.md) | Agent Lifecycle Proof |
 | historical archive | [`archive/field-notes/assessment-2026-08-02.md`](../archive/field-notes/assessment-2026-08-02.md) | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | [`archive/field-notes/assessment-task-1b6783.md`](../archive/field-notes/assessment-task-1b6783.md) | Assessment: task_1b67831356c347c3a91d782982f47d1c |
