@@ -1962,7 +1962,7 @@
 
 <h1 id="adr-0023-one-skill-source-thin-plugins-per-coding-harness">ADR 0023 - One skill source, thin plugins per coding harness<a class="headerlink" href="#adr-0023-one-skill-source-thin-plugins-per-coding-harness" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: <strong>Proposed</strong></li>
+<li>Status: <strong>Accepted</strong></li>
 <li>Date: 2026-08-20</li>
 <li>Amended: 2026-08-25 — Agent Plugins 1.0 is the portable package; the
   human CLI and the agent plugin share one <code>mac</code> executable; every agent
@@ -2296,6 +2296,11 @@ who is allowed to send. The hook layer is a companion decision; it
 does not change the single-sender rule.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Implemented 2026-08-25: <code>mac admin plugin install|status|uninstall</code>
+  writes one Agent Plugins package under <code>$MAC_HOME/plugin</code> and wires
+  detected harnesses; <code>ControlPlane.tick</code> is the only stall nudger
+  (<code>mac.session_nudge</code>). Heartbeat is not progress. How a session hears
+  the nudge is <a href="../0032-cli-session-hooks-not-tmux/">ADR 0032</a>.</li>
 <li>Guidance stops depending on a session choosing to read it.</li>
 <li>A new rule is written once and reaches every harness as one plugin
   plus thin shims, not five authored copies.</li>
