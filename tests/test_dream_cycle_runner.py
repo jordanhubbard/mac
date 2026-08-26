@@ -569,6 +569,13 @@ def test_installer_schedules_script_jobs_via_launchd_and_systemd() -> None:
     assert ".timer" in installer
     assert "Persistent=true" in installer
     assert "RunAtLoad" in installer
+    assert "install_kslug_workspace_skill" in installer
+    assert "workspace-skills/kslug-nightly-news/SKILL.md" in installer
+    skill = OPENCLAW_DIR / "workspace-skills" / "kslug-nightly-news" / "SKILL.md"
+    assert skill.is_file()
+    body = skill.read_text(encoding="utf-8")
+    assert ":tv: _KSLUG NIGHTLY NEWS_ :tv:" in body
+    assert "Do not use Slack tools" in body
 
 
 def test_runner_and_installer_are_syntactically_valid() -> None:

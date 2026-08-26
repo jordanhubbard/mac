@@ -1472,6 +1472,22 @@ EOF
   chmod 0700 "$MANAGED_DIR/checkpoint-quiesce.sh"
 }
 
+install_kslug_workspace_skill() {
+  # The nightly #localnews producer looks for this skill in the OpenClaw
+  # workspace. Host-only copies are invisible inside the sandbox overlay, so
+  # the installer places the managed skill before the sandbox is (re)built.
+  local src="${MAC_OPENCLAW_KSLUG_SKILL_SRC:-$(dirname "$0")/workspace-skills/kslug-nightly-news/SKILL.md}"
+  local dst="$WORKSPACE_DIR/skills/kslug-nightly-news/SKILL.md"
+  if [ ! -f "$src" ]; then
+    log "kslug workspace skill source not found ($src); skipping"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cp -f "$src" "$dst"
+  chmod 0600 "$dst"
+  log "installed kslug-nightly-news workspace skill"
+}
+
 write_workspace_context() {
   cat > "$WORKSPACE_DIR/AGENTS.md" <<EOF
 # MAC OpenClaw Gateway Context
@@ -2765,6 +2781,7 @@ prepare() {
   write_checkpoint_quiescer
   write_workspace_context
   migrate_continuity
+  install_kslug_workspace_skill
   render_policy
   write_host_wrapper "$openshell_bin"
   install_host_script_runner
