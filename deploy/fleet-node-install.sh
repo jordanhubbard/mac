@@ -376,6 +376,7 @@ DRAIN_POLL_SECONDS="${MAC_DEPLOY_DRAIN_POLL_SECONDS:-10}"
 DEFER_CLEAR_DRAIN="${MAC_DEPLOY_DEFER_CLEAR_DRAIN:-0}"
 DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"
 SCHEMA_BASELINE_AUTHORIZED="${MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE:-0}"
+SCHEMA_LEGACY_PRUNE_AUTHORIZED="${MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE:-0}"
 OPENSHELL_DEPLOY_ENABLED="${MAC_DEPLOY_OPENSHELL_ENABLED:-0}"
 OPENSHELL_EFFECTIVE_ARGS="${MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS:-}"
 OPENSHELL_RUNTIME_IMAGE="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
@@ -10998,7 +10999,7 @@ migrate_control_plane_schema() {
   local preflight="$LOG_DIR/schema-migration-preflight-${DEPLOY_TS}.json"
   local backup="$LOG_DIR/schema-migration-backup-${DEPLOY_TS}.json"
   local migration="$LOG_DIR/schema-migration-result-${DEPLOY_TS}.json"
-  local quiescence state pending_count backup_dir
+  local quiescence state pending_count prune_required backup_dir
   local -a baseline_args=() backup_args=()
   [ -n "$dsn" ] || die "schema migration requires MAC_DATABASE_URL or MAC_DB"
   if [ "$NODE_ACTION" = legacy-one-shot ]; then
@@ -11011,13 +11012,17 @@ migrate_control_plane_schema() {
 
   log "running read-only PostgreSQL schema migration preflight"
   "$VENV/bin/mac-schema-migrate" --status --database-url "$dsn" > "$preflight"
-  read -r state pending_count < <("$PY" - "$preflight" <<'PY_SCHEMA_PREFLIGHT'
+  read -r state pending_count prune_required < <("$PY" - "$preflight" <<'PY_SCHEMA_PREFLIGHT'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
-print(payload.get("database_state", ""), len(payload.get("pending") or []))
+print(
+    payload.get("database_state", ""),
+    len(payload.get("pending") or []),
+    int(bool(payload.get("requires_legacy_schema_prune_authority"))),
+)
 PY_SCHEMA_PREFLIGHT
 )
   if [ "$pending_count" -eq 0 ]; then
@@ -11030,6 +11035,11 @@ PY_SCHEMA_PREFLIGHT
     truthy "$SCHEMA_BASELINE_AUTHORIZED" \
       || die "existing unversioned PostgreSQL authority requires MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE=1"
     baseline_args+=(--authorize-existing-baseline)
+    if [ "$prune_required" -eq 1 ]; then
+      truthy "$SCHEMA_LEGACY_PRUNE_AUTHORIZED" \
+        || die "reviewed legacy PostgreSQL tables require MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE=1"
+      baseline_args+=(--authorize-legacy-schema-prune)
+    fi
   elif [ "$state" = fresh ]; then
     backup_args+=(--allow-empty-authority)
   fi

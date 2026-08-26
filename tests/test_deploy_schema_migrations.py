@@ -70,6 +70,27 @@ def test_existing_unversioned_baseline_requires_explicit_deploy_authority() -> N
     assert "add_remote_env MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE" in deploy
 
 
+def test_legacy_prune_has_separate_authority_after_verified_backup() -> None:
+    installer = _installer()
+    body = _migration_function(installer)
+    deploy = DEPLOY.read_text(encoding="utf-8")
+
+    prune_preflight = body.index('payload.get("requires_legacy_schema_prune_authority")')
+    prune_authority = body.index('truthy "$SCHEMA_LEGACY_PRUNE_AUTHORIZED"')
+    backup = body.index('"$VENV/bin/mac-pg-backup" --json')
+    backup_proof = body.index('payload.get("restore_verified") is not True')
+    migration = body.index('if ! "$VENV/bin/mac-schema-migrate"')
+
+    assert prune_preflight < prune_authority < backup < backup_proof < migration
+    assert "--authorize-legacy-schema-prune" in body
+    assert "MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE=1" in body
+    assert "add_remote_env MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE" in deploy
+    # Both preflight and migration JSON are embedded unchanged in the durable
+    # deploy receipt, preserving the before-drop row counts.
+    assert '"preflight": load("MAC_SCHEMA_PREFLIGHT")' in installer
+    assert '"migration": load("MAC_SCHEMA_RESULT")' in installer
+
+
 def test_failed_migration_retains_backup_receipt_and_cannot_start_hub() -> None:
     source = _installer()
     body = _migration_function(source)

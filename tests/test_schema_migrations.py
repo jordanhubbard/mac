@@ -3,11 +3,76 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import re
 
 import pytest
 
 from mac.schema_migrations import Migration
 from mac.store import StoreError
+
+
+EXPECTED_LEGACY_PRUNABLE_TABLES = {
+    "evidence_attempt_links",
+    "evidence_attempt_verifications",
+    "execution_cohort_assignments",
+    "execution_cohort_configurations",
+    "work_package_assignment_audit",
+    "work_package_batch_inputs",
+    "work_package_certification_jobs",
+    "work_package_certifications",
+    "work_package_controller_outcomes",
+    "work_package_controller_station_receipts",
+    "work_package_epochs",
+    "work_package_finalization_outcomes",
+    "work_package_history",
+    "work_package_integration_batches",
+    "work_package_landing_attempts",
+    "work_package_landing_intents",
+    "work_package_landing_receipts",
+    "work_package_landing_streams",
+    "work_package_lease_expiry_repairs",
+    "work_package_node_candidates",
+    "work_package_node_lineage",
+    "work_package_plan_versions",
+    "work_package_publication_finalizations",
+    "work_package_ref_retirement_attempts",
+    "work_package_ref_retirement_intents",
+    "work_package_ref_retirement_receipts",
+    "work_package_station_attempts",
+    "work_package_task_links",
+    "work_package_telemetry_health",
+    "work_package_wip_tokens",
+    "work_packages",
+}
+
+
+def test_legacy_prune_allowlist_is_exact_and_has_no_runtime_sql_users() -> None:
+    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+
+    assert LEGACY_PRUNABLE_TABLES == EXPECTED_LEGACY_PRUNABLE_TABLES
+    root = Path(__file__).resolve().parents[1]
+    historical_drop = (root / "migrations" / "2026-08-17-drop-work-package-tables.sql").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        set(re.findall(r"DROP TABLE IF EXISTS\s+(\w+)\s+CASCADE", historical_drop))
+        == LEGACY_PRUNABLE_TABLES
+    )
+
+    runtime_root = root / "src" / "mac"
+    sql_use = re.compile(
+        r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+"
+        r"[\"']?(%s)\b" % "|".join(sorted(LEGACY_PRUNABLE_TABLES)),
+        re.IGNORECASE,
+    )
+    users = []
+    for path in runtime_root.rglob("*.py"):
+        if path.name == "schema_migrations.py":
+            continue
+        if sql_use.search(path.read_text(encoding="utf-8")):
+            users.append(path.relative_to(runtime_root).as_posix())
+    assert users == []
 
 
 def test_migration_chain_rejects_empty_duplicate_malformed_and_out_of_order() -> None:
@@ -86,6 +151,7 @@ def test_cli_status_and_apply_delegate_without_starting_control_plane(monkeypatc
                 "--applied-by",
                 "pytest",
                 "--authorize-existing-baseline",
+                "--authorize-legacy-schema-prune",
             ]
         )
         == 0
@@ -97,6 +163,7 @@ def test_cli_status_and_apply_delegate_without_starting_control_plane(monkeypatc
             {
                 "applied_by": "pytest",
                 "authorize_existing_baseline": True,
+                "authorize_legacy_schema_prune": True,
             },
         )
     ]

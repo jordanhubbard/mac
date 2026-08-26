@@ -61,6 +61,7 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
     "deploy/deploy-mac-fleet.sh": (
+        "tests/test_deploy_schema_migrations.py",
         "tests/test_deploy_fleet_drain.py",
         "tests/test_fleet_node_machine_onboard.py",
         "tests/test_reviewed_openshell_cli.py",

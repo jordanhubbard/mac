@@ -320,6 +320,7 @@ class PostgresStore(StoreHelpersMixin):
         *,
         applied_by: str,
         authorize_existing_baseline: bool = False,
+        authorize_legacy_schema_prune: bool = False,
         migrations: Optional[Sequence[Any]] = None,
     ) -> dict:
         """Apply migrations transactionally through the explicit deploy API."""
@@ -331,6 +332,7 @@ class PostgresStore(StoreHelpersMixin):
                     conn,
                     applied_by=applied_by,
                     authorize_existing_baseline=authorize_existing_baseline,
+                    authorize_legacy_schema_prune=authorize_legacy_schema_prune,
                     migrations=MIGRATIONS if migrations is None else migrations,
                 )
         except StoreError:

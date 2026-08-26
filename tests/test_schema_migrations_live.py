@@ -26,6 +26,33 @@ def _fresh_store(pg_dsn: str):
         store.close()
 
 
+def _install_unversioned_legacy_tables(store, *, include_unknown: bool = False) -> None:
+    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+
+    with store._pool.connection() as conn:
+        conn.execute(MIGRATIONS[0].sql)
+        for table_name in sorted(LEGACY_PRUNABLE_TABLES):
+            conn.execute('CREATE TABLE "%s" (id INTEGER PRIMARY KEY, payload TEXT)' % table_name)
+            conn.execute(
+                'INSERT INTO "%s" (id, payload) VALUES (1, %s)' % (table_name, "%s"),
+                ("retained-by-backup",),
+            )
+        conn.execute(
+            "ALTER TABLE evidence_attempt_verifications "
+            "ADD COLUMN link_id INTEGER REFERENCES evidence_attempt_links(id)"
+        )
+        conn.execute(
+            "INSERT INTO execution_cohort_assignments (id, payload) VALUES (2, %s)",
+            ("second-live-row",),
+        )
+        if include_unknown:
+            conn.execute("CREATE TABLE unknown_legacy_extra (id INTEGER PRIMARY KEY)")
+
+
+def _relation_exists(store, relation: str) -> bool:
+    return store.query_one("SELECT to_regclass(?) AS relation", (relation,))["relation"] is not None
+
+
 def test_fresh_database_bootstrap_records_version_and_append_only_ledger(pg_dsn: str) -> None:
     with _fresh_store(pg_dsn) as store:
         preflight = store.migration_status()
@@ -246,3 +273,103 @@ def test_pending_migration_without_postcondition_is_refused(pg_dsn: str) -> None
             store.query_one("SELECT to_regclass('migration_missing_proof') AS relation")["relation"]
             is None
         )
+
+
+def test_preflight_reports_exact_reviewed_legacy_prune_counts_read_only(pg_dsn: str) -> None:
+    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+
+    with _fresh_store(pg_dsn) as store:
+        _install_unversioned_legacy_tables(store)
+
+        status = store.migration_status()
+
+        assert status["database_state"] == "existing-unversioned"
+        assert status["requires_backup"] is True
+        assert status["requires_existing_baseline_authority"] is True
+        assert status["requires_legacy_schema_prune_authority"] is True
+        prune = status["legacy_schema_prune"]
+        assert prune["required"] is True
+        assert prune["requires_backup"] is True
+        assert prune["requires_authorization"] is True
+        assert prune["table_names"] == sorted(LEGACY_PRUNABLE_TABLES)
+        assert prune["total_rows"] == len(LEGACY_PRUNABLE_TABLES) + 1
+        assert {item["table"]: item["row_count"] for item in prune["tables"]}[
+            "execution_cohort_assignments"
+        ] == 2
+        assert all(_relation_exists(store, table) for table in LEGACY_PRUNABLE_TABLES)
+        assert not _relation_exists(store, "schema_migrations")
+
+
+def test_legacy_prune_requires_separate_authority_and_accepts_rows(pg_dsn: str) -> None:
+    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+
+    with _fresh_store(pg_dsn) as store:
+        _install_unversioned_legacy_tables(store)
+
+        with pytest.raises(StoreError, match="authorize-legacy-schema-prune"):
+            store.apply_migrations(
+                applied_by="pytest:baseline-only",
+                authorize_existing_baseline=True,
+            )
+        assert all(_relation_exists(store, table) for table in LEGACY_PRUNABLE_TABLES)
+        assert not _relation_exists(store, "schema_migrations")
+
+        result = store.apply_migrations(
+            applied_by="pytest:authorized-prune",
+            authorize_existing_baseline=True,
+            authorize_legacy_schema_prune=True,
+        )
+
+        assert result["mode"] == "authorized-existing-baseline-with-legacy-prune"
+        assert result["legacy_schema_prune"]["table_names"] == sorted(LEGACY_PRUNABLE_TABLES)
+        assert result["legacy_schema_prune"]["total_rows"] == len(LEGACY_PRUNABLE_TABLES) + 1
+        assert not any(_relation_exists(store, table) for table in LEGACY_PRUNABLE_TABLES)
+        assert store.verify_schema()["status"] == "verified"
+
+
+def test_unknown_extra_blocks_before_legacy_prune_mutation(pg_dsn: str) -> None:
+    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+
+    with _fresh_store(pg_dsn) as store:
+        _install_unversioned_legacy_tables(store, include_unknown=True)
+
+        with pytest.raises(StoreError, match="unknown_legacy_extra"):
+            store.migration_status()
+        with pytest.raises(StoreError, match="unknown_legacy_extra"):
+            store.apply_migrations(
+                applied_by="pytest:unknown-extra",
+                authorize_existing_baseline=True,
+                authorize_legacy_schema_prune=True,
+            )
+
+        assert all(_relation_exists(store, table) for table in LEGACY_PRUNABLE_TABLES)
+        assert _relation_exists(store, "unknown_legacy_extra")
+        assert not _relation_exists(store, "schema_migrations")
+
+
+def test_failure_after_legacy_drop_rolls_back_tables_rows_and_ledger(pg_dsn: str) -> None:
+    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+
+    broken = Migration(
+        "0003_legacy_prune_rollback_probe",
+        "CREATE TABLE legacy_prune_rollback_probe (id INTEGER PRIMARY KEY)",
+        "SELECT FALSE",
+    )
+    with _fresh_store(pg_dsn) as store:
+        _install_unversioned_legacy_tables(store)
+
+        with pytest.raises(StoreError, match="postcondition failed"):
+            store.apply_migrations(
+                applied_by="pytest:rollback",
+                authorize_existing_baseline=True,
+                authorize_legacy_schema_prune=True,
+                migrations=(*MIGRATIONS, broken),
+            )
+
+        assert all(_relation_exists(store, table) for table in LEGACY_PRUNABLE_TABLES)
+        assert (
+            store.query_one("SELECT COUNT(*) AS count FROM execution_cohort_assignments")["count"]
+            == 2
+        )
+        assert not _relation_exists(store, "schema_migrations")
+        assert not _relation_exists(store, "legacy_prune_rollback_probe")

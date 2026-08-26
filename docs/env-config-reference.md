@@ -174,6 +174,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ATTEST_REV` | str | consumer-defined | deployment | Deployment setting: deploy attest rev. |
 | `MAC_DEPLOY_ATTEST_TS` | str | consumer-defined | deployment | Deployment setting: deploy attest ts. |
 | `MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE` | str | consumer-defined | deployment | Deployment setting: deploy authorize existing schema baseline. |
+| `MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE` | str | consumer-defined | deployment | Deployment setting: deploy authorize legacy schema prune. |
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CHAT_GATEWAY_IMPL` | str | consumer-defined | deployment | Deployment setting: deploy chat gateway impl. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |

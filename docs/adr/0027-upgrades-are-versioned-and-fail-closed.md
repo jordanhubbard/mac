@@ -22,6 +22,56 @@ pending it requires the typed quiescence proof, creates and restore-verifies a
 PostgreSQL backup, records the backup-bound deploy receipt, then migrates before
 any hub supervisor starts. No verified backup means no migration.
 
+The existing fleet authority also carries the reviewed pre-baseline fossils
+identified in §8. Repository-wide runtime-source inspection found no SQL reader
+or writer for them; the only exact-name references are retirement evidence, the
+historical manual-drop artifact, generated test-impact data, and one explanatory
+comment. Stage 1A therefore records this exact legacy-prunable allowlist:
+
+    evidence_attempt_links
+    evidence_attempt_verifications
+    execution_cohort_assignments
+    execution_cohort_configurations
+    work_package_assignment_audit
+    work_package_batch_inputs
+    work_package_certification_jobs
+    work_package_certifications
+    work_package_controller_outcomes
+    work_package_controller_station_receipts
+    work_package_epochs
+    work_package_finalization_outcomes
+    work_package_history
+    work_package_integration_batches
+    work_package_landing_attempts
+    work_package_landing_intents
+    work_package_landing_receipts
+    work_package_landing_streams
+    work_package_lease_expiry_repairs
+    work_package_node_candidates
+    work_package_node_lineage
+    work_package_plan_versions
+    work_package_publication_finalizations
+    work_package_ref_retirement_attempts
+    work_package_ref_retirement_intents
+    work_package_ref_retirement_receipts
+    work_package_station_attempts
+    work_package_task_links
+    work_package_telemetry_health
+    work_package_wip_tokens
+    work_packages
+
+Preflight remains read-only. If and only if all schema extras are members of
+that list (or known later-migration tables), it reports every present legacy
+table and exact row count and requires both backup and separate prune authority.
+The deploy must supply `MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE=1`, which maps
+to `--authorize-legacy-schema-prune`, in addition to existing-baseline
+authority. After the restore-verified backup, application locks and recounts
+the exact reported tables, drops only those tables transactionally with
+dependency handling, re-proves the pruned baseline, and only then writes the
+ordered ledger. Unknown extras fail before mutation; any later failure rolls
+back the drops and ledger together. Both preflight and committed migration
+counts are retained in the deploy receipt.
+
 ## Context
 
 mac has one deployment today, and its project instructions say so: break schemas

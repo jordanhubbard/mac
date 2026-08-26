@@ -23,6 +23,41 @@ POSTGRES_DATA_PATH = Path(__file__).resolve().parent / "data" / "postgres"
 SCHEMA_PATH = POSTGRES_DATA_PATH / "schema.sql"
 MIGRATION_PATH = POSTGRES_DATA_PATH / "migrations"
 AUTHORITY_TABLES = frozenset({"schema_version", "schema_migrations"})
+LEGACY_PRUNABLE_TABLES = frozenset(
+    {
+        "evidence_attempt_links",
+        "evidence_attempt_verifications",
+        "execution_cohort_assignments",
+        "execution_cohort_configurations",
+        "work_package_assignment_audit",
+        "work_package_batch_inputs",
+        "work_package_certification_jobs",
+        "work_package_certifications",
+        "work_package_controller_outcomes",
+        "work_package_controller_station_receipts",
+        "work_package_epochs",
+        "work_package_finalization_outcomes",
+        "work_package_history",
+        "work_package_integration_batches",
+        "work_package_landing_attempts",
+        "work_package_landing_intents",
+        "work_package_landing_receipts",
+        "work_package_landing_streams",
+        "work_package_lease_expiry_repairs",
+        "work_package_node_candidates",
+        "work_package_node_lineage",
+        "work_package_plan_versions",
+        "work_package_publication_finalizations",
+        "work_package_ref_retirement_attempts",
+        "work_package_ref_retirement_intents",
+        "work_package_ref_retirement_receipts",
+        "work_package_station_attempts",
+        "work_package_task_links",
+        "work_package_telemetry_health",
+        "work_package_wip_tokens",
+        "work_packages",
+    }
+)
 FORMER_STARTUP_ENSURE_COLUMNS = frozenset(
     {
         ("agents", "installed_packages"),
@@ -215,6 +250,41 @@ def _later_migration_tables(migrations: Sequence[Migration]) -> set[str]:
     for migration in migrations[1:]:
         tables.update(_table_bodies(migration.sql))
     return tables
+
+
+def _legacy_prune_plan(cur: Any, relations: Iterable[str]) -> dict[str, Any]:
+    """Return exact, read-only counts for reviewed pre-baseline legacy tables."""
+
+    table_names = sorted(LEGACY_PRUNABLE_TABLES & set(relations))
+    tables: list[dict[str, Any]] = []
+    for table_name in table_names:
+        cur.execute('SELECT COUNT(*) FROM "%s"' % table_name)
+        row = cur.fetchone()
+        tables.append({"table": table_name, "row_count": int(row[0])})
+    return {
+        "required": bool(tables),
+        "requires_backup": bool(tables),
+        "requires_authorization": bool(tables),
+        "table_names": table_names,
+        "tables": tables,
+        "total_rows": sum(item["row_count"] for item in tables),
+    }
+
+
+def _prove_unversioned_baseline(
+    cur: Any,
+    migrations: Sequence[Migration],
+    relations: Iterable[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prove baseline shape while admitting only reviewed legacy/future tables."""
+
+    allowed_extras = _later_migration_tables(migrations) | LEGACY_PRUNABLE_TABLES
+    proof = _prove_baseline(
+        cur,
+        migrations[0].sql,
+        allowed_extra_tables=allowed_extras,
+    )
+    return proof, _legacy_prune_plan(cur, relations)
 
 
 def _rows(cur: Any, query: str, params: Sequence[Any] = ()) -> list[tuple[Any, ...]]:
@@ -467,11 +537,13 @@ def migration_status(
                         "pending": [migration.migration_id for migration in migrations],
                         "requires_backup": True,
                         "requires_existing_baseline_authority": False,
+                        "requires_legacy_schema_prune_authority": False,
+                        "legacy_schema_prune": _legacy_prune_plan(cur, ()),
                     }
-                proof = _prove_baseline(
+                proof, legacy_prune = _prove_unversioned_baseline(
                     cur,
-                    migrations[0].sql,
-                    allowed_extra_tables=_later_migration_tables(migrations),
+                    migrations,
+                    relations,
                 )
                 return {
                     "status": "pending",
@@ -480,6 +552,8 @@ def migration_status(
                     "pending": [migration.migration_id for migration in migrations],
                     "requires_backup": True,
                     "requires_existing_baseline_authority": True,
+                    "requires_legacy_schema_prune_authority": legacy_prune["required"],
+                    "legacy_schema_prune": legacy_prune,
                     "proof": proof,
                 }
             if presence != AUTHORITY_TABLES:
@@ -494,6 +568,8 @@ def migration_status(
                 "pending": pending,
                 "requires_backup": bool(pending),
                 "requires_existing_baseline_authority": False,
+                "requires_legacy_schema_prune_authority": False,
+                "legacy_schema_prune": _legacy_prune_plan(cur, ()),
                 "proof": proof,
             }
     except StoreError:
@@ -536,6 +612,7 @@ def apply_migrations(
     *,
     applied_by: str,
     authorize_existing_baseline: bool = False,
+    authorize_legacy_schema_prune: bool = False,
     migrations: Sequence[Migration] = MIGRATIONS,
 ) -> dict[str, Any]:
     """Apply pending migrations atomically after explicit deploy authorization."""
@@ -553,6 +630,7 @@ def apply_migrations(
                 if presence and presence != AUTHORITY_TABLES:
                     raise StoreError("PostgreSQL schema migration authority is partial or corrupt")
 
+                legacy_prune = _legacy_prune_plan(cur, ())
                 if not presence:
                     user_relations = relations_before - AUTHORITY_TABLES
                     if user_relations:
@@ -561,12 +639,39 @@ def apply_migrations(
                                 "existing unversioned PostgreSQL schema requires explicit "
                                 "--authorize-existing-baseline after backup and quiesce"
                             )
-                        baseline_proof = _prove_baseline(
+                        baseline_proof, legacy_prune = _prove_unversioned_baseline(
                             cur,
-                            migrations[0].sql,
-                            allowed_extra_tables=_later_migration_tables(migrations),
+                            migrations,
+                            user_relations,
                         )
-                        mode = "authorized-existing-baseline"
+                        if legacy_prune["required"]:
+                            if not authorize_legacy_schema_prune:
+                                raise StoreError(
+                                    "reviewed legacy PostgreSQL tables require separate explicit "
+                                    "--authorize-legacy-schema-prune after backup and quiesce"
+                                )
+                            quoted = ", ".join(
+                                '"%s"' % table_name for table_name in legacy_prune["table_names"]
+                            )
+                            cur.execute("LOCK TABLE %s IN ACCESS EXCLUSIVE MODE" % quoted)
+                            locked_plan = _legacy_prune_plan(
+                                cur,
+                                legacy_prune["table_names"],
+                            )
+                            if locked_plan["table_names"] != legacy_prune["table_names"]:
+                                raise StoreError(
+                                    "legacy PostgreSQL prune plan changed while acquiring locks"
+                                )
+                            legacy_prune = locked_plan
+                            cur.execute("DROP TABLE %s CASCADE" % quoted)
+                            baseline_proof = _prove_baseline(
+                                cur,
+                                migrations[0].sql,
+                                allowed_extra_tables=_later_migration_tables(migrations),
+                            )
+                            mode = "authorized-existing-baseline-with-legacy-prune"
+                        else:
+                            mode = "authorized-existing-baseline"
                     else:
                         baseline_proof = None
                         mode = "fresh-bootstrap"
@@ -640,6 +745,7 @@ def apply_migrations(
                     "current_version": migrations[current - 1].migration_id,
                     "ordinal": current,
                     "proof": final_proof,
+                    "legacy_schema_prune": legacy_prune,
                 }
     except StoreError:
         raise
@@ -669,6 +775,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="explicitly baseline a proved, known existing unversioned schema",
     )
+    parser.add_argument(
+        "--authorize-legacy-schema-prune",
+        action="store_true",
+        help="separately authorize dropping only reviewed legacy pre-baseline tables",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
     if not args.database_url:
         parser.error("--database-url or MAC_DATABASE_URL/MAC_DB is required")
@@ -684,6 +795,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             result = store.apply_migrations(
                 applied_by=args.applied_by,
                 authorize_existing_baseline=args.authorize_existing_baseline,
+                authorize_legacy_schema_prune=args.authorize_legacy_schema_prune,
             )
         print(__import__("json").dumps(result, sort_keys=True))
     except StoreError as exc:

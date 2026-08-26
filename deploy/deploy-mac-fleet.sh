@@ -8993,6 +8993,10 @@ PY
   # complete known schema before accepting this explicit baseline authority.
   add_remote_env MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE \
     "${MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE:-}"
+  # Separate destructive gate for the reviewed ADR 0027 pre-baseline prune.
+  # The hub installer still requires a restore-verified backup before use.
+  add_remote_env MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE \
+    "${MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE:-}"
   # Git credential for cloning/pushing private repos (-> GH_TOKEN in mac.env).
   # This is deliberately separate from remote_env: the latter becomes argv.
   add_remote_secret_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"

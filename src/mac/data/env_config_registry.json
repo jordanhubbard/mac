@@ -2055,6 +2055,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy authorize legacy schema prune.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_AUTHORIZE_LEGACY_SCHEMA_PRUNE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy barrier file.",
     "family": "deployment",
     "name": "MAC_DEPLOY_BARRIER_FILE",
