@@ -5150,6 +5150,220 @@ hub_epoch_client_read() {
   return 0
 }
 
+validate_hub_authority_output() {
+  local path="$1"
+  "$PYTHON_BIN" - "$path" <<'PY'
+import json
+import sys
+import uuid
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    value = json.load(stream)
+if (
+    not isinstance(value, dict)
+    or set(value) != {"schema", "hub_authority_id"}
+    or value.get("schema") != "mac.fleet_release_hub_authority.v1"
+):
+    raise SystemExit("hub authority response is invalid")
+try:
+    authority_id = str(uuid.UUID(str(value.get("hub_authority_id"))))
+except (TypeError, ValueError) as error:
+    raise SystemExit("hub authority response has an invalid authority UUID") from error
+if value["hub_authority_id"] != authority_id:
+    raise SystemExit("hub authority response UUID is not canonical")
+print(authority_id)
+PY
+}
+
+read_aborted_hub_authority_from_postgres() {
+  # This is the hub-down break-glass identity proof. It executes a fixed,
+  # read-only program through the already pinned SSH route, parses the hub's
+  # owner-private environment with the deployed parser, and asks only the
+  # authoritative PostgreSQL singleton table for its UUID. The DSN remains in
+  # remote process memory: it is never put in argv, stdout, or controller logs.
+  local hub_agent="$1" output="$2"
+  local ssh_parts=() ssh_args=() ssh_target item last_index output_tmp=""
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  if [ "${#ssh_parts[@]}" -lt 1 ]; then
+    echo "ERROR: ${hub_agent}: aborted-hub PostgreSQL authority route is empty" >&2
+    return 1
+  fi
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  if ! output_tmp="$(mktemp "$TMPDIR_LOCAL/aborted-hub-authority.XXXXXX")"; then
+    return 1
+  fi
+  if ! chmod 0600 "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    '"$HOME/.mac/venv/bin/python" -' > "$output_tmp" <<'PY'
+import json
+import os
+import signal
+import stat
+import uuid
+from pathlib import Path
+
+import psycopg
+from mac.deploy_env import parse_env_text
+
+env_path = Path.home() / ".mac" / "mac.env"
+fd = os.open(env_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+try:
+    before = os.fstat(fd)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or not 1 <= before.st_size <= 1024 * 1024
+    ):
+        raise SystemExit("hub environment is not an owner-private regular file")
+    raw = os.read(fd, before.st_size + 1)
+    after = os.fstat(fd)
+    if (
+        len(raw) != before.st_size
+        or (
+            before.st_dev,
+            before.st_ino,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        != (
+            after.st_dev,
+            after.st_ino,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+    ):
+        raise SystemExit("hub environment changed while reading")
+finally:
+    os.close(fd)
+
+try:
+    values = parse_env_text(raw.decode("utf-8"))
+except (UnicodeError, ValueError) as error:
+    raise SystemExit("hub environment is malformed") from error
+dsn = str(values.get("MAC_DATABASE_URL") or values.get("MAC_DB") or "").strip()
+if not dsn:
+    raise SystemExit("hub environment has no authoritative PostgreSQL DSN")
+if not dsn.startswith(("postgres://", "postgresql://")):
+    raise SystemExit("hub authority recovery requires PostgreSQL; SQLite fallback is forbidden")
+
+def timed_out(_signum, _frame):
+    raise TimeoutError("PostgreSQL authority proof timed out")
+
+signal.signal(signal.SIGALRM, timed_out)
+signal.alarm(20)
+try:
+    try:
+        with psycopg.connect(
+            dsn,
+            connect_timeout=10,
+            options="-c statement_timeout=10000 -c lock_timeout=5000",
+        ) as connection:
+            with connection.transaction():
+                connection.execute("SET TRANSACTION READ ONLY")
+                rows = connection.execute(
+                    "SELECT authority_id::text FROM hub_authority_identity "
+                    "WHERE singleton_key = 'hub'"
+                ).fetchall()
+    except Exception as error:
+        raise SystemExit(
+            "authoritative PostgreSQL hub identity query failed (%s)"
+            % type(error).__name__
+        ) from None
+finally:
+    signal.alarm(0)
+
+if len(rows) != 1:
+    raise SystemExit("authoritative PostgreSQL hub identity is missing or ambiguous")
+try:
+    authority_id = str(uuid.UUID(str(rows[0][0])))
+except (TypeError, ValueError) as error:
+    raise SystemExit("authoritative PostgreSQL hub identity is malformed") from error
+if str(rows[0][0]) != authority_id:
+    raise SystemExit("authoritative PostgreSQL hub identity UUID is not canonical")
+print(
+    json.dumps(
+        {
+            "schema": "mac.fleet_release_hub_authority.v1",
+            "hub_authority_id": authority_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+)
+PY
+  then
+    rm -f -- "$output_tmp"
+    echo "ERROR: ${hub_agent}: could not read the aborted hub authority from its configured PostgreSQL store; verify SSH access, ~/.mac/mac.env mode 0600, PostgreSQL reachability, and the hub_authority_identity singleton" >&2
+    return 1
+  fi
+  if ! validate_hub_epoch_client_output "$output_tmp" \
+    || ! validate_hub_authority_output "$output_tmp" >/dev/null; then
+    rm -f -- "$output_tmp"
+    echo "ERROR: ${hub_agent}: aborted-hub PostgreSQL authority proof returned an invalid identity envelope" >&2
+    return 1
+  fi
+  if ! mv -f -- "$output_tmp" "$output"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+}
+
+read_recovery_hub_authority() {
+  local hub_agent="$1" status_file="$2" output="$3"
+  local api_error hub_state
+  if ! api_error="$(mktemp "$TMPDIR_LOCAL/hub-authority-api-error.XXXXXX")"; then
+    return 1
+  fi
+  chmod 0600 "$api_error" || {
+    rm -f -- "$api_error"
+    return 1
+  }
+  if hub_epoch_client_read "$hub_agent" "$output" authority 2>"$api_error"; then
+    rm -f -- "$api_error"
+    if ! validate_hub_authority_output "$output" >/dev/null; then
+      echo "ERROR: ${hub_agent}: live hub authority API returned an invalid identity; refusing database fallback" >&2
+      return 1
+    fi
+    return 0
+  fi
+  rm -f -- "$api_error"
+  if ! hub_state="$("$PYTHON_BIN" - "$status_file" <<'PY'
+import json
+import sys
+
+try:
+    value = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    raise SystemExit("cohort recovery status is unreadable") from error
+journal = value.get("journal") if isinstance(value, dict) else None
+if not isinstance(journal, dict) or not isinstance(journal.get("hub_state"), str):
+    raise SystemExit("cohort recovery status lacks journal hub_state")
+print(journal["hub_state"])
+PY
+  )"; then
+    echo "ERROR: ${hub_agent}: live hub authority API failed and journal hub_state could not be verified" >&2
+    return 1
+  fi
+  if [ "$hub_state" != aborted ]; then
+    echo "ERROR: ${hub_agent}: live hub authority API is unavailable; PostgreSQL break-glass identity proof is allowed only for journal hub_state=aborted (observed ${hub_state})" >&2
+    return 1
+  fi
+  echo "==> ${hub_agent}: live hub authority API unavailable after journaled abort; verifying the PostgreSQL authority over the bound SSH route" >&2
+  read_aborted_hub_authority_from_postgres "$hub_agent" "$output"
+}
+
 hub_epoch_client_request() {
   local hub_agent="$1" request_file="$2" output="$3"
   shift 3
@@ -14194,10 +14408,10 @@ PY
     fi
     if [ "$role" = hub ]; then
       authority_file="$route_dir/hub-authority.json"
-      if ! hub_epoch_client_read "$agent" "$authority_file" authority; then
+      if ! read_recovery_hub_authority "$agent" "$status_file" "$authority_file"; then
         return 1
       fi
-      if ! authority_id="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["hub_authority_id"])' "$authority_file")"; then
+      if ! authority_id="$(validate_hub_authority_output "$authority_file")"; then
         return 1
       fi
       if ! write_live_endpoint_identity "$agent" "$observed" "$authority_id"; then

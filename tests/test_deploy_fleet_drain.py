@@ -4189,9 +4189,10 @@ write_live_endpoint_identity() {{
   fi
   chmod 0600 "$2"
 }}
-hub_epoch_client_read() {{
-  printf '%s\\n' '{{"hub_authority_id":"fixture-authority"}}' > "$2"
+read_recovery_hub_authority() {{
+  printf '%s\\n' '{{"schema":"mac.fleet_release_hub_authority.v1","hub_authority_id":"123e4567-e89b-12d3-a456-426614174000"}}' > "$3"
 }}
+validate_hub_authority_output() {{ printf '%s\\n' '123e4567-e89b-12d3-a456-426614174000'; }}
 persist_cohort_recovery_route_mismatch() {{ printf '%s\n' "$*" >> {shlex.quote(str(diagnostics))}; }}
 {verify}
 set +e
@@ -4209,6 +4210,185 @@ printf '%s|%s|%s\n' "$first" "$second" "$SSH_CONTROL_REQUIRED"
         "rocky",
         "natasha",
     ]
+
+
+@pytest.mark.parametrize(
+    ("observed_host_digest", "database_authority_id", "expected_success"),
+    [
+        ("a" * 64, "123e4567-e89b-12d3-a456-426614174000", True),
+        ("b" * 64, "123e4567-e89b-12d3-a456-426614174000", False),
+        ("a" * 64, "123e4567-e89b-12d3-a456-426614174999", False),
+    ],
+    ids=("hub-down-match", "wrong-ssh-host", "wrong-database-uuid"),
+)
+def test_aborted_hub_route_uses_postgres_authority_and_keeps_exact_identity_gate(
+    tmp_path, observed_host_digest, database_authority_id, expected_success
+):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    validate = (
+        "validate_hub_authority_output() {"
+        + deploy.split("validate_hub_authority_output() {", 1)[1].split(
+            "\n}\n\nread_aborted_hub_authority_from_postgres", 1
+        )[0]
+        + "\n}"
+    )
+    recovery_authority = (
+        "read_recovery_hub_authority() {"
+        + deploy.split("read_recovery_hub_authority() {", 1)[1].split(
+            "\n}\n\nhub_epoch_client_request", 1
+        )[0]
+        + "\n}"
+    )
+    verify = (
+        "verify_cohort_recovery_routes() {"
+        + deploy.split("verify_cohort_recovery_routes() {", 1)[1].split(
+            "\n}\n\nrecover_committed_cohort_node", 1
+        )[0]
+        + "\n}"
+    )
+    authority_id = "123e4567-e89b-12d3-a456-426614174000"
+    store_digest = hashlib.sha256(authority_id.encode()).hexdigest()
+    hub_identity = {
+        "schema": "mac.fleet_endpoint_identity.v1",
+        "adapter": "ssh-hub",
+        "authority": {
+            "ssh_host_key_sha256": "a" * 64,
+            "instance_id_kind": "machine-id",
+            "instance_id_sha256": "c" * 64,
+            "durable_store_uuid_sha256": store_digest,
+        },
+        "observation": {},
+    }
+    status = tmp_path / "status.json"
+    recovery = tmp_path / "recovery.json"
+    events = tmp_path / "events"
+    status.write_text(
+        json.dumps(
+            {
+                "journal": {
+                    "epoch_id": "fixture-epoch",
+                    "source_commit": "d" * 40,
+                    "hub_state": "aborted",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovery.write_text(
+        json.dumps(
+            {
+                "direction": "rollback",
+                "hub_recovery": {
+                    "action": "none",
+                    "agent_name": "rocky",
+                    "route_identity": hub_identity,
+                },
+                "candidates": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+ENDPOINT_IDENTITY_HELPER={shlex.quote(str(ROOT / "deploy" / "fleet-endpoint-identity.py"))}
+SSH_CONTROL_REQUIRED=0
+EVENTS={shlex.quote(str(events))}
+start_ssh_control_master() {{ :; }}
+hub_epoch_client_read() {{ printf '%s\\n' api >> "$EVENTS"; return 1; }}
+read_aborted_hub_authority_from_postgres() {{
+  printf '%s\\n' postgres >> "$EVENTS"
+  printf '%s\\n' '{{"schema":"mac.fleet_release_hub_authority.v1","hub_authority_id":"{database_authority_id}"}}' > "$2"
+}}
+write_live_endpoint_identity() {{
+  "$PYTHON_BIN" - "$2" "$3" <<'PY'
+import hashlib,json,sys
+identity={{
+  "schema":"mac.fleet_endpoint_identity.v1",
+  "adapter":"ssh-hub",
+  "authority":{{
+    "ssh_host_key_sha256":"{observed_host_digest}",
+    "instance_id_kind":"machine-id",
+    "instance_id_sha256":"{"c" * 64}",
+    "durable_store_uuid_sha256":hashlib.sha256(sys.argv[2].lower().encode()).hexdigest(),
+  }},
+  "observation":{{}},
+}}
+with open(sys.argv[1],"w",encoding="utf-8") as stream: json.dump(identity,stream)
+PY
+  chmod 0600 "$2"
+}}
+persist_cohort_recovery_route_mismatch() {{ printf '%s\\n' "$TMPDIR_LOCAL/mismatch.json"; }}
+{validate}
+{recovery_authority}
+{verify}
+set +e
+verify_cohort_recovery_routes {shlex.quote(str(status))} {shlex.quote(str(recovery))}
+printf '%s\\n' "$?"
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ("0" if expected_success else "1"), result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == ["api", "postgres"]
+    if not expected_success:
+        assert "recovery route mismatch diagnostic retained" in result.stderr
+
+
+def test_recovery_hub_authority_prefers_live_api_without_postgres_fallback(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    validate = (
+        "validate_hub_authority_output() {"
+        + deploy.split("validate_hub_authority_output() {", 1)[1].split(
+            "\n}\n\nread_aborted_hub_authority_from_postgres", 1
+        )[0]
+        + "\n}"
+    )
+    recovery_authority = (
+        "read_recovery_hub_authority() {"
+        + deploy.split("read_recovery_hub_authority() {", 1)[1].split(
+            "\n}\n\nhub_epoch_client_request", 1
+        )[0]
+        + "\n}"
+    )
+    status = tmp_path / "status.json"
+    output = tmp_path / "authority.json"
+    events = tmp_path / "events"
+    status.write_text(json.dumps({"journal": {"hub_state": "aborted"}}), encoding="utf-8")
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+EVENTS={shlex.quote(str(events))}
+hub_epoch_client_read() {{
+  printf '%s\\n' api >> "$EVENTS"
+  printf '%s\\n' '{{"schema":"mac.fleet_release_hub_authority.v1","hub_authority_id":"123e4567-e89b-12d3-a456-426614174000"}}' > "$2"
+}}
+read_aborted_hub_authority_from_postgres() {{ printf '%s\\n' postgres >> "$EVENTS"; return 1; }}
+{validate}
+{recovery_authority}
+read_recovery_hub_authority rocky {shlex.quote(str(status))} {shlex.quote(str(output))}
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == ["api"]
+
+
+def test_aborted_hub_authority_reader_is_postgres_only_and_secret_safe():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    reader = deploy.split("read_aborted_hub_authority_from_postgres() {", 1)[1].split(
+        "\n}\n\nread_recovery_hub_authority", 1
+    )[0]
+
+    assert "from mac.deploy_env import parse_env_text" in reader
+    assert "SELECT authority_id::text FROM hub_authority_identity" in reader
+    assert 'dsn.startswith(("postgres://", "postgresql://"))' in reader
+    assert "SQLite fallback is forbidden" in reader
+    assert "sqlite3" not in reader.lower()
+    assert "psycopg.connect(" in reader
+    assert "connect_timeout=10" in reader
+    assert "statement_timeout=10000" in reader
+    assert "ssh_target" in reader
+    assert '"$HOME/.mac/venv/bin/python" -' in reader
+    assert "$dsn" not in reader
 
 
 def test_recovery_route_mismatch_persists_wrapped_helper_comparison(tmp_path):
