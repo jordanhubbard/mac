@@ -1759,6 +1759,7 @@ write_host_wrapper() {
 #!/usr/bin/env bash
 set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
+export OPENSHELL_GATEWAY_ENDPOINT=$(printf '%q' "$OPENSHELL_GATEWAY_ENDPOINT")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 HOST_ROOT=$(printf '%q' "$OPENCLAW_HOST_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
@@ -1814,7 +1815,7 @@ PY
 fi
 
 subprocess_timeout() {
-  local value="\${MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS:-30}"
+  local value="\${MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS:-120}"
   case "\$value" in
     ''|*[!0-9]*)
       echo "openclaw-gateway-stop: invalid subprocess timeout: \$value" >&2
@@ -2040,7 +2041,7 @@ for database in sorted(databases):
     connection = None
     try:
         connection = sqlite3.connect(
-            database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0
+            database.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=2.0
         )
         connection.execute("PRAGMA query_only=ON")
         rows = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]

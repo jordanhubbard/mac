@@ -1384,6 +1384,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "sandbox download" in stop_wrapper
     assert "fcntl.flock" in stop_wrapper
     assert "PRAGMA quick_check" in stop_wrapper
+    assert "export OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17670" in stop_wrapper
+    assert "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS:-120" in stop_wrapper
+    assert "?mode=ro&immutable=1" in stop_wrapper
     assert "TAR_OPTIONS" not in stop_wrapper
     assert "sandbox_state" in stop_wrapper
     assert "wait_for_sandbox_absent" in stop_wrapper
