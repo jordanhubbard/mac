@@ -582,6 +582,14 @@ jobs:
             sleep 2
           done
           docker exec mac-ci-pg pg_isready -U postgres
+          # Hub startup is verification-only. Exercise the same explicit
+          # migration boundary as a real deploy before the black-box process
+          # is allowed to serve against this fresh authority.
+          docker run --rm --network mac-ci-net \
+            --entrypoint /opt/mac-venv/bin/mac-schema-migrate \
+            mac:ci-${{ github.sha }} \
+            --database-url "postgresql://postgres@mac-ci-pg:5432/mac" \
+            --applied-by "ci-blackbox:${GITHUB_SHA}"
           docker run -d --name mac-ci --network mac-ci-net \
             -e MAC_SECRET_KEY=ci-test-key-with-at-least-32-characters-of-entropy \
             -e MAC_API_TOKEN="$MAC_BLACKBOX_TOKEN" \

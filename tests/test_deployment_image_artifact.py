@@ -261,6 +261,19 @@ def test_main_deployment_publication_is_anonymously_executable_on_both_arches() 
     assert "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml" in verifier
 
 
+def test_deployed_hub_blackbox_explicitly_migrates_before_startup() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    step = workflow.split(
+        "- name: Black-box deployed hub authentication and task round trip",
+        1,
+    )[1].split("\n      - ", 1)[0]
+
+    migration = step.index("--entrypoint /opt/mac-venv/bin/mac-schema-migrate")
+    startup = step.index("docker run -d --name mac-ci --network mac-ci-net")
+    assert migration < startup
+    assert '--applied-by "ci-blackbox:${GITHUB_SHA}"' in step
+
+
 def test_the_per_commit_image_tag_survives_image_reuse() -> None:
     """``git-<sha>`` must be published on BOTH publication paths.
 
