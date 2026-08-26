@@ -31,10 +31,12 @@ that referenced a dream log that was never produced.  The committed guardrail in
 by reproducing the two-stage flow on the host, where the scripts and data live:
 
   1. run the host script and capture its stdout (bounded, timed out);
-  2. build the combined prompt (job message + ``## Script Output`` section);
-  3. run one agent turn via the host ``openclaw-agent`` wrapper;
-  4. deliver the reply to the job's Slack channel via the ``openclaw-message``
-     wrapper, or, when there is no deliverable target, write it locally.
+  2. fail closed to a local diagnostic if the script did not produce evidence;
+  3. build the combined prompt (job message + ``## Script Output`` section);
+  4. run one agent turn via the host ``openclaw-agent`` wrapper;
+  5. deliver the reply only to a Slack DM, the configured home channel, or an
+     explicitly operator-authorized job channel via the ``openclaw-message``
+     wrapper; otherwise write it locally.
 
 The pure core (prompt building, reply extraction, deliver-vs-local decision) is
 kept free of subprocess calls so it is unit-testable; the three external calls
@@ -209,6 +211,48 @@ def resolve_delivery_target(job: dict) -> Optional[Tuple[str, str]]:
         if _SLACK_TARGET.fullmatch(target):
             return ("slack", target)
     return None
+
+
+def configured_home_channel_target() -> str:
+    """Return the one Slack channel this gateway may broadcast into."""
+    configured = (os.environ.get("MAC_OPENCLAW_HOME_CHANNEL") or "").strip()
+    if configured:
+        return configured
+    try:
+        return (openclaw_home() / "home-channel-target").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def authorize_delivery_target(
+    target: Optional[Tuple[str, str]],
+    home_channel_target: str,
+    authorized_channel_targets: Any = (),
+) -> Tuple[Optional[Tuple[str, str]], str]:
+    """Allow Slack DMs and operator-authorized channels; refuse other broadcasts."""
+    if target is None:
+        return None, ""
+    platform, destination = target
+    if platform != "slack":
+        return target, ""
+    if destination.startswith("D"):
+        return target, ""
+
+    allowed = [home_channel_target]
+    if isinstance(authorized_channel_targets, (list, tuple, set)):
+        allowed.extend(authorized_channel_targets)
+    normalized = set()
+    for candidate in allowed:
+        candidate = str(candidate or "").strip()
+        for prefix in ("channel:", "slack:"):
+            if candidate.startswith(prefix):
+                candidate = candidate[len(prefix) :]
+                break
+        if candidate:
+            normalized.add(candidate)
+    if destination in normalized:
+        return target, ""
+    return None, "slack_broadcast_outside_home_channel"
 
 
 # --------------------------------------------------------------------------- #
@@ -480,6 +524,7 @@ def run_job(
     output_dir: str,
     account: str = "default",
     legacy_scripts_dir: str = "",
+    home_channel_target: str = "",
     script_runner: Callable[..., Tuple[str, str]] = default_script_runner,
     agent_runner: Callable[..., str] = default_agent_runner,
     deliver_runner: Callable[..., None] = default_deliver_runner,
@@ -497,11 +542,12 @@ def run_job(
         script_output, script_note = script_runner(scripts_dir, legacy_script)
 
     prompt = build_prompt(message, script_output, script_note, script_name=legacy_script)
-
-    session_id = "mac-host-cron-%s" % _slug(job.get("name") or job.get("legacy_id") or "job")
-    reply = extract_reply(agent_runner(agent_bin, prompt, session_id=session_id))
-
-    target = resolve_delivery_target(job)
+    requested_target = resolve_delivery_target(job)
+    target, delivery_refusal = authorize_delivery_target(
+        requested_target,
+        home_channel_target or configured_home_channel_target(),
+        job.get("authorized_slack_channels"),
+    )
     result: dict = {
         "name": job.get("name"),
         "legacy_script": legacy_script or None,
@@ -514,8 +560,23 @@ def run_job(
         "delivered": False,
         "target": None,
         "local_path": None,
-        "reply_chars": len(reply),
+        "reply_chars": 0,
+        "delivery_refusal": delivery_refusal or None,
     }
+
+    # A failed collector has no evidence for the agent to interpret.  Calling
+    # the agent here previously turned a deterministic infrastructure failure
+    # into fresh prose and broadcast it every hour.
+    if legacy_script and script_note:
+        result["local_path"] = write_local_output(output_dir, job, prompt, "")
+        return result
+
+    session_id = "mac-host-cron-%s-%s" % (
+        _slug(job.get("name") or job.get("legacy_id") or "job"),
+        time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
+    )
+    reply = extract_reply(agent_runner(agent_bin, prompt, session_id=session_id))
+    result["reply_chars"] = len(reply)
     if target and reply:
         deliver_runner(message_bin, target, reply, account=account)
         result["delivered"] = True

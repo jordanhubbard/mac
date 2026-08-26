@@ -203,6 +203,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`repository-runtime-contract.md`](../repository-runtime-contract.md) | Repository Runtime Contract |
 | supplemental reference | [`review-strategy-experiments.md`](../review-strategy-experiments.md) | Review-strategy experiments |
 | supplemental reference | [`review-tick-stall-diagnosis.md`](../review-tick-stall-diagnosis.md) | Why the hub self-tick fails to drain the REVIEWING backlog |
+| supplemental reference | [`roadmap.md`](../roadmap.md) | MAC Roadmap |
 | supplemental reference | [`scientific-optimizer.md`](../scientific-optimizer.md) | Autonomous scientific optimizer |
 | supplemental reference | [`secrets-management-guide.md`](../secrets-management-guide.md) | Secrets Management Guide |
 | supplemental reference | [`security/openshell-0.0.72-compatibility-review.mdx`](../security/openshell-0.0.72-compatibility-review.mdx) | OpenShell 0.0.72 Compatibility Review |

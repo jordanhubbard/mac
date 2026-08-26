@@ -92,6 +92,31 @@ def test_resolve_delivery_target_decision() -> None:
     assert runner.resolve_delivery_target({"delivery": "slack:@jordan"}) is None
 
 
+def test_delivery_policy_allows_dm_and_home_channel_only() -> None:
+    home = "channel:C0HOME"
+    assert runner.authorize_delivery_target(("slack", "D0JORDAN"), home) == (
+        ("slack", "D0JORDAN"),
+        "",
+    )
+    assert runner.authorize_delivery_target(("slack", "C0HOME"), home) == (
+        ("slack", "C0HOME"),
+        "",
+    )
+    assert runner.authorize_delivery_target(("slack", "C0OTHER"), home) == (
+        None,
+        "slack_broadcast_outside_home_channel",
+    )
+    assert runner.authorize_delivery_target(("slack", "G0OTHER"), home) == (
+        None,
+        "slack_broadcast_outside_home_channel",
+    )
+    assert runner.authorize_delivery_target(
+        ("slack", "C0LOCALNEWS"),
+        home,
+        ["channel:C0LOCALNEWS"],
+    ) == (("slack", "C0LOCALNEWS"), "")
+
+
 def test_message_args_targets_channel_with_account_and_text() -> None:
     args = runner.message_args(
         "/bin/openclaw-message", "slack", "C0123ABC", "hello", account="acct1"
@@ -173,6 +198,7 @@ def test_run_job_full_flow_delivers_to_slack_channel(tmp_path: Path) -> None:
         message_bin="/bin/openclaw-message",
         output_dir=str(tmp_path / "out"),
         account="dreamteam",
+        home_channel_target="channel:C0DREAM01",
         script_runner=fake_script,
         agent_runner=fake_agent,
         deliver_runner=fake_deliver,
@@ -186,14 +212,11 @@ def test_run_job_full_flow_delivers_to_slack_channel(tmp_path: Path) -> None:
     assert account == "dreamteam"
 
 
-def test_run_job_missing_script_still_runs_and_writes_local(tmp_path: Path) -> None:
-    """No script + no deliverable target: proceed with the unavailable note and
-    persist the reply locally rather than firing a phantom reference."""
-    seen = {}
+def test_run_job_missing_script_fails_closed_without_agent_turn(tmp_path: Path) -> None:
+    """A collector failure is evidence-free and must never become agent prose."""
 
     def fake_agent(agent_bin, prompt, *, session_id="", **kwargs):
-        seen["prompt"] = prompt
-        return json.dumps({"response": "logged locally"})
+        raise AssertionError("failed script must not trigger an agent turn")
 
     def fake_deliver(*args, **kwargs):  # pragma: no cover - must not be called
         raise AssertionError("local job must not deliver")
@@ -216,11 +239,60 @@ def test_run_job_missing_script_still_runs_and_writes_local(tmp_path: Path) -> N
     assert result["delivered"] is False
     assert result["script_ran"] is False
     assert "unavailable" in (result["script_note"] or "")
-    assert "## Script Output" in seen["prompt"]
-    assert "unavailable" in seen["prompt"]
+    assert result["reply_chars"] == 0
     local_path = Path(result["local_path"])
     assert local_path.is_file()
-    assert "logged locally" in local_path.read_text(encoding="utf-8")
+    local = local_path.read_text(encoding="utf-8")
+    assert "## Script Output" in local
+    assert "unavailable" in local
+
+
+def test_run_job_refuses_non_home_channel_broadcast(tmp_path: Path) -> None:
+    delivered = []
+    job = {
+        "name": "dream-cycle",
+        "message": "Compose the morning dream note.",
+        "legacy_script": "dream_cycle.py",
+        "origin": {"platform": "slack", "chat_id": "C0OTHER"},
+    }
+    result = runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(tmp_path / "out"),
+        home_channel_target="channel:C0HOME",
+        script_runner=lambda *_args: ("evidence", ""),
+        agent_runner=lambda *_args, **_kwargs: '{"text":"private result"}',
+        deliver_runner=lambda *args, **kwargs: delivered.append((args, kwargs)),
+    )
+    assert result["delivered"] is False
+    assert result["delivery_refusal"] == "slack_broadcast_outside_home_channel"
+    assert delivered == []
+    assert Path(result["local_path"]).is_file()
+
+
+def test_run_job_uses_fresh_session_per_invocation(tmp_path: Path, monkeypatch) -> None:
+    seen = []
+    monkeypatch.setattr(runner.time, "strftime", lambda *_args: "20260826T052000Z")
+    job = {
+        "name": "kslug-nightly-news",
+        "message": "Produce the broadcast transcript.",
+        "legacy_script": "kslug_collect.py",
+        "delivery": "local",
+    }
+    runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(tmp_path / "out"),
+        script_runner=lambda *_args: ("wire copy", ""),
+        agent_runner=lambda *_args, **kwargs: (
+            seen.append(kwargs["session_id"]) or '{"text":"news"}'
+        ),
+    )
+    assert seen == ["mac-host-cron-kslug-nightly-news-20260826T052000Z"]
 
 
 def test_default_script_runner_reports_missing_script(tmp_path: Path) -> None:
@@ -266,6 +338,7 @@ def test_apply_cron_plan_emits_host_script_jobs_spec() -> None:
     assert "host-script-jobs.json" in apply
     assert "mac.openclaw_host_script_jobs.v1" in apply
     assert "writeFileSync" in apply
+    assert "authorized_slack_channels" in apply
     # The guardrail is NOT regressed: script jobs still install disabled with
     # the honest description and deferred_script_jobs is still reported.
     assert "const enable = hasScript ? false : Boolean(job.enabled);" in apply
@@ -282,6 +355,7 @@ def test_installer_schedules_script_jobs_via_launchd_and_systemd() -> None:
     assert "install_host_script_runner" in installer
     # The installer consumes / emits the host-script-jobs spec.
     assert "host-script-jobs.json" in installer
+    assert '"authorized_slack_channels"' in installer
     # BOTH supervisor branches schedule the host runner.
     assert "schedule_launchd_script_job" in installer
     assert "StartCalendarInterval" in installer

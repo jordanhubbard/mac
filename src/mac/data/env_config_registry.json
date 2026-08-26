@@ -8218,7 +8218,8 @@
     "name": "MAC_OPENCLAW_HOME_CHANNEL",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py"
     ],
     "type": "str"
   },

@@ -2648,6 +2648,11 @@ for job in jobs:
             "message": str(job.get("message") or ""),
             "delivery": job.get("delivery"),
             "origin": job.get("origin"),
+            "authorized_slack_channels": (
+                job.get("authorized_slack_channels")
+                if isinstance(job.get("authorized_slack_channels"), list)
+                else []
+            ),
             "legacy_id": job.get("legacy_id"),
             "enabled": bool(job.get("enabled", True)),
         }

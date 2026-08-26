@@ -157,6 +157,9 @@ for (const job of plan.jobs) {
       message: String(job.message || ""),
       delivery: job.delivery ?? null,
       origin: job.origin ?? null,
+      authorized_slack_channels: Array.isArray(job.authorized_slack_channels)
+        ? job.authorized_slack_channels
+        : [],
       legacy_id: job.legacy_id ?? null,
       enabled: Boolean(job.enabled),
     });

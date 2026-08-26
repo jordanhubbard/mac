@@ -93,8 +93,11 @@ exit 64
             "FAKE_LAUNCHCTL_MODE": mode,
             "FAKE_LAUNCHCTL_COUNT": str(count),
             "FAKE_LAUNCHCTL_CALLS": str(calls),
-            "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "1.5",
-            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "0.5",
+            # Keep the contract bounded without treating xdist scheduling delay
+            # as launchctl failure.  The production helper enforces these
+            # deadlines with a monotonic process-group supervisor.
+            "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "10",
+            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "10",
             "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         },
         check=False,

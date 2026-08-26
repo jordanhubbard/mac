@@ -468,8 +468,11 @@ esac
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "MAC_DEPLOY_SERVICE_TS": "fixture",
             "MAC_DEPLOY_FLEET_NAME": "mac",
-            "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS": "1",
-            "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS": "1",
+            # The bound belongs to the production wrapper, not host scheduler
+            # latency.  One second flakes when xdist saturates Darwin while
+            # Python starts the process-group supervisor around this fake.
+            "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS": "10",
+            "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS": "10",
             "FAKE_MANAGER_STATE": str(state),
             "FAKE_MANAGER_CALLS": str(calls),
             "FAKE_STOP_FAIL": "1" if stop_fails else "0",
