@@ -2745,6 +2745,7 @@ def test_all_deploy_credentials_use_the_fenced_stdin_secret_channel():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     secret_names = (
         "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",
+        "MAC_OPENCLAW_UPGRADE_TOKEN",
         "NVIDIA_IMAGE_API_KEY",
         "NVIDIA_AUDIO_API_KEY",
         "NVIDIA_VIDEO_API_KEY",

@@ -8858,6 +8858,10 @@ PY
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_BASE_URL "$gateway_base_url"
   add_remote_env MAC_DEPLOY_HERMES_SURFACE_B64 "$hermes_surface_b64"
   add_remote_env MAC_DEPLOY_OPENCLAW_LIVE_CANARY "${MAC_DEPLOY_OPENCLAW_LIVE_CANARY:-0}"
+  # OpenClaw may request and inspect fleet upgrades through a distinct,
+  # human-bound credential. Keep it off argv and transport it through the same
+  # fenced stdin channel as every other deploy credential.
+  add_remote_secret_env MAC_OPENCLAW_UPGRADE_TOKEN "${MAC_OPENCLAW_UPGRADE_TOKEN:-}"
   add_remote_env MAC_DEPLOY_HUB_URL "$hub_url"
   # The shared token exists only for the compatibility bootstrap. Keep it out
   # of the remote command/argv just like every other deploy credential; the

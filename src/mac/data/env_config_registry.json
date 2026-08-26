@@ -8699,6 +8699,7 @@
     "name": "MAC_OPENCLAW_UPGRADE_TOKEN",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
