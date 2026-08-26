@@ -84,6 +84,18 @@ transaction or equivalent durable evidence.
 - [ ] Database and agent-owned state upgrades are versioned, ordered, recorded,
   and fail closed as specified by ADR 0027.
 
+## CLI and plugin distribution
+
+- [ ] The MAC CLI's known installation, authentication, command-routing, and
+  upgrade defects are fixed and covered by supported-host contract tests plus a
+  live fleet smoke test.
+- [ ] Plugin generation produces a deterministic, versioned, integrity-checked
+  artifact whose commands, bundled dependencies, configuration migration, and
+  rollback behavior pass installation and upgrade contracts.
+- [ ] The generated plugin is verified on every supported host and becomes the
+  canonical MAC CLI installation method, with a bounded migration from the
+  legacy installer and a tested rollback path.
+
 ## Operational autonomy
 
 - [ ] Nightly local-news collection reliably publishes one deduplicated report
@@ -110,6 +122,8 @@ transaction or equivalent durable evidence.
 3. Prove the hub-mediated upgrade transaction across the full fleet.
 4. Close the autonomous review/repair/publication loop with a live `~/Src/mac`
    task.
-5. Implement hierarchical sandbox ACL feedback and profile placement.
-6. Revisit dream-cycle analysis only after the higher-priority proofs are
+5. Repair the MAC CLI, verify deterministic plugin generation, and migrate the
+   fleet to plugin-based CLI installation.
+6. Implement hierarchical sandbox ACL feedback and profile placement.
+7. Revisit dream-cycle analysis only after the higher-priority proofs are
    durable.
