@@ -74,8 +74,8 @@ transaction or equivalent durable evidence.
   forward or back by bounded cohorts.
 - [ ] Crash recovery, authorization failures, failed health proofs, and cohort
   rollback are covered and proven in the live fleet.
-- [ ] The current `main` source commit is deployed and attested on Rocky,
-  Natasha, Bullwinkle, and every subsequently registered fleet member.
+- [ ] The current `main` source commit is deployed and attested on the hub,
+  every configured worker, and every subsequently registered fleet member.
 - [ ] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
   of generated authority files.
@@ -91,8 +91,8 @@ transaction or equivalent durable evidence.
 - [ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.
-- [ ] Rocky's proactive channel output is restricted to `#rockyandfriends`;
-  direct messages to the fleet owner remain allowed.
+- [ ] The hub agent's proactive channel output is restricted to its configured
+  home channel; direct messages to the fleet owner remain allowed.
 - [ ] OpenClaw gateway shutdown and deployment checkpoints handle WAL-backed
   state, bounded subprocess shutdown, and the configured OpenShell endpoint
   without corrupting or abandoning a rollout.
@@ -105,7 +105,7 @@ transaction or equivalent durable evidence.
 
 ## Near-term order
 
-1. Complete and verify the top-of-tree Rocky rollout.
+1. Complete and verify the top-of-tree hub rollout.
 2. Restore the nightly `#localnews` report.
 3. Prove the hub-mediated upgrade transaction across the full fleet.
 4. Close the autonomous review/repair/publication loop with a live `~/Src/mac`
