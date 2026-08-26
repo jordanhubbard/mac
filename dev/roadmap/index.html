@@ -1759,6 +1759,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cli-and-plugin-distribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI and plugin distribution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#operational-autonomy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1887,6 +1898,18 @@ transaction or equivalent durable evidence.</p>
 <li>[ ] Database and agent-owned state upgrades are versioned, ordered, recorded,
   and fail closed as specified by ADR 0027.</li>
 </ul>
+<h2 id="cli-and-plugin-distribution">CLI and plugin distribution<a class="headerlink" href="#cli-and-plugin-distribution" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] The MAC CLI's known installation, authentication, command-routing, and
+  upgrade defects are fixed and covered by supported-host contract tests plus a
+  live fleet smoke test.</li>
+<li>[ ] Plugin generation produces a deterministic, versioned, integrity-checked
+  artifact whose commands, bundled dependencies, configuration migration, and
+  rollback behavior pass installation and upgrade contracts.</li>
+<li>[ ] The generated plugin is verified on every supported host and becomes the
+  canonical MAC CLI installation method, with a bounded migration from the
+  legacy installer and a tested rollback path.</li>
+</ul>
 <h2 id="operational-autonomy">Operational autonomy<a class="headerlink" href="#operational-autonomy" title="Permanent link">&para;</a></h2>
 <ul>
 <li>[ ] Nightly local-news collection reliably publishes one deduplicated report
@@ -1913,6 +1936,8 @@ transaction or equivalent durable evidence.</p>
 <li>Prove the hub-mediated upgrade transaction across the full fleet.</li>
 <li>Close the autonomous review/repair/publication loop with a live <code>~/Src/mac</code>
    task.</li>
+<li>Repair the MAC CLI, verify deterministic plugin generation, and migrate the
+   fleet to plugin-based CLI installation.</li>
 <li>Implement hierarchical sandbox ACL feedback and profile placement.</li>
 <li>Revisit dream-cycle analysis only after the higher-priority proofs are
    durable.</li>
