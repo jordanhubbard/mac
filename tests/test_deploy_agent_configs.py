@@ -2774,6 +2774,10 @@ def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
     assert "actionable_text" in classifier
     assert 'if spec["severity"] != "info"' in classifier
     assert 'if spec["severity"] == "info"' in classifier
+    assert "openclaw_openshell_ssh_exited_recovered" in classifier
+    assert "elif requires_then_regex:" in classifier
+    deploy = script
+    assert "wait_for_gateway_ready_log" in deploy
 
 
 def test_gateway_log_classifier_accepts_exact_recovered_rocky_startup(tmp_path):
@@ -2818,6 +2822,41 @@ def test_gateway_log_classifier_accepts_exact_recovered_rocky_startup(tmp_path):
         {"count": 2, "name": "openclaw_sandbox_create_recovered", "severity": "info"},
         {"count": 4, "name": "openclaw_cron_device_approval_deferred", "severity": "info"},
     ]
+
+
+def test_gateway_log_classifier_accepts_recovered_openshell_ssh_exit(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                "Created sandbox: mac-openclaw-rocky",
+                "Config health-state write failed: database disk image is malformed",
+                "[openclaw] Could not start the CLI.",
+                "[openclaw] Reason: Failed to open the plugin state database. | database disk image is malformed | ERR_SQLITE_ERROR",
+                "Error:   × ssh exited with status exit status: 1",
+                "2026-08-26T22:47:00.292+00:00 [gateway] ready",
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert summary["actionable_count"] == 0
+    assert any(
+        item["name"] == "openclaw_openshell_ssh_exited_recovered" and item["count"] == 1
+        for item in summary["classes"]
+    )
+
+
+def test_gateway_log_classifier_rejects_openshell_ssh_exit_without_ready(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "Error:   × ssh exited with status exit status: 1\n",
+    )
+
+    assert result.returncode == 1
+    assert summary["actionable_count"] == 1
+    assert {item["name"] for item in summary["classes"]} == {"traceback"}
 
 
 def test_gateway_log_classifier_classifies_sanitized_cron_deferrals(tmp_path):

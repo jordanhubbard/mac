@@ -11662,6 +11662,25 @@ note_gateway_degraded() {
     >> "$LOG_DIR/openclaw-gateway-degraded.txt" 2>/dev/null || true
 }
 
+wait_for_gateway_ready_log() {
+  # KeepAlive can restart OpenClaw after a one-shot CLI failure. Give that
+  # successor time to print [gateway] ready so recovered startup Errors are
+  # classified as info instead of failing the node.
+  local log_file="$1"
+  local timeout="${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}"
+  local waited=0
+  [ -n "$log_file" ] || return 0
+  while [ "$waited" -lt "$timeout" ]; do
+    if grep -q '\[gateway\] ready' "$log_file" 2>/dev/null; then
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  log "WARNING: gateway log still missing [gateway] ready after ${timeout}s; classifying anyway"
+  return 0
+}
+
 handle_failed_openclaw_successor() {
   local context="$1"
   if [ "$RECOVERY_POLICY" = retain-forward ]; then
@@ -13774,6 +13793,11 @@ patterns = {
         "requires_then_regex": r"\[gateway\] ready\b",
         "match_key": "sandbox",
     },
+    "openclaw_openshell_ssh_exited_recovered": {
+        "severity": "info",
+        "regex": r"Error:[ \t]+×[ \t]+ssh exited with status exit status: \d+",
+        "requires_then_regex": r"\[gateway\] ready\b",
+    },
     "openclaw_cron_device_approval_deferred": {
         "severity": "info",
         "regex": (
@@ -13847,6 +13871,15 @@ for name, spec in patterns.items():
 
         matches = [
             match for match in matches if has_ordered_recovery(match)
+        ]
+    elif requires_then_regex:
+        then_matches = list(
+            re.finditer(requires_then_regex, actionable_text, flags=info_flags)
+        )
+        matches = [
+            match
+            for match in matches
+            if any(then.start() > match.end() for then in then_matches)
         ]
     if matches:
         classes.append({"name": name, "severity": spec["severity"], "count": len(matches)})
@@ -14358,8 +14391,10 @@ fi
 
 if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
   if [ "$SUPERVISOR_KIND" = "systemd" ]; then
+    wait_for_gateway_ready_log "$LOG_DIR/openclaw-gateway-journal.txt"
     classify_gateway_logs "$LOG_DIR/openclaw-gateway-journal.txt"
   else
+    wait_for_gateway_ready_log "$LOG_DIR/openclaw-gateway.log"
     classify_gateway_logs "$LOG_DIR/openclaw-gateway.log"
   fi
 elif [ "$SUPERVISOR_KIND" = "systemd" ]; then

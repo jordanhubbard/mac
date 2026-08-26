@@ -704,6 +704,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image. |
 | `MAC_OPENCLAW_IMAGE_REVISION` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image revision. |
 | `MAC_OPENCLAW_INSTANCE_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw instance id. |
+| `MAC_OPENCLAW_KSLUG_SKILL_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw kslug skill src. |
 | `MAC_OPENCLAW_LEGACY_SCRIPTS_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy scripts dir. |
 | `MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy slack home channels file. |
 | `MAC_OPENCLAW_LIVE_CANARY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw live canary. |

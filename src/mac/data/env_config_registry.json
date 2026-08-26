@@ -8313,6 +8313,17 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw kslug skill src.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_KSLUG_SKILL_SRC",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw legacy scripts dir.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_LEGACY_SCRIPTS_DIR",
@@ -8753,6 +8764,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"
