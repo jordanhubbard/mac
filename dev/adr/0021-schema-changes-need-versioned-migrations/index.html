@@ -1726,6 +1726,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#stage-1a-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1A implementation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1891,6 +1902,26 @@
 <li>Related: ADR 0013 (one authoritative hub allocator), ADR 0020 (a running task
   is not editable — the change that surfaced this)</li>
 </ul>
+<h2 id="stage-1a-implementation">Stage 1A implementation<a class="headerlink" href="#stage-1a-implementation" title="Permanent link">&para;</a></h2>
+<p>The in-repository runner in <code>mac.schema_migrations</code> is the database schema
+authority. <code>schema_version</code> holds the single current version and
+<code>schema_migrations</code> is the append-only, ordered SHA-256 ledger. The pre-existing
+<code>schema_migration_receipts</code> and <code>telemetry_data_migrations</code> tables remain
+specialized component/data receipts and are not overloaded.</p>
+<p>Migration SQL is frozen under <code>src/mac/data/postgres/migrations/</code>.
+<code>schema.sql</code> is the generated current bootstrap artifact; <code>make postgres-schema</code>
+checks it against the immutable ordered sequence (and <code>ARGS=--write</code>
+regenerates it). Editing <code>schema.sql</code> cannot change an already-recorded
+migration checksum.</p>
+<p>Deploy orchestration runs <code>mac-schema-migrate --applied-by &lt;identity&gt;</code>. A fresh
+database is bootstrapped transactionally. An existing unversioned database is
+accepted only with <code>--authorize-existing-baseline</code>, and only after its complete
+known table/column/object baseline is proved. Ordinary control-plane startup
+performs read-only verification and fails closed on drift or version mismatch.
+The fleet installer performs that operation only on the quiesced hub, after a
+restore-verified PostgreSQL backup, and persists preflight/backup/result
+evidence under the deployment log directory. A current preflight skips both
+backup and migration.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>Adding the <code>stopped</code> task state (ADR 0020) required changing a Postgres trigger
 function. The question "will a redeploy apply that?" turned out to have a

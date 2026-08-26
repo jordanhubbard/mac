@@ -1726,6 +1726,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#stage-1a-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1A implementation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1935,6 +1946,19 @@
 <li>Related: <a href="../0013-authoritative-hub-allocator/">ADR 0013</a> — the hub is the
   authority, so the hub owns the schema it writes</li>
 </ul>
+<h2 id="stage-1a-implementation">Stage 1A implementation<a class="headerlink" href="#stage-1a-implementation" title="Permanent link">&para;</a></h2>
+<p>Schema application is an explicit deploy operation:</p>
+<div class="highlight"><pre><span></span><code>mac-schema-migrate --applied-by deploy:&lt;release&gt;
+</code></pre></div>
+<p>Existing fleet authorities that predate the ordered ledger additionally require
+<code>--authorize-existing-baseline</code>. That flag does not waive validation: the
+runner refuses partial or unknown schemas, applies every migration and its
+postcondition in one transaction, and records the stable ID and SHA-256 only
+after proof succeeds. Hub startup only verifies; it does not repeatedly execute
+the schema bundle. Fleet deploy first runs a read-only preflight; if work is
+pending it requires the typed quiescence proof, creates and restore-verifies a
+PostgreSQL backup, records the backup-bound deploy receipt, then migrates before
+any hub supervisor starts. No verified backup means no migration.</p>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>mac has one deployment today, and its project instructions say so: break schemas
 and bump versions rather than carrying shims, because there are no other users.
