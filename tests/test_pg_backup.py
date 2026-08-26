@@ -98,6 +98,27 @@ def test_dump_is_verified_owner_only_and_manifested(tmp_path):
     assert "pg_dump" in fake.names()
 
 
+def test_empty_authority_backup_still_requires_successful_scratch_restore(tmp_path):
+    result = pg_backup.dump(
+        DSN,
+        tmp_path / "empty",
+        verify_tables=(),
+        now=_now(),
+        runner=FakePg(),
+    )
+    assert result.verified is True
+    assert result.verify_detail["tables"] == {"live": {}, "restored": {}}
+
+    with pytest.raises(pg_backup.PgBackupError, match="empty authority failed"):
+        pg_backup.dump(
+            DSN,
+            tmp_path / "broken-empty",
+            verify_tables=(),
+            now=_now(),
+            runner=FakePg(restore_rc=2),
+        )
+
+
 def test_restore_drill_fails_when_counts_diverge(tmp_path):
     # scratch restore reports a different row count than the live authority
     class Divergent(FakePg):

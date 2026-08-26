@@ -141,6 +141,8 @@ EXPECTED_TABLES = [
     "deployments",
     "dispatch_mismatch_state",
     "dispatch_rounds",
+    "dream_candidate_entries",
+    "dream_runs",
     "environment_events",
     "environments",
     "eval_runs",
@@ -310,7 +312,9 @@ def test_live_schema_creates_exactly_the_manifest_tables(postgres_store) -> None
         "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
     )
     live = {r["table_name"] for r in rows}
-    expected = set(EXPECTED_TABLES)
+    from mac.schema_migrations import AUTHORITY_TABLES
+
+    expected = set(EXPECTED_TABLES) | set(AUTHORITY_TABLES)
     assert expected - live == set(), (
         "declared in schema.sql but absent after initialize(): %s" % sorted(expected - live)
     )
@@ -469,12 +473,70 @@ def test_postgres_store_exposes_initialize_and_ensure_column() -> None:
     from mac.store_postgres import PostgresStore
 
     assert callable(PostgresStore.initialize)
+    assert callable(PostgresStore.verify_schema)
+    assert callable(PostgresStore.apply_migrations)
     assert callable(PostgresStore.ensure_column)
     # Additive-migration helper used by initialize().
     import inspect
 
     params = list(inspect.signature(PostgresStore.ensure_column).parameters)
     assert params == ["self", "table", "column", "definition"]
+
+
+def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
+    from mac.schema_migrations import (
+        AUTHORITY_DDL,
+        MIGRATIONS,
+        MIGRATION_PATH,
+        render_bootstrap_schema,
+    )
+
+    assert "CREATE TABLE schema_version" in AUTHORITY_DDL
+    assert "CREATE TABLE schema_migrations" in AUTHORITY_DDL
+    assert "checksum_sha256 CHAR(64)" in AUTHORITY_DDL
+    assert "trg_schema_migrations_append_only" in AUTHORITY_DDL
+    assert "trg_schema_version_consistent" in AUTHORITY_DDL
+    assert [migration.migration_id for migration in MIGRATIONS] == [
+        "0001_postgresql_authority_baseline",
+        "0002_dream_candidate_store",
+    ]
+    expected_checksums = {
+        "0001_postgresql_authority_baseline": (
+            "be555476740aef560d539b91c7dcb28a3e6d48557659a5a2f654ee37181b58cd"
+        ),
+        "0002_dream_candidate_store": (
+            "597a14ee40fa1d5d28fd05daa1ae2adf53518690e5f6f3e55b9c0598107b62f9"
+        ),
+    }
+    for migration in MIGRATIONS:
+        assert migration.checksum_sha256 == expected_checksums[migration.migration_id]
+        assert migration.sql == (MIGRATION_PATH / (migration.migration_id + ".sql")).read_text()
+    assert _schema_text() == render_bootstrap_schema()
+
+
+def test_frozen_baseline_contains_every_removed_startup_ensure_column() -> None:
+    from mac.schema_migrations import (
+        FORMER_STARTUP_ENSURE_COLUMNS,
+        MIGRATIONS,
+        _expected_inventory,
+    )
+
+    tables, _ = _expected_inventory(MIGRATIONS[0].sql)
+    present = {(table, column) for table, columns in tables.items() for column in columns}
+    assert FORMER_STARTUP_ENSURE_COLUMNS - present == set()
+    assert ("agents", "attestation_key_history_ciphertext") in present
+
+
+@pytest.mark.postgres
+def test_live_schema_contains_every_removed_startup_ensure_column(postgres_store) -> None:
+    from mac.schema_migrations import FORMER_STARTUP_ENSURE_COLUMNS
+
+    rows = postgres_store.query_all(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema()"
+    )
+    live = {(row["table_name"], row["column_name"]) for row in rows}
+    assert FORMER_STARTUP_ENSURE_COLUMNS - live == set()
 
 
 def test_additive_columns_are_present_in_schema(

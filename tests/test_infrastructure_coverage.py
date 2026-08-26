@@ -400,7 +400,8 @@ def test_postgres_store_adapter_with_fake_pool(monkeypatch):
     assert store.execute("UPDATE things SET name = ?", ["new"]).rowcount == 0
     store.executemany("INSERT INTO things VALUES (?, ?)", [(1, "a"), (2, "b")])
     store.ensure_column("things", "extra", "extra TEXT")
-    store.initialize()
+    assert callable(store.initialize)
+    assert callable(store.verify_schema)
     with store.transaction() as transaction:
         transaction.execute("UPDATE things SET name = ?", ["inside"])
     store.close()
@@ -413,7 +414,7 @@ def test_postgres_store_adapter_with_fake_pool(monkeypatch):
         lambda: store.execute("SELECT 1"),
         lambda: store.executemany("INSERT INTO t VALUES (?)", [(1,)]),
         lambda: store.ensure_column("t", "c", "c TEXT"),
-        store.initialize,
+        store.verify_schema,
     ):
         with pytest.raises(StoreError, match="database down"):
             operation()

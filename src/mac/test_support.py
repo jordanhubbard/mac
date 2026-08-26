@@ -199,7 +199,15 @@ def drop_store(store) -> None:
 # Tables the packaged DDL leaves populated: the migration ledgers. A reset must
 # preserve them, because "just initialized" includes their rows -- wiping them
 # would make the next test look like a database whose migrations never ran.
-_RESET_PRESERVED_TABLES = frozenset({"task_dependency_migrations", "telemetry_data_migrations"})
+_RESET_PRESERVED_TABLES = frozenset(
+    {
+        "schema_version",
+        "schema_migrations",
+        "schema_migration_receipts",
+        "task_dependency_migrations",
+        "telemetry_data_migrations",
+    }
+)
 
 
 def reset_store_data(store) -> bool:
@@ -297,8 +305,8 @@ def store_on(dsn: str, *, pool_size: int = 2, initialize: bool = False):
 
     store = PostgresStore(dsn, pool_size=pool_size, min_size=1)
     if initialize:
-        # Re-runs the DDL and the data migrations, which is what a test that
-        # reopens a database to prove a migration fires actually needs.
+        # Explicitly apply the database-level versioned chain. Component data
+        # migrations must be invoked by their own tests/APIs.
         store.initialize()
     _OPEN_STORES.append(store)
     return store

@@ -831,7 +831,11 @@ def cmd_plugin_uninstall(args: argparse.Namespace) -> None:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
-    """Initialize the local mac control-plane database."""
+    """Explicitly bootstrap and verify a fresh PostgreSQL authority.
+
+    Existing unversioned databases are deliberately refused; fleet baseline
+    authorization belongs to the backup-gated deploy migration command.
+    """
     _plane(args)
     _print({"status": "initialized", "db": args.db})
 
@@ -7637,7 +7641,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     _set(
         cmd_init,
-        sub.add_parser("init", help="create the control-plane schema in the --db PostgreSQL store"),
+        sub.add_parser(
+            "init",
+            help="explicitly bootstrap a fresh --db PostgreSQL authority; never baseline existing",
+        ),
     )
 
     database = sub.add_parser(

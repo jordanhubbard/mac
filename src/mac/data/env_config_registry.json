@@ -1644,6 +1644,7 @@
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py",
       "src/mac/router_service.py",
+      "src/mac/schema_migrations.py",
       "src/mac/store.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
@@ -1665,6 +1666,7 @@
       "src/mac/dispatch.py",
       "src/mac/mac_paths.py",
       "src/mac/router_service.py",
+      "src/mac/schema_migrations.py",
       "src/mac/store.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
@@ -2036,6 +2038,18 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy authorize existing schema baseline.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -9310,6 +9324,7 @@
     "name": "MAC_PG_BACKUP_DIR",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py"
     ],
@@ -12184,6 +12199,61 @@
     "retired": false,
     "sources": [
       "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: schema backup.",
+    "family": "core",
+    "name": "MAC_SCHEMA_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: schema preflight.",
+    "family": "core",
+    "name": "MAC_SCHEMA_PREFLIGHT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: schema quiescence.",
+    "family": "core",
+    "name": "MAC_SCHEMA_QUIESCENCE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: schema receipt status.",
+    "family": "core",
+    "name": "MAC_SCHEMA_RECEIPT_STATUS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: schema result.",
+    "family": "core",
+    "name": "MAC_SCHEMA_RESULT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },

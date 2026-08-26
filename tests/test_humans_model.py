@@ -427,16 +427,33 @@ class TestDeleteHuman:
 # ---------------------------------------------------------------------------
 
 
+def _apply_versioned_humans_repair(store) -> None:
+    from mac.schema_migrations import MIGRATIONS, Migration
+
+    start = MIGRATIONS[0].sql.index("CREATE TABLE IF NOT EXISTS humans (")
+    end = MIGRATIONS[0].sql.index(
+        "CREATE TABLE IF NOT EXISTS openclaw_conversation_executions (",
+        start,
+    )
+    repair = Migration(
+        "0003_test_humans_repair",
+        MIGRATIONS[0].sql[start:end],
+        """
+        SELECT to_regclass(current_schema() || '.humans') IS NOT NULL
+           AND to_regclass(current_schema() || '.human_groups') IS NOT NULL
+        """,
+    )
+    store.apply_migrations(applied_by="test-humans-repair", migrations=(*MIGRATIONS, repair))
+
+
 class TestMigrationPath:
-    """Verify that initialize() adds humans / human_groups and the two new task
-    columns to a database that was created before the humans schema existed.
+    """Verify an explicit versioned migration repairs a pre-humans schema.
 
     Strategy: open a full ephemeral_store (which runs _initialize()), then manually
     drop the humans and human_groups tables and the two new task columns to
     simulate a pre-humans schema.  Call initialize() directly and assert that the
-    schema is back to the expected state.  This exercises the ALTER TABLE /
-    CREATE TABLE IF NOT EXISTS migration paths without needing a minimal-schema
-    fixture that would require duplicating the whole DDL.
+    schema is back to the expected state. This does not rely on initialize()
+    replaying unversioned DDL.
     """
 
     @staticmethod
@@ -462,31 +479,28 @@ class TestMigrationPath:
         tables_before = table_names(store)
         assert "humans" not in tables_before
         assert "human_groups" not in tables_before
-        # Re-run migrate
-        store.initialize()
+        _apply_versioned_humans_repair(store)
         tables_after = table_names(store)
         assert "humans" in tables_after
         assert "human_groups" in tables_after
 
     def test_human_assignees_column_present_after_migrate(self):
-        """_ensure_column is idempotent — if columns already exist from
-        _initialize() the second call via _migrate() must not raise."""
+        """The immutable baseline contains the former ensure-column."""
         store = _fresh_store()
-        # Columns already present from _initialize(); _migrate() must not error
-        store.initialize()
+        store.verify_schema()
         cols = column_names(store, "tasks")
         assert "human_assignees" in cols
 
     def test_created_by_human_column_present_after_migrate(self):
         store = _fresh_store()
-        store.initialize()
+        store.verify_schema()
         cols = column_names(store, "tasks")
         assert "created_by_human" in cols
 
     def test_full_crud_works_after_migrate(self):
         store = _fresh_store()
         self._degrade_schema(store)
-        store.initialize()
+        _apply_versioned_humans_repair(store)
         h = _make_human(username="migrated_user", groups=["alpha"])
         store.upsert_human(
             h.id,
@@ -514,7 +528,7 @@ def test_the_owner_foreign_key_comes_back_after_humans_is_recreated():
     store.execute("DROP TABLE IF EXISTS human_groups")
     store.execute("DROP TABLE IF EXISTS humans CASCADE")
 
-    store.initialize()
+    _apply_versioned_humans_repair(store)
 
     # Scoped to THIS schema. pg_constraint is cluster-wide and every test runs
     # in its own schema, so an unscoped lookup finds some other test's

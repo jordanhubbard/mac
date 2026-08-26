@@ -14,7 +14,7 @@ from mac.models import (
 )
 from mac.services import ControlPlane
 from mac.test_support import dsn_for, ephemeral_store, store_on
-from mac.task_dependencies import MIGRATION_VERSION
+from mac.task_dependencies import MIGRATION_VERSION, migrate_dependency_edges
 
 
 def _plane() -> ControlPlane:
@@ -38,6 +38,12 @@ def _reset_dependency_migration(dsn: str, updates: list[tuple[str, str]]) -> Non
             )
     finally:
         conn.close()
+
+
+def _open_and_migrate_dependencies(dsn: str):
+    store = store_on(dsn)
+    migrate_dependency_edges(store)
+    return store
 
 
 def test_create_resolves_prefix_and_persists_full_edge() -> None:
@@ -121,7 +127,7 @@ def test_migration_rewrites_unique_short_reference(tmp_path: Path) -> None:
     store.close()
 
     _reset_dependency_migration(database, [(consumer.id, json.dumps([dependency.id[:13]]))])
-    migrated = store_on(database, initialize=True)
+    migrated = _open_and_migrate_dependencies(database)
     try:
         row = migrated.query_one("SELECT dependencies FROM tasks WHERE id = ?", (consumer.id,))
         assert row is not None
@@ -144,7 +150,7 @@ def test_migration_quarantines_missing_dependency(tmp_path: Path) -> None:
     store.close()
 
     _reset_dependency_migration(database, [(consumer.id, json.dumps(["task_deadbeef"]))])
-    migrated = store_on(database, initialize=True)
+    migrated = _open_and_migrate_dependencies(database)
     try:
         finding = migrated.query_one(
             "SELECT reason FROM task_dependency_quarantine WHERE task_id = ?",
@@ -178,7 +184,7 @@ def test_migration_deduplicates_repeated_invalid_dependency(tmp_path: Path) -> N
         database,
         [(consumer.id, json.dumps(["task_deadbeef", "task_deadbeef"]))],
     )
-    migrated = store_on(database, initialize=True)
+    migrated = _open_and_migrate_dependencies(database)
     try:
         findings = migrated.query_all(
             "SELECT reason FROM task_dependency_quarantine WHERE task_id = ?",
@@ -241,7 +247,7 @@ def test_migration_preserves_prior_hold_provenance(
     finally:
         conn.close()
 
-    migrated = store_on(database, initialize=True)
+    migrated = _open_and_migrate_dependencies(database)
     try:
         repaired_control = ControlPlane(
             migrated,
@@ -280,7 +286,7 @@ def test_migration_normalizes_uppercase_hex_prefix(tmp_path: Path) -> None:
         database,
         [(consumer.id, json.dumps([uppercase_prefix]))],
     )
-    migrated = store_on(database, initialize=True)
+    migrated = _open_and_migrate_dependencies(database)
     try:
         row = migrated.query_one(
             "SELECT dependencies FROM tasks WHERE id = ?",
@@ -479,7 +485,7 @@ def test_migration_quarantines_all_cycle_members(tmp_path: Path) -> None:
             (second.id, json.dumps([first.id])),
         ],
     )
-    migrated = store_on(database, initialize=True)
+    migrated = _open_and_migrate_dependencies(database)
     try:
         findings = migrated.query_all(
             "SELECT task_id, reason FROM task_dependency_quarantine ORDER BY task_id"

@@ -173,6 +173,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ATTEST_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy attest generation. |
 | `MAC_DEPLOY_ATTEST_REV` | str | consumer-defined | deployment | Deployment setting: deploy attest rev. |
 | `MAC_DEPLOY_ATTEST_TS` | str | consumer-defined | deployment | Deployment setting: deploy attest ts. |
+| `MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE` | str | consumer-defined | deployment | Deployment setting: deploy authorize existing schema baseline. |
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CHAT_GATEWAY_IMPL` | str | consumer-defined | deployment | Deployment setting: deploy chat gateway impl. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
@@ -1034,6 +1035,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SANDBOX_PATH_PREFIX` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: sandbox path prefix. |
 | `MAC_SANDBOX_PNPM_VERSION` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: sandbox pnpm version. |
 | `MAC_SANDBOX_PYTHON` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: sandbox python. |
+| `MAC_SCHEMA_BACKUP` | str | consumer-defined | core | Core setting: schema backup. |
+| `MAC_SCHEMA_PREFLIGHT` | str | consumer-defined | core | Core setting: schema preflight. |
+| `MAC_SCHEMA_QUIESCENCE` | str | consumer-defined | core | Core setting: schema quiescence. |
+| `MAC_SCHEMA_RECEIPT_STATUS` | str | consumer-defined | core | Core setting: schema receipt status. |
+| `MAC_SCHEMA_RESULT` | str | consumer-defined | core | Core setting: schema result. |
 | `MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer auto improve. |
 | `MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROMOTE` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer auto promote. |
 | `MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer auto propose. |

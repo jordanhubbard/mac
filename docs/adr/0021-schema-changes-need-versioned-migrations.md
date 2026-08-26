@@ -6,6 +6,30 @@
 - Related: ADR 0013 (one authoritative hub allocator), ADR 0020 (a running task
   is not editable — the change that surfaced this)
 
+## Stage 1A implementation
+
+The in-repository runner in `mac.schema_migrations` is the database schema
+authority. `schema_version` holds the single current version and
+`schema_migrations` is the append-only, ordered SHA-256 ledger. The pre-existing
+`schema_migration_receipts` and `telemetry_data_migrations` tables remain
+specialized component/data receipts and are not overloaded.
+
+Migration SQL is frozen under `src/mac/data/postgres/migrations/`.
+`schema.sql` is the generated current bootstrap artifact; `make postgres-schema`
+checks it against the immutable ordered sequence (and `ARGS=--write`
+regenerates it). Editing `schema.sql` cannot change an already-recorded
+migration checksum.
+
+Deploy orchestration runs `mac-schema-migrate --applied-by <identity>`. A fresh
+database is bootstrapped transactionally. An existing unversioned database is
+accepted only with `--authorize-existing-baseline`, and only after its complete
+known table/column/object baseline is proved. Ordinary control-plane startup
+performs read-only verification and fails closed on drift or version mismatch.
+The fleet installer performs that operation only on the quiesced hub, after a
+restore-verified PostgreSQL backup, and persists preflight/backup/result
+evidence under the deployment log directory. A current preflight skips both
+backup and migration.
+
 ## Context
 
 Adding the `stopped` task state (ADR 0020) required changing a Postgres trigger

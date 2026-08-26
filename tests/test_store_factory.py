@@ -108,6 +108,9 @@ def test_factory_takes_postgres_branch(monkeypatch) -> None:
         def initialize(self) -> None:
             seen.append({"initialize": True})
 
+        def verify_schema(self) -> None:
+            seen.append({"verify": True})
+
     monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)
     monkeypatch.setenv("MAC_DATABASE_URL", "postgresql://user@host:5432/macdb")
     monkeypatch.setenv("MAC_PG_POOL_SIZE", "7")
@@ -119,7 +122,8 @@ def test_factory_takes_postgres_branch(monkeypatch) -> None:
         "dsn": "postgresql://user@host:5432/macdb",
         "pool_size": 7,
     }
-    assert {"initialize": True} in seen
+    assert {"verify": True} in seen
+    assert {"initialize": True} not in seen
 
 
 def test_factory_can_attach_to_existing_postgres_without_schema_ddl(
@@ -139,13 +143,19 @@ def test_factory_can_attach_to_existing_postgres_without_schema_ddl(
         def initialize(self) -> None:
             seen.append({"initialize": True})
 
+        def verify_schema(self) -> None:
+            seen.append({"verify": True})
+
     monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)
     monkeypatch.setenv("MAC_DATABASE_URL", "postgresql://user@host/macdb")
 
     s = make_store_from_env(initialize_schema=False)
 
     assert isinstance(s, _FakePG)
-    assert seen == [{"dsn": "postgresql://user@host/macdb", "pool_size": 10}]
+    assert seen == [
+        {"dsn": "postgresql://user@host/macdb", "pool_size": 10},
+        {"verify": True},
+    ]
 
 
 def test_factory_supports_postgres_scheme_alias(monkeypatch) -> None:
@@ -158,6 +168,9 @@ def test_factory_supports_postgres_scheme_alias(monkeypatch) -> None:
             self.path = dsn
 
         def initialize(self) -> None:
+            pass
+
+        def verify_schema(self) -> None:
             pass
 
     monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)

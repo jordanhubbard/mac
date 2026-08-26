@@ -33,14 +33,14 @@ GUI_PACKAGE ?= dist/mac-hub-ui.tar.gz
 DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
-CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade-supervisor mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
+CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade-supervisor mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway mac-schema-migrate
 
 .PHONY: help require-python require-npm require-uv \
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
-	install-hooks setup deploy test coverage test-api test-cli test-local-console test-systemd-local-console test-ui cli-coverage lint lint-fix lint-local-console format-local-console \
-	test-portfolio fault-replay sanity-test compatibility-test \
+	install-hooks setup deploy test coverage test-api test-cli test-local-console test-systemd-local-console test-ui test-schema-migrations cli-coverage lint lint-fix lint-local-console format-local-console \
+	test-portfolio fault-replay sanity-test compatibility-test postgres-schema \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-graph docs-lab docs-reference env-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
 	observe-build observe-run \
@@ -283,6 +283,22 @@ test-ui: require-npm $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, Fleet ID
 	uv run --extra dev pytest -q -m ui tests/
 	cd $(IDE_DIR) && $(NPM) run test:ui
 	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run typecheck && $(NPM) test
+
+SCHEMA_MIGRATION_TESTS ?= tests/test_schema_migrations.py \
+	tests/test_schema_migrations_live.py tests/test_store_factory.py \
+	tests/test_postgres_schema.py tests/test_deploy_schema_migrations.py \
+	tests/test_pg_backup.py
+
+test-schema-migrations: postgres-schema ## Run focused live-Postgres schema migration authority tests.
+	bash -n deploy/fleet-node-install.sh
+	@export MAC_TEST_PG_PORT="$${MAC_TEST_PG_PORT:-$$((56000 + $$$$ % 9000))}"; \
+		export MAC_TEST_PG_CONTAINER="$${MAC_TEST_PG_CONTAINER:-mac-test-postgres-schema-$$$$}"; \
+		trap 'docker rm -f "$$MAC_TEST_PG_CONTAINER" >/dev/null 2>&1 || true' EXIT; \
+		eval "$$(scripts/start-test-postgres.sh)" && \
+		uv run --extra dev pytest -q $(SCHEMA_MIGRATION_TESTS)
+
+postgres-schema: require-uv ## Check or regenerate schema.sql from ordered migrations.
+	$(UV) run --extra postgres python scripts/generate-postgres-schema.py $(ARGS)
 
 observe-build: require-npm ## Backward-compatible alias for build-gui (rebuild the hub UI bundle).
 	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run build

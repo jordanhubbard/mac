@@ -115,15 +115,13 @@ def test_mac_authority_fails_closed_with_neither_dsn_variable_set() -> None:
     assert "neither MAC_DATABASE_URL nor MAC_DB is set" in result.stderr
 
 
-def test_first_time_control_plane_init_uses_the_current_command_name() -> None:
-    # `mac init` moved under `admin` (`mac admin init`); a stale call site
-    # crashes every first-time control-plane-enabled deploy at
-    # "initializing hub control-plane database" with the CLI's own
-    # deprecation message ("`init` moved under `admin`. Run `mac admin
-    # init`") rather than actually initializing anything.
+def test_first_time_control_plane_init_uses_explicit_schema_migrations() -> None:
+    # Deploy owns schema application while the hub is quiesced. It must not
+    # route first-time bootstrap through ordinary control-plane startup.
     text = _script()
     assert "mac_authority init" not in text
-    assert "mac_authority admin init" in text
+    assert "mac_authority admin init" not in text
+    assert "mac-schema-migrate" in text
 
 
 def test_reachable_nonmesh_route_is_direct_hub_eligible() -> None:

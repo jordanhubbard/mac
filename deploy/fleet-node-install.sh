@@ -375,6 +375,7 @@ DRAIN_TIMEOUT_SECONDS="${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}"
 DRAIN_POLL_SECONDS="${MAC_DEPLOY_DRAIN_POLL_SECONDS:-10}"
 DEFER_CLEAR_DRAIN="${MAC_DEPLOY_DEFER_CLEAR_DRAIN:-0}"
 DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"
+SCHEMA_BASELINE_AUTHORIZED="${MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE:-0}"
 OPENSHELL_DEPLOY_ENABLED="${MAC_DEPLOY_OPENSHELL_ENABLED:-0}"
 OPENSHELL_EFFECTIVE_ARGS="${MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS:-}"
 OPENSHELL_RUNTIME_IMAGE="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
@@ -417,6 +418,7 @@ ROLLBACK_COMPLETION_RECEIPT="$LOG_DIR/rollback-${DEPLOY_TS}-completion.json"
 MANIFEST_PRE="$LOG_DIR/deploy-manifest-${DEPLOY_TS}-pre.json"
 MANIFEST_POST="$LOG_DIR/deploy-manifest-${DEPLOY_TS}-post.json"
 FINALIZE_RECEIPT="$LOG_DIR/deploy-${DEPLOY_TS}-finalize.json"
+SCHEMA_MIGRATION_RECEIPT="$LOG_DIR/schema-migration-${DEPLOY_TS}.json"
 PREREQUISITE_HELPER="${MAC_DEPLOY_PREREQUISITE_HELPER:-}"
 PREREQUISITE_HELPER_SHA256="${MAC_DEPLOY_PREREQUISITE_HELPER_SHA256:-}"
 PREREQUISITE_BUNDLE="${MAC_DEPLOY_PREREQUISITE_BUNDLE:-}"
@@ -10952,6 +10954,121 @@ mac_authority() {
   fi
 }
 
+write_schema_migration_receipt() {
+  local status="$1" preflight="$2" backup="${3:-}" result="${4:-}" quiescence="$5"
+  MAC_SCHEMA_RECEIPT_STATUS="$status" MAC_SCHEMA_PREFLIGHT="$preflight" \
+    MAC_SCHEMA_BACKUP="$backup" MAC_SCHEMA_RESULT="$result" \
+    MAC_SCHEMA_QUIESCENCE="$quiescence" \
+    "$PY" - "$SCHEMA_MIGRATION_RECEIPT" <<'PY_SCHEMA_RECEIPT'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+def load(name):
+    value = os.environ.get(name, "")
+    if not value:
+        return None
+    with open(value, encoding="utf-8") as handle:
+        return json.load(handle)
+
+path = Path(sys.argv[1])
+payload = {
+    "schema": "mac.deploy_schema_migration.v1",
+    "status": os.environ["MAC_SCHEMA_RECEIPT_STATUS"],
+    "recorded_at": datetime.now(timezone.utc).isoformat(),
+    "source_revision": os.environ.get("DEPLOY_REV"),
+    "generation": os.environ.get("DEPLOY_GENERATION"),
+    "quiescence_proof": os.environ["MAC_SCHEMA_QUIESCENCE"],
+    "preflight": load("MAC_SCHEMA_PREFLIGHT"),
+    "backup": load("MAC_SCHEMA_BACKUP"),
+    "migration": load("MAC_SCHEMA_RESULT"),
+}
+temporary = path.with_name("." + path.name + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.chmod(0o600)
+temporary.replace(path)
+PY_SCHEMA_RECEIPT
+}
+
+migrate_control_plane_schema() {
+  control_plane_enabled || return 0
+  local dsn="${MAC_DATABASE_URL:-${MAC_DB:-}}"
+  local preflight="$LOG_DIR/schema-migration-preflight-${DEPLOY_TS}.json"
+  local backup="$LOG_DIR/schema-migration-backup-${DEPLOY_TS}.json"
+  local migration="$LOG_DIR/schema-migration-result-${DEPLOY_TS}.json"
+  local quiescence state pending_count backup_dir
+  local -a baseline_args=() backup_args=()
+  [ -n "$dsn" ] || die "schema migration requires MAC_DATABASE_URL or MAC_DB"
+  if [ "$NODE_ACTION" = legacy-one-shot ]; then
+    quiescence="$LOG_DIR/pre-artifact-supervisor-quiescence.json"
+  else
+    quiescence="$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json"
+  fi
+  [ -s "$quiescence" ] \
+    || die "schema migration requires the retained typed hub quiescence proof: $quiescence"
+
+  log "running read-only PostgreSQL schema migration preflight"
+  "$VENV/bin/mac-schema-migrate" --status --database-url "$dsn" > "$preflight"
+  read -r state pending_count < <("$PY" - "$preflight" <<'PY_SCHEMA_PREFLIGHT'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+print(payload.get("database_state", ""), len(payload.get("pending") or []))
+PY_SCHEMA_PREFLIGHT
+)
+  if [ "$pending_count" -eq 0 ]; then
+    write_schema_migration_receipt current "$preflight" "" "" "$quiescence"
+    log "PostgreSQL schema is current; skipped backup and migration"
+    return 0
+  fi
+
+  if [ "$state" = existing-unversioned ]; then
+    truthy "$SCHEMA_BASELINE_AUTHORIZED" \
+      || die "existing unversioned PostgreSQL authority requires MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE=1"
+    baseline_args+=(--authorize-existing-baseline)
+  elif [ "$state" = fresh ]; then
+    backup_args+=(--allow-empty-authority)
+  fi
+
+  backup_dir="${MAC_PG_BACKUP_DIR:-$MAC_HOME/backups}"
+  write_schema_migration_receipt \
+    backup_required "$preflight" "" "" "$quiescence"
+  log "creating restore-verified PostgreSQL backup before schema migration"
+  "$VENV/bin/mac-pg-backup" --json --dsn "$dsn" --out "$backup_dir" \
+    "${backup_args[@]}" > "$backup"
+  "$PY" - "$backup" <<'PY_SCHEMA_BACKUP_PROOF'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("restore_verified") is not True:
+    raise SystemExit("schema migration backup was not restore-verified")
+if not payload.get("manifest") or not payload.get("sha256"):
+    raise SystemExit("schema migration backup lacks its manifest binding")
+PY_SCHEMA_BACKUP_PROOF
+
+  write_schema_migration_receipt \
+    backup_verified_migration_pending "$preflight" "$backup" "" "$quiescence"
+
+  log "applying explicit transactional PostgreSQL schema migrations"
+  if ! "$VENV/bin/mac-schema-migrate" --database-url "$dsn" \
+      --applied-by "fleet-deploy:${DEPLOY_REV}:${DEPLOY_GENERATION}" \
+      "${baseline_args[@]}" > "$migration"; then
+    write_schema_migration_receipt \
+      migration_failed_backup_retained "$preflight" "$backup" "" "$quiescence"
+    die "PostgreSQL schema migration failed transactionally; backup retained at $(cat "$backup")"
+  fi
+
+  write_schema_migration_receipt \
+    migrated "$preflight" "$backup" "$migration" "$quiescence"
+  log "PostgreSQL schema migration completed with receipt $SCHEMA_MIGRATION_RECEIPT"
+}
+
 retire_spoke_local_control_plane_database() {
   if control_plane_enabled; then
     return 0
@@ -10990,10 +11107,14 @@ PY
   log "archived inactive legacy spoke database at $archive"
 }
 
+# The upgraded package is installed and the typed hub is still quiesced here.
+# Preflight avoids an expensive backup when current; any pending migration is
+# backup-gated and completes before every supervisor-specific hub start below.
+migrate_control_plane_schema
+
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   if control_plane_enabled; then
-    log "initializing hub control-plane database"
-    mac_authority admin init >/dev/null
+    log "hub control-plane database was explicitly migrated and verified"
     register_hermes_runtime_identity
   else
     log "configuring spoke as a database-free hub client"

@@ -468,6 +468,11 @@ def verify_restore(
             ],
             env,
         )
+        if not verify_tables and restore.returncode != 0:
+            raise PgBackupError(
+                "restore verify of empty authority failed: %s"
+                % (restore.stderr or "").strip()[:500]
+            )
         # pg_restore can emit non-fatal warnings (e.g. missing role GRANTs we
         # deliberately stripped). Treat only a hard non-zero-with-no-tables as
         # failure; the row-count proof below is the real gate.
@@ -567,6 +572,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--keep-last", type=int, default=DEFAULT_KEEP_LAST)
     parser.add_argument("--sync-cmd", default=None)
     parser.add_argument(
+        "--json", action="store_true", help="emit a machine-readable backup receipt"
+    )
+    parser.add_argument(
+        "--allow-empty-authority",
+        action="store_true",
+        help="restore-verify an empty fresh database without representative table checks",
+    )
+    parser.add_argument(
         "--no-verify",
         action="store_true",
         help="skip the restore-to-scratch verification (not recommended)",
@@ -591,9 +604,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         Path(out),
         keep_last=ns.keep_last,
         verify=not ns.no_verify,
+        verify_tables=() if ns.allow_empty_authority else DEFAULT_VERIFY_TABLES,
         sync_cmd=ns.sync_cmd,
     )
-    print("pg backup written: %s (restore_verified=%s)" % (result.path, result.verified))
+    if ns.json:
+        print(
+            json.dumps(
+                {
+                    "schema": BACKUP_MANIFEST_SCHEMA,
+                    "path": str(result.path),
+                    "manifest": str(result.manifest),
+                    "sha256": result.sha256,
+                    "size_bytes": result.size_bytes,
+                    "created_at": result.created_at,
+                    "restore_verified": result.verified,
+                    "restore_detail": result.verify_detail,
+                },
+                sort_keys=True,
+            )
+        )
+    else:
+        print("pg backup written: %s (restore_verified=%s)" % (result.path, result.verified))
     return 0
 
 

@@ -6,6 +6,22 @@
 - Related: [ADR 0013](0013-authoritative-hub-allocator.md) — the hub is the
   authority, so the hub owns the schema it writes
 
+## Stage 1A implementation
+
+Schema application is an explicit deploy operation:
+
+    mac-schema-migrate --applied-by deploy:<release>
+
+Existing fleet authorities that predate the ordered ledger additionally require
+`--authorize-existing-baseline`. That flag does not waive validation: the
+runner refuses partial or unknown schemas, applies every migration and its
+postcondition in one transaction, and records the stable ID and SHA-256 only
+after proof succeeds. Hub startup only verifies; it does not repeatedly execute
+the schema bundle. Fleet deploy first runs a read-only preflight; if work is
+pending it requires the typed quiescence proof, creates and restore-verifies a
+PostgreSQL backup, records the backup-bound deploy receipt, then migrates before
+any hub supervisor starts. No verified backup means no migration.
+
 ## Context
 
 mac has one deployment today, and its project instructions say so: break schemas

@@ -8989,6 +8989,10 @@ PY
   add_remote_env MAC_DEPLOY_AGENT_MEDIA_ROUTES "${MAC_DEPLOY_AGENT_MEDIA_ROUTES:-}"
   # media-01 service-role election: ops the fleet wants held (hub seeds + reconciles).
   add_remote_env MAC_DEPLOY_SERVICE_ROLE_OPS "${MAC_DEPLOY_SERVICE_ROLE_OPS:-}"
+  # One-time fleet compatibility gate. The hub installer still proves the
+  # complete known schema before accepting this explicit baseline authority.
+  add_remote_env MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE \
+    "${MAC_DEPLOY_AUTHORIZE_EXISTING_SCHEMA_BASELINE:-}"
   # Git credential for cloning/pushing private repos (-> GH_TOKEN in mac.env).
   # This is deliberately separate from remote_env: the latter becomes argv.
   add_remote_secret_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"

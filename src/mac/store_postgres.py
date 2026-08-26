@@ -283,137 +283,60 @@ class PostgresStore(StoreHelpersMixin):
     #: database in that cluster is UTF8; nothing was wrong with the data.
 
     def initialize(self) -> None:
-        """Apply the bundled Postgres schema (idempotent).
+        """Explicitly bootstrap a fresh database through the migration runner.
 
-        Equivalent to `SQLiteStore._initialize()` for the Postgres backend:
-        creates all tables, indexes, triggers, the `events` view, and the
-        `json_extract` SQL-function dialect shim. Safe to call on an
-        already-initialised database — every statement uses
-        `IF NOT EXISTS` or `OR REPLACE`.
+        Kept as a compatibility API for test/install callers that already use
+        ``initialize()``.  It no longer replays idempotent DDL on an existing
+        authority and it never silently baselines an unversioned database.
         """
-        schema = _load_packaged_schema()
+        self.apply_migrations(applied_by="PostgresStore.initialize")
+
+    def verify_schema(self) -> dict:
+        """Verify the ordered migration authority without executing DDL."""
+        from mac.schema_migrations import verify_schema
+
         try:
             with self._pool.connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(schema)
+                return verify_schema(conn)
+        except StoreError:
+            raise
         except psycopg.Error as exc:
             raise StoreError(str(exc)) from exc
-        # Additive migrations for existing databases (idempotent via IF NOT EXISTS).
-        self.ensure_column(
-            "agents", "installed_packages", "installed_packages TEXT NOT NULL DEFAULT '{}'"
-        )
-        self.ensure_column(
-            "agents",
-            "attestation_key_prev_ciphertext",
-            "attestation_key_prev_ciphertext TEXT",
-        )
-        self.ensure_column(
-            "agents",
-            "attestation_key_history_ciphertext",
-            "attestation_key_history_ciphertext TEXT",
-        )
-        self.ensure_column(
-            "fleet_release_epoch_agents",
-            "prior_report_executor_projection_sha256",
-            "prior_report_executor_projection_sha256 TEXT",
-        )
-        self.ensure_column(
-            "fleet_release_epochs",
-            "abort_disposition",
-            "abort_disposition TEXT",
-        )
-        self.ensure_column("tasks", "human_assignees", "human_assignees TEXT")
-        self.ensure_column("tasks", "created_by_human", "created_by_human TEXT")
-        self.ensure_column("tasks", "idempotency_key", "idempotency_key TEXT")
-        # schema_dispatch_hold: per-agent dispatch hold + zombie-detection counters.
-        self.ensure_column("agents", "dispatch_hold", "dispatch_hold INTEGER NOT NULL DEFAULT 0")
-        self.ensure_column("agents", "dispatch_hold_reason", "dispatch_hold_reason TEXT")
-        self.ensure_column("agents", "dispatch_hold_at", "dispatch_hold_at TEXT")
-        self.ensure_column(
-            "agents",
-            "consecutive_lease_expiries_no_telemetry",
-            "consecutive_lease_expiries_no_telemetry INTEGER NOT NULL DEFAULT 0",
-        )
-        self.ensure_column(
-            "agents",
-            "last_control_stream_published_at",
-            "last_control_stream_published_at TEXT",
-        )
-        self.ensure_column(
-            "agents",
-            "last_control_stream_consumed_at",
-            "last_control_stream_consumed_at TEXT",
-        )
-        # reviews.findings: what the reviewer actually said. Additive and
-        # idempotent, so an existing hub keeps every stored review and simply
-        # starts recording judgement alongside the verdict.
-        self.ensure_column("reviews", "findings", "findings TEXT NOT NULL DEFAULT '{}'")
-        # fleet_release_admission_episodes: the base table is created by the
-        # bundled schema (CREATE TABLE IF NOT EXISTS). These additive column
-        # migrations upgrade any database that already has an earlier, partial
-        # version of the table so SQLite<->Postgres parity holds. Each is
-        # idempotent via ADD COLUMN IF NOT EXISTS.
-        self.ensure_column("fleet_release_admission_episodes", "project", "project TEXT")
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "barrier_resource_digest",
-            "barrier_resource_digest TEXT NOT NULL DEFAULT ''",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "owner_kind",
-            "owner_kind TEXT NOT NULL DEFAULT 'publisher'",
-        )
-        self.ensure_column("fleet_release_admission_episodes", "owner_id", "owner_id TEXT")
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "waiter_kind",
-            "waiter_kind TEXT NOT NULL DEFAULT 'epoch_opener'",
-        )
-        self.ensure_column("fleet_release_admission_episodes", "waiter_id", "waiter_id TEXT")
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "waiting_publishers",
-            "waiting_publishers INTEGER NOT NULL DEFAULT 0",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "waiting_epoch_openers",
-            "waiting_epoch_openers INTEGER NOT NULL DEFAULT 0",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "queue_depth",
-            "queue_depth INTEGER NOT NULL DEFAULT 0",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "wait_started_at",
-            "wait_started_at TEXT NOT NULL DEFAULT ''",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "wait_ended_at",
-            "wait_ended_at TEXT",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "wait_seconds",
-            "wait_seconds DOUBLE PRECISION",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "outcome",
-            "outcome TEXT NOT NULL DEFAULT ''",
-        )
-        self.ensure_column(
-            "fleet_release_admission_episodes",
-            "metadata",
-            "metadata TEXT NOT NULL DEFAULT '{}'",
-        )
-        from mac.task_dependencies import migrate_dependency_edges
 
-        migrate_dependency_edges(self)
+    def migration_status(self) -> dict:
+        """Run the read-only migration preflight used by deploy orchestration."""
+        from mac.schema_migrations import migration_status
+
+        try:
+            with self._pool.connection() as conn:
+                return migration_status(conn)
+        except StoreError:
+            raise
+        except psycopg.Error as exc:
+            raise StoreError(str(exc)) from exc
+
+    def apply_migrations(
+        self,
+        *,
+        applied_by: str,
+        authorize_existing_baseline: bool = False,
+        migrations: Optional[Sequence[Any]] = None,
+    ) -> dict:
+        """Apply migrations transactionally through the explicit deploy API."""
+        from mac.schema_migrations import MIGRATIONS, apply_migrations
+
+        try:
+            with self._pool.connection() as conn:
+                return apply_migrations(
+                    conn,
+                    applied_by=applied_by,
+                    authorize_existing_baseline=authorize_existing_baseline,
+                    migrations=MIGRATIONS if migrations is None else migrations,
+                )
+        except StoreError:
+            raise
+        except psycopg.Error as exc:
+            raise StoreError(str(exc)) from exc
 
     def ensure_column(self, table: str, column: str, definition: str) -> None:
         """Additive migration helper — matches SQLiteStore._ensure_column.

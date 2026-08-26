@@ -88,6 +88,7 @@ mac-router = "mac.router_service:main"
 # Verified authority snapshots for warm-standby recovery. The SQLite-era
 # mac-ledger-backup entry point went with its module.
 mac-pg-backup = "mac.pg_backup:main"
+mac-schema-migrate = "mac.schema_migrations:main"
 # Thin CLI shared by host-mode workers and the Job-pod codex stubs to
 # sign worker_evidence manifests without re-implementing the canonical
 # HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).

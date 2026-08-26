@@ -619,6 +619,8 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
 
 
 def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:
+    from mac.schema_migrations import AUTHORITY_TABLES
+
     schema_path = (
         Path(__file__).resolve().parent.parent / "src" / "mac" / "data" / "postgres" / "schema.sql"
     )
@@ -635,7 +637,7 @@ def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:
         "WHERE table_schema = current_schema() AND table_type = ?",
         ("BASE TABLE",),
     )
-    assert row["n"] == expected
+    assert row["n"] == expected + len(AUTHORITY_TABLES)
 
 
 def test_postgres_telemetry_data_migrations_are_append_only(postgres_store) -> None:

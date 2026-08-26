@@ -85,7 +85,8 @@ class Store(Protocol):
 def make_store_from_env(
     dsn: Optional[str] = None,
     *,
-    initialize_schema: bool = True,
+    initialize_schema: bool = False,
+    verify_schema: bool = True,
 ) -> "Store":
     """Open the control-plane database.
 
@@ -100,11 +101,11 @@ def make_store_from_env(
     declare its durable authority; an operator client must never acquire a
     private one merely by importing or starting MAC without a configuration.
 
-    Schema ownership is explicit. Control-plane startup uses the default
-    ``initialize_schema=True`` so a fresh authority comes up ready. Ancillary
-    processes that attach to an already-running authority must pass ``False``;
-    doing so prevents routine data-plane commands from taking PostgreSQL DDL
-    locks against live task and lease traffic.
+    Schema ownership is explicit. Ordinary control-plane startup verifies the
+    database's ordered migration ledger and performs no DDL. Fresh bootstrap
+    and upgrades must use ``PostgresStore.apply_migrations`` or the
+    ``mac-schema-migrate`` deploy CLI. ``initialize_schema=True`` remains only
+    as a compatibility path for explicit fresh-store setup.
     """
     role = os.environ.get("MAC_CONTROL_PLANE_ROLE", "").strip().lower()
     if role == "client":
@@ -122,10 +123,19 @@ def make_store_from_env(
             "control-plane database is not configured; set MAC_DATABASE_URL to a "
             "PostgreSQL DSN. MAC does not create a database implicitly."
         )
-    return open_postgres_store(resolved, initialize_schema=initialize_schema)
+    return open_postgres_store(
+        resolved,
+        initialize_schema=initialize_schema,
+        verify_schema=verify_schema,
+    )
 
 
-def open_postgres_store(dsn: str, *, initialize_schema: bool = True) -> "Store":
+def open_postgres_store(
+    dsn: str,
+    *,
+    initialize_schema: bool = False,
+    verify_schema: bool = True,
+) -> "Store":
     """Open a `PostgresStore` on ``dsn``, rejecting any other scheme.
 
     Shared by every entry point that accepts a database from an operator --
@@ -144,4 +154,6 @@ def open_postgres_store(dsn: str, *, initialize_schema: bool = True) -> "Store":
     store = PostgresStore(dsn, pool_size=pool_size)
     if initialize_schema:
         store.initialize()
+    elif verify_schema:
+        store.verify_schema()
     return store

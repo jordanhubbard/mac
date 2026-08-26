@@ -2,7 +2,7 @@
 
 ``hermes_instances`` -> ``persona_instances`` and the
 ``platform_bindings.hermes_instance_id`` FK -> ``persona_instance_id`` are
-renamed in place by ``Store._migrate_persona_instance_identity``. These
+renamed in place by the frozen PostgreSQL baseline migration. These
 tests assert the one-time migration preserves every row and relationship from a
 legacy database, records an immutable receipt, and is idempotent.
 """
@@ -29,7 +29,7 @@ def _build_old_schema_db() -> str:
     """A schema that still uses the pre-persona names. Returns its DSN.
 
     The legacy DDL is created directly rather than by an old code path, then
-    `store.initialize()` runs the rename that ships in schema.sql.
+    The test explicitly executes the immutable migration artifact.
     """
     from mac.test_support import create_schema, store_on
 
@@ -87,7 +87,10 @@ def _build_old_schema_db() -> str:
 def test_migration_renames_tables_and_columns(tmp_path):
     dsn = _build_old_schema_db()
 
-    store = store_on(dsn, initialize=True)
+    from mac.schema_migrations import MIGRATIONS
+
+    store = store_on(dsn)
+    store.execute(MIGRATIONS[0].sql)
     try:
         conn = store
         tables = table_names(store)

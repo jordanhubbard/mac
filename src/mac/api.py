@@ -4361,10 +4361,9 @@ def create_app(
     local_console_socket_path: Optional[str] = None,
     local_console_group: Optional[str] = None,
 ) -> FastAPI:
-    # db_path is the explicit SQLite override (e.g. for tests). When it is
-    # None, make_store_from_env requires MAC_DATABASE_URL or MAC_DB. This keeps
-    # production construction explicit and prevents API import/startup from
-    # manufacturing a private client-home authority.
+    # db_path is an explicit PostgreSQL override (e.g. for tests). When it is
+    # None, make_store_from_env requires MAC_DATABASE_URL or MAC_DB. Opening
+    # verifies the ordered schema ledger and performs no startup DDL.
     if control_plane is not None:
         cp = control_plane
     elif db_path is not None:

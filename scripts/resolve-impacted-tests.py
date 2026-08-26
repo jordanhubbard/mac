@@ -80,6 +80,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_deploy_fleet_drain.py",
         "tests/test_deploy_fleet_parallel_staging.py",
         "tests/test_deploy_github_https_credentials.py",
+        "tests/test_deploy_schema_migrations.py",
         "tests/test_fleet_node_capability_truthfulness.py",
         "tests/test_fleet_node_daemon_quiescence.py",
         "tests/test_fleet_node_gateway_readiness.py",
