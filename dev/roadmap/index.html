@@ -1877,8 +1877,8 @@ transaction or equivalent durable evidence.</p>
   forward or back by bounded cohorts.</li>
 <li>[ ] Crash recovery, authorization failures, failed health proofs, and cohort
   rollback are covered and proven in the live fleet.</li>
-<li>[ ] The current <code>main</code> source commit is deployed and attested on Rocky,
-  Natasha, Bullwinkle, and every subsequently registered fleet member.</li>
+<li>[ ] The current <code>main</code> source commit is deployed and attested on the hub,
+  every configured worker, and every subsequently registered fleet member.</li>
 <li>[ ] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
   of generated authority files.</li>
@@ -1894,8 +1894,8 @@ transaction or equivalent durable evidence.</p>
 <li>[ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.</li>
-<li>[ ] Rocky's proactive channel output is restricted to <code>#rockyandfriends</code>;
-  direct messages to the fleet owner remain allowed.</li>
+<li>[ ] The hub agent's proactive channel output is restricted to its configured
+  home channel; direct messages to the fleet owner remain allowed.</li>
 <li>[ ] OpenClaw gateway shutdown and deployment checkpoints handle WAL-backed
   state, bounded subprocess shutdown, and the configured OpenShell endpoint
   without corrupting or abandoning a rollout.</li>
@@ -1908,7 +1908,7 @@ transaction or equivalent durable evidence.</p>
 </ul>
 <h2 id="near-term-order">Near-term order<a class="headerlink" href="#near-term-order" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Complete and verify the top-of-tree Rocky rollout.</li>
+<li>Complete and verify the top-of-tree hub rollout.</li>
 <li>Restore the nightly <code>#localnews</code> report.</li>
 <li>Prove the hub-mediated upgrade transaction across the full fleet.</li>
 <li>Close the autonomous review/repair/publication loop with a live <code>~/Src/mac</code>
