@@ -97,3 +97,17 @@ def test_restore_reverts_state_and_keeps_safety_backup(tmp_path):
     assert (
         (root / res["safety_backup"] / "SOUL.md").read_text().startswith("# SOUL\ngeneric default")
     )
+
+
+def test_snapshot_prefers_openclaw_workspace_when_root_has_no_soul(tmp_path):
+    home = tmp_path / "openclaw"
+    workspace = home / "workspace"
+    _make_agent_home(workspace)
+    root = tmp_path / "journal"
+
+    m = journal.snapshot(home=home, root=root, date="2026-08-26", agent_id="natasha", run_hook=False)
+
+    dest = root / "2026-08-26"
+    assert (dest / "SOUL.md").read_text().startswith("# SOUL")
+    assert "SOUL.md" in m["captured"]
+    assert m["hermes_home"] == str(workspace)

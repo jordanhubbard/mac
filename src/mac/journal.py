@@ -38,10 +38,28 @@ STATE_ENTRIES: List[str] = [
 ]
 
 
+def _has_soul(home: Path) -> bool:
+    return (home / "SOUL.md").is_file() or (home / "workspace" / "SOUL.md").is_file()
+
+
+def _soul_root(home: Path) -> Path:
+    """OpenClaw stores SOUL/USER/MEMORY under ``workspace/``; Hermes used the home root."""
+    workspace = home / "workspace"
+    if (workspace / "SOUL.md").is_file() and not (home / "SOUL.md").is_file():
+        return workspace
+    return home
+
+
 def hermes_home() -> Path:
-    # Resolve via the single sanctioned path helper (behavior-preserving:
-    # HERMES_HOME or ~/.hermes today). See docs/home-consolidation.md.
-    return mac_paths.gateway_home()
+    # Prefer the live OpenClaw tree when HERMES_HOME still points at a vacated
+    # ~/.hermes stub. Explicit snapshot(home=...) callers are unchanged.
+    gateway = mac_paths.gateway_home()
+    if _has_soul(gateway):
+        return gateway
+    openclaw = mac_paths.openclaw_home()
+    if _has_soul(openclaw):
+        return openclaw
+    return gateway
 
 
 def journal_root() -> Path:
@@ -82,7 +100,7 @@ def snapshot(
     """Copy the agent's soul+memory state into ``<root>/<date>/`` and write a
     manifest (with per-file sha256). Runs the backup hook unless run_hook=False.
     Idempotent for a given date (re-running refreshes that day's snapshot)."""
-    home = Path(home) if home else hermes_home()
+    home = _soul_root(Path(home) if home else hermes_home())
     root = Path(root) if root else journal_root()
     date = date or _today()
     agent_id = agent_id or _agent_id()
@@ -191,7 +209,7 @@ def restore(
     """Restore an agent's state from a journal date back into HERMES_HOME. Always
     snapshots the *current* state first (a ``pre-restore-*`` journal) so a
     restore is itself reversible — restoring a soul should never destroy one."""
-    home = Path(home) if home else hermes_home()
+    home = _soul_root(Path(home) if home else hermes_home())
     root = Path(root) if root else journal_root()
     src = root / date
     mf = src / "manifest.json"
