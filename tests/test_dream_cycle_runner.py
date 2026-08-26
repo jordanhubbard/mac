@@ -81,6 +81,105 @@ def test_extract_reply_handles_nested_json() -> None:
     assert runner.extract_reply("") == ""
 
 
+def test_kslug_process_note_is_not_a_transcript() -> None:
+    note = (
+        "The KSLUG skill and SPEC aren't accessible in this sandbox — "
+        "proceeding from the prompt's embedded cast/format instructions."
+    )
+    assert runner.kslug_transcript_ok(note) is False
+    difficulties = (
+        ":rotating_light: *KSLUG TECHNICAL DIFFICULTIES* :rotating_light:\n"
+        "The wire is down. Dan and Lee sign off."
+    )
+    assert runner.kslug_transcript_ok(difficulties) is True
+
+
+def test_choose_reply_prefers_kslug_transcript_over_preamble() -> None:
+    transcript = (
+        ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
+        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. "
+        + ("Item from the wire. " * 40)
+    )
+    payload = {
+        "text": "The KSLUG skill and SPEC aren't accessible in this sandbox.",
+        "payloads": [{"text": transcript}],
+    }
+    job = {"name": "kslug-nightly-news"}
+    chosen = runner.choose_reply(job, payload)
+    assert chosen.startswith(":tv: _KSLUG NIGHTLY NEWS_")
+    assert "DAN GREEN" in chosen
+    assert len(chosen) >= 500
+    assert runner.extract_reply(payload).startswith("The KSLUG skill")
+
+
+def test_kslug_process_note_fails_closed_without_slack_delivery(tmp_path: Path) -> None:
+    delivered = []
+    job = {
+        "name": "kslug-nightly-news",
+        "cron": "0 6 * * *",
+        "legacy_script": "kslug_collect.py",
+        "message": "Produce the broadcast.",
+        "delivery": "slack:C0HOME",
+        "authorized_slack_channels": ["channel:C0HOME"],
+    }
+    result = runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(tmp_path / "out"),
+        home_channel_target="channel:C0HOME",
+        script_runner=lambda *_args: ("wire copy", ""),
+        agent_runner=lambda *_args, **_kwargs: json.dumps(
+            {
+                "text": (
+                    "The KSLUG skill and SPEC aren't accessible in this sandbox "
+                    "— proceeding from the prompt."
+                )
+            }
+        ),
+        deliver_runner=lambda *_args, **_kwargs: delivered.append(True),
+    )
+    assert result["delivered"] is False
+    assert result["delivery_refusal"] == "process_note_not_broadcast"
+    assert delivered == []
+    assert Path(result["local_path"]).is_file()
+    assert not (tmp_path / "out" / "kslug-nightly-news.last-success.json").exists()
+
+
+def test_kslug_prompt_includes_host_runner_contract(tmp_path: Path) -> None:
+    captured = {}
+    transcript = (
+        ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
+        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. "
+        + ("Local wire copy. " * 40)
+    )
+    job = {
+        "name": "kslug-nightly-news",
+        "cron": "0 6 * * *",
+        "legacy_script": "kslug_collect.py",
+        "message": "Produce tonight's broadcast.",
+        "delivery": "slack:C0HOME",
+        "authorized_slack_channels": ["channel:C0HOME"],
+    }
+    runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(tmp_path / "out"),
+        home_channel_target="channel:C0HOME",
+        script_runner=lambda *_args: ("wire", ""),
+        agent_runner=lambda _bin, prompt, **_kwargs: (
+            captured.update(prompt=prompt)
+            or json.dumps({"text": transcript})
+        ),
+        deliver_runner=lambda *_args, **_kwargs: None,
+    )
+    assert "Host-runner contract" in captured["prompt"]
+    assert "Do not use Slack or message tools" in captured["prompt"]
+
+
 def test_resolve_delivery_target_decision() -> None:
     slack_origin = {"origin": {"platform": "slack", "chat_id": "C0123ABC"}}
     assert runner.resolve_delivery_target(slack_origin) == ("slack", "C0123ABC")
@@ -328,6 +427,110 @@ def test_load_job_selects_by_name_from_jobs_file(tmp_path: Path) -> None:
     assert job["legacy_script"] == "kslug_collect.py"
 
 
+def test_daily_job_skips_second_broadcast_same_local_day(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    job = {
+        "name": "kslug-nightly-news",
+        "cron": "0 6 * * *",
+        "legacy_script": "kslug_collect.py",
+        "message": "Produce the broadcast transcript.",
+        "delivery": "slack:C0HOME",
+        "authorized_slack_channels": ["channel:C0HOME"],
+    }
+    runner.write_delivery_receipt(
+        job,
+        str(output_dir),
+        {"target": "slack:C0HOME", "reply_chars": 12},
+    )
+    called = []
+    result = runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(output_dir),
+        home_channel_target="channel:C0HOME",
+        script_runner=lambda *_args: called.append("script") or ("wire", ""),
+        agent_runner=lambda *_args, **_kwargs: called.append("agent") or '{"text":"news"}',
+        deliver_runner=lambda *_args, **_kwargs: called.append("deliver"),
+    )
+    assert result["skipped"] == "already_delivered_today"
+    assert result["delivered"] is False
+    assert called == []
+
+
+def test_hourly_job_is_not_day_deduped(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    job = {
+        "name": "dream-cycle",
+        "cron": "0 * * * *",
+        "legacy_script": "dream_cycle.py",
+        "message": "Compose the morning dream note.",
+        "delivery": "slack:C0HOME",
+        "authorized_slack_channels": ["channel:C0HOME"],
+    }
+    runner.write_delivery_receipt(
+        job,
+        str(output_dir),
+        {"target": "slack:C0HOME", "reply_chars": 12},
+    )
+    delivered = []
+    result = runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(output_dir),
+        home_channel_target="channel:C0HOME",
+        script_runner=lambda *_args: ("evidence", ""),
+        agent_runner=lambda *_args, **_kwargs: '{"text":"note"}',
+        deliver_runner=lambda *_args, **_kwargs: delivered.append(True),
+    )
+    assert "skipped" not in result
+    assert result["delivered"] is True
+    assert delivered == [True]
+
+
+def test_successful_daily_delivery_writes_same_day_receipt(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    job = {
+        "name": "kslug-nightly-news",
+        "cron": "0 6 * * *",
+        "legacy_script": "kslug_collect.py",
+        "message": "Produce the broadcast.",
+        "delivery": "slack:C0HOME",
+        "authorized_slack_channels": ["channel:C0HOME"],
+    }
+    result = runner.run_job(
+        job,
+        scripts_dir=str(tmp_path),
+        agent_bin="/bin/openclaw-agent",
+        message_bin="/bin/openclaw-message",
+        output_dir=str(output_dir),
+        home_channel_target="channel:C0HOME",
+        script_runner=lambda *_args: ("wire copy", ""),
+        agent_runner=lambda *_args, **_kwargs: json.dumps(
+            {
+                "text": (
+                    ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
+                    "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green "
+                    "and this is the KSLUG Nightly News. " + ("Local wire copy. " * 40)
+                )
+            }
+        ),
+        deliver_runner=lambda *_args, **_kwargs: None,
+    )
+    assert result["delivered"] is True
+    receipt = json.loads(
+        (output_dir / "kslug-nightly-news.last-success.json").read_text(encoding="utf-8")
+    )
+    assert receipt["schema"] == "mac.host_script_job_delivery.v1"
+    assert receipt["local_date"] == runner.calendar_day_key()
+    assert receipt["target"] == "slack:C0HOME"
+
+
 # --------------------------------------------------------------------------- #
 # Deploy-artifact string contracts                                            #
 # --------------------------------------------------------------------------- #
@@ -364,6 +567,8 @@ def test_installer_schedules_script_jobs_via_launchd_and_systemd() -> None:
     assert "systemctl --user" in installer
     assert "OnCalendar=" in installer
     assert ".timer" in installer
+    assert "Persistent=true" in installer
+    assert "RunAtLoad" in installer
 
 
 def test_runner_and_installer_are_syntactically_valid() -> None:

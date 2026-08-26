@@ -65,6 +65,33 @@ DEFAULT_SCRIPT_TIMEOUT = 300.0
 DEFAULT_AGENT_TIMEOUT = 300.0
 SCRIPT_OUTPUT_HEADING = "## Script Output"
 
+# Nightly #localnews (kslug-nightly-news) has historically leaked process notes
+# into Slack when the workspace skill / AgentFS SPEC were missing. The host
+# runner therefore injects this contract and refuses to deliver a reply that is
+# not a broadcast transcript. Hourly jobs are unaffected.
+KSLUG_REPLY_CONTRACT = """
+Host-runner contract (this outranks a missing skill or SPEC.md):
+- Do not mention skills, SPEC.md, sandboxes, tools, or delivery.
+- Do not use Slack or message tools; the scheduler posts your reply verbatim.
+- Your entire reply IS the broadcast transcript. First line exactly:
+  :tv: _KSLUG NIGHTLY NEWS_ :tv:
+- Cast: Dan Green (warm/corny lead), Lee Solomon (deadpan weather, coat on, walks out), Drea (loud sports, slaps the desk). Wednesdays only: Tom Pepper station-manager editorial.
+- Separate segments with ───. No preamble, no apologies, no play-by-play.
+"""
+
+_KSLUG_PROCESS_NOTE_MARKERS = (
+    "aren't accessible in this sandbox",
+    "not accessible in this sandbox",
+    "skill and spec",
+    "proceeding from the prompt",
+    "queued and delivered",
+    "broadcast delivered",
+    "skill file isn't accessible",
+    "skill isn't accessible",
+    "spec aren't accessible",
+    "spec isn't accessible",
+)
+
 # A Slack channel/group/DM id, matching apply-cron-plan.mjs's deliveryArgs.
 _SLACK_TARGET = re.compile(r"[CGD][A-Z0-9]+")
 
@@ -190,6 +217,85 @@ def extract_reply(payload: Any) -> str:
     if isinstance(payload, str):
         return payload.strip()
     return ""
+
+
+def iter_response_texts(payload: Any) -> list:
+    """Collect candidate reply strings from a nested openclaw --json payload."""
+    if isinstance(payload, str):
+        stripped = payload.strip()
+        if not stripped:
+            return []
+        try:
+            payload = json.loads(stripped)
+        except (TypeError, ValueError):
+            return [stripped]
+    found: list = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key in ("text", "response", "content", "message"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    found.append(candidate.strip())
+                else:
+                    walk(candidate)
+            for key in ("payloads", "messages", "result", "data"):
+                walk(value.get(key))
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(payload)
+    return found
+
+
+def kslug_job(job: dict) -> bool:
+    return "kslug" in str(job.get("name") or "").lower()
+
+
+def slice_kslug_transcript(text: str) -> str:
+    """Drop preamble so delivery starts at the broadcast banner when present."""
+    if not text:
+        return text
+    lowered = text.lower()
+    marker = ":tv: _kslug nightly news_"
+    idx = lowered.find(marker)
+    if idx < 0:
+        idx = lowered.find("kslug nightly news")
+        if idx < 0:
+            return text
+        # Include a preceding :tv: line when the model put the emoji above.
+        line_start = text.rfind("\n", 0, idx)
+        idx = 0 if line_start < 0 else line_start + 1
+    return text[idx:].lstrip()
+
+
+def kslug_transcript_ok(text: str) -> bool:
+    """True when ``text`` is a real newscast (or the documented wire-down form)."""
+    body = str(text or "").strip()
+    if not body:
+        return False
+    lowered = body.lower()
+    if "kslug technical difficulties" in lowered:
+        return True
+    if any(marker in lowered for marker in _KSLUG_PROCESS_NOTE_MARKERS):
+        return False
+    if "dan green" in lowered and "kslug" in lowered and len(body) >= 500:
+        return True
+    return False
+
+
+def choose_reply(job: dict, payload: Any) -> str:
+    """Pick the deliverable agent text, preferring a KSLUG transcript blob."""
+    primary = extract_reply(payload)
+    if not kslug_job(job):
+        return primary
+    blobs = iter_response_texts(payload) or ([primary] if primary else [])
+    scored = [slice_kslug_transcript(blob) for blob in blobs]
+    ok = [blob for blob in scored if kslug_transcript_ok(blob)]
+    if ok:
+        return max(ok, key=len)
+    return slice_kslug_transcript(primary)
 
 
 def resolve_delivery_target(job: dict) -> Optional[Tuple[str, str]]:
@@ -515,6 +621,52 @@ def write_local_output(output_dir: str, job: dict, prompt: str, reply: str) -> s
     return str(destination)
 
 
+def daily_calendar_job(job: dict) -> bool:
+    """True when the cron string names a specific hour (once per local day)."""
+    fields = str(job.get("cron") or "").split()
+    return len(fields) >= 2 and fields[1].isdigit()
+
+
+def calendar_day_key(now: Optional[float] = None) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(now))
+
+
+def delivery_receipt_path(output_dir: str, job: dict) -> Path:
+    return Path(output_dir).expanduser() / ("%s.last-success.json" % _slug(job.get("name") or "job"))
+
+
+def already_delivered_today(job: dict, output_dir: str, *, now: Optional[float] = None) -> bool:
+    """Suppress a second daily broadcast on the same local calendar day."""
+    if not daily_calendar_job(job):
+        return False
+    path = delivery_receipt_path(output_dir, job)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("local_date") or "") == calendar_day_key(now)
+
+
+def write_delivery_receipt(job: dict, output_dir: str, result: dict) -> None:
+    path = delivery_receipt_path(output_dir, job)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": "mac.host_script_job_delivery.v1",
+        "name": job.get("name"),
+        "local_date": calendar_day_key(),
+        "delivered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "target": result.get("target"),
+        "reply_chars": result.get("reply_chars"),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def run_job(
     job: dict,
     *,
@@ -531,7 +683,24 @@ def run_job(
 ) -> dict:
     """Reproduce the Hermes two-stage flow for one job. Returns a result dict."""
     message = str(job.get("message") or "")
+    if kslug_job(job):
+        message = message.rstrip() + "\n" + KSLUG_REPLY_CONTRACT
     legacy_script = str(job.get("legacy_script") or job.get("script") or "").strip()
+    if already_delivered_today(job, output_dir):
+        return {
+            "name": job.get("name"),
+            "legacy_script": legacy_script or None,
+            "script_ran": False,
+            "script_note": None,
+            "scripts_dir": None,
+            "legacy_scripts_home": False,
+            "delivered": False,
+            "skipped": "already_delivered_today",
+            "target": None,
+            "local_path": None,
+            "reply_chars": 0,
+            "delivery_refusal": None,
+        }
 
     script_output, script_note = "", ""
     used_legacy_home = False
@@ -575,12 +744,18 @@ def run_job(
         _slug(job.get("name") or job.get("legacy_id") or "job"),
         time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()),
     )
-    reply = extract_reply(agent_runner(agent_bin, prompt, session_id=session_id))
+    reply = choose_reply(job, agent_runner(agent_bin, prompt, session_id=session_id))
     result["reply_chars"] = len(reply)
+    if kslug_job(job) and not kslug_transcript_ok(reply):
+        result["delivery_refusal"] = "process_note_not_broadcast"
+        result["local_path"] = write_local_output(output_dir, job, prompt, reply)
+        return result
     if target and reply:
         deliver_runner(message_bin, target, reply, account=account)
         result["delivered"] = True
         result["target"] = "%s:%s" % target
+        if daily_calendar_job(job):
+            write_delivery_receipt(job, output_dir, result)
     else:
         result["local_path"] = write_local_output(output_dir, job, prompt, reply)
     return result

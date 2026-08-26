@@ -2484,6 +2484,14 @@ schedule_launchd_script_job() {
   fi
   cal="$cal
   </dict>"
+  # Daily jobs (hour set) also RunAtLoad so a deploy that boots the plist
+  # after the calendar minute still publishes that local day. The runner
+  # suppresses a second post once a same-day success receipt exists.
+  local run_at_load=""
+  if [ -n "$hour" ]; then
+    run_at_load="  <key>RunAtLoad</key><true/>
+"
+  fi
   cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -2510,7 +2518,7 @@ schedule_launchd_script_job() {
     <key>MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR</key><string>${output_dir}</string>
   </dict>
 ${cal}
-  <key>StandardOutPath</key><string>${output_dir}/${slug}.log</string>
+${run_at_load}  <key>StandardOutPath</key><string>${output_dir}/${slug}.log</string>
   <key>StandardErrorPath</key><string>${output_dir}/${slug}.log</string>
 </dict>
 </plist>
