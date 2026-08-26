@@ -8873,7 +8873,7 @@ try:
         "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS", 180, 0.01, 600
     )
     quiescence_timeout = bounded_number(
-        "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS", 45, 0.01, 600
+        "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS", 180, 0.01, 600
     )
     # Bounded window to drain a live, lease-owned task sandbox before failing
     # closed.  The cohort controller has already held dispatch, so this only

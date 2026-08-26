@@ -2233,6 +2233,7 @@
     "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -8751,6 +8752,7 @@
     "name": "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "int"

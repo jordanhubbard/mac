@@ -1061,6 +1061,20 @@ def test_first_hub_bootstrap_does_not_require_phase1_quiescence():
     assert "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1" in block
 
 
+def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
+    # Empty remote assignments would fail-close bounded_number() / integer
+    # parsers on the node. The controller must omit the assignment unless the
+    # operator actually set a value.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert (
+        'if [ -n "${MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS:-}" ]; then'
+        in deploy
+    )
+    assert "add_remote_env MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS" in deploy
+    assert 'if [ -n "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-}" ]; then' in deploy
+    assert "add_remote_env MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT" in deploy
+
+
 def _arm_phase2_rollback_source():
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     return (

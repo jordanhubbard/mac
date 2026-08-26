@@ -9058,6 +9058,17 @@ PY
   else
     add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
   fi
+  # Daemon stop wrappers (especially a managed OpenClaw sandbox checkpoint)
+  # can exceed the node default quiescence bound. Forward only when set so an
+  # empty assignment cannot fail-close bounded_number() on the node.
+  if [ -n "${MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS:-}" ]; then
+    add_remote_env MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS \
+      "$MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS"
+  fi
+  if [ -n "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-}" ]; then
+    add_remote_env MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT \
+      "$MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT"
+  fi
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
   # Operator-configured control-plane database (fleet-node-install.sh's
