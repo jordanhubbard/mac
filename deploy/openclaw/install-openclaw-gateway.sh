@@ -770,7 +770,7 @@ migrate_legacy_slack_home_channels() {
   # migrated public identity can resolve its durable Slack target without a
   # runtime dependency on Hermes files. Existing OpenClaw state is authoritative.
   local target="${MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE:-$OPENCLAW_HOST_DIR/slack_home_channels.json}"
-  local legacy="${MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE:-${HERMES_SLACK_HOME_CHANNELS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_home_channels.json}}"
+  local legacy="${MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE:-${HERMES_SLACK_HOME_CHANNELS_FILE:-$HOME/.hermes/slack_home_channels.json}}"
   [ -s "$target" ] && return 0
   [ -s "$legacy" ] || return 0
   mkdir -p "$(dirname "$target")"
@@ -1628,7 +1628,7 @@ migrate_continuity() {
   local migration_status=0
   if [ -f "$proposal" ]; then
     "$CONTINUITY_MIGRATOR" \
-      --hermes-home "${HERMES_HOME:-$HOME/.hermes}" \
+      --hermes-home "${MAC_LEGACY_HERMES_HOME:-$HOME/.hermes}" \
       --workspace "$WORKSPACE_DIR" \
       --state-dir "$STATE_DIR" \
       --migration-dir "$MIGRATION_DIR" \
@@ -1638,7 +1638,7 @@ migrate_continuity() {
       --identity-proposal "$proposal" >/dev/null || migration_status=$?
   else
     "$CONTINUITY_MIGRATOR" \
-    --hermes-home "${HERMES_HOME:-$HOME/.hermes}" \
+    --hermes-home "${MAC_LEGACY_HERMES_HOME:-$HOME/.hermes}" \
     --workspace "$WORKSPACE_DIR" \
     --state-dir "$STATE_DIR" \
     --migration-dir "$MIGRATION_DIR" \

@@ -363,7 +363,7 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HUB_URL": hub_url,
         "MAC_URL": hub_url,
         "MAC_SUPERVISOR_KIND": cfg.control.supervisor_kind,
-        "HERMES_HOME": str(paths.home / ".hermes"),
+        "HERMES_HOME": str(paths.mac_home / "openclaw"),
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REDACT_SECRETS": "true",
         "ACC_DIR": str(paths.home / ".acc"),
@@ -374,15 +374,17 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM": "1",
         "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
         "MAC_HERMES_STARTUP_CHECK": "1",
-        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(paths.home / ".hermes" / "mac-runtime-context.json"),
+        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(
+            paths.mac_home / "openclaw" / "mac-runtime-context.json"
+        ),
         "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(
-            paths.home / ".hermes" / "mac-runtime-context.md"
+            paths.mac_home / "openclaw" / "mac-runtime-context.md"
         ),
         "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
         "MAC_HERMES_WORKSPACE": str(paths.mac_home / "src" / "mac"),
         "MAC_PROJECT_CONTRACT_FILE": str(paths.mac_home / "src" / "mac" / ".mac" / "project.yaml"),
         "MAC_SELF_UPDATE_REPO": str(paths.mac_home / "src" / "mac"),
-        "MAC_MEMORY_TOPOLOGY_FILE": str(paths.home / ".hermes" / "mac-memory-topology.json"),
+        "MAC_MEMORY_TOPOLOGY_FILE": str(paths.mac_home / "openclaw" / "mac-memory-topology.json"),
     }
     if cfg.identity.is_hub:
         values.update(

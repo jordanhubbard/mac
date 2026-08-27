@@ -384,6 +384,18 @@ OPENSHELL_RUNTIME_INPUT_SHA256="${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"
 OPENSHELL_LOCAL_IMAGE_BUILD="${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
 OPENSHELL_BOOTSTRAPPED=0
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
+# Live gateway home matches src/mac/mac_paths.py::gateway_home().
+# HERMES_HOME overrides unless it still names the vacated ~/.hermes tree.
+# Default is $MAC_HOME/openclaw. Never mkdir ~/.hermes.
+mac_gateway_home() {
+  local home="${HERMES_HOME:-}"
+  case "$home" in
+    ""|"$HOME/.hermes"|"$HOME/.hermes/")
+      home="$MAC_HOME/openclaw"
+      ;;
+  esac
+  printf '%s\n' "$home"
+}
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
 ONBOARDED_COMMAND_PATH="$MAC_HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh}"
@@ -2116,7 +2128,7 @@ install_or_validate_shared_services() {
     fi
     export FLEET_NAME="$FLEET_NAME"
     export QDRANT_SUPERVISOR="$SUPERVISOR_KIND"
-    MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
+    MAC_HOME="$MAC_HOME" HERMES_HOME="$(mac_gateway_home)" WORKSPACE="$SRC_DIR" \
       bash "$SRC_DIR/deploy/install-qdrant-service.sh"
     reload_mac_env
   else
@@ -2136,7 +2148,7 @@ install_or_validate_web_search_service() {
     export FIRECRAWL_PORT="$FIRECRAWL_PORT_CONFIGURED"
     export FLEET_NAME="$FLEET_NAME"
     export FIRECRAWL_SUPERVISOR="$SUPERVISOR_KIND"
-    MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
+    MAC_HOME="$MAC_HOME" HERMES_HOME="$(mac_gateway_home)" WORKSPACE="$SRC_DIR" \
       bash "$SRC_DIR/deploy/install-firecrawl-gateway.sh"
     reload_mac_env
   else
@@ -2161,7 +2173,7 @@ install_or_validate_publish_service() {
     export WEBDAV_MAX_UPLOAD_BYTES="$WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED"
     export FLEET_NAME="$FLEET_NAME"
     export WEBDAV_SUPERVISOR="$SUPERVISOR_KIND"
-    MAC_HOME="$MAC_HOME" HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" WORKSPACE="$SRC_DIR" \
+    MAC_HOME="$MAC_HOME" HERMES_HOME="$(mac_gateway_home)" WORKSPACE="$SRC_DIR" \
       bash "$SRC_DIR/deploy/install-webdav-server.sh"
     reload_mac_env
   else
@@ -2171,8 +2183,11 @@ install_or_validate_publish_service() {
 }
 
 write_hermes_memory_topology() {
-  log "writing Hermes memory topology"
-  "$PY" - "$HOME/.hermes/mac-memory-topology.json" "$HOME/.hermes/.env" <<'PY'
+  local gateway_home
+  gateway_home="$(mac_gateway_home)"
+  log "writing gateway memory topology"
+  HERMES_HOME="$gateway_home" \
+  "$PY" - "$gateway_home/mac-memory-topology.json" "$gateway_home/.env" <<'PY'
 from __future__ import annotations
 
 import json
@@ -2261,7 +2276,7 @@ topology = {
     },
     "local_memory": {
         "owner": "hermes",
-        "home": os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes"),
+        "home": os.environ.get("HERMES_HOME") or str(topology_path.parent),
         "soul": "SOUL.md",
         "user_profile": "USER.md",
         "memory_user_profile": "memories/USER.md",
@@ -2330,15 +2345,17 @@ PY
 }
 
 write_hermes_runtime_context() {
-  log "writing Hermes task/project runtime context"
+  local gateway_home
+  gateway_home="$(mac_gateway_home)"
+  log "writing gateway task/project runtime context"
   "$VENV/bin/python" -m mac.hermes_runtime \
-    "$HOME/.hermes/mac-runtime-context.json" \
-    "$HOME/.hermes/mac-runtime-context.md" \
-    "$HOME/.hermes/.env" \
+    "$gateway_home/mac-runtime-context.json" \
+    "$gateway_home/mac-runtime-context.md" \
+    "$gateway_home/.env" \
     --agent-name "$AGENT" \
     --fleet-name "$FLEET_NAME" \
     --mac-url "${MAC_HUB_URL:-${HUB_URL:-}}" \
-    --hermes-home "${HERMES_HOME:-$HOME/.hermes}" \
+    --hermes-home "$gateway_home" \
     --mac-home "$MAC_HOME" \
     --workspace "$SRC_DIR" \
     --tenant-id "${MAC_FLEET_TENANT_ID:-}" \
@@ -2347,7 +2364,7 @@ write_hermes_runtime_context() {
     --agent-id "${MAC_AGENT_ID:-}"
   set -a
   set +u
-  . "$HOME/.hermes/.env"
+  . "$gateway_home/.env"
   set -u
   set +a
 }
@@ -2367,8 +2384,8 @@ verify_hermes_prompt_bridge() {
     return 0
   fi
   log "verifying Hermes prompt bridge sees MAC runtime context"
-  HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
-  MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$HOME/.hermes/mac-runtime-context.md}" \
+  HERMES_HOME="$(mac_gateway_home)" \
+  MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$(mac_gateway_home)/mac-runtime-context.md}" \
   PYTHONPATH="$agent_dir:${PYTHONPATH:-}" \
   "$VENV/bin/python" - "$SRC_DIR" <<'PY'
 from __future__ import annotations
@@ -2416,6 +2433,7 @@ PY
 
 register_hermes_runtime_identity() {
   log "registering Hermes runtime identity in mac"
+  HERMES_HOME="$(mac_gateway_home)" MAC_HOME="$MAC_HOME" \
   "$VENV/bin/python" - <<'PY'
 from __future__ import annotations
 
@@ -2442,7 +2460,9 @@ def truthy(raw, default=""):
 
 agent = os.environ["AGENT"]
 fleet = os.environ.get("FLEET_NAME") or "mac"
-home = os.environ.get("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
+home = os.environ.get("HERMES_HOME") or os.path.join(
+    os.environ.get("MAC_HOME") or os.path.expanduser("~/.mac"), "openclaw"
+)
 tenant_id = os.environ.get("MAC_FLEET_TENANT_ID") or stable_id("tenant", fleet)
 agent_id = os.environ.get("MAC_AGENT_ID") or stable_id("agent", agent)
 persona_id = os.environ.get("MAC_HERMES_PERSONA_ID") or stable_id("persona", agent)
@@ -3477,8 +3497,8 @@ manifest = {
         "mac_venv": str(Path(os.environ["VENV"])),
         "hermes_agent": str(hermes_dir),
         "env_file": str(Path(os.environ["ENV_FILE"])),
-        "hermes_runtime_context": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or str(Path.home() / ".hermes" / "mac-runtime-context.json"),
-        "hermes_runtime_markdown": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or str(Path.home() / ".hermes" / "mac-runtime-context.md"),
+        "hermes_runtime_context": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or str(mac_home / "openclaw" / "mac-runtime-context.json"),
+        "hermes_runtime_markdown": os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or str(mac_home / "openclaw" / "mac-runtime-context.md"),
     },
     "python": {
         "selected": os.environ["PY"],
@@ -3491,8 +3511,8 @@ manifest = {
         "mac_database": file_ref(mac_home / "mac.db"),
         "hermes_agent": file_ref(hermes_dir),
         "hermes_state": file_ref(Path.home() / ".hermes"),
-        "hermes_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (Path.home() / ".hermes" / "mac-runtime-context.json")),
-        "hermes_runtime_markdown": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or (Path.home() / ".hermes" / "mac-runtime-context.md")),
+        "hermes_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (mac_home / "openclaw" / "mac-runtime-context.json")),
+        "hermes_runtime_markdown": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or (mac_home / "openclaw" / "mac-runtime-context.md")),
         "acc_state": file_ref(Path.home() / ".acc"),
         "disk_before_cleanup": file_ref(Path(os.environ["LOG_DIR"]) / ("disk-before-cleanup-%s.json" % os.environ["DEPLOY_TS"])),
         "disk_after_cleanup": file_ref(Path(os.environ["LOG_DIR"]) / ("disk-after-cleanup-%s.json" % os.environ["DEPLOY_TS"])),
@@ -3519,7 +3539,7 @@ manifest = {
             and "MAC_HERMES_GATEWAY_PROVIDER" in hermes_run_text
             and "resolve_runtime_provider" in hermes_run_text
         ),
-        "task_project_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (Path.home() / ".hermes" / "mac-runtime-context.json")),
+        "task_project_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (mac_home / "openclaw" / "mac-runtime-context.json")),
         "task_project_runtime_prompt_bridge_present": (
             "_load_mac_runtime_context" in hermes_prompt_builder_text
             and "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN" in hermes_prompt_builder_text
@@ -9278,7 +9298,7 @@ install_github_cli() {
 }
 
 normalize_hermes_redaction_env() {
-  "$PY" - "$LOG_DIR/hermes-redaction-normalization.json" "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
+  "$PY" - "$LOG_DIR/hermes-redaction-normalization.json" "$(mac_gateway_home)/config.yaml" "$(mac_gateway_home)/.env" <<'PY'
 import json
 import re
 import sys
@@ -9400,7 +9420,7 @@ fetch_slack_secrets_from_vault() {
     MAC_AGENT_NAME="$AGENT" \
       MAC_SECRET_VAULT_URL="$mac_vault_url" \
       MAC_SECRET_VAULT_TOKEN="$mac_vault_token" \
-      HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
+      HERMES_HOME="$(mac_gateway_home)" \
       "$PY" "$fetcher" >> "$DEPLOY_LOG" 2>&1 || \
         log "WARNING: mac-vault Slack fetch failed for ${AGENT}; existing slack config preserved"
     return 0
@@ -9409,7 +9429,7 @@ fetch_slack_secrets_from_vault() {
 
 sync_hermes_slack_identity_env() {
   log "syncing Hermes Slack identity/routing environment"
-  "$PY" - "$ENV_FILE" "$HOME/.hermes/.env" <<'PY'
+  "$PY" - "$ENV_FILE" "$(mac_gateway_home)/.env" <<'PY'
 from pathlib import Path
 import sys
 
@@ -9539,7 +9559,7 @@ sync_hermes_chat_config() {
   # bearer (403). Mirror mac.env's router endpoint + token into the runtime
   # config. Non-fatal: a failure leaves chat degraded but doesn't abort deploy.
   log "syncing Hermes chat config (in-mac-router endpoint + provider) from mac.env"
-  "$VENV/bin/python" -m mac.hermes_chat_config --hermes-home "$HOME/.hermes" --mac-env "$ENV_FILE" \
+  "$VENV/bin/python" -m mac.hermes_chat_config --hermes-home "$(mac_gateway_home)" --mac-env "$ENV_FILE" \
     || log "WARNING: hermes chat config sync failed; agent chat self-test may stay degraded"
 }
 
@@ -9550,7 +9570,7 @@ apply_hermes_fleet_surface() {
   log "applying fleet Hermes config surface"
   "$VENV/bin/python" -m mac.hermes_config_surface apply \
     --payload-b64 "$HERMES_SURFACE_B64" \
-    --hermes-home "$HOME/.hermes" \
+    --hermes-home "$(mac_gateway_home)" \
     || log "WARNING: fleet Hermes config surface apply failed; preserving existing Hermes config"
 }
 
@@ -9559,7 +9579,7 @@ install_fleet_skills() {
   # the in-mac router (vision + image generation), so every agent benefits — no
   # local GPU needed. Re-copied each deploy → durable + repeatable. Non-fatal.
   local src="$SRC_DIR/deploy/skills/fleet"
-  local skills_dir="$HOME/.hermes/skills"
+  local skills_dir="$MAC_HOME/openclaw/workspace/skills"
   [ -d "$src" ] || return 0
   mkdir -p "$skills_dir"
   local n=0 d
@@ -9581,7 +9601,7 @@ install_omniverse_gpu_skills() {
     return 0
   fi
   local asset="$SRC_DIR/deploy/skills/omniverse-skills.tar.gz"
-  local skills_dir="$HOME/.hermes/skills"
+  local skills_dir="$MAC_HOME/openclaw/workspace/skills"
   if [ ! -f "$asset" ]; then
     log "Omniverse 3D skills: vendored asset missing ($asset); skipping"
     return 0
@@ -10152,6 +10172,12 @@ initialize_hermes_home() {
 }
 
 ensure_hermes_identity_memory_continuity() {
+  # Identity lives in the OpenClaw workspace after migration. Do not recreate
+  # a vacated ~/.hermes tree just to link SOUL/MEMORY files.
+  if [ ! -d "$HOME/.hermes" ]; then
+    log "skipping Hermes identity continuity: ~/.hermes is vacated; OpenClaw workspace owns identity"
+    return 0
+  fi
   log "verifying Hermes identity and memory continuity"
   "$PY" - "$HOME/.hermes" <<'PY'
 from pathlib import Path
@@ -10206,7 +10232,7 @@ install_hermes_messaging_deps() {
 
 write_hermes_web_search_config() {
   log "writing Hermes web search configuration"
-  "$VENV/bin/python" - "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
+  "$VENV/bin/python" - "$(mac_gateway_home)/config.yaml" "$(mac_gateway_home)/.env" <<'PY'
 from __future__ import annotations
 
 import os
@@ -10291,7 +10317,7 @@ PY
 
 install_hermes_web_deps() {
   log "preinstalling configured Hermes web dependencies"
-  "$VENV/bin/python" - "$HOME/.hermes" "$LOG_DIR/hermes-web-deps.json" <<'PY'
+  "$VENV/bin/python" - "$(mac_gateway_home)" "$LOG_DIR/hermes-web-deps.json" <<'PY'
 import importlib.util
 import json
 import os
@@ -10334,11 +10360,11 @@ PY
 
 sync_hermes_home_channels() {
   log "syncing Hermes Slack home-channel data"
-  HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
+  HERMES_HOME="$(mac_gateway_home)" \
   "$PY" "$SRC_DIR/deploy/sync-hermes-home-channels.py" \
-    "${HERMES_SLACK_ACCOUNTS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_accounts.json}" \
-    "${HERMES_SLACK_HOME_CHANNELS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_home_channels.json}" \
-    "${HERMES_SLACK_CHANNEL_TEAMS_FILE:-${HERMES_HOME:-$HOME/.hermes}/slack_channel_teams.json}" \
+    "${HERMES_SLACK_ACCOUNTS_FILE:-$(mac_gateway_home)/slack_accounts.json}" \
+    "${HERMES_SLACK_HOME_CHANNELS_FILE:-$(mac_gateway_home)/slack_home_channels.json}" \
+    "${HERMES_SLACK_CHANNEL_TEAMS_FILE:-$(mac_gateway_home)/slack_channel_teams.json}" \
     "$LOG_DIR/hermes-home-channel-sync.json" || \
     log "WARNING: Hermes Slack home-channel sync failed; preserving existing home-channel data"
 }
@@ -10346,7 +10372,7 @@ sync_hermes_home_channels() {
 repair_hermes_kanban_schema() {
   local report="$LOG_DIR/hermes-kanban-schema-repair.json"
   log "checking Hermes kanban SQLite schema compatibility"
-  HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
+  HERMES_HOME="$(mac_gateway_home)" \
   "$PY" - "$report" "$LOG_DIR" "$DEPLOY_TS" <<'PY'
 from __future__ import annotations
 
@@ -10361,7 +10387,7 @@ from pathlib import Path
 report_path = Path(sys.argv[1])
 log_dir = Path(sys.argv[2])
 deploy_ts = sys.argv[3]
-hermes_home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".mac" / "openclaw"))
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -10864,14 +10890,15 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
 else
   log "typed phase 2 consumed infrastructure receipts; tunnel, OpenShell, shared-service, and storage mutation is forbidden"
   # Forbidding MUTATION is not the same as tolerating ABSENCE. A fungible node
-  # is recreated from an image and comes up with no ~/.hermes state at all, and
+  # is recreated from an image and comes up with no gateway topology at all, and
   # this writer only ran on the legacy-one-shot path, so a typed deploy could
   # never give the file back: three of five GKE workers were still missing it
   # on 2026-08-05 and reported qdrant_status=missing_topology while registering
   # healthy. Write it only when it does not exist -- an existing topology is
-  # still left exactly as the receipts describe it.
-  if [ ! -f "$HOME/.hermes/mac-memory-topology.json" ]; then
-    log "repairing absent Hermes memory topology (typed phase 2 retains an existing one, but cannot retain a missing one)"
+  # still left exactly as the receipts describe it. Live files belong under
+  # $MAC_HOME/openclaw; never recreate ~/.hermes.
+  if [ ! -f "$(mac_gateway_home)/mac-memory-topology.json" ]; then
+    log "repairing absent gateway memory topology (typed phase 2 retains an existing one, but cannot retain a missing one)"
     write_hermes_memory_topology
   fi
 fi
@@ -11135,11 +11162,12 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
 else
   log "typed phase 2 retained hub database, runtime identity, and Hermes context authorities"
   # "Retained" presumes something is there to retain. A recreated fungible node
-  # has no ~/.hermes/mac-runtime-context.json and this writer only ran on the
+  # has no gateway mac-runtime-context.json and this writer only ran on the
   # legacy-one-shot path, so the file could never come back. Repair absence
   # only; an existing context stays exactly as the receipts describe it.
-  if [ ! -f "$HOME/.hermes/mac-runtime-context.json" ]; then
-    log "repairing absent Hermes runtime context (typed phase 2 retains an existing one, but cannot retain a missing one)"
+  # Live files belong under $MAC_HOME/openclaw; never recreate ~/.hermes.
+  if [ ! -f "$(mac_gateway_home)/mac-runtime-context.json" ]; then
+    log "repairing absent gateway runtime context (typed phase 2 retains an existing one, but cannot retain a missing one)"
     write_hermes_runtime_context
   fi
 fi
@@ -11399,7 +11427,7 @@ PY
 
 scrub_spoke_provider_secrets() {
   # Clean invariant (NOT mutate-in-place): a spoke routes every provider call
-  # through the hub, so its gateway env (~/.hermes/.env) must hold NO upstream
+  # through the hub, so its gateway env ($MAC_HOME/openclaw/.env) must hold NO upstream
   # provider/API keys — only messaging connection tokens (SLACK_*/MATTERMOST_*,
   # which the gateway needs to connect directly) and the hub-token gateway creds
   # mac.env supplies. The Slack/identity sync upserts specific keys and PRESERVES
@@ -11408,7 +11436,7 @@ scrub_spoke_provider_secrets() {
   # deploy so re-deploy converges to the clean invariant. HUB keeps its keys (it
   # runs the router + escrows them). Spoke-only, idempotent, backs up first.
   [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ] || return 0
-  local henv="$HOME/.hermes/.env"
+  local henv="$(mac_gateway_home)/.env"
   [ -f "$henv" ] || return 0
   # Upstream provider/API keys + base-url companions, from the single registry
   # (mac.providers). Messaging tokens (SLACK_*, MATTERMOST_*) and MAC_*/gateway
@@ -11805,12 +11833,14 @@ set -euo pipefail
 ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
 set -a
 set +u
-[ -f "$HOME/.hermes/.env" ] && . "$HOME/.hermes/.env"
-[ -f "$HOME/.mac/mac.env" ] && . "$HOME/.mac/mac.env"
+[ -f "${MAC_HOME:-$HOME/.mac}/openclaw/.env" ] && . "${MAC_HOME:-$HOME/.mac}/openclaw/.env"
+[ -f "${MAC_HOME:-$HOME/.mac}/mac.env" ] && . "${MAC_HOME:-$HOME/.mac}/mac.env"
 set -u
 set +a
 export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
-export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+if [ -z "${HERMES_HOME:-}" ] || [ "${HERMES_HOME}" = "$HOME/.hermes" ] || [ "${HERMES_HOME}" = "$HOME/.hermes/" ]; then
+  export HERMES_HOME="${MAC_HOME:-$HOME/.mac}/openclaw"
+fi
 export HERMES_DISABLE_LAZY_INSTALLS=1
 export HERMES_REDACT_SECRETS=true
 if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then

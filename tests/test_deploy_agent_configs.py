@@ -745,6 +745,13 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
         ROOT / "src" / "mac" / "hermes_runtime.py"
     ).read_text(encoding="utf-8")
     assert generated_env["MAC_HERMES_INSTANCE_ID"] == "hermes_spoke-a"
+    assert generated_env["HERMES_HOME"] == str(tmp_path / ".mac" / "openclaw")
+    assert generated_env["MAC_MEMORY_TOPOLOGY_FILE"] == str(
+        tmp_path / ".mac" / "openclaw" / "mac-memory-topology.json"
+    )
+    assert generated_env["MAC_HERMES_RUNTIME_CONTEXT_FILE"] == str(
+        tmp_path / ".mac" / "openclaw" / "mac-runtime-context.json"
+    )
     assert generated_env["MAC_WORKER_HERMES_INSTANCE_ID"] == generated_env["MAC_HERMES_INSTANCE_ID"]
     assert (
         'common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")'
@@ -1680,7 +1687,7 @@ def test_omniverse_gpu_skills_installed_only_on_gpu_nodes():
     )[0]
     assert "nvidia-smi -L" in fn  # GPU gate
     assert "deploy/skills/omniverse-skills.tar.gz" in fn
-    assert '"$HOME/.hermes/skills"' in fn
+    assert '"$MAC_HOME/openclaw/workspace/skills"' in fn
     # Invoked only by the onboarding/legacy preparation branch. Typed phase 2
     # retains the exact receipt-proved skills state.
     installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")

@@ -230,7 +230,7 @@ def test_the_drain_clear_sends_the_measured_health(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Typed phase 2 must repair absent Hermes state
+# Typed phase 2 must repair absent gateway state under OpenClaw home
 # --------------------------------------------------------------------------
 
 
@@ -241,17 +241,18 @@ def test_the_drain_clear_sends_the_measured_health(tmp_path):
         ("write_hermes_runtime_context", "mac-runtime-context.json"),
     ],
 )
-def test_typed_phase_two_repairs_absent_hermes_state(writer, filename):
+def test_typed_phase_two_repairs_absent_gateway_state(writer, filename):
     """A recreated fungible node must be able to get these files back.
 
     Both writers ran only on the legacy-one-shot path, so a typed phase-2
     deploy could never restore them: three of five GKE workers were still
     missing both on 2026-08-05. Phase 2 must keep refusing to MUTATE an
-    existing file while still repairing an absent one.
+    existing file while still repairing an absent one. After Hermes retirement
+    the live files belong under $MAC_HOME/openclaw, not ~/.hermes.
     """
     text = _script()
     guarded = re.search(
-        r'if \[ ! -f "\$HOME/\.hermes/%s" \]; then\n(?:.*\n)*?\s*%s\n'
+        r'if \[ ! -f "\$\(mac_gateway_home\)/%s" \]; then\n(?:.*\n)*?\s*%s\n'
         % (re.escape(filename), re.escape(writer)),
         text,
     )
@@ -260,4 +261,24 @@ def test_typed_phase_two_repairs_absent_hermes_state(writer, filename):
         "never regain it" % filename
     )
     # The repair must be conditional: an existing file is still left alone.
-    assert '! -f "$HOME/.hermes/%s"' % filename in text
+    assert '! -f "$(mac_gateway_home)/%s"' % filename in text
+    # Recreating ~/.hermes is the opposite of retiring Hermes.
+    assert "$HOME/.hermes/%s" % filename not in text
+
+
+def test_installer_defaults_gateway_home_to_openclaw_not_hermes():
+    """Deploy must not recreate a vacated ~/.hermes tree.
+
+    Python already resolves gateway_home() to $MAC_HOME/openclaw. The installer
+    and mac.env rewrite were still pinning ~/.hermes, which is how the last
+    fleet deploy put that directory back after GC.
+    """
+    text = _script()
+    assert "mac_gateway_home()" in text
+    assert "${HERMES_HOME:-$HOME/.hermes}" not in text
+    assert "$HOME/.hermes/mac-memory-topology.json" not in text
+    assert "$HOME/.hermes/mac-runtime-context.json" not in text
+    assert 'local skills_dir="$HOME/.hermes/skills"' not in text
+    assert 'local skills_dir="$MAC_HOME/openclaw/workspace/skills"' in text
+    # Continuity may still READ a leftover tree; it must not mkdir one.
+    assert '[ ! -d "$HOME/.hermes" ]' in text

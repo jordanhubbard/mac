@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_HOME="${HERMES_HOME:-${MAC_HOME:-$HOME/.mac}/openclaw}"
 WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 FLEET_NAME="${FLEET_NAME:-mac}"
 SERVICE_NAME="${FLEET_NAME}-firecrawl-gateway.service"

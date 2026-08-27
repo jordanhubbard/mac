@@ -16,7 +16,7 @@ MAC_LAUNCHD_LOG_PREFIX="[qdrant]"
 # shellcheck source=lib/launchd-lifecycle.sh
 . "$launchd_lib"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_HOME="${HERMES_HOME:-$MAC_HOME/openclaw}"
 WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 FLEET_NAME="${FLEET_NAME:-mac}"
 UNIT_TEMPLATE="${WORKSPACE}/deploy/systemd/mac-qdrant.service"

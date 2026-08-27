@@ -89,6 +89,13 @@ def test_deploy_env_does_not_default_agent_dir_to_removed_vendor_tree() -> None:
     assert "/_hermes" not in path_values
 
 
+def test_deploy_env_defaults_gateway_home_to_openclaw() -> None:
+    source = (SRC_MAC / "deploy_env.py").read_text(encoding="utf-8")
+    path_values = source.split("def _path_values", 1)[1].split("\ndef ", 1)[0]
+    assert 'paths.home / ".hermes"' not in path_values
+    assert 'paths.mac_home / "openclaw"' in path_values
+
+
 def test_adr_0001_records_vendoring_premise_ended() -> None:
     text = ADR_0001.read_text(encoding="utf-8")
     assert "Superseded" in text
