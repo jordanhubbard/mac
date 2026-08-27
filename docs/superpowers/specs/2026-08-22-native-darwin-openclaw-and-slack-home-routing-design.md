@@ -340,7 +340,7 @@ All behavior is implemented test-first.
 ## Rollout
 
 1. Merge code and contract tests without deploying.
-2. Deploy to the Rocky Darwin node while fleet dispatch remains held.
+2. Deploy to the Darwin hub node while fleet dispatch remains held.
 3. Verify native runtime manifest, launchd service, OpenClaw health, Slack
    plugin, account/workspace identity, and both home-channel resolutions.
 4. Send one administrative canary through each Slack account and prove each
