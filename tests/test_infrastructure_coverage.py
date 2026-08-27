@@ -214,6 +214,10 @@ def test_openshell_supervisor_contracts(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setenv("MAC_OPENSHELL_POLICY", "~/policy.yaml")
     assert module.default_policy_path("agent").name == "policy.yaml"
+    monkeypatch.delenv("MAC_OPENSHELL_POLICY", raising=False)
+    default_policy = module.default_policy_path("agent_rocky")
+    assert default_policy.name == "rocky-policy.yaml"
+    assert default_policy.parent.name == "openshell"
     monkeypatch.setenv("MAC_OPENSHELL_CHILD", "python -m worker")
     assert module.default_child_argv() == ["python", "-m", "worker"]
     monkeypatch.delenv("MAC_OPENSHELL_CHILD")

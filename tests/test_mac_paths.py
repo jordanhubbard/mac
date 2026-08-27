@@ -37,6 +37,8 @@ def test_defaults_match_legacy_literals(clean_home):
     assert mac_paths.fleets_config() == home / ".mac" / "fleets.yaml"
     assert mac_paths.ledger_db() == home / ".mac" / "mac.db"
     assert mac_paths.journal_dir() == home / ".mac" / "journal"
+    assert mac_paths.backups_dir() == home / ".mac" / "backups"
+    assert mac_paths.archive_dir() == home / ".mac" / "archive"
     assert mac_paths.gateway_env_file() == home / ".mac" / "openclaw" / ".env"
     assert mac_paths.dream_logs_dir() == home / ".mac" / "openclaw" / "dream_logs"
     assert mac_paths.openclaw_home() == home / ".mac" / "openclaw"
@@ -48,6 +50,8 @@ def test_mac_home_relocates_all_derived_paths_together(clean_home, monkeypatch):
     assert mac_paths.mac_home() == root
     assert mac_paths.ledger_db() == root / "mac.db"
     assert mac_paths.journal_dir() == root / "journal"
+    assert mac_paths.backups_dir() == root / "backups"
+    assert mac_paths.archive_dir() == root / "archive"
     assert mac_paths.fleets_config() == root / "fleets.yaml"
     assert mac_paths.openclaw_home() == root / "openclaw"
     # Phase 2 (2026-08-21): the gateway home now relocates WITH MAC_HOME, which
