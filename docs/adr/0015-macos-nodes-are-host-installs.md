@@ -194,7 +194,7 @@ It is no longer the macOS posture, because macOS no longer has one to waive.
 - macOS nodes run tasks unconfined by MAC. Anything that must be confined must
   run on a Linux node.
 - The host install must now supply, natively, everything the runtime image
-  supplied. It does not yet: Node/npm/pnpm, the reviewed coding-agent CLIs
+  supplied. It does not yet: OpenClaw, the `openclaw` CLI, Node/npm/pnpm, the reviewed coding-agent CLIs
   (`claude`, `codex`, `cursor-agent`), the `[dev]` extra needed to run contract
   tests in place, cmake/ninja/llvm-objcopy/ld.lld/qemu-system-riscv64, java and
   lein have no darwin install path, and `deploy/verify-bash-contract.sh`'s
@@ -202,6 +202,18 @@ It is no longer the macOS posture, because macOS no longer has one to waive.
   3.2). Several host-side code paths also hardcode `/opt/mac-venv/bin` and omit
   `/opt/homebrew/bin`. These are tracked separately; until they are closed, a
   macOS node is a *steward* host, not a general execution host.
+- The OpenClaw chat gateway is the sharpest open case, and it is currently
+  contradictory rather than merely incomplete. `fleet-node-install.sh` carries a
+  live darwin route — `install_darwin_openclaw_service()` installs a launchd job
+  and registers a withdraw hook for rollback — but the installer it calls,
+  `deploy/openclaw/install-openclaw-gateway.sh`, resolves only a Linux image.
+  So a macOS hub ends up with no `openclaw` on the host, which is why the
+  gateway appears to be missing rather than declined. Closing this means
+  choosing one of two things and deleting the other: give the installer a real
+  darwin host route, or retire `install_darwin_openclaw_service()` and serve
+  macOS conversations from a Linux gateway node. Do not "fix" it by making the
+  installer refuse darwin while that launchd route still exists — that turns a
+  silent gap into a failed deploy, and takes the rollback path down with it.
 - Windows is out of scope here. The ledger task that motivated this work names
   it, but the operator's decision as stated concerns macOS, and WSL2 already
   presents as Linux. Nothing in this ADR describes Windows.

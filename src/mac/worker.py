@@ -6022,7 +6022,15 @@ class MacWorker(
                 coding_agent_sandbox_which,
             )
 
-            sandboxed = _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX", "1"))
+            # Probe the route the way tasks will actually run on this node. An
+            # unset MAC_OPENSHELL_SANDBOX means off to every other reader, and a
+            # host-install platform has no managed sandbox to probe through at
+            # all (ADR 0015): its kernel cannot enforce Landlock, so a probe
+            # sandbox never starts and leaves a restarting container behind.
+            host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
+            sandboxed = not host_install and _env_truthy(
+                os.environ.get("MAC_OPENSHELL_SANDBOX")
+            )
 
             def _verify(choice: Any) -> bool:
                 try:

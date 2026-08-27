@@ -3322,6 +3322,10 @@ def test_worker_publishes_matching_sandbox_route_verification(
             return choice
         return coding_agent.CodingAgentChoice(agent="", available=False)
 
+    # The sandboxed branch is what this test covers, so state its premise: a
+    # Linux node that has opted into the managed sandbox. Neither is a default.
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
     monkeypatch.setattr(
         task_executor,
@@ -3428,6 +3432,115 @@ def test_worker_verifies_darwin_host_route_without_openshell(
     assert worker._coding_route_report["agent"] == "opencode"
 
 
+@pytest.mark.parametrize(
+    ("platform", "requested_sandbox"),
+    [
+        # A host install has no managed sandbox even when one is requested:
+        # its kernel cannot enforce Landlock, so the probe sandbox never
+        # starts and leaves a restarting container behind (ADR 0015).
+        ("darwin", "1"),
+        ("darwin", None),
+        # Unset means off to every other reader of the variable, so the probe
+        # must not verify a confinement the node will not actually use.
+        ("linux", None),
+    ],
+)
+def test_worker_route_probe_stays_on_the_host_unless_the_sandbox_is_opted_into(
+    tmp_path: Path,
+    monkeypatch,
+    platform: str,
+    requested_sandbox: Optional[str],
+):
+    from mac import coding_agent, task_executor
+
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("host-install")
+    agent = cp.register_agent(
+        machine.id,
+        "host-install-worker",
+        resources={"openshell_required": False},
+    )
+    choice = coding_agent.CodingAgentChoice(
+        agent="opencode",
+        available=True,
+        binary="/Users/test/.mac/bin/opencode",
+        auth_source="~/.local/share/opencode/auth.json",
+        provider="opencode",
+        protocol="opencode-run",
+        auth_kind="api_key_file",
+    )
+
+    # The probe swallows exceptions to keep a bad route from killing the
+    # worker, so record what it reached for and assert afterwards instead of
+    # raising from inside a stub.
+    resolver_kinds: list[str] = []
+    sandbox_verifications: list[str] = []
+
+    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
+        # A `which` resolver is what selects the sandbox image inventory; the
+        # host branch resolves binaries on the host and passes None.
+        resolver_kinds.append("host" if which is None else "sandbox")
+        return (
+            choice
+            if accept(choice)
+            else coding_agent.CodingAgentChoice(agent="", available=False)
+        )
+
+    def record_sandbox_verification(verified_choice):
+        sandbox_verifications.append(verified_choice.agent)
+        return {"verified": False, "failure_class": "sandbox_was_used"}
+
+    monkeypatch.setattr(sys, "platform", platform)
+    if requested_sandbox is None:
+        monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    else:
+        monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", requested_sandbox)
+    monkeypatch.setattr(
+        task_executor, "coding_agent_sandbox_verification", record_sandbox_verification
+    )
+    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, coding_agent.PREFLIGHT_SENTINEL, ""
+        ),
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_DETECTORS",
+        {
+            **coding_agent._DETECTORS,
+            "opencode": lambda *_args: (
+                True,
+                choice.binary,
+                choice.auth_source,
+                "opencode: configured for test",
+            ),
+        },
+    )
+
+    worker = MacWorker(
+        api,
+        agent.id,
+        tmp_path,
+        lambda _t, _d: WorkerExecution(0, "ok"),
+    )
+    worker._probe_coding_route()
+
+    assert sandbox_verifications == []
+    assert resolver_kinds == ["host"]
+    report = worker._coding_route_report
+    assert report["failure_class"] == ""
+    assert report["verified"] is True
+    assert report["agent"] == "opencode"
+    verification = report["reports"]["opencode"]
+    assert verification["verified"] is True
+    assert verification["execution_binary"] == choice.binary
+
+
 def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
     tmp_path: Path,
     monkeypatch,
@@ -3484,6 +3597,10 @@ def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
             "failure_class": "" if candidate.agent == "codex" else "probe_failed",
         }
 
+    # Route fall-through is exercised through the sandboxed verifier, so state
+    # its premise: a Linux node that has opted into the managed sandbox.
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
     monkeypatch.setattr(
         task_executor,
@@ -3540,6 +3657,10 @@ def test_worker_probes_and_advertises_cursor_from_task_image_not_host_path(
     agent = cp.register_agent(machine.id, "worker", resources={})
     attempted = []
 
+    # Resolving the CLI from the task image rather than the host is only
+    # meaningful on a node that runs the sandbox, so state that premise.
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_CODING_AGENT", "cursor")
     monkeypatch.setenv("CURSOR_API_KEY", "secret-not-reported")
     monkeypatch.setattr(
