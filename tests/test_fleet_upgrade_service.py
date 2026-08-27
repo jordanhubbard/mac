@@ -207,6 +207,38 @@ def test_failed_hub_swap_resume_clears_only_upgrade_owned_worker_holds(tmp_path:
     assert armed["handoff_digest"]
 
 
+def test_upgrade_arm_skips_operator_held_and_virtual_agents(tmp_path: Path):
+    cp, _human, fleet, upgrade = _fixture(tmp_path)
+    worker = next(agent for agent in cp.list_agents() if agent.name == "worker")
+    session = cp.register_agent(cp.register_machine("laptop").id, "cursor-session")
+    operator = cp.register_agent(
+        cp.register_machine("hub-host").id,
+        "operator",
+        resources={"virtual": True},
+    )
+    cp.set_agent_dispatch_hold(session.id, "interactive session")
+    cp.update_fleet(
+        fleet.id,
+        agent_ids=[worker.id, session.id, operator.id],
+        actor="human_alice",
+    )
+
+    armed = _stage_and_arm(cp, upgrade["id"])
+
+    fenced = next(
+        event["detail"]["fenced_agents"]
+        for event in cp.fleet_upgrade_events(upgrade["id"])
+        if event["phase"] == "hub_swap_armed"
+    )
+    assert fenced == [worker.id]
+    assert armed["state"] == "hub_applying"
+    assert cp.get_agent(worker.id).dispatch_hold_reason == "fleet_upgrade:%s:hub_cutover" % upgrade[
+        "id"
+    ]
+    assert cp.get_agent(session.id).dispatch_hold_reason == "interactive session"
+    assert cp.get_agent(operator.id).dispatch_hold is False
+
+
 def test_supervisor_launch_escapes_hub_systemd_cgroup(tmp_path: Path, monkeypatch):
     cp, _human, _fleet, upgrade = _fixture(tmp_path)
     _stage_and_arm(cp, upgrade["id"])

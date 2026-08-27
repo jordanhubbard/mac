@@ -570,38 +570,37 @@ class FleetUpgradeService:
         return resumed
 
     def _fence_worker_cohort(self, row: Any) -> List[str]:
-        agents = self.store.query_all(
-            """
-            SELECT a.* FROM agents a
-            JOIN fleet_agents fa ON fa.agent_id = a.id
-            WHERE fa.fleet_id = ?
-            ORDER BY a.name, a.id
-            """,
+        members = self.store.query_all(
+            "SELECT agent_id FROM fleet_agents WHERE fleet_id = ? ORDER BY agent_id",
             (row["fleet_id"],),
         )
         hub_identity = os.environ.get("MAC_REVIEW_TICK_HUB_AGENT", "").strip()
-        workers = [
-            agent
-            for agent in agents
-            if str(agent["id"]) != hub_identity and str(agent["name"]) != hub_identity
-        ]
-        busy = [
-            str(agent["id"])
-            for agent in workers
-            if str(agent["current_task_id"] or "") or str(agent["status"]) == "busy"
-        ]
+        reason = "fleet_upgrade:%s:hub_cutover" % row["id"]
+        fenced: List[str] = []
+        busy: List[str] = []
+        for member in members:
+            agent = self.cp.get_agent(str(member["agent_id"]))
+            if agent.id == hub_identity or agent.name == hub_identity:
+                continue
+            if agent.deleted_at:
+                continue
+            resources = agent.resources if isinstance(agent.resources, dict) else {}
+            if resources.get("virtual") is True:
+                continue
+            existing_reason = str(agent.dispatch_hold_reason or "")
+            if agent.dispatch_hold and existing_reason != reason:
+                # Interactive sessions and other operator holds stay with their
+                # issuer. Failing the whole cutover because a laptop session is
+                # held made hub-mediated upgrade unusable on the live fleet.
+                continue
+            if str(agent.current_task_id or "") or str(agent.status) == "busy":
+                busy.append(agent.id)
+                continue
+            self.cp.set_agent_dispatch_hold(agent.id, reason)
+            fenced.append(agent.id)
         if busy:
             raise ValidationError("worker cohort is not quiescent: %s" % ", ".join(sorted(busy)))
-        reason = "fleet_upgrade:%s:hub_cutover" % row["id"]
-        for agent in workers:
-            existing_reason = str(agent["dispatch_hold_reason"] or "")
-            if bool(agent["dispatch_hold"]) and existing_reason != reason:
-                raise ValidationError(
-                    "worker has an operator-owned dispatch hold: %s" % agent["id"]
-                )
-        for agent in workers:
-            self.cp.set_agent_dispatch_hold(str(agent["id"]), reason)
-        return [str(agent["id"]) for agent in workers]
+        return fenced
 
     def _clear_upgrade_holds(self, upgrade_id: str) -> None:
         reason = "fleet_upgrade:%s:hub_cutover" % upgrade_id
