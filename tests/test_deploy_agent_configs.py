@@ -1506,18 +1506,20 @@ def _extract_bash_fn(name):
 def _run_scrub(tmp_path, *, agent, hub_agent, hermes_env_text):
     import subprocess as _sp
 
-    (tmp_path / ".hermes").mkdir(parents=True, exist_ok=True)
-    henv = tmp_path / ".hermes" / ".env"
+    mac_home = tmp_path / ".mac"
+    gateway_home = mac_home / "openclaw"
+    gateway_home.mkdir(parents=True, exist_ok=True)
+    henv = gateway_home / ".env"
     henv.write_text(hermes_env_text, encoding="utf-8")
-    fn = _extract_bash_fn("scrub_spoke_provider_secrets")
+    fn = _extract_bash_fn("mac_gateway_home") + _extract_bash_fn("scrub_spoke_provider_secrets")
     script = (
         "set -euo pipefail\n"
         "log() { :; }\n"
         "DEPLOY_TS=test; DEPLOY_LOG=/dev/null\n"
         + ("PY=%r\n" % sys.executable)
         + (
-            "HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
-            % (str(tmp_path), agent, hub_agent)
+            "HOME=%r; MAC_HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
+            % (str(tmp_path), str(mac_home), agent, hub_agent)
         )
         + fn
         + "scrub_spoke_provider_secrets\n"
