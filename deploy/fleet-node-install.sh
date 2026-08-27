@@ -11729,12 +11729,17 @@ note_gateway_degraded() {
 
 wait_for_gateway_ready_log() {
   # KeepAlive can restart OpenClaw after a one-shot CLI failure. Give that
-  # successor time to print [gateway] ready so recovered startup Errors are
-  # classified as info instead of failing the node.
+  # successor a short window to print [gateway] ready so recovered startup
+  # Errors are classified as info. Do not reuse the channel-probe budget:
+  # verify() already proved reachability, and Linux journals often never
+  # contain this line (observed 180s no-op waits on natasha/bullwinkle).
   local log_file="$1"
-  local timeout="${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}"
+  local timeout="${MAC_OPENCLAW_READY_LOG_TIMEOUT:-20}"
   local waited=0
   [ -n "$log_file" ] || return 0
+  case "$timeout" in
+    ''|*[!0-9]*) timeout=20 ;;
+  esac
   while [ "$waited" -lt "$timeout" ]; do
     if grep -q '\[gateway\] ready' "$log_file" 2>/dev/null; then
       return 0

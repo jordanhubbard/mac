@@ -72,6 +72,58 @@ def test_explicitly_unreachable_gateway_fails_even_for_headless_runtime(tmp_path
 
     payload = validator.load_status_payload(status)
     assert validator.channel_problems(payload, ()) == ["gateway"]
+    assert validator.classify_probe(payload, ()) == ("retry", ["gateway"])
+
+
+def test_auth_error_is_fatal_and_duplicate_accounts_are_fatal() -> None:
+    validator = load_validator()
+    auth = {
+        "channelAccounts": {
+            "slack": [account(ok=False, error="invalid_auth")],
+        }
+    }
+    assert validator.classify_probe(auth, ("slack",)) == ("fatal", ["slack"])
+    duplicates = {
+        "channelAccounts": {
+            "slack": [
+                account(account_id="default", team_id="T-offtera"),
+                account(account_id="offtera", team_id="T-offtera"),
+            ],
+        },
+        "channelDefaultAccountId": {"slack": "default"},
+    }
+    assert validator.classify_probe(duplicates, ("slack",)) == ("fatal", ["slack"])
+
+
+def test_probe_not_ok_without_auth_error_is_retryable() -> None:
+    validator = load_validator()
+    payload = {"channelAccounts": {"slack": [account(ok=False)]}}
+    assert validator.classify_probe(payload, ("slack",)) == ("retry", ["slack"])
+
+
+def test_quiet_retry_hides_human_line(tmp_path) -> None:
+    import subprocess
+    import sys
+
+    status = tmp_path / "status.json"
+    status.write_text('{"gatewayReachable": false, "channelAccounts": {}}\n', encoding="utf-8")
+    quiet = subprocess.run(
+        [sys.executable, str(VALIDATOR), "--quiet", "--required", "", str(status)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    loud = subprocess.run(
+        [sys.executable, str(VALIDATOR), "--required", "", str(status)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert quiet.returncode == 1
+    assert quiet.stderr == ""
+    assert loud.returncode == 1
+    assert "channel probe did not prove" in loud.stderr
+    assert "probe_verdict=retry" in loud.stderr
 
 
 def test_single_configured_channel_is_validated_without_requiring_others() -> None:

@@ -236,13 +236,9 @@ def test_macos_host_adr_names_the_unresolved_openclaw_darwin_contradiction() -> 
 
     # Both live halves of the contradiction must still exist, so that this test
     # fails if one is removed without the ADR being updated to match.
-    installer_sh = (
-        ROOT / "deploy" / "fleet-node-install.sh"
-    ).read_text(encoding="utf-8")
+    installer_sh = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     assert "install_darwin_openclaw_service() {" in installer_sh
-    assert "mac_launchd_transaction_set_rollback_hook withdraw_openclaw_gateway" in (
-        installer_sh
-    )
+    assert "mac_launchd_transaction_set_rollback_hook withdraw_openclaw_gateway" in (installer_sh)
 
 
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
@@ -2111,6 +2107,10 @@ def test_openclaw_prefers_reviewed_cli_over_stale_configured_runtime(
 def test_openclaw_verification_probes_then_advertises_after_exclusive_cutover() -> None:
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "validate-openclaw-channel-status.py" in installer
+    assert "prove_openclaw_channels" in installer
+    status_json = installer.index("channels status --json")
+    probe_json = installer.index("channels status --probe --json")
+    assert status_json < probe_json
     assert "service-advertisement.json" in installer
     assert '"schema": "mac.chat_gateway_service.v1"' in installer
     assert '"provider": "openshell"' in installer
@@ -3622,7 +3622,10 @@ esac
     )
 
     assert result.returncode != 0
-    assert "gateway/channel probes did not become healthy within 1s" in result.stderr
+    assert (
+        "OpenClaw gateway did not become reachable within 1s" in result.stderr
+        or "gateway/channel probes did not become healthy within 1s" in result.stderr
+    )
     assert not (mac_home / "openclaw" / "verification-pending.json").exists()
     installer_text = INSTALLER.read_text(encoding="utf-8")
     assert "$SECONDS" not in installer_text

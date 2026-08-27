@@ -2787,6 +2787,11 @@ def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
     assert "elif requires_then_regex:" in classifier
     deploy = script
     assert "wait_for_gateway_ready_log" in deploy
+    wait_fn = script.split("wait_for_gateway_ready_log() {", 1)[1].split(
+        "handle_failed_openclaw_successor() {", 1
+    )[0]
+    assert 'timeout="${MAC_OPENCLAW_READY_LOG_TIMEOUT:-20}"' in wait_fn
+    assert "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT" not in wait_fn
 
 
 def test_gateway_log_classifier_accepts_exact_recovered_rocky_startup(tmp_path):
@@ -3680,9 +3685,7 @@ def test_optional_openshell_disable_retires_only_mac_owned_darwin_sandboxes(tmp_
     them because it only reaps a sandbox whose owning process is already dead.
     The darwin migration has to remove them -- and only them.
     """
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
@@ -3774,9 +3777,7 @@ def test_darwin_openshell_migration_reports_but_never_uninstalls_operator_opensh
     plausible on a Mac, so the migration has to name it -- but uninstalling
     another package manager's software is not MAC's call.
     """
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     for never in ("brew uninstall", "brew remove", "brew services stop openshell"):
         assert never not in installer
 

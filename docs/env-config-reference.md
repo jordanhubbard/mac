@@ -716,6 +716,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_PLUGIN_TIMEOUT_MS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw plugin timeout ms. |
 | `MAC_OPENCLAW_POLICY_TEMPLATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw policy template. |
 | `MAC_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw public identity. |
+| `MAC_OPENCLAW_READY_LOG_TIMEOUT` | int | 20 | openclaw-runtime | Seconds to wait for `[gateway] ready` in the host log after `verify` already proved the gateway reachable. Default 20. This is not the Slack `--probe` budget; reusing `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` here added 180s of no-op wait on Linux spokes whose journals never contain that line. |
 | `MAC_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw representation mode. |
 | `MAC_OPENCLAW_REPRESENTED_BY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw represented by. |
 | `MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw require host automation journal. |

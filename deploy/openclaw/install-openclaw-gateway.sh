@@ -2836,6 +2836,92 @@ sandbox_command() {
   sandbox_command_until "$deadline" "$openshell_bin" "$@"
 }
 
+prove_openclaw_channels() {
+  # Two phases share one deadline. Phase 1 only asks whether the local gateway
+  # answers (`channels status --json`). `--probe` talks to Slack/Telegram and
+  # is what turned a still-booting gateway into a 90–180s false failure.
+  local openshell_bin="$1"
+  local channel_status="$OPENCLAW_HOST_DIR/channel-status.json"
+  local channel_status_tmp="$channel_status.tmp"
+  local timeout="${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}"
+  local interval="${MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL:-2}"
+  local channel_deadline backoff classify_rc
+  case "$timeout" in
+    ''|*[!0-9]*) die "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT must be a non-negative integer" ;;
+  esac
+  case "$interval" in
+    ''|*[!0-9]*) die "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL must be a non-negative integer" ;;
+  esac
+  channel_deadline="$(monotonic_deadline "$timeout")" \
+    || die "could not establish OpenClaw channel verification deadline"
+
+  while :; do
+    if sandbox_command_until "$channel_deadline" "$openshell_bin" \
+      /usr/local/bin/openclaw channels status --json \
+      > "$channel_status_tmp" 2>&1 \
+      && python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+        --quiet --required "" "$channel_status_tmp"; then
+      break
+    fi
+    if monotonic_deadline_expired "$channel_deadline"; then
+      mv -f "$channel_status_tmp" "$channel_status" 2>/dev/null || true
+      chmod 0600 "$channel_status" 2>/dev/null || true
+      python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+        --required "" "$channel_status" 2>/dev/null || true
+      die "OpenClaw gateway did not become reachable within ${timeout}s"
+    fi
+    sleep_before_deadline "$channel_deadline" "$interval"
+  done
+
+  if [ -z "$MAC_OPENCLAW_CHANNELS" ]; then
+    python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+      --required "" "$channel_status_tmp" \
+      || die "OpenClaw headless gateway status was not reachable"
+    mv -f "$channel_status_tmp" "$channel_status"
+    chmod 0600 "$channel_status"
+    return 0
+  fi
+
+  backoff="$interval"
+  while :; do
+    classify_rc=0
+    if sandbox_command_until "$channel_deadline" "$openshell_bin" \
+      /usr/local/bin/openclaw channels status --probe --json \
+      > "$channel_status_tmp" 2>&1; then
+      python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+        --quiet --required "$MAC_OPENCLAW_CHANNELS" "$channel_status_tmp" \
+        || classify_rc=$?
+      if [ "$classify_rc" -eq 0 ]; then
+        python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+          --required "$MAC_OPENCLAW_CHANNELS" "$channel_status_tmp" \
+          || die "OpenClaw channel probe succeeded then failed to report"
+        mv -f "$channel_status_tmp" "$channel_status"
+        chmod 0600 "$channel_status"
+        return 0
+      fi
+      if [ "$classify_rc" -eq 3 ]; then
+        python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+          --required "$MAC_OPENCLAW_CHANNELS" "$channel_status_tmp" 2>/dev/null || true
+        mv -f "$channel_status_tmp" "$channel_status"
+        chmod 0600 "$channel_status"
+        die "OpenClaw channel probe failed closed (non-retryable configuration or auth)"
+      fi
+    fi
+    if monotonic_deadline_expired "$channel_deadline"; then
+      mv -f "$channel_status_tmp" "$channel_status" 2>/dev/null || true
+      chmod 0600 "$channel_status" 2>/dev/null || true
+      python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+        --required "$MAC_OPENCLAW_CHANNELS" "$channel_status" 2>/dev/null || true
+      die "OpenClaw gateway/channel probes did not become healthy within ${timeout}s"
+    fi
+    sleep_before_deadline "$channel_deadline" "$backoff"
+    if [ "$backoff" -gt 0 ] && [ "$backoff" -lt 16 ]; then
+      backoff=$((backoff * 2))
+      [ "$backoff" -gt 16 ] && backoff=16
+    fi
+  done
+}
+
 wait_for_sandbox_ready() {
   local openshell_bin="$1"
   local timeout="${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}"
@@ -2988,6 +3074,7 @@ json.dump({
 }, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
 PY
   chmod 0600 "$continuity_search"
+  prove_openclaw_channels "$openshell_bin"
   case ",$MAC_OPENCLAW_CHANNELS," in
     *,slack,*)
       local slack_account
@@ -3006,29 +3093,6 @@ PY
         --target 0 --message 'MAC plugin preflight' --dry-run --json >/dev/null
       ;;
   esac
-  local channel_status="$OPENCLAW_HOST_DIR/channel-status.json"
-  local channel_status_tmp="$channel_status.tmp"
-  local channel_deadline
-  channel_deadline="$(monotonic_deadline "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}")" \
-    || die "could not establish OpenClaw channel verification deadline"
-  while :; do
-    if sandbox_command_until "$channel_deadline" "$openshell_bin" \
-      /usr/local/bin/openclaw channels status \
-      --probe --json > "$channel_status_tmp" 2>&1 \
-      && python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
-        "$channel_status_tmp" --required "$MAC_OPENCLAW_CHANNELS"; then
-      mv -f "$channel_status_tmp" "$channel_status"
-      chmod 0600 "$channel_status"
-      break
-    fi
-    if monotonic_deadline_expired "$channel_deadline"; then
-      mv -f "$channel_status_tmp" "$channel_status" 2>/dev/null || true
-      chmod 0600 "$channel_status" 2>/dev/null || true
-      die "OpenClaw gateway/channel probes did not become healthy within ${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}s"
-    fi
-    sleep_before_deadline "$channel_deadline" \
-      "${MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL:-2}"
-  done
   if truthy "$LIVE_CANARY"; then
     local output
     output="$(sandbox_command "$openshell_bin" /usr/local/bin/openclaw agent \

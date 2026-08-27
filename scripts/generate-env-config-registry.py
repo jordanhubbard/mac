@@ -116,6 +116,7 @@ CONSUMER_DEFAULTS = {
     # deploy/fleet-node-install.sh reads ``${MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0}``,
     # so the non-fatal default is the installer's, not an invented one.
     "MAC_DEPLOY_GATEWAY_PROBE_FATAL": "0",
+    "MAC_OPENCLAW_READY_LOG_TIMEOUT": "20",
 }
 # Descriptions an operator cannot derive from the variable name. The generated
 # sentence is fine for a setting whose name says what it does; an escape hatch
@@ -129,6 +130,13 @@ CURATED_DESCRIPTIONS = {
         "mac-agent and none of them consult chat, so a node that cannot post is "
         "degraded for conversation and fully capable of work. Set it for a deploy "
         "whose purpose is to prove the chat surface."
+    ),
+    "MAC_OPENCLAW_READY_LOG_TIMEOUT": (
+        "Seconds to wait for `[gateway] ready` in the host log after `verify` "
+        "already proved the gateway reachable. Default 20. This is not the "
+        "Slack `--probe` budget; reusing `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` "
+        "here added 180s of no-op wait on Linux spokes whose journals never "
+        "contain that line."
     ),
 }
 
