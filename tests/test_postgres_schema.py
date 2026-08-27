@@ -499,6 +499,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
     assert [migration.migration_id for migration in MIGRATIONS] == [
         "0001_postgresql_authority_baseline",
         "0002_dream_candidate_store",
+        "0003_drop_leftover_work_package_triggers",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -506,6 +507,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0002_dream_candidate_store": (
             "597a14ee40fa1d5d28fd05daa1ae2adf53518690e5f6f3e55b9c0598107b62f9"
+        ),
+        "0003_drop_leftover_work_package_triggers": (
+            "bde53a11681f213e107703925e690b2694dc7a95d242b0df943f442be53f0a1d"
         ),
     }
     for migration in MIGRATIONS:

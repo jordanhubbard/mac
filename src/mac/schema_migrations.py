@@ -58,6 +58,64 @@ LEGACY_PRUNABLE_TABLES = frozenset(
         "work_packages",
     }
 )
+# Trigger functions that lived on surviving tables (notably `tasks`) and only
+# *queried* the prunable relations. DROP TABLE ... CASCADE does not remove
+# them. The 2026-08-27 fleet outage was every claim failing with
+# `relation "work_package_assignment_audit" does not exist`.
+LEGACY_PRUNABLE_FUNCTIONS = frozenset(
+    {
+        "trg_evidence_attempt_links_immutable",
+        "trg_evidence_attempt_package_identity",
+        "trg_evidence_attempt_verification_identity",
+        "trg_evidence_attempt_verifications_immutable",
+        "trg_execution_cohort_append_only",
+        "trg_execution_cohort_configuration_append_only",
+        "trg_work_package_assignment_immutable",
+        "trg_work_package_batch_fence_monotonic",
+        "trg_work_package_batch_initial_state",
+        "trg_work_package_batch_inputs_open",
+        "trg_work_package_batch_invariants",
+        "trg_work_package_batch_repository_matches",
+        "trg_work_package_certification_job_lifecycle",
+        "trg_work_package_certification_lifecycle",
+        "trg_work_package_controller_outcome_append_only",
+        "trg_work_package_controller_station_lifecycle",
+        "trg_work_package_current_epoch_status",
+        "trg_work_package_epochs_lifecycle",
+        "trg_work_package_expiry_node_guard",
+        "trg_work_package_expiry_repair_authority",
+        "trg_work_package_expiry_repairs_immutable",
+        "trg_work_package_expiry_task_detach_guard",
+        "trg_work_package_finalization_outcome_append_only",
+        "trg_work_package_history_immutable",
+        "trg_work_package_landing_attempt_lifecycle",
+        "trg_work_package_landing_intent_lifecycle",
+        "trg_work_package_landing_receipt_lifecycle",
+        "trg_work_package_landing_stream_invariants",
+        "trg_work_package_lineage_carry_forward_evidence",
+        "trg_work_package_node_candidate_lifecycle",
+        "trg_work_package_node_lineage_immutable",
+        "trg_work_package_plan_versions_immutable",
+        "trg_work_package_publication_finalization_lifecycle",
+        "trg_work_package_ref_retirement_append_only",
+        "trg_work_package_station_attempt_append_only",
+        "trg_work_package_task_claim_authority",
+        "trg_work_package_task_link_candidate_state",
+        "trg_work_package_task_link_executable_insert",
+        "trg_work_package_task_links_identity_immutable",
+        "trg_work_package_task_links_lifecycle",
+        "trg_work_package_wip_lifecycle",
+        "trg_work_packages_current_epoch_coherent",
+        "trg_work_packages_initial_state",
+        "trg_work_packages_state_transition",
+    }
+)
+LEGACY_PRUNABLE_TASK_TRIGGERS = frozenset(
+    {
+        "trg_work_package_expiry_task_detach_guard",
+        "trg_work_package_task_claim_authority",
+    }
+)
 FORMER_STARTUP_ENSURE_COLUMNS = frozenset(
     {
         ("agents", "installed_packages"),
@@ -177,6 +235,18 @@ MIGRATIONS: tuple[Migration, ...] = (
            AND to_regclass(current_schema() || '.dream_candidate_entries') IS NOT NULL
         """,
     ),
+    Migration(
+        "0003_drop_leftover_work_package_triggers",
+        _load_sql(MIGRATION_PATH / "0003_drop_leftover_work_package_triggers.sql"),
+        """
+        SELECT to_regprocedure(
+                   current_schema() || '.trg_work_package_task_claim_authority()'
+               ) IS NULL
+           AND to_regprocedure(
+                   current_schema() || '.trg_work_package_expiry_task_detach_guard()'
+               ) IS NULL
+        """,
+    ),
 )
 
 
@@ -250,6 +320,21 @@ def _later_migration_tables(migrations: Sequence[Migration]) -> set[str]:
     for migration in migrations[1:]:
         tables.update(_table_bodies(migration.sql))
     return tables
+
+
+def _drop_legacy_prunable_functions(cur: Any) -> None:
+    """Drop leftover work-package trigger functions on surviving tables.
+
+    ``DROP TABLE ... CASCADE`` removes triggers that live ON the dropped
+    table. It does not remove triggers on ``tasks`` whose function body
+    still queries the dropped table, and those leftovers abort every
+    ``claim_task`` with a missing-relation error.
+    """
+
+    for trigger_name in sorted(LEGACY_PRUNABLE_TASK_TRIGGERS):
+        cur.execute("DROP TRIGGER IF EXISTS %s ON tasks" % trigger_name)
+    for function_name in sorted(LEGACY_PRUNABLE_FUNCTIONS):
+        cur.execute("DROP FUNCTION IF EXISTS %s() CASCADE" % function_name)
 
 
 def _legacy_prune_plan(cur: Any, relations: Iterable[str]) -> dict[str, Any]:
@@ -664,6 +749,7 @@ def apply_migrations(
                                 )
                             legacy_prune = locked_plan
                             cur.execute("DROP TABLE %s CASCADE" % quoted)
+                            _drop_legacy_prunable_functions(cur)
                             baseline_proof = _prove_baseline(
                                 cur,
                                 migrations[0].sql,

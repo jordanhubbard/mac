@@ -48,7 +48,11 @@ EXPECTED_LEGACY_PRUNABLE_TABLES = {
 
 
 def test_legacy_prune_allowlist_is_exact_and_has_no_runtime_sql_users() -> None:
-    from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
+    from mac.schema_migrations import (
+        LEGACY_PRUNABLE_FUNCTIONS,
+        LEGACY_PRUNABLE_TABLES,
+        LEGACY_PRUNABLE_TASK_TRIGGERS,
+    )
 
     assert LEGACY_PRUNABLE_TABLES == EXPECTED_LEGACY_PRUNABLE_TABLES
     root = Path(__file__).resolve().parents[1]
@@ -58,6 +62,27 @@ def test_legacy_prune_allowlist_is_exact_and_has_no_runtime_sql_users() -> None:
     assert (
         set(re.findall(r"DROP TABLE IF EXISTS\s+(\w+)\s+CASCADE", historical_drop))
         == LEGACY_PRUNABLE_TABLES
+    )
+    assert (
+        set(re.findall(r"DROP FUNCTION IF EXISTS\s+(\w+)\s*\(\)\s+CASCADE", historical_drop))
+        == LEGACY_PRUNABLE_FUNCTIONS
+    )
+    migration_drop = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "mac"
+        / "data"
+        / "postgres"
+        / "migrations"
+        / "0003_drop_leftover_work_package_triggers.sql"
+    ).read_text(encoding="utf-8")
+    assert (
+        set(re.findall(r"DROP FUNCTION IF EXISTS\s+(\w+)\s*\(\)\s+CASCADE", migration_drop))
+        == LEGACY_PRUNABLE_FUNCTIONS
+    )
+    assert (
+        set(re.findall(r"DROP TRIGGER IF EXISTS\s+(\w+)\s+ON tasks", migration_drop))
+        == LEGACY_PRUNABLE_TASK_TRIGGERS
     )
 
     runtime_root = root / "src" / "mac"
