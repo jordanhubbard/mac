@@ -13,6 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from mac.canonical_reconcile import reconcile_evidence_problems
 from mac.fleet_learning import (
     AUTH_FAILURE_CLASSES,
     classify_repository_access_failure,
@@ -166,6 +167,9 @@ class EvidenceValidationContext:
     repo_coupled: bool = False
     # mac-wjy3: a task whose contract requires tests must record a tests list.
     require_tests: bool = False
+    # Prepared canonical HEAD the worker attached. Empty means this run did
+    # not snapshot a worktree (unit tests of bare manifests stay fail-open).
+    expected_reconcile_head_sha: str = ""
 
 
 class EvidenceValidator:
@@ -479,20 +483,30 @@ def validate_evidence_type(
     allow_empty_repo_change: bool = False,
     repo_coupled: bool = False,
     require_tests: bool = False,
+    expected_reconcile_head_sha: str = "",
 ) -> List[str]:
     typed = VerificationManifest.parse(manifest)
     validator = VALIDATORS.get(str(evidence_type or "").strip().lower())
     if validator is None:
         return ["unsupported verification.evidence_type: %s" % evidence_type]
-    return validator.validate(
+    problems = validator.validate(
         typed,
         EvidenceValidationContext(
             passed_check_count=passed_check_count,
             allow_empty_repo_change=allow_empty_repo_change,
             repo_coupled=repo_coupled,
             require_tests=require_tests,
+            expected_reconcile_head_sha=expected_reconcile_head_sha,
         ),
     )
+    problems.extend(
+        reconcile_evidence_problems(
+            typed.raw,
+            str(evidence_type or "").strip().lower(),
+            expected_reconcile_head_sha,
+        )
+    )
+    return problems
 
 
 def _manifest_list(value: Any) -> List[Any]:

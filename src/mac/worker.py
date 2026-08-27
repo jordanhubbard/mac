@@ -47,6 +47,12 @@ from mac.bus_task_context import (
     bus_context_from_task,
     task_focus as bus_task_focus,
 )
+from mac.canonical_reconcile import (
+    build_reconcile_snapshot,
+    expected_head_sha_from_task,
+    host_still_valid_reconcile,
+    reconcile_evidence_problems,
+)
 from mac.agentbus_control import (
     DEBUG_TERMINAL_INPUT_SCHEMA,
     DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
@@ -4096,6 +4102,7 @@ class MacWorker(
         # is written, because task.json is what the coding agent is handed --
         # afterwards would be too late for the agent that has to act on it.
         self._attach_bus_task_context(task, task_dir, repository_context)
+        self._attach_canonical_reconcile(task, task_dir, repository_context)
         (task_dir / "task.json").write_text(
             json.dumps({"task": task, "lease": lease}, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -4173,6 +4180,64 @@ class MacWorker(
             },
         )
         return context
+
+    def _attach_canonical_reconcile(
+        self,
+        task: JsonDict,
+        task_dir: Path,
+        repository_context: Optional[JsonDict],
+    ) -> JsonDict:
+        """Record the look at canonical HEAD that placement is not a validity decision.
+
+        Adjacent landings on the same files are facts to re-read, not proof the
+        described defect is gone. The snapshot is what the prompt renders and
+        what submit later requires the evidence to answer.
+        """
+        repo = repository_context if isinstance(repository_context, dict) else {}
+        worktree_raw = str(repo.get("repository_worktree") or "").strip()
+        worktree = Path(worktree_raw).expanduser() if worktree_raw else None
+        if worktree is None or not worktree.is_dir():
+            return {}
+        head_sha = str(repo.get("repository_base_sha") or "").strip()
+        canonical_branch = str(repo.get("repository_canonical_branch") or "").strip()
+        metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        runtime = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+        bus_context = (
+            runtime.get("bus_context") if isinstance(runtime.get("bus_context"), dict) else {}
+        )
+        snapshot = build_reconcile_snapshot(
+            worktree,
+            task,
+            head_sha=head_sha,
+            canonical_branch=canonical_branch,
+            bus_context=bus_context,
+        )
+        try:
+            (task_dir / "canonical-reconcile.json").write_text(
+                json.dumps(snapshot, indent=2, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        metadata = task.setdefault("metadata", {})
+        if isinstance(metadata, dict):
+            runtime = metadata.setdefault("runtime", {})
+            if isinstance(runtime, dict):
+                runtime["canonical_reconcile"] = snapshot
+        self._observe_log(
+            "worker.canonical_reconcile.attached",
+            subject_type="task",
+            subject_id=str(task.get("id") or ""),
+            detail={
+                "agent_id": self.agent_id,
+                "head_sha": snapshot.get("head_sha"),
+                "canonical_branch": snapshot.get("canonical_branch"),
+                "implicated_paths": list(snapshot.get("implicated_paths") or [])[:12],
+                "recent_commits": len(snapshot.get("recent_commits") or []),
+                "sibling_landings": len(snapshot.get("sibling_landings") or []),
+            },
+        )
+        return snapshot
 
     def _review_task_payload(self, task_dir: Path) -> JsonDict:
         loaded = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
@@ -4730,6 +4795,16 @@ class MacWorker(
             "tests": tests,
             "checks": checks,
         }
+        existing_reconcile = {}
+        try:
+            loaded = json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = {}
+        if isinstance(loaded, dict) and isinstance(loaded.get("canonical_reconcile"), dict):
+            existing_reconcile = loaded["canonical_reconcile"]
+        stamped = host_still_valid_reconcile(task, existing_reconcile)
+        if stamped:
+            manifest["canonical_reconcile"] = stamped
         if problems:
             manifest["problems"] = problems
         return manifest
@@ -4924,6 +4999,13 @@ class MacWorker(
             if evidence_type == "review_verdict":
                 problems.extend(_worker_review_verdict_executor_repo_problems(task_dir, manifest))
             problems.extend(_worker_required_changed_file_problems(task_payload, manifest))
+            problems.extend(
+                reconcile_evidence_problems(
+                    manifest,
+                    evidence_type,
+                    expected_head_sha_from_task(task_payload),
+                )
+            )
 
         serialized_context = _load_repository_context(task_dir)
         trusted_read_only_context = _trusted_read_only_repository_context(task_payload)

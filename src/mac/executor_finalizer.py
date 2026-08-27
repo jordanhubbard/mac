@@ -342,6 +342,11 @@ from mac.bus_task_context import (  # noqa: E402
     already_published as bus_already_published,
     bus_context_from_task,
 )
+from mac.canonical_reconcile import (  # noqa: E402
+    head_sha_matches,
+    host_still_valid_reconcile,
+    is_no_change_reconcile,
+)
 from mac.executor_hub_io import (  # noqa: E402,F401 - compatibility re-exports
     broadcast_event,
     utcnow,
@@ -804,6 +809,141 @@ def _read_executor_evidence_payload(task_workspace: Path) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _canonical_reconcile_from_evidence(evidence: Mapping[str, Any]) -> Dict[str, Any]:
+    block = evidence.get("canonical_reconcile") if isinstance(evidence, Mapping) else None
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _stamp_canonical_reconcile(manifest: Dict[str, Any], block: Mapping[str, Any]) -> None:
+    if block:
+        manifest["canonical_reconcile"] = dict(block)
+
+
+def _finalize_no_change_reconcile(
+    task_workspace: Path,
+    task: Dict[str, Any],
+    worktree_path: Path,
+    agent_evidence: Mapping[str, Any],
+    *,
+    task_id: Optional[str],
+) -> bool:
+    """Accept already_satisfied / needs_restatement without commit, push, or PR.
+
+    Returns True when evidence was written and the caller must stop.
+    """
+    if not is_no_change_reconcile(agent_evidence):
+        return False
+    reconcile_block = _canonical_reconcile_from_evidence(agent_evidence)
+    status = _git(["status", "--porcelain"], worktree_path)
+    tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(status.stdout)
+    dirty = bool(tracked_lines or untracked_paths or staged_new_paths)
+    head_sha = _git(["rev-parse", "HEAD"], worktree_path).stdout.strip()
+    base_sha = _repository_prepared_base(task)
+    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], worktree_path).stdout.strip() or "HEAD"
+    reason = str(
+        agent_evidence.get("reason")
+        or agent_evidence.get("no_change_reason")
+        or reconcile_block.get("reason")
+        or ""
+    ).strip()
+    decision = str(reconcile_block.get("decision") or "").strip().lower()
+    moved = bool(base_sha and head_sha and not head_sha_matches(head_sha, base_sha))
+    if dirty or moved:
+        problem = (
+            "no_change canonical_reconcile requires a clean worktree at the prepared HEAD"
+            if dirty
+            else "no_change canonical_reconcile requires HEAD to match the prepared base"
+        )
+        manifest = {
+            "schema": "mac.worker_evidence.v1",
+            "status": "fail",
+            "evidence_type": "no_change",
+            "reason": reason or problem,
+            "summary": problem,
+            "problems": [problem],
+            "canonical_reconcile": reconcile_block,
+            "repo": {
+                "head_sha": head_sha,
+                "base_sha": base_sha,
+                "pushed": False,
+                "remote_ref": "refs/heads/" + branch if branch != "HEAD" else "",
+                "dirty": dirty,
+                "files_changed": [],
+            },
+            "push": {
+                "returncode": 1,
+                "status": "skipped",
+                "reason": problem,
+            },
+            "checks": [
+                {
+                    "name": "canonical_head_matches_prepared_base",
+                    "returncode": 1,
+                    "status": "fail",
+                    "stderr": problem,
+                }
+            ],
+        }
+        (task_workspace / "mac-evidence.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        emit_telemetry(
+            "finalizer_completed",
+            task_id=task_id,
+            level="warning",
+            all_ok=False,
+            pushed=False,
+            head_sha=head_sha,
+        )
+        return True
+    if not reason:
+        reason = "requested change is already present at canonical HEAD"
+    stamped = dict(reconcile_block) if reconcile_block else {}
+    stamped.setdefault("decision", decision)
+    stamped.setdefault("head_sha", head_sha)
+    stamped.setdefault("reason", reason)
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "no_change",
+        "reason": reason,
+        "summary": reason,
+        "canonical_reconcile": stamped,
+        "repo": {
+            "head_sha": head_sha,
+            "base_sha": base_sha,
+            "pushed": False,
+            "remote_ref": "refs/heads/" + branch if branch != "HEAD" else "",
+            "dirty": False,
+            "files_changed": [],
+        },
+        "push": {
+            "returncode": 0,
+            "status": "skipped",
+            "reason": "canonical_reconcile %s; no publication" % (decision or "no_change"),
+        },
+        "checks": [
+            {
+                "name": "canonical_head_matches_prepared_base",
+                "returncode": 0,
+                "status": "pass",
+            }
+        ],
+    }
+    (task_workspace / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    emit_telemetry(
+        "finalizer_completed",
+        task_id=task_id,
+        level="info",
+        all_ok=True,
+        pushed=False,
+        head_sha=head_sha,
+    )
+    return True
+
+
 def _preserve_executor_state_before_refusal(
     task_workspace: Path,
     task: Dict[str, Any],
@@ -1124,6 +1264,7 @@ def _write_partial_finalizer_evidence(
     files_changed: Optional[List[str]] = None,
     bootstrap: Optional[Dict[str, Any]] = None,
     tests: Optional[Dict[str, Any]] = None,
+    canonical_reconcile: Optional[Mapping[str, Any]] = None,
 ) -> None:
     manifest: Dict[str, Any] = {
         "schema": "mac.worker_evidence.v1",
@@ -1156,6 +1297,7 @@ def _write_partial_finalizer_evidence(
     }
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
+    _stamp_canonical_reconcile(manifest, canonical_reconcile or {})
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -1236,6 +1378,16 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         return
     task_id = str(task.get("id") or "") or None
     emit_telemetry("finalizer_started", task_id=task_id)
+    agent_evidence = _read_executor_evidence_payload(task_workspace)
+    reconcile_block = _canonical_reconcile_from_evidence(agent_evidence)
+    if _finalize_no_change_reconcile(
+        task_workspace,
+        task,
+        worktree_path,
+        agent_evidence,
+        task_id=task_id,
+    ):
+        return
     progress: Dict[str, Any] = {
         "head_sha": "",
         "base_sha": _repository_prepared_base(task),
@@ -1257,6 +1409,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             files_changed=list(progress["files_changed"]),
             bootstrap=progress["bootstrap"],
             tests=progress["tests"],
+            canonical_reconcile=reconcile_block,
         )
 
     with _FinalizerPhaseContext(
@@ -1575,6 +1728,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     recovery_log = _load_harness_recovery_log(task_workspace)
     if recovery_log:
         manifest["recovery"] = recovery_log
+    stamped = host_still_valid_reconcile(task, reconcile_block)
+    _stamp_canonical_reconcile(manifest, stamped)
     with _FinalizerPhaseContext(
         task_workspace,
         task_id,

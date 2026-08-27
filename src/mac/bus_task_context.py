@@ -34,6 +34,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from mac.canonical_reconcile import sibling_landings_from_bus
+
 BUS_TASK_CONTEXT_SCHEMA = "mac.bus_task_context.v1"
 
 #: How many events reach the coding agent.
@@ -280,6 +282,10 @@ def derive_signals(entries: Sequence[Dict[str, Any]], focus: Dict[str, str]) -> 
         "already_published": already_published,
         "canonical_advanced": canonical_advanced,
         "peer_activity": peers[:10],
+        # Same-repo landings that are not THIS task. Facts to re-read HEAD.
+        # Never treated as already_published — a sibling merge is not proof
+        # the described defect is gone.
+        "sibling_landings": sibling_landings_from_bus({"events": list(entries)}, task_id=task_id),
     }
 
 
@@ -362,6 +368,26 @@ def render_bus_context_section(context: Optional[Dict[str, Any]]) -> str:
             "- PEERS ACTIVE in this repository: %s. If one of them says they own "
             "a file you were about to change, believe them." % held
         )
+    siblings = signals.get("sibling_landings")
+    if isinstance(siblings, list) and siblings:
+        lines.append(
+            "- RECENT LANDINGS in this repository (not this task). Re-read HEAD. "
+            "Do not treat these as already_published for this task:"
+        )
+        for item in siblings[:6]:
+            if not isinstance(item, dict):
+                continue
+            pr = item.get("pr_number")
+            pr_bit = (" pr #%s" % pr) if pr not in (None, "", 0) else ""
+            lines.append(
+                "    [%s]%s task=%s sha=%s"
+                % (
+                    _text(item.get("event_type")) or "git",
+                    pr_bit,
+                    _text(item.get("task_id")) or "?",
+                    (_text(item.get("sha")) or "?")[:12],
+                )
+            )
     lines.append("- Events (newest first):")
     for entry in context["events"]:
         payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}

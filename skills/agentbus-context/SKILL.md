@@ -18,7 +18,7 @@ existed; nothing read it.
 
 ## Step zero of every task
 
-Before your first edit, answer three questions:
+Before your first edit, answer four questions:
 
 1. **Has this task's work already been published?** If `git.merged` names your
    task, the change is in the trunk. Verify against the repository, say so in
@@ -31,6 +31,14 @@ Before your first edit, answer three questions:
    `task.claimed` from another agent in this repository means you are not
    alone in it. If a peer says they own a file you were about to change,
    believe them.
+4. **Is the requested change still absent in THIS tree?** Starting on HEAD is
+   placement, not a validity decision. Adjacent `git.merged` / `git.pushed`
+   events for other tasks are facts to re-read, not proof this defect is gone.
+   Record `canonical_reconcile` in evidence with `still_valid`,
+   `already_satisfied`, or `needs_restatement`. Do not treat another task's
+   merge as already published for this task. `already_satisfied` and
+   `needs_restatement` use `evidence_type=no_change` and must not open a pull
+   request.
 
 When MAC runs you as a fleet worker, the answers are already in your prompt: a
 section headed **"AgentBus context"**, gathered by the worker before your task
@@ -58,6 +66,12 @@ checked out by hand), ask the hub yourself:
 | `sandbox.policy_changed` / `sandbox.policy_published` | the guardrail moved | the worker holds new work itself; you do not need to act mid-task |
 
 ## Traps
+
+**Starting on HEAD is not a validity decision.** Workspace prep places you on
+the current canonical tip. That does not mean the described change is gone.
+A sibling landing that touched the same files is a reason to re-read HEAD,
+not a reason to skip the look or to auto-cancel. Record `canonical_reconcile`
+before you edit.
 
 **`git.merged` carries a `tree_sha`, and that is the field you match on.**
 Every merge in this fleet is a *squash*: the commit sha in the event was minted

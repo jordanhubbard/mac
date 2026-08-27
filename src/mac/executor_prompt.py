@@ -71,6 +71,7 @@ from mac.bus_task_context import (
     bus_context_from_task,
     render_bus_context_section,
 )
+from mac.canonical_reconcile import render_reconcile_section
 from mac.models import (
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
@@ -860,7 +861,7 @@ def build_task_prompt(
     evidence_contract = (
         "This is a read-only repository report. Evidence must use evidence_type=operator_result; repository mutation, commit, push, and host finalization are forbidden."
         if metadata_declares_read_only_report_repository(metadata)
-        else "Evidence contract: repository tasks use evidence_type=repo_change; operator_result is reserved for work without a repository contract. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
+        else "Evidence contract: repository tasks use evidence_type=repo_change when the requested change is still absent in this tree; already_satisfied and needs_restatement use evidence_type=no_change and must not open a pull request. operator_result is reserved for work without a repository contract. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
     )
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
@@ -891,6 +892,9 @@ def build_task_prompt(
     bus_section = render_bus_context_section(bus_context_from_task(task))
     if bus_section:
         parts.append(bus_section)
+    reconcile_section = render_reconcile_section(task)
+    if reconcile_section:
+        parts.append(reconcile_section)
     integration_section = _cooperative_integration_section(task)
     if integration_section:
         parts.append(integration_section)
