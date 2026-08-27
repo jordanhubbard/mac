@@ -11732,7 +11732,7 @@ wait_for_gateway_ready_log() {
   # successor a short window to print [gateway] ready so recovered startup
   # Errors are classified as info. Do not reuse the channel-probe budget:
   # verify() already proved reachability, and Linux journals often never
-  # contain this line (observed 180s no-op waits on natasha/bullwinkle).
+  # contain this line (observed 180s no-op waits on Linux journald hosts).
   local log_file="$1"
   local timeout="${MAC_OPENCLAW_READY_LOG_TIMEOUT:-20}"
   local waited=0

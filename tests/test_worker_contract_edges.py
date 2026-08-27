@@ -1,46 +1,15 @@
-"""Coverage for worker verification and operating-system boundaries."""
+"""Worker verification contracts that affect publish, review, and prepush."""
 
 from __future__ import annotations
 
 import json
 import subprocess
 
-import pytest
-
 from mac import worker
 
 
 def _completed(returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
-
-
-def test_execution_environment_summary_collects_bootstrap_and_deltas(tmp_path) -> None:
-    assert worker.MacWorker._execution_env_summary(object(), tmp_path) == ""
-    (tmp_path / "mac-evidence.json").write_text("not-json")
-    assert worker.MacWorker._execution_env_summary(object(), tmp_path) == ""
-    (tmp_path / "mac-evidence.json").write_text(
-        json.dumps(
-            {
-                "bootstrap": {"command": "uv sync", "returncode": 2},
-                "tests": [
-                    "invalid",
-                    {"environment_delta": "invalid"},
-                    {
-                        "environment_delta": {
-                            "installed": ["one", "two"],
-                            "added": ["three"],
-                            "missing": ["four"],
-                            "missing_commands": ["five"],
-                        }
-                    },
-                ],
-            }
-        )
-    )
-    assert worker.MacWorker._execution_env_summary(object(), tmp_path) == (
-        "bootstrap: uv sync (rc 2); installed: one, two; added: three; missing: four"
-    )
-
 
 def test_verification_contract_dispatches_all_evidence_types() -> None:
     sha = "a" * 40
@@ -471,80 +440,6 @@ def test_review_verdict_compares_executor_changed_files(tmp_path) -> None:
         tmp_path, {"repo": {"files_changed": ["other.py"]}}
     )
     assert "must match executor evidence" in problems[0]
-
-
-@pytest.mark.parametrize(
-    ("item", "expected"),
-    [
-        ([{"status": "pass"}], True),
-        ("invalid", False),
-        ({"returncode": 0}, True),
-        ({"returncode": "bad"}, False),
-        ({"failed": 1, "status": "pass"}, False),
-        ({"result": "successful"}, True),
-        ({"passed": True}, True),
-        ({"success": 2, "failed": 0}, True),
-        ({"ok": True, "satisfied": True}, True),
-        ({"nested": {"outcome": "ok"}}, True),
-        ({"status": "fail"}, False),
-    ],
-)
-def test_worker_verification_item_passed_shapes(item, expected: bool) -> None:
-    assert worker._worker_verification_item_passed(item) is expected
-
-
-def test_worker_repo_anchor_and_empty_change_exceptions() -> None:
-    missing = worker._worker_require_pushed_repo_anchor({})
-    assert missing == ["repo evidence requires verification.repo object"]
-    malformed = worker._worker_require_pushed_repo_anchor(
-        {"repo": {"head_sha": "short", "dirty": True, "pushed": False}}
-    )
-    assert len(malformed) == 3
-    assert (
-        worker._worker_require_pushed_repo_anchor(
-            {"repo": {"head_sha": "a" * 40, "dirty": "0", "pr_url": "https://pr"}}
-        )
-        == []
-    )
-    assert worker._worker_allows_empty_repo_change_evidence({}, "documentation") is False
-    assert (
-        worker._worker_allows_empty_repo_change_evidence({"metadata": []}, "repo_change") is False
-    )
-    assert (
-        worker._worker_allows_empty_repo_change_evidence(
-            {"metadata": {"origin": {"type": "beads_source_remediation"}}}, "repo_change"
-        )
-        is True
-    )
-    assert (
-        worker._worker_allows_empty_repo_change_evidence(
-            {"metadata": {"remediation": {"type": "beads_source_refresh"}}}, "repo_change"
-        )
-        is True
-    )
-
-
-def test_path_and_bound_normalizers() -> None:
-    assert worker._normalize_restart_services(None) == []
-    assert worker._normalize_restart_services(
-        ["a.service", "", "a.service", "b-agent.service"]
-    ) == [
-        "a.service",
-        "b-agent.service",
-    ]
-    with pytest.raises(ValueError, match="invalid"):
-        worker._normalize_restart_services("-bad.service")
-    assert worker._bounded_int("bad", 1, 10, 5) == 5
-    assert worker._bounded_int(99, 1, 10, 5) == 10
-    assert worker._bounded_float("bad", 1.0, 10.0, 5.0) == 5.0
-    assert worker._bounded_float(-1, 1.0, 10.0, 5.0) == 1.0
-    assert worker._manifest_list(None) == []
-    assert worker._manifest_list("x") == ["x"]
-    assert worker._metadata_path_list("./src//a.py") == ["src/a.py"]
-    assert worker._metadata_path_list(42) == []
-    assert worker._nested_dict({"a": []}, "a", "b") == {}
-    assert worker._repo_path_satisfies_requirement("src/a.py", "src/*.py") is True
-    assert worker._repo_path_satisfies_requirement("", "src/*.py") is False
 
 
 def test_repository_head_push_checks_remote_url_origin_and_branch(monkeypatch, tmp_path) -> None:

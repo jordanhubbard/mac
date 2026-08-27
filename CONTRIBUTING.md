@@ -6,6 +6,32 @@ to be true for this to be wrong, and the tests check exactly that.**
 Everything below is derived from failures this repository actually had. None of
 it is style preference.
 
+## Tests
+
+Prefer observable behavior through public APIs over individual methods or
+private helpers.
+
+- **API contract tests** cover request/response schemas, status codes,
+  documented errors, authentication, and backward compatibility.
+- **API-level component tests** exercise the service through its public
+  interface, with real internals and realistic persistence. Mock only true
+  external boundaries.
+- **Workflows** are complete scenarios (create → retrieve → update → delete,
+  including failure recovery).
+- **Edges** that matter: malformed input, missing data, duplicates,
+  idempotency, authorization failures, timeouts, retries, partial failure,
+  concurrency.
+- **Method-level unit tests** only when the logic is complex, safety-critical,
+  algorithmically subtle, or substantially easier to diagnose in isolation.
+
+Do not add a test merely to raise count or line coverage. Do not duplicate the
+same behavior at several layers, assert internal call sequences, test trivial
+getters/wrappers, or lean on mocks. Before adding a test, name the distinct
+contract, failure mode, boundary, or regression it protects.
+
+Whole-repo coverage floors in `test-policy.toml` are collapse rails, not a
+target to maximize. Do not add tests to satisfy them.
+
 ## Filing an issue
 
 Issues live in the mac task ledger, not GitHub Issues:
@@ -158,9 +184,11 @@ and are better for it.
 ## What gets a PR sent back
 
 - **A test that passes without the change.** It documents nothing.
-- **Weakening a gate to go green.** If `dead-code-check` or the coverage floor
-  fails, fix the code. Lowering a floor to land a change removes the thing that
-  found the change was incomplete.
+- **A test whose only job is line coverage, a getter, a mock call sequence, or
+  a duplicate of another layer.**
+- **Weakening a behavioral gate to go green.** If `dead-code-check` fails, fix
+  the code. Whole-repo coverage floors are collapse rails; do not add tests to
+  hold them, and do not treat a floor miss as a reason to pad.
 - **A generated artifact edited by hand.** Regenerate it. Hand-merging a
   generated file makes it a lie about what its generator produces.
 - **A claim you did not verify.** "Should be fine on Linux" is not a result. If

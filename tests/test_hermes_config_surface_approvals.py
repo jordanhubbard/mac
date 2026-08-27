@@ -10,6 +10,7 @@ operator opts out per-host with MAC_HERMES_ALLOW_APPROVAL_PROMPTS=1.
 
 from __future__ import annotations
 
+import pytest
 import yaml
 
 import mac.hermes_config_surface as hcs
@@ -50,6 +51,15 @@ def test_non_dict_approvals_replaced():
     cfg = {"approvals": "bogus"}
     hcs._ensure_never_prompt_defaults(cfg)
     assert cfg["approvals"]["mode"] == "off"
+
+
+def test_surface_patch_rejects_invalid_and_non_writable_env():
+    from mac.models import ValidationError
+
+    with pytest.raises(ValidationError, match="invalid environment"):
+        hcs.normalize_surface_patch({"env": {"bad-name": "value"}})
+    with pytest.raises(ValidationError, match="not dashboard-writable"):
+        hcs.normalize_surface_patch({"env": {"PATH": "value"}})
 
 
 def test_apply_payload_writes_never_prompt(tmp_path):
