@@ -43,6 +43,7 @@ to their retained sources.
 - [Autonomous Project Routing and Review/Fix Loop Implementation Plan](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) — `superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`
 - [Autonomous Project Routing and Review/Fix Loop Design](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) — `superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`
 - [K8s bootstrap fleet registration — design](../superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md) — `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md`
+- [Native Darwin OpenClaw and Slack home-channel routing — design](../superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md) — `superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
