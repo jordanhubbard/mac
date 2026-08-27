@@ -6939,6 +6939,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Openclaw Runtime setting: openclaw public identity.</td>
 </tr>
 <tr>
+<td><code>MAC_OPENCLAW_READY_LOG_TIMEOUT</code></td>
+<td>int</td>
+<td>20</td>
+<td>openclaw-runtime</td>
+<td>Seconds to wait for <code>[gateway] ready</code> in the host log after <code>verify</code> already proved the gateway reachable. Default 20. This is not the Slack <code>--probe</code> budget; reusing <code>MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT</code> here added 180s of no-op wait on Linux spokes whose journals never contain that line.</td>
+</tr>
+<tr>
 <td><code>MAC_OPENCLAW_REPRESENTATION_MODE</code></td>
 <td>str</td>
 <td>consumer-defined</td>
