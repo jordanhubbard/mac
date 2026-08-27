@@ -608,6 +608,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LEASE_ID` | str | consumer-defined | core | Core setting: lease id. |
 | `MAC_LEDGER_BACKUP_DIR` | str | consumer-defined | core | Core setting: ledger backup dir. |
 | `MAC_LEDGER_BACKUP_ENABLED` | bool | consumer-defined | core | Core setting: ledger backup enabled. |
+| `MAC_LEGACY_HERMES_HOME` | str | consumer-defined | core | Core setting: legacy hermes home. |
 | `MAC_LESSON_CURATION_ENABLED` | bool | consumer-defined | core | Core setting: lesson curation enabled. |
 | `MAC_LESSON_CURATION_MODEL` | str | consumer-defined | core | Core setting: lesson curation model. |
 | `MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: linux manager command timeout seconds. |

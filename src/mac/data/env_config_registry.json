@@ -2178,6 +2178,7 @@
     "name": "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -2200,6 +2201,7 @@
     "name": "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -2211,6 +2213,7 @@
     "name": "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -2222,6 +2225,7 @@
     "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -2278,6 +2282,7 @@
     "name": "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -7204,6 +7209,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: legacy hermes home.",
+    "family": "core",
+    "name": "MAC_LEGACY_HERMES_HOME",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: lesson curation enabled.",
     "family": "core",
     "name": "MAC_LESSON_CURATION_ENABLED",
@@ -8522,6 +8538,7 @@
     "name": "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
@@ -8677,6 +8694,7 @@
     "name": "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
