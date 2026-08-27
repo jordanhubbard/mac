@@ -1073,6 +1073,17 @@ def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
     assert "add_remote_env MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS" in deploy
     assert 'if [ -n "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-}" ]; then' in deploy
     assert "add_remote_env MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT" in deploy
+    for name in (
+        "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS",
+        "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS",
+        "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS",
+        "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",
+        "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
+        "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
+        "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
+    ):
+        assert 'if [ -n "${!_timeout_var:-}" ]; then' in deploy
+        assert name in deploy
 
 
 def _arm_phase2_rollback_source():
