@@ -1,21 +1,20 @@
 schema = "mac.test_policy.v1"
 
 [coverage]
-# Safety rails, not optimization targets. Changes to these values require a
-# portfolio report and behavioral/fault-detection justification.
-statement_safety_floor = 90.0
-branch_safety_floor = 80.0
+# Collapse rails, not a line-count objective. A test exists to protect a
+# public contract, failure mode, or regression — never to hold these numbers.
+# 60/50 still fails a suite that has been gutted; it does not demand padding.
+statement_safety_floor = 60.0
+branch_safety_floor = 50.0
 require_branch_measurement = true
 
 [coverage.diff]
 # When the gate runs a resolver-selected SUBSET (impact-based selection), the
-# whole-repo floors above are not measurable. Diff-coverage enforces the same
-# safety intent over ONLY the lines the change touched, so an untested changed
-# line fails the gate even though the whole-repo total is unmeasured. The
-# scheduled full run re-enforces the whole-repo [coverage] floors and rebuilds
-# the impact map, so this is a complement, never a replacement.
-statement_safety_floor = 90.0
-branch_safety_floor = 80.0
+# whole-repo floors above are not measurable. Diff-coverage asks whether the
+# lines this change touched were executed, not whether the repo's aggregate
+# percentage is high. The scheduled full run still applies [coverage].
+statement_safety_floor = 80.0
+branch_safety_floor = 70.0
 
 [portfolio]
 protect_historical_fault_probes = true

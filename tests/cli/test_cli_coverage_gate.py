@@ -359,29 +359,3 @@ def test_known_untested_allowlist_is_subset_of_discovered():
         lines.append("")
         lines.append("Remove these stale entries from KNOWN_UNTESTED.")
         raise AssertionError("\n".join(lines))
-
-
-def test_cli_coverage_ratio():
-    """Report the current coverage ratio (informational – always passes).
-
-    The ratio = (tested subcommands / total subcommands) * 100.
-    Run ``make cli-coverage`` for a quick human-readable report.
-    """
-    cli_src = _cli_py_path().read_text(encoding="utf-8")
-    all_subcommands = discover_cli_subcommands(cli_src)
-    tested = discover_tested_subcommands(_cli_test_dir())
-
-    # Exclude self from tested (we don't call _run in this file)
-    actually_tested = tested & all_subcommands
-    total = len(all_subcommands)
-    covered_count = len(actually_tested)
-    ratio = (covered_count / total * 100) if total else 0.0
-
-    print(
-        f"\nCLI coverage: {covered_count}/{total} subcommands tested "
-        f"({ratio:.1f}%); "
-        f"{len(KNOWN_UNTESTED)} in allowlist, "
-        f"{total - covered_count - len(KNOWN_UNTESTED & all_subcommands)} gap."
-    )
-    # This test always passes; it is purely informational.
-    assert total > 0, "No subcommands found — cli.py may have changed structure"

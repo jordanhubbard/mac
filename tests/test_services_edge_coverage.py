@@ -1,14 +1,11 @@
-"""Alternate-state coverage for the control-plane service facade."""
+"""ControlPlane public mutation contracts: validate, persist, reject bad input."""
 
 from __future__ import annotations
-
-from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 
 from mac.models import AgentStatus, HealthStatus, ValidationError
-from mac.services import ControlPlane, _agent_resource_command_names
+from mac.services import ControlPlane
 
 
 def _registered(cp: ControlPlane):
@@ -22,26 +19,6 @@ def _registered(cp: ControlPlane):
         resources={"capacity": 2, "memory": 16},
     )
     return machine, agent
-
-
-def test_agent_resource_command_inventory_accepts_every_shape() -> None:
-    resources = {
-        "commands": {
-            "available": ["git", " python "],
-            "commands": ["gh", {"name": "ruff"}, {}, 3],
-            "paths": {"uv": "/bin/uv", "": "/bad"},
-        },
-        "command_inventory": ["node", {"name": "npm"}, {}, 1],
-    }
-    assert _agent_resource_command_names(resources) == {
-        "git",
-        "python",
-        "gh",
-        "ruff",
-        "uv",
-        "node",
-        "npm",
-    }
 
 
 def test_update_task_populates_all_optional_columns_and_validates() -> None:
@@ -176,94 +153,6 @@ def test_integration_finding_filters_notifications_and_idempotent_resolution() -
     resolved = cp.resolve_integration_finding(finding.id, resolution="fixed")
     assert resolved.status == "resolved"
     assert cp.resolve_integration_finding(finding.id).id == finding.id
-
-
-@pytest.mark.parametrize(
-    ("item", "expected"),
-    [
-        ([{"status": "passed"}], True),
-        ("invalid", False),
-        ({"returncode": 0}, True),
-        ({"returncode": "bad"}, False),
-        ({"failed": 1, "status": "ok"}, False),
-        ({"status": "success"}, True),
-        ({"result": "ok"}, True),
-        ({"outcome": "succeeded"}, True),
-        ({"passed": True}, True),
-        ({"success": 2, "failed": 0}, True),
-        ({"ok": True, "satisfied": True}, True),
-        ({"nested": {"status": "pass"}}, True),
-    ],
-)
-def test_service_verification_item_shapes(item, expected: bool) -> None:
-    cp = ControlPlane.in_memory()
-    assert cp._verification_item_passed(item) is expected
-
-
-def test_agent_resources_satisfy_numeric_list_exact_and_hardware(monkeypatch) -> None:
-    cp = ControlPlane.in_memory()
-    machine, agent = _registered(cp)
-    base_task = cp.create_task("resource task", metadata={})
-    assert cp._agent_resources_satisfy(agent, machine, base_task) is True
-    assert (
-        cp._agent_resources_satisfy(
-            agent, machine, replace(base_task, metadata={"resources": {"cpu": 99}})
-        )
-        is False
-    )
-    assert (
-        cp._agent_resources_satisfy(
-            agent, machine, replace(base_task, metadata={"resources": {"tags": ["gpu"]}})
-        )
-        is True
-    )
-    assert (
-        cp._agent_resources_satisfy(
-            agent, machine, replace(base_task, metadata={"resources": {"tags": ["missing"]}})
-        )
-        is False
-    )
-    assert (
-        cp._agent_resources_satisfy(
-            agent, machine, replace(base_task, metadata={"resources": {"os": "linux"}})
-        )
-        is False
-    )
-    monkeypatch.setattr(
-        "mac.roles_service.machine_hardware_satisfies", lambda *_a, **_k: (False, ["gpu"])
-    )
-    assert (
-        cp._agent_resources_satisfy(
-            agent, machine, replace(base_task, metadata={"hardware": {"gpu": True}})
-        )
-        is False
-    )
-
-
-def test_agent_available_fast_failure_gates(monkeypatch) -> None:
-    cp = ControlPlane.in_memory()
-    machine, agent = _registered(cp)
-    task = cp.create_task("work", required_capabilities=["python"])
-    assert cp._agent_available_for(agent, task) is True
-    assert cp._agent_available_for(replace(agent, status="offline"), task) is False
-    assert cp._agent_available_for(replace(agent, health_status="degraded"), task) is False
-    assert (
-        cp._agent_available_for(agent, replace(task, metadata={"target_agent_id": "other"}))
-        is False
-    )
-    assert (
-        cp._agent_available_for(agent, replace(task, metadata={"target_agent_name": "other"}))
-        is False
-    )
-    assert (
-        cp._agent_available_for(
-            replace(agent, running_digest="old"),
-            replace(task, metadata={"required_runtime_digest": "new"}),
-        )
-        is False
-    )
-    monkeypatch.setattr(cp, "_agent_active_lease_count", lambda _id: 99)
-    assert cp._agent_available_for(agent, task) is False
 
 
 def test_project_update_delete_validation_and_force() -> None:

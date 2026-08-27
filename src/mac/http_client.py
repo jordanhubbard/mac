@@ -141,9 +141,9 @@ class HubClient:
             with urllib.request.urlopen(request, timeout=30) as response:
                 payload = response.read().decode("utf-8")
                 # getattr, not response.headers: a transport is anything with
-                # .read(), and tests/test_infrastructure_coverage.py passes a
-                # fake that has no headers at all. A version check must not be
-                # able to break a request -- see _note_hub_version.
+                # .read(), and some urllib wrappers have no headers. A version
+                # check must not be able to break a request -- see
+                # _note_hub_version.
                 headers = getattr(response, "headers", None)
                 if headers is not None:
                     _note_hub_version(headers.get("X-MAC-Version"))
