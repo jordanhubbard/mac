@@ -6130,12 +6130,16 @@ class ControlPlane:
         agents: Optional[Iterable[Agent]] = None,
         candidate_limit: int = 60,
         record_observation: bool = False,
+        projects: Optional[Mapping[str, Any]] = None,
+        sync_states: Optional[Mapping[str, Tuple[Optional[str], bool]]] = None,
     ) -> JsonDict:
         return self.dispatch.explain_task_dispatch(
             task_id,
             agents=agents,
             candidate_limit=candidate_limit,
             record_observation=record_observation,
+            projects=projects,
+            sync_states=sync_states,
         )
 
     # -- task groups and bulk operations ---------------------------------
@@ -6653,8 +6657,25 @@ class ControlPlane:
         agents = self.list_agents()
         idle_worker_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
 
+        # Build the two fleet-wide inputs every stranded-task explanation needs
+        # exactly ONCE and reuse them.  ``explain_task_dispatch`` otherwise
+        # rebuilds the project map and, for every agent, falls back to the
+        # single-agent sync-barrier scan of the whole non-terminal task set --
+        # per explained task.  On the live ledger the report explains up to
+        # fifty stranded tasks, so that O(stranded x agents x tasks) work is
+        # what made ``mac task throughput`` exceed the CLI's 30s deadline.  The
+        # bulk ``_sync_barrier_states`` map is the same one the allocator round
+        # already computes once per round for exactly this reason.
+        projects = {record.name: record for record in self.list_project_records()}
+        sync_states = self.dispatch._sync_barrier_states()
+
         def explain(task_id: str) -> JsonDict:
-            return self.explain_task_dispatch(task_id, agents=agents)
+            return self.explain_task_dispatch(
+                task_id,
+                agents=agents,
+                projects=projects,
+                sync_states=sync_states,
+            )
 
         return self.task_flow.report(
             project=project,
