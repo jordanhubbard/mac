@@ -2022,7 +2022,7 @@ It is no longer the macOS posture, because macOS no longer has one to waive.</p>
 <li>macOS nodes run tasks unconfined by MAC. Anything that must be confined must
   run on a Linux node.</li>
 <li>The host install must now supply, natively, everything the runtime image
-  supplied. It does not yet: Node/npm/pnpm, the reviewed coding-agent CLIs
+  supplied. It does not yet: OpenClaw, the <code>openclaw</code> CLI, Node/npm/pnpm, the reviewed coding-agent CLIs
   (<code>claude</code>, <code>codex</code>, <code>cursor-agent</code>), the <code>[dev]</code> extra needed to run contract
   tests in place, cmake/ninja/llvm-objcopy/ld.lld/qemu-system-riscv64, java and
   lein have no darwin install path, and <code>deploy/verify-bash-contract.sh</code>'s
@@ -2030,6 +2030,18 @@ It is no longer the macOS posture, because macOS no longer has one to waive.</p>
   3.2). Several host-side code paths also hardcode <code>/opt/mac-venv/bin</code> and omit
   <code>/opt/homebrew/bin</code>. These are tracked separately; until they are closed, a
   macOS node is a <em>steward</em> host, not a general execution host.</li>
+<li>The OpenClaw chat gateway is the sharpest open case, and it is currently
+  contradictory rather than merely incomplete. <code>fleet-node-install.sh</code> carries a
+  live darwin route — <code>install_darwin_openclaw_service()</code> installs a launchd job
+  and registers a withdraw hook for rollback — but the installer it calls,
+  <code>deploy/openclaw/install-openclaw-gateway.sh</code>, resolves only a Linux image.
+  So a macOS hub ends up with no <code>openclaw</code> on the host, which is why the
+  gateway appears to be missing rather than declined. Closing this means
+  choosing one of two things and deleting the other: give the installer a real
+  darwin host route, or retire <code>install_darwin_openclaw_service()</code> and serve
+  macOS conversations from a Linux gateway node. Do not "fix" it by making the
+  installer refuse darwin while that launchd route still exists — that turns a
+  silent gap into a failed deploy, and takes the rollback path down with it.</li>
 <li>Windows is out of scope here. The ledger task that motivated this work names
   it, but the operator's decision as stated concerns macOS, and WSL2 already
   presents as Linux. Nothing in this ADR describes Windows.</li>
