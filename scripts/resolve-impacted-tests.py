@@ -127,6 +127,19 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ),
     "deploy/fleet-node-rollback-supervisor.py": ("tests/test_fleet_node_rollback_supervisor.py",),
     "deploy/fleet-node-substrate-adopt.py": ("tests/test_fleet_node_substrate_adopt.py",),
+    # Shell + the out-of-process Python validator it calls. Neither lives under
+    # src/, so the coverage map cannot attribute them; without this contract a
+    # probe-timing change forced the whole-repo 90% floor (47 minutes) and
+    # failed at 89.9969% displayed as 90.00%.
+    "deploy/openclaw/install-openclaw-gateway.sh": (
+        "tests/test_dream_cycle_runner.py",
+        "tests/test_fleet_node_generated_rollback.py",
+        "tests/test_fleet_node_phase1_quiesce.py",
+        "tests/test_openclaw_fleet_upgrade_control.py",
+        "tests/test_openclaw_gateway_cold_start.py",
+        "tests/test_openclaw_gateway_deploy.py",
+        "tests/test_script_job_home.py",
+    ),
     "docs/env-config-reference.md": ("tests/test_env_config.py",),
     "scripts/generate-env-config-registry.py": ("tests/test_env_config.py",),
     # The documentation site's nav. It is a .yml, so it was "opaque" and forced
@@ -138,6 +151,10 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "scripts/run-contract-tests.sh": ("tests/test_contract_test_runner.py",),
     "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/test-checkpoint.py": ("tests/test_test_checkpoint.py",),
+    "scripts/validate-openclaw-channel-status.py": (
+        "tests/test_openclaw_channel_status.py",
+        "tests/test_openclaw_gateway_deploy.py",
+    ),
     "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),
     # Source entry points the coverage map cannot attribute because they run
     # only out-of-process — a git-invoked askpass helper, or an installed
