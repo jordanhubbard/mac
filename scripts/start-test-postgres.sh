@@ -28,6 +28,22 @@ LOCKS="${MAC_TEST_PG_MAX_LOCKS:-1024}"
 # "couldn't get a connection after 30s" rather than a test failure.
 CONNS="${MAC_TEST_PG_MAX_CONNECTIONS:-400}"
 
+# Launchd and non-interactive SSH on Darwin do not put Homebrew on PATH.
+# The hub-mediated upgrade gate runs this helper from that environment and
+# otherwise reports "no local Postgres" while postgresql@17 is already
+# listening on 127.0.0.1:5432.
+for brew_bin in \
+  /opt/homebrew/opt/postgresql@17/bin \
+  /opt/homebrew/opt/postgresql@16/bin \
+  /usr/local/opt/postgresql@17/bin \
+  /opt/homebrew/bin \
+  /usr/local/bin; do
+  if [ -x "$brew_bin/pg_isready" ] || [ -x "$brew_bin/pg_ctl" ]; then
+    PATH="$brew_bin:${PATH:-}"
+  fi
+done
+export PATH
+
 emit() { echo "export MAC_TEST_PG_URL=$1"; }
 
 # 1. Already configured -- respect it.
