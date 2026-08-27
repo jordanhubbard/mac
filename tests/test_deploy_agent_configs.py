@@ -2857,10 +2857,51 @@ def test_gateway_log_classifier_accepts_recovered_openshell_ssh_exit(tmp_path):
     )
 
 
+def test_gateway_log_classifier_accepts_recovered_openshell_ssh_tar_create(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                "Config health-state write failed: database disk image is malformed",
+                "[openclaw] Could not start the CLI.",
+                "[openclaw] Reason: Failed to open the plugin state database. | database disk image is malformed | ERR_SQLITE_ERROR",
+                "Error:   × ssh exited with status exit status: 1",
+                "tar: ./state/openclaw.sqlite: file changed as we read it",
+                "tar: ./state: file changed as we read it",
+                "Error:   × ssh tar create exited with status exit status: 1",
+                "openclaw-gateway-stop: state checkpoint download failed; preserving last-good host state",
+                "openclaw-gateway: stop/checkpoint failed before start; continuing to cold start",
+                "2026-08-27T05:55:41.748+00:00 [gateway] ready",
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert summary["actionable_count"] == 0
+    recovered = next(
+        item
+        for item in summary["classes"]
+        if item["name"] == "openclaw_openshell_ssh_exited_recovered"
+    )
+    assert recovered["count"] == 2
+
+
 def test_gateway_log_classifier_rejects_openshell_ssh_exit_without_ready(tmp_path):
     result, summary = run_gateway_log_classifier(
         tmp_path,
         "Error:   × ssh exited with status exit status: 1\n",
+    )
+
+    assert result.returncode == 1
+    assert summary["actionable_count"] == 1
+    assert {item["name"] for item in summary["classes"]} == {"traceback"}
+
+
+def test_gateway_log_classifier_rejects_openshell_ssh_tar_create_without_ready(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "Error:   × ssh tar create exited with status exit status: 1\n",
     )
 
     assert result.returncode == 1

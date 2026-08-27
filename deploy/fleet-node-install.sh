@@ -13877,7 +13877,10 @@ patterns = {
     },
     "openclaw_openshell_ssh_exited_recovered": {
         "severity": "info",
-        "regex": r"Error:[ \t]+×[ \t]+ssh exited with status exit status: \d+",
+        "regex": (
+            r"Error:[ \t]+×[ \t]+ssh(?: tar create)? "
+            r"exited with status exit status: \d+"
+        ),
         "requires_then_regex": r"\[gateway\] ready\b",
     },
     "openclaw_cron_device_approval_deferred": {
