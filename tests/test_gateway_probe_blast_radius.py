@@ -90,6 +90,27 @@ def test_the_agent_service_is_installed_after_a_degraded_gateway(script: str):
     assert "gateway_probe_is_fatal" in between
 
 
+def test_darwin_degraded_gateway_still_records_pre_finalize(script: str):
+    """Live 2026-08-27: Darwin returned 0 after a Slack probe timeout without
+    calling finalize_openclaw_gateway. The post manifest then died with
+    "daemon quiescence receipt lacks phase pre_finalize" and held the fleet.
+    Linux already continues into finalize after a non-fatal verify failure."""
+    fn = script.split("install_darwin_openclaw_service() {", 1)[1].split(
+        "\n}\ninstall_darwin_agent_service", 1
+    )[0]
+    verify_fail = fn.find("stock OpenClaw verification failed under launchd")
+    assert verify_fail > 0
+    after_fail = fn[verify_fail:]
+    note = after_fail.find(
+        'note_gateway_degraded "stock OpenClaw verification failed under launchd"'
+    )
+    assert note > 0
+    until_return = after_fail[note:]
+    ret = until_return.find("return 0")
+    assert ret > 0
+    assert "finalize_openclaw_gateway" in until_return[:ret]
+
+
 def test_the_script_still_parses():
     """A shell edit that does not parse fails every deploy on every host."""
     import subprocess

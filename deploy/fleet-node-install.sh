@@ -13662,10 +13662,25 @@ EOF
       # node is in a consistent state with a degraded chat gateway. Aborting
       # here is what took the fleet down: one node failed this probe twice and
       # both times every other node was held for it.
-      if ! gateway_probe_is_fatal; then
-        note_gateway_degraded "stock OpenClaw verification failed under launchd"
-        return 0
+      if gateway_probe_is_fatal; then
+        return 1
       fi
+      note_gateway_degraded "stock OpenClaw verification failed under launchd"
+      # Linux still records pre_finalize after a non-fatal probe failure.
+      # Returning here skipped that proof on Darwin and failed the post
+      # manifest with "daemon quiescence receipt lacks phase pre_finalize".
+      stop_gui_launchd_job_if_present "$uid" "$HERMES_LAUNCHD_LABEL"
+      darwin_disable_job "gui/$uid/$HERMES_LAUNCHD_LABEL" "$HERMES_LAUNCHD_LABEL" user
+      stop_gui_launchd_job_if_present "$uid" "$NEMOCLAW_LAUNCHD_LABEL"
+      darwin_disable_job "gui/$uid/$NEMOCLAW_LAUNCHD_LABEL" "$NEMOCLAW_LAUNCHD_LABEL" user
+      if ! finalize_openclaw_gateway; then
+        log "ERROR: OpenClaw exclusivity proof failed under launchd"
+        if gateway_probe_is_fatal; then
+          return 1
+        fi
+        note_gateway_degraded "OpenClaw exclusivity proof failed under launchd"
+      fi
+      return 0
     else
       # Rollback path: the successor was withdrawn, so the gateway state is NOT
       # consistent and continuing would install an agent over a half-undone
