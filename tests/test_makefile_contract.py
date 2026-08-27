@@ -101,3 +101,40 @@ def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:
     namespace = runpy.run_path(str(ROOT / "scripts" / "bootstrap-project.py"))
 
     assert namespace["VENV"] == ROOT / "custom-venv"
+
+
+def test_sanity_test_depends_on_impact_map_regeneration() -> None:
+    """Consumers of the committed map must list the producer as a prerequisite.
+
+    The analog is test-schema-migrations: postgres-schema. Without this, a
+    stale interned node id is discovered by an always_run guard after the
+    selector has already handed pytest a usage-error id, or not at all
+    until the nightly portfolio job happens to rebuild the artifact.
+    """
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "sanity-test: impact-map" in makefile
+    assert "test-schema-migrations: postgres-schema" in makefile
+    assert "MAC_TEST_REBUILD_MAP=1" in makefile
+    assert "IMPACT_MAP_ARGS ?= --check" in makefile
+
+    sanity = subprocess.run(
+        ["make", "-n", "sanity-test"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert sanity.returncode == 0, sanity.stderr
+    assert "build-test-impact-map.py" in sanity.stdout
+    assert "run-sanity-tests.sh" in sanity.stdout
+
+    portfolio = subprocess.run(
+        ["make", "-n", "test-portfolio"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert portfolio.returncode == 0, portfolio.stderr
+    assert "MAC_TEST_REBUILD_MAP=1" in portfolio.stdout

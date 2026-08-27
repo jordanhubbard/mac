@@ -71,9 +71,16 @@ jobs:
           restore-keys: |
             mac-test-checkpoint-sanity-${{ github.head_ref }}-
           save-always: true
+      - name: Check the committed impact map is collectable
+        # sanity-test depends on impact-map the same way test-schema-migrations
+        # depends on postgres-schema. A stale interned node id is a pytest
+        # usage error (exit 4); fail here with the regeneration command rather
+        # than inside a later selected test.
+        run: make impact-map
       - name: Run affected, public-contract, and process-E2E sanity scope
         env:
           MAC_TEST_CHECKPOINT: "1"
+          MAC_IMPACT_MAP_CHECKED: "1"
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
 
   mainline:
@@ -308,7 +315,10 @@ jobs:
         run: uv run --extra dev --python ${{ matrix.python-version }} python scripts/fault-replay.py
 
   portfolio:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -350,13 +360,14 @@ jobs:
           name: test-portfolio
           path: .test-portfolio/
       - name: Commit the refreshed impact map to main
-        # Only the scheduled/dispatched run on main is allowed to advance the
-        # committed map. run-contract-tests.sh only regenerates the artifact after
-        # a green whole-repo portfolio gate, so any commit here reflects a passing
-        # suite. [skip ci] keeps the data-only commit from re-triggering CI (and the
-        # image republish path). The rebase-retry loop tolerates a racing push to
-        # main; the map touches a single non-source data file, so it never conflicts
-        # with code changes and never invalidates another file's map freshness.
+        # The producer of the committed map is this job: a green whole-repo
+        # portfolio run with MAC_TEST_REBUILD_MAP=1. It used to run only on a
+        # nightly schedule, so a merge that deleted tests left interned node
+        # ids stranded until the next cron -- and every subsequent PR's
+        # always_run guards failed. Push-to-main is therefore part of the
+        # same dependency: if main moved, regenerate. [skip ci] keeps the
+        # data-only commit from re-triggering CI (and the image republish
+        # path). The rebase-retry loop tolerates a racing push to main.
         if: github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
@@ -369,7 +380,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add "$map"
           git commit -m "chore(test-selection): refresh committed impact map [skip ci]" \
-            -m "Rebuilt from the scheduled portfolio coverage run at ${GITHUB_SHA}."
+            -m "Rebuilt from the portfolio coverage run at ${GITHUB_SHA}."
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:main; then
               echo "pushed refreshed impact map"

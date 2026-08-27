@@ -27,9 +27,13 @@ candidate_requires_zero_unique_arcs = true
 # the dynamic per-test coverage map and falls back to the full suite whenever a
 # changed file cannot be safely mapped.
 #
-# Committed map produced post-merge on main by scripts/build-test-impact-map.py.
-# A missing or stale map is always SAFE: every unresolved source file forces a
-# full run, which is the pre-selection behavior.
+# Committed map produced by `make test-portfolio` (and the CI portfolio job
+# on main). `make sanity-test` depends on `make impact-map`, which checks
+# that interned node ids still collect. A missing map, or an unmapped
+# source file, fails closed to a full run. A stale interned node id is not
+# safe: selecting it is a pytest usage error (exit 4).
+# `make impact-map IMPACT_MAP_ARGS=--write` prunes dead ids without a
+# coverage run; a portfolio rebuild is what maps newly added tests.
 impact_map = "src/mac/data/test_impact_map.json"
 
 # Files that invalidate the whole map or test collection when they change, so a

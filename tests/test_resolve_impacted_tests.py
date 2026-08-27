@@ -50,6 +50,7 @@ def repo(tmp_path: Path) -> Path:
         "tests/test_canary.py",
         "tests/test_changed.py",
         "tests/test_env_config.py",
+        "tests/test_build_test_impact_map.py",
         "tests/test_resolve_impacted_tests.py",
     ):
         target = tmp_path / rel
@@ -134,6 +135,28 @@ def test_reviewed_opaque_path_selects_owning_contract_and_guards(repo, policy, i
     assert result["reason"] == "impact_hybrid_scope"
     assert set(result["tests"]) == {
         "tests/test_env_config.py",
+        "tests/test_always.py",
+        "tests/test_canary.py",
+    }
+
+
+def test_impact_map_artifact_selects_its_freshness_guards(repo, policy, impact_map):
+    """Both sides of the generated map must be contracted.
+
+    A map-only refresh used to be an opaque data file and fail-closed to the
+    whole suite (or, with [skip ci], skipped the freshness tests entirely).
+    The guards that catch stranded node ids are the contract for that file.
+    """
+    result = _resolve(
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/data/test_impact_map.json"],
+    )
+    assert result["mode"] == "focused"
+    assert result["reason"] == "impact_hybrid_scope"
+    assert set(result["tests"]) == {
+        "tests/test_build_test_impact_map.py",
         "tests/test_always.py",
         "tests/test_canary.py",
     }

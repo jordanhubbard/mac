@@ -72,13 +72,17 @@ when it cannot map a change.
 
 Two things to know:
 
-- **The impact map interns node ids and references them by integer index.**
-  Deleting or renaming a test strands ids. There is a gate for it, and it now
-  compares against actual `pytest --collect-only` output rather than function
-  names — because an empty `@pytest.mark.parametrize` list produces **zero**
-  tests while the function still exists, which a name-based check cannot see.
-  That left 180 stale ids that failed unrelated PRs with a pytest *usage*
-  error.
+- **The impact map is a generated artifact, and regeneration is a
+  dependency of anything that consumes it.** `make sanity-test` depends on
+  `make impact-map` the same way `make test-schema-migrations` depends on
+  `make postgres-schema`. `make test-portfolio` rebuilds the map from
+  coverage (`MAC_TEST_REBUILD_MAP=1`). Deleting or renaming a test strands
+  interned ids; `make impact-map IMPACT_MAP_ARGS=--write` prunes them
+  without a coverage run. There is a gate that compares against actual
+  `pytest --collect-only` output rather than function names — because an
+  empty `@pytest.mark.parametrize` list produces **zero** tests while the
+  function still exists, which a name-based check cannot see. That left
+  180 stale ids that failed unrelated PRs with a pytest *usage* error.
 - **Changing the selector forces a full run.** `test-policy.toml`,
   `select-sanity-tests.py`, `resolve-impacted-tests.py`,
   `build-test-impact-map.py` and `src/mac/test_checkpoint.py` are all in

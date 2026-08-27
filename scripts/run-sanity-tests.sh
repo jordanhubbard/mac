@@ -14,6 +14,14 @@ if [ -z "${PY:-}" ]; then
     exit 2
 fi
 
+# Selection consults the committed impact map. A stale interned node id is a
+# pytest usage error (exit 4), not a test failure, so regeneration is a
+# prerequisite of this script -- the same shape as test-schema-migrations
+# depending on postgres-schema. `make sanity-test` already ran --check.
+if [ "${MAC_IMPACT_MAP_CHECKED:-0}" != "1" ]; then
+    "$PY" scripts/build-test-impact-map.py --check
+fi
+
 selection="$(mktemp)"
 trap 'rm -f "$selection"' EXIT
 "$PY" scripts/select-sanity-tests.py "$@" >"$selection"
