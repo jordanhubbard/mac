@@ -170,7 +170,7 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
 | [Presentations](docs/presentation/README.md) | capabilities decks, each pinned to the commit it describes and published to Google Slides |
-| [v1.2.0 capabilities (`e8040fec`)](docs/presentation/20260825T000816Z-e8040fec/README.md) | current release deck: object model, twelve task states, fleet, measurement — [Google Slides](https://docs.google.com/presentation/d/1cLzjGERKojHg0w1FOyUnlqlsVu_OZVM5b_kGc7T3fSw/edit) |
+| [v1.3.0 capabilities (`d8d491d6`)](docs/presentation/20260828T104510Z-d8d491d6/README.md) | current release deck: object model, twelve task states, 430 routes, fleet, measurement — [Google Slides](https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit) |
 
 Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name

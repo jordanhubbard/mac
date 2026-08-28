@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 #: import it, so the number lives in exactly one place. It used to be copied by
 #: hand into four (pyproject, this package, the FastAPI app, the A2A card) with
 #: a comment on each asking the next person to keep them in sync.
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 __all__ = [
     "ControlPlane",
