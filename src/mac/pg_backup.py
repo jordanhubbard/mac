@@ -352,8 +352,15 @@ def dump(
     verify_detail: Dict[str, object] = {"performed": False}
     verified = False
     if verify:
+        # Pass the caller's runner, not `run`. `run` is always a callable
+        # (`_default_runner` on the live path), and `_binary_for` treats any
+        # non-None runner as a model that must keep using bare names. Passing
+        # `_default_runner` made verify_restore invoke argv[0]="psql" /
+        # "pg_restore", which FileNotFoundError'd under launchd PATH
+        # (task_0393627c). The live path's runner is None, so `_binary_for`
+        # resolves via pg_binary(); a test FakePg still arrives as `runner`.
         verify_detail = verify_restore(
-            dsn, destination, verify_tables=verify_tables, now=now, runner=run
+            dsn, destination, verify_tables=verify_tables, now=now, runner=runner
         )
         verified = bool(verify_detail.get("ok"))
 
