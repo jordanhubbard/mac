@@ -6602,6 +6602,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: impact map checked.",
+    "family": "core",
+    "name": "MAC_IMPACT_MAP_CHECKED",
+    "retired": false,
+    "sources": [
+      "scripts/run-sanity-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: journal agent.",
     "family": "core",
     "name": "MAC_JOURNAL_AGENT",
@@ -13576,6 +13587,7 @@
     "name": "MAC_TEST_REBUILD_MAP",
     "retired": false,
     "sources": [
+      "scripts/build-test-impact-map.py",
       "scripts/run-contract-tests.sh"
     ],
     "type": "bool"
