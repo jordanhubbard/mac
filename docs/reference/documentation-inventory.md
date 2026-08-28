@@ -62,6 +62,7 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/assessment-task-de3502.md`](../archive/field-notes/assessment-task-de3502.md) | Assessment: task_de35029099d34c94be186c8992ee706a |
 | historical archive | [`archive/field-notes/assessment-task-f6a813.md`](../archive/field-notes/assessment-task-f6a813.md) | Assessment: task_f6a813fede7841d28b154af3a544864a |
 | historical archive | [`archive/field-notes/assessment-task-f9cd72.md`](../archive/field-notes/assessment-task-f9cd72.md) | Assessment: task_f9cd72342aef4e7b8701b131b12d29ff |
+| historical archive | [`archive/field-notes/canary-v1.3.1.md`](../archive/field-notes/canary-v1.3.1.md) | v1.3.1 fleet canary |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md`](../archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md) | Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable) |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-5404b15-skill.md`](../archive/field-notes/closeout-dreamrepair-5404b15-skill.md) | Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md`](../archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md) | Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
