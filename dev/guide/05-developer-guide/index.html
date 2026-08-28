@@ -2053,13 +2053,17 @@ selects tests from a committed impact map and fails <strong>closed</strong> to a
 when it cannot map a change.</p>
 <p>Two things to know:</p>
 <ul>
-<li><strong>The impact map interns node ids and references them by integer index.</strong>
-  Deleting or renaming a test strands ids. There is a gate for it, and it now
-  compares against actual <code>pytest --collect-only</code> output rather than function
-  names — because an empty <code>@pytest.mark.parametrize</code> list produces <strong>zero</strong>
-  tests while the function still exists, which a name-based check cannot see.
-  That left 180 stale ids that failed unrelated PRs with a pytest <em>usage</em>
-  error.</li>
+<li><strong>The impact map is a generated artifact, and regeneration is a
+  dependency of anything that consumes it.</strong> <code>make sanity-test</code> depends on
+  <code>make impact-map</code> the same way <code>make test-schema-migrations</code> depends on
+  <code>make postgres-schema</code>. <code>make test-portfolio</code> rebuilds the map from
+  coverage (<code>MAC_TEST_REBUILD_MAP=1</code>). Deleting or renaming a test strands
+  interned ids; <code>make impact-map IMPACT_MAP_ARGS=--write</code> prunes them
+  without a coverage run. There is a gate that compares against actual
+  <code>pytest --collect-only</code> output rather than function names — because an
+  empty <code>@pytest.mark.parametrize</code> list produces <strong>zero</strong> tests while the
+  function still exists, which a name-based check cannot see. That left
+  180 stale ids that failed unrelated PRs with a pytest <em>usage</em> error.</li>
 <li><strong>Changing the selector forces a full run.</strong> <code>test-policy.toml</code>,
   <code>select-sanity-tests.py</code>, <code>resolve-impacted-tests.py</code>,
   <code>build-test-impact-map.py</code> and <code>src/mac/test_checkpoint.py</code> are all in

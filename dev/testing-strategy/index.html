@@ -1868,10 +1868,14 @@ better behavioral or fault-detection evidence.</p>
 <h2 id="evidence-used-to-maintain-the-portfolio">Evidence used to maintain the portfolio<a class="headerlink" href="#evidence-used-to-maintain-the-portfolio" title="Permanent link">&para;</a></h2>
 <p>The canonical coverage run measures statements, branches, and Python child
 processes. <code>make test-portfolio</code> additionally records exact pytest node IDs,
-durations, outcomes, and per-test coverage contexts. The portfolio report
-identifies tests with no unique executed lines or arcs. That is a review queue,
-not an automatic deletion list: assertions can differ even when execution is
-the same.</p>
+durations, outcomes, and per-test coverage contexts, and rebuilds
+<code>src/mac/data/test_impact_map.json</code> from that run (<code>MAC_TEST_REBUILD_MAP=1</code>).
+The portfolio report identifies tests with no unique executed lines or arcs.
+That is a review queue, not an automatic deletion list: assertions can differ
+even when execution is the same. Deleting a test without regenerating the
+map strands interned node ids; <code>make impact-map IMPACT_MAP_ARGS=--write</code>
+prunes those without another coverage run. <code>make sanity-test</code> depends on
+<code>make impact-map</code>, which checks collectability.</p>
 <p>A test is a safe deletion or consolidation candidate only when all applicable
 evidence agrees:</p>
 <ol>
