@@ -140,6 +140,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "mkdocs.yml": ("tests/test_docs_accessibility.py",),
     "scripts/resolve-impacted-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/run-contract-tests.sh": ("tests/test_contract_test_runner.py",),
+    "scripts/serial_slice_plugin.py": ("tests/test_contract_test_runner.py",),
     "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/test-checkpoint.py": ("tests/test_test_checkpoint.py",),
     "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),

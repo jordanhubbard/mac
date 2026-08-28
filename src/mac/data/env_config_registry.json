@@ -13606,6 +13606,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: test serial slice.",
+    "family": "core",
+    "name": "MAC_TEST_SERIAL_SLICE",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test stall timeout.",
     "family": "core",
     "name": "MAC_TEST_STALL_TIMEOUT",
