@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="900" viewBox="0 0 1520 900" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="1520" height="900" fill="#FFFFFF"/>
+
+  <text x="40" y="46" font-size="30" font-weight="700" fill="#1B2530">How agents coordinate: a town square, not a switchboard</text>
+  <text x="40" y="76" font-size="16.5" fill="#5A6B7A">AgentBus is a broadcast bus — every participant hears everything — because an agent that cannot hear its peers cannot avoid destroying their work.</text>
+
+  <!-- BUS VISUAL -->
+  <rect x="40" y="102" width="800" height="330" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+
+  <rect x="66" y="132" width="132" height="56" rx="7" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="132" y="156" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">agent</text>
+  <text x="132" y="175" font-size="11.5" fill="#5A6B7A" text-anchor="middle">macOS host</text>
+
+  <rect x="212" y="132" width="132" height="56" rx="7" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="278" y="156" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">agent</text>
+  <text x="278" y="175" font-size="11.5" fill="#5A6B7A" text-anchor="middle">Linux sandbox</text>
+
+  <rect x="358" y="132" width="132" height="56" rx="7" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="424" y="156" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">agent</text>
+  <text x="424" y="175" font-size="11.5" fill="#5A6B7A" text-anchor="middle">HGX node</text>
+
+  <rect x="504" y="132" width="132" height="56" rx="7" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="570" y="156" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">reviewer</text>
+  <text x="570" y="175" font-size="11.5" fill="#5A6B7A" text-anchor="middle">a peer, on request</text>
+
+  <rect x="650" y="132" width="164" height="56" rx="7" fill="#FDF6EE" stroke="#B5651D" stroke-width="2"/>
+  <text x="732" y="156" font-size="13.5" font-weight="700" fill="#7A430F" text-anchor="middle">human</text>
+  <text x="732" y="175" font-size="11.5" fill="#8A6438" text-anchor="middle">a participant, not a controller</text>
+
+  <line x1="132" y1="188" x2="132" y2="236" stroke="#2E6F9E" stroke-width="1.5"/>
+  <line x1="278" y1="188" x2="278" y2="236" stroke="#2E6F9E" stroke-width="1.5"/>
+  <line x1="424" y1="188" x2="424" y2="236" stroke="#2E6F9E" stroke-width="1.5"/>
+  <line x1="570" y1="188" x2="570" y2="236" stroke="#2E6F9E" stroke-width="1.5"/>
+  <line x1="732" y1="188" x2="732" y2="236" stroke="#B5651D" stroke-width="1.5"/>
+
+  <rect x="66" y="236" width="748" height="34" rx="6" fill="#2E6F9E"/>
+  <text x="440" y="259" font-size="15" font-weight="700" fill="#FFFFFF" text-anchor="middle">AgentBus — everyone hears it</text>
+
+  <line x1="440" y1="270" x2="440" y2="304" stroke="#2F3A45" stroke-width="1.5"/>
+  <rect x="300" y="304" width="280" height="50" rx="7" fill="#2F3A45"/>
+  <text x="440" y="326" font-size="14" font-weight="700" fill="#FFFFFF" text-anchor="middle">hub — keeps the ledger</text>
+  <text x="440" y="345" font-size="11.5" fill="#B7C4D0" text-anchor="middle">choreography is peer-to-peer; the record is central</text>
+
+  <text x="66" y="384" font-size="13" fill="#2F3A45"><tspan font-weight="700">Roll call</tspan> returns every agent on the bus with its capabilities — the prerequisite for an agent pulling</text>
+  <text x="66" y="403" font-size="13" fill="#2F3A45">work and judging for itself what it can take. Without a roster an agent can only wait to be assigned.</text>
+  <text x="66" y="422" font-size="13" fill="#2F3A45"><tspan font-weight="700">Traffic</tspan> returns everything being said, resumable by cursor. An inbox is scoped by <tspan font-style="italic">addressing</tspan>, not access.</text>
+
+  <!-- WHY -->
+  <rect x="860" y="102" width="620" height="330" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="884" y="134" font-size="17" font-weight="700" fill="#1B2530">Why private messages were abolished</text>
+  <text x="884" y="164" font-size="13.5" fill="#2F3A45">Two incidents are on the record where concurrent agents in one</text>
+  <text x="884" y="183" font-size="13.5" fill="#2F3A45">checkout nearly destroyed each other's work — a <tspan font-family="Menlo, Consolas, monospace" font-size="12.5">git add -A</tspan> moments</text>
+  <text x="884" y="202" font-size="13.5" fill="#2F3A45">from sweeping ~1,200 lines of another agent's half-finished work into an</text>
+  <text x="884" y="221" font-size="13.5" fill="#2F3A45">unrelated commit, and a <tspan font-family="Menlo, Consolas, monospace" font-size="12.5">git commit -a</tspan> that did.</text>
+  <text x="884" y="250" font-size="13.5" fill="#2F3A45">The only mitigation was a documented convention: a rule agents could</text>
+  <text x="884" y="269" font-size="13.5" fill="#2F3A45">follow but could not <tspan font-style="italic">verify</tspan>, because nothing told one agent what</text>
+  <text x="884" y="288" font-size="13.5" fill="#2F3A45">another was doing.</text>
+
+  <rect x="884" y="306" width="572" height="60" rx="6" fill="#FFFFFF" stroke="#9CC2D8"/>
+  <text x="900" y="330" font-size="13.5" font-style="italic" fill="#1B4E73">"An enforced silence would stop an agent from volunteering the one fact</text>
+  <text x="900" y="350" font-size="13.5" font-style="italic" fill="#1B4E73">that keeps another from destroying work."</text>
+
+  <text x="884" y="392" font-size="13" fill="#2F3A45"><tspan font-weight="700">One carve-out.</tspan> <tspan font-family="Menlo, Consolas, monospace" font-size="12.5">mac.debug.terminal.*</tspan> stays participant-scoped: those</text>
+  <text x="884" y="411" font-size="13" fill="#2F3A45">streams are raw terminal I/O including credentials, and a credential read</text>
+  <text x="884" y="425" font-size="13" fill="#2F3A45">off the bus cannot be un-read.</text>
+
+  <!-- THREE CARDS -->
+  <rect x="40" y="454" width="466" height="212" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="64" y="484" font-size="16" font-weight="700" fill="#1B2530">A closed, typed vocabulary</text>
+  <text x="64" y="510" font-size="13" fill="#2F3A45">Payloads were self-describing by convention only, so a</text>
+  <text x="64" y="529" font-size="13" fill="#2F3A45">malformed message was found by the consumer at turn time</text>
+  <text x="64" y="548" font-size="13" fill="#2F3A45">rather than by the producer at publish time.</text>
+  <text x="64" y="574" font-size="13" fill="#2F3A45">A schema registry now validates declared schemas at publish</text>
+  <text x="64" y="593" font-size="13" fill="#2F3A45">and warns on unknown ones, so experimentation stays open.</text>
+  <text x="64" y="622" font-size="12.5" fill="#5A6B7A">peer_message · peer_reply · media.share · error · task.claimed</text>
+  <text x="64" y="640" font-size="12.5" fill="#5A6B7A">task.progress · task.released · project.attention · git.*</text>
+
+  <rect x="527" y="454" width="466" height="212" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="551" y="484" font-size="16" font-weight="700" fill="#1B2530">Lifecycle verbs a human also speaks</text>
+  <text x="551" y="508" font-size="13" fill="#2F3A45">Requests on a channel everyone can see, which each agent</text>
+  <text x="551" y="527" font-size="13" fill="#2F3A45">observes and honours — never a privileged mutation.</text>
+
+  <rect x="551" y="540" width="112" height="32" rx="5" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="607" y="561" font-size="12.5" font-weight="700" fill="#1B4E73" text-anchor="middle">stand_down</text>
+  <rect x="671" y="540" width="80" height="32" rx="5" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="711" y="561" font-size="12.5" font-weight="700" fill="#1B4E73" text-anchor="middle">pause</text>
+  <rect x="759" y="540" width="86" height="32" rx="5" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="802" y="561" font-size="12.5" font-weight="700" fill="#1B4E73" text-anchor="middle">resume</text>
+  <rect x="853" y="540" width="80" height="32" rx="5" fill="#E7F0F7" stroke="#2E6F9E"/>
+  <text x="893" y="561" font-size="12.5" font-weight="700" fill="#1B4E73" text-anchor="middle">status</text>
+  <rect x="551" y="580" width="80" height="32" rx="5" fill="#FBE9E6" stroke="#C0392B"/>
+  <text x="591" y="601" font-size="12.5" font-weight="700" fill="#98291C" text-anchor="middle">abort</text>
+  <text x="645" y="601" font-size="12.5" fill="#8C3227">destructive — flagged so a UI cannot</text>
+  <text x="645" y="617" font-size="12.5" fill="#8C3227">put it behind the same control</text>
+
+  <text x="551" y="644" font-size="12.5" fill="#5A6B7A">Scopes: fleet · project · agent · task. A directive with no</text>
+  <text x="551" y="660" font-size="12.5" fill="#5A6B7A">target is refused — defaulting to the fleet is what does damage.</text>
+
+  <rect x="1014" y="454" width="466" height="212" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="1038" y="484" font-size="16" font-weight="700" fill="#1B2530">Stand-down is not abort</text>
+  <text x="1038" y="510" font-size="13" fill="#2F3A45">Collapsing them is the mistake the vocabulary exists to</text>
+  <text x="1038" y="529" font-size="13" fill="#2F3A45">prevent. A single button labelled "stop" that means ABORT</text>
+  <text x="1038" y="548" font-size="13" fill="#2F3A45">destroys work in flight; one that means PAUSE does not stop</text>
+  <text x="1038" y="567" font-size="13" fill="#2F3A45">a runaway. Most off-the-rails moments want stand-down.</text>
+  <text x="1038" y="596" font-size="13" fill="#2F3A45">Both verbs ship, named honestly.</text>
+  <text x="1038" y="625" font-size="12.5" fill="#5A6B7A">A verb nobody understands fails where it is built rather than</text>
+  <text x="1038" y="643" font-size="12.5" fill="#5A6B7A">travelling the bus and being silently dropped — that is</text>
+  <text x="1038" y="661" font-size="12.5" fill="#5A6B7A">indistinguishable from a fleet that heard it and did nothing.</text>
+
+  <!-- BOTTOM -->
+  <rect x="40" y="688" width="712" height="180" rx="10" fill="#2F3A45"/>
+  <text x="64" y="720" font-size="17" font-weight="700" fill="#FFFFFF">Dispatch — matching work to capacity</text>
+  <text x="64" y="748" font-size="13.5" fill="#DCE5EC">The dispatcher matches open work to healthy, capable agents, accounting for</text>
+  <text x="64" y="768" font-size="13.5" fill="#DCE5EC">tenant pool policy, resources, capacity, stale heartbeats and expired leases.</text>
+  <text x="64" y="796" font-size="13.5" fill="#DCE5EC">Priority ages, so old work is not starved by a steady stream of new work.</text>
+  <text x="64" y="824" font-size="13" fill="#8FA5B8">Routing skips are logged with a reason class, which is what makes</text>
+  <text x="64" y="842" font-size="13" fill="#8FA5B8"><tspan font-family="Menlo, Consolas, monospace" font-size="12.5">mac task why-unclaimed</tspan> able to answer instead of guess.</text>
+
+  <rect x="768" y="688" width="712" height="180" rx="10" fill="#2F3A45"/>
+  <text x="792" y="720" font-size="17" font-weight="700" fill="#FFFFFF">The merge queue — because GitHub would not</text>
+  <text x="792" y="748" font-size="13.5" fill="#DCE5EC">GitHub merge queues are an organization-only feature, verified against the live</text>
+  <text x="792" y="768" font-size="13.5" fill="#DCE5EC">repository: adding the rule returns HTTP 422 on a user-owned repo. So for every</text>
+  <text x="792" y="788" font-size="13.5" fill="#DCE5EC">personal repository this is the only path, and mac grew its own.</text>
+  <text x="792" y="816" font-size="13.5" fill="#DCE5EC">Speculative Zuul-style train, AIMD window (floor 1, ceiling 4), eviction on</text>
+  <text x="792" y="836" font-size="13.5" fill="#DCE5EC">failure, and an entry that cannot progress is now required to say so.</text>
+</svg>
