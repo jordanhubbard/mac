@@ -532,7 +532,7 @@ Key route groups:
 
 - `/tenants`, `/users`, `/personas`
 - `/persona-instances`, `/persona-instances/{id}/context`, `/persona-instances/{id}/work-context`, `/platform-bindings`
-- `/dashboard/state`, `/dashboard/stream`, `/dashboard/observe`, `/dashboard/observe/tasks/{id}`, `/dashboard/workflow-plan/preview`, `/dashboard/workflow-plan/accept`
+- `/dashboard/state`, `/dashboard/stream`, `/dashboard/observe`, `/dashboard/observe/tasks/{id}`, `/dashboard/observe/projects/{project}/graph`, `/dashboard/workflow-plan/preview`, `/dashboard/workflow-plan/accept`
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`
 - `/roles`, `/agents/{id}/role`, `/agents/{id}/identity`

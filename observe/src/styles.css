@@ -729,3 +729,99 @@ button.ghost[aria-pressed="true"] {
   background: var(--series-2);
   border-color: var(--series-2);
 }
+
+/* --- mission control ---------------------------------------------------- */
+
+.mc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mc-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.mc-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+  align-items: stretch;
+}
+
+.mc-layout .panel {
+  min-height: 0;
+}
+
+.mc-explorer {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.mc-explorer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.mc-explorer-item:hover {
+  background: var(--surface-2);
+}
+
+.mc-explorer-item[aria-current="true"] {
+  border-left-color: var(--series-1);
+  background: var(--surface-2);
+}
+
+.mc-explorer-item .micro {
+  margin-left: auto;
+}
+
+.mc-graph {
+  overflow: auto;
+  min-height: 240px;
+  background: var(--plane);
+  border: 1px solid var(--grid);
+}
+
+.mc-inspector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mc-edge-list {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.mc-edge-ref {
+  display: inline-block;
+  margin-left: 8px;
+}
+
+@media (max-width: 900px) {
+  .mc-layout {
+    grid-template-columns: 1fr;
+  }
+}
