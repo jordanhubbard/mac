@@ -209,6 +209,7 @@ from mac.agentbus_control import (
 from mac.action_event_service import ActionEventService
 from mac.agentbus_broadcast import BroadcastService
 from mac.agentbus_service import AgentBusService
+from mac.canonical_reconcile import expected_head_sha_from_task
 from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
 from mac import evidence_blobs
@@ -26704,6 +26705,9 @@ class ControlPlane:
             allow_empty_repo_change=self._allows_empty_repo_change_evidence(task, evidence_type),
             repo_coupled=self._task_is_repo_coupled(task),
             require_tests=self._task_requires_tests(task),
+            expected_reconcile_head_sha=expected_head_sha_from_task(
+                {"id": task.id, "metadata": task.metadata}
+            ),
         )
         problems.extend(self._required_changed_file_problems(task, manifest))
         return problems

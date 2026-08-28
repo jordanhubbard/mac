@@ -14,6 +14,13 @@ worktree (rebase before publishing), and whether a peer holds a lease on
 related work. A context that says TRUNCATED is incomplete; query the hub rather
 than treating what you were shown as the whole story.
 
+Before editing a repository task, read the Canonical HEAD reconcile section
+when present. Starting on HEAD is placement, not proof the task is still
+valid. Adjacent landings on the same files are not proof the defect is gone.
+Record canonical_reconcile.decision (still_valid, already_satisfied, or
+needs_restatement) against that HEAD. already_satisfied and needs_restatement
+use evidence_type=no_change and must not open a pull request.
+
 The prepared task worktree is the worker's only writable repository checkout;
 registered source checkouts remain read-only except for explicit
 source-remediation tasks. The worker owns analysis, edits, task-local bootstrap,

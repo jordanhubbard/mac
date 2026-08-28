@@ -861,3 +861,68 @@ def test_tests_list_with_one_item_passes_require_tests():
         )
         == []
     )
+
+
+def test_reconcile_is_not_required_without_prepared_head_sha():
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            _repo_manifest(),
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
+
+
+def test_repo_change_requires_still_valid_when_prepared_head_is_set():
+    problems = validate_evidence_type(
+        "repo_change",
+        _repo_manifest(),
+        passed_check_count=_passed_check_count,
+        expected_reconcile_head_sha="abcdef1234567890",
+    )
+    assert any("canonical_reconcile" in item for item in problems)
+
+    ok = _repo_manifest(
+        canonical_reconcile={
+            "decision": "still_valid",
+            "head_sha": "abcdef1234567890",
+            "reason": "the requested change is still absent",
+        }
+    )
+    assert (
+        validate_evidence_type(
+            "repo_change",
+            ok,
+            passed_check_count=_passed_check_count,
+            expected_reconcile_head_sha="abcdef1234567890",
+        )
+        == []
+    )
+
+
+def test_no_change_already_satisfied_passes_when_prepared_head_is_set():
+    manifest = _repo_manifest(
+        evidence_type="no_change",
+        repo={
+            "head_sha": "abcdef1234567890",
+            "dirty": False,
+            "pushed": False,
+            "files_changed": [],
+        },
+        reason="already present at HEAD",
+        canonical_reconcile={
+            "decision": "already_satisfied",
+            "head_sha": "abcdef1234567890",
+            "reason": "already present at HEAD",
+        },
+    )
+    assert (
+        validate_evidence_type(
+            "no_change",
+            manifest,
+            passed_check_count=_passed_check_count,
+            expected_reconcile_head_sha="abcdef1234567890",
+        )
+        == []
+    )

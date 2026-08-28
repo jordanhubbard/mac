@@ -21,6 +21,7 @@ that: a rare terminal event buried under a page of chatter is still found.
 from __future__ import annotations
 
 import json
+import subprocess
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -146,6 +147,60 @@ def test_the_prompt_the_agent_is_given_names_what_it_must_not_redo(tmp_path):
     assert "AgentBus context" in prompt
     assert "ALREADY LANDED" in prompt
     assert "do NOT open a second pull request" in prompt
+
+
+def test_the_prompt_names_canonical_head_reconcile_when_the_worker_attaches_it(tmp_path):
+    from mac.executor_prompt import build_task_prompt
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "release.sh").write_text("git push origin main\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    client = _Client(
+        [
+            _event(
+                11,
+                "git.merged",
+                task_id="task_theirs",
+                payload={
+                    "repository": REPO_CONTEXT["repository_canonical_remote"],
+                    "canonical_branch": "main",
+                    "sha": "peerlanded",
+                    "pr_number": 107,
+                },
+            )
+        ]
+    )
+    instance = _worker(tmp_path, client)
+    task = _task()
+    task["title"] = "stop `scripts/release.sh` from pushing main"
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    repo_context = dict(REPO_CONTEXT)
+    repo_context["repository_worktree"] = str(repo)
+    repo_context["repository_base_sha"] = head
+    instance._attach_bus_task_context(task, task_dir, repo_context)
+    instance._attach_canonical_reconcile(task, task_dir, repo_context)
+
+    snapshot = task["metadata"]["runtime"]["canonical_reconcile"]
+    assert snapshot["head_sha"] == head
+    assert "scripts/release.sh" in snapshot["implicated_paths"]
+    on_disk = json.loads((task_dir / "canonical-reconcile.json").read_text(encoding="utf-8"))
+    assert on_disk["head_sha"] == head
+    prompt = build_task_prompt(task, task_dir / "task.json")
+    assert "Canonical HEAD reconcile" in prompt
+    assert "still_valid" in prompt
+    assert "already_satisfied" in prompt
+    assert "RECENT LANDINGS" in prompt or "sibling" in json.dumps(snapshot)
 
 
 def test_the_workers_own_echo_is_not_fed_back_to_it(tmp_path):

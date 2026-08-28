@@ -184,6 +184,12 @@ def test_a_merge_of_someone_elses_task_is_not_my_work_landing():
     assert already_published(context) is None
     # ...but it IS a canonical advance, which is a different fact about it.
     assert context["events"], "a peer's merge onto my base branch is still relevant"
+    siblings = context["signals"]["sibling_landings"]
+    assert siblings
+    assert siblings[0]["task_id"] == "task_theirs"
+    rendered = render_bus_context_section(context)
+    assert "RECENT LANDINGS" in rendered
+    assert "ALREADY LANDED" not in rendered
 
 
 def test_it_answers_whether_the_canonical_tip_moved():
