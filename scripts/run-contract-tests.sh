@@ -759,11 +759,14 @@ PYCAP
     # from the tracked artifact it is explicitly asked to regenerate.
     if [ "$_MAC_TEST_REBUILD_MAP_REQUESTED" = "1" ] && [ -n "$portfolio_dir" ] \
         && [ "$policy_status" -eq 0 ]; then
-        "$PY" scripts/build-test-impact-map.py \
+        if ! "$PY" scripts/build-test-impact-map.py \
             --coverage-file "$COVERAGE_FILE" \
             --timings "$portfolio_dir/timings.json" \
-            --output "src/mac/data/test_impact_map.json" \
-            || echo "run-contract-tests.sh: impact-map rebuild failed (gate result unaffected)" >&2
+            --output "src/mac/data/test_impact_map.json"
+        then
+            echo "run-contract-tests.sh: impact-map rebuild failed" >&2
+            exit 1
+        fi
     fi
     exit "$policy_status"
 fi

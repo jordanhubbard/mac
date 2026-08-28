@@ -40,7 +40,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
 	install-hooks setup deploy test coverage test-api test-cli test-local-console test-systemd-local-console test-ui test-schema-migrations cli-coverage lint lint-fix lint-local-console format-local-console \
-	test-portfolio fault-replay sanity-test compatibility-test postgres-schema \
+	test-portfolio impact-map fault-replay sanity-test compatibility-test postgres-schema \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-graph docs-lab docs-reference env-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
 	observe-build observe-run \
@@ -251,14 +251,20 @@ test: ## Run the mandatory hermetic contract test suite.
 coverage: ## Run the canonical statement/branch/subprocess coverage gate.
 	scripts/run-contract-tests.sh
 
-test-portfolio: ## Measure per-test timings and unique line/arc contribution.
-	MAC_TEST_PORTFOLIO=1 scripts/run-contract-tests.sh
+# IMPACT_MAP_ARGS, not ARGS: sanity-test forwards ARGS to the runner (--base).
+IMPACT_MAP_ARGS ?= --check
+
+test-portfolio: ## Measure per-test contribution and rebuild the committed impact map.
+	MAC_TEST_PORTFOLIO=1 MAC_TEST_REBUILD_MAP=1 scripts/run-contract-tests.sh
+
+impact-map: require-uv ## Check the committed impact map (IMPACT_MAP_ARGS=--write to regenerate).
+	$(UV) run --extra dev python scripts/build-test-impact-map.py $(IMPACT_MAP_ARGS)
 
 fault-replay: ## Prove historical probes pass now and fail before their fixes.
 	uv run --extra dev python scripts/fault-replay.py
 
-sanity-test: ## Run affected tests + public/process canaries, fail closed to full.
-	scripts/run-sanity-tests.sh $(ARGS)
+sanity-test: impact-map ## Run affected tests + public/process canaries, fail closed to full.
+	MAC_IMPACT_MAP_CHECKED=1 scripts/run-sanity-tests.sh $(ARGS)
 
 compatibility-test: ## Run the secondary-version public/process compatibility slice.
 	scripts/run-compatibility-tests.sh

@@ -121,3 +121,16 @@ def test_the_sanity_runner_prints_the_split():
 
     assert "provenance:" in script
     assert "always_run guards" in script
+
+
+def test_the_sanity_runner_checks_the_impact_map_before_selecting():
+    """Selection depends on the map; regeneration/check is a prerequisite.
+
+    `make sanity-test` already ran --check and sets MAC_IMPACT_MAP_CHECKED so
+    this is not doubled. Direct invocations (the executor, CI-without-make)
+    still have to check.
+    """
+    script = (ROOT / "scripts" / "run-sanity-tests.sh").read_text(encoding="utf-8")
+
+    assert "build-test-impact-map.py --check" in script
+    assert "MAC_IMPACT_MAP_CHECKED" in script

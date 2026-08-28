@@ -139,6 +139,10 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/test-checkpoint.py": ("tests/test_test_checkpoint.py",),
     "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),
+    # Generated artifact: interned node ids go stale when tests are renamed
+    # or deleted. Map both sides so a map-only refresh runs the freshness
+    # guards instead of fail-closing to the whole suite (or skipping them).
+    "src/mac/data/test_impact_map.json": ("tests/test_build_test_impact_map.py",),
     # Source entry points the coverage map cannot attribute because they run
     # only out-of-process — a git-invoked askpass helper, or an installed
     # console-script copy whose path is outside the src/ prefix the map indexes.

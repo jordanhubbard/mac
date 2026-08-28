@@ -191,6 +191,124 @@ def test_missing_coverage_file_is_a_clean_error(tmp_path):
     assert rc == 2
 
 
+def _stale_document() -> dict:
+    return {
+        "schema": "mac.test_impact_map.v1",
+        "generated_by": "scripts/build-test-impact-map.py",
+        "base_sha": "abc",
+        "source_prefix": "src/",
+        "nodeids": [
+            "tests/test_foo.py::test_live",
+            "tests/test_foo.py::test_gone",
+            "tests/test_bar.py::test_other",
+        ],
+        "file_tests": {"src/mac/foo.py": [0, 1], "src/mac/bar.py": [2]},
+        "file_line_tests": {
+            "src/mac/foo.py": {"10": [0], "11": [0, 1]},
+            "src/mac/bar.py": {"5": [2]},
+        },
+        "file_scope_tests": {
+            "src/mac/foo.py": {"build": [0, 1]},
+            "src/mac/bar.py": {"other": [2]},
+        },
+        "file_hashes": {"src/mac/foo.py": "sha256:aa", "src/mac/bar.py": "sha256:bb"},
+        "always_run": ["tests/test_missing.py", "tests/test_foo.py"],
+        "stats": {"interned_nodeids": 99, "mapped_files": 2, "mapped_scopes": 2},
+    }
+
+
+def test_prune_drops_uncollectable_ids_and_compacts_indices():
+    """Retiring a test must not require a 45-minute coverage rebuild.
+
+    The intern table is identity: remaining ids keep their relative order,
+    and every integer index is rewritten. base_sha stays the coverage origin.
+    """
+    collectable = {
+        "tests/test_foo.py::test_live",
+        "tests/test_bar.py::test_other",
+    }
+    pruned = BUILDER.prune_uncollectable(_stale_document(), collectable, repo_root=None)
+
+    assert pruned["nodeids"] == [
+        "tests/test_foo.py::test_live",
+        "tests/test_bar.py::test_other",
+    ]
+    assert pruned["file_tests"] == {
+        "src/mac/foo.py": [0],
+        "src/mac/bar.py": [1],
+    }
+    assert pruned["file_line_tests"]["src/mac/foo.py"]["10"] == [0]
+    assert pruned["file_line_tests"]["src/mac/foo.py"]["11"] == [0]
+    assert pruned["file_line_tests"]["src/mac/bar.py"]["5"] == [1]
+    assert pruned["file_scope_tests"]["src/mac/foo.py"]["build"] == [0]
+    assert pruned["file_scope_tests"]["src/mac/bar.py"]["other"] == [1]
+    assert pruned["file_hashes"]["src/mac/foo.py"] == "sha256:aa"
+    assert pruned["stats"]["interned_nodeids"] == 2
+    assert pruned["stats"]["pruned_uncollectable_nodeids"] == 1
+    assert pruned["base_sha"] == "abc"
+
+
+def test_prune_drops_always_run_files_that_no_longer_exist(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_foo.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+    pruned = BUILDER.prune_uncollectable(
+        _stale_document(),
+        set(_stale_document()["nodeids"]),
+        repo_root=tmp_path,
+    )
+    assert pruned["always_run"] == ["tests/test_foo.py"]
+
+
+def _seed_collectable_repo(tmp_path: Path) -> Path:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_foo.py").write_text("def test_live():\n    assert True\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_check_fails_on_stale_interned_ids(tmp_path):
+    repo = _seed_collectable_repo(tmp_path)
+    out = repo / "map.json"
+    out.write_text(json.dumps(_stale_document()), encoding="utf-8")
+    rc = BUILDER.main(
+        [
+            "--check",
+            "--repo-root",
+            str(repo),
+            "--output",
+            str(out),
+            "--coverage-file",
+            str(repo / "nope.coverage"),
+        ]
+    )
+    assert rc == 1
+
+
+def test_write_prunes_without_a_coverage_run(tmp_path):
+    repo = _seed_collectable_repo(tmp_path)
+    out = repo / "map.json"
+    out.write_text(json.dumps(_stale_document()), encoding="utf-8")
+    rc = BUILDER.main(
+        [
+            "--write",
+            "--repo-root",
+            str(repo),
+            "--output",
+            str(out),
+            "--coverage-file",
+            str(repo / "nope.coverage"),
+        ]
+    )
+    assert rc == 0
+    updated = json.loads(out.read_text(encoding="utf-8"))
+    assert updated["nodeids"] == ["tests/test_foo.py::test_live"]
+    assert updated["file_tests"]["src/mac/foo.py"] == [0]
+    assert "src/mac/bar.py" not in updated["file_tests"]
+    assert updated["stats"]["interned_nodeids"] == 1
+    assert updated["stats"]["pruned_uncollectable_nodeids"] == 2
+    assert updated["always_run"] == ["tests/test_foo.py"]
+
+
 def test_committed_impact_map_has_no_stale_node_ids():
     """The map must not reference tests that no longer exist.
 
@@ -231,6 +349,23 @@ def test_committed_impact_map_has_no_stale_node_ids():
         not in have.get(nodeid.partition("::")[0], set())
     )
     assert not stale, "stale node ids in test_impact_map.json: %s" % stale[:10]
+
+
+def test_committed_impact_map_interned_count_matches_the_table():
+    """stats.interned_nodeids is defined as len(nodeids). Gate that.
+
+    Hand-remaps kept decrementing stats in generator-space and the gap
+    accumulated (task_72270e63). A prune recomputes the field; this test
+    makes a wrong committed value visible without a coverage rebuild.
+    """
+    import json
+
+    document = json.loads(
+        (
+            Path(__file__).resolve().parents[1] / "src" / "mac" / "data" / "test_impact_map.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert document["stats"]["interned_nodeids"] == len(document["nodeids"])
 
 
 # ---------------------------------------------------------------------------

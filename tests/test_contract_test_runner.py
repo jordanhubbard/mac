@@ -769,6 +769,18 @@ def test_contract_runner_is_byte_identical_without_the_checkpoint_flag(tmp_path)
     assert _checkpoint_calls(calls, "record") == []
 
 
+def test_contract_runner_rebuilds_the_impact_map_as_a_hard_gate():
+    """MAC_TEST_REBUILD_MAP=1 is a producer, not a best-effort side effect.
+
+    Swallowing a failed rebuild left sanity depending on a rotting committed
+    map until the next scheduled portfolio job happened to succeed.
+    """
+    text = RUNNER.read_text(encoding="utf-8")
+    assert "impact-map rebuild failed (gate result unaffected)" not in text
+    assert "impact-map rebuild failed" in text
+    assert "MAC_TEST_REBUILD_MAP" in text
+
+
 def test_contract_runner_declined_checkpoint_runs_the_normal_full_gate(tmp_path):
     """Plan exit 10 means "run everything"; no triage phase may appear."""
     completed, calls = _run_with_fake_python(tmp_path, checkpoint="1", checkpoint_plan_status=10)

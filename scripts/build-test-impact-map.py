@@ -14,6 +14,17 @@ work that stripped the coverage env, or session-level arcs) are recorded in
 
 The artifact is intentionally interned (a nodeid table plus integer indices) to
 stay compact for a suite with thousands of tests and files.
+
+Two write paths, because consumers of this file must be able to name
+regeneration as a Make/CI dependency without always paying a 45-minute
+portfolio run:
+
+* coverage rebuild (default, when ``.test-portfolio/.coverage`` exists) maps
+  new tests and is what ``make test-portfolio`` produces;
+* prune (``--write``) drops interned ids that pytest would no longer collect
+  and compacts the indices. That is what a test deletion needs.
+  ``--check`` (``make impact-map``) fails closed if prune would change
+  the committed file.
 """
 
 from __future__ import annotations
@@ -243,6 +254,218 @@ def build_map(
     }
 
 
+def prune_uncollectable(
+    document: dict[str, Any],
+    collectable: set[str],
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Drop interned node ids that pytest would not collect; compact indices.
+
+    This regenerates the interned table without a coverage run. It does not
+    map newly added tests; ``build_map`` from portfolio coverage does that.
+
+    Index identity is the intern table: remaining ids keep their relative
+    order, and every integer in ``file_tests`` / ``file_line_tests`` /
+    ``file_scope_tests`` is rewritten. ``stats.interned_nodeids`` is
+    recomputed from the resulting table so a prune cannot leave the
+    committed stats describing a document they no longer match.
+    """
+    old_ids = [str(nodeid) for nodeid in document.get("nodeids") or []]
+    remap: dict[int, int] = {}
+    new_ids: list[str] = []
+    dropped = 0
+    for old_index, nodeid in enumerate(old_ids):
+        if nodeid in collectable:
+            remap[old_index] = len(new_ids)
+            new_ids.append(nodeid)
+        else:
+            dropped += 1
+
+    def remap_list(indices: list[Any]) -> list[int]:
+        return sorted({remap[int(index)] for index in indices if int(index) in remap})
+
+    new_file_tests: dict[str, list[int]] = {}
+    for filename, indices in (document.get("file_tests") or {}).items():
+        kept = remap_list(list(indices))
+        if kept:
+            new_file_tests[str(filename)] = kept
+
+    new_line_tests: dict[str, dict[str, list[int]]] = {}
+    for filename, lines in (document.get("file_line_tests") or {}).items():
+        kept_lines: dict[str, list[int]] = {}
+        for line, indices in (lines or {}).items():
+            kept = remap_list(list(indices))
+            if kept:
+                kept_lines[str(line)] = kept
+        if kept_lines:
+            new_line_tests[str(filename)] = kept_lines
+
+    new_scope_tests: dict[str, dict[str, list[int]]] = {}
+    for filename, scopes in (document.get("file_scope_tests") or {}).items():
+        kept_scopes: dict[str, list[int]] = {}
+        for name, indices in (scopes or {}).items():
+            kept = remap_list(list(indices))
+            if kept:
+                kept_scopes[str(name)] = kept
+        if kept_scopes:
+            new_scope_tests[str(filename)] = kept_scopes
+
+    always_run = [str(path) for path in document.get("always_run") or []]
+    if repo_root is not None:
+        always_run = [path for path in always_run if (repo_root / path).is_file()]
+
+    file_hashes = {
+        str(path): digest
+        for path, digest in (document.get("file_hashes") or {}).items()
+        if str(path) in new_file_tests
+    }
+
+    stats = dict(document.get("stats") or {})
+    stats["interned_nodeids"] = len(new_ids)
+    stats["pruned_uncollectable_nodeids"] = dropped
+    stats["mapped_files"] = len(new_file_tests)
+    if "mapped_scopes" in stats:
+        stats["mapped_scopes"] = sum(len(scopes) for scopes in new_scope_tests.values())
+
+    pruned = dict(document)
+    pruned["nodeids"] = new_ids
+    pruned["file_tests"] = new_file_tests
+    pruned["file_line_tests"] = new_line_tests
+    pruned["file_scope_tests"] = new_scope_tests
+    pruned["file_hashes"] = file_hashes
+    pruned["always_run"] = always_run
+    pruned["stats"] = stats
+    return pruned
+
+
+def collect_nodeids(repo_root: Path) -> set[str]:
+    """Node ids pytest would collect under ``repo_root/tests``.
+
+    Collection is the only authority on what exists: a live ``def test_*``
+    with an empty ``@pytest.mark.parametrize`` list still produces zero
+    collectable ids, and selecting a stranded one is a usage error.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests"],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    collected = {
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.startswith("tests/") and "::" in line
+    }
+    if not collected:
+        detail = (result.stderr or result.stdout)[-2000:]
+        raise ValueError(
+            "pytest --collect-only returned no node ids; "
+            "cannot check or prune the impact map.\n" + detail
+        )
+    return collected
+
+
+def _dump_map(path: Path, document: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _stale_nodeids(document: dict[str, Any], collectable: set[str]) -> list[str]:
+    return [
+        str(nodeid) for nodeid in document.get("nodeids") or [] if str(nodeid) not in collectable
+    ]
+
+
+def _print_write_summary(document: dict[str, Any], output: Path) -> None:
+    stats = document.get("stats") or {}
+    print(
+        "test-impact map: %d files, %d tests (%d unattributed -> always_run), "
+        "%d high-fanout lines pruned (cap %d), base %s -> %s (%.1f MB)"
+        % (
+            int(stats.get("mapped_files") or 0),
+            int(stats.get("interned_nodeids") or 0),
+            int(stats.get("unattributed_tests") or 0),
+            int(stats.get("pruned_high_fanout_lines") or 0),
+            int(stats.get("line_fanout_cap") or 0),
+            str(document.get("base_sha") or "unknown")[:12],
+            output,
+            output.stat().st_size / 1e6,
+        )
+    )
+
+
+def _check_or_prune(
+    *,
+    output: Path,
+    repo_root: Path,
+    write: bool,
+) -> int:
+    if not output.is_file():
+        print(
+            f"build-test-impact-map: committed map not found: {output}\n"
+            "Produce it with `make test-portfolio` "
+            "(or `make impact-map IMPACT_MAP_ARGS=--write` after a coverage run).",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        document = json.loads(output.read_text(encoding="utf-8"))
+        collectable = collect_nodeids(repo_root)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"build-test-impact-map: {exc}", file=sys.stderr)
+        return 2
+
+    stale = _stale_nodeids(document, collectable)
+    interned = (document.get("stats") or {}).get("interned_nodeids")
+    stats_drift = interned is not None and interned != len(document.get("nodeids") or [])
+    pruned = prune_uncollectable(document, collectable, repo_root=repo_root)
+    always_run_drift = pruned["always_run"] != [
+        str(path) for path in document.get("always_run") or []
+    ]
+    stale_map = bool(stale) or stats_drift or always_run_drift
+
+    if not write:
+        if not stale_map:
+            return 0
+        extra = []
+        if stats_drift:
+            extra.append("stats.interned_nodeids does not match len(nodeids)")
+        if always_run_drift:
+            extra.append("always_run names test files that no longer exist")
+        suffix = ("; " + "; ".join(extra)) if extra else ""
+        print(
+            "build-test-impact-map: committed map is stale "
+            "(%d interned node ids do not collect%s).\n"
+            "Selecting a stranded id is a pytest usage error (exit 4), "
+            "not a test failure.\n"
+            "Regenerate: make impact-map IMPACT_MAP_ARGS=--write\n"
+            "(or make test-portfolio for a coverage rebuild that also maps new tests)\n"
+            "First 10: %s" % (len(stale), suffix, stale[:10]),
+            file=sys.stderr,
+        )
+        return 1
+
+    if not stale_map:
+        print(
+            "test-impact map: already current (%d interned ids)"
+            % len(document.get("nodeids") or [])
+        )
+        return 0
+    _dump_map(output, pruned)
+    dropped = int((pruned.get("stats") or {}).get("pruned_uncollectable_nodeids") or 0)
+    print(
+        "test-impact map: pruned %d uncollectable node ids -> %s (%d interned, %.1f MB)"
+        % (dropped, output, len(pruned["nodeids"]), output.stat().st_size / 1e6)
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--coverage-file", type=Path, default=DEFAULT_COVERAGE)
@@ -255,50 +478,50 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MAX_LINE_FANOUT,
         help="drop line-index entries touched by more than N tests (<=0 keeps all)",
     )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="fail if interned node ids would not collect (no write)",
+    )
+    mode.add_argument(
+        "--write",
+        action="store_true",
+        help="prune uncollectable interned ids and write the map (no coverage run)",
+    )
     args = parser.parse_args(argv)
+    repo_root = args.repo_root.resolve()
+    output = args.output if args.output.is_absolute() else (repo_root / args.output)
 
-    if not args.coverage_file.is_file():
-        print(
-            f"build-test-impact-map: coverage data not found: {args.coverage_file}\n"
-            "Run `MAC_TEST_PORTFOLIO=1 scripts/run-contract-tests.sh` or "
-            "`scripts/test-portfolio.py` first.",
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        document = build_map(
-            args.coverage_file,
-            args.timings,
-            repo_root=args.repo_root.resolve(),
-            max_line_fanout=args.max_line_fanout,
-        )
-    except (OSError, ValueError) as exc:
-        print(f"build-test-impact-map: {exc}", file=sys.stderr)
-        return 2
+    if args.check:
+        return _check_or_prune(output=output, repo_root=repo_root, write=False)
+    if args.write:
+        return _check_or_prune(output=output, repo_root=repo_root, write=True)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    # Compact separators: this artifact is machine-read, committed, and large;
-    # pretty-printing roughly tripled its on-disk (and git-history) size.
-    args.output.write_text(
-        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    stats = document["stats"]
+    if args.coverage_file.is_file():
+        try:
+            document = build_map(
+                args.coverage_file,
+                args.timings,
+                repo_root=repo_root,
+                max_line_fanout=args.max_line_fanout,
+            )
+        except (OSError, ValueError) as exc:
+            print(f"build-test-impact-map: {exc}", file=sys.stderr)
+            return 2
+        _dump_map(output, document)
+        _print_write_summary(document, output)
+        return 0
+
     print(
-        "test-impact map: %d files, %d tests (%d unattributed -> always_run), "
-        "%d high-fanout lines pruned (cap %d), base %s -> %s (%.1f MB)"
-        % (
-            stats["mapped_files"],
-            stats["interned_nodeids"],
-            stats["unattributed_tests"],
-            stats["pruned_high_fanout_lines"],
-            stats["line_fanout_cap"],
-            document["base_sha"][:12],
-            args.output,
-            args.output.stat().st_size / 1e6,
-        )
+        f"build-test-impact-map: coverage data not found: {args.coverage_file}\n"
+        "Full rebuild: `make test-portfolio` "
+        "(or `MAC_TEST_PORTFOLIO=1 MAC_TEST_REBUILD_MAP=1 scripts/run-contract-tests.sh`).\n"
+        "Prune uncollectable ids without coverage: "
+        "`make impact-map IMPACT_MAP_ARGS=--write`.",
+        file=sys.stderr,
     )
-    return 0
+    return 2
 
 
 if __name__ == "__main__":
