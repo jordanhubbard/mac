@@ -1895,9 +1895,11 @@ the MAC hub and repository remote:</p>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac --json admin repo refs audit --repo . --remote origin --base-ref origin/main</span>
 </code></pre></div>
 <p>Audit reads current branch SHAs with <code>git ls-remote</code>, loads each task from the
-MAC ledger, checks open GitHub pull requests, and reports classification counts.
-It does not update or delete remote refs. Classifications include <code>active</code>,
-<code>blocked</code>, <code>deferred</code>, <code>superseded</code>, <code>quarantined</code>, <code>merged</code>, and <code>unknown</code>.</p>
+MAC ledger, and checks open reviews on the selected remote. GitHub remotes use
+an authenticated <code>gh</code>; GitLab remotes use an authenticated <code>glab</code>. It reports
+classification counts without updating or deleting remote refs. Classifications
+include <code>active</code>, <code>blocked</code>, <code>deferred</code>, <code>superseded</code>, <code>quarantined</code>, <code>merged</code>,
+and <code>unknown</code>.</p>
 <p>Prune is also a dry-run unless <code>--execute</code> is supplied:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac --json admin repo refs prune --repo . --remote origin</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac --json admin repo refs prune --repo . --remote origin --execute --actor operator</span>
@@ -1909,8 +1911,8 @@ It does not update or delete remote refs. Classifications include <code>active</
   disposition.</li>
 <li>Its grace period has expired.</li>
 <li>A completed branch is proven reachable from the selected canonical base ref.</li>
-<li>GitHub pull-request state was successfully checked and no pull request is
-  open for the branch.</li>
+<li>GitHub pull-request or GitLab merge-request state was successfully checked
+  and no review is open for the branch.</li>
 <li>The remote SHA still equals the SHA observed by audit.</li>
 </ul>
 <p>Deletion is one atomic Git push guarded by a per-ref <code>--force-with-lease</code> for
