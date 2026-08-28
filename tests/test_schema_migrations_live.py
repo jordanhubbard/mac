@@ -47,6 +47,64 @@ def _install_unversioned_legacy_tables(store, *, include_unknown: bool = False) 
         )
         if include_unknown:
             conn.execute("CREATE TABLE unknown_legacy_extra (id INTEGER PRIMARY KEY)")
+        _install_leftover_work_package_task_triggers(conn)
+
+
+def _install_leftover_work_package_task_triggers(conn) -> None:
+    """Reproduce the live-hub leftover: a tasks trigger that queries a dropped table.
+
+    DROP TABLE work_package_assignment_audit CASCADE does not remove this.
+    """
+
+    conn.execute(
+        """
+        CREATE OR REPLACE FUNCTION trg_work_package_task_claim_authority()
+        RETURNS trigger AS $$
+        BEGIN
+            PERFORM 1 FROM work_package_assignment_audit LIMIT 1;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    conn.execute(
+        """
+        CREATE OR REPLACE FUNCTION trg_work_package_expiry_task_detach_guard()
+        RETURNS trigger AS $$
+        BEGIN
+            IF OLD.lease_id IS NOT NULL AND NEW.lease_id IS NULL THEN
+                PERFORM 1 FROM work_package_assignment_audit LIMIT 1;
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    conn.execute("DROP TRIGGER IF EXISTS trg_work_package_task_claim_authority ON tasks")
+    conn.execute(
+        """
+        CREATE TRIGGER trg_work_package_task_claim_authority
+        BEFORE UPDATE ON tasks
+        FOR EACH ROW EXECUTE FUNCTION trg_work_package_task_claim_authority()
+        """
+    )
+    conn.execute("DROP TRIGGER IF EXISTS trg_work_package_expiry_task_detach_guard ON tasks")
+    conn.execute(
+        """
+        CREATE TRIGGER trg_work_package_expiry_task_detach_guard
+        BEFORE UPDATE ON tasks
+        FOR EACH ROW EXECUTE FUNCTION trg_work_package_expiry_task_detach_guard()
+        """
+    )
+
+
+def _function_exists(store, name: str) -> bool:
+    row = store.query_one(
+        "SELECT 1 AS ok FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE n.nspname = current_schema() AND p.proname = ?",
+        (name,),
+    )
+    return row is not None
 
 
 def _relation_exists(store, relation: str) -> bool:
@@ -96,7 +154,7 @@ def test_known_existing_schema_requires_and_accepts_explicit_baseline(pg_dsn: st
 
 def test_explicit_upgrade_applies_in_order_and_proves_postcondition(pg_dsn: str) -> None:
     upgrade = Migration(
-        "0003_upgrade_probe",
+        "0004_upgrade_probe",
         "CREATE TABLE migration_upgrade_probe (id INTEGER PRIMARY KEY)",
         "SELECT to_regclass('migration_upgrade_probe') IS NOT NULL",
     )
@@ -105,13 +163,13 @@ def test_explicit_upgrade_applies_in_order_and_proves_postcondition(pg_dsn: str)
         store.apply_migrations(applied_by="pytest:bootstrap")
         result = store.apply_migrations(applied_by="pytest:upgrade", migrations=chain)
 
-        assert result["applied"] == ["0003_upgrade_probe"]
-        assert result["current_version"] == "0003_upgrade_probe"
+        assert result["applied"] == ["0004_upgrade_probe"]
+        assert result["current_version"] == "0004_upgrade_probe"
         assert (
-            store.query_one("SELECT migration_id FROM schema_migrations WHERE ordinal = 3")[
+            store.query_one("SELECT migration_id FROM schema_migrations WHERE ordinal = 4")[
                 "migration_id"
             ]
-            == "0003_upgrade_probe"
+            == "0004_upgrade_probe"
         )
 
 
@@ -173,7 +231,7 @@ def test_schema_version_rejects_inconsistency_and_verification_detects_tampering
 
 def test_missing_or_out_of_order_ledger_is_refused(pg_dsn: str) -> None:
     upgrade = Migration(
-        "0003_order_probe",
+        "0004_order_probe",
         "CREATE TABLE migration_order_probe (id INTEGER PRIMARY KEY)",
         "SELECT to_regclass('migration_order_probe') IS NOT NULL",
     )
@@ -190,7 +248,7 @@ def test_missing_or_out_of_order_ledger_is_refused(pg_dsn: str) -> None:
 
 def test_failed_migration_rolls_back_ddl_and_receipt(pg_dsn: str) -> None:
     broken = Migration(
-        "0003_rollback_probe",
+        "0004_rollback_probe",
         "CREATE TABLE migration_rollback_probe (id INTEGER PRIMARY KEY)",
         "SELECT FALSE",
     )
@@ -237,7 +295,7 @@ def test_read_only_startup_refuses_fresh_and_behind_databases(pg_dsn: str) -> No
         store.apply_migrations(applied_by="pytest:old-binary", migrations=MIGRATIONS[:1])
         status = store.migration_status()
         assert status["status"] == "pending"
-        assert status["pending"] == [MIGRATIONS[1].migration_id]
+        assert status["pending"] == [migration.migration_id for migration in MIGRATIONS[1:]]
         with pytest.raises(StoreError, match="behind this binary"):
             store.verify_schema()
 
@@ -259,7 +317,7 @@ def test_partial_or_empty_authority_is_refused(pg_dsn: str) -> None:
 
 def test_pending_migration_without_postcondition_is_refused(pg_dsn: str) -> None:
     missing_proof = Migration(
-        "0003_missing_proof",
+        "0004_missing_proof",
         "CREATE TABLE migration_missing_proof (id INTEGER PRIMARY KEY)",
     )
     with _fresh_store(pg_dsn) as store:
@@ -324,6 +382,8 @@ def test_legacy_prune_requires_separate_authority_and_accepts_rows(pg_dsn: str) 
         assert result["legacy_schema_prune"]["table_names"] == sorted(LEGACY_PRUNABLE_TABLES)
         assert result["legacy_schema_prune"]["total_rows"] == len(LEGACY_PRUNABLE_TABLES) + 1
         assert not any(_relation_exists(store, table) for table in LEGACY_PRUNABLE_TABLES)
+        assert not _function_exists(store, "trg_work_package_task_claim_authority")
+        assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
         assert store.verify_schema()["status"] == "verified"
 
 
@@ -351,7 +411,7 @@ def test_failure_after_legacy_drop_rolls_back_tables_rows_and_ledger(pg_dsn: str
     from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
 
     broken = Migration(
-        "0003_legacy_prune_rollback_probe",
+        "0004_legacy_prune_rollback_probe",
         "CREATE TABLE legacy_prune_rollback_probe (id INTEGER PRIMARY KEY)",
         "SELECT FALSE",
     )
@@ -373,3 +433,24 @@ def test_failure_after_legacy_drop_rolls_back_tables_rows_and_ledger(pg_dsn: str
         )
         assert not _relation_exists(store, "schema_migrations")
         assert not _relation_exists(store, "legacy_prune_rollback_probe")
+
+
+def test_upgrade_drops_leftover_work_package_task_triggers(pg_dsn: str) -> None:
+    """A hub already on 0002 still has the tasks triggers after table prune."""
+
+    with _fresh_store(pg_dsn) as store:
+        store.apply_migrations(
+            applied_by="pytest:through-0002",
+            migrations=MIGRATIONS[:2],
+        )
+        with store._pool.connection() as conn:
+            _install_leftover_work_package_task_triggers(conn)
+        assert _function_exists(store, "trg_work_package_task_claim_authority")
+        assert _function_exists(store, "trg_work_package_expiry_task_detach_guard")
+
+        result = store.apply_migrations(applied_by="pytest:drop-leftovers")
+
+        assert result["applied"] == ["0003_drop_leftover_work_package_triggers"]
+        assert not _function_exists(store, "trg_work_package_task_claim_authority")
+        assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
+        assert store.verify_schema()["status"] == "verified"

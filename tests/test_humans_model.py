@@ -436,7 +436,7 @@ def _apply_versioned_humans_repair(store) -> None:
         start,
     )
     repair = Migration(
-        "0003_test_humans_repair",
+        "0004_test_humans_repair",
         MIGRATIONS[0].sql[start:end],
         """
         SELECT to_regclass(current_schema() || '.humans') IS NOT NULL
