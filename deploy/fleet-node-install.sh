@@ -12429,6 +12429,12 @@ def classify_openclaw_agent_failure(output: str) -> str:
         return "budget_exceeded"
     if "no eligible models registered" in normalized:
         return "no_eligible_models"
+    if (
+        "no provider could serve model=" in normalized
+        or "all_providers_unavailable" in normalized
+        or ("503" in normalized and "service unavailable" in normalized)
+    ):
+        return "provider_unavailable"
     return ""
 
 
@@ -12743,38 +12749,46 @@ if openclaw_required:
 
     prompt = "Respond exactly MAC_OPENCLAW_STARTUP_OK"
     try:
-        completed = subprocess.run(
-            [
-                str(openclaw_agent_bin),
-                "--agent",
-                "main",
-                "--message",
-                prompt,
-                "--session-id",
-                f"mac-openclaw-startup-self-test-{agent_id}-{int(time.time())}",
-                "--json",
-            ],
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-            env={**os.environ, "MAC_AGENT_ID": agent_id},
-        )
-        agent_returncode = completed.returncode
-        raw_agent_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
-        agent_output = tail(raw_agent_output)
-        if "MAC_OPENCLAW_STARTUP_OK" in raw_agent_output:
-            # OpenClaw may report a non-zero CLI status after a gateway scope
-            # upgrade request while successfully completing the model turn via
-            # its embedded fallback runner.  The sentinel proves the execution
-            # contract; only a missing sentinel is a hard self-test failure.
-            checks["openclaw_agent"] = True
-        elif completed.returncode != 0:
+        for attempt in range(1, 4):
+            completed = subprocess.run(
+                [
+                    str(openclaw_agent_bin),
+                    "--agent",
+                    "main",
+                    "--message",
+                    prompt,
+                    "--session-id",
+                    f"mac-openclaw-startup-self-test-{agent_id}-{int(time.time())}-{attempt}",
+                    "--json",
+                ],
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+                env={**os.environ, "MAC_AGENT_ID": agent_id},
+            )
+            agent_returncode = completed.returncode
+            raw_agent_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+            agent_output = tail(raw_agent_output)
+            if "MAC_OPENCLAW_STARTUP_OK" in raw_agent_output:
+                # OpenClaw may report a non-zero CLI status after a gateway scope
+                # upgrade request while successfully completing the model turn via
+                # its embedded fallback runner. The sentinel proves the contract.
+                checks["openclaw_agent"] = True
+                openclaw_failure_class = ""
+                break
             openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-            add_openclaw_agent_probe_problem(f"OpenClaw agent self-test exited {completed.returncode}")
-        else:
-            add_openclaw_agent_probe_problem("OpenClaw agent self-test did not return its sentinel")
-            checks["openclaw_agent"] = False
+            if openclaw_failure_class != "provider_unavailable" or attempt == 3:
+                if completed.returncode != 0:
+                    add_openclaw_agent_probe_problem(
+                        f"OpenClaw agent self-test exited {completed.returncode}"
+                    )
+                else:
+                    add_openclaw_agent_probe_problem(
+                        "OpenClaw agent self-test did not return its sentinel"
+                    )
+                break
+            time.sleep(attempt)
     except subprocess.TimeoutExpired as exc:
         agent_returncode = None
         agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))

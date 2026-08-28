@@ -128,7 +128,14 @@ def _run_gateway_serving_self_test(tmp_path, monkeypatch, *, agent_rc, agent_std
     # Stub reachable shared services + heartbeat so they are not a failure cause.
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
 
+    outcomes = (
+        list(zip(agent_rc, agent_stdout, agent_stderr)) if isinstance(agent_rc, list) else None
+    )
+
     def _fake_run(*args, **kwargs):
+        if outcomes is not None:
+            rc, stdout, stderr = outcomes.pop(0)
+            return _FakeCompleted(rc, stdout, stderr)
         return _FakeCompleted(agent_rc, agent_stdout, agent_stderr)
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
@@ -192,6 +199,25 @@ def test_gateway_serving_worker_agent_no_sentinel_is_degraded(tmp_path, monkeypa
     assert report["blocking_problems"] == []
     probe = "OpenClaw agent self-test did not return its sentinel"
     assert probe in report["non_blocking_problems"]
+
+
+def test_gateway_serving_worker_retries_transient_router_503(tmp_path, monkeypatch):
+    exit_code, report = _run_gateway_serving_self_test(
+        tmp_path,
+        monkeypatch,
+        agent_rc=[1, 0],
+        agent_stdout=["", "MAC_OPENCLAW_STARTUP_OK"],
+        agent_stderr=[
+            "FailoverError: 503 no provider could serve model=azure/anthropic/claude-sonnet-4-6",
+            "",
+        ],
+    )
+
+    assert exit_code == 0
+    assert report["status"] == "passed"
+    assert report["checks"]["openclaw_agent"] is True
+    assert report["openclaw_failure_class"] == ""
+    assert report["problems"] == []
 
 
 def test_gateway_serving_worker_hard_misconfig_still_blocks(tmp_path, monkeypatch):
