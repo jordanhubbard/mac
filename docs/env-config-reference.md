@@ -1150,6 +1150,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_PORTFOLIO_OUTPUT` | str | consumer-defined | core | Core setting: test portfolio output. |
 | `MAC_TEST_REBUILD_MAP` | bool | consumer-defined | core | Core setting: test rebuild map. |
 | `MAC_TEST_SELECT_BASE` | str | consumer-defined | core | Core setting: test select base. |
+| `MAC_TEST_SERIAL_SLICE` | str | consumer-defined | core | Core setting: test serial slice. |
 | `MAC_TEST_STALL_TIMEOUT` | int | consumer-defined | core | Core setting: test stall timeout. |
 | `MAC_TICK_BLOCKING_HUB_VERIFY` | str | consumer-defined | core | Core setting: tick blocking hub verify. |
 | `MAC_TICK_RUNS_REVIEW_SWEEP` | str | consumer-defined | core | Core setting: tick runs review sweep. |

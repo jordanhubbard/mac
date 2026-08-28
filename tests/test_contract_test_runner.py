@@ -34,7 +34,7 @@ def _run_with_fake_python(
     fake_python = bin_dir / "python3"
     fake_python.write_text(
         """#!/bin/sh
-printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\tSKIPFILE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "${MAC_TEST_CHECKPOINT_SKIP_FILE-<unset>}" "$*" >> "$FAKE_PY_LOG"
+printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\tSKIPFILE=%s\tSERIAL=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "${MAC_TEST_CHECKPOINT_SKIP_FILE-<unset>}" "${MAC_TEST_SERIAL_SLICE-<unset>}" "$*" >> "$FAKE_PY_LOG"
 case "$*" in
     *os.cpu_count*)
         # The runner computes its headroom-aware default worker count with a
@@ -192,7 +192,11 @@ def test_contract_runner_defaults_to_headroom_workers_and_protects_serial_phase(
     # saturating every core; the serial phase stays unparallelised.
     assert "-n 6 --dist loadscope" in pytest_calls[0]
     assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
-    assert "-n " not in pytest_calls[1]
+    assert "SERIAL=<unset>" in pytest_calls[0]
+    assert "-n 0" in pytest_calls[1]
+    assert "-p serial_slice_plugin" in pytest_calls[1]
+    assert "--dist" not in pytest_calls[1]
+    assert "SERIAL=1" in pytest_calls[1]
     assert "-m process_e2e or postgres or container_contract or docker_e2e" in pytest_calls[1]
     assert all(line.startswith("PYTEST_ADDOPTS=<unset>\t") for line in pytest_calls)
 
@@ -221,7 +225,9 @@ def test_contract_runner_fast_mode_skips_coverage_and_policy(tmp_path):
     assert len(pytest_calls) == 2
     assert "-n 6 --dist loadscope" in pytest_calls[0]
     assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
-    assert "-n " not in pytest_calls[1]
+    assert "-n 0" in pytest_calls[1]
+    assert "-p serial_slice_plugin" in pytest_calls[1]
+    assert "--dist" not in pytest_calls[1]
     assert "-m process_e2e or postgres or container_contract or docker_e2e" in pytest_calls[1]
     # No coverage pipeline runs at all.
     assert not any("-m coverage combine" in line for line in calls)

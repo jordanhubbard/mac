@@ -59,7 +59,11 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 # sides of generated artifacts so a generator or generated-output-only change
 # cannot silently bypass its drift test.
 PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
-    ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
+    ".github/workflows/ci.yml": (
+        "tests/test_deployment_image_artifact.py",
+        "tests/test_red_main_is_surfaced.py",
+        "tests/test_portfolio_ci_does_not_push_main.py",
+    ),
     "deploy/deploy-mac-fleet.sh": (
         "tests/test_deploy_schema_migrations.py",
         "tests/test_deploy_fleet_drain.py",
@@ -136,6 +140,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "mkdocs.yml": ("tests/test_docs_accessibility.py",),
     "scripts/resolve-impacted-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/run-contract-tests.sh": ("tests/test_contract_test_runner.py",),
+    "scripts/serial_slice_plugin.py": ("tests/test_contract_test_runner.py",),
     "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/test-checkpoint.py": ("tests/test_test_checkpoint.py",),
     "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),

@@ -503,6 +503,27 @@ PYCAP
     # loadscope (which keeps a module's tests + module-scoped fixtures on one
     # worker).
     _SERIAL_MARK="process_e2e or postgres or container_contract or docker_e2e"
+    # Pin the protected marker slice to one process. PYTEST_ADDOPTS is unset
+    # above, but an explicit `-n 0` is what keeps a future pyproject addopts
+    # (or a leaked `-n auto`) from making process_e2e concurrent after we split
+    # it off. The plugin drops coverage's subprocess patch for children:
+    # tracing docker/sudo/launchctl blows sub-second process-group deadlines
+    # on Darwin after a wide xdist bulk phase. The parent pytest process is
+    # still measured by `coverage run`.
+    _mac_run_serial_pytest() {
+        export MAC_TEST_SERIAL_SLICE=1
+        _serial_status=0
+        _serial_pypath="$(cd "$(dirname "$0")" && pwd)${PYTHONPATH:+:$PYTHONPATH}"
+        if [ "${1:-}" = "coverage" ]; then
+            PYTHONPATH="$_serial_pypath" "$PY" -m coverage run -m pytest -n 0 \
+                -p serial_slice_plugin -m "$_SERIAL_MARK" || _serial_status=$?
+        else
+            PYTHONPATH="$_serial_pypath" "$PY" -m pytest -n 0 \
+                -p serial_slice_plugin -m "$_SERIAL_MARK" || _serial_status=$?
+        fi
+        unset MAC_TEST_SERIAL_SLICE
+        return "$_serial_status"
+    }
 
     # Every invocation owns a separate coverage namespace. Multiple agents and
     # local actors routinely test the same checkout concurrently; sharing the
@@ -619,7 +640,7 @@ PYCAP
             "$PY" -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
                 -m "not ($_SERIAL_MARK)" || pytest_status=$?
             if [ "$pytest_status" -eq 0 ]; then
-                "$PY" -m pytest -m "$_SERIAL_MARK" || pytest_status=$?
+                _mac_run_serial_pytest || pytest_status=$?
             fi
         else
             # Nested/serial single-owner run. A nested empty selection (exit 5)
@@ -653,7 +674,7 @@ PYCAP
             "$PY" -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
                 -m "not ($_SERIAL_MARK)" || triage_status=$?
             if [ "$triage_status" -eq 0 ]; then
-                "$PY" -m pytest -m "$_SERIAL_MARK" || triage_status=$?
+                _mac_run_serial_pytest || triage_status=$?
             fi
         else
             "$PY" -m pytest || triage_status=$?
@@ -689,7 +710,7 @@ PYCAP
         "$PY" -m coverage run -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
             -m "not ($_SERIAL_MARK)" || pytest_status=$?
         if [ "$pytest_status" -eq 0 ]; then
-            "$PY" -m coverage run -m pytest -m "$_SERIAL_MARK" || pytest_status=$?
+            _mac_run_serial_pytest coverage || pytest_status=$?
         fi
     else
         # Nested/serial single-owner run under coverage. A nested empty
