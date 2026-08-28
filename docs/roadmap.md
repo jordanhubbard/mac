@@ -74,11 +74,18 @@ transaction or equivalent durable evidence.
   forward or back by bounded cohorts.
 - [ ] Crash recovery, authorization failures, failed health proofs, and cohort
   rollback are covered and proven in the live fleet.
-- [ ] The current `main` source commit is deployed and attested on the hub,
+- [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
-- [ ] A failed or interrupted fleet deployment can safely resume without
+  Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on rocky, natasha, and
+  bullwinkle after typed cohort `20260827T060057Z` (`make deploy HUB=rocky`
+  with hold-adoptions after a retained roll-forward). Hub `/health` ok;
+  workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
+- [x] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
   of generated authority files.
+  Verified by adopting hold
+  `mac admin fleet roll-forward repair retained after 20260827T054339Z`
+  and completing `20260827T060057Z` without rewriting generated authority.
 - [ ] Darwin and parallel test harnesses are deterministic enough that required
   gates provide reliable release evidence on the supported development hosts.
 - [ ] Database and agent-owned state upgrades are versioned, ordered, recorded,
@@ -98,8 +105,12 @@ transaction or equivalent durable evidence.
 
 ## Operational autonomy
 
-- [ ] Nightly local-news collection reliably publishes one deduplicated report
+- [x] Nightly local-news collection reliably publishes one deduplicated report
   to `#localnews`, with delivery and freshness evidence.
+  Live receipt `kslug-nightly-news.last-success.json` delivered
+  `2026-08-26T22:23:31Z` to `slack:C0AH1QJCT7F`; later runs skipped
+  `already_delivered_today`. Launchd job `kslug-nightly-news` (`0 6 * * *`)
+  reinstalled on rocky in deploy `20260827T060057Z` at `060acc50`.
 - [ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.
@@ -117,8 +128,10 @@ transaction or equivalent durable evidence.
 
 ## Near-term order
 
-1. Complete and verify the top-of-tree hub rollout.
-2. Restore the nightly `#localnews` report.
+1. Complete and verify the top-of-tree hub rollout. Done: `060acc50`,
+   deploy `20260827T060057Z`.
+2. Restore the nightly `#localnews` report. Done: Slack delivery
+   `2026-08-26T22:23:31Z` plus launchd reinstall on `060acc50`.
 3. Prove the hub-mediated upgrade transaction across the full fleet.
 4. Close the autonomous review/repair/publication loop with a live `~/Src/mac`
    task.
