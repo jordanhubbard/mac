@@ -17,6 +17,21 @@ ROOT = Path(__file__).resolve().parents[1]
 LAUNCHD_LIFECYCLE = ROOT / "deploy" / "lib" / "launchd-lifecycle.sh"
 
 
+def _without_coverage_tracing(env: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(env)
+    cleaned.pop("COVERAGE_PROCESS_START", None)
+    cleaned.pop("COVERAGE_PROCESS_CONFIG", None)
+    return cleaned
+
+
+@pytest.fixture(autouse=True)
+def _drop_coverage_subprocess_tracing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """launchd helpers inherit os.environ; coverage's subprocess patch wraps
+    sudo/launchctl and blows the 1-second command deadlines."""
+    monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
+    monkeypatch.delenv("COVERAGE_PROCESS_CONFIG", raising=False)
+
+
 @pytest.mark.parametrize(
     ("installer_name", "label", "health_assignment", "wrapper_call"),
     (
@@ -399,7 +414,7 @@ while :; do sleep 5; done
             str(LAUNCHD_LIFECYCLE),
             str(worker),
         ],
-        env={**os.environ, "CHILD_PID_FILE": str(child_pid)},
+        env=_without_coverage_tracing({**os.environ, "CHILD_PID_FILE": str(child_pid)}),
         check=False,
         capture_output=True,
         text=True,

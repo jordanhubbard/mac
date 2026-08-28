@@ -322,6 +322,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
@@ -359,16 +360,17 @@ jobs:
         with:
           name: test-portfolio
           path: .test-portfolio/
-      - name: Commit the refreshed impact map to main
+      - name: Open a PR for the refreshed impact map
         # The producer of the committed map is this job: a green whole-repo
-        # portfolio run with MAC_TEST_REBUILD_MAP=1. It used to run only on a
-        # nightly schedule, so a merge that deleted tests left interned node
-        # ids stranded until the next cron -- and every subsequent PR's
-        # always_run guards failed. Push-to-main is therefore part of the
-        # same dependency: if main moved, regenerate. [skip ci] keeps the
-        # data-only commit from re-triggering CI (and the image republish
-        # path). The rebase-retry loop tolerates a racing push to main.
+        # portfolio run with MAC_TEST_REBUILD_MAP=1. Branch protection rejects
+        # `git push origin HEAD:main` (GH013), and that rejection used to fail
+        # this job — so a red main meant "git was not allowed to push", not
+        # "the product is red". Land the refresh on a bot-owned branch as a
+        # pull request. The map is already uploaded as the test-portfolio
+        # artifact; a blocked push or PR must not fail the job.
         if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           map=src/mac/data/test_impact_map.json
@@ -378,20 +380,23 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          branch=ci/impact-map-refresh
+          git checkout -B "$branch"
           git add "$map"
-          git commit -m "chore(test-selection): refresh committed impact map [skip ci]" \
+          git commit -m "chore(test-selection): refresh committed impact map" \
             -m "Rebuilt from the portfolio coverage run at ${GITHUB_SHA}."
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:main; then
-              echo "pushed refreshed impact map"
-              exit 0
-            fi
-            echo "push rejected (attempt ${attempt}); rebasing onto origin/main"
-            git fetch origin main
-            git rebase origin/main
-          done
-          echo "failed to push refreshed impact map after retries" >&2
-          exit 1
+          if ! git push origin "HEAD:refs/heads/${branch}" --force; then
+            echo "::warning::could not push ${branch}; map is in the test-portfolio artifact"
+            exit 0
+          fi
+          if gh pr view "$branch" --json number --jq .number >/dev/null 2>&1; then
+            echo "updated existing impact-map PR"
+            exit 0
+          fi
+          gh pr create --base main --head "$branch" \
+            --title "chore(test-selection): refresh committed impact map" \
+            --body "Portfolio job rebuilt \`src/mac/data/test_impact_map.json\` from ${GITHUB_SHA}. Opened because branch protection forbids pushing the refresh directly to main." \
+            || echo "::warning::could not open PR; branch ${branch} was pushed"
 
   container-contract:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -1240,6 +1245,7 @@ jobs:
       - postgres-contract
       - publication-scope
       - docker
+      - portfolio
     if: always() && failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

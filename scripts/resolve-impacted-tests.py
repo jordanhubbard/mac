@@ -59,7 +59,11 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 # sides of generated artifacts so a generator or generated-output-only change
 # cannot silently bypass its drift test.
 PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
-    ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
+    ".github/workflows/ci.yml": (
+        "tests/test_deployment_image_artifact.py",
+        "tests/test_red_main_is_surfaced.py",
+        "tests/test_portfolio_ci_does_not_push_main.py",
+    ),
     "deploy/deploy-mac-fleet.sh": (
         "tests/test_deploy_schema_migrations.py",
         "tests/test_deploy_fleet_drain.py",

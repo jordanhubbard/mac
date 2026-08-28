@@ -235,6 +235,15 @@ def test_fleet_installer_contract_includes_every_direct_test_owner():
     assert direct_owners <= set(R.PATH_TEST_CONTRACTS["deploy/fleet-node-install.sh"])
 
 
+def test_ci_workflow_contract_owns_portfolio_and_red_main_guards():
+    owners = R.PATH_TEST_CONTRACTS[".github/workflows/ci.yml"]
+    assert "tests/test_deployment_image_artifact.py" in owners
+    assert "tests/test_red_main_is_surfaced.py" in owners
+    assert "tests/test_portfolio_ci_does_not_push_main.py" in owners
+    for owner in owners:
+        assert (ROOT / owner).is_file(), owner
+
+
 def test_documentation_only_selects_no_tests(repo, policy, impact_map):
     result = _resolve(repo, policy, impact_map, ["docs/guide.md", "README rename.md"])
     assert result["mode"] == "focused"
