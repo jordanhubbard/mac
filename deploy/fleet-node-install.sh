@@ -11112,8 +11112,12 @@ PY_SCHEMA_PREFLIGHT
   write_schema_migration_receipt \
     backup_required "$preflight" "" "" "$quiescence"
   log "creating restore-verified PostgreSQL backup before schema migration"
+  # ${a[@]+"${a[@]}"} rather than "${a[@]}": under `set -u`, bash 3.2 (macOS
+  # hub hosts) treats expanding an empty array as unbound. backup_args is
+  # empty for a versioned authority with pending migrations; only `fresh`
+  # appends --allow-empty-authority.
   "$VENV/bin/mac-pg-backup" --json --dsn "$dsn" --out "$backup_dir" \
-    "${backup_args[@]}" > "$backup"
+    ${backup_args[@]+"${backup_args[@]}"} > "$backup"
   "$PY" - "$backup" <<'PY_SCHEMA_BACKUP_PROOF'
 import json
 import sys
@@ -11132,7 +11136,7 @@ PY_SCHEMA_BACKUP_PROOF
   log "applying explicit transactional PostgreSQL schema migrations"
   if ! "$VENV/bin/mac-schema-migrate" --database-url "$dsn" \
       --applied-by "fleet-deploy:${DEPLOY_REV}:${DEPLOY_GENERATION}" \
-      "${baseline_args[@]}" > "$migration"; then
+      ${baseline_args[@]+"${baseline_args[@]}"} > "$migration"; then
     write_schema_migration_receipt \
       migration_failed_backup_retained "$preflight" "$backup" "" "$quiescence"
     die "PostgreSQL schema migration failed transactionally; backup retained at $(cat "$backup")"
