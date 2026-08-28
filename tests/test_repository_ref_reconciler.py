@@ -107,7 +107,7 @@ def _install_success_fakes(monkeypatch, *, pr_warning=""):
     monkeypatch.setattr(
         rrr,
         "query_open_pull_requests",
-        lambda _repo: (None, pr_warning) if pr_warning else ({}, ""),
+        lambda _repo, **_kwargs: (None, pr_warning) if pr_warning else ({}, ""),
     )
     monkeypatch.setattr(
         rrr,

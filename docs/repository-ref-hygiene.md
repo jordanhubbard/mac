@@ -63,9 +63,11 @@ mac --json admin repo refs audit --repo . --remote origin --base-ref origin/main
 ```
 
 Audit reads current branch SHAs with `git ls-remote`, loads each task from the
-MAC ledger, checks open GitHub pull requests, and reports classification counts.
-It does not update or delete remote refs. Classifications include `active`,
-`blocked`, `deferred`, `superseded`, `quarantined`, `merged`, and `unknown`.
+MAC ledger, and checks open reviews on the selected remote. GitHub remotes use
+an authenticated `gh`; GitLab remotes use an authenticated `glab`. It reports
+classification counts without updating or deleting remote refs. Classifications
+include `active`, `blocked`, `deferred`, `superseded`, `quarantined`, `merged`,
+and `unknown`.
 
 Prune is also a dry-run unless `--execute` is supplied:
 
@@ -81,8 +83,8 @@ Execution fails closed unless all of these checks pass:
   disposition.
 - Its grace period has expired.
 - A completed branch is proven reachable from the selected canonical base ref.
-- GitHub pull-request state was successfully checked and no pull request is
-  open for the branch.
+- GitHub pull-request or GitLab merge-request state was successfully checked
+  and no review is open for the branch.
 - The remote SHA still equals the SHA observed by audit.
 
 Deletion is one atomic Git push guarded by a per-ref `--force-with-lease` for

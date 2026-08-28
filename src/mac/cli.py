@@ -3212,8 +3212,10 @@ def cmd_task_force_complete(args: argparse.Namespace) -> None:
     _print(_plane(args).force_complete_task(args.task_id, args.actor, args.reason or None))
 
 
-def _repository_open_pull_requests(repo: Path) -> tuple[Optional[Dict[str, str]], str]:
-    return query_open_pull_requests(repo, runner=subprocess.run)
+def _repository_open_pull_requests(
+    repo: Path, remote: str = "origin"
+) -> tuple[Optional[Dict[str, str]], str]:
+    return query_open_pull_requests(repo, remote=remote, runner=subprocess.run)
 
 
 def _repository_ref_audit(
@@ -3227,7 +3229,7 @@ def _repository_ref_audit(
     selected_tasks = set(args.task_ids or [])
     if selected_tasks:
         refs = [item for item in refs if item.task_id in selected_tasks]
-    open_prs, pr_warning = _repository_open_pull_requests(repo)
+    open_prs, pr_warning = _repository_open_pull_requests(repo, args.remote)
     result = audit_repository_refs_result(
         repo,
         refs,

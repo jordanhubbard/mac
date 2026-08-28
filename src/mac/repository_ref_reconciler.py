@@ -404,7 +404,7 @@ class RepositoryRefReconciler:
         )
         refresh_remote_base_ref(repo, remote, base_ref)
         refs = list_managed_remote_refs(repo, remote)
-        open_pull_requests, pr_warning = query_open_pull_requests(repo)
+        open_pull_requests, pr_warning = query_open_pull_requests(repo, remote=remote)
         audit_result = audit_repository_refs_result(
             repo,
             refs,
