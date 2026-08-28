@@ -1888,11 +1888,18 @@ transaction or equivalent durable evidence.</p>
   forward or back by bounded cohorts.</li>
 <li>[ ] Crash recovery, authorization failures, failed health proofs, and cohort
   rollback are covered and proven in the live fleet.</li>
-<li>[ ] The current <code>main</code> source commit is deployed and attested on the hub,
-  every configured worker, and every subsequently registered fleet member.</li>
-<li>[ ] A failed or interrupted fleet deployment can safely resume without
+<li>[x] The current <code>main</code> source commit is deployed and attested on the hub,
+  every configured worker, and every subsequently registered fleet member.
+  Verified <code>060acc500ab99e30bc01cfccf7eef2232108b4e4</code> on rocky, natasha, and
+  bullwinkle after typed cohort <code>20260827T060057Z</code> (<code>make deploy HUB=rocky</code>
+  with hold-adoptions after a retained roll-forward). Hub <code>/health</code> ok;
+  workers idle and unheld; <code>HERMES_HOME=$MAC_HOME/openclaw</code>.</li>
+<li>[x] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
-  of generated authority files.</li>
+  of generated authority files.
+  Verified by adopting hold
+  <code>mac admin fleet roll-forward repair retained after 20260827T054339Z</code>
+  and completing <code>20260827T060057Z</code> without rewriting generated authority.</li>
 <li>[ ] Darwin and parallel test harnesses are deterministic enough that required
   gates provide reliable release evidence on the supported development hosts.</li>
 <li>[ ] Database and agent-owned state upgrades are versioned, ordered, recorded,
@@ -1912,8 +1919,12 @@ transaction or equivalent durable evidence.</p>
 </ul>
 <h2 id="operational-autonomy">Operational autonomy<a class="headerlink" href="#operational-autonomy" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] Nightly local-news collection reliably publishes one deduplicated report
-  to <code>#localnews</code>, with delivery and freshness evidence.</li>
+<li>[x] Nightly local-news collection reliably publishes one deduplicated report
+  to <code>#localnews</code>, with delivery and freshness evidence.
+  Live receipt <code>kslug-nightly-news.last-success.json</code> delivered
+  <code>2026-08-26T22:23:31Z</code> to <code>slack:C0AH1QJCT7F</code>; later runs skipped
+  <code>already_delivered_today</code>. Launchd job <code>kslug-nightly-news</code> (<code>0 6 * * *</code>)
+  reinstalled on rocky in deploy <code>20260827T060057Z</code> at <code>060acc50</code>.</li>
 <li>[ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.</li>
@@ -1931,8 +1942,10 @@ transaction or equivalent durable evidence.</p>
 </ul>
 <h2 id="near-term-order">Near-term order<a class="headerlink" href="#near-term-order" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Complete and verify the top-of-tree hub rollout.</li>
-<li>Restore the nightly <code>#localnews</code> report.</li>
+<li>Complete and verify the top-of-tree hub rollout. Done: <code>060acc50</code>,
+   deploy <code>20260827T060057Z</code>.</li>
+<li>Restore the nightly <code>#localnews</code> report. Done: Slack delivery
+   <code>2026-08-26T22:23:31Z</code> plus launchd reinstall on <code>060acc50</code>.</li>
 <li>Prove the hub-mediated upgrade transaction across the full fleet.</li>
 <li>Close the autonomous review/repair/publication loop with a live <code>~/Src/mac</code>
    task.</li>
