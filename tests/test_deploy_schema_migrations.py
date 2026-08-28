@@ -115,3 +115,18 @@ def test_spokes_never_backup_or_migrate_postgresql() -> None:
     assert first_command == "control_plane_enabled || return 0"
     assert '"$VENV/bin/mac-pg-backup"' in body
     assert '"$VENV/bin/mac-schema-migrate"' in body
+
+
+def test_empty_backup_and_baseline_args_expand_under_nounset() -> None:
+    """Versioned pending migrations leave both arrays empty; Darwin bash 3.2
+    with `set -u` aborts `"${empty[@]}"` (rocky 2026-08-28 deploy of #671)."""
+    body = _migration_function(_installer())
+
+    assert "local -a baseline_args=() backup_args=()" in body
+    assert '    ${backup_args[@]+"${backup_args[@]}"} > "$backup"' in body
+    assert '      ${baseline_args[@]+"${baseline_args[@]}"} > "$migration"' in body
+    unsafe = body.replace('${backup_args[@]+"${backup_args[@]}"}', "").replace(
+        '${baseline_args[@]+"${baseline_args[@]}"}', ""
+    )
+    assert '"${backup_args[@]}"' not in unsafe
+    assert '"${baseline_args[@]}"' not in unsafe
