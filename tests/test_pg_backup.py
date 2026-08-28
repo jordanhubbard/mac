@@ -325,3 +325,35 @@ def test_dump_succeeds_while_the_live_table_is_churning(tmp_path):
     res = pg_backup.dump(DSN, tmp_path / "b", now=_now(), runner=Churning())
     assert res.verified is True
     assert json.loads(res.manifest.read_text())["restore_verified"] is True
+
+
+def test_live_dump_resolves_psql_and_pg_restore_when_they_are_off_path(tmp_path, monkeypatch):
+    """dump(verify=True) on the live path must not pass _default_runner into
+    verify_restore. That made _binary_for return the bare name ``psql``, which
+    FileNotFoundError'd under launchd PATH (task_0393627c / rocky 2026-08-28).
+    """
+
+    install = tmp_path / "opt" / "postgresql@17" / "bin"
+    install.mkdir(parents=True)
+    for name in ("pg_dump", "pg_restore", "psql"):
+        binary = install / name
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+
+    empty = tmp_path / "path-without-postgres"
+    empty.mkdir()
+    monkeypatch.setattr(pg_backup, "_PG_BIN_SEARCH", (str(install),))
+    monkeypatch.setenv("PATH", str(empty))
+
+    fake = FakePg()
+    monkeypatch.setattr(pg_backup, "_default_runner", fake)
+    res = pg_backup.dump(DSN, tmp_path / "live", now=_now(), runner=None)
+
+    assert res.verified is True
+    invoked = [Path(argv[0]) for argv in fake.calls]
+    names = {path.name for path in invoked}
+    assert {"pg_dump", "pg_restore", "psql"} <= names
+    for path in invoked:
+        if path.name in {"pg_dump", "pg_restore", "psql"}:
+            assert path.is_absolute(), path
+            assert path.parent == install, path
