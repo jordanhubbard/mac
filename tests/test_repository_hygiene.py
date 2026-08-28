@@ -657,10 +657,12 @@ def test_prune_normalizes_remote_revalidation_failure(tmp_path):
     assert "secret" not in str(exc_info.value)
 
 
-def test_query_open_pull_requests_uses_distinct_failure_state(tmp_path):
+def test_query_open_pull_requests_uses_github_schema(tmp_path):
     payload = '[{"headRefName":"branch","number":7,"url":"https://example.invalid/pull/7"}]'
 
     def success(argv, **kwargs):
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return _cp(argv, stdout="git@github.com:example/project.git\n")
         assert argv[:4] == ["gh", "pr", "list", "--state"]
         assert kwargs["cwd"] == str(tmp_path.resolve())
         return _cp(argv, stdout=payload)
@@ -669,12 +671,72 @@ def test_query_open_pull_requests_uses_distinct_failure_state(tmp_path):
     assert warning == ""
     assert heads == {"branch": "https://example.invalid/pull/7"}
 
+
+def test_query_open_pull_requests_uses_gitlab_schema_without_github_flags(tmp_path):
+    payload = (
+        '[{"source_branch":"branch","iid":7,"web_url":"https://example.invalid/merge_requests/7"}]'
+    )
+
+    def success(argv, **kwargs):
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return _cp(
+                argv,
+                stdout="ssh://git@gitlab-master.nvidia.com:12051/example/project.git\n",
+            )
+        assert argv == [
+            "glab",
+            "mr",
+            "list",
+            "--state",
+            "opened",
+            "--per-page",
+            "1000",
+            "--output",
+            "json",
+        ]
+        assert "--jq" not in argv
+        assert kwargs["cwd"] == str(tmp_path.resolve())
+        return _cp(argv, stdout=payload)
+
+    heads, warning = query_open_pull_requests(tmp_path, runner=success)
+    assert warning == ""
+    assert heads == {"branch": "https://example.invalid/merge_requests/7"}
+
+
+def test_query_open_pull_requests_uses_distinct_failure_state(tmp_path):
+    def failed_review_query(argv, **kwargs):
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return _cp(argv, stdout="https://github.com/example/project.git\n")
+        return _cp(argv, returncode=1)
+
     heads, warning = query_open_pull_requests(
         tmp_path,
-        runner=lambda *args, **kwargs: _cp([], returncode=1),
+        runner=failed_review_query,
     )
     assert heads is None
     assert "could not be verified" in warning
+
+
+def test_query_open_pull_requests_fails_closed_for_unknown_origin(tmp_path):
+    heads, warning = query_open_pull_requests(
+        tmp_path,
+        runner=lambda argv, **kwargs: _cp(
+            argv, stdout="ssh://git@example.invalid/team/project.git\n"
+        ),
+    )
+    assert heads is None
+    assert "unsupported repository host" in warning
+
+
+def test_query_open_pull_requests_reads_the_selected_remote(tmp_path):
+    def success(argv, **kwargs):
+        if argv == ["git", "remote", "get-url", "upstream"]:
+            return _cp(argv, stdout="https://github.com/example/project.git\n")
+        return _cp(argv, stdout="[]")
+
+    heads, warning = query_open_pull_requests(tmp_path, remote="upstream", runner=success)
+    assert warning == ""
+    assert heads == {}
 
 
 def test_verify_repository_remote_accepts_transport_equivalence(tmp_path):

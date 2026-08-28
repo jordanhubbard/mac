@@ -175,7 +175,9 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     branch = "mac/agent_worker/%s-lease_%s" % (task["id"], "d" * 18)
     _git(repo, "push", "origin", "HEAD:refs/heads/%s" % branch)
-    monkeypatch.setattr(cli, "_repository_open_pull_requests", lambda _repo: ({}, ""))
+    monkeypatch.setattr(
+        cli, "_repository_open_pull_requests", lambda _repo, _remote="origin": ({}, "")
+    )
 
     rc, audit, error = _run(
         tmp_path,
@@ -245,7 +247,7 @@ def test_repo_refs_execute_requires_pull_request_verification(tmp_path, monkeypa
     monkeypatch.setattr(
         cli,
         "_repository_open_pull_requests",
-        lambda _repo: (None, "pull request state unavailable"),
+        lambda _repo, _remote="origin": (None, "pull request state unavailable"),
     )
 
     rc, result, error = _run(
@@ -272,11 +274,15 @@ def test_open_pull_request_probe_parses_and_validates_output(tmp_path, monkeypat
         {"headRefName": "", "number": 14, "url": "https://example/pr/14"},
         "invalid",
     ]
-    monkeypatch.setattr(
-        cli.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, json.dumps(payload), ""),
-    )
+
+    def fake_run(argv, **kwargs):
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return subprocess.CompletedProcess(
+                argv, 0, "https://github.com/example/project.git\n", ""
+            )
+        return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
 
     heads, warning = cli._repository_open_pull_requests(tmp_path)
 
@@ -299,6 +305,10 @@ def test_open_pull_request_probe_parses_and_validates_output(tmp_path, monkeypat
 )
 def test_open_pull_request_probe_fails_closed(tmp_path, monkeypatch, behavior, warning):
     def fake_run(*args, **kwargs):
+        if args[0] == ["git", "remote", "get-url", "origin"]:
+            return subprocess.CompletedProcess(
+                args[0], 0, "https://github.com/example/project.git\n", ""
+            )
         if behavior == "raise":
             raise FileNotFoundError
         if behavior == "failure":
@@ -324,7 +334,7 @@ def test_repository_ref_audit_filters_tasks_and_reports_warning(tmp_path, monkey
     monkeypatch.setattr(
         cli,
         "_repository_open_pull_requests",
-        lambda _repo: (None, "PR state unavailable"),
+        lambda _repo, _remote="origin": (None, "PR state unavailable"),
     )
     monkeypatch.setattr(
         cli,

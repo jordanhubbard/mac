@@ -436,9 +436,10 @@ def _run(
 def query_open_pull_requests(
     repo: Path,
     *,
+    remote: str = "origin",
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[Optional[Dict[str, str]], str]:
-    """Return open GitHub pull requests keyed by head branch.
+    """Return open pull or merge requests keyed by head branch.
 
     Failure is represented as ``(None, warning)`` rather than an empty mapping,
     because callers must distinguish "no open pull requests" from "the check
@@ -446,8 +447,24 @@ def query_open_pull_requests(
     """
 
     try:
-        result = runner(
-            [
+        cwd = str(Path(repo).expanduser().resolve())
+        if not _REMOTE_NAME_RE.fullmatch(str(remote or "")):
+            return None, "pull request state could not be verified: invalid git remote name"
+        remote_result = runner(
+            ["git", "remote", "get-url", remote],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        parsed_remote = (
+            _canonical_git_remote(remote_result.stdout) if remote_result.returncode == 0 else None
+        )
+        host = parsed_remote[0] if parsed_remote else ""
+        if host == "github.com" or host.endswith(".github.com"):
+            provider = "GitHub"
+            command = [
                 "gh",
                 "pr",
                 "list",
@@ -457,33 +474,58 @@ def query_open_pull_requests(
                 "1000",
                 "--json",
                 "headRefName,number,url",
-            ],
-            cwd=str(Path(repo).expanduser().resolve()),
+            ]
+            branch_field, number_field, url_field = "headRefName", "number", "url"
+            review_label = "PR"
+        elif host == "gitlab.com" or any(
+            label == "gitlab" or label.startswith("gitlab-") for label in host.split(".")
+        ):
+            provider = "GitLab"
+            command = [
+                "glab",
+                "mr",
+                "list",
+                "--state",
+                "opened",
+                "--per-page",
+                "1000",
+                "--output",
+                "json",
+            ]
+            branch_field, number_field, url_field = "source_branch", "iid", "web_url"
+            review_label = "MR"
+        else:
+            return None, "pull request state could not be verified: unsupported repository host"
+        result = runner(
+            command,
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=60,
             check=False,
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return None, "GitHub pull request state could not be verified"
+        return None, "pull request state could not be verified"
     if result.returncode != 0:
-        return None, "GitHub pull request state could not be verified"
+        return None, "%s pull request state could not be verified" % provider
     try:
         payload = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
-        return None, "GitHub pull request state returned malformed JSON"
+        return None, "%s pull request state returned malformed JSON" % provider
     if not isinstance(payload, list):
-        return None, "GitHub pull request state returned an invalid response"
+        return None, "%s pull request state returned an invalid response" % provider
     heads: Dict[str, str] = {}
     for item in payload:
         if not isinstance(item, dict):
             continue
-        branch = str(item.get("headRefName") or "").strip()
+        branch = str(item.get(branch_field) or "").strip()
         if not branch:
             continue
-        url = str(item.get("url") or "").strip()
-        number = str(item.get("number") or "").strip()
-        heads[branch] = url or (("PR #%s" % number) if number else "open pull request")
+        url = str(item.get(url_field) or "").strip()
+        number = str(item.get(number_field) or "").strip()
+        heads[branch] = url or (
+            ("%s #%s" % (review_label, number)) if number else "open pull request"
+        )
     return heads, ""
 
 
