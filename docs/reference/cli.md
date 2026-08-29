@@ -54,7 +54,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-0 administrative commands live under `mac admin` (`mac admin help` lists them).
+54 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.

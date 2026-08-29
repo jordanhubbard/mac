@@ -1,5 +1,12 @@
 # Oneshot isolation — contract gate verification
 
+!!! warning "Historical verification of a removed tree"
+    This record described a fix in the vendored Hermes snapshot. That snapshot
+    was deleted in PR #377 (`3ebde2dd`). It is not a current operating
+    contract; see [the vendor-fate record](hermes-vendor-fate.md). The
+    reconciled regression module named below may still exist; the source path
+    it originally guarded does not.
+
 Verification record for the `hermes -z` one-shot session-isolation area after
 the stale characterization tests were reconciled with the applied fix. This
 document captures the operational evidence that the repository contract gate is

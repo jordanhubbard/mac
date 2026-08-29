@@ -74,9 +74,10 @@ Relevant environment:
 - `HERMES_HOME`: Hermes state directory; defaults to `~/.hermes`.
 - `ACC_DIR`: legacy ACC data directory for migration references; defaults to
   `~/.acc`.
-- `MAC_HERMES_AGENT_DIR` / `HERMES_AGENT_DIR`: explicit external Hermes checkout
-  to inspect for legacy shim compatibility. Normal fleet deployment uses the
-  vendored runtime under `src/mac/_hermes`.
+- `MAC_HERMES_AGENT_DIR` / `HERMES_AGENT_DIR`: optional path to an *external*
+  Hermes checkout for legacy shim inspection. Fleet deployment does not vendor
+  a Hermes tree; the in-tree snapshot was removed (see
+  [the vendor-fate record](hermes-vendor-fate.md)). Normal chat uses OpenClaw.
 - `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM=0`: disable the startup shim patcher
   when `MAC_HERMES_AGENT_DIR` points at an explicit checkout. It is enabled by
   default only for explicit checkout paths.
@@ -98,11 +99,12 @@ Relevant environment:
 - `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS=0`: preserve existing home-channel files
   without discovery.
 
-The default deployment runs MAC's vendored Hermes snapshot. The explicit-checkout
-shim settings above remain only for compatibility with an operator-managed
-external checkout. In the normal topology the gateway receives its model,
-provider, base URL, and hub-facing token from fleet deploy; upstream provider
-credentials remain on the hub behind the in-mac router.
+The default fleet chat runtime is stock OpenClaw, not a vendored Hermes
+snapshot (removed in PR #377). The explicit-checkout shim settings above remain
+only for compatibility with an operator-managed external Hermes checkout. In
+the normal topology the gateway receives its model, provider, base URL, and
+hub-facing token from fleet deploy; upstream provider credentials remain on
+the hub behind the in-mac router.
 
 ## Creating Tasks
 

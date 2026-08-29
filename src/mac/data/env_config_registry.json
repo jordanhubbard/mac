@@ -1646,6 +1646,7 @@
       "src/mac/pg_backup_scheduler.py",
       "src/mac/router_service.py",
       "src/mac/schema_migrations.py",
+      "src/mac/services.py",
       "src/mac/store.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
@@ -1669,6 +1670,7 @@
       "src/mac/mac_paths.py",
       "src/mac/router_service.py",
       "src/mac/schema_migrations.py",
+      "src/mac/services.py",
       "src/mac/store.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
@@ -6436,6 +6438,28 @@
     "description": "Hub setting: hub verify image.",
     "family": "hub",
     "name": "MAC_HUB_VERIFY_IMAGE",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.docker.internal`. Does not select the live hub database.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PG_HOST",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub database. Loopback hosts are rewritten to `host.docker.internal` (or `MAC_HUB_VERIFY_PG_HOST`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` from the cloned repo and rewrites that DSN the same way.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PG_URL",
     "retired": false,
     "sources": [
       "src/mac/services.py"

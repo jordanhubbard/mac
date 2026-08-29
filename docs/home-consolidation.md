@@ -1,8 +1,9 @@
 # Home-Directory Consolidation: Analysis & Plan
 
 Status: **plan** (approved target = single authoritative root under `$HOME`).
-Scope: first-party MAC only (`src/mac/` excluding the vendored `src/mac/_hermes/`
-snapshot, `deploy/`, `scripts/`, `Makefile`). Every claim below is grounded in
+Scope: first-party MAC only (`src/mac/`, `deploy/`, `scripts/`, `Makefile`).
+The former in-tree Hermes snapshot is gone (PR #377); do not exclude a path
+that is no longer in the tree. Every claim below is grounded in
 `file:line` evidence gathered by a three-way exploration of the `.mac`,
 `.hermes`, and `.openclaw`/`.nemoclaw` namespaces.
 
@@ -251,8 +252,8 @@ runner's dependency on `~/.hermes/scripts`.
 
 - Fleet-wide blast radius: home resolution runs in every worker + the hub +
   deploy. Phase 0 must be backward-compatible and land as a coordinated epoch.
-- Vendored gateway code (`src/mac/_hermes/`, OpenClaw upstream) expects its
-  internal home layout; we relocate the *root* via `HERMES_HOME`, never rename
-  the gateway's internal structure.
+- OpenClaw (and any remaining external Hermes home) expects its internal
+  home layout; we relocate the *root* via `HERMES_HOME` / the OpenClaw home
+  under `$MAC_HOME/openclaw`, never rename the gateway's internal structure.
 - Secrets migration is the highest-care step — verify perms and that no secret
   is duplicated or dropped; do it with checksums and a reversible backup.

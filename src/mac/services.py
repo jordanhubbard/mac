@@ -1119,6 +1119,97 @@ def hub_verification_unavailable_reason(output: str) -> Optional[str]:
     return None
 
 
+_HUB_VERIFY_SANDBOX_PG_HOST = "host.docker.internal"
+
+
+def parse_start_test_postgres_export(stdout: str) -> str:
+    """Read the DSN from ``scripts/start-test-postgres.sh`` stdout."""
+
+    for line in (stdout or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("export MAC_TEST_PG_URL="):
+            return stripped.split("=", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def hub_verify_sandbox_pg_url(
+    raw: str,
+    *,
+    live_database_url: str = "",
+    sandbox_host: str = "",
+) -> Optional[str]:
+    """Return a test DSN the OpenShell hub-verify sandbox can use.
+
+    Refuses the live hub database. Rewrites loopback hosts to
+    ``host.docker.internal`` (override with ``MAC_HUB_VERIFY_PG_HOST``) so a
+    Postgres started on the hub is reachable from inside the sandbox.
+    """
+
+    candidate = (raw or "").strip()
+    live = (live_database_url or "").strip()
+    if not candidate:
+        return None
+    if live and candidate == live:
+        return None
+    host = (sandbox_host or os.environ.get("MAC_HUB_VERIFY_PG_HOST") or "").strip()
+    if not host:
+        host = _HUB_VERIFY_SANDBOX_PG_HOST
+    parsed = urllib.parse.urlsplit(candidate)
+    hostname = (parsed.hostname or "").strip().lower()
+    if hostname in {"127.0.0.1", "localhost", "::1"}:
+        username = parsed.username or ""
+        password = parsed.password
+        userinfo = username
+        if password is not None:
+            userinfo = "%s:%s" % (username, password)
+        netloc = host
+        if parsed.port:
+            netloc = "%s:%s" % (host, parsed.port)
+        if userinfo:
+            netloc = "%s@%s" % (userinfo, netloc)
+        candidate = urllib.parse.urlunsplit(
+            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+        if live and candidate == live:
+            return None
+    return candidate
+
+
+def hub_verify_test_pg_url(repo_root: Path) -> Optional[str]:
+    """Dedicated test DSN for the hub-verify sandbox, never the live hub DB."""
+
+    explicit = (os.environ.get("MAC_HUB_VERIFY_PG_URL") or "").strip()
+    live = (os.environ.get("MAC_DATABASE_URL") or os.environ.get("MAC_DB") or "").strip()
+    raw = explicit
+    if not raw:
+        helper = repo_root / "scripts" / "start-test-postgres.sh"
+        if helper.is_file():
+            try:
+                proc = subprocess.run(
+                    ["bash", str(helper)],
+                    cwd=str(repo_root),
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    check=False,
+                )
+            except Exception:  # noqa: BLE001 - missing helper must not abort verify
+                proc = None
+            if proc is not None and int(proc.returncode or 1) == 0:
+                raw = parse_start_test_postgres_export(proc.stdout or "")
+    return hub_verify_sandbox_pg_url(raw, live_database_url=live)
+
+
+def hub_verify_sandbox_env_pairs(*, test_pg_url: Optional[str] = None) -> List[str]:
+    """``--env`` values for a hub-verify OpenShell create."""
+
+    pairs = ["HOME=/tmp", "PATH=%s" % SANDBOX_BASE_PATH]
+    dsn = (test_pg_url or "").strip()
+    if dsn:
+        pairs.append("MAC_TEST_PG_URL=%s" % dsn)
+    return pairs
+
+
 def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
     """Keep the head AND the tail of a rejected verification's output.
 
@@ -27129,6 +27220,7 @@ class ControlPlane:
             argv = [openshell, "sandbox", "create", "--no-auto-providers"]
             if policy:
                 argv += ["--policy", policy]
+            test_pg_url = hub_verify_test_pg_url(tmp / "repo")
             argv += [
                 "--name",
                 name,
@@ -27142,14 +27234,15 @@ class ControlPlane:
                 "mac.keep=false",
                 "--from",
                 image,
-                "--env",
-                "HOME=/tmp",
-                # OpenShell's supervisor resets PATH on fresh create/exec
-                # commands instead of preserving the image ENV. Pass the
-                # sandbox-owned runtime path explicitly; never inherit the
-                # control-plane host's PATH.
-                "--env",
-                "PATH=%s" % SANDBOX_BASE_PATH,
+            ]
+            # OpenShell's supervisor resets PATH on fresh create/exec
+            # commands instead of preserving the image ENV. Pass the
+            # sandbox-owned runtime path explicitly; never inherit the
+            # control-plane host's PATH. MAC_TEST_PG_URL is a dedicated
+            # test DSN (never the live hub database).
+            for value in hub_verify_sandbox_env_pairs(test_pg_url=test_pg_url):
+                argv += ["--env", value]
+            argv += [
                 "--upload",
                 "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
                 "--",
