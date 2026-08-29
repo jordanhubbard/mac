@@ -13907,6 +13907,36 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     # Lost-.git uploads still fail fast with a distinguishable message.
     assert "rev-parse --is-inside-work-tree" in inner
     assert "not a usable git repo after upload" in inner
+    assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)
+
+
+def test_hub_verify_sandbox_injects_dedicated_test_pg_url(cp, monkeypatch):
+    """Hub-verify must pass a test DSN into the sandbox. Observed live on
+    task_d894080c: the OpenShell sandbox had no MAC_TEST_PG_URL, start-test-postgres
+    could not provision inside --no-auto-providers, and review retried as
+    hub_verify_unavailable."""
+    import subprocess as _subprocess
+
+    from mac import services as services_mod
+
+    captured = []
+    dsn = "postgresql://mac_test@host.docker.internal:5432/mac_test"
+
+    def fake_run(argv, **kwargs):
+        captured.append(list(argv))
+        if "rev-parse" in argv and "HEAD" in argv:
+            return _subprocess.CompletedProcess(argv, 0, stdout=("a" * 40) + "\n", stderr="")
+        return _subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(services_mod, "hub_verify_test_pg_url", lambda repo_root: dsn)
+    rc, _out = cp._hub_verify_run_contract_test(
+        "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
+    )
+    assert rc == 0
+    create = next(a for a in captured if "create" in a and "--upload" in a)
+    env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
+    assert "MAC_TEST_PG_URL=%s" % dsn in env_values
 
 
 def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypatch):

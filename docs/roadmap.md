@@ -76,8 +76,8 @@ transaction or equivalent durable evidence.
   rollback are covered and proven in the live fleet.
 - [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
-  Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on rocky, natasha, and
-  bullwinkle after typed cohort `20260827T060057Z` (`make deploy HUB=rocky`
+  Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and
+  gpu-worker after typed cohort `20260827T060057Z` (`make deploy HUB=<hub>`
   with hold-adoptions after a retained roll-forward). Hub `/health` ok;
   workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
 - [x] A failed or interrupted fleet deployment can safely resume without
@@ -110,7 +110,7 @@ transaction or equivalent durable evidence.
   Live receipt `kslug-nightly-news.last-success.json` delivered
   `2026-08-26T22:23:31Z` to `slack:C0AH1QJCT7F`; later runs skipped
   `already_delivered_today`. Launchd job `kslug-nightly-news` (`0 6 * * *`)
-  reinstalled on rocky in deploy `20260827T060057Z` at `060acc50`.
+  reinstalled on the hub in deploy `20260827T060057Z` at `060acc50`.
 - [ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.
@@ -140,3 +140,34 @@ transaction or equivalent durable evidence.
 6. Implement hierarchical sandbox ACL feedback and profile placement.
 7. Revisit dream-cycle analysis only after the higher-priority proofs are
    durable.
+
+## Known defects from the v1.3.0 capabilities deck (slide 12)
+
+Source: [MAC capabilities at `d8d491d6`](https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit?slide=id.p12),
+captured 2026-08-28. Items stay unchecked until they meet the completion rule
+above. Large ADRs are held `--no-dispatch` until hub-verify can land
+repository work (`task_321b8e8d`).
+
+- [ ] Default `mac --help` reports the real `mac admin` subcommand count, not
+      zero. Ledger `task_2d33cc69`.
+- [ ] Current docs no longer describe the deleted Hermes snapshot as present.
+      Ledger `task_a0fc238b`. Fate record: `docs/hermes-vendor-fate.md`.
+- [ ] Token spend is metered at the router and persisted (ADR 0017). 29.5% of
+      `llm.route` events over the seven days to 2026-08-19 recorded no input
+      tokens; cost is priced at read time. Ledger `task_b0750aee` (successor to
+      failed `task_45927341`).
+- [ ] The task view is a graph under progressive disclosure (ADR 0018): the hub
+      sends dependency edges so the console can show *what* blocks a task.
+      Ledger `task_bdf11b3f`.
+- [ ] The coding-route search path is a fleet contract, not per-worker
+      environment (ADR 0029). Ledger `task_198bf6ab`.
+- [ ] CLI sessions use each harness's hooks for AgentBus inject/record, not
+      tmux and not a prompt-level `agentbus wait` (ADR 0032). Ledger
+      `task_13a1f7fe`.
+- [ ] ADR 0012 (native steward + containerized execution) stays deferred until
+      a fleet measurement exists. ADR 0015 already narrowed the containerized
+      half to Linux. Ledger `task_3a48fd75`.
+- [ ] Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
+      (not the live hub database) so a repository canary can complete.
+      Ledger `task_321b8e8d`. Blocked the v1.3.1 canary `task_d894080c` /
+      PR #681.

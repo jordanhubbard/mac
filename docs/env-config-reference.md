@@ -542,6 +542,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_UPGRADE_REQUIRED_CHECKS` | bool | consumer-defined | hub | Hub setting: hub upgrade required checks. |
 | `MAC_HUB_URL` | str | consumer-defined | hub | Hub setting: hub url. |
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
+| `MAC_HUB_VERIFY_PG_HOST` | str | consumer-defined | hub | Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.docker.internal`. Does not select the live hub database. |
+| `MAC_HUB_VERIFY_PG_URL` | str | consumer-defined | hub | Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub database. Loopback hosts are rewritten to `host.docker.internal` (or `MAC_HUB_VERIFY_PG_HOST`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` from the cloned repo and rewrites that DSN the same way. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
 | `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |

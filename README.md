@@ -30,15 +30,13 @@ vacuum. It has learned from, interoperates with, or substantially relies on the
 following projects. The relationship is stated explicitly so that an
 integration or protocol influence is not mistaken for copied source:
 
-- **[Hermes Agent](https://github.com/NousResearch/hermes-agent) — vendored
-  runtime:** `src/mac/_hermes` is a pruned, MAC-modified snapshot of Hermes
-  Agent 0.15.1 at
-  [`b1a25404b`](https://github.com/NousResearch/hermes-agent/commit/b1a25404b638bfbd79ce4d08b49afc0ee1361528).
-  It supplies the agent loop, gateways, tools, plugins, and skills. The
-  snapshot contract — the pin and prune policy — is
-  [ADR 0001](docs/adr/0001-unify-hermes-runtime-into-mac.md); the standalone
-  deploy/hermes/SNAPSHOT.md it once named was removed with the inactive
-  snapshot.
+- **[Hermes Agent](https://github.com/NousResearch/hermes-agent) — lineage,
+  not a vendored tree:** MAC learned from Hermes Agent's loop, gateways, and
+  skills. The in-tree snapshot of that runtime was removed in PR #377
+  (`3ebde2dd`); see [the vendor-fate record](docs/hermes-vendor-fate.md).
+  Live fleet chat uses stock OpenClaw. First-party `mac.hermes_adapter` is
+  clean-room MAC code, not a copy of that snapshot. ADR 0001 is superseded
+  on the vendoring premise.
 - **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) — execution
   security foundation:** MAC's agent process trees, filesystem/network policy,
   sandbox lifecycle, and normalized action-event collection integrate with
@@ -81,9 +79,8 @@ integration or protocol influence is not mistaken for copied source:
 
 This is a direct-lineage and architectural acknowledgement, not an exhaustive
 transitive dependency list. Python and Node dependencies remain documented in
-their manifests and lockfiles; additional skill- and plugin-level notices are
-kept with the vendored Hermes files that require them. Each upstream project
-remains subject to its own license.
+their manifests and lockfiles. Each upstream project remains subject to its
+own license.
 
 ## Core Contracts
 
@@ -207,9 +204,8 @@ and the `/dashboard/*` routes require a bearer token, so an unauthenticated
 browser gets `403` there; `/ui` is the front door.
 
 `make test` runs the complete hermetic pytest suite with statement, branch, and
-Python-subprocess coverage for MAC-owned `src/mac` code. Vendored Hermes
-internals under `src/mac/_hermes` are excluded. Coverage is a regression safety
-floor rather than a target for generating tests; see
+Python-subprocess coverage for MAC-owned `src/mac` code. Coverage is a
+regression safety floor rather than a target for generating tests; see
 [the test portfolio strategy](docs/testing-strategy.md). Use `make coverage`
 for the same full-suite report, `make test-portfolio` to audit redundant
 execution, and `make fault-replay` to prove tests detect known historical bugs.
@@ -230,9 +226,7 @@ logic errors and undefined names, plus syntax errors). Formatting is in the
 same gate, so `make lint-fix` cannot rewrite files `make lint` never mentioned.
 Widen `[tool.ruff.lint].select` as the codebase is cleaned up. Ruff is a
 dev-only tool pinned in the `dev` extra and fetched on demand with
-`uv run --with ruff`; it is not a runtime dependency. The vendored
-Hermes runtime under `src/mac/_hermes` keeps its own upstream lint discipline
-and is excluded.
+`uv run --with ruff`; it is not a runtime dependency.
 
 The common lifecycle is deliberately conventional:
 

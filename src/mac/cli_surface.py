@@ -333,6 +333,16 @@ def _subparsers_of(parser: argparse.ArgumentParser) -> Optional[argparse._SubPar
     return None
 
 
+def _admin_command_count(action: argparse._SubParsersAction) -> int:
+    """Distinct subcommands under `mac admin`, aliases collapsed, excluding help."""
+
+    admin_parser = action.choices.get("admin")
+    admin_action = _subparsers_of(admin_parser) if admin_parser is not None else None
+    if admin_action is None:
+        return 0
+    return len([name for name, _ in _distinct_subcommands(admin_action) if name != "help"])
+
+
 def _distinct_subcommands(
     action: argparse._SubParsersAction,
 ) -> List[Tuple[str, argparse.ArgumentParser]]:
@@ -745,9 +755,13 @@ def _top_level_help_text(action: argparse._SubParsersAction, *, show_all: bool =
                 _format_rows([("admin", "fleet, runtime and control-plane administration")])
             )
             lines.append("")
+        # Count the admin *group's* subcommands. After re-parenting, the
+        # top-level leftover set is empty, so `len(registered - {"admin"})`
+        # printed "0 administrative commands" while `mac admin help` listed
+        # fifty-odd groups (v1.3.0 deck slide 12).
         lines.append(
             "%d administrative commands live under `mac admin` "
-            "(`mac admin help` lists them)." % len(registered - {"admin"})
+            "(`mac admin help` lists them)." % _admin_command_count(action)
         )
         lines.append(
             "They moved: `mac fleet ...` is now `mac admin fleet ...`, and the "

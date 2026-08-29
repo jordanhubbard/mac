@@ -122,6 +122,19 @@ CONSUMER_DEFAULTS = {
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_HUB_VERIFY_PG_URL": (
+        "Dedicated test Postgres DSN injected into the hub-verify OpenShell "
+        "sandbox as `MAC_TEST_PG_URL`. Never the live hub database. Loopback "
+        "hosts are rewritten to `host.docker.internal` (or "
+        "`MAC_HUB_VERIFY_PG_HOST`) so the sandbox can reach Postgres on the hub. "
+        "If unset, hub-verify runs `scripts/start-test-postgres.sh` from the "
+        "cloned repo and rewrites that DSN the same way."
+    ),
+    "MAC_HUB_VERIFY_PG_HOST": (
+        "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the "
+        "hub-verify test DSN. Default `host.docker.internal`. Does not select "
+        "the live hub database."
+    ),
     "MAC_DEPLOY_GATEWAY_PROBE_FATAL": (
         "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, "
         "and therefore the whole deploy cohort; unset or `0` records the failure, "

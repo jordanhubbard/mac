@@ -1233,10 +1233,10 @@ def apply_hermes_gateway_runtime_shim_report(
     """Report the per-agent gateway provider/model override.
 
     ADR 0001 hu-03/hu-04: the override is now **owned, in-process code**
-    (``mac.agent_provider``, called by the vendored gateway in ``src/mac/_hermes``).
-    The old runtime string-surgery of a cloned upstream tree is gone, so there is
-    no shim to "miss" — when an override is configured the in-process gateway
-    always honors it. The ``gateway_runtime_shim_*`` field names are retained for
+    (``mac.agent_provider``). The vendored gateway snapshot that used to live
+    in-tree was removed; there is no shim to "miss" — when an override is
+    configured the in-process gateway always honors it. The
+    ``gateway_runtime_shim_*`` field names are retained for
     dashboard/report-schema compatibility but now reflect the owned decision.
     ``agent_dir`` is accepted and ignored (no upstream checkout is consulted).
     """
@@ -1258,7 +1258,7 @@ def apply_hermes_gateway_runtime_shim_report(
         "gateway_runtime_shim_patch": {
             "obsolete": True,
             "applied": False,
-            "note": "in-process via mac.agent_provider (vendored gateway); no string surgery",
+            "note": "in-process via mac.agent_provider (no vendored gateway); no string surgery",
             "error": "",
         },
         "provider_decision": provider_decision,
@@ -1277,9 +1277,9 @@ def _slack_activation_report(
     env_token_present = bool(os.environ.get("SLACK_BOT_TOKEN"))
     explicit_config = _config_explicitly_enables_slack(hermes_home / "config.yaml")
     # ADR 0001 hu-04: multi-workspace Slack support (activation from
-    # slack_accounts.json) is now baked into the vendored gateway — the former
-    # out-of-tree multi-slack-mvp patch. So an account file is sufficient; there
-    # is no upstream-checkout "shim" to apply. Shim field names are retained for
+    # slack_accounts.json) is owned in-process — the former out-of-tree
+    # multi-slack-mvp patch. An account file is sufficient; there is no
+    # upstream-checkout "shim" to apply. Shim field names are retained for
     # report-schema compatibility and report as effectively present.
     activation_source = "not_configured"
     can_activate = False
@@ -1296,7 +1296,7 @@ def _slack_activation_report(
     _obsolete_patch = {
         "obsolete": True,
         "applied": False,
-        "note": "vendored gateway (no upstream-checkout shim)",
+        "note": "in-process gateway (no upstream-checkout shim)",
         "error": "",
     }
     return {

@@ -79,7 +79,7 @@ def _fake_run(monkeypatch):
         done = lambda rc, out="", err="": subprocess.CompletedProcess(argv, rc, out, err)
         if argv[0] == "git" and "rev-parse" in argv:
             return done(0, HEAD_SHA + "\n")
-        if argv[0] in ("git", "tar"):
+        if argv[0] in ("git", "tar", "bash"):
             return done(0)
         if "delete" in argv:
             return done(0)
