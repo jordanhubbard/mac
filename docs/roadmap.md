@@ -76,8 +76,8 @@ transaction or equivalent durable evidence.
   rollback are covered and proven in the live fleet.
 - [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
-  Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on rocky, natasha, and
-  bullwinkle after typed cohort `20260827T060057Z` (`make deploy HUB=rocky`
+  Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and
+  worker-2 after typed cohort `20260827T060057Z` (`make deploy HUB=<hub>`
   with hold-adoptions after a retained roll-forward). Hub `/health` ok;
   workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
 - [x] A failed or interrupted fleet deployment can safely resume without
@@ -110,7 +110,7 @@ transaction or equivalent durable evidence.
   Live receipt `kslug-nightly-news.last-success.json` delivered
   `2026-08-26T22:23:31Z` to `slack:C0AH1QJCT7F`; later runs skipped
   `already_delivered_today`. Launchd job `kslug-nightly-news` (`0 6 * * *`)
-  reinstalled on rocky in deploy `20260827T060057Z` at `060acc50`.
+  reinstalled on the hub in deploy `20260827T060057Z` at `060acc50`.
 - [ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.
