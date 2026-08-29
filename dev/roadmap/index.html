@@ -1791,6 +1791,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#known-defects-from-the-v130-capabilities-deck-slide-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known defects from the v1.3.0 capabilities deck (slide 12)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1890,8 +1901,8 @@ transaction or equivalent durable evidence.</p>
   rollback are covered and proven in the live fleet.</li>
 <li>[x] The current <code>main</code> source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
-  Verified <code>060acc500ab99e30bc01cfccf7eef2232108b4e4</code> on rocky, natasha, and
-  bullwinkle after typed cohort <code>20260827T060057Z</code> (<code>make deploy HUB=rocky</code>
+  Verified <code>060acc500ab99e30bc01cfccf7eef2232108b4e4</code> on the hub, worker-1, and
+  gpu-worker after typed cohort <code>20260827T060057Z</code> (<code>make deploy HUB=&lt;hub&gt;</code>
   with hold-adoptions after a retained roll-forward). Hub <code>/health</code> ok;
   workers idle and unheld; <code>HERMES_HOME=$MAC_HOME/openclaw</code>.</li>
 <li>[x] A failed or interrupted fleet deployment can safely resume without
@@ -1924,7 +1935,7 @@ transaction or equivalent durable evidence.</p>
   Live receipt <code>kslug-nightly-news.last-success.json</code> delivered
   <code>2026-08-26T22:23:31Z</code> to <code>slack:C0AH1QJCT7F</code>; later runs skipped
   <code>already_delivered_today</code>. Launchd job <code>kslug-nightly-news</code> (<code>0 6 * * *</code>)
-  reinstalled on rocky in deploy <code>20260827T060057Z</code> at <code>060acc50</code>.</li>
+  reinstalled on the hub in deploy <code>20260827T060057Z</code> at <code>060acc50</code>.</li>
 <li>[ ] Scheduled automation fails closed: failed collectors cannot become agent
   prose, repeated unchanged results are suppressed, DMs are allowed, and
   channel broadcasts are limited to the configured destination.</li>
@@ -1955,6 +1966,36 @@ transaction or equivalent durable evidence.</p>
 <li>Revisit dream-cycle analysis only after the higher-priority proofs are
    durable.</li>
 </ol>
+<h2 id="known-defects-from-the-v130-capabilities-deck-slide-12">Known defects from the v1.3.0 capabilities deck (slide 12)<a class="headerlink" href="#known-defects-from-the-v130-capabilities-deck-slide-12" title="Permanent link">&para;</a></h2>
+<p>Source: <a href="https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit?slide=id.p12">MAC capabilities at <code>d8d491d6</code></a>,
+captured 2026-08-28. Items stay unchecked until they meet the completion rule
+above. Large ADRs are held <code>--no-dispatch</code> until hub-verify can land
+repository work (<code>task_321b8e8d</code>).</p>
+<ul>
+<li>[ ] Default <code>mac --help</code> reports the real <code>mac admin</code> subcommand count, not
+      zero. Ledger <code>task_2d33cc69</code>.</li>
+<li>[ ] Current docs no longer describe the deleted Hermes snapshot as present.
+      Ledger <code>task_a0fc238b</code>. Fate record: <code>docs/hermes-vendor-fate.md</code>.</li>
+<li>[ ] Token spend is metered at the router and persisted (ADR 0017). 29.5% of
+      <code>llm.route</code> events over the seven days to 2026-08-19 recorded no input
+      tokens; cost is priced at read time. Ledger <code>task_b0750aee</code> (successor to
+      failed <code>task_45927341</code>).</li>
+<li>[ ] The task view is a graph under progressive disclosure (ADR 0018): the hub
+      sends dependency edges so the console can show <em>what</em> blocks a task.
+      Ledger <code>task_bdf11b3f</code>.</li>
+<li>[ ] The coding-route search path is a fleet contract, not per-worker
+      environment (ADR 0029). Ledger <code>task_198bf6ab</code>.</li>
+<li>[ ] CLI sessions use each harness's hooks for AgentBus inject/record, not
+      tmux and not a prompt-level <code>agentbus wait</code> (ADR 0032). Ledger
+      <code>task_13a1f7fe</code>.</li>
+<li>[ ] ADR 0012 (native steward + containerized execution) stays deferred until
+      a fleet measurement exists. ADR 0015 already narrowed the containerized
+      half to Linux. Ledger <code>task_3a48fd75</code>.</li>
+<li>[ ] Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
+      (not the live hub database) so a repository canary can complete.
+      Ledger <code>task_321b8e8d</code>. Blocked the v1.3.1 canary <code>task_d894080c</code> /
+      PR #681.</li>
+</ul>
 
 
 

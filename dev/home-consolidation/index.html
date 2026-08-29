@@ -1912,8 +1912,9 @@
 
 <h1 id="home-directory-consolidation-analysis-plan">Home-Directory Consolidation: Analysis &amp; Plan<a class="headerlink" href="#home-directory-consolidation-analysis-plan" title="Permanent link">&para;</a></h1>
 <p>Status: <strong>plan</strong> (approved target = single authoritative root under <code>$HOME</code>).
-Scope: first-party MAC only (<code>src/mac/</code> excluding the vendored <code>src/mac/_hermes/</code>
-snapshot, <code>deploy/</code>, <code>scripts/</code>, <code>Makefile</code>). Every claim below is grounded in
+Scope: first-party MAC only (<code>src/mac/</code>, <code>deploy/</code>, <code>scripts/</code>, <code>Makefile</code>).
+The former in-tree Hermes snapshot is gone (PR #377); do not exclude a path
+that is no longer in the tree. Every claim below is grounded in
 <code>file:line</code> evidence gathered by a three-way exploration of the <code>.mac</code>,
 <code>.hermes</code>, and <code>.openclaw</code>/<code>.nemoclaw</code> namespaces.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
@@ -2192,9 +2193,9 @@ runner's dependency on <code>~/.hermes/scripts</code>.</p>
 <ul>
 <li>Fleet-wide blast radius: home resolution runs in every worker + the hub +
   deploy. Phase 0 must be backward-compatible and land as a coordinated epoch.</li>
-<li>Vendored gateway code (<code>src/mac/_hermes/</code>, OpenClaw upstream) expects its
-  internal home layout; we relocate the <em>root</em> via <code>HERMES_HOME</code>, never rename
-  the gateway's internal structure.</li>
+<li>OpenClaw (and any remaining external Hermes home) expects its internal
+  home layout; we relocate the <em>root</em> via <code>HERMES_HOME</code> / the OpenClaw home
+  under <code>$MAC_HOME/openclaw</code>, never rename the gateway's internal structure.</li>
 <li>Secrets migration is the highest-care step — verify perms and that no secret
   is duplicated or dropped; do it with checksums and a reversible backup.</li>
 </ul>

@@ -1899,9 +1899,10 @@ present.</p>
 <li><code>HERMES_HOME</code>: Hermes state directory; defaults to <code>~/.hermes</code>.</li>
 <li><code>ACC_DIR</code>: legacy ACC data directory for migration references; defaults to
   <code>~/.acc</code>.</li>
-<li><code>MAC_HERMES_AGENT_DIR</code> / <code>HERMES_AGENT_DIR</code>: explicit external Hermes checkout
-  to inspect for legacy shim compatibility. Normal fleet deployment uses the
-  vendored runtime under <code>src/mac/_hermes</code>.</li>
+<li><code>MAC_HERMES_AGENT_DIR</code> / <code>HERMES_AGENT_DIR</code>: optional path to an <em>external</em>
+  Hermes checkout for legacy shim inspection. Fleet deployment does not vendor
+  a Hermes tree; the in-tree snapshot was removed (see
+  <a href="../hermes-vendor-fate/">the vendor-fate record</a>). Normal chat uses OpenClaw.</li>
 <li><code>MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM=0</code>: disable the startup shim patcher
   when <code>MAC_HERMES_AGENT_DIR</code> points at an explicit checkout. It is enabled by
   default only for explicit checkout paths.</li>
@@ -1923,11 +1924,12 @@ present.</p>
 <li><code>MAC_HERMES_SYNC_SLACK_HOME_CHANNELS=0</code>: preserve existing home-channel files
   without discovery.</li>
 </ul>
-<p>The default deployment runs MAC's vendored Hermes snapshot. The explicit-checkout
-shim settings above remain only for compatibility with an operator-managed
-external checkout. In the normal topology the gateway receives its model,
-provider, base URL, and hub-facing token from fleet deploy; upstream provider
-credentials remain on the hub behind the in-mac router.</p>
+<p>The default fleet chat runtime is stock OpenClaw, not a vendored Hermes
+snapshot (removed in PR #377). The explicit-checkout shim settings above remain
+only for compatibility with an operator-managed external Hermes checkout. In
+the normal topology the gateway receives its model, provider, base URL, and
+hub-facing token from fleet deploy; upstream provider credentials remain on
+the hub behind the in-mac router.</p>
 <h2 id="creating-tasks">Creating Tasks<a class="headerlink" href="#creating-tasks" title="Permanent link">&para;</a></h2>
 <p>Hermes should summarize the user request and pass sanitized context:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mac.hermes_adapter</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConversationTaskInput</span>

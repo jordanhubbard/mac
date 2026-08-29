@@ -1815,16 +1815,27 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-vendored-runtime-srcmac_hermes" class="md-nav__link">
+  <a href="#4-vendored-runtime-removed-after-this-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Vendored runtime — src/mac/_hermes/
+        4. Vendored runtime — removed after this audit
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Vendored runtime — src/mac/_hermes/">
+    <nav class="md-nav" aria-label="4. Vendored runtime — removed after this audit">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#historical-measurement-2026-07-24" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical measurement (2026-07-24)
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#41-first-party-code-touches-hermes-through-exactly-one-door" class="md-nav__link">
@@ -2148,6 +2159,8 @@ every change.</strong></p>
 <p>Genuine dead code is small and mostly identifiable. The larger and more expensive problems
 are structural, and they are the ones worth acting on.</p>
 <h3 id="scale-at-a-glance">Scale at a glance<a class="headerlink" href="#scale-at-a-glance" title="Permanent link">&para;</a></h3>
+<p>The <code>_hermes/</code> row is a <strong>2026-07-24 measurement</strong>. That tree was deleted in
+PR #377 (<code>3ebde2dd</code>). It is not present in current checkouts.</p>
 <table>
 <thead>
 <tr>
@@ -2165,10 +2178,10 @@ are structural, and they are the ones worth acting on.</p>
 <td>The code this repository owns and must maintain.</td>
 </tr>
 <tr>
-<td>Vendored runtime (<code>src/mac/_hermes/</code>)</td>
+<td>Vendored runtime (<code>src/mac/_hermes/</code>, <strong>removed</strong>)</td>
 <td style="text-align: right;">—</td>
 <td style="text-align: right;"><strong>~443,000</strong></td>
-<td>Pinned snapshot of <code>NousResearch/hermes-agent</code>; excluded from coverage.</td>
+<td>Historical: pinned snapshot of <code>NousResearch/hermes-agent</code>.</td>
 </tr>
 <tr>
 <td>Tests (<code>tests/</code>)</td>
@@ -2220,8 +2233,8 @@ surface.</strong></p>
 </tr>
 <tr>
 <td>Vendored surface</td>
-<td>~443K LOC pinned; most of it dormant but correctly quarantined</td>
-<td>Low (by design)</td>
+<td>Historical ~443K LOC; tree removed in PR #377</td>
+<td>Low (closed)</td>
 </tr>
 </tbody>
 </table>
@@ -2357,12 +2370,22 @@ handler.</p>
 </tbody>
 </table>
 <hr />
-<h2 id="4-vendored-runtime-srcmac_hermes">4. Vendored runtime — <code>src/mac/_hermes/</code><a class="headerlink" href="#4-vendored-runtime-srcmac_hermes" title="Permanent link">&para;</a></h2>
-<p><code>src/mac/_hermes/</code> is a <strong>vendored, integrity-pinned snapshot</strong> of
+<h2 id="4-vendored-runtime-removed-after-this-audit">4. Vendored runtime — removed after this audit<a class="headerlink" href="#4-vendored-runtime-removed-after-this-audit" title="Permanent link">&para;</a></h2>
+<div class="admonition warning">
+<p class="admonition-title">The in-tree Hermes snapshot is gone</p>
+<p>This section is a 2026-07-24 measurement of a tree that was <strong>deleted</strong> in
+PR #377 (<code>3ebde2dd</code>, 2026-08-17). It is not a current inventory. See
+<a href="../hermes-vendor-fate/">the vendor-fate record</a>. First-party modules named
+<code>hermes_*</code> remain; they are clean-room MAC code, not that snapshot.</p>
+</div>
+<p>The figures below described the then-vendored snapshot of
+<code>https://github.com/NousResearch/hermes-agent.git</code>. They are retained as
+evidence of why the tree was removed (it was larger than first-party MAC).</p>
+<h3 id="historical-measurement-2026-07-24">Historical measurement (2026-07-24)<a class="headerlink" href="#historical-measurement-2026-07-24" title="Permanent link">&para;</a></h3>
+<p><code>src/mac/_hermes/</code> was a <strong>vendored, integrity-pinned snapshot</strong> of
 <code>https://github.com/NousResearch/hermes-agent.git</code> (commit <code>b1a25404…</code>, vendored
-<code>2026-05-31</code>), per <code>src/mac/_hermes/SNAPSHOT_PIN</code> and ADR 0001
-(<code>docs/adr/0001-unify-hermes-runtime-into-mac.md</code>). It is ~443K LOC — <strong>more than twice the
-size of all first-party code</strong> — and is deliberately quarantined:</p>
+<code>2026-05-31</code>), per ADR 0001. It was ~443K LOC — <strong>more than twice the
+size of all first-party code</strong> — and was deliberately quarantined:</p>
 <ul>
 <li><strong>Excluded from coverage</strong> (<code>pyproject.toml:130-132</code>: "do not count vendored Hermes
   internals against this repository's threshold").</li>

@@ -1784,6 +1784,14 @@
 
 
 <h1 id="oneshot-isolation-contract-gate-verification">Oneshot isolation — contract gate verification<a class="headerlink" href="#oneshot-isolation-contract-gate-verification" title="Permanent link">&para;</a></h1>
+<div class="admonition warning">
+<p class="admonition-title">Historical verification of a removed tree</p>
+<p>This record described a fix in the vendored Hermes snapshot. That snapshot
+was deleted in PR #377 (<code>3ebde2dd</code>). It is not a current operating
+contract; see <a href="../hermes-vendor-fate/">the vendor-fate record</a>. The
+reconciled regression module named below may still exist; the source path
+it originally guarded does not.</p>
+</div>
 <p>Verification record for the <code>hermes -z</code> one-shot session-isolation area after
 the stale characterization tests were reconciled with the applied fix. This
 document captures the operational evidence that the repository contract gate is

@@ -5721,6 +5721,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Hub setting: hub verify image.</td>
 </tr>
 <tr>
+<td><code>MAC_HUB_VERIFY_PG_HOST</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>hub</td>
+<td>Hostname substituted for <code>127.0.0.1</code>/<code>localhost</code>/<code>::1</code> in the hub-verify test DSN. Default <code>host.docker.internal</code>. Does not select the live hub database.</td>
+</tr>
+<tr>
+<td><code>MAC_HUB_VERIFY_PG_URL</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>hub</td>
+<td>Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as <code>MAC_TEST_PG_URL</code>. Never the live hub database. Loopback hosts are rewritten to <code>host.docker.internal</code> (or <code>MAC_HUB_VERIFY_PG_HOST</code>) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs <code>scripts/start-test-postgres.sh</code> from the cloned repo and rewrites that DSN the same way.</td>
+</tr>
+<tr>
 <td><code>MAC_HUB_VERIFY_RUNNER</code></td>
 <td>str</td>
 <td>consumer-defined</td>
