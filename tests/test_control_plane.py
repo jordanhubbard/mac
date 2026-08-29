@@ -13920,7 +13920,7 @@ def test_hub_verify_sandbox_injects_dedicated_test_pg_url(cp, monkeypatch):
     from mac import services as services_mod
 
     captured = []
-    dsn = "postgresql://mac_test@host.docker.internal:5432/mac_test"
+    dsn = "postgresql://mac_test@host.openshell.internal:55432/mac_hubverify"
 
     def fake_run(argv, **kwargs):
         captured.append(list(argv))

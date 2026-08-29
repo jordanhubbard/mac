@@ -6446,7 +6446,18 @@
   },
   {
     "default": null,
-    "description": "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.docker.internal`. Does not select the live hub database.",
+    "description": "Data directory for the dedicated hub-verify Postgres started by `scripts/start-test-postgres.sh`. Defaults to a temp `mac-hubverify-pgdata` directory, never the live hub cluster.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PG_DATADIR",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.openshell.internal` (OpenShell's host-bridge alias). Does not select the live hub Postgres.",
     "family": "hub",
     "name": "MAC_HUB_VERIFY_PG_HOST",
     "retired": false,
@@ -6457,7 +6468,18 @@
   },
   {
     "default": null,
-    "description": "Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub database. Loopback hosts are rewritten to `host.docker.internal` (or `MAC_HUB_VERIFY_PG_HOST`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` from the cloned repo and rewrites that DSN the same way.",
+    "description": "Port passed to `scripts/start-test-postgres.sh` when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PG_PORT",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way.",
     "family": "hub",
     "name": "MAC_HUB_VERIFY_PG_URL",
     "retired": false,
@@ -9072,7 +9094,8 @@
     "name": "MAC_OPENSHELL_HOST_ALIAS",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -13495,7 +13518,8 @@
     "name": "MAC_TEST_PG_CONTAINER",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh"
+      "scripts/start-test-postgres.sh",
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -13506,7 +13530,8 @@
     "name": "MAC_TEST_PG_DATADIR",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh"
+      "scripts/start-test-postgres.sh",
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -13517,7 +13542,8 @@
     "name": "MAC_TEST_PG_DB",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh"
+      "scripts/start-test-postgres.sh",
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -13561,7 +13587,8 @@
     "name": "MAC_TEST_PG_PORT",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh"
+      "scripts/start-test-postgres.sh",
+      "src/mac/services.py"
     ],
     "type": "int"
   },

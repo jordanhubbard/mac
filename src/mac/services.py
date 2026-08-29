@@ -1119,7 +1119,14 @@ def hub_verification_unavailable_reason(output: str) -> Optional[str]:
     return None
 
 
-_HUB_VERIFY_SANDBOX_PG_HOST = "host.docker.internal"
+# OpenShell injects this hosts entry; ``host.docker.internal`` is Docker
+# Desktop and is not present in a hub-verify sandbox. Keep in lockstep with
+# ``executor_sandbox._OPENSHELL_HOST_ALIAS_DEFAULT``.
+_HUB_VERIFY_SANDBOX_PG_HOST = "host.openshell.internal"
+_HUB_VERIFY_PG_PORT = "55432"
+_HUB_VERIFY_PG_DB = "mac_hubverify"
+_HUB_VERIFY_PG_CONTAINER = "mac-hubverify-postgres"
+_LOOPBACK_PG_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
 
 
 def parse_start_test_postgres_export(stdout: str) -> str:
@@ -1132,6 +1139,50 @@ def parse_start_test_postgres_export(stdout: str) -> str:
     return ""
 
 
+def _pg_url_authority(dsn: str) -> Optional[Tuple[str, int]]:
+    parsed = urllib.parse.urlsplit((dsn or "").strip())
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return None
+    return host, int(parsed.port or 5432)
+
+
+def _hub_verify_pg_shares_live_server(candidate: str, live: str) -> bool:
+    """True when *candidate* is the live hub Postgres process, even if the
+    database name or role differs.
+
+    ``start-test-postgres.sh`` will happily emit ``...@127.0.0.1:5432/mac_test``
+    when the hub is already listening on 5432. Exact-string comparison against
+    ``MAC_DATABASE_URL`` (a different database on that same server) would then
+    inject the live cluster into the sandbox.
+    """
+
+    if not candidate or not live:
+        return False
+    if candidate.strip() == live.strip():
+        return True
+    left = _pg_url_authority(candidate)
+    right = _pg_url_authority(live)
+    if left is None or right is None:
+        return False
+    left_host, left_port = left
+    right_host, right_port = right
+    if left_port != right_port:
+        return False
+    if left_host == right_host:
+        return True
+    return left_host in _LOOPBACK_PG_HOSTS or right_host in _LOOPBACK_PG_HOSTS
+
+
+def _hub_verify_sandbox_pg_host(*, sandbox_host: str = "") -> str:
+    return (
+        sandbox_host
+        or os.environ.get("MAC_HUB_VERIFY_PG_HOST")
+        or os.environ.get("MAC_OPENSHELL_HOST_ALIAS")
+        or ""
+    ).strip() or _HUB_VERIFY_SANDBOX_PG_HOST
+
+
 def hub_verify_sandbox_pg_url(
     raw: str,
     *,
@@ -1140,8 +1191,9 @@ def hub_verify_sandbox_pg_url(
 ) -> Optional[str]:
     """Return a test DSN the OpenShell hub-verify sandbox can use.
 
-    Refuses the live hub database. Rewrites loopback hosts to
-    ``host.docker.internal`` (override with ``MAC_HUB_VERIFY_PG_HOST``) so a
+    Refuses the live hub Postgres (same host+port, not merely the same DSN).
+    Rewrites loopback hosts to ``host.openshell.internal`` (override with
+    ``MAC_HUB_VERIFY_PG_HOST`` or ``MAC_OPENSHELL_HOST_ALIAS``) so a dedicated
     Postgres started on the hub is reachable from inside the sandbox.
     """
 
@@ -1149,14 +1201,12 @@ def hub_verify_sandbox_pg_url(
     live = (live_database_url or "").strip()
     if not candidate:
         return None
-    if live and candidate == live:
+    if _hub_verify_pg_shares_live_server(candidate, live):
         return None
-    host = (sandbox_host or os.environ.get("MAC_HUB_VERIFY_PG_HOST") or "").strip()
-    if not host:
-        host = _HUB_VERIFY_SANDBOX_PG_HOST
+    host = _hub_verify_sandbox_pg_host(sandbox_host=sandbox_host)
     parsed = urllib.parse.urlsplit(candidate)
     hostname = (parsed.hostname or "").strip().lower()
-    if hostname in {"127.0.0.1", "localhost", "::1"}:
+    if hostname in _LOOPBACK_PG_HOSTS:
         username = parsed.username or ""
         password = parsed.password
         userinfo = username
@@ -1170,9 +1220,42 @@ def hub_verify_sandbox_pg_url(
         candidate = urllib.parse.urlunsplit(
             (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
         )
-        if live and candidate == live:
+        if _hub_verify_pg_shares_live_server(candidate, live):
             return None
     return candidate
+
+
+def _hub_verify_start_test_postgres(repo_root: Path) -> str:
+    helper = repo_root / "scripts" / "start-test-postgres.sh"
+    if not helper.is_file():
+        return ""
+    env = dict(os.environ)
+    env.pop("MAC_TEST_PG_URL", None)
+    env["MAC_TEST_PG_PORT"] = (
+        os.environ.get("MAC_HUB_VERIFY_PG_PORT") or _HUB_VERIFY_PG_PORT
+    ).strip() or _HUB_VERIFY_PG_PORT
+    env["MAC_TEST_PG_DB"] = _HUB_VERIFY_PG_DB
+    env["MAC_TEST_PG_CONTAINER"] = _HUB_VERIFY_PG_CONTAINER
+    env["MAC_TEST_PG_DATADIR"] = os.environ.get("MAC_HUB_VERIFY_PG_DATADIR") or os.path.join(
+        tempfile.gettempdir(), "mac-hubverify-pgdata"
+    )
+    try:
+        proc = subprocess.run(
+            ["bash", str(helper)],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+            env=env,
+        )
+    except Exception:  # noqa: BLE001 - missing helper must not abort verify
+        return ""
+    # 0 is success; ``returncode or 1`` would turn a successful helper into a
+    # miss and leave the sandbox without MAC_TEST_PG_URL (observed after #682).
+    if getattr(proc, "returncode", 1) != 0:
+        return ""
+    return parse_start_test_postgres_export(proc.stdout or "")
 
 
 def hub_verify_test_pg_url(repo_root: Path) -> Optional[str]:
@@ -1180,23 +1263,7 @@ def hub_verify_test_pg_url(repo_root: Path) -> Optional[str]:
 
     explicit = (os.environ.get("MAC_HUB_VERIFY_PG_URL") or "").strip()
     live = (os.environ.get("MAC_DATABASE_URL") or os.environ.get("MAC_DB") or "").strip()
-    raw = explicit
-    if not raw:
-        helper = repo_root / "scripts" / "start-test-postgres.sh"
-        if helper.is_file():
-            try:
-                proc = subprocess.run(
-                    ["bash", str(helper)],
-                    cwd=str(repo_root),
-                    capture_output=True,
-                    text=True,
-                    timeout=90,
-                    check=False,
-                )
-            except Exception:  # noqa: BLE001 - missing helper must not abort verify
-                proc = None
-            if proc is not None and int(proc.returncode or 1) == 0:
-                raw = parse_start_test_postgres_export(proc.stdout or "")
+    raw = explicit or _hub_verify_start_test_postgres(repo_root)
     return hub_verify_sandbox_pg_url(raw, live_database_url=live)
 
 
@@ -27239,7 +27306,7 @@ class ControlPlane:
             # commands instead of preserving the image ENV. Pass the
             # sandbox-owned runtime path explicitly; never inherit the
             # control-plane host's PATH. MAC_TEST_PG_URL is a dedicated
-            # test DSN (never the live hub database).
+            # test DSN on host.openshell.internal (never the live hub Postgres).
             for value in hub_verify_sandbox_env_pairs(test_pg_url=test_pg_url):
                 argv += ["--env", value]
             argv += [
