@@ -2811,7 +2811,7 @@ def test_gateway_log_classifier_accepts_exact_recovered_rocky_startup(tmp_path):
         "Gateway target: ws://127.0.0.1:18789",
         "Source: local loopback",
         "Config: /home/sandbox/.config/mac-openclaw/openclaw.json",
-        "Bind: lan",
+        "Bind: loopback",
     ]
     result, summary = run_gateway_log_classifier(
         tmp_path,

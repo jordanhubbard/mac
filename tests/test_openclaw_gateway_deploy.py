@@ -91,7 +91,7 @@ if scenario in {"deferred", "tainted-deferral"}:
     print("Gateway target: ws://127.0.0.1:18789", file=sys.stderr)
     print("Source: local loopback", file=sys.stderr)
     print("Config: /home/sandbox/.config/mac-openclaw/openclaw.json", file=sys.stderr)
-    print("Bind: lan", file=sys.stderr)
+    print("Bind: loopback", file=sys.stderr)
     if scenario == "tainted-deferral":
         print("ERROR gateway database unavailable", file=sys.stderr)
     raise SystemExit(1)
