@@ -82,6 +82,16 @@ _MAC_CONTRACT_RUNTIME_VENV_REQUESTED="${MAC_CONTRACT_RUNTIME_VENV:-}"
 # unset", pointing at the CI provisioning step rather than at this line.
 _MAC_TEST_PG_URL_REQUESTED="${MAC_TEST_PG_URL:-}"
 _MAC_COVERAGE_DIR=""
+# The merge-gate suite and the production merge queue both call
+# `git merge-tree --write-tree`, which only exists in git >= 2.38. Resolve
+# a usable git the same way the interpreter is resolved below: honour an
+# explicit override and a task-local toolchain bin dir, and capture both
+# BEFORE the hermetic MAC_* sweep unsets every MAC_-prefixed var (exactly
+# like _MAC_CONTRACT_RUNTIME_VENV_REQUESTED). MAC_CONTRACT_GIT names a git
+# binary directly; MAC_TOOLCHAIN_BIN is a task-local bin dir whose ./git is
+# preferred over the ambient PATH git. Empty/unset => the PATH git.
+_MAC_CONTRACT_GIT_REQUESTED="${MAC_CONTRACT_GIT:-}"
+_MAC_TOOLCHAIN_BIN_REQUESTED="${MAC_TOOLCHAIN_BIN:-}"
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
@@ -175,18 +185,79 @@ git config --global --add safe.directory '*' >/dev/null 2>&1 || true
 
 # The merge-gate suite (and the production merge queue) uses
 # `git merge-tree --write-tree`, added in git 2.38. On an older git the
-# git-publication/merge-queue tests fail with an opaque rc=129 — lead the log
-# with the actual cause so a fleet host running distro git (e.g. 2.34 on the
-# GKE pod image) is diagnosable from the first line of the failure output.
-_git_ver="$(git version 2>/dev/null | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/')"
-if [ -n "${_git_ver}" ]; then
-    _git_major="${_git_ver%% *}"
-    _git_minor="${_git_ver#* }"
-    if [ "${_git_major:-0}" -lt 2 ] || { [ "${_git_major:-0}" -eq 2 ] && [ "${_git_minor:-0}" -lt 38 ]; }; then
-        echo "run-contract-tests.sh: WARNING: $(git version) < 2.38 —" \
-             "merge-gate tests (and the production merge queue) WILL fail;" \
-             "upgrade git on this host" >&2
+# git-publication/merge-queue tests fail with an opaque rc=129, so a fleet host
+# running distro git (e.g. 2.34 on the Ubuntu-22.04 / GKE pod image) used to
+# burn a whole gate run and report a misleading generic test failure. Resolve a
+# usable git the same way the interpreter is resolved below — prefer an explicit
+# override, then a task-local toolchain bin dir, then the ambient PATH git — and
+# FAIL FAST with a distinct, classified status BEFORE paying for the full suite
+# when none is >= 2.38. Existing hosts that already ship git >= 2.38 keep the
+# byte-identical fast path (the resolved git's own dir is re-exported onto PATH
+# so every test subprocess sees exactly the git resolved here).
+_MAC_GIT_REQUIRED_MAJOR=2
+_MAC_GIT_REQUIRED_MINOR=38
+# Exit status reserved for the git-toolchain prerequisite: distinct from the
+# interpreter/pytest statuses so the dispatcher can classify it as environment
+# at the source instead of inferring it from a truncated log.
+_MAC_GIT_PREREQ_EXIT=3
+# Print "MAJOR MINOR" for the given git binary, or nothing if it cannot report.
+_git_ver_of() {
+    "$1" version 2>/dev/null | sed -E 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/'
+}
+# 0 if the given git binary reports >= the required floor, non-zero otherwise.
+_git_meets_floor() {
+    _gmf_ver="$(_git_ver_of "$1")"
+    [ -n "${_gmf_ver}" ] || return 1
+    _gmf_major="${_gmf_ver%% *}"
+    _gmf_minor="${_gmf_ver#* }"
+    if [ "${_gmf_major:-0}" -lt "$_MAC_GIT_REQUIRED_MAJOR" ]; then
+        return 1
     fi
+    if [ "${_gmf_major:-0}" -eq "$_MAC_GIT_REQUIRED_MAJOR" ] \
+        && [ "${_gmf_minor:-0}" -lt "$_MAC_GIT_REQUIRED_MINOR" ]; then
+        return 1
+    fi
+    return 0
+}
+# Resolve the candidate git in override precedence order. An explicit
+# MAC_CONTRACT_GIT names the binary directly; MAC_TOOLCHAIN_BIN supplies a
+# task-local bin dir whose ./git is preferred over the ambient PATH git; the
+# PATH git is the default.
+_mac_git=""
+if [ -n "$_MAC_CONTRACT_GIT_REQUESTED" ] && [ -x "$_MAC_CONTRACT_GIT_REQUESTED" ]; then
+    _mac_git="$_MAC_CONTRACT_GIT_REQUESTED"
+elif [ -n "$_MAC_TOOLCHAIN_BIN_REQUESTED" ] && [ -x "$_MAC_TOOLCHAIN_BIN_REQUESTED/git" ]; then
+    _mac_git="$_MAC_TOOLCHAIN_BIN_REQUESTED/git"
+else
+    _mac_git="$(command -v git || true)"
+fi
+# If the preferred override is present but too old, still consider whether the
+# ambient PATH git satisfies the floor — the override is a hint, not a downgrade.
+if [ -n "$_mac_git" ] && ! _git_meets_floor "$_mac_git"; then
+    _mac_path_git="$(command -v git || true)"
+    if [ -n "$_mac_path_git" ] && [ "$_mac_path_git" != "$_mac_git" ] \
+        && _git_meets_floor "$_mac_path_git"; then
+        _mac_git="$_mac_path_git"
+    fi
+fi
+if [ -z "$_mac_git" ] || ! _git_meets_floor "$_mac_git"; then
+    # Report the full version string (patch level included) so the diagnostic
+    # names exactly the git that was found, e.g. "2.34.1" on Ubuntu-22.04.
+    _mac_git_found="$("${_mac_git:-git}" version 2>/dev/null | sed -E 's/^git version //')"
+    [ -n "$_mac_git_found" ] || _mac_git_found="none"
+    echo "run-contract-tests.sh: FATAL: git ${_mac_git_found} < ${_MAC_GIT_REQUIRED_MAJOR}.${_MAC_GIT_REQUIRED_MINOR} required for merge-gate tests and the production merge queue; provide a modern git via MAC_CONTRACT_GIT=/path/to/git or MAC_TOOLCHAIN_BIN=<dir with ./git> (this gate will NOT run the suite on an unusable git)" >&2
+    exit "$_MAC_GIT_PREREQ_EXIT"
+fi
+# Export the resolved git's directory at the FRONT of PATH so every test
+# subprocess resolves the same git this gate validated. Only prepend when the
+# resolved git is NOT already the one the ambient PATH resolves to: on a host
+# whose PATH git already satisfies the floor (no override in play) PATH is left
+# byte-identical; when an override/toolchain git was chosen it is pushed to the
+# front so subprocesses see it instead of the older PATH git.
+_mac_git_dir="$(CDPATH= cd -- "$(dirname -- "$_mac_git")" && pwd)"
+if [ "$_mac_git" != "$(command -v git || true)" ]; then
+    PATH="${_mac_git_dir}:${PATH}"
+    export PATH
 fi
 
 # Resolve a usable interpreter instead of assuming a repo-local .venv. Local
