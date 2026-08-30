@@ -5721,18 +5721,32 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Hub setting: hub verify image.</td>
 </tr>
 <tr>
+<td><code>MAC_HUB_VERIFY_PG_DATADIR</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>hub</td>
+<td>Data directory for the dedicated hub-verify Postgres started by <code>scripts/start-test-postgres.sh</code>. Defaults to a temp <code>mac-hubverify-pgdata</code> directory, never the live hub cluster.</td>
+</tr>
+<tr>
 <td><code>MAC_HUB_VERIFY_PG_HOST</code></td>
 <td>str</td>
 <td>consumer-defined</td>
 <td>hub</td>
-<td>Hostname substituted for <code>127.0.0.1</code>/<code>localhost</code>/<code>::1</code> in the hub-verify test DSN. Default <code>host.docker.internal</code>. Does not select the live hub database.</td>
+<td>Hostname substituted for <code>127.0.0.1</code>/<code>localhost</code>/<code>::1</code> in the hub-verify test DSN. Default <code>host.openshell.internal</code> (OpenShell's host-bridge alias). Does not select the live hub Postgres.</td>
+</tr>
+<tr>
+<td><code>MAC_HUB_VERIFY_PG_PORT</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>hub</td>
+<td>Port passed to <code>scripts/start-test-postgres.sh</code> when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432.</td>
 </tr>
 <tr>
 <td><code>MAC_HUB_VERIFY_PG_URL</code></td>
 <td>str</td>
 <td>consumer-defined</td>
 <td>hub</td>
-<td>Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as <code>MAC_TEST_PG_URL</code>. Never the live hub database. Loopback hosts are rewritten to <code>host.docker.internal</code> (or <code>MAC_HUB_VERIFY_PG_HOST</code>) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs <code>scripts/start-test-postgres.sh</code> from the cloned repo and rewrites that DSN the same way.</td>
+<td>Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as <code>MAC_TEST_PG_URL</code>. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to <code>host.openshell.internal</code> (or <code>MAC_HUB_VERIFY_PG_HOST</code> / <code>MAC_OPENSHELL_HOST_ALIAS</code>) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs <code>scripts/start-test-postgres.sh</code> on a dedicated port (default 55432) and rewrites that DSN the same way.</td>
 </tr>
 <tr>
 <td><code>MAC_HUB_VERIFY_RUNNER</code></td>
