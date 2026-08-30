@@ -64,6 +64,10 @@ MAX_SCRIPT_OUTPUT = 20000
 DEFAULT_SCRIPT_TIMEOUT = 300.0
 DEFAULT_AGENT_TIMEOUT = 300.0
 SCRIPT_OUTPUT_HEADING = "## Script Output"
+# OpenClaw Slack's buildSlackPresentationBlocks truncates each type=text block
+# at the Block Kit section mrkdwn cap. Chunk here so a 4k+ KSLUG transcript is
+# not silently cut after the runner already counted it as delivered.
+SLACK_SECTION_TEXT_MAX = 3000
 
 # Nightly #localnews (kslug-nightly-news) has historically leaked process notes
 # into Slack when the workspace skill / AgentFS SPEC were missing. The host
@@ -538,6 +542,11 @@ def message_args(
     ``json.dumps`` escapes the newlines, so the token crossing the boundary has
     none while the body survives intact. ``--message`` keeps a single-line
     summary because the CLI requires it.
+
+    OpenClaw Slack (2026.6.11) renders ``presentation.title`` and
+    ``presentation.blocks`` into Block Kit. A top-level ``{"text": body}`` is
+    ignored, so Slack posted only the ``--message`` banner. The body must be
+    ``{"blocks": [{"type": "text", "text": ...}, ...]}``.
     """
     return [
         message_bin,
@@ -551,8 +560,36 @@ def message_args(
         "--message",
         summary_line(text),
         "--presentation",
-        json.dumps({"text": text}),
+        json.dumps({"blocks": presentation_text_blocks(text)}),
     ]
+
+
+def presentation_text_blocks(text: str, *, limit: int = SLACK_SECTION_TEXT_MAX) -> list:
+    """Split ``text`` into Slack presentation ``type=text`` blocks.
+
+    Empty input yields no blocks: the CLI still has ``--message``. Chunks stay
+    at or under ``limit`` so OpenClaw does not truncate mid-broadcast.
+    """
+    body = str(text or "")
+    if not body:
+        return []
+    if limit <= 0:
+        limit = SLACK_SECTION_TEXT_MAX
+    chunks = []
+    remaining = body
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+        window = remaining[:limit]
+        cut = window.rfind("\n")
+        if cut < limit // 2:
+            chunks.append(remaining[:limit])
+            remaining = remaining[limit:]
+        else:
+            chunks.append(remaining[: cut + 1])
+            remaining = remaining[cut + 1 :]
+    return [{"type": "text", "text": chunk} for chunk in chunks if chunk]
 
 
 def summary_line(text: str, *, limit: int = 200) -> str:

@@ -252,9 +252,33 @@ def test_the_multi_line_body_survives_the_escaping() -> None:
 
     body = "first line\nsecond line\nthird line"
     args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
-    presentation = args[args.index("--presentation") + 1]
+    presentation = _json.loads(args[args.index("--presentation") + 1])
 
-    assert _json.loads(presentation)["text"] == body
+    assert "text" not in presentation
+    assert presentation["blocks"] == [{"type": "text", "text": body}]
+    assert "".join(block["text"] for block in presentation["blocks"]) == body
+    assert args[args.index("--message") + 1] == "first line"
+
+
+def test_presentation_chunks_long_transcripts_without_argv_newlines() -> None:
+    """A KSLUG-length body must keep every character and stay sandbox-safe."""
+    import json as _json
+
+    body = ("local wire copy from the collector. " * 80) + "\n" + ("dan green closer. " * 80)
+    assert len(body) > runner.SLACK_SECTION_TEXT_MAX
+    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body)
+    assert not any("\n" in part or "\r" in part for part in args)
+    presentation = _json.loads(args[args.index("--presentation") + 1])
+    blocks = presentation["blocks"]
+    assert all(block["type"] == "text" for block in blocks)
+    assert all(len(block["text"]) <= runner.SLACK_SECTION_TEXT_MAX for block in blocks)
+    assert "".join(block["text"] for block in blocks) == body
+    assert "dan green closer" in "".join(block["text"] for block in blocks)
+
+
+def test_presentation_text_blocks_empty_input_is_no_blocks() -> None:
+    assert runner.presentation_text_blocks("") == []
+    assert runner.presentation_text_blocks("   ") == [{"type": "text", "text": "   "}]
 
 
 def test_the_summary_line_is_never_empty() -> None:
