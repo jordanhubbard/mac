@@ -15,6 +15,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import subprocess
+import urllib.parse
 from typing import Callable, List, Mapping, Optional, Sequence
 
 MESH_PROVIDERS = frozenset({"tailscale", "headscale"})
@@ -22,6 +23,20 @@ TAILSCALE_CGNAT_V4 = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_ULA_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 UNSPECIFIED_HOSTS = frozenset({"0.0.0.0", "::", "*", "[::]"})
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+# Non-interactive SSH PATH is often /usr/bin:/bin:/usr/sbin:/sbin. Darwin
+# installs Tailscale under /usr/local/bin or Tailscale.app, not that PATH.
+TAILSCALE_IPV4_BINARIES = (
+    "tailscale",
+    "/usr/local/bin/tailscale",
+    "/opt/homebrew/bin/tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+)
+_HUB_URL_ENV_KEYS = (
+    "MAC_DEPLOY_HUB_URL",
+    "MAC_HUB_URL",
+    "MAC_URL",
+    "MAC_API_URL",
+)
 
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -104,30 +119,77 @@ def hosts_include_non_loopback(hosts: Sequence[str]) -> bool:
     return any(not is_loopback_host(host) for host in hosts)
 
 
+def overlay_ipv4_from_host(host: str) -> str:
+    """Return ``host`` when it is a Tailscale CGNAT IPv4, else empty."""
+    text = str(host or "").strip().strip("[]")
+    if not text:
+        return ""
+    if text.count(":") == 1 and "." in text:
+        text = text.split(":", 1)[0]
+    ip = _parse_ip(text)
+    if ip is None or ip.version != 4 or ip not in TAILSCALE_CGNAT_V4:
+        return ""
+    return str(ip)
+
+
+def overlay_ipv4_from_url(url: str) -> str:
+    try:
+        host = urllib.parse.urlparse(str(url or "")).hostname or ""
+    except ValueError:
+        return ""
+    return overlay_ipv4_from_host(host)
+
+
+def overlay_ipv4_from_ssh_target(target: str) -> str:
+    text = str(target or "").strip()
+    if not text:
+        return ""
+    if "@" in text:
+        text = text.rsplit("@", 1)[1]
+    return overlay_ipv4_from_host(text)
+
+
 def lookup_tailscale_ipv4(
     *,
     environ: Optional[Mapping[str, str]] = None,
     run: Optional[RunCommand] = None,
 ) -> str:
-    """Prefer a live ``tailscale ip -4``; fall back to ``MAC_TAILSCALE_IP``."""
+    """Live ``tailscale ip -4``, then env/URL/SSH-target CGNAT fallbacks.
+
+    Deploy SSH sessions do not put Homebrew or Tailscale.app on PATH, so the
+    CLI lookup is empty unless an absolute binary exists. The fleet already
+    knows the overlay address as ``MAC_DEPLOY_TARGET`` / the hub URL.
+    """
     env = environ or {}
     runner = run or subprocess.run
-    try:
-        completed = runner(
-            ["tailscale", "ip", "-4"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        completed = None
-    if completed is not None and completed.returncode == 0:
+    for binary in TAILSCALE_IPV4_BINARIES:
+        try:
+            completed = runner(
+                [binary, "ip", "-4"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            continue
+        if completed.returncode != 0:
+            continue
         live = (completed.stdout or "").strip().splitlines()
-        if live and _parse_ip(live[0].strip()):
-            return live[0].strip()
-    fallback = str(env.get("MAC_TAILSCALE_IP") or "").strip()
-    return fallback if _parse_ip(fallback) else ""
+        if live:
+            token = live[0].strip()
+            # The CLI names the live overlay address, including Headscale
+            # prefixes that are not CGNAT. URL/SSH fallbacks stay CGNAT-only.
+            if _parse_ip(token):
+                return token
+    raw = str(env.get("MAC_TAILSCALE_IP") or "").strip()
+    if _parse_ip(raw):
+        return raw
+    for key in _HUB_URL_ENV_KEYS:
+        found = overlay_ipv4_from_url(str(env.get(key) or "").strip())
+        if found:
+            return found
+    return overlay_ipv4_from_ssh_target(str(env.get("MAC_DEPLOY_TARGET") or "").strip())
 
 
 def mesh_bind_problems(

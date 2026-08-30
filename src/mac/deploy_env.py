@@ -17,10 +17,10 @@ import secrets
 import shlex
 import sys
 import urllib.parse
-from typing import Dict, Mapping, MutableMapping, Optional, Sequence
+from typing import Callable, Dict, Mapping, MutableMapping, Optional, Sequence
 
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
-from mac.mesh_bind import MeshBindError, deploy_mac_bind_host
+from mac.mesh_bind import MeshBindError, deploy_mac_bind_host, lookup_tailscale_ipv4, overlay_ipv4_from_url
 
 
 DEFAULT_WORKER_CAPABILITIES = (
@@ -880,6 +880,7 @@ def build_mac_env(
     cfg: DeployEnvConfig,
     *,
     environ: Optional[Mapping[str, str]] = None,
+    lookup: Optional[Callable[..., str]] = None,
 ) -> Dict[str, str]:
     env = os.environ if environ is None else environ
     values: Dict[str, str] = dict(existing)
@@ -896,10 +897,13 @@ def build_mac_env(
         )
     _ensure_secret_values(values)
     values.update(_path_values(cfg))
-    tailscale_ip = (
-        (env.get("MAC_TAILSCALE_IP") or "").strip()
-        or (values.get("MAC_TAILSCALE_IP") or "").strip()
-    )
+    finder = lookup or lookup_tailscale_ipv4
+    tailscale_ip = finder(environ=env)
+    if not tailscale_ip:
+        existing_ip = str(values.get("MAC_TAILSCALE_IP") or "").strip()
+        tailscale_ip = existing_ip or overlay_ipv4_from_url(cfg.control.hub_url)
+    if tailscale_ip:
+        values["MAC_TAILSCALE_IP"] = tailscale_ip
     try:
         values["MAC_BIND_HOST"] = deploy_mac_bind_host(
             cfg.control.bind_host,
