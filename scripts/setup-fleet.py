@@ -560,7 +560,9 @@ def _setup_hub(
             supervisor=supervisor,
             mode=hub_worker_mode,
             claim_only_canary_tasks=hub_claim_only_canary_tasks,
-            control_bind_host="0.0.0.0",
+            control_bind_host=(
+                "127.0.0.1" if network_provider in {"tailscale", "headscale"} else "0.0.0.0"
+            ),
         )
     ]
     while prompt_bool("Add another agent?", default=False):
@@ -1265,7 +1267,11 @@ def main(argv: List[str]) -> int:
                     supervisor=args.supervisor,
                     mode="loop",
                     claim_only_canary_tasks=False,
-                    control_bind_host="0.0.0.0",
+                    control_bind_host=(
+                        "127.0.0.1"
+                        if args.network_provider in {"tailscale", "headscale"}
+                        else "0.0.0.0"
+                    ),
                 )
             ],
         }

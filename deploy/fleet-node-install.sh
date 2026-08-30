@@ -11348,7 +11348,9 @@ export HERMES_REDACT_SECRETS=true
 # simple read (3.46s -> 0.43s) and let the allocator path finish instead of
 # hitting the client deadline. The hub keeps its own structured observability;
 # this was a duplicate written on the worst possible thread.
-exec "$runtime_venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level warning --no-access-log
+# mac.hub_serve binds loopback plus the Tailscale address (and refuses
+# 0.0.0.0 on a mesh hub). Uvicorn's CLI accepts only one --host.
+exec "$runtime_venv/bin/python" -m mac.hub_serve
 EOF
   chmod 700 "$wrapper"
 }

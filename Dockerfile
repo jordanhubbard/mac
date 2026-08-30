@@ -36,7 +36,9 @@ FROM docker.io/library/python@sha256:60d9996b6a8a3689d36db740b49f4327be3be09a211
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
-    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin
+    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin \
+    MAC_BIND_HOST=0.0.0.0 \
+    MAC_PORT=8789
 
 RUN printf '%s\n' 'mac:x:10001:' >> /etc/group && \
     printf '%s\n' 'mac:x:10001:10001:MAC service:/var/lib/mac:/usr/sbin/nologin' >> /etc/passwd && \
@@ -59,6 +61,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
         r = urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3); \
         sys.exit(0 if r.status == 200 else 1)" || exit 1
 
-CMD ["uvicorn", "mac.api:create_app", "--factory", \
-     "--host", "0.0.0.0", "--port", "8789", \
-     "--workers", "1", "--log-level", "info"]
+CMD ["python", "-m", "mac.hub_serve"]

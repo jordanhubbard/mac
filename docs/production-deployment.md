@@ -138,11 +138,15 @@ sudo systemctl status mac.service
 curl -fsS http://127.0.0.1:8789/health
 ```
 
-The unit binds to `${MAC_BIND_HOST:-127.0.0.1}:${MAC_PORT:-8789}` (both
-read from `/etc/mac/mac.env` which the unit already loads). Worker agents
-default to `127.0.0.1`; hub agents set `MAC_BIND_HOST=0.0.0.0`. Put a
-TLS-terminating reverse proxy (nginx, Caddy) in front for external access —
-do not expose the bare port.
+The unit is started with `python -m mac.hub_serve`, which reads
+`${MAC_BIND_HOST}` and `${MAC_PORT}` from `/etc/mac/mac.env`. Worker agents
+bind `127.0.0.1`. Mesh hubs (Tailscale/Headscale) bind loopback plus the
+CGNAT address from `tailscale ip -4` and refuse `0.0.0.0`, so the API cannot
+accidentally listen on a public NIC. The overlay is the transport; it is not
+a host firewall unless the process also refuses other interfaces. In-cluster
+images with no mesh provider may still bind `0.0.0.0` inside the container
+network namespace. Put a TLS-terminating reverse proxy in front only when
+the hub must be reached off-mesh.
 
 ## Fleet Setup Wizard
 

@@ -2266,7 +2266,7 @@ def test_setup_fleet_wizard_new_hub_is_noninteractive_and_custom_port_aware(tmp_
     assert cfg["hub_agent"] == "horde"
     assert cfg["agents"][0]["target"] == "horde@20.115.163.162:2201"
     assert cfg["agents"][0]["worker"]["mode"] == "loop"
-    assert cfg["agents"][0]["control_bind_host"] == "0.0.0.0"
+    assert cfg["agents"][0]["control_bind_host"] == "127.0.0.1"
     assert "MAC_SECRET_KEY=" in env_file.read_text(encoding="utf-8")
 
 

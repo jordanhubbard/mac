@@ -57,6 +57,7 @@ from mac.hermes_config_surface import (
 )
 from mac.hermes_startup import build_hermes_startup_report
 from mac.loop_stall_detector import LoopStallDetector
+from mac.mesh_bind import hosts_include_non_loopback, parse_bind_hosts, runtime_bind_error
 from mac.observability_console import (
     build_console_snapshot,
     build_task_drilldown,
@@ -4467,6 +4468,13 @@ def create_app(
         return merged
 
     initial_tokens = _current_auth_tokens()
+    mesh_bind_error = runtime_bind_error(
+        bind_host=os.environ.get("MAC_BIND_HOST") or "",
+        network_provider=os.environ.get("MAC_NETWORK_PROVIDER") or "",
+        mesh_ip=os.environ.get("MAC_TAILSCALE_IP") or "",
+    )
+    if mesh_bind_error:
+        raise ValidationError(mesh_bind_error)
     # mac-853j: refuse to fail-open when the API is bound to a non-loopback
     # interface. Deployments that explicitly want a no-auth dev mode can
     # set MAC_API_ALLOW_OPEN=1, but the default for a 0.0.0.0 hub is
@@ -4480,7 +4488,7 @@ def create_app(
             "yes",
             "on",
         }
-        is_loopback = bind_host in {"", "127.0.0.1", "::1", "localhost"}
+        is_loopback = not hosts_include_non_loopback(parse_bind_hosts(bind_host))
         if not is_loopback and not allow_open:
             raise ValidationError(
                 "auth fail-open refused: MAC_BIND_HOST=%r is non-loopback and "

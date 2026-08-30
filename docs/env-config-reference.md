@@ -678,6 +678,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_NEMOCLAW_SLACK_APP_TOKEN` | str | consumer-defined | core | Core setting: nemoclaw slack app token. |
 | `MAC_NEMOCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | core | Core setting: nemoclaw slack bot token. |
 | `MAC_NEMOCLAW_SLACK_WORKSPACE` | str | consumer-defined | core | Core setting: nemoclaw slack workspace. |
+| `MAC_NETWORK_PROVIDER` | str | consumer-defined | core | Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / public addresses and binds loopback plus the Tailscale IPv4 instead. Not a host firewall by itself; it is the listen-address policy that makes the overlay the only worker path. Unset means no mesh bind policy (container/dev). |
 | `MAC_NOTIFIER_DRAIN_HUB_AGENT` | str | consumer-defined | notifier | Notifier setting: notifier drain hub agent. |
 | `MAC_NOTIFIER_DRAIN_LIMIT` | int | consumer-defined | notifier | Notifier setting: notifier drain limit. |
 | `MAC_NOTIFIER_DRAIN_ON_HEARTBEAT` | str | consumer-defined | notifier | Notifier setting: notifier drain on heartbeat. |

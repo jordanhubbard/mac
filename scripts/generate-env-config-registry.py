@@ -155,6 +155,14 @@ CURATED_DESCRIPTIONS = {
         "degraded for conversation and fully capable of work. Set it for a deploy "
         "whose purpose is to prove the chat surface."
     ),
+    "MAC_NETWORK_PROVIDER": (
+        "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` "
+        "or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / "
+        "public addresses and binds loopback plus the Tailscale IPv4 instead. "
+        "Not a host firewall by itself; it is the listen-address policy that "
+        "makes the overlay the only worker path. Unset means no mesh bind "
+        "policy (container/dev)."
+    ),
     "MAC_OPENCLAW_READY_LOG_TIMEOUT": (
         "Seconds to wait for `[gateway] ready` in the host log after `verify` "
         "already proved the gateway reachable. Default 20. This is not the "
