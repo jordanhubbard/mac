@@ -202,6 +202,14 @@ def main(argv: list[str] | None = None) -> int:
         "--changed-lines",
         help="diff mode: JSON file mapping source path -> [line numbers] (overrides --base)",
     )
+    parser.add_argument(
+        "--partial",
+        action="store_true",
+        help=(
+            "label an incomplete measurement and skip floor enforcement; "
+            "the caller's test failure remains authoritative"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -217,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
             result = evaluate_diff(coverage_doc, policy_doc, changed)
         else:
             result = evaluate(coverage_doc, policy_doc)
+        if args.partial:
+            result["partial"] = True
     except (
         OSError,
         KeyError,
@@ -233,24 +243,28 @@ def main(argv: list[str] | None = None) -> int:
     elif result.get("mode") == "diff":
         statement = result["statements"]
         print(
-            "diff coverage safety: statements "
+            ("partial diff coverage (tests failed): " if args.partial else "diff coverage safety: ")
+            + "statements "
             f"{statement['covered']}/{statement['relevant']} changed lines "
             f"({statement['percent']:.2f}%, floor {statement['safety_floor']:.2f}%); "
             f"uncovered branches on changed lines: {result['branches']['uncovered_on_changed_lines']}"
         )
-        for failure in result["failures"]:
-            print(f"coverage-policy: {failure}", file=sys.stderr)
+        if not args.partial:
+            for failure in result["failures"]:
+                print(f"coverage-policy: {failure}", file=sys.stderr)
     else:
         statement = result["statements"]
         branch = result["branches"]
         print(
-            "coverage safety: statements "
+            ("partial coverage (tests failed): " if args.partial else "coverage safety: ")
+            + "statements "
             f"{statement['covered']}/{statement['total']} ({statement['percent']:.2f}%, floor {statement['safety_floor']:.2f}%); "
             f"branches {branch['covered']}/{branch['total']} ({branch['percent']:.2f}%, floor {branch['safety_floor']:.2f}%)"
         )
-        for failure in result["failures"]:
-            print(f"coverage-policy: {failure}", file=sys.stderr)
-    return 0 if result["status"] == "pass" else 1
+        if not args.partial:
+            for failure in result["failures"]:
+                print(f"coverage-policy: {failure}", file=sys.stderr)
+    return 0 if args.partial or result["status"] == "pass" else 1
 
 
 if __name__ == "__main__":

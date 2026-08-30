@@ -179,6 +179,26 @@ def test_main_fail_exit_one(policy_mod, tmp_path, capsys):
     assert "statement coverage" in captured.err
 
 
+def test_main_partial_labels_measurement_and_skips_floor_failure(policy_mod, tmp_path, capsys):
+    coverage_path, policy_path = _write_inputs(
+        tmp_path, _coverage_doc(covered_lines=10), _policy_doc()
+    )
+    code = policy_mod.main(
+        [
+            "--coverage-json",
+            str(coverage_path),
+            "--policy",
+            str(policy_path),
+            "--partial",
+        ]
+    )
+    assert code == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith("partial coverage (tests failed): statements 10/100")
+    assert "coverage safety:" not in captured.out
+    assert captured.err == ""
+
+
 def test_main_json_output(policy_mod, tmp_path, capsys):
     coverage_path, policy_path = _write_inputs(tmp_path, _coverage_doc(), _policy_doc())
     code = policy_mod.main(

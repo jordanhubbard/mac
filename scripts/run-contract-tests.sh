@@ -743,7 +743,15 @@ PYCAP
     fi
     if [ "$combine_status" -eq 0 ] && [ "$json_status" -eq 0 ]; then
         "$PY" -m coverage report || report_status=$?
-        "$PY" scripts/coverage-policy.py --coverage-json "$coverage_json" || policy_status=$?
+        coverage_policy_args=""
+        if [ "$pytest_status" -ne 0 ]; then
+            coverage_policy_args="--partial"
+        fi
+        # A failed pytest phase leaves an incomplete measurement (and can
+        # suppress the serial phase). Label it as partial; pytest_status below
+        # remains the gate result rather than a misleading coverage failure.
+        "$PY" scripts/coverage-policy.py --coverage-json "$coverage_json" \
+            $coverage_policy_args || policy_status=$?
     fi
     if [ -s "$coverage_json" ]; then
         coverage_publish="coverage.json.tmp.$$"
