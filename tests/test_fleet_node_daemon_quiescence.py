@@ -1057,6 +1057,26 @@ def test_stop_wrapper_failure_blocks_delete_and_receipt(tmp_path: Path, mode: st
     _assert_no_secret(run)
 
 
+def test_stop_wrapper_timeout_reports_actionable_timeout_evidence(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        wrapper_mode="child-timeout",
+        seed_marker=True,
+        extra_env={"MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS": "1"},
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert "managed OpenClaw stop wrapper timed out" in run.result.stderr
+    assert "elapsed=" in run.result.stderr
+    assert "effective_timeout=1.000s" in run.result.stderr
+    assert "requested_timeout=1.000s" in run.result.stderr
+    assert (
+        "limiting_bound=MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS"
+        in run.result.stderr
+    )
+    _assert_no_secret(run)
+
+
 def test_timeout_kills_descendant_that_ignores_term(tmp_path: Path) -> None:
     if shutil.which("ps") is None:
         pytest.skip("ps(1) is required to observe descendant termination state")

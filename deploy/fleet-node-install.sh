@@ -6804,10 +6804,35 @@ class QuiescenceFailure(Exception):
 
 
 class CommandResult:
-    def __init__(self, returncode, stdout, timed_out=False):
+    def __init__(
+        self,
+        returncode,
+        stdout,
+        timed_out=False,
+        requested_timeout=None,
+        effective_timeout=None,
+        elapsed=None,
+        limiting_env=None,
+    ):
         self.returncode = returncode
         self.stdout = stdout
         self.timed_out = timed_out
+        self.requested_timeout = requested_timeout
+        self.effective_timeout = effective_timeout
+        self.elapsed = elapsed
+        self.limiting_env = limiting_env
+
+    def timeout_evidence(self):
+        return (
+            "elapsed=%.3fs effective_timeout=%.3fs requested_timeout=%.3fs "
+            "limiting_bound=%s"
+            % (
+                self.elapsed,
+                self.effective_timeout,
+                self.requested_timeout,
+                self.limiting_env,
+            )
+        )
 
 
 mode, proof_phase, mac_home_raw, generation, revision = sys.argv[1:6]
@@ -6850,7 +6875,14 @@ def run_bounded(argv, env=None, timeout=None):
     if not argv or not os.path.isabs(str(argv[0])):
         raise QuiescenceFailure("daemon command is not an absolute executable")
     requested_timeout = command_timeout if timeout is None else timeout
-    effective_timeout = min(requested_timeout, remaining_time())
+    remaining = remaining_time()
+    effective_timeout = min(requested_timeout, remaining)
+    limiting_env = (
+        "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS"
+        if requested_timeout <= remaining
+        else "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS"
+    )
+    started_at = time.monotonic()
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         try:
             process = subprocess.Popen(
@@ -6906,6 +6938,10 @@ def run_bounded(argv, env=None, timeout=None):
         process.returncode,
         raw.decode("utf-8", errors="strict"),
         timed_out=timed_out,
+        requested_timeout=requested_timeout,
+        effective_timeout=effective_timeout,
+        elapsed=time.monotonic() - started_at,
+        limiting_env=limiting_env,
     )
 
 
@@ -7238,7 +7274,10 @@ def quiesce_openclaw_sandbox():
     outcome["stop_wrapper_invoked"] = True
     stopped = run_bounded([str(stop_wrapper)], env=openshell_env())
     if stopped.timed_out:
-        raise QuiescenceFailure("managed OpenClaw stop wrapper timed out")
+        raise QuiescenceFailure(
+            "managed OpenClaw stop wrapper timed out; %s"
+            % stopped.timeout_evidence()
+        )
     if stopped.returncode != 0:
         raise QuiescenceFailure("managed OpenClaw stop wrapper failed")
     deadline = min(gate_deadline, time.monotonic() + quiescence_timeout)
@@ -7254,7 +7293,9 @@ def quiesce_openclaw_sandbox():
     if stable_sandbox_absence(name, deadline, return_on_presence=False):
         return outcome
     if deleted.timed_out:
-        raise QuiescenceFailure("OpenShell sandbox deletion timed out")
+        raise QuiescenceFailure(
+            "OpenShell sandbox deletion timed out; %s" % deleted.timeout_evidence()
+        )
     if deleted.returncode != 0:
         raise QuiescenceFailure("OpenShell sandbox deletion failed")
     raise QuiescenceFailure("OpenShell sandbox remained present after deletion")
