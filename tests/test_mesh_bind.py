@@ -13,6 +13,8 @@ from mac.mesh_bind import (
     deploy_mac_bind_host,
     is_allowed_mesh_bind_host,
     lookup_tailscale_ipv4,
+    overlay_ipv4_from_ssh_target,
+    overlay_ipv4_from_url,
     parse_bind_hosts,
     runtime_bind_error,
     serve_bind_hosts,
@@ -146,6 +148,44 @@ def test_lookup_falls_back_to_env_when_cli_missing() -> None:
     )
 
 
+def test_lookup_tries_well_known_tailscale_binaries() -> None:
+    def fake_run(args, **_kwargs):
+        if args[0] == "tailscale":
+            raise FileNotFoundError("tailscale")
+        if args[0] == "/usr/local/bin/tailscale":
+            return SimpleNamespace(returncode=0, stdout="100.64.0.4\n")
+        raise FileNotFoundError(args[0])
+
+    assert lookup_tailscale_ipv4(environ={}, run=fake_run) == "100.64.0.4"
+
+
+def test_lookup_uses_deploy_target_and_hub_url_when_cli_missing() -> None:
+    def fake_run(*_args, **_kwargs):
+        raise FileNotFoundError("tailscale")
+
+    assert (
+        lookup_tailscale_ipv4(
+            environ={"MAC_DEPLOY_TARGET": "jkh@100.64.9.9"},
+            run=fake_run,
+        )
+        == "100.64.9.9"
+    )
+    assert (
+        lookup_tailscale_ipv4(
+            environ={"MAC_DEPLOY_HUB_URL": "http://100.64.8.8:8789"},
+            run=fake_run,
+        )
+        == "100.64.8.8"
+    )
+
+
+def test_overlay_parsers_accept_cgnat_only() -> None:
+    assert overlay_ipv4_from_ssh_target("jkh@100.64.1.2:22") == "100.64.1.2"
+    assert overlay_ipv4_from_url("http://100.64.1.3:8789") == "100.64.1.3"
+    assert overlay_ipv4_from_ssh_target("jkh@10.0.0.5") == ""
+    assert overlay_ipv4_from_url("http://example.test:8789") == ""
+
+
 def test_bind_sockets_loopback_ephemeral() -> None:
     sockets = bind_sockets(["127.0.0.1"], 0)
     try:
@@ -213,6 +253,36 @@ def test_build_mac_env_expands_mesh_hub_bind(tmp_path) -> None:
         {},
         cfg,
         environ={"MAC_TAILSCALE_IP": "100.64.0.1", "MAC_API_ALLOW_OPEN": "1"},
+        lookup=lambda environ=None: (environ or {}).get("MAC_TAILSCALE_IP") or "",
     )
     assert values["MAC_BIND_HOST"] == "127.0.0.1,100.64.0.1"
     assert values["MAC_NETWORK_PROVIDER"] == "tailscale"
+    assert values["MAC_TAILSCALE_IP"] == "100.64.0.1"
+
+
+def test_build_mac_env_discovers_overlay_ip_from_hub_url(tmp_path) -> None:
+    from mac import deploy_env
+
+    cfg = deploy_env.DeployEnvConfig(
+        paths=deploy_env.DeployPaths(tmp_path / "mac.env", tmp_path / ".mac", tmp_path),
+        control=deploy_env.ControlConfig(
+            port="8789",
+            hub_url="http://100.64.0.9:8789",
+            hub_token="hub-token",
+            bind_host="0.0.0.0",
+            supervisor_kind="systemd",
+            network_provider="tailscale",
+        ),
+        gateway=deploy_env.GatewayConfig("", "", "", ""),
+        worker=deploy_env.WorkerConfig("loop", "python", "", "", "0"),
+        services=deploy_env.SharedServicesConfig("", "6333", "", "3002"),
+        identity=deploy_env.DeployIdentity("hub", "hub", "fleet"),
+    )
+    values = deploy_env.build_mac_env(
+        {},
+        cfg,
+        environ={"MAC_API_ALLOW_OPEN": "1"},
+        lookup=lambda environ=None: "",
+    )
+    assert values["MAC_BIND_HOST"] == "127.0.0.1,100.64.0.9"
+    assert values["MAC_TAILSCALE_IP"] == "100.64.0.9"
