@@ -13624,6 +13624,7 @@
     "retired": false,
     "sources": [
       "scripts/run-contract-tests.sh",
+      "scripts/run-sanity-tests.sh",
       "scripts/start-test-postgres.sh",
       "src/mac/services.py",
       "src/mac/test_support.py"
