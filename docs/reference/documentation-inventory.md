@@ -194,6 +194,15 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`openshell-nemo-relay-e2e.md`](../openshell-nemo-relay-e2e.md) | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | [`openshell-nemo-relay-integration.md`](../openshell-nemo-relay-integration.md) | OpenShell + NeMo Relay integration |
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
+| supplemental reference | [`presentations/agentfabric-overview/README.md`](../presentations/agentfabric-overview/README.md) | AgentFabric overview — authoring package |
+| supplemental reference | [`presentations/agentfabric-overview/SKILL.md`](../presentations/agentfabric-overview/SKILL.md) | AgentFabric overview presentation |
+| supplemental reference | [`presentations/agentfabric-overview/current-deliverables.md`](../presentations/agentfabric-overview/current-deliverables.md) | Current deliverables — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/deck-specification.md`](../presentations/agentfabric-overview/deck-specification.md) | Deck specification — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/narrative-specification.md`](../presentations/agentfabric-overview/narrative-specification.md) | Narrative specification — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/prompts/deck-authoring-prompt.md`](../presentations/agentfabric-overview/prompts/deck-authoring-prompt.md) | Deck authoring prompt — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/prompts/image-prompts.md`](../presentations/agentfabric-overview/prompts/image-prompts.md) | Image prompts — intentionally empty |
+| supplemental reference | [`presentations/agentfabric-overview/qa-ledger.md`](../presentations/agentfabric-overview/qa-ledger.md) | QA ledger — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/source-notes.md`](../presentations/agentfabric-overview/source-notes.md) | Source notes — AgentFabric overview |
 | runbook | [`production-deployment.md`](../production-deployment.md) | Production Deployment |
 | generated reference | [`reference/cli.md`](../reference/cli.md) | Command-line reference |
 | generated reference | [`reference/documentation-inventory.md`](../reference/documentation-inventory.md) | Documentation inventory |
