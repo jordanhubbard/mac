@@ -1761,6 +1761,20 @@ def _contract_string_list(value: Any, field: str, *, required: bool = True) -> L
     return strings
 
 
+def _contract_version_mapping(value: Any, field: str) -> Dict[str, str]:
+    if value is None:
+        return {}
+    mapping = _contract_mapping(value, field)
+    result: Dict[str, str] = {}
+    for command, version in mapping.items():
+        name = _contract_string(command, "%s command" % field)
+        minimum = _contract_string(version, "%s.%s" % (field, name))
+        if re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", minimum) is None:
+            raise ValidationError("%s.%s must be a dotted numeric version" % (field, name))
+        result[name] = minimum
+    return result
+
+
 def _contract_relative_paths(value: Any, field: str) -> List[str]:
     paths = _contract_string_list(value, field, required=False)
     for raw_path in paths:
@@ -1997,6 +2011,10 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             "required_commands": _contract_string_list(
                 toolchain.get("required_commands"),
                 "repository runtime contract.toolchain.required_commands",
+            ),
+            "minimum_versions": _contract_version_mapping(
+                toolchain.get("minimum_versions"),
+                "repository runtime contract.toolchain.minimum_versions",
             ),
         },
         "bootstrap": {

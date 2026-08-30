@@ -40,6 +40,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MAC_BIND_HOST=0.0.0.0 \
     MAC_PORT=8789
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN printf '%s\n' 'mac:x:10001:' >> /etc/group && \
     printf '%s\n' 'mac:x:10001:10001:MAC service:/var/lib/mac:/usr/sbin/nologin' >> /etc/passwd && \
     mkdir -p /var/lib/mac && \

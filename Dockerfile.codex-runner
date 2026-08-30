@@ -5,6 +5,7 @@ USER root
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm && \
+    python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" && \
     npm install -g @openai/codex && \
     npm install -g opencode-ai && \
     npm cache clean --force && \

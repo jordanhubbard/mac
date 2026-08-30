@@ -7305,11 +7305,18 @@ openshell_checks = (
     if openshell_required
     else [path_check("openshell-disabled-state", mac_home)]
 )
+git_cli = next(
+    (str(Path(candidate).resolve()) for candidate in (shutil.which("git"), "/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git") if candidate and Path(candidate).is_file()),
+    None,
+)
+if git_cli is None:
+    raise SystemExit("git >= 2.38 prerequisite is unavailable")
 
 checks = {
     "machine-onboarding": [
         path_check("mac-cli", mac_bin, executable=True),
         path_check("github-cli", github_cli, executable=True),
+        {"name": "git-cli", "kind": "tool-version", "path": git_cli, "minimum_version": "2.38"},
     ],
     # The controller reached this node through the route identity sealed into
     # the contract. Prove the other half of the route by dialing the selected
