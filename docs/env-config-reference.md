@@ -120,6 +120,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONTINUITY_MIN_SCORE` | str | consumer-defined | core | Core setting: continuity min score. |
 | `MAC_CONTINUITY_TOKEN_BUDGET` | str | consumer-defined | core | Core setting: continuity token budget. |
 | `MAC_CONTRACT_DESCRIPTION` | str | consumer-defined | core | Core setting: contract description. |
+| `MAC_CONTRACT_GIT` | str | consumer-defined | core | Core setting: contract git. |
 | `MAC_CONTRACT_MARKER` | str | consumer-defined | core | Core setting: contract marker. |
 | `MAC_CONTRACT_RUNTIME_VENV` | str | consumer-defined | core | Core setting: contract runtime venv. |
 | `MAC_CONTRACT_SNAPSHOT` | str | consumer-defined | core | Core setting: contract snapshot. |
