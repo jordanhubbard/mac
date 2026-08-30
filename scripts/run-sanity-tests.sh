@@ -14,6 +14,18 @@ if [ -z "${PY:-}" ]; then
     exit 2
 fi
 
+# The impact-map check collects the suite, whose imports require a test DSN.
+# Provision it here so both collection and the contract runner below share it.
+if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+    _pg_helper="scripts/start-test-postgres.sh"
+    if [ -x "$_pg_helper" ]; then
+        echo "run-sanity-tests.sh: provisioning PostgreSQL for impact-map collection" >&2
+        if _pg_dsn=$("$_pg_helper"); then
+            eval "$_pg_dsn"
+        fi
+    fi
+fi
+
 # Selection consults the committed impact map. A stale interned node id is a
 # pytest usage error (exit 4), not a test failure, so regeneration is a
 # prerequisite of this script -- the same shape as test-schema-migrations
