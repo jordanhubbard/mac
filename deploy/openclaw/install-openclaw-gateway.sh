@@ -1129,11 +1129,17 @@ if "telegram" in configured:
         },
     }
 
+# loopback, not lan/tailnet. The gateway runs in OpenShell's private netns
+# (host loopback is a different namespace; Tailscale lives on the supervisor).
+# Slack/Telegram are outbound; controlUi is off; advertised access is
+# sandbox_exec. bind=lan lets OpenShell publish 18789 onto every host NIC.
+# bind=tailnet looks for utun/tailscale0 inside the sandbox and fails closed
+# or is a no-op. Health/CLI already talk to ws://127.0.0.1:18789 in-sandbox.
 config = {
     "gateway": {
         "mode": "local",
         "port": int(os.environ.get("MAC_OPENCLAW_GATEWAY_PORT", "18789")),
-        "bind": "lan",
+        "bind": "loopback",
         "auth": {
             "mode": "token",
             "token": secret_ref("OPENCLAW_GATEWAY_TOKEN"),
