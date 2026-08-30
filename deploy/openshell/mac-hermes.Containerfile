@@ -109,6 +109,17 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \
+    && command -v git >/dev/null \
+    # git >= 2.38 is a hard prerequisite: the merge-gate suite and the
+    # production merge queue call `git merge-tree --write-tree`, absent from
+    # older distro git (e.g. Ubuntu 22.04 / 2.34.1), which fails the
+    # authoritative gate with an opaque rc=129. Bookworm ships git >= 2.39, but
+    # the floor is DECLARED in .mac/project.yaml
+    # (toolchain.command_minimum_versions.git) and asserted here so a base-image
+    # change cannot silently regress it (tests/test_git_toolchain_floor.py).
+    && git_ver="$(git version | sed -E 's/^git version ([0-9]+\.[0-9]+).*/\1/')" \
+    && git_major="${git_ver%%.*}" && git_minor="${git_ver#*.}" \
+    && { [ "$git_major" -gt 2 ] || { [ "$git_major" -eq 2 ] && [ "$git_minor" -ge 38 ]; }; } \
     && command -v cmake >/dev/null \
     && command -v ninja >/dev/null \
     && command -v clang >/dev/null \

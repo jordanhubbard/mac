@@ -19,6 +19,8 @@ toolchain:
     - python3
     - git
     - gh
+  command_minimum_versions:
+    git: "2.38"
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:
@@ -45,6 +47,19 @@ evidence:
 - `toolchain.required_commands`: commands that must exist before bootstrap can
   run. Keep this list small and portable. Project bootstrap scripts should fail
   loudly when a required command is still missing.
+- `toolchain.command_minimum_versions` (optional): a mapping of command name to
+  minimum `MAJOR.MINOR` version for commands whose *floor* is load-bearing, not
+  just their presence. `git: "2.38"` is required because the merge-gate suite
+  and the production merge queue call `git merge-tree --write-tree`, which only
+  exists in git >= 2.38; on Ubuntu 22.04 distro git (2.34.1) those tests fail
+  with an opaque rc=129 and burn a whole authoritative gate run.
+  `scripts/run-contract-tests.sh` fails fast on an older git as a runner-side
+  backstop, but this field is where the requirement is *declared* so every
+  provisioning asset that installs git (the runner/hermes images and
+  `deploy/fleet-node-install.sh`) can be checked against it. The guard test
+  `tests/test_git_toolchain_floor.py` asserts the declared floor is >= 2.38 and
+  that each such asset enforces it, so the prerequisite cannot silently
+  regress.
 - `bootstrap.command`: an idempotent command run from the repository root to
   create the local build/test environment.
 - `bootstrap.creates`: relative paths expected after bootstrap. These are used

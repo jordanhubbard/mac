@@ -20,6 +20,17 @@ toolchain:
     - initdb
     - pg_ctl
     - postgres
+  # Minimum versions for commands whose FLOOR is load-bearing, not just their
+  # presence. The merge-gate suite and the production merge queue both call
+  # `git merge-tree --write-tree`, which only exists in git >= 2.38; on Ubuntu
+  # 22.04 distro git (2.34.1) the merge-queue/publication tests fail with an
+  # opaque rc=129 and a whole authoritative gate run is burned on a misleading
+  # generic failure. scripts/run-contract-tests.sh fails fast on an older git,
+  # but that is a runner-side backstop -- this floor is where the requirement is
+  # DECLARED so every provisioning asset that installs git can be checked
+  # against it (see tests/test_git_toolchain_floor.py). Format: `command: X.Y`.
+  command_minimum_versions:
+    git: "2.38"
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:

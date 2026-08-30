@@ -895,6 +895,30 @@ ensure_venv_support() {
   exit 1
 }
 
+ensure_git_floor() {
+  # git >= 2.38 is a hard fleet prerequisite: the merge-gate suite and the
+  # production merge queue call `git merge-tree --write-tree`, which older
+  # distro git (e.g. Ubuntu 22.04 / 2.34.1) lacks, so an old-git worker burns a
+  # whole authoritative gate run on an opaque rc=129. The floor is DECLARED in
+  # .mac/project.yaml (toolchain.command_minimum_versions.git) and asserted here
+  # so a node cannot silently enter the fleet with a too-old git. Keep this
+  # floor in sync with that contract (tests/test_git_toolchain_floor.py).
+  local required_major=2 required_minor=38 git_ver git_major git_minor
+  if ! command -v git >/dev/null 2>&1; then
+    log "ERROR: git is missing; complete node onboarding before phase 2"
+    exit 1
+  fi
+  git_ver="$(git version 2>/dev/null | sed -E 's/^git version ([0-9]+\.[0-9]+).*/\1/')"
+  git_major="${git_ver%%.*}"
+  git_minor="${git_ver#*.}"
+  if [ -z "$git_ver" ] \
+    || [ "${git_major:-0}" -lt "$required_major" ] \
+    || { [ "${git_major:-0}" -eq "$required_major" ] && [ "${git_minor:-0}" -lt "$required_minor" ]; }; then
+    log "ERROR: git ${git_ver:-unknown} < required ${required_major}.${required_minor} (git merge-tree --write-tree); complete node onboarding before phase 2"
+    exit 1
+  fi
+}
+
 truthy() {
   case "${1:-}" in
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
@@ -10795,6 +10819,7 @@ else
   # receipts instead of rediscovering an open-ended set of host assumptions.
   ensure_dns_resolution
   ensure_venv_support
+  ensure_git_floor
   install_github_cli
   configure_github_https_credentials
   install_github_review_key
