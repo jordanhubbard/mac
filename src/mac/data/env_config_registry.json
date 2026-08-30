@@ -638,7 +638,8 @@
       "src/mac/dispatch.py",
       "src/mac/gitops.py",
       "src/mac/ide_launcher.py",
-      "src/mac/local_console.py"
+      "src/mac/local_console.py",
+      "src/mac/mesh_bind.py"
     ],
     "type": "str"
   },
@@ -3080,7 +3081,8 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/mesh_bind.py"
     ],
     "type": "str"
   },
@@ -4464,7 +4466,8 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/mesh_bind.py"
     ],
     "type": "str"
   },
@@ -6429,6 +6432,7 @@
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
       "src/mac/local_console.py",
+      "src/mac/mesh_bind.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/worker.py"
@@ -13861,6 +13865,7 @@
       "src/mac/k8s/orchestrator.py",
       "src/mac/k8s/runner.py",
       "src/mac/local_console.py",
+      "src/mac/mesh_bind.py",
       "src/mac/openshell_collector.py",
       "src/mac/worker.py"
     ],
