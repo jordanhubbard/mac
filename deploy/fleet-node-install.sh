@@ -48,11 +48,6 @@ readonly RECOVERY_POLICY
 MAC_LAUNCHD_TX_RECOVERY_POLICY="$RECOVERY_POLICY"
 export MAC_LAUNCHD_TX_RECOVERY_POLICY
 
-# Non-interactive SSH PATH is typically /usr/bin:/bin. Mesh bind looks up
-# `tailscale ip -4`; Darwin keeps that binary off the default PATH.
-PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH"
-export PATH
-
 # The outer controller acquires this fence before it copies or mutates any
 # managed state.  Re-check it in-band before this transaction's first write,
 # then renew it throughout long package/image installs.  A controller whose
