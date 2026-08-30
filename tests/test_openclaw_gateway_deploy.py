@@ -91,7 +91,7 @@ if scenario in {"deferred", "tainted-deferral"}:
     print("Gateway target: ws://127.0.0.1:18789", file=sys.stderr)
     print("Source: local loopback", file=sys.stderr)
     print("Config: /home/sandbox/.config/mac-openclaw/openclaw.json", file=sys.stderr)
-    print("Bind: lan", file=sys.stderr)
+    print("Bind: loopback", file=sys.stderr)
     if scenario == "tainted-deferral":
         print("ERROR gateway database unavailable", file=sys.stderr)
     raise SystemExit(1)
@@ -328,9 +328,21 @@ def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> No
     policy = (mac_home / "openclaw" / "openclaw-policy.yaml").read_text(encoding="utf-8")
     assert "MAC_OPENCLAW_CONTROL_URL=http://host.openshell.internal:8789" in runtime
     assert "http://host.openshell.internal:8789/v1" in config
+    assert '"bind": "loopback"' in config
+    assert '"bind": "lan"' not in config
     assert "host: host.openshell.internal" in policy
     assert "127.0.0.1:8789" not in runtime
     assert "localhost:8789" not in runtime
+
+
+def test_installer_does_not_emit_lan_gateway_bind() -> None:
+    """bind=lan published 18789 onto every supervisor NIC. Chat is outbound;
+    operators use sandbox exec; OpenClaw's tailnet bind is not visible in the
+    sandbox netns. Loopback is the only reliable refuse.
+    """
+    text = INSTALLER.read_text(encoding="utf-8")
+    assert '"bind": "loopback"' in text
+    assert '"bind": "lan"' not in text
 
 
 def test_prepare_renders_distinct_agentbus_and_model_router_ports(tmp_path: Path) -> None:
@@ -2445,6 +2457,7 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
     config = json.loads((mac_home / "openclaw" / "managed" / "openclaw.json").read_text())
     runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text()
     workspace = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text()
+    assert config["gateway"]["bind"] == "loopback"
     assert config["channels"] == {}
     assert config["plugins"]["entries"]["slack"] == {"enabled": False}
     assert config["plugins"]["entries"]["telegram"] == {"enabled": False}
