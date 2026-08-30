@@ -20,6 +20,7 @@ import urllib.parse
 from typing import Dict, Mapping, MutableMapping, Optional, Sequence
 
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
+from mac.mesh_bind import MeshBindError, deploy_mac_bind_host
 
 
 DEFAULT_WORKER_CAPABILITIES = (
@@ -363,6 +364,7 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HUB_URL": hub_url,
         "MAC_URL": hub_url,
         "MAC_SUPERVISOR_KIND": cfg.control.supervisor_kind,
+        "MAC_NETWORK_PROVIDER": cfg.control.network_provider,
         "HERMES_HOME": str(paths.mac_home / "openclaw"),
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REDACT_SECRETS": "true",
@@ -894,6 +896,19 @@ def build_mac_env(
         )
     _ensure_secret_values(values)
     values.update(_path_values(cfg))
+    tailscale_ip = (
+        (env.get("MAC_TAILSCALE_IP") or "").strip()
+        or (values.get("MAC_TAILSCALE_IP") or "").strip()
+    )
+    try:
+        values["MAC_BIND_HOST"] = deploy_mac_bind_host(
+            cfg.control.bind_host,
+            network_provider=cfg.control.network_provider,
+            is_hub=cfg.identity.is_hub,
+            tailscale_ip=tailscale_ip,
+        )
+    except MeshBindError as exc:
+        raise ValueError(str(exc)) from exc
     if cfg.identity.is_hub:
         # Evidence artifact bytes live in a hub-local blob store so ledger DB
         # growth decouples from artifact volume (mac.evidence_blobs). setdefault

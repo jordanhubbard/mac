@@ -799,11 +799,12 @@
     "name": "MAC_BIND_HOST",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/k8s/mac-api/deployment.yaml",
       "deploy/systemd/mac.service",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
+      "src/mac/hub_serve.py",
+      "src/mac/mesh_bind.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -1483,6 +1484,7 @@
     "sources": [
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
+      "src/mac/hub_serve.py",
       "src/mac/pg_backup_scheduler.py",
       "src/mac/store.py",
       "src/mac/worker.py"
@@ -8013,6 +8015,20 @@
   },
   {
     "default": null,
+    "description": "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / public addresses and binds loopback plus the Tailscale IPv4 instead. Not a host firewall by itself; it is the listen-address policy that makes the overlay the only worker path. Unset means no mesh bind policy (container/dev).",
+    "family": "core",
+    "name": "MAC_NETWORK_PROVIDER",
+    "retired": false,
+    "sources": [
+      "deploy/systemd/mac.service",
+      "src/mac/api.py",
+      "src/mac/deploy_env.py",
+      "src/mac/hub_serve.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Notifier setting: notifier drain hub agent.",
     "family": "notifier",
     "name": "MAC_NOTIFIER_DRAIN_HUB_AGENT",
@@ -10124,6 +10140,7 @@
       "scripts/migrate-tokenhub-vault.sh",
       "src/mac/deploy_env.py",
       "src/mac/fleet_upgrade_service.py",
+      "src/mac/hub_serve.py",
       "src/mac/local_console.py"
     ],
     "type": "int"
@@ -12999,7 +13016,10 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/install-tailscale.sh"
+      "deploy/install-tailscale.sh",
+      "src/mac/api.py",
+      "src/mac/deploy_env.py",
+      "src/mac/mesh_bind.py"
     ],
     "type": "str"
   },

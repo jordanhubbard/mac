@@ -1406,7 +1406,13 @@ for name in selected:
         raise SystemExit(2)
     control_bind_host = text_field(agent.get("control_bind_host"))
     if not control_bind_host:
-        control_bind_host = "0.0.0.0" if name == hub_agent else "127.0.0.1"
+        # Mesh hubs listen on loopback plus the overlay address written later
+        # from the node's Tailscale IPv4. All-interfaces bind is only the default
+        # when there is no overlay, e.g. in-cluster.
+        if name == hub_agent and network_provider not in {"tailscale", "headscale"}:
+            control_bind_host = "0.0.0.0"
+        else:
+            control_bind_host = "127.0.0.1"
     # Pure workers are code executors and therefore require the confined
     # OpenShell runtime by default.  Conversational nodes remain opt-in,
     # while an explicit worker.openshell_required value wins for either

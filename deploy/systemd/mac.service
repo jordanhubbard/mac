@@ -18,14 +18,15 @@ RuntimeDirectoryMode=0700
 # start without it.
 # Optional: MAC_API_TOKEN or MAC_API_TOKENS for scoped bearer auth.
 # Required unless MAC_DATABASE_URL is set: MAC_DB=/var/lib/mac/mac.db.
-# Optional: MAC_PORT=8789 (default). Hub agents typically bind 0.0.0.0;
-#   worker agents typically bind 127.0.0.1. Set MAC_BIND_HOST accordingly.
-# Optional: MAC_BIND_HOST=127.0.0.1 (default for workers; hubs use 0.0.0.0).
+# Optional: MAC_PORT=8789 (default). Mesh hubs listen on loopback plus the
+#   Tailscale IP (mac.hub_serve); they refuse 0.0.0.0. Worker agents bind
+#   127.0.0.1. Set MAC_BIND_HOST / MAC_NETWORK_PROVIDER accordingly.
+# Optional: MAC_BIND_HOST=127.0.0.1 (default for workers; mesh hubs add the
+#   Tailscale IPv4).
 # The hub-local enrollment socket defaults to /run/mac/local-console.sock.
 # MAC_LOCAL_CONSOLE_GROUP requires a matching SupplementaryGroups= override;
 # the API then changes the runtime directory/socket boundary to 0750/0660.
-ExecStart=/usr/local/bin/uvicorn mac.api:create_app --factory \
-    --host ${MAC_BIND_HOST:-127.0.0.1} --port ${MAC_PORT:-8789} --workers 1 --log-level warning --no-access-log
+ExecStart=/usr/local/bin/python -m mac.hub_serve
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
