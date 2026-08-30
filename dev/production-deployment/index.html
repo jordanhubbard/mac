@@ -2829,11 +2829,15 @@ the new key).</p>
 <a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="go">sudo systemctl status mac.service</span>
 <a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="go">curl -fsS http://127.0.0.1:8789/health</span>
 </code></pre></div>
-<p>The unit binds to <code>${MAC_BIND_HOST:-127.0.0.1}:${MAC_PORT:-8789}</code> (both
-read from <code>/etc/mac/mac.env</code> which the unit already loads). Worker agents
-default to <code>127.0.0.1</code>; hub agents set <code>MAC_BIND_HOST=0.0.0.0</code>. Put a
-TLS-terminating reverse proxy (nginx, Caddy) in front for external access —
-do not expose the bare port.</p>
+<p>The unit is started with <code>python -m mac.hub_serve</code>, which reads
+<code>${MAC_BIND_HOST}</code> and <code>${MAC_PORT}</code> from <code>/etc/mac/mac.env</code>. Worker agents
+bind <code>127.0.0.1</code>. Mesh hubs (Tailscale/Headscale) bind loopback plus the
+CGNAT address from <code>tailscale ip -4</code> and refuse <code>0.0.0.0</code>, so the API cannot
+accidentally listen on a public NIC. The overlay is the transport; it is not
+a host firewall unless the process also refuses other interfaces. In-cluster
+images with no mesh provider may still bind <code>0.0.0.0</code> inside the container
+network namespace. Put a TLS-terminating reverse proxy in front only when
+the hub must be reached off-mesh.</p>
 <h2 id="fleet-setup-wizard">Fleet Setup Wizard<a class="headerlink" href="#fleet-setup-wizard" title="Permanent link">&para;</a></h2>
 <p>First-time deployments should use the setup wizard instead of hand-editing
 deployment YAML:</p>
