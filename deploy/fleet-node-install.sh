@@ -9334,6 +9334,20 @@ install_github_cli() {
   log "verified onboarded GitHub CLI at $existing"
 }
 
+verify_git_version() {
+  local git_bin="" version=""
+  git_bin="$(onboarded_command_path git 2>/dev/null || true)"
+  [ -n "$git_bin" ] || die "Git >= 2.38 is missing; complete node onboarding before phase 2"
+  version="$("$git_bin" version 2>/dev/null)" || die "onboarded Git is not executable"
+  "$PY" - "$version" <<'PY' || die "Git >= 2.38 is required for merge-tree --write-tree"
+import re
+import sys
+match = re.search(r"[0-9]+(?:\.[0-9]+)+", sys.argv[1])
+raise SystemExit(0 if match and tuple(map(int, match.group().split(".")[:2])) >= (2, 38) else 1)
+PY
+  log "verified onboarded $version"
+}
+
 normalize_hermes_redaction_env() {
   "$PY" - "$LOG_DIR/hermes-redaction-normalization.json" "$(mac_gateway_home)/config.yaml" "$(mac_gateway_home)/.env" <<'PY'
 import json
@@ -10796,6 +10810,7 @@ else
   ensure_dns_resolution
   ensure_venv_support
   install_github_cli
+  verify_git_version
   configure_github_https_credentials
   install_github_review_key
 fi

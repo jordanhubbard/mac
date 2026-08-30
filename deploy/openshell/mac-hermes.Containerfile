@@ -106,6 +106,7 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
     && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
+    && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \

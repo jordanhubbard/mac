@@ -19,6 +19,8 @@ toolchain:
     - python3
     - git
     - gh
+  minimum_versions:
+    git: "2.38"
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:
@@ -45,6 +47,9 @@ evidence:
 - `toolchain.required_commands`: commands that must exist before bootstrap can
   run. Keep this list small and portable. Project bootstrap scripts should fail
   loudly when a required command is still missing.
+- `toolchain.minimum_versions`: minimum dotted versions for commands in
+  `required_commands`. Fleet prerequisite receipts verify these floors before
+  phase 2; mac requires Git 2.38 for `merge-tree --write-tree`.
 - `bootstrap.command`: an idempotent command run from the repository root to
   create the local build/test environment.
 - `bootstrap.creates`: relative paths expected after bootstrap. These are used

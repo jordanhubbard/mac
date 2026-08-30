@@ -24,6 +24,7 @@ import os
 import re
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -255,6 +256,21 @@ def _validate_path_check(value: dict[str, Any]) -> dict[str, Any]:
     return check
 
 
+def _validate_tool_version_check(value: dict[str, Any]) -> dict[str, Any]:
+    check = _exact_dict(
+        value, frozenset({"name", "kind", "path", "minimum_version"}), "tool version check"
+    )
+    _safe_name(check["name"], "check name")
+    if check["kind"] != "tool-version":
+        raise PrerequisiteError("tool version check kind is invalid")
+    _absolute_path(check["path"])
+    if not isinstance(check["minimum_version"], str) or re.fullmatch(
+        r"[0-9]+(?:\.[0-9]+){1,3}", check["minimum_version"]
+    ) is None:
+        raise PrerequisiteError("tool minimum_version is invalid")
+    return check
+
+
 def _validate_loopback_host(value: Any) -> str:
     if not isinstance(value, str) or value not in {"127.0.0.1", "::1", "localhost"}:
         raise PrerequisiteError("network checks are restricted to loopback")
@@ -384,6 +400,8 @@ def _validate_contract(value: Any) -> dict[str, Any]:
         kind = raw.get("kind")
         if kind == "path":
             check = _validate_path_check(raw)
+        elif kind == "tool-version":
+            check = _validate_tool_version_check(raw)
         elif kind == "tcp":
             check = _validate_tcp_check(raw)
         elif kind == "http":
@@ -495,6 +513,34 @@ def _probe_tcp(check: dict[str, Any]) -> dict[str, Any]:
     return {"connected": True, "elapsed_ms": int((time.monotonic() - started) * 1000)}
 
 
+def _probe_tool_version(check: dict[str, Any]) -> dict[str, Any]:
+    path = _absolute_path(check["path"])
+    try:
+        metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise PrerequisiteError(f"tool version check {check['name']} is not a regular file")
+        output = subprocess.run(
+            [str(path), "version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/"},
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PrerequisiteError(f"tool version check {check['name']} failed") from exc
+    match = re.search(r"[0-9]+(?:\.[0-9]+)+", output)
+    if match is None:
+        raise PrerequisiteError(f"tool version check {check['name']} output is invalid")
+    detected = tuple(int(part) for part in match.group().split("."))
+    required = tuple(int(part) for part in check["minimum_version"].split("."))
+    width = max(len(detected), len(required))
+    if detected + (0,) * (width - len(detected)) < required + (0,) * (width - len(required)):
+        raise PrerequisiteError(f"tool version check {check['name']} is below minimum")
+    return {"version": match.group(), "minimum_version": check["minimum_version"]}
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
@@ -531,6 +577,8 @@ def verify_contract(contract: Any, *, now: float | None = None) -> dict[str, Any
     for check in parsed["checks"]:
         if check["kind"] == "path":
             observation = _probe_path(check)
+        elif check["kind"] == "tool-version":
+            observation = _probe_tool_version(check)
         elif check["kind"] == "tcp":
             observation = _probe_tcp(check)
         else:
@@ -579,7 +627,7 @@ def validate_receipt(value: Any) -> dict[str, Any]:
         if name in seen:
             raise PrerequisiteError("receipt check names must be unique")
         seen.add(name)
-        if check["kind"] not in {"path", "tcp", "http"}:
+        if check["kind"] not in {"path", "tool-version", "tcp", "http"}:
             raise PrerequisiteError("receipt check kind is unsupported")
         _digest(check["evidence_sha256"], "receipt evidence digest")
     return json.loads(_canonical(receipt))
