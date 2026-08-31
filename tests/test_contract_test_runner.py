@@ -936,8 +936,7 @@ def _stage_git_runner(
     # and logs its pytest phases so we can assert the suite actually ran.
     _write_exec(
         path_bin / "python3",
-        "#!/bin/sh\n"
-        'printf \'%s\\n\' "$*" >> "$FAKE_PY_LOG"\n' + _GOOD_PY_BODY.split("\n", 1)[1],
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$FAKE_PY_LOG"\n' + _GOOD_PY_BODY.split("\n", 1)[1],
     )
     if path_git_version is not None:
         _write_exec(path_bin / "git", _fake_git_body(path_git_version))

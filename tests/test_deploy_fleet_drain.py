@@ -1066,10 +1066,7 @@ def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
     # parsers on the node. The controller must omit the assignment unless the
     # operator actually set a value.
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert (
-        'if [ -n "${MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS:-}" ]; then'
-        in deploy
-    )
+    assert 'if [ -n "${MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS:-}" ]; then' in deploy
     assert "add_remote_env MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS" in deploy
     assert 'if [ -n "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-}" ]; then' in deploy
     assert "add_remote_env MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT" in deploy

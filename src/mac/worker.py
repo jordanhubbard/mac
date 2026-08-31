@@ -6110,9 +6110,7 @@ class MacWorker(
             # all (ADR 0015): its kernel cannot enforce Landlock, so a probe
             # sandbox never starts and leaves a restarting container behind.
             host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
-            sandboxed = not host_install and _env_truthy(
-                os.environ.get("MAC_OPENSHELL_SANDBOX")
-            )
+            sandboxed = not host_install and _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
 
             def _verify(choice: Any) -> bool:
                 try:

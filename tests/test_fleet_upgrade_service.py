@@ -232,9 +232,10 @@ def test_upgrade_arm_skips_operator_held_and_virtual_agents(tmp_path: Path):
     )
     assert fenced == [worker.id]
     assert armed["state"] == "hub_applying"
-    assert cp.get_agent(worker.id).dispatch_hold_reason == "fleet_upgrade:%s:hub_cutover" % upgrade[
-        "id"
-    ]
+    assert (
+        cp.get_agent(worker.id).dispatch_hold_reason
+        == "fleet_upgrade:%s:hub_cutover" % upgrade["id"]
+    )
     assert cp.get_agent(session.id).dispatch_hold_reason == "interactive session"
     assert cp.get_agent(operator.id).dispatch_hold is False
 

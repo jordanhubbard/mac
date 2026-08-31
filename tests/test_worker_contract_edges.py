@@ -11,6 +11,7 @@ from mac import worker
 def _completed(returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
+
 def test_verification_contract_dispatches_all_evidence_types() -> None:
     sha = "a" * 40
     anchor = {
