@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from mac.agentbus_control import REFLECT_REQUEST_TOPIC
 from mac.api import create_app
-from mac.models import NotFoundError, ValidationError, utcnow
+from mac.models import NotFoundError, ValidationError, parse_time, utcnow
 from mac.services import ControlPlane
 
 
@@ -1403,3 +1404,55 @@ def test_evidence_row_resets_no_telemetry_counter(monkeypatch):
     refreshed = cp.get_agent(agent.id)
     assert refreshed.consecutive_lease_expiries_no_telemetry == 0
     assert refreshed.dispatch_hold is False
+
+
+def test_attempt_telemetry_tolerates_bounded_database_clock_skew():
+    cp = _make_cp()
+    agent = _register_agent(cp, "skewed-telemetry-agent")
+    task = cp.create_task("skewed telemetry")
+    _, lease = cp.claim_task(task.id, agent.id)
+    event = cp.record_log(
+        "executor.started",
+        layer="executor",
+        source="mac-task-executor",
+        subject_type="task",
+        subject_id=task.id,
+        detail={"agent_id": agent.id},
+    )
+    cp.store.execute(
+        "UPDATE observability_events SET created_at = ? WHERE id = ?",
+        (
+            (parse_time(lease.created_at) - timedelta(seconds=1)).isoformat(
+                timespec="microseconds"
+            ),
+            event.id,
+        ),
+    )
+
+    assert cp._lease_attempt_telemetry_exists(lease) is True
+
+
+def test_attempt_telemetry_rejects_old_same_task_event():
+    cp = _make_cp()
+    agent = _register_agent(cp, "old-telemetry-agent")
+    task = cp.create_task("old telemetry")
+    _, lease = cp.claim_task(task.id, agent.id)
+    event = cp.record_log(
+        "executor.started",
+        layer="executor",
+        source="mac-task-executor",
+        subject_type="task",
+        subject_id=task.id,
+        detail={"agent_id": agent.id},
+    )
+    cp.store.execute(
+        "UPDATE observability_events SET created_at = ? WHERE id = ?",
+        (
+            (parse_time(lease.created_at) - timedelta(seconds=6)).isoformat(
+                timespec="microseconds"
+            ),
+            event.id,
+        ),
+    )
+
+    assert cp._lease_attempt_telemetry_exists(lease) is False
