@@ -54,6 +54,7 @@ need to know, the failure message names it when it fires.
 
 | Directory | Commit | Deck | Subject |
 |---|---|---|---|
+| [`20260831T143751Z-e78a7ba7`](20260831T143751Z-e78a7ba7/README.md) | `e78a7ba7` | [Google Slides](https://docs.google.com/presentation/d/1uPIlC_TYrp3XHd4ARIbrdxNjPiYgAE7pjdi2n_2FUD8/edit) | v1.3.4 — resilient contract gates, supported PostgreSQL CI, host-Python upgrade recovery, and bounded lease-telemetry clock skew |
 | [`20260828T104510Z-d8d491d6`](20260828T104510Z-d8d491d6/README.md) | `d8d491d6` | [Google Slides](https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit) | What the control plane can do today — object model, twelve task states, coordination, fleet, measurement at v1.3.0 |
 | [`20260825T000816Z-e8040fec`](20260825T000816Z-e8040fec/README.md) | `e8040fec` | [Google Slides](https://docs.google.com/presentation/d/1cLzjGERKojHg0w1FOyUnlqlsVu_OZVM5b_kGc7T3fSw/edit) | What the control plane can do today — object model, twelve task states, coordination, fleet, measurement at v1.2.0 |
 | [`20260820T182340Z-bac50778`](20260820T182340Z-bac50778/README.md) | `bac50778` | [Google Slides](https://docs.google.com/presentation/d/1vzkNL3_IM-ophzQWUpJl3JE5L-X3MnEva8m6edeEOQk/edit) | How the control plane is put together — hub↔workers, the life of a task, inside the hub, with live console captures |

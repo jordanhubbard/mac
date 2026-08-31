@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="930" viewBox="0 0 1520 930" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="1520" height="930" fill="#FFFFFF"/>
+
+  <text x="40" y="46" font-size="30" font-weight="700" fill="#1B2530">The fleet measures itself — including where it falls short</text>
+  <text x="40" y="76" font-size="16.5" fill="#5A6B7A">Every figure below is from this repository's own ledger, dated. The most useful capability mac has is that its instrumentation can indict its own design.</text>
+
+  <!-- WHAT IT MEASURES -->
+  <rect x="40" y="104" width="690" height="452" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M40 114 a10 10 0 0 1 10 -10 h670 a10 10 0 0 1 10 10 v42 h-690 z" fill="#2E6F9E"/>
+  <text x="62" y="142" font-size="17" font-weight="700" fill="#FFFFFF">What it measures</text>
+
+  <text x="62" y="186" font-size="14.5" font-weight="700" fill="#1B2530">Review experiments</text>
+  <text x="62" y="207" font-size="13" fill="#2F3A45">Pre-registered arms, propensity retained, deterministic assignment from</text>
+  <text x="62" y="225" font-size="13" fill="#2F3A45">(experiment_id, task_id, policy_version). A blind arm withholds executor</text>
+  <text x="62" y="243" font-size="13" fill="#2F3A45">evidence for an independent discovery pass.</text>
+
+  <text x="62" y="277" font-size="14.5" font-weight="700" fill="#1B2530">Scientific optimizer</text>
+  <text x="62" y="298" font-size="13" fill="#2F3A45">Policies, experiments, assignments, observations and decisions as durable</text>
+  <text x="62" y="316" font-size="13" fill="#2F3A45">tables. Emits a policy <tspan font-style="italic">candidate</tspan>; promotion stays an operator gate.</text>
+
+  <text x="62" y="350" font-size="14.5" font-weight="700" fill="#1B2530">Dreaming — memory that must shrink</text>
+  <text x="62" y="371" font-size="13" fill="#2F3A45">Copy-on-write runs, gated on provenance, contradiction reduction, privacy,</text>
+  <text x="62" y="389" font-size="13" fill="#2F3A45">retrieval quality, compression and win balance. A run whose output exceeds</text>
+  <text x="62" y="407" font-size="13" fill="#2F3A45">0.75× its input is quarantined; promotion retires the rows it supersedes.</text>
+
+  <text x="62" y="441" font-size="14.5" font-weight="700" fill="#1B2530">Fleet operational learning</text>
+  <text x="62" y="462" font-size="13" fill="#2F3A45">Repository-access outcomes are control inputs, not log lines: a proven</text>
+  <text x="62" y="480" font-size="13" fill="#2F3A45">success is preferred for later routing, a proven failure removes that agent</text>
+  <text x="62" y="498" font-size="13" fill="#2F3A45">from equivalent routing until a cooldown expires. Credentials are never stored.</text>
+
+  <text x="62" y="532" font-size="13" fill="#5A6B7A">Also: eval sets with scoring direction and regression thresholds · task throughput</text>
+  <text x="62" y="548" font-size="13" fill="#5A6B7A">observability · hub event-loop stall detection · classified attempt failures.</text>
+
+  <!-- WHAT IT MEASURED -->
+  <rect x="754" y="104" width="726" height="222" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M754 114 a10 10 0 0 1 10 -10 h706 a10 10 0 0 1 10 10 v42 h-726 z" fill="#2F3A45"/>
+  <text x="776" y="142" font-size="17" font-weight="700" fill="#FFFFFF">Model routing — 7 days to 2026-08-19 (unchanged)</text>
+
+  <text x="900" y="188" font-size="22" font-weight="700" fill="#1B2530" text-anchor="end">28,352</text>
+  <text x="916" y="188" font-size="13.5" fill="#2F3A45"><tspan font-family="Menlo, Consolas, monospace" font-size="12.5">llm.route</tspan> events recorded</text>
+
+  <text x="900" y="222" font-size="22" font-weight="700" fill="#1B2530" text-anchor="end">481.8M</text>
+  <text x="916" y="222" font-size="13.5" fill="#2F3A45">input tokens, against 5.05M output</text>
+
+  <text x="900" y="256" font-size="22" font-weight="700" fill="#C0392B" text-anchor="end">29.5%</text>
+  <text x="916" y="256" font-size="13.5" fill="#2F3A45">of routes recorded <tspan font-family="Menlo, Consolas, monospace" font-size="12.5">input_tokens = null</tspan></text>
+
+  <text x="900" y="290" font-size="22" font-weight="700" fill="#C0392B" text-anchor="end">0</text>
+  <text x="916" y="290" font-size="13.5" fill="#2F3A45">routes reported cached tokens at all</text>
+
+  <text x="776" y="316" font-size="12.5" fill="#5A6B7A">64% of routes stream. Cost is not stored — it is priced against a catalog at read time, and reports say "missing", never zero.</text>
+
+  <rect x="754" y="342" width="726" height="214" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M754 352 a10 10 0 0 1 10 -10 h706 a10 10 0 0 1 10 10 v42 h-726 z" fill="#2F3A45"/>
+  <text x="776" y="380" font-size="17" font-weight="700" fill="#FFFFFF">Ledger census — 2026-08-31 (live hub)</text>
+
+  <text x="776" y="418" font-size="13.5" fill="#2F3A45">blocked <tspan font-weight="700">380</tspan>   ·   waiting <tspan font-weight="700">29</tspan>   ·   open <tspan font-weight="700">124</tspan>   ·   running <tspan font-weight="700">0</tspan></text>
+  <text x="776" y="440" font-size="13.5" fill="#2F3A45">failed <tspan font-weight="700">2,165</tspan>   ·   cancelled <tspan font-weight="700">3,566</tspan>   ·   stopped <tspan font-weight="700">5</tspan></text>
+
+  <rect x="776" y="458" width="682" height="82" rx="7" fill="#FBF4F3" stroke="#DCBCB6"/>
+  <text x="884" y="490" font-size="24" font-weight="700" fill="#C0392B" text-anchor="end">165</text>
+  <text x="900" y="484" font-size="13.5" fill="#2F3A45">of 355 blocked tasks were permanently dead on 2026-08-19</text>
+  <text x="900" y="503" font-size="13.5" fill="#2F3A45">(ADR 0018). That dead-dep query was not re-run for this</text>
+  <text x="900" y="522" font-size="13.5" fill="#2F3A45">census; blocked has grown to 380, not shrunk.</text>
+
+  <!-- GAPS -->
+  <text x="40" y="596" font-size="14" font-weight="700" fill="#B5651D">OPEN DECISIONS AT THIS COMMIT — THREE THE MEASUREMENTS ARE FORCING (16 ADRs STILL PROPOSED)</text>
+
+  <rect x="40" y="610" width="466" height="292" rx="10" fill="#FDF6EE" stroke="#C08A4A"/>
+  <text x="62" y="640" font-size="15.5" font-weight="700" fill="#7A430F">ADR 0029 · Proposed</text>
+  <text x="62" y="662" font-size="14" font-weight="700" fill="#1B2530">The route search path is a fleet contract</text>
+  <text x="62" y="690" font-size="13" fill="#2F3A45">Coding-agent choice lived in per-worker environment:</text>
+  <text x="62" y="708" font-size="13" fill="#2F3A45">a pinned variable, an exported key, an edited unit</text>
+  <text x="62" y="726" font-size="13" fill="#2F3A45">file. No two hosts were obliged to agree.</text>
+  <text x="62" y="752" font-size="13" fill="#2F3A45">When one account exhausts, every worker rediscovers</text>
+  <text x="62" y="770" font-size="13" fill="#2F3A45">it independently, one wasted turn at a time.</text>
+  <text x="62" y="796" font-size="13" fill="#2F3A45">The decision is recorded; the ordered ladder is not</text>
+  <text x="62" y="814" font-size="13" fill="#2F3A45">yet the runtime search path on every host.</text>
+  <text x="62" y="846" font-size="12.5" fill="#7A430F" font-weight="700">Proposal: one fleet-wide ordered ladder, quota</text>
+  <text x="62" y="864" font-size="12.5" fill="#7A430F" font-weight="700">learning, and a bus event when a route is skipped.</text>
+
+  <rect x="527" y="610" width="466" height="292" rx="10" fill="#FDF6EE" stroke="#C08A4A"/>
+  <text x="549" y="640" font-size="15.5" font-weight="700" fill="#7A430F">ADR 0017 · Proposed</text>
+  <text x="549" y="662" font-size="14" font-weight="700" fill="#1B2530">Meter token spend at the router</text>
+  <text x="549" y="690" font-size="13" fill="#2F3A45">Usage lives as one observability event per request,</text>
+  <text x="549" y="708" font-size="13" fill="#2F3A45">with token counts inside a JSON text column.</text>
+  <text x="549" y="734" font-size="13" fill="#2F3A45">There is no token table and no cost column. Cost is</text>
+  <text x="549" y="752" font-size="13" fill="#2F3A45">computed at read time against a models catalog, and</text>
+  <text x="549" y="770" font-size="13" fill="#2F3A45">returns whether it could be priced at all.</text>
+  <text x="549" y="796" font-size="13" fill="#2F3A45">With 29.5% of routes reporting no input tokens and</text>
+  <text x="549" y="814" font-size="13" fill="#2F3A45">none reporting cache hits, spend cannot currently be</text>
+  <text x="549" y="832" font-size="13" fill="#2F3A45">attributed with confidence.</text>
+  <text x="549" y="864" font-size="12.5" fill="#7A430F" font-weight="700">Proposal: meter at the router, where the truth is,</text>
+  <text x="549" y="882" font-size="12.5" fill="#7A430F" font-weight="700">rather than trusting what the client reports.</text>
+
+  <rect x="1014" y="610" width="466" height="292" rx="10" fill="#FDF6EE" stroke="#C08A4A"/>
+  <text x="1036" y="640" font-size="15.5" font-weight="700" fill="#7A430F">ADR 0018 · Proposed</text>
+  <text x="1036" y="662" font-size="14" font-weight="700" fill="#1B2530">The task view is a graph, not a board</text>
+  <text x="1036" y="690" font-size="13" fill="#2F3A45">The console can say how many tasks are blocked. It</text>
+  <text x="1036" y="708" font-size="13" fill="#2F3A45">cannot say <tspan font-style="italic">what blocks them</tspan>, because the hub never</text>
+  <text x="1036" y="726" font-size="13" fill="#2F3A45">sends the edges — the client has no dependency field.</text>
+  <text x="1036" y="752" font-size="13" fill="#2F3A45">On a board, a task whose dependency lands in five</text>
+  <text x="1036" y="770" font-size="13" fill="#2F3A45">minutes and one that is permanently dead look</text>
+  <text x="1036" y="788" font-size="13" fill="#2F3A45">exactly the same.</text>
+  <text x="1036" y="820" font-size="12.5" font-style="italic" fill="#8C3227">"A state whose p50 dwell is measured in days is not a</text>
+  <text x="1036" y="838" font-size="12.5" font-style="italic" fill="#8C3227">queue, it is a graveyard."</text>
+  <text x="1036" y="864" font-size="12.5" fill="#7A430F" font-weight="700">Proposal: ship the dependency edges and present the</text>
+  <text x="1036" y="882" font-size="12.5" fill="#7A430F" font-weight="700">work as a graph under progressive disclosure.</text>
+</svg>

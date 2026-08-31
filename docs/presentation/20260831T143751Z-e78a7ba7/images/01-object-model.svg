@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="900" viewBox="0 0 1520 900" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="1520" height="900" fill="#FFFFFF"/>
+
+  <text x="40" y="46" font-size="30" font-weight="700" fill="#1B2530">One control plane, four objects</text>
+  <text x="40" y="76" font-size="16.5" fill="#5A6B7A">The CLI is the object model, not a wrapper over one. 125 verbs across four nouns, and the same model is exposed through six surfaces.</text>
+
+  <!-- PROJECT -->
+  <rect x="40" y="104" width="342" height="470" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M40 114 a10 10 0 0 1 10 -10 h322 a10 10 0 0 1 10 10 v44 h-342 z" fill="#2E6F9E"/>
+  <text x="62" y="134" font-size="19" font-weight="700" fill="#FFFFFF">project</text>
+  <text x="290" y="134" font-size="15" font-weight="700" fill="#BBD7EA" text-anchor="end">9 verbs</text>
+  <text x="62" y="152" font-size="12.5" fill="#D6E6F2">a unit of work ownership</text>
+
+  <text x="62" y="186" font-size="13.5" fill="#2F3A45">Repositories, policy, and dispatch</text>
+  <text x="62" y="205" font-size="13.5" fill="#2F3A45">state. Project-level dispatch pause</text>
+  <text x="62" y="224" font-size="13.5" fill="#2F3A45">is a gate distinct from per-task</text>
+  <text x="62" y="243" font-size="13.5" fill="#2F3A45">staging.</text>
+
+  <text x="62" y="278" font-size="12" font-weight="700" fill="#2E6F9E">VERBS</text>
+  <text x="62" y="302" font-size="13.5" fill="#2F3A45">create · list · show · update</text>
+  <text x="62" y="324" font-size="13.5" fill="#2F3A45">delete · register</text>
+  <text x="62" y="346" font-size="13.5" font-weight="700" fill="#1B2530">pause · activate</text>
+  <text x="62" y="368" font-size="13.5" fill="#2F3A45">egress</text>
+
+  <rect x="62" y="392" width="298" height="162" rx="6" fill="#F4F6F8"/>
+  <text x="78" y="416" font-size="12" font-weight="700" fill="#2E6F9E">WHAT IT GUARANTEES</text>
+  <text x="78" y="438" font-size="12.5" fill="#2F3A45">A registered repository must satisfy</text>
+  <text x="78" y="456" font-size="12.5" fill="#2F3A45">a runtime contract before agents</text>
+  <text x="78" y="474" font-size="12.5" fill="#2F3A45">bootstrap on it, so work does not</text>
+  <text x="78" y="492" font-size="12.5" fill="#2F3A45">depend on accidental local state.</text>
+  <text x="78" y="516" font-size="12.5" fill="#2F3A45">Egress policy is declared per</text>
+  <text x="78" y="534" font-size="12.5" fill="#2F3A45">project and per task.</text>
+
+  <!-- TASK -->
+  <rect x="410" y="104" width="342" height="470" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M410 114 a10 10 0 0 1 10 -10 h322 a10 10 0 0 1 10 10 v44 h-342 z" fill="#2E6F9E"/>
+  <text x="432" y="134" font-size="19" font-weight="700" fill="#FFFFFF">task</text>
+  <text x="660" y="134" font-size="15" font-weight="700" fill="#BBD7EA" text-anchor="end">45 verbs</text>
+  <text x="432" y="152" font-size="12.5" fill="#D6E6F2">the thing agents claim, run, publish</text>
+
+  <text x="432" y="186" font-size="13.5" fill="#2F3A45">The durable ledger of record.</text>
+  <text x="432" y="205" font-size="13.5" fill="#2F3A45">State transitions, leases, history,</text>
+  <text x="432" y="224" font-size="13.5" fill="#2F3A45">evidence, dependencies, recovery —</text>
+  <text x="432" y="243" font-size="13.5" fill="#2F3A45">all in PostgreSQL.</text>
+
+  <text x="432" y="278" font-size="12" font-weight="700" fill="#2E6F9E">VERBS, BY WHAT THEY ARE FOR</text>
+  <text x="432" y="302" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">run:</tspan> claim · start · close · reopen</text>
+  <text x="432" y="324" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">prove:</tspan> evidence · submit-review · audit</text>
+  <text x="432" y="346" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">ask:</tspan> ask · answer · needs-input · wait</text>
+  <text x="432" y="368" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">explain:</tspan> why-unclaimed · throughput</text>
+
+  <rect x="432" y="392" width="298" height="162" rx="6" fill="#F4F6F8"/>
+  <text x="448" y="416" font-size="12" font-weight="700" fill="#2E6F9E">RECOVERY IS FIRST CLASS</text>
+  <text x="448" y="438" font-size="12.5" fill="#2F3A45">recover-stranded · recover-finalizer</text>
+  <text x="448" y="456" font-size="12.5" fill="#2F3A45">recover-stalled-finalizer</text>
+  <text x="448" y="480" font-size="12.5" fill="#2F3A45">break-glass · break-glass-list</text>
+  <text x="448" y="498" font-size="12.5" fill="#2F3A45">break-glass-revoke</text>
+  <text x="448" y="522" font-size="12.5" fill="#5A6B7A">Break-glass is grantable, listable</text>
+  <text x="448" y="540" font-size="12.5" fill="#5A6B7A">and revocable — never ambient.</text>
+
+  <!-- AGENT -->
+  <rect x="780" y="104" width="342" height="470" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M780 114 a10 10 0 0 1 10 -10 h322 a10 10 0 0 1 10 10 v44 h-342 z" fill="#2E6F9E"/>
+  <text x="802" y="134" font-size="19" font-weight="700" fill="#FFFFFF">agent</text>
+  <text x="1030" y="134" font-size="15" font-weight="700" fill="#BBD7EA" text-anchor="end">17 verbs</text>
+  <text x="802" y="152" font-size="12.5" fill="#D6E6F2">a worker on a machine</text>
+
+  <text x="802" y="186" font-size="13.5" fill="#2F3A45">Registry of what each worker can</text>
+  <text x="802" y="205" font-size="13.5" fill="#2F3A45">do: capabilities, resources, health,</text>
+  <text x="802" y="224" font-size="13.5" fill="#2F3A45">availability, and instance kind</text>
+  <text x="802" y="243" font-size="13.5" fill="#2F3A45">(static or fungible).</text>
+
+  <text x="802" y="278" font-size="12" font-weight="700" fill="#2E6F9E">VERBS</text>
+  <text x="802" y="302" font-size="13.5" fill="#2F3A45">create · list · show · update · delete</text>
+  <text x="802" y="324" font-size="13.5" font-weight="700" fill="#1B2530">hold · resume · heartbeat</text>
+  <text x="802" y="346" font-size="13.5" fill="#2F3A45">config · hardware · reflect · tell</text>
+  <text x="802" y="368" font-size="13.5" fill="#2F3A45">deregister · migrate</text>
+
+  <rect x="802" y="392" width="298" height="162" rx="6" fill="#F4F6F8"/>
+  <text x="818" y="416" font-size="12" font-weight="700" fill="#2E6F9E">VISIBILITY IS NOT A GATE</text>
+  <text x="818" y="438" font-size="12.5" fill="#2F3A45">ADR 0014 settled that agent</text>
+  <text x="818" y="456" font-size="12.5" fill="#2F3A45">visibility is a communication</text>
+  <text x="818" y="474" font-size="12.5" fill="#2F3A45">boundary, not a dispatch gate — so</text>
+  <text x="818" y="492" font-size="12.5" fill="#2F3A45">who may talk never decides who may</text>
+  <text x="818" y="510" font-size="12.5" fill="#2F3A45">work.</text>
+  <text x="818" y="534" font-size="12.5" fill="#5A6B7A">hardware reports a normalized</text>
+  <text x="818" y="552" font-size="12.5" fill="#5A6B7A">effective allocation per node.</text>
+
+  <!-- ADMIN -->
+  <rect x="1150" y="104" width="330" height="470" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M1150 114 a10 10 0 0 1 10 -10 h310 a10 10 0 0 1 10 10 v44 h-330 z" fill="#2F3A45"/>
+  <text x="1172" y="134" font-size="19" font-weight="700" fill="#FFFFFF">admin</text>
+  <text x="1458" y="134" font-size="15" font-weight="700" fill="#B7C4D0" text-anchor="end">54 groups</text>
+  <text x="1172" y="152" font-size="12.5" fill="#B7C4D0">everything an operator owns</text>
+
+  <text x="1172" y="186" font-size="13.5" fill="#2F3A45">Not a grab bag — each is its own</text>
+  <text x="1172" y="205" font-size="13.5" fill="#2F3A45">subcommand group with its own</text>
+  <text x="1172" y="224" font-size="13.5" fill="#2F3A45">verbs.</text>
+
+  <text x="1172" y="256" font-size="12" font-weight="700" fill="#2F3A45">WORK</text>
+  <text x="1172" y="278" font-size="13" fill="#2F3A45">dispatch · review · judgement</text>
+  <text x="1172" y="297" font-size="13" fill="#2F3A45">pull-request · workflow · plan</text>
+
+  <text x="1172" y="327" font-size="12" font-weight="700" fill="#2F3A45">LEARNING</text>
+  <text x="1172" y="349" font-size="13" fill="#2F3A45">memory · dream · nap · journal</text>
+  <text x="1172" y="368" font-size="13" fill="#2F3A45">optimizer · eval · curiosity</text>
+
+  <rect x="1172" y="392" width="286" height="162" rx="6" fill="#F4F6F8"/>
+  <text x="1188" y="416" font-size="12" font-weight="700" fill="#2F3A45">FLEET &amp; RUNTIME</text>
+  <text x="1188" y="438" font-size="12.5" fill="#2F3A45">fleet · machine · hgx · openshell</text>
+  <text x="1188" y="456" font-size="12.5" fill="#2F3A45">sandbox-image · runtime · rollout</text>
+  <text x="1188" y="480" font-size="12" font-weight="700" fill="#2F3A45">IDENTITY &amp; COMMS</text>
+  <text x="1188" y="502" font-size="12.5" fill="#2F3A45">secret · persona · binding</text>
+  <text x="1188" y="520" font-size="12.5" fill="#2F3A45">agentbus · directive · notifier</text>
+  <text x="1188" y="538" font-size="12.5" fill="#2F3A45">mcp · integrations · bridge</text>
+
+  <!-- SURFACES -->
+  <rect x="40" y="596" width="1440" height="272" rx="10" fill="#2F3A45"/>
+  <text x="64" y="632" font-size="20" font-weight="700" fill="#FFFFFF">The same object model, six ways in</text>
+  <text x="64" y="656" font-size="14" fill="#B7C4D0">Every surface goes through the same dispatch seam, and a contract test proves the client and the hub agree about the route table.</text>
+
+  <rect x="64" y="676" width="222" height="172" rx="7" fill="#3C4A57"/>
+  <text x="80" y="702" font-size="14" font-weight="700" fill="#FFFFFF">CLI</text>
+  <text x="80" y="726" font-size="12.5" fill="#C9D6E2">125 verbs. Generated</text>
+  <text x="80" y="744" font-size="12.5" fill="#C9D6E2">reference is checked</text>
+  <text x="80" y="762" font-size="12.5" fill="#C9D6E2">against the live parser,</text>
+  <text x="80" y="780" font-size="12.5" fill="#C9D6E2">so docs cannot drift.</text>
+  <text x="80" y="808" font-size="12.5" fill="#8FA5B8">--json works in any</text>
+  <text x="80" y="826" font-size="12.5" fill="#8FA5B8">position.</text>
+
+  <rect x="300" y="676" width="222" height="172" rx="7" fill="#3C4A57"/>
+  <text x="316" y="702" font-size="14" font-weight="700" fill="#FFFFFF">HTTP API</text>
+  <text x="316" y="726" font-size="12.5" fill="#C9D6E2">430 routes on FastAPI.</text>
+  <text x="316" y="744" font-size="12.5" fill="#C9D6E2">The route index is</text>
+  <text x="316" y="762" font-size="12.5" fill="#C9D6E2">generated from the live</text>
+  <text x="316" y="780" font-size="12.5" fill="#C9D6E2">OpenAPI schema.</text>
+  <text x="316" y="808" font-size="12.5" fill="#8FA5B8">Scoped bearer tokens:</text>
+  <text x="316" y="826" font-size="12.5" fill="#8FA5B8">read/write/agent/admin.</text>
+
+  <rect x="536" y="676" width="222" height="172" rx="7" fill="#3C4A57"/>
+  <text x="552" y="702" font-size="14" font-weight="700" fill="#FFFFFF">MCP server</text>
+  <text x="552" y="726" font-size="12.5" fill="#C9D6E2">Typed ledger tools for</text>
+  <text x="552" y="744" font-size="12.5" fill="#C9D6E2">coding agents, so they</text>
+  <text x="552" y="762" font-size="12.5" fill="#C9D6E2">stop parsing tables.</text>
+  <text x="552" y="790" font-size="12.5" fill="#8FA5B8">A test forbids it from</text>
+  <text x="552" y="808" font-size="12.5" fill="#8FA5B8">making its own requests,</text>
+  <text x="552" y="826" font-size="12.5" fill="#8FA5B8">so it cannot drift.</text>
+
+  <rect x="772" y="676" width="222" height="172" rx="7" fill="#3C4A57"/>
+  <text x="788" y="702" font-size="14" font-weight="700" fill="#FFFFFF">ACP + A2A</text>
+  <text x="788" y="726" font-size="12.5" fill="#C9D6E2">Agent Client Protocol</text>
+  <text x="788" y="744" font-size="12.5" fill="#C9D6E2">and A2A implemented as</text>
+  <text x="788" y="762" font-size="12.5" fill="#C9D6E2">specifications, not</text>
+  <text x="788" y="780" font-size="12.5" fill="#C9D6E2">vendored SDKs.</text>
+  <text x="788" y="808" font-size="12.5" fill="#8FA5B8">Served at /.well-known</text>
+  <text x="788" y="826" font-size="12.5" fill="#8FA5B8">agent cards.</text>
+
+  <rect x="1008" y="676" width="222" height="172" rx="7" fill="#3C4A57"/>
+  <text x="1024" y="702" font-size="14" font-weight="700" fill="#FFFFFF">Python client</text>
+  <text x="1024" y="726" font-size="12.5" fill="#C9D6E2">Contract-checked against</text>
+  <text x="1024" y="744" font-size="12.5" fill="#C9D6E2">the hub's real route</text>
+  <text x="1024" y="762" font-size="12.5" fill="#C9D6E2">table in CI.</text>
+  <text x="1024" y="790" font-size="12.5" fill="#8FA5B8">Tells you when the</text>
+  <text x="1024" y="808" font-size="12.5" fill="#8FA5B8">client is older than the</text>
+  <text x="1024" y="826" font-size="12.5" fill="#8FA5B8">hub it is talking to.</text>
+
+  <rect x="1244" y="676" width="214" height="172" rx="7" fill="#3C4A57"/>
+  <text x="1260" y="702" font-size="14" font-weight="700" fill="#FFFFFF">Console</text>
+  <text x="1260" y="726" font-size="12.5" fill="#C9D6E2">/ui is read-only</text>
+  <text x="1260" y="744" font-size="12.5" fill="#C9D6E2">observability. The</text>
+  <text x="1260" y="762" font-size="12.5" fill="#C9D6E2">command-and-control</text>
+  <text x="1260" y="780" font-size="12.5" fill="#C9D6E2">dashboard was retired.</text>
+  <text x="1260" y="808" font-size="12.5" fill="#8FA5B8">It speaks on the bus</text>
+  <text x="1260" y="826" font-size="12.5" fill="#8FA5B8">rather than mutating.</text>
+</svg>
