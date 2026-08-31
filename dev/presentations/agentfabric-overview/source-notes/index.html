@@ -1,0 +1,2319 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/presentations/agentfabric-overview/source-notes/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Source notes — AgentFabric overview - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#source-notes-agentfabric-overview" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Source notes — AgentFabric overview
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guide/01-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guide/02-getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guide/03-advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guide/04-ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guide/05-developer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans and Task DAGs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-cicd-monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#identity-and-framing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity and framing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nvidia-technology-re-use-slide-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NVIDIA technology re-use (slide 7)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-source-re-use-slide-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open-source re-use (slide 8)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mechanisms-agentfabric-adds-slide-9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mechanisms AgentFabric adds (slide 9)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#containment-slide-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Containment (slide 10)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#actors-lifecycle-coordination-fleet-slides-1215" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actors, lifecycle, coordination, fleet (slides 12–15)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#models-and-money-slide-16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models and money (slide 16)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measured-surface-area-slide-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured surface area (slide 18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implemented-decided-proposed-slide-19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implemented / decided / proposed (slide 19)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prohibited-claims" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prohibited claims
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/presentations/agentfabric-overview/source-notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="source-notes-agentfabric-overview">Source notes — AgentFabric overview<a class="headerlink" href="#source-notes-agentfabric-overview" title="Permanent link">&para;</a></h1>
+<p>This is the factual ledger for both members of this package. Every claim in the deck and
+the narrative must appear here with an authority inside the control-plane tree, and every
+counted figure must carry the command that produced it and the date it was measured.</p>
+<p>If a claim is not in this file, it does not belong in the deck.</p>
+<p><strong>Audited tree:</strong> <code>jordanhubbard/mac</code> at <code>2976182</code>, measured 2026-08-30.</p>
+<h2 id="identity-and-framing">Identity and framing<a class="headerlink" href="#identity-and-framing" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Authority</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AgentFabric is a multi-agent coordinator control plane that owns durable operational truth; human-facing runtimes own conversation, personality, memory, and messaging gateways</td>
+<td><code>README.md</code>, <code>docs/authority-boundary.md</code></td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>The control plane owns tasks, leases, routing, reviews, evidence, secret handles, runtime manifests, rollout state, and audit trails</td>
+<td><code>README.md</code>, <code>src/mac/models.py</code>, <code>src/mac/task_lifecycle.py</code></td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>The gateway (conversational runtime) holds no operational authority</td>
+<td><code>docs/hermes-boundary.md</code>, <code>docs/authority-boundary.md</code></td>
+<td>implemented</td>
+</tr>
+</tbody>
+</table>
+<p>"AgentFabric" is the presentation name for this control plane; the repository, CLI, and
+modules use <code>mac</code>. The deck never claims the two are different systems.</p>
+<h2 id="nvidia-technology-re-use-slide-7">NVIDIA technology re-use (slide 7)<a class="headerlink" href="#nvidia-technology-re-use-slide-7" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Project</th>
+<th>Role in AgentFabric</th>
+<th>Authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVIDIA OpenShell</td>
+<td>execution security: Landlock filesystem policy, seccomp syscall filter, deny-by-default L7 egress, sandbox lifecycle, normalized action events. One guardrail authority, not two competing ones.</td>
+<td><code>src/mac/openshell_service.py</code>, <code>src/mac/executor_sandbox.py</code>, <code>src/mac/sandbox_egress.py</code>, <code>src/mac/openshell_collector.py</code>, <code>docs/openshell-sandbox.md</code>, ADR 0008 (Accepted)</td>
+</tr>
+<tr>
+<td>NVIDIA NeMo Relay</td>
+<td>optional observability: request, task, tool, and model activity mapped into Relay scopes, enabled through the <code>relay</code> packaging extra (<code>nemo-relay==0.3.0</code>)</td>
+<td><code>src/mac/relay_observability.py</code>, <code>pyproject.toml</code> (<code>[project.optional-dependencies] relay</code>), <code>docs/openshell-nemo-relay-integration.md</code>, <code>docs/openshell-nemo-relay-e2e.md</code></td>
+</tr>
+<tr>
+<td>NVIDIA HGX</td>
+<td>bounded elastic provider-session capacity; onboarding is an explicit operator action with a durable receipt</td>
+<td><code>docs/hgx-elastic-capacity.md</code>, <code>AGENTS.md</code> (<code>hgx list</code> / <code>hgx ssh</code> transport), ADR 0005 (Proposed — the elastic tier beyond the operator-driven path is a proposal)</td>
+</tr>
+<tr>
+<td>NVIDIA NemoClaw</td>
+<td>compatibility and design reference for the conversational agent boundary; <strong>not</strong> the deployed gateway implementation</td>
+<td><code>README.md</code>, <code>docs/hermes-boundary.md</code></td>
+</tr>
+</tbody>
+</table>
+<p>The deck must state the HGX and NemoClaw qualifications. Presenting NemoClaw as the
+deployed gateway, or unbounded elastic capacity as shipped, is a factual error.</p>
+<h2 id="open-source-re-use-slide-8">Open-source re-use (slide 8)<a class="headerlink" href="#open-source-re-use-slide-8" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Projects</th>
+<th>Authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>State</td>
+<td>PostgreSQL (fleet authority), SQLite (local development), versioned migrations</td>
+<td><code>CLAUDE.md</code> ("the test suite runs against PostgreSQL, not SQLite, because that is what the fleet runs"), <code>src/mac/schema_migrations.py</code>, ADR 0021 (Proposed — the migration <em>policy</em> is proposed; versioned migrations exist)</td>
+</tr>
+<tr>
+<td>Service</td>
+<td>FastAPI, Uvicorn, Pydantic, httpx</td>
+<td><code>pyproject.toml</code>, <code>src/mac/api.py</code>, <code>src/mac/http_routes/</code></td>
+</tr>
+<tr>
+<td>Execution</td>
+<td>Docker Engine / Moby, Kubernetes, OpenClaw, OpenAI Codex CLI, OpenCode</td>
+<td>ADR 0008 (Accepted), <code>src/mac/k8s/runner.py</code>, <code>src/mac/coding_agent.py</code>, <code>docs/openclaw-identities.md</code></td>
+</tr>
+<tr>
+<td>Protocol</td>
+<td>ACP, A2A agent cards, MCP, OCSF event streams</td>
+<td><code>src/mac/acp/protocol.py</code>, <code>src/mac/a2a/card.py</code>, <code>src/mac/mcp_server.py</code>, <code>src/mac/openshell_collector.py</code>, ADR 0006 (Proposed — ACP <em>support scope</em>)</td>
+</tr>
+</tbody>
+</table>
+<p>Every entry is a dependency, not a fork. The MCP server and the Python client are clients
+of the same HTTP surface rather than parallel implementations (<code>src/mac/mcp_server.py</code>).</p>
+<h2 id="mechanisms-agentfabric-adds-slide-9">Mechanisms AgentFabric adds (slide 9)<a class="headerlink" href="#mechanisms-agentfabric-adds-slide-9" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>Authority</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Durable task ledger: a task is a state machine with an owner, a lease, dependencies, and history</td>
+<td><code>src/mac/models.py</code> (<code>TaskState</code>), <code>src/mac/task_lifecycle.py</code>, <code>docs/task-dependency-semantics.md</code>, ADR 0004 (Accepted)</td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>Named gate decisions rather than booleans, so refusals are explainable</td>
+<td>ADR 0022 (Proposed as a general contract), <code>docs/adr/0011-hub-review-verification-scope.md</code> (Accepted) for the review gate</td>
+<td>review gate implemented; the general contract is a proposal</td>
+</tr>
+<tr>
+<td>Ordered, capability-filtered coding-route ladder</td>
+<td><code>src/mac/coding_agent.py</code> (<code>AGENT_PRIORITY</code>), <code>docs/coding-route-ladder.md</code></td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>Evidence closure: build, test, review, and publication artifacts kept as pointers with the task</td>
+<td><code>AGENTS.md</code> (<code>mac.worker_evidence.v1</code> manifest), <code>src/mac/observability_service.py</code></td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>Break-glass: recovery is a granted, listable, revocable, reason-bearing authorization</td>
+<td><code>mac task break-glass</code> / <code>break-glass-list</code> / <code>break-glass-revoke</code>, <code>docs/break-glass-host-recovery.md</code></td>
+<td>implemented</td>
+</tr>
+</tbody>
+</table>
+<p>The route ladder order is <code>("opencode", "pi", "claude", "codex", "cursor")</code> —
+<code>src/mac/coding_agent.py:111</code>. opencode is first for credential durability, not model
+quality; the module comment states this. Do not present the order as a quality ranking.</p>
+<h2 id="containment-slide-10">Containment (slide 10)<a class="headerlink" href="#containment-slide-10" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agent process tree is owned and reaped; syscall filter applied; never runs as root</td>
+<td><code>src/mac/executor_sandbox.py</code>, <code>src/mac/worker.py</code>, <code>docs/openshell-sandbox.md</code></td>
+</tr>
+<tr>
+<td>Read-only and read-write paths are allow-listed via Landlock</td>
+<td><code>src/mac/openshell_service.py</code>, <code>src/mac/executor_sandbox.py</code></td>
+</tr>
+<tr>
+<td>Egress is deny-by-default with declared hosts per project and per task</td>
+<td><code>src/mac/sandbox_egress.py</code></td>
+</tr>
+<tr>
+<td>Secrets are handles resolved at use and never printed</td>
+<td><code>docs/secrets-management-guide.md</code></td>
+</tr>
+<tr>
+<td>An agent never accepts its own work</td>
+<td><code>docs/adr/0011-hub-review-verification-scope.md</code>, <code>docs/authority-boundary.md</code></td>
+</tr>
+</tbody>
+</table>
+<p>"Never self-approves" is an authority boundary enforced by the control plane, not a
+sandbox control. The deck says so.</p>
+<h2 id="actors-lifecycle-coordination-fleet-slides-1215">Actors, lifecycle, coordination, fleet (slides 12–15)<a class="headerlink" href="#actors-lifecycle-coordination-fleet-slides-1215" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Eight actors, one authority each: requester, gateway agent, hub, dispatcher, worker, coding executor, reviewer agent, operator</td>
+<td><code>docs/authority-boundary.md</code>, <code>src/mac/services.py</code>, <code>src/mac/worker.py</code></td>
+</tr>
+<tr>
+<td>12 task states</td>
+<td><code>src/mac/models.py</code> (<code>TaskState</code>): open, waiting, blocked, claimed, running, needs_review, needs_input, stopped, reviewing, completed, failed, cancelled</td>
+</tr>
+<tr>
+<td>Terminal states are completed, failed, cancelled</td>
+<td><code>src/mac/models.py</code> (<code>TERMINAL_TASK_STATES</code>)</td>
+</tr>
+<tr>
+<td>A hold is a flag (<code>metadata.no_dispatch=true</code>), not a state; <code>mac task release</code> removes the key</td>
+<td><code>AGENTS.md</code>, <code>src/mac/task_lifecycle.py</code></td>
+</tr>
+<tr>
+<td>Leases are time-bounded and recoverable; recovery verbs exist for stranded and stalled work</td>
+<td><code>src/mac/task_lifecycle.py</code>, <code>AGENTS.md</code></td>
+</tr>
+<tr>
+<td>AgentBus is a broadcast medium with lifecycle verbs (stand down, abort, pause, resume, status); the ledger, not the bus, is the system of record</td>
+<td><code>src/mac/agentbus_service.py</code>, <code>src/mac/agentbus_control.py</code>, <code>src/mac/agentbus_broadcast.py</code>, ADR 0026 (Proposed — <em>first-class operations emit bus events</em>)</td>
+</tr>
+<tr>
+<td>Operational learning is recorded as secret-free memories that bias future routing</td>
+<td><code>AGENTS.md</code> ("Fleet Operational Learning"), <code>docs/fleet-operational-learning.md</code></td>
+</tr>
+<tr>
+<td>macOS nodes are host installs by decision</td>
+<td>ADR 0015 (Accepted), <code>docs/adr/0015-macos-nodes-are-host-installs.md</code></td>
+</tr>
+<tr>
+<td>Docker Engine / Moby is the only container runtime</td>
+<td>ADR 0008 (Accepted)</td>
+</tr>
+<tr>
+<td>Kubernetes dispatch folds claim, launch, and stuck-Job reconciliation into one orchestrator</td>
+<td><code>src/mac/k8s/runner.py</code></td>
+</tr>
+<tr>
+<td>HGX sessions are onboarded by explicit operator action with a durable receipt</td>
+<td><code>docs/hgx-elastic-capacity.md</code>, <code>AGENTS.md</code></td>
+</tr>
+<tr>
+<td>Fleet targets resolve from <code>~/.mac/fleets.yaml</code>, which is the source of truth</td>
+<td><code>AGENTS.md</code> ("Fleet Host Resolution")</td>
+</tr>
+</tbody>
+</table>
+<h2 id="models-and-money-slide-16">Models and money (slide 16)<a class="headerlink" href="#models-and-money-slide-16" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Authority</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One route event per model call, carrying input, output, and streaming state, attributed to task, project, or agent</td>
+<td><code>src/mac/observability_service.py</code> (<code>llm.route</code> events), ADR 0017</td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>Cost is priced at read time against a models catalog, so a price-table change re-values history</td>
+<td><code>estimate_route_cost()</code> in <code>src/mac/scientific_optimizer.py</code>, <code>src/mac/models_catalog.py</code></td>
+<td>implemented</td>
+</tr>
+<tr>
+<td>Metering <strong>enforced</strong> at the router rather than trusted from the caller</td>
+<td>ADR 0017 (<strong>Proposed</strong>)</td>
+<td>proposed</td>
+</tr>
+<tr>
+<td>Coverage gaps are measured, not averaged away</td>
+<td>ADR 0017 quantifies them: over the seven days to 2026-08-19, on 28,352 <code>llm.route</code> events, 8,352 routes (29.5%) recorded <code>input_tokens = null</code>, 5,948 were flagged <code>stream_no_usage</code>, and 2,474 routes were attributed to nothing</td>
+<td>measured, dated</td>
+</tr>
+</tbody>
+</table>
+<p>Any spend figure quoted from this package must carry its measurement date. The deck must
+not say "every model call is metered at the router" — today the router captures what the
+caller reported, and the gap is quantified above.</p>
+<h2 id="measured-surface-area-slide-18">Measured surface area (slide 18)<a class="headerlink" href="#measured-surface-area-slide-18" title="Permanent link">&para;</a></h2>
+<p>Counts describe surface area, not maturity. Re-measure on every regeneration; do not carry
+these forward.</p>
+<table>
+<thead>
+<tr>
+<th>Figure</th>
+<th>Value</th>
+<th>Command (repository root, <code>2976182</code>, 2026-08-30)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>control-plane modules</td>
+<td>221</td>
+<td><code>ls src/mac/*.py \| wc -l</code></td>
+</tr>
+<tr>
+<td>HTTP route declarations</td>
+<td>435</td>
+<td><code>grep -rhoE "@(app\|router)\.(get\|post\|put\|patch\|delete)\(" src/mac \| wc -l</code></td>
+</tr>
+<tr>
+<td>CLI leaf commands</td>
+<td>458</td>
+<td>walk <code>mac.cli.build_parser()</code> and count parsers with no subparser map</td>
+</tr>
+<tr>
+<td>top-level CLI groups</td>
+<td>4 objects (<code>project</code>, <code>task</code>, <code>agent</code>, <code>admin</code>) plus <code>help</code></td>
+<td><code>mac.cli.build_parser()</code> subparser map</td>
+</tr>
+<tr>
+<td>task states</td>
+<td>12</td>
+<td><code>TaskState</code> in <code>src/mac/models.py</code></td>
+</tr>
+<tr>
+<td>coding routes on the ladder</td>
+<td>5</td>
+<td><code>AGENT_PRIORITY</code> in <code>src/mac/coding_agent.py</code></td>
+</tr>
+<tr>
+<td>dispatch targets</td>
+<td>2 (fleet nodes, Kubernetes)</td>
+<td><code>src/mac/k8s/runner.py</code> plus the fleet dispatcher path</td>
+</tr>
+</tbody>
+</table>
+<h2 id="implemented-decided-proposed-slide-19">Implemented / decided / proposed (slide 19)<a class="headerlink" href="#implemented-decided-proposed-slide-19" title="Permanent link">&para;</a></h2>
+<p>Placement is taken from each ADR's own status line.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Item</th>
+<th>Authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Implemented</td>
+<td>durable ledger, leases, recovery</td>
+<td>ADR 0004 (Accepted), <code>src/mac/task_lifecycle.py</code></td>
+</tr>
+<tr>
+<td>Implemented</td>
+<td>sandboxed execution and egress policy</td>
+<td>ADR 0008 (Accepted), <code>src/mac/sandbox_egress.py</code></td>
+</tr>
+<tr>
+<td>Implemented</td>
+<td>independent review gates</td>
+<td>ADR 0011 (Accepted)</td>
+</tr>
+<tr>
+<td>Implemented</td>
+<td>route events, priced at read time</td>
+<td><code>src/mac/observability_service.py</code>, <code>estimate_route_cost()</code></td>
+</tr>
+<tr>
+<td>Decided, not yet runtime</td>
+<td>agent-initiated review scope</td>
+<td>ADR 0016 (Accepted 2026-08-20)</td>
+</tr>
+<tr>
+<td>Decided, not yet runtime</td>
+<td>native steward plus containerized execution on Linux</td>
+<td>ADR 0012 (<strong>Accepted; implementation deferred pending fleet measurement</strong>)</td>
+</tr>
+<tr>
+<td>Proposed</td>
+<td>metering enforced at the router</td>
+<td>ADR 0017 (Proposed)</td>
+</tr>
+<tr>
+<td>Proposed</td>
+<td>route-search-path contract</td>
+<td>ADR 0029 (Proposed)</td>
+</tr>
+<tr>
+<td>Proposed</td>
+<td>task view as a graph</td>
+<td>ADR 0018 (Proposed)</td>
+</tr>
+<tr>
+<td>Proposed</td>
+<td>retrieval and extraction pipeline</td>
+<td>ADR 0030 (Proposed)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="prohibited-claims">Prohibited claims<a class="headerlink" href="#prohibited-claims" title="Permanent link">&para;</a></h2>
+<ul>
+<li>No ROI, productivity, or throughput percentages. None are measured, so none may appear.</li>
+<li>The forty-agent failure field on slide 3 is illustrative of failure classes, not a
+  measured failure rate.</li>
+<li>Evidence indexes what happened; it does not authorize a release. Acceptance and
+  publication remain explicit decisions by an authorized actor.</li>
+<li>The AgentBus is not the system of record.</li>
+<li>No claim that the full fleet matrix has been qualified; node classes are configuration
+  evidence, not qualification evidence.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
