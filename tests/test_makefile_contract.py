@@ -58,6 +58,24 @@ def test_make_dry_run_builds_both_supported_surfaces() -> None:
     assert "npm run build" in result.stdout
 
 
+def test_package_cli_verifies_the_current_console_script_contract() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    scripts = makefile.split("CONSOLE_SCRIPTS = ", 1)[1].splitlines()[0].split()
+
+    assert "mac-hermes-gateway" not in scripts
+    assert {
+        "mac",
+        "mac-agent",
+        "mac-evidence",
+        "mac-git-askpass",
+        "mac-openshell-collector",
+        "mac-openshell-supervisor",
+        "mac-pg-backup",
+        "mac-router",
+        "mac-schema-migrate",
+    } <= set(scripts)
+
+
 def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")

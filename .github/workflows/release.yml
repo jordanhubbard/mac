@@ -1,0 +1,45 @@
+name: Release artifacts
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  wheel:
+    name: Build and publish Python wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Build and verify wheel
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          make package-cli PYTHON="$(uv python find 3.11)"
+          wheel="$(find dist -maxdepth 1 -name 'mac-*.whl' -print -quit)"
+          test -n "$wheel"
+          version="${RELEASE_TAG#v}"
+          case "$(basename "$wheel")" in
+            "mac-${version}-"*.whl) ;;
+            *) echo "wheel $wheel does not match release $RELEASE_TAG" >&2; exit 1 ;;
+          esac
+          uv venv --python 3.11 /tmp/mac-release-smoke
+          uv pip install --python /tmp/mac-release-smoke/bin/python \
+            "${wheel}[postgres,relay]"
+          /tmp/mac-release-smoke/bin/python -c \
+            'import mac, mac.task_executor; print(mac.__version__)'
+      - name: Create release if needed and attach wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --verify-tag \
+              --title "mac $RELEASE_TAG" --generate-notes
+          gh release upload "$RELEASE_TAG" dist/mac-*.whl --clobber
