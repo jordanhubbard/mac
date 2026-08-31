@@ -239,8 +239,7 @@ def deploy_mac_bind_host(
     for host in explicit:
         if not is_allowed_mesh_bind_host(host, mesh_ips=(mesh_ip,) if mesh_ip else ()):
             raise MeshBindError(
-                "mesh hub bind refused: %r is not loopback or Tailscale/Headscale"
-                % host
+                "mesh hub bind refused: %r is not loopback or Tailscale/Headscale" % host
             )
     if any(is_unspecified_host(host) for host in requested_hosts):
         if not mesh_ip or not _parse_ip(mesh_ip):
@@ -251,8 +250,7 @@ def deploy_mac_bind_host(
     if mesh_ip:
         if not is_allowed_mesh_bind_host(mesh_ip, mesh_ips=(mesh_ip,)):
             raise MeshBindError(
-                "mesh hub bind refused: Tailscale IP %r is not a usable listen address"
-                % mesh_ip
+                "mesh hub bind refused: Tailscale IP %r is not a usable listen address" % mesh_ip
             )
         return format_bind_hosts(["127.0.0.1", mesh_ip])
     return "127.0.0.1"
@@ -334,7 +332,5 @@ def runtime_bind_error(
     """Message for create_app. None when the configured bind is legal."""
     hosts = parse_bind_hosts(bind_host)
     mesh_ips = [mesh_ip] if mesh_ip.strip() else []
-    problems = mesh_bind_problems(
-        hosts, network_provider=network_provider, mesh_ips=mesh_ips
-    )
+    problems = mesh_bind_problems(hosts, network_provider=network_provider, mesh_ips=mesh_ips)
     return "; ".join(problems) if problems else None

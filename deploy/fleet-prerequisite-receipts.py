@@ -264,9 +264,10 @@ def _validate_tool_version_check(value: dict[str, Any]) -> dict[str, Any]:
     if check["kind"] != "tool-version":
         raise PrerequisiteError("tool version check kind is invalid")
     _absolute_path(check["path"])
-    if not isinstance(check["minimum_version"], str) or re.fullmatch(
-        r"[0-9]+(?:\.[0-9]+){1,3}", check["minimum_version"]
-    ) is None:
+    if (
+        not isinstance(check["minimum_version"], str)
+        or re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", check["minimum_version"]) is None
+    ):
         raise PrerequisiteError("tool minimum_version is invalid")
     return check
 

@@ -632,7 +632,9 @@ def calendar_day_key(now: Optional[float] = None) -> str:
 
 
 def delivery_receipt_path(output_dir: str, job: dict) -> Path:
-    return Path(output_dir).expanduser() / ("%s.last-success.json" % _slug(job.get("name") or "job"))
+    return Path(output_dir).expanduser() / (
+        "%s.last-success.json" % _slug(job.get("name") or "job")
+    )
 
 
 def already_delivered_today(job: dict, output_dir: str, *, now: Optional[float] = None) -> bool:

@@ -20,7 +20,12 @@ import urllib.parse
 from typing import Callable, Dict, Mapping, MutableMapping, Optional, Sequence
 
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
-from mac.mesh_bind import MeshBindError, deploy_mac_bind_host, lookup_tailscale_ipv4, overlay_ipv4_from_url
+from mac.mesh_bind import (
+    MeshBindError,
+    deploy_mac_bind_host,
+    lookup_tailscale_ipv4,
+    overlay_ipv4_from_url,
+)
 
 
 DEFAULT_WORKER_CAPABILITIES = (

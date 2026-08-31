@@ -97,8 +97,7 @@ def test_kslug_process_note_is_not_a_transcript() -> None:
 def test_choose_reply_prefers_kslug_transcript_over_preamble() -> None:
     transcript = (
         ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
-        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. "
-        + ("Item from the wire. " * 40)
+        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. " + ("Item from the wire. " * 40)
     )
     payload = {
         "text": "The KSLUG skill and SPEC aren't accessible in this sandbox.",
@@ -151,8 +150,7 @@ def test_kslug_prompt_includes_host_runner_contract(tmp_path: Path) -> None:
     captured = {}
     transcript = (
         ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
-        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. "
-        + ("Local wire copy. " * 40)
+        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. " + ("Local wire copy. " * 40)
     )
     job = {
         "name": "kslug-nightly-news",
@@ -171,8 +169,7 @@ def test_kslug_prompt_includes_host_runner_contract(tmp_path: Path) -> None:
         home_channel_target="channel:C0HOME",
         script_runner=lambda *_args: ("wire", ""),
         agent_runner=lambda _bin, prompt, **_kwargs: (
-            captured.update(prompt=prompt)
-            or json.dumps({"text": transcript})
+            captured.update(prompt=prompt) or json.dumps({"text": transcript})
         ),
         deliver_runner=lambda *_args, **_kwargs: None,
     )

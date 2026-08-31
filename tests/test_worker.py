@@ -3483,9 +3483,7 @@ def test_worker_route_probe_stays_on_the_host_unless_the_sandbox_is_opted_into(
         # host branch resolves binaries on the host and passes None.
         resolver_kinds.append("host" if which is None else "sandbox")
         return (
-            choice
-            if accept(choice)
-            else coding_agent.CodingAgentChoice(agent="", available=False)
+            choice if accept(choice) else coding_agent.CodingAgentChoice(agent="", available=False)
         )
 
     def record_sandbox_verification(verified_choice):
