@@ -661,7 +661,35 @@ def _read_only_report_executor_attestation(
             _read_only_report_extra_create_argv(require_approval=False)
         if not _read_only_report_environment_passthrough_valid():
             return None
-        python_candidate = (os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or sys.executable).strip()
+        configured_python = (os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or "").strip()
+        python_candidate = configured_python or sys.executable
+        # A persistent venv can outlive its base interpreter. Homebrew patch
+        # upgrades exposed this with a copied Mach-O launcher that still
+        # existed but referenced a removed Cellar framework. Execute-probe the
+        # configured candidate; if it is stale, recover through the interpreter
+        # already running this worker. The resolved file and digest below are
+        # still what the hub approves, so task execution cannot retarget a
+        # symlink after approval.
+        probe = subprocess.run(
+            [python_candidate, "-c", "import mac"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if probe.returncode != 0 and configured_python:
+            python_candidate = sys.executable
+            probe = subprocess.run(
+                [python_candidate, "-c", "import mac"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        if probe.returncode != 0:
+            return None
         python_path, python_sha256 = nofollow_regular_file_identity(
             Path(python_candidate).expanduser().resolve(strict=True)
         )
