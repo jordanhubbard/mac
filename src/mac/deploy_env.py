@@ -1067,12 +1067,12 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
     values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
     values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-task-executor"))
-    # Report executors use deployment-owned, no-follow artifacts. The Python
-    # binary is a real file copied beside the venv launchers (not the mutable
-    # venv/bin/python symlink); the task wrapper must exec these exact paths.
-    values["MAC_TASK_EXECUTOR_PYTHON"] = str(
-        cfg.paths.mac_home / "venv" / "bin" / "mac-report-python"
-    )
+    # Registration resolves this venv launcher to the current base interpreter,
+    # execute-probes it, and sends that exact file identity to the hub for
+    # approval. Do not copy the interpreter into the venv: Homebrew Python
+    # binaries retain a versioned Cellar dylib reference, so a routine patch
+    # upgrade left the copy executable but unloadable before MAC could run.
+    values["MAC_TASK_EXECUTOR_PYTHON"] = str(cfg.paths.mac_home / "venv" / "bin" / "python")
     values["MAC_TASK_EXECUTOR_SCRIPT"] = str(cfg.paths.mac_home / "bin" / "mac-task-executor.py")
     values["MAC_SELF_UPDATE_REPO"] = str(cfg.paths.mac_home / "src" / "mac")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")

@@ -12069,21 +12069,12 @@ install_mac_agent_wrapper() {
   local executor_py="${4:-$MAC_HOME/bin/mac-task-executor.py}"
   local crash_observer="${5:-$MAC_HOME/bin/mac-crash-observer}"
   local install_aliases="${6:-1}"
-  local report_python="$MAC_HOME/venv/bin/mac-report-python"
   mkdir -p \
     "$(dirname "$wrapper")" \
     "$(dirname "$selftest")" \
     "$(dirname "$executor")" \
     "$(dirname "$executor_py")" \
     "$(dirname "$crash_observer")"
-  # venv/bin/python is normally a symlink. A retarget between attestation and
-  # exec would select an unapproved interpreter, so install a real immutable-by-
-  # identity launcher within the venv and attest/invoke this exact file.
-  local resolved_python
-  resolved_python="$("$VENV/bin/python" -c 'import os, sys; print(os.path.realpath(sys.executable))')"
-  [ -f "$resolved_python" ] || die "resolved worker Python is missing: $resolved_python"
-  install -m 0755 "$resolved_python" "${report_python}.new"
-  mv -f "${report_python}.new" "$report_python"
   # Deliberately run outside the MAC virtualenv: it must remain usable when a
   # broken MAC import graph is the reason the worker cannot start.
   install -m 0755 "$SRC_DIR/deploy/mac-crash-observer.py" "$crash_observer"
