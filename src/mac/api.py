@@ -60,6 +60,7 @@ from mac.loop_stall_detector import LoopStallDetector
 from mac.mesh_bind import hosts_include_non_loopback, parse_bind_hosts, runtime_bind_error
 from mac.observability_console import (
     build_console_snapshot,
+    build_project_graph,
     build_task_drilldown,
     build_transcript_entry,
 )
@@ -5107,6 +5108,24 @@ def create_app(
         """
         del principal
         return build_task_drilldown(cp, task_id)
+
+    @app.get("/dashboard/observe/projects/{project}/graph")
+    def dashboard_observe_project_graph(
+        project: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Bounded live dependency graph for one project. Read-only.
+
+        Live tasks fill the cap first. Each edge carries the waiter's join
+        policy and a verdict (dead / pending / satisfied / settled / unknown)
+        so a failed blocker is not indistinguishable from a slow one.
+
+        A blank or whitespace project name returns ``found: false`` with HTTP
+        200 rather than 404: the console asks this from a query param, and
+        "no project selected" is an answer it must render.
+        """
+        del principal
+        return build_project_graph(cp, project)
 
     @app.get("/dashboard/observe/transcripts/{transcript_id}")
     def dashboard_observe_transcript(

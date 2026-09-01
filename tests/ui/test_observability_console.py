@@ -20,9 +20,11 @@ from fastapi.testclient import TestClient
 from mac.api import _required_scope, create_app
 from mac.models import new_id, utcnow
 from mac.observability_console import (
+    GRAPH_SCHEMA_VERSION,
     SCHEMA_VERSION,
     bucket_transitions,
     build_console_snapshot,
+    build_project_graph,
     build_task_drilldown,
     build_transcript_entry,
     dwell_percentiles,
@@ -462,6 +464,152 @@ def test_drilldown_endpoints_are_get_only_and_answer(cp: ControlPlane):
         assert getattr(client, method)("/dashboard/observe/tasks/%s" % task.id).status_code == 405
     assert client.get("/dashboard/observe/tasks/nope").json()["found"] is False
     assert client.get("/dashboard/observe/transcripts/nope").json()["found"] is False
+
+
+# ---------------------------------------------------------------------------
+# Project graph — Mission Control
+# ---------------------------------------------------------------------------
+
+
+def test_empty_project_name_is_found_false_not_an_empty_graph(cp: ControlPlane):
+    out = build_project_graph(cp, "   ")
+    assert out["schema"] == GRAPH_SCHEMA_VERSION
+    assert out["found"] is False
+    assert "graph" not in out
+
+
+def test_unknown_project_is_an_empty_graph_not_a_degradation(cp: ControlPlane):
+    out = build_project_graph(cp, "does-not-exist")
+    assert out["found"] is True
+    assert "graph" in out
+    assert out["graph"]["nodes"] == []
+    assert out["graph"]["edges"] == []
+    assert out["graph"]["total"] == 0
+    assert out["degraded"] == []
+
+
+def test_graph_puts_the_prerequisite_on_the_left(cp: ControlPlane):
+    blocker = cp.create_task(title="blocker", description="", project="alpha")
+    waiter = cp.create_task(
+        title="waiter", description="", project="alpha", dependencies=[blocker.id]
+    )
+    out = build_project_graph(cp, "alpha")
+    graph = out["graph"]
+    ids = {node["id"] for node in graph["nodes"]}
+    assert ids == {blocker.id, waiter.id}
+    assert len(graph["edges"]) == 1
+    edge = graph["edges"][0]
+    assert edge["from"] == blocker.id
+    assert edge["to"] == waiter.id
+    assert edge["join_policy"] == "all_success"
+    assert edge["from_in_view"] is True
+    assert edge["verdict"] == "pending"
+    waiter_node = next(node for node in graph["nodes"] if node["id"] == waiter.id)
+    assert waiter_node["join_policy"] == "all_success"
+    assert waiter_node["no_dispatch"] is False
+
+
+def test_failed_blocker_under_all_success_is_a_dead_edge(cp: ControlPlane):
+    blocker = cp.create_task(title="dead", description="", project="alpha")
+    waiter = cp.create_task(
+        title="stuck", description="", project="alpha", dependencies=[blocker.id]
+    )
+    cp.store.execute("UPDATE tasks SET state='failed' WHERE id=?", (blocker.id,))
+    graph = build_project_graph(cp, "alpha")["graph"]
+    assert graph["edges"][0]["verdict"] == "dead"
+    assert graph["dead_blocked"] == 1
+    assert waiter.id in {node["id"] for node in graph["nodes"]}
+
+
+def test_failed_blocker_under_all_settled_is_settled_not_dead(cp: ControlPlane):
+    blocker = cp.create_task(title="done-badly", description="", project="alpha")
+    cp.create_task(
+        title="integrator",
+        description="",
+        project="alpha",
+        dependencies=[blocker.id],
+        metadata={"dependency_policy": {"join": "all_settled"}},
+    )
+    cp.store.execute("UPDATE tasks SET state='failed' WHERE id=?", (blocker.id,))
+    graph = build_project_graph(cp, "alpha")["graph"]
+    assert graph["edges"][0]["verdict"] == "settled"
+    assert graph["edges"][0]["join_policy"] == "all_settled"
+    assert graph["dead_blocked"] == 0
+
+
+def test_no_dispatch_is_visible_and_counted_as_held(cp: ControlPlane):
+    held = cp.create_task(
+        title="staged",
+        description="",
+        project="alpha",
+        metadata={"no_dispatch": True},
+    )
+    graph = build_project_graph(cp, "alpha")["graph"]
+    node = next(item for item in graph["nodes"] if item["id"] == held.id)
+    assert node["no_dispatch"] is True
+    assert graph["held"] == 1
+
+
+def test_live_tasks_fill_the_cap_before_terminal_ones(cp: ControlPlane):
+    live = [cp.create_task(title="live-%d" % i, description="", project="alpha") for i in range(2)]
+    old = cp.create_task(title="done", description="", project="alpha")
+    cp.store.execute("UPDATE tasks SET state='completed' WHERE id=?", (old.id,))
+    graph = build_project_graph(cp, "alpha", node_limit=2)["graph"]
+    ids = {node["id"] for node in graph["nodes"]}
+    assert ids == {task.id for task in live}
+    assert old.id not in ids
+    assert graph["shown"] == 2
+    assert graph["omitted"] == 1
+    assert graph["truncated"] is True
+    assert graph["total"] == 3
+    assert graph["live_total"] == 2
+
+
+def test_an_out_of_project_blocker_is_named_not_dropped(cp: ControlPlane):
+    other = cp.create_task(title="elsewhere", description="", project="beta")
+    waiter = cp.create_task(
+        title="needs-beta", description="", project="alpha", dependencies=[other.id]
+    )
+    graph = build_project_graph(cp, "alpha")["graph"]
+    assert [node["id"] for node in graph["nodes"]] == [waiter.id]
+    edge = graph["edges"][0]
+    assert edge["from"] == other.id
+    assert edge["from_in_view"] is False
+    assert edge["from_project"] == "beta"
+    assert edge["from_title"] == "elsewhere"
+    assert graph["omitted_edges"] == 1
+
+
+def test_a_broken_graph_read_is_omitted_never_an_empty_dag(cp: ControlPlane):
+    cp.create_task(title="orphan", description="", project="alpha")
+    cp.store.execute("DROP TABLE IF EXISTS task_edges CASCADE")
+    out = build_project_graph(cp, "alpha")
+    assert "graph" not in out
+    reasons = {entry["section"]: entry["reason"] for entry in out["degraded"]}
+    assert "graph" in reasons
+    assert reasons["graph"]
+
+
+def test_graph_endpoint_returns_the_payload(cp: ControlPlane):
+    task = cp.create_task(title="shown", description="", project="alpha")
+    resp = _client(cp).get("/dashboard/observe/projects/alpha/graph")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema"] == GRAPH_SCHEMA_VERSION
+    assert body["graph"]["nodes"][0]["id"] == task.id
+
+
+def test_graph_endpoint_is_get_only(cp: ControlPlane):
+    client = _client(cp)
+    path = "/dashboard/observe/projects/alpha/graph"
+    for method in ("post", "put", "patch", "delete"):
+        assert getattr(client, method)(path).status_code == 405
+
+
+def test_graph_endpoint_carries_the_same_scope_bar_as_the_console():
+    assert _required_scope("GET", "/dashboard/observe/projects/alpha/graph") == _required_scope(
+        "GET", "/dashboard/observe"
+    )
 
 
 # ---------------------------------------------------------------------------

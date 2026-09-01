@@ -8,6 +8,7 @@ import { AgentsView, ProjectsView } from "./views/Fleet";
 import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
 import { MergeQueueView } from "./views/MergeQueue";
+import { MissionControlView } from "./views/MissionControl";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -20,6 +21,7 @@ const VIEWS = [
   { id: "stuck", label: "Stuck work", group: "Movement" },
   { id: "agents", label: "Agents", group: "Fleet" },
   { id: "projects", label: "Projects", group: "Fleet" },
+  { id: "mission-control", label: "Mission Control", group: "Fleet" },
   { id: "pipelines", label: "Pipelines", group: "Delivery" },
   { id: "merge-queue", label: "Merge queue", group: "Delivery" },
   { id: "cycles", label: "Dream & nap", group: "Delivery" },
@@ -67,29 +69,53 @@ function readTaskId(): string | null {
   return new URLSearchParams(window.location.search).get("task");
 }
 
+function readProject(): string {
+  return new URLSearchParams(window.location.search).get("project") ?? "";
+}
+
+function readSelected(): string | null {
+  return new URLSearchParams(window.location.search).get("selected");
+}
+
 export function App() {
   const [token, setToken] = useState(readToken);
   const [view, setView] = useState<ViewId>(readView);
   const [taskId, setTaskId] = useState<string | null>(readTaskId);
+  const [project, setProject] = useState(readProject);
+  const [selectedId, setSelectedId] = useState<string | null>(readSelected);
   const [windowHours, setWindowHours] = useState<number>(6);
   const [draftToken, setDraftToken] = useState("");
 
   const client = useMemo(() => new ConsoleClient(() => token), [token]);
   const live = useLive(client, windowHours, 60);
 
-  // Keep ?view= (and ?task=) in the URL so a view is linkable and survives a
-  // reload — the same query-param contract the legacy dashboard publishes.
+  // Keep ?view= (and ?task= / ?project= / ?selected=) in the URL so a view is
+  // linkable and survives a reload — the same query-param contract the legacy
+  // dashboard publishes.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     params.set("view", view);
     if (view === "task" && taskId) params.set("task", taskId);
     else params.delete("task");
+    if (project) params.set("project", project);
+    else params.delete("project");
+    if (selectedId && (view === "mission-control" || view === "task")) {
+      params.set("selected", selectedId);
+    } else {
+      params.delete("selected");
+    }
     history.replaceState(null, "", `${window.location.pathname}?${params}`);
-  }, [view, taskId]);
+  }, [view, taskId, project, selectedId]);
 
   const openTask = useCallback((id: string) => {
     setTaskId(id);
+    setSelectedId(id);
     setView("task");
+  }, []);
+
+  const openMission = useCallback((name: string) => {
+    setProject(name);
+    setView("mission-control");
   }, []);
 
   const needsToken = live.errorKind === "auth" && !live.snapshot;
@@ -209,8 +235,13 @@ export function App() {
             snap={snap}
             client={client}
             taskId={taskId}
+            project={project}
+            selectedId={selectedId}
+            refreshKey={snap.observability_sequence}
             onOpenTask={openTask}
-            onBack={() => setView("live")}
+            onOpenMission={openMission}
+            onSelectNode={setSelectedId}
+            onBack={() => setView(project ? "mission-control" : "live")}
           />
         ) : live.error ? null : (
           <p className="empty">Reading the hub…</p>
@@ -225,14 +256,24 @@ function Router({
   snap,
   client,
   taskId,
+  project,
+  selectedId,
+  refreshKey,
   onOpenTask,
+  onOpenMission,
+  onSelectNode,
   onBack,
 }: {
   view: ViewId;
   snap: Snapshot;
   client: ConsoleClient;
   taskId: string | null;
+  project: string;
+  selectedId: string | null;
+  refreshKey: number;
   onOpenTask: (id: string) => void;
+  onOpenMission: (project: string) => void;
+  onSelectNode: (id: string) => void;
   onBack: () => void;
 }) {
   switch (view) {
@@ -245,7 +286,20 @@ function Router({
     case "agents":
       return <AgentsView snap={snap} />;
     case "projects":
-      return <ProjectsView snap={snap} />;
+      return <ProjectsView snap={snap} onOpenMission={onOpenMission} />;
+    case "mission-control":
+      return (
+        <MissionControlView
+          snap={snap}
+          client={client}
+          project={project}
+          selectedId={selectedId}
+          refreshKey={refreshKey}
+          onSelectProject={onOpenMission}
+          onSelectNode={onSelectNode}
+          onOpenTask={onOpenTask}
+        />
+      );
     case "pipelines":
       return <PipelinesView snap={snap} />;
     case "merge-queue":

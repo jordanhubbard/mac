@@ -5,12 +5,14 @@
  * guard is visual — a panel that *looks* like a healthy reading when the hub
  * could not be read at all.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { Snapshot } from "../src/lib/api";
+import { ConsoleClient } from "../src/lib/api";
 import { LiveView } from "../src/views/Live";
 import { StuckView } from "../src/views/Stuck";
 import { AgentsView } from "../src/views/Fleet";
+import { MissionControlView } from "../src/views/MissionControl";
 import { Tile, Unavailable } from "../src/components/primitives";
 
 function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
@@ -191,5 +193,38 @@ describe("the hub's belief about an agent is shown next to the evidence", () => 
     const { container } = render(<AgentsView snap={snap} />);
     expect(container.textContent).toContain("never");
     expect(container.textContent).toContain("no readable last_seen_at");
+  });
+});
+
+describe("mission control does not invent an empty DAG", () => {
+  it("says unavailable when the hub omitted the graph section", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          schema: "mac.dashboard.observe.project_graph.v1",
+          server_time: "2026-08-28T12:00:00+00:00",
+          project: "alpha",
+          found: true,
+          build_ms: 4,
+          degraded: [{ section: "graph", reason: "StoreError: no such table" }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    render(
+      <MissionControlView
+        snap={snapshot()}
+        client={new ConsoleClient(() => "", fetchImpl as unknown as typeof fetch)}
+        project="alpha"
+        selectedId={null}
+        refreshKey={1}
+        onSelectProject={() => undefined}
+        onSelectNode={() => undefined}
+        onOpenTask={() => undefined}
+      />,
+    );
+    expect(await screen.findByText(/Project graph unavailable/)).toBeTruthy();
+    expect(screen.getByText(/no such table/)).toBeTruthy();
+    expect(screen.queryByText(/This project has no tasks/)).toBeNull();
   });
 });

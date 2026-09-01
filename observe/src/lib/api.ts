@@ -369,6 +369,59 @@ export const EXPECTED_TASK_SCHEMA = "mac.dashboard.observe.task.v1";
 
 export const EXPECTED_SCHEMA = "mac.dashboard.observe.v1";
 
+export const EXPECTED_GRAPH_SCHEMA = "mac.dashboard.observe.project_graph.v1";
+
+export interface GraphNode {
+  id: string;
+  title: string;
+  state: string;
+  priority: number;
+  owner_agent_id: string | null;
+  updated_at: string | null;
+  created_at: string | null;
+  dwell_seconds: number | null;
+  age_seconds: number | null;
+  no_dispatch: boolean;
+  join_policy: string;
+  cyclic: boolean;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  join_policy: string;
+  from_state: string | null;
+  from_title: string | null;
+  from_project: string | null;
+  from_in_view: boolean;
+  verdict: "dead" | "pending" | "satisfied" | "settled" | "unknown" | string;
+}
+
+export interface ProjectGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  by_state: Record<string, number>;
+  total: number;
+  live_total: number;
+  shown: number;
+  omitted: number;
+  omitted_live: number;
+  omitted_edges: number;
+  held: number;
+  dead_blocked: number;
+  truncated: boolean;
+}
+
+export interface ProjectGraphResponse {
+  schema: string;
+  server_time: string;
+  project: string;
+  found: boolean;
+  build_ms: number;
+  degraded: Degradation[];
+  graph?: ProjectGraph;
+}
+
 export interface StreamEvent {
   event: "connected" | "updated" | "heartbeat" | string;
   server_time: string;
@@ -400,6 +453,14 @@ export class ConsoleClient {
       { timeoutMs: 20_000 },
     );
     return (await response.json()) as TaskDrilldown;
+  }
+
+  async projectGraph(project: string): Promise<ProjectGraphResponse> {
+    const response = await this.get(
+      `/dashboard/observe/projects/${encodeURIComponent(project)}/graph`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as ProjectGraphResponse;
   }
 
   /** One transcript turn's text. Fetched only when a turn is expanded. */
