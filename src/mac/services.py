@@ -27207,7 +27207,19 @@ class ControlPlane:
         # on the hub -- observed live on 2026-08-11.
         auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
         openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
-        image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "localhost/mac-hermes:net").strip()
+        image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
+        if not image:
+            return 1, (
+                "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
+                "the deployment-approved immutable OpenShell runtime image"
+            )
+        if not re.fullmatch(
+            r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image
+        ):
+            return 1, (
+                "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
+                "the immutable repository-owned OpenShell runtime image"
+            )
         policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
         try:
             # 1200s could not cover even a scoped run once cloning, uploading

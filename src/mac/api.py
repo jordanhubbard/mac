@@ -6180,6 +6180,15 @@ def create_app(
         # OPEN so it can be retried or reconciled. Counterpart to force-complete.
         return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
 
+    @app.post("/tasks/{task_id}/stop")
+    def stop_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.stop_task(task_id, actor=body.actor, reason=body.reason).to_dict()
+
     @app.post("/tasks/{task_id}/ask")
     def ask_task(
         task_id: str,
