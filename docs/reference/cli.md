@@ -37,9 +37,10 @@ options:
                      ~/.mac/fleets.yaml entry.
   --profile PROFILE  Secure client profile under ~/.mac/clients. Falls back to
                      $MAC_PROFILE or the active profile.
-  --json             Emit JSON instead of the default human-readable text.
-                     Works in any position (e.g. `mac task list --json` or
-                     `mac --json task list`).
+  --json             Emit JSON explicitly. Non-interactive stdout already
+                     defaults to JSON; interactive terminals default to human-
+                     readable text. Works in any position (e.g. `mac task list
+                     --json` or `mac --json task list`).
 
 The objects mac models. Start here:
 
