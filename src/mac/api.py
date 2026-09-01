@@ -2547,6 +2547,8 @@ def _should_record_http_observation(path: str) -> bool:
             # telemetry source and feed the read -> metric -> refresh loop the
             # two lines above already exist to break.
             "/dashboard/observe",
+            "/news",
+            "/news/stream",
             "/.well-known/agent-card.json",
             "/.well-known/agent.json",
         }
@@ -7948,6 +7950,42 @@ def create_app(
             until=until,
             limit=limit,
         )
+
+    @app.get("/news")
+    def list_news(
+        after_sequence: Optional[int] = Query(default=None, ge=0),
+        project: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        return cp.list_news(after_sequence=after_sequence, project=project, limit=limit)
+
+    @app.get("/news/stream")
+    async def stream_news(
+        request: Request,
+        after_sequence: int = Query(default=0, ge=0),
+        project: Optional[str] = Query(default=None),
+        timeout_seconds: float = Query(default=300.0),
+        poll_interval_seconds: float = Query(default=1.0),
+    ) -> StreamingResponse:
+        """Follow the same curated activity representation returned by /news."""
+        clamped_timeout = clamp_stream_timeout(timeout_seconds)
+        clamped_interval = clamp_stream_poll_interval(poll_interval_seconds)
+
+        async def iter_news() -> Any:
+            cursor = max(0, int(after_sequence))
+            deadline = time.monotonic() + clamped_timeout
+            while True:
+                if await _client_gone(request):
+                    break
+                page = cp.list_news(after_sequence=cursor, project=project, limit=500)
+                for item in page["items"]:
+                    cursor = max(cursor, int(item["sequence"]))
+                    yield json.dumps(item, sort_keys=True, default=str) + "\n"
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(0 if page["items"] else clamped_interval)
+
+        return StreamingResponse(iter_news(), media_type="application/x-ndjson")
 
     @app.post("/sandbox/rollout")
     def roll_out_sandbox_image(body: SandboxRolloutRequest) -> Dict[str, Any]:

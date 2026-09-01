@@ -9687,6 +9687,23 @@ class ControlPlane:
             for row in rows
         ]
 
+    def list_news(
+        self,
+        *,
+        after_sequence: Optional[int] = None,
+        project: Optional[str] = None,
+        limit: int = 100,
+    ) -> JsonDict:
+        """Significant task and agent lifecycle facts for human observers."""
+        from mac.news_feed import build_news_feed
+
+        return build_news_feed(
+            self,
+            after_sequence=after_sequence,
+            project=project,
+            limit=limit,
+        )
+
     # Observability: thin facade over ``self.observability`` so existing
     # callers keep working. New code should call ``cp.observability.<method>``
     # directly.

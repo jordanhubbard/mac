@@ -2604,6 +2604,13 @@ class RemoteDispatch:
     def list_events(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/events", **kw))
 
+    def list_news(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._get("/news", **kw))
+
+    def stream_news(self, **kw: Any) -> Any:
+        lines = self._client.stream_lines("/news/stream" + _query(kw))
+        return self._decode_event_lines(lines)
+
     def list_command_audit(self, **kw: Any) -> List[_Dictish]:
         agent_id = kw.pop("agent_id", None)
         path = (

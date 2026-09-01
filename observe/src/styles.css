@@ -581,6 +581,36 @@ button.ghost[aria-pressed="true"] {
   padding: 10px 0;
 }
 
+/* --- fleet news ---------------------------------------------------------- */
+
+.news-board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.news-board li {
+  display: grid;
+  grid-template-columns: 68px 8px minmax(0, 1fr);
+  gap: 10px;
+  border-bottom: 1px solid var(--grid);
+  padding: 9px 0;
+  align-items: start;
+}
+
+.news-board li:last-child { border-bottom: 0; }
+.news-board time { color: var(--ink-muted); font-size: 11px; }
+.news-mark { width: 8px; height: 8px; margin-top: 4px; }
+.news-copy { display: flex; flex-direction: column; min-width: 0; }
+.news-copy code { color: var(--ink-secondary); font-size: 11px; }
+.news-detail, .news-meta { color: var(--ink-muted); }
+.news-meta { font-size: 10px; margin-top: 2px; }
+.news-alert { color: var(--status-serious); font-size: 10px; margin-top: 2px; }
+
+@media (max-width: 600px) {
+  .news-board li { grid-template-columns: 50px 8px minmax(0, 1fr); gap: 7px; }
+}
+
 /* --- task drill-down ------------------------------------------------------ */
 
 .task-head {

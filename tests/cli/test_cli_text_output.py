@@ -1,6 +1,4 @@
-"""The `mac` CLI defaults to compact human-readable text; `--json` switches to
-JSON. These lock the text renderer (a pure function, independent of the global
-output-mode flag the rest of the suite forces to JSON)."""
+"""Interactive `mac` output is compact text; non-interactive output is JSON."""
 
 from mac import cli
 
@@ -452,7 +450,53 @@ def test_json_flag_strips_position_independently(monkeypatch):
         return p
 
     monkeypatch.setattr(cli, "build_parser", fake_build_parser)
-    cli._set_output_json(False)
+    monkeypatch.setattr(cli, "_stdout_is_interactive", lambda: True)
+
     cli.main(["noop", "--json"])
+
     assert cli._OUTPUT_JSON is True
-    cli._set_output_json(False)
+    assert seen["ran"] is True
+
+
+def test_main_defaults_to_json_when_stdout_is_not_a_terminal(monkeypatch):
+    seen = {}
+
+    def fake_build_parser():
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        command = sub.add_parser("noop")
+        command.set_defaults(func=lambda _args: seen.setdefault("json", cli._OUTPUT_JSON))
+        return parser
+
+    monkeypatch.setattr(cli, "build_parser", fake_build_parser)
+    monkeypatch.setattr(cli, "_stdout_is_interactive", lambda: False)
+    monkeypatch.setenv("PAGER", "less")
+    monkeypatch.setenv("GH_PAGER", "delta")
+
+    cli.main(["noop"])
+
+    assert seen["json"] is True
+    assert cli.os.environ["PAGER"] == "cat"
+    assert cli.os.environ["GH_PAGER"] == "cat"
+
+
+def test_main_keeps_text_for_an_interactive_terminal(monkeypatch):
+    seen = {}
+
+    def fake_build_parser():
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        command = sub.add_parser("noop")
+        command.set_defaults(func=lambda _args: seen.setdefault("json", cli._OUTPUT_JSON))
+        return parser
+
+    monkeypatch.setattr(cli, "build_parser", fake_build_parser)
+    monkeypatch.setattr(cli, "_stdout_is_interactive", lambda: True)
+
+    cli.main(["noop"])
+
+    assert seen["json"] is False

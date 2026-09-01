@@ -234,6 +234,8 @@ request and response definitions.
 | `GET` | `/nap-schedules` | List Nap Schedules |
 | `POST` | `/nap-tick/run` | Nap Tick Run |
 | `GET` | `/nap-tick/status` | Nap Tick Status |
+| `GET` | `/news` | List News |
+| `GET` | `/news/stream` | Stream News |
 | `GET` | `/notifications` | List Notifications |
 | `POST` | `/notifications/{notification_id}/delivered` | Mark Notification Delivered |
 | `GET` | `/notifier/channels` | List Notifier Channels |
