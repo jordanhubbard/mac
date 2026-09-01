@@ -14506,12 +14506,23 @@ else
 fi
 
 if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
-  if [ "$SUPERVISOR_KIND" = "systemd" ]; then
-    wait_for_gateway_ready_log "$LOG_DIR/openclaw-gateway-journal.txt"
-    classify_gateway_logs "$LOG_DIR/openclaw-gateway-journal.txt"
-  else
-    wait_for_gateway_ready_log "$LOG_DIR/openclaw-gateway.log"
-    classify_gateway_logs "$LOG_DIR/openclaw-gateway.log"
+  # classify_gateway_logs exits nonzero on any actionable finding, which the
+  # script's error trap otherwise turns straight into a fatal node failure.
+  # A slow-but-healthy OpenClaw startup routinely logs its own transient
+  # ERROR/Exception lines while retrying (that is what the classifier is
+  # built to catch); that must not fail the whole node any more than the
+  # readiness probe above does, for the same "chat gateway failure may not
+  # stop task execution" reason (see gateway_probe_is_fatal). Honor the same
+  # switch here instead of letting classify_gateway_logs decide unilaterally.
+  gateway_log="$LOG_DIR/openclaw-gateway.log"
+  [ "$SUPERVISOR_KIND" = "systemd" ] && gateway_log="$LOG_DIR/openclaw-gateway-journal.txt"
+  wait_for_gateway_ready_log "$gateway_log"
+  if ! classify_gateway_logs "$gateway_log"; then
+    handle_failed_openclaw_successor "OpenClaw gateway log contains actionable errors"
+    if gateway_probe_is_fatal; then
+      exit 1
+    fi
+    note_gateway_degraded "OpenClaw gateway log contains actionable errors"
   fi
 elif [ "$SUPERVISOR_KIND" = "systemd" ]; then
   classify_gateway_logs "$LOG_DIR/hermes-gateway-journal.txt"
