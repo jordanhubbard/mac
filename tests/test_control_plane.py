@@ -13881,6 +13881,10 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
         return _subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
+    monkeypatch.setenv(
+        "MAC_HUB_VERIFY_IMAGE",
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
+    )
     rc, out = cp._hub_verify_run_contract_test(
         "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
     )
@@ -13930,6 +13934,10 @@ def test_hub_verify_sandbox_injects_dedicated_test_pg_url(cp, monkeypatch):
 
     monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
     monkeypatch.setattr(services_mod, "hub_verify_test_pg_url", lambda repo_root: dsn)
+    monkeypatch.setenv(
+        "MAC_HUB_VERIFY_IMAGE",
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
+    )
     rc, _out = cp._hub_verify_run_contract_test(
         "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
     )
