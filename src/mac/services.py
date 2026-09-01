@@ -18872,8 +18872,14 @@ class ControlPlane:
 
     # AgentBus broadcast channel: fleet-readable typed events.
 
-    def agentbus_roll_call(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.agentbus_broadcast.roll_call(*args, **kwargs)
+    def agentbus_roll_call(self, agent_id: str = "", *, include_departed: bool = False) -> JsonDict:
+        # agent_id is accepted-and-ignored here so CLI call sites are
+        # identical in local and hub (RemoteDispatch) mode: the hub route is
+        # agent-scoped for authorization only (POST /agents/{id}/...), and
+        # in-process ControlPlane calls carry no per-caller identity to
+        # authorize against.
+        del agent_id
+        return self.agentbus_broadcast.roll_call(include_departed=include_departed)
 
     def publish_agentbus_broadcast(self, *args: Any, **kwargs: Any) -> JsonDict:
         agent_id = self._positional_or_kw(args, kwargs, "agent_id", 0)
