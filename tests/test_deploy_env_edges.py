@@ -317,6 +317,24 @@ def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path)
     assert "MAC_CLIENT_PRINCIPALS_FILE" not in spoke
 
 
+def test_hub_verify_uses_the_deployment_approved_runtime_image(tmp_path):
+    runtime = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+
+    hub = deploy_env.build_mac_env(
+        {"MAC_HUB_VERIFY_IMAGE": "localhost/mac-hermes:net"},
+        _cfg(tmp_path),
+        environ={"MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": runtime},
+    )
+    spoke = deploy_env.build_mac_env(
+        {},
+        _cfg(tmp_path, agent="spoke", manager="hub"),
+        environ={"MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": runtime},
+    )
+
+    assert hub["MAC_HUB_VERIFY_IMAGE"] == runtime
+    assert "MAC_HUB_VERIFY_IMAGE" not in spoke
+
+
 def test_spoke_env_removes_stale_local_control_plane_configuration(tmp_path):
     spoke = deploy_env.build_mac_env(
         {

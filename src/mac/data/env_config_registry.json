@@ -6457,6 +6457,7 @@
     "name": "MAC_HUB_VERIFY_IMAGE",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
     "type": "str"

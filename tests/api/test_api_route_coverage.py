@@ -1417,6 +1417,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/tasks/{task_id}"): {"task_id": "delete_task_id"},
         ("POST", "/tasks/{task_id}/transition"): {"task_id": "transition_task_id"},
         ("POST", "/tasks/{task_id}/reopen"): {"task_id": "reopen_task_id"},
+        ("POST", "/tasks/{task_id}/stop"): {"task_id": "reopen_task_id"},
         ("POST", "/tasks/{task_id}/ask"): {"task_id": "ask_task_id"},
         ("POST", "/tasks/{task_id}/answer"): {"task_id": "answer_task_id"},
         ("POST", "/tasks/{task_id}/force-complete"): {"task_id": "force_complete_task_id"},
@@ -2009,6 +2010,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/tasks/{task_id}/reopen"): {
             "actor": "operator",
             "reason": "route coverage reopen",
+        },
+        ("POST", "/tasks/{task_id}/stop"): {
+            "actor": "operator",
+            "reason": "route coverage stop",
         },
         ("POST", "/tasks/{task_id}/ask"): {
             "actor": "operator",

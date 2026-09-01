@@ -795,6 +795,16 @@ class RemoteDispatch:
         body = _drop_none({"actor": actor, "reason": reason})
         return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
 
+    def stop_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        reason: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none({"actor": actor, "reason": reason})
+        return _Dictish(self._post("/tasks/%s/stop" % quote(task_id, safe=""), body))
+
     def update_task(self, task_id: str, **fields: Any) -> _Dictish:
         return _Dictish(self._put("/tasks/%s" % quote(task_id, safe=""), _drop_none(dict(fields))))
 

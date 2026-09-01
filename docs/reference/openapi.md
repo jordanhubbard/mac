@@ -386,6 +386,7 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/review-outcomes` | Record Review Outcome |
 | `POST` | `/tasks/{task_id}/reviews` | Request Review |
 | `POST` | `/tasks/{task_id}/start` | Start Task |
+| `POST` | `/tasks/{task_id}/stop` | Stop Task |
 | `POST` | `/tasks/{task_id}/submit-for-review` | Submit For Review |
 | `GET` | `/tasks/{task_id}/summary` | Task Summary |
 | `GET` | `/tasks/{task_id}/transcript` | Get Task Transcript |

@@ -407,10 +407,17 @@ def host_still_valid_reconcile(
     HEAD, or submit refuses. Do not invent already_satisfied here.
     """
     block = dict(existing) if isinstance(existing, Mapping) else {}
-    if _text(block.get("decision")).lower() in RECONCILE_DECISIONS:
+    decision = _text(block.get("decision")).lower()
+    if decision in NO_CHANGE_DECISIONS:
         return block
     snapshot = reconcile_snapshot_from_task(task)
-    head = _text(block.get("head_sha")) or _text(snapshot.get("head_sha"))
+    # For repo_change the host finalizer is the authority: it operates on the
+    # worktree prepared from this snapshot and may rebase it before testing and
+    # pushing. An agent can accidentally cite its sandbox HEAD (or a sibling
+    # checkout); preserving that valid-looking but wrong SHA makes successful
+    # work fail the evidence gate after publication. Stamp the prepared
+    # canonical HEAD, while no_change decisions above remain agent-authored.
+    head = _text(snapshot.get("head_sha")) or _text(block.get("head_sha"))
     if not head:
         return block
     block["decision"] = "still_valid"

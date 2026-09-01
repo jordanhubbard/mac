@@ -194,6 +194,26 @@ def test_host_still_valid_does_not_override_already_satisfied():
     assert expected_head_sha_from_task(task) == "deadbeefcafebabe"
 
 
+def test_host_still_valid_corrects_agent_head_to_prepared_snapshot():
+    from mac.canonical_reconcile import host_still_valid_reconcile
+
+    task = {"metadata": {"runtime": {"canonical_reconcile": {"head_sha": "a" * 40}}}}
+    stamped = host_still_valid_reconcile(
+        task,
+        {
+            "decision": "still_valid",
+            "head_sha": "b" * 40,
+            "reason": "agent inspected its sandbox checkout",
+        },
+    )
+
+    assert stamped == {
+        "decision": "still_valid",
+        "head_sha": "a" * 40,
+        "reason": "agent inspected its sandbox checkout",
+    }
+
+
 def test_snapshot_lists_recent_commits_on_implicated_paths(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

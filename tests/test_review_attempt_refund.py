@@ -151,23 +151,24 @@ def test_semantic_rejection_still_spends_the_attempt(cp):
     assert after.state == TaskState.OPEN.value
 
 
-def test_repeated_harness_failures_never_exhaust_the_budget(cp):
-    """The whole task_4ce995cb shape: three harness rejections, still alive.
-
-    Previously this reached attempt_count 3/3 and went terminal with
-    failure_class "scope".  The task must remain retryable instead.
-    """
+def test_repeated_harness_failures_stop_after_three_refunded_attempts(cp):
+    """Harness failures refund work attempts, but cannot retry forever."""
     executor, reviewer, task, review, ev = _drive_to_review(cp, "three-strikes")
 
     for round_index, feedback in enumerate((HARNESS_588_ERRORS, HARNESS_UTF8, HARNESS_588_ERRORS)):
         _reject_with(cp, review, reviewer, task, feedback, ev)
         current = cp.get_task(task.id)
-        assert current.state == TaskState.OPEN.value, "round %d left the task in %s" % (
+        expected = TaskState.BLOCKED.value if round_index == 2 else TaskState.OPEN.value
+        assert current.state == expected, "round %d left the task in %s" % (
             round_index,
             current.state,
         )
         assert current.attempt_count == 0
         assert current.attempt_count < current.max_attempts
+        assert current.metadata["review_infrastructure_failure_count"] == round_index + 1
+
+        if current.state == TaskState.BLOCKED.value:
+            break
 
         # Next attempt: re-claim (which spends an attempt again) and re-review.
         # After a reacquire the control plane requires the current lease_id, so
@@ -188,7 +189,7 @@ def test_repeated_harness_failures_never_exhaust_the_budget(cp):
         review = cp.request_review(task.id, reviewer.id, actor="manual")
 
     final = cp.get_task(task.id)
-    assert final.state not in {TaskState.FAILED.value, TaskState.BLOCKED.value}
+    assert final.state == TaskState.BLOCKED.value
 
 
 def test_the_transition_says_why_the_attempt_was_refunded(cp):

@@ -1393,6 +1393,56 @@ def test_remote_dispatch_task_close_uses_api_transition_shape(monkeypatch):
     }
 
 
+def test_remote_dispatch_task_stop_uses_admin_stop_route(monkeypatch):
+    import io
+    import json as _json
+    import sys
+
+    from mac.cli import main
+    from mac.http_client import HubClient
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    fake = _FakeTransport(
+        response_for={("POST", "/tasks/task_xyz/stop"): {"id": "task_xyz", "state": "stopped"}}
+    )
+    orig_init = HubClient.__init__
+    monkeypatch.setattr(
+        HubClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
+    )
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "task",
+                "stop",
+                "task_xyz",
+                "--reason",
+                "integration recovery",
+                "--actor",
+                "operator",
+            ]
+        )
+    finally:
+        sys.stdout = old
+
+    assert rc == 0
+    assert _json.loads(out.getvalue()) == {"id": "task_xyz", "state": "stopped"}
+    method, url, payload, _token = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://hub.example:8789/tasks/task_xyz/stop"
+    assert payload == {"actor": "operator", "reason": "integration recovery"}
+
+
 def test_dictish_supports_attribute_access():
     d = _Dictish({"id": "lease_42", "agent_id": "agent_x"})
     assert d.id == "lease_42"  # noqa: E501 — matches typed-object access pattern
