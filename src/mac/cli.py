@@ -6076,6 +6076,71 @@ def cmd_agentbus_broadcast(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_agentbus_traffic(args: argparse.Namespace) -> None:
+    """Read the whole bus as ``agent_id`` hears it, not just what is addressed to it.
+
+    ``read``/``wait``/``drain`` answer "has anyone said anything to me" on one
+    known stream or inbox. This is the fleet activity firehose -- point-to-point
+    AND group traffic across every stream the agent may hear, the thing an
+    operator actually wants when asking "what is the fleet doing right now".
+    The read endpoint has existed since 2026-08-17 with no CLI command calling
+    it, which is the whole reason nobody used it from a terminal.
+
+    Without --follow this is one page, like ``broadcast``. With --follow it
+    polls forever, printing each new batch as it arrives, until interrupted --
+    the tail-mode counterpart to ``wait``'s single-shot exit-on-first-message.
+    """
+    import time as _time
+
+    cp = _plane(args)
+    include_addressed = not args.exclude_addressed
+    cursor = args.after_cursor or ""
+    if not args.follow:
+        traffic = cp.read_agentbus_traffic(
+            args.agent_id,
+            cursor,
+            args.limit,
+            include_addressed=include_addressed,
+        )
+        _print(traffic)
+        return
+    interval = max(0.1, float(args.poll_interval_seconds))
+    try:
+        while True:
+            traffic = cp.read_agentbus_traffic(
+                args.agent_id,
+                cursor,
+                args.limit,
+                include_addressed=include_addressed,
+            )
+            if traffic:
+                for item in traffic:
+                    entry = item.to_dict() if hasattr(item, "to_dict") else item
+                    _print(entry)
+                    next_cursor = entry.get("cursor") if hasattr(entry, "get") else None
+                    if next_cursor:
+                        cursor = str(next_cursor)
+            _time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
+def cmd_agentbus_roll_call(args: argparse.Namespace) -> None:
+    """Who is on the bus right now, and what each of them can do.
+
+    One-shot fleet roster as ``agent_id`` (the identity the CLI session
+    authenticates as -- reused for authorization only, the roster itself is
+    not scoped to it). Pairs with ``traffic`` for "what is the fleet doing":
+    this answers who is out there, traffic answers what they are saying.
+    """
+    _print(
+        _plane(args).agentbus_roll_call(
+            args.agent_id,
+            include_departed=args.include_departed,
+        )
+    )
+
+
 def cmd_agentbus_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_agentbus_content(
@@ -11075,6 +11140,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bus_broadcast.add_argument("--project")
     _set(cmd_agentbus_broadcast, bus_broadcast)
+
+    bus_traffic = agentbus.add_parser(
+        "traffic",
+        help="watch fleet activity: the whole bus, not just what is addressed to you",
+        description=(
+            "Point-to-point AND group traffic across every stream this agent "
+            "may hear, not just its own inbox or one known stream -- the "
+            "thing an operator actually wants when asking 'what is the fleet "
+            "doing right now'. Without --follow this is one page; with "
+            "--follow it polls and prints forever until interrupted."
+        ),
+    )
+    bus_traffic.add_argument("agent_id", help="identity to authenticate and listen as")
+    bus_traffic.add_argument("--after-cursor", default="")
+    bus_traffic.add_argument("--limit", type=int, default=100)
+    bus_traffic.add_argument(
+        "--exclude-addressed",
+        action="store_true",
+        help="drop chunks already addressed to this agent (it handles those via inbox/wait)",
+    )
+    bus_traffic.add_argument("--follow", action="store_true", help="poll and tail forever")
+    bus_traffic.add_argument("--poll-interval-seconds", type=float, default=2.0)
+    _set(cmd_agentbus_traffic, bus_traffic)
+
+    bus_roll_call = agentbus.add_parser(
+        "roll-call",
+        help="who is on the bus right now, and what each of them can do",
+    )
+    bus_roll_call.add_argument("agent_id", help="identity to authenticate as")
+    bus_roll_call.add_argument("--include-departed", action="store_true")
+    _set(cmd_agentbus_roll_call, bus_roll_call)
 
     bus_publish = agentbus.add_parser("publish")
     bus_publish.add_argument("sender_agent_id")

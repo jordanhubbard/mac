@@ -1736,6 +1736,39 @@ class RemoteDispatch:
             )
         )
 
+    def read_agentbus_traffic(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+        *,
+        include_addressed: bool = True,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/agents/%s/agentbus/traffic" % quote(agent_id, safe=""),
+                after_cursor=after_cursor,
+                limit=limit,
+                include_addressed=include_addressed,
+            )
+        )
+
+    def agentbus_roll_call(
+        self,
+        agent_id: str,
+        *,
+        include_departed: bool = False,
+    ) -> _Dictish:
+        # The route is agent-scoped for authorization only (an agent connects
+        # to the bus as itself, same as read_agentbus_traffic); the roster it
+        # returns is fleet-wide, not filtered to agent_id.
+        return _Dictish(
+            self._get(
+                "/agents/%s/agentbus/roll-call" % quote(agent_id, safe=""),
+                include_departed=include_departed,
+            )
+        )
+
     # -- Inbox (task_7faf8e56) ----------------------------------------------
     #
     # RemoteDispatch wrapped the entire agentbus surface EXCEPT the inbox, and

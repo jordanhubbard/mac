@@ -9,7 +9,7 @@ Covers:
   - observability: list, prune
   - rollout extended: verify-artifact, health
   - nap extended: cycle, due
-  - agentbus extended: publish, repo-update, artifact-publish
+  - agentbus extended: publish, repo-update, artifact-publish, traffic, roll-call
   - secret: access (with trusted machine)
   - task extended: detect-beads, detect-ticketing
 
@@ -519,6 +519,55 @@ def test_agentbus_publish_event(tmp_path):
         '{"msg": "hello"}',
     )
     assert rc == 0
+
+
+def test_agentbus_traffic_reads_the_whole_bus_not_just_the_inbox(tmp_path):
+    """agentbus traffic surfaces the message as the listener, not just the sender's echo."""
+    sender = _make_agent(tmp_path, "traffic-sender", agent_id="agent_traffic_sender")
+    listener = _make_agent(tmp_path, "traffic-listener", agent_id="agent_traffic_listener")
+
+    rc, _sent = _run(
+        tmp_path,
+        "admin",
+        "agentbus",
+        "publish",
+        sender["id"],
+        "--recipient-agent-id",
+        listener["id"],
+        "--payload",
+        '{"msg": "hello"}',
+    )
+    assert rc == 0
+
+    rc, traffic = _run(tmp_path, "admin", "agentbus", "traffic", listener["id"])
+    assert rc == 0
+    assert len(traffic) == 1
+    assert traffic[0]["from_agent_id"] == sender["id"]
+    assert traffic[0]["addressed_to_me"] is True
+
+    # --exclude-addressed drops messages already addressed to the listener --
+    # it handles those via inbox/wait, not the firehose.
+    rc, filtered = _run(
+        tmp_path, "admin", "agentbus", "traffic", listener["id"], "--exclude-addressed"
+    )
+    assert rc == 0
+    assert filtered == []
+
+    # The sender never sees its own write echoed back.
+    rc, sender_view = _run(tmp_path, "admin", "agentbus", "traffic", sender["id"])
+    assert rc == 0
+    assert sender_view == []
+
+
+def test_agentbus_roll_call_lists_registered_agents(tmp_path):
+    """agentbus roll-call answers who is on the bus, authenticating as any registered agent."""
+    agent = _make_agent(tmp_path, "roll-call-agent", agent_id="agent_roll_call")
+
+    rc, roster = _run(tmp_path, "admin", "agentbus", "roll-call", agent["id"])
+
+    assert rc == 0
+    assert roster["schema"].startswith("mac.agentbus")
+    assert agent["id"] in {entry["id"] for entry in roster["agents"]}
 
 
 def test_agent_reflect_publishes_self_description(tmp_path):
