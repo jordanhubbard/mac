@@ -2772,6 +2772,31 @@ def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
     assert '*" --fail-closed "*' in deploy
 
 
+def test_gateway_log_classifier_failure_is_non_fatal_by_default_for_openclaw():
+    # Regression: a slow-but-healthy OpenClaw startup on 2026-09-01 logged its
+    # own transient ERROR lines while retrying, classify_gateway_logs exited
+    # 1 on that actionable finding, and the script's error trap turned it
+    # straight into a fatal node failure -- exactly the "gateway probe fails
+    # the whole fleet" incident gateway_probe_is_fatal was built to prevent
+    # for the readiness check, except this second check bypassed it entirely.
+    script = deploy_script_text()
+    call_site = script.split(
+        'if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then\n'
+        "  # classify_gateway_logs exits nonzero",
+        1,
+    )[1].split("log \"verifying hub health", 1)[0]
+
+    assert "if ! classify_gateway_logs " in call_site
+    assert "handle_failed_openclaw_successor " in call_site
+    assert "if gateway_probe_is_fatal; then" in call_site
+    assert "note_gateway_degraded " in call_site
+    # The old form let classify_gateway_logs's own SystemExit(1) propagate
+    # unguarded straight into the script's error trap.
+    assert re.search(
+        r'^\s*classify_gateway_logs "\$gateway_log"\s*$', call_site, re.MULTILINE
+    ) is None
+
+
 def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
     script = deploy_script_text()
     classifier = script.split("classify_gateway_logs() {", 1)[1].split(

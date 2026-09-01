@@ -709,6 +709,54 @@ run_bounded_node_phase {shlex.quote(str(specs))} stdin-proof stdin_draining_work
         assert f"worker{number}: stdin-proof passed" in result.stdout
 
 
+def test_bounded_node_phase_explains_a_child_that_dies_without_publishing_status(tmp_path):
+    # Regression for a 2026-09-01 fleet deploy: bullwinkle's phase1-prepare
+    # reported "status 125" with an otherwise-empty log, which reads as a
+    # mysterious phase failure. That status is synthesized by the controller
+    # when it loses track of a child (kill -0/`jobs -pr` race, or the child
+    # was killed externally) -- it is not necessarily a command failure
+    # inside the phase. The controller must say so explicitly.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    bounded = (
+        "run_bounded_node_phase() {"
+        + deploy.split("run_bounded_node_phase() {", 1)[1].split(
+            "\n}\n\npreflight_probe_helper_source", 1
+        )[0]
+        + "\n}"
+    )
+    specs = tmp_path / "selected-specs"
+    specs.write_text("victim|fixture\n", encoding="utf-8")
+    snippet = f"""set -euo pipefail
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+NODE_PARALLELISM=1
+BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=0
+stable_worker_agent_id() {{ printf '%s\n' "$1"; }}
+persist_bounded_phase_failure_evidence() {{ return 1; }}
+self_destructing_worker() {{
+  # Simulate a child that dies before it can write its own status file.
+  # $$ is inherited from the parent shell inside a subshell -- BASHPID is
+  # the subshell's own pid, the one that must die here.
+  kill -9 $BASHPID
+}}
+{bounded}
+run_bounded_node_phase {shlex.quote(str(specs))} die-before-status self_destructing_worker
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "victim: die-before-status child exited without publishing its status "
+        "file (status=125 synthesized)" in result.stderr
+    )
+    assert "controller/job-control condition" in result.stderr
+    assert "ERROR: victim: die-before-status failed with status 125" in result.stderr
+
+
 def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     legacy = deploy.split("legacy_hub_bootstrap() {", 1)[1].split(
