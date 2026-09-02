@@ -17965,7 +17965,7 @@ class ControlPlane:
         rows = self.store.query_all(
             """
             SELECT * FROM agents
-            WHERE status != ? AND last_seen_at <= ?
+            WHERE status != ? AND deleted_at IS NULL AND last_seen_at <= ?
             ORDER BY last_seen_at, id
             """,
             (AgentStatus.OFFLINE.value, cutoff),
