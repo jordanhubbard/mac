@@ -1428,6 +1428,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert 'sandbox delete "$SANDBOX" >/dev/null 2>&1 || true' not in stop_wrapper
     assert "/sandbox/workspace" in stop_wrapper
     assert "/sandbox/state" in stop_wrapper
+    reclaim = wrapper.split("reclaim_stale_sandbox() {", 1)[1].split("\n}\n", 1)[0]
+    assert "/sandbox/workspace" in reclaim
+    assert "/sandbox/state" not in reclaim
+    assert "retained last validated host state" in reclaim
     assert "pgrep -x openclaw" not in stop_wrapper
     assert "trap cleanup EXIT" in wrapper
     assert "stop_gateway" in wrapper

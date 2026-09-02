@@ -102,6 +102,8 @@ def test_open_pull_request_github_happy(monkeypatch: pytest.MonkeyPatch) -> None
             return _FakeResponse(
                 {"number": 42, "html_url": "https://github.com/x/y/pull/42", "state": "open"}
             )
+        if "/pulls?state=open" in url:
+            return _FakeResponse([])
         return _FakeResponse({"default_branch": "main"})
 
     with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
@@ -135,6 +137,8 @@ def test_open_pull_request_gitea_happy(monkeypatch: pytest.MonkeyPatch) -> None:
             return _FakeResponse(
                 {"number": 7, "html_url": "https://gitea.local/x/y/pulls/7", "state": "open"}
             )
+        if "/pulls?state=open" in url:
+            return _FakeResponse([])
         return _FakeResponse({"default_branch": "trunk"})
 
     with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
@@ -159,6 +163,64 @@ def test_open_pull_request_requires_token(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv("GITEA_TOKEN", raising=False)
     with pytest.raises(ValueError, match="GITEA_TOKEN"):
         open_pull_request("https://gitea.local/x/y", head="b")
+
+
+def test_open_pull_request_reuses_task_pr_across_lease_branches(monkeypatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    posts = []
+    task_id = "task_d5b6ebd1146e789c114037cda9fff9d9"
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if req.get_method() == "POST":
+            posts.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"number": 168, "html_url": "https://github.com/x/y/pull/168"})
+        if "/pulls?state=open" in url:
+            return _FakeResponse(
+                [
+                    {
+                        "number": 168,
+                        "html_url": "https://github.com/x/y/pull/168",
+                        "state": "open",
+                        "title": "the work (%s)" % task_id,
+                        "body": "- task: `%s`" % task_id,
+                        "head": {"ref": "mac/agent_a/%s-lease_old" % task_id},
+                        "base": {"ref": "main"},
+                    }
+                ]
+            )
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="mac/agent_b/%s-lease_new" % task_id,
+            title="the work (%s)" % task_id,
+            body="- task: `%s`" % task_id,
+        )
+
+    assert result.number == 168
+    assert result.url.endswith("/168")
+    assert result.reused is True
+    assert posts == []
+
+
+def test_open_pull_request_fails_closed_when_task_pr_index_is_unreadable(monkeypatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+
+    def offline(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if "/pulls?state=open" in url:
+            raise OSError("offline")
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=offline):
+        with pytest.raises(RuntimeError, match="could not verify"):
+            open_pull_request(
+                "https://github.com/x/y.git",
+                head="lease-specific",
+                title="work (task_d5b6ebd1146e789c114037cda9fff9d9)",
+            )
 
 
 def test_https_remote_for_token_auth_rewrites_ssh_when_token_present(
