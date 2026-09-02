@@ -1726,6 +1726,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#hgx-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HGX authentication
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#readiness-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1819,25 +1830,37 @@ not create, stop, resume, or delete provider sessions. The explicit <code>execut
 command creates capacity. On an HGX-enabled hub, the optional background
 autoscaler invokes the same bounded controller from durable provisioning
 demand; provider work never runs on a dispatcher or HTTP thread.</p>
-<p>Enable it only on the authenticated hub that owns HGX provider credentials:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>MAC_HGX_AUTOSCALE_ENABLED=1
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>MAC_HGX_AUTOSCALE_MAX_SESSIONS=10
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS=120
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>MAC_HGX_AUTOSCALE_SCALE_UP_STEP=1
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS=300
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS=3600
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP=1
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS=3600
+<h2 id="hgx-authentication">HGX authentication<a class="headerlink" href="#hgx-authentication" title="Permanent link">&para;</a></h2>
+<p>HGX is MAC's external capacity provider, not a token-configured MAC provider.
+There is no HGX API token to mint, paste, or store in a MAC environment file.
+The operating account that will run <code>hgx</code> completes the one-time interactive
+browser bounce:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="gp">$ </span>hgx<span class="w"> </span>login
 </code></pre></div>
-<p>The hub process must be able to execute the configured <code>MAC_HGX_BINARY</code>
-non-interactively with a valid owner credential. Enabling the service without
-that credential is observable as a provider error and never falls back to
+<p>After that login succeeds, HGX commands are ready to use in that account; run
+the capacity <code>status</code>, <code>plan</code>, or explicit <code>execute</code> command normally. If an
+HGX session later expires or is revoked, repeat <code>hgx login</code> once and retry the
+operation. The adapter recognizes the usual unauthenticated HGX errors and
+reports this recovery without exposing provider stderr.</p>
+<p>Enable the optional autoscaler only where its operating context can already
+run the configured <code>MAC_HGX_BINARY</code> using that established HGX login session:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>MAC_HGX_AUTOSCALE_ENABLED=1
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>MAC_HGX_AUTOSCALE_MAX_SESSIONS=10
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS=120
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>MAC_HGX_AUTOSCALE_SCALE_UP_STEP=1
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS=300
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS=3600
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP=1
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS=3600
+</code></pre></div>
+<p>The autoscaler does not perform an interactive login itself. A missing or
+expired HGX login is observable as a provider error and never falls back to
 unverified capacity.</p>
 <h2 id="readiness-contract">Readiness contract<a class="headerlink" href="#readiness-contract" title="Permanent link">&para;</a></h2>
 <p>Every created session uses the current HGX CLI contract for an explicit
 <code>standard-dind</code> instance. It also passes explicit placement and resource
 arguments instead of inheriting provider defaults:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>--cluster gke-newhouse --gpu 1 --memory 64Gi --cpu 8
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>--cluster gke-newhouse --gpu 1 --memory 64Gi --cpu 8
 </code></pre></div>
 <p>The CLI exposes <code>--cluster</code>, <code>--gpu</code>, <code>--memory-gib</code>, and <code>--cpu</code>; cluster
 identifiers are restricted to a safe argv shape, GPU is bounded to 0..8,
@@ -1855,7 +1878,7 @@ That request is not readiness evidence.</p>
 failed session never counts toward <code>min-ready</code>.</p>
 <h2 id="bounds-and-cooldown">Bounds and cooldown<a class="headerlink" href="#bounds-and-cooldown" title="Permanent link">&para;</a></h2>
 <p>The desired ready count is:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>min(max-sessions, max(min-ready, pending-requests + headroom))
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>min(max-sessions, max(min-ready, pending-requests + headroom))
 </code></pre></div>
 <p><code>max-sessions</code> bounds all live provider inventory, including unrelated live
 HGX sessions, so the controller does not evade a provider-wide safety limit.
@@ -1920,8 +1943,8 @@ controller does not invent credentials or silently mark provisioning requests
 fulfilled.</p>
 <p>Once onboarding has registered the real agent and the corresponding
 provisioning request is fulfilled, consume the capacity receipt explicitly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gp">$ </span>mac<span class="w"> </span>admin<span class="w"> </span>hgx<span class="w"> </span>capacity<span class="w"> </span>mark-onboarded<span class="w"> </span>&lt;immutable-session-id&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>--agent-id<span class="w"> </span>&lt;registered-mac-agent-id&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gp">$ </span>mac<span class="w"> </span>admin<span class="w"> </span>hgx<span class="w"> </span>capacity<span class="w"> </span>mark-onboarded<span class="w"> </span>&lt;immutable-session-id&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>--agent-id<span class="w"> </span>&lt;registered-mac-agent-id&gt;
 </code></pre></div>
 <p>This is an idempotent receipt-only mutation; it performs no provider action.
 The onboarded session continues to consume the provider-wide
