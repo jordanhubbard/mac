@@ -1353,6 +1353,24 @@ def test_live_lease_owned_sandbox_is_never_interrupted_during_drain(
     _assert_no_secret(run)
 
 
+def test_live_hubverify_sandbox_does_not_block_task_lease_drain(tmp_path: Path) -> None:
+    """A hub-owned verifier is not a worker task lease and remains untouched."""
+    hubverify = _managed_task_sandbox(
+        "mac-hubverify-live-fixture", kind="hubverify", pid=os.getpid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([hubverify])},
+    )
+
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_task_sandboxes"]["final_state"] == "quiescent"
+    assert not any("sandbox delete mac-hubverify-live-fixture" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
 def test_multiple_stale_task_sandboxes_are_reaped_in_one_gate_pass(
     tmp_path: Path,
 ) -> None:
