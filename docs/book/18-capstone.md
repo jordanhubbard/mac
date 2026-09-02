@@ -26,10 +26,11 @@ MAC_DB="$DOCS_DB" MAC_API_ALLOW_OPEN=1 \
   --port "$DOCS_PORT" >"$TMPDIR/mac-docs-hub.log" 2>&1 &
 hub_pid=$!
 trap 'kill "$hub_pid" 2>/dev/null || true; wait "$hub_pid" 2>/dev/null || true' EXIT
-for attempt in 1 2 3 4 5; do
+for attempt in $(seq 1 30); do
   curl --fail --silent "$DOCS_HUB_URL/health" >/dev/null && break
   sleep 1
 done
+curl --fail --silent "$DOCS_HUB_URL/health" >/dev/null
 mac --hub-url "$DOCS_HUB_URL" project create production-demo --active
 mac --hub-url "$DOCS_HUB_URL" admin machine register production-host \
   --machine-id machine_production

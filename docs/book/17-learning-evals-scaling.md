@@ -3,7 +3,7 @@ schema: mac.docs.chapter.v1
 chapter: 17
 title: Learning, Evals, and Scaling
 audiences: [operator, integrator, contributor]
-timeout_seconds: 60
+timeout_seconds: 120
 ---
 
 # Learning, Evals, and Scaling
