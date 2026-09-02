@@ -2,12 +2,13 @@
 # Create an immutable MAC release from main and optionally roll it out.
 set -euo pipefail
 
-usage() { echo 'usage: scripts/release.sh [major|minor|patch] [--fleet NAME]'; }
+usage() { echo 'usage: scripts/release.sh [major|minor|patch] --docs-dir DIR [--fleet NAME]'; }
 die() { echo "release: $*" >&2; exit 1; }
 
-bump=patch; fleet=""
+bump=patch; fleet=""; docs_dir=""
 while (($#)); do case "$1" in
   major|minor|patch) bump="$1";;
+  --docs-dir) shift; (($#)) || die '--docs-dir requires a path'; docs_dir="$1";;
   --fleet) shift; (($#)) || die '--fleet requires a name'; fleet="$1";;
   -h|--help) usage; exit 0;;
   *) die "unknown argument: $1";;
@@ -25,9 +26,17 @@ case "$bump" in major) major=$((major+1)); minor=0; patch=0;; minor) minor=$((mi
 version="$major.$minor.$patch"; tag="v$version"; branch="release/$tag"
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "$tag already exists"
 
-# A pinned audit/deck is the human-authored release gate; its presence is
-# verified here, while docs-check verifies that it is reachable and valid.
-git ls-files 'docs/presentation/*/AUDIT.md' | grep -q . || die 'no pinned release audit exists'
+# A release must carry its own audited documentation and rebuildable deck, not
+# merely point at a prior release's artifacts.  Content remains deliberately
+# human-authored, but this command proves it was updated before it can tag.
+[ -n "$docs_dir" ] || die '--docs-dir is required for every release'
+[ -f "$docs_dir/README.md" ] || die "$docs_dir lacks README.md"
+[ -f "$docs_dir/AUDIT.md" ] || die "$docs_dir lacks AUDIT.md"
+[ -f "$docs_dir/build_deck.py" ] || die "$docs_dir lacks build_deck.py"
+git diff --quiet "v$current"..HEAD -- "$docs_dir" && die "$docs_dir was not updated since v$current"
+grep -Fq "$tag" "$docs_dir/AUDIT.md" || die "$docs_dir/AUDIT.md does not identify $tag"
+python3 scripts/generate-docs-reference.py --write
+python3 "$docs_dir/build_deck.py"
 python3 - "$version" <<'PY'
 from pathlib import Path
 import re, sys
@@ -39,7 +48,7 @@ PY
 make lint
 make test
 make docs-check
-git add src/mac/__init__.py
+git add src/mac/__init__.py docs
 git commit -m "Release $tag"
 git switch -c "$branch"
 git push --set-upstream origin "$branch"

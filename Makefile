@@ -241,8 +241,9 @@ deploy: require-python ## Deploy to an already configured fleet hub.
 	fi
 	$(PYTHON) setup.py $(if $(HUB),--hub $(HUB),) $(ARGS)
 
-release: ## Create a tagged GitHub release (BUMP=patch; FLEET=<name> deploys it).
-	scripts/release.sh $(BUMP) $(if $(FLEET),--fleet $(FLEET),)
+release: ## Create a tagged GitHub release (RELEASE_DOCS=dir; FLEET=<name> deploys it).
+	@if [ -z "$(RELEASE_DOCS)" ]; then echo "usage: make release RELEASE_DOCS=docs/presentation/<release-dir> [BUMP=patch] [FLEET=<name>]"; exit 2; fi
+	scripts/release.sh $(BUMP) --docs-dir "$(RELEASE_DOCS)" $(if $(FLEET),--fleet $(FLEET),)
 
 # ---------------------------------------------------------------------------
 # Tests and quality gates.

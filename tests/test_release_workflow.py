@@ -12,6 +12,9 @@ def test_release_workflow_requires_gates_then_pr_tag_artifact_and_optional_rollo
         "make lint",
         "make test",
         "make docs-check",
+        "--docs-dir is required for every release",
+        "scripts/generate-docs-reference.py --write",
+        'python3 "$docs_dir/build_deck.py"',
         'git switch -c "$branch"',
         'gh pr checks "$pr_url" --watch --fail-fast',
         'gh pr merge "$pr_url" --squash --delete-branch',
@@ -33,4 +36,5 @@ def test_release_workflow_requires_gates_then_pr_tag_artifact_and_optional_rollo
 def test_makefile_exposes_release_target():
     text = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "release: ## Create a tagged GitHub release" in text
-    assert "scripts/release.sh $(BUMP)" in text
+    assert "RELEASE_DOCS=docs/presentation" in text
+    assert 'scripts/release.sh $(BUMP) --docs-dir "$(RELEASE_DOCS)"' in text
