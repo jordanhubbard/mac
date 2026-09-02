@@ -9428,7 +9428,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     hgx = sub.add_parser(
         "hgx",
-        help="operator controls for fungible HGX provider capacity",
+        help=(
+            "operator controls for fungible HGX provider capacity; authenticate "
+            "once with interactive `hgx login` (no API token)"
+        ),
     ).add_subparsers(dest="hgx_command", required=True)
     hgx_capacity = hgx.add_parser(
         "capacity",

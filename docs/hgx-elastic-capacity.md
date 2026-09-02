@@ -17,7 +17,25 @@ command creates capacity. On an HGX-enabled hub, the optional background
 autoscaler invokes the same bounded controller from durable provisioning
 demand; provider work never runs on a dispatcher or HTTP thread.
 
-Enable it only on the authenticated hub that owns HGX provider credentials:
+## HGX authentication
+
+HGX is MAC's external capacity provider, not a token-configured MAC provider.
+There is no HGX API token to mint, paste, or store in a MAC environment file.
+The operating account that will run `hgx` completes the one-time interactive
+browser bounce:
+
+```console
+$ hgx login
+```
+
+After that login succeeds, HGX commands are ready to use in that account; run
+the capacity `status`, `plan`, or explicit `execute` command normally. If an
+HGX session later expires or is revoked, repeat `hgx login` once and retry the
+operation. The adapter recognizes the usual unauthenticated HGX errors and
+reports this recovery without exposing provider stderr.
+
+Enable the optional autoscaler only where its operating context can already
+run the configured `MAC_HGX_BINARY` using that established HGX login session:
 
 ```text
 MAC_HGX_AUTOSCALE_ENABLED=1
@@ -30,9 +48,8 @@ MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP=1
 MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS=3600
 ```
 
-The hub process must be able to execute the configured `MAC_HGX_BINARY`
-non-interactively with a valid owner credential. Enabling the service without
-that credential is observable as a provider error and never falls back to
+The autoscaler does not perform an interactive login itself. A missing or
+expired HGX login is observable as a provider error and never falls back to
 unverified capacity.
 
 ## Readiness contract

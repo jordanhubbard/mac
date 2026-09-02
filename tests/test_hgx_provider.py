@@ -442,6 +442,21 @@ def test_nonzero_exit_raises_command_error(monkeypatch):
     assert excinfo.value.stderr == "boom"
 
 
+def test_expired_hgx_login_explains_the_one_time_browser_bounce(monkeypatch):
+    _install_run(
+        monkeypatch,
+        lambda argv, kw: _FakeCompleted("", "Login token expired. Run: hgx login", returncode=1),
+    )
+
+    with pytest.raises(HgxCommandError) as excinfo:
+        HgxProvider().list()
+
+    message = str(excinfo.value)
+    assert "one-time interactive `hgx login` browser bounce" in message
+    assert "not a MAC or provider API token" in message
+    assert excinfo.value.stderr == "Login token expired. Run: hgx login"
+
+
 def test_missing_binary_raises_command_error(monkeypatch):
     def handler(argv, kw):
         raise FileNotFoundError("no hgx")
