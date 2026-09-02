@@ -375,6 +375,36 @@ export interface StreamEvent {
   observability_sequence: number;
 }
 
+export interface NewsItem {
+  sequence: number;
+  created_at: string;
+  kind: "task" | "agent" | string;
+  event_type: string;
+  actor: string;
+  summary: string;
+  task_id: string | null;
+  task_title: string | null;
+  project: string | null;
+  from_state: string | null;
+  to_state: string | null;
+  failure_class: string | null;
+  attempt_refunded: boolean;
+  agent_id: string | null;
+  agent_name: string | null;
+  previous_status: string | null;
+  status: string | null;
+  previous_health_status: string | null;
+  health_status: string | null;
+  changed_fields: string[];
+}
+
+export interface NewsFeed {
+  schema: "mac.news.v1" | string;
+  server_time: string;
+  cursor: number;
+  items: NewsItem[];
+}
+
 export class ConsoleClient {
   private readonly get: ReadOnlyFetch;
 
@@ -400,6 +430,13 @@ export class ConsoleClient {
       { timeoutMs: 20_000 },
     );
     return (await response.json()) as TaskDrilldown;
+  }
+
+  async news(limit = 100): Promise<NewsFeed> {
+    const response = await this.get(`/news?limit=${encodeURIComponent(limit)}`, {
+      timeoutMs: 20_000,
+    });
+    return (await response.json()) as NewsFeed;
   }
 
   /** One transcript turn's text. Fetched only when a turn is expanded. */

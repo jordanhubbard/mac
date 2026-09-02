@@ -2224,8 +2224,13 @@ PY
 # gateway went down for ~6 minutes and needed a human to run
 # 'openshell sandbox delete' by hand.
 #
-# Reclaim any leftover sandbox here, salvaging its contents first so the delta
-# since the last good checkpoint is archived rather than discarded.
+# Reclaim any leftover sandbox here. Workspace files are ordinary files and can
+# be salvaged best-effort. State is deliberately NOT live-copied: OpenClaw's
+# SQLite authority spans the database and WAL while gateway/message/agent
+# processes may still be alive, and two such reclaimed trees on Rocky failed
+# quick_check with invalid page references. The stop wrapper is the only path
+# allowed to replace host state because it proves writer quiescence and validates
+# every SQLite database before promotion.
 reclaim_stale_sandbox() {
   if ! bounded 30 "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1; then
     return 0
@@ -2235,14 +2240,12 @@ reclaim_stale_sandbox() {
   salvage="\$HOST_ROOT/archive/reclaimed-\$(date -u +%Y%m%dT%H%M%SZ)-\$\$"
   mkdir -p "\$salvage"
   if bounded 120 "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
-       /sandbox/workspace "\$salvage/workspace" >/dev/null 2>&1 \
-    && bounded 120 "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
-       /sandbox/state "\$salvage/state" >/dev/null 2>&1; then
+       /sandbox/workspace "\$salvage/workspace" >/dev/null 2>&1; then
     chmod -R go-rwx "\$salvage" 2>/dev/null || true
-    echo "openclaw-gateway: salvaged un-checkpointed contents to \$salvage" >&2
+    echo "openclaw-gateway: salvaged un-checkpointed workspace to \$salvage; retained last validated host state" >&2
   else
     rm -rf "\$salvage"
-    echo "openclaw-gateway: could not salvage sandbox contents; deleting anyway to restore service" >&2
+    echo "openclaw-gateway: could not salvage sandbox workspace; deleting anyway to restore service" >&2
   fi
   if ! bounded 120 "\$OPEN_SHELL" sandbox delete "\$SANDBOX" >/dev/null 2>&1; then
     echo "openclaw-gateway: sandbox delete failed for \$SANDBOX" >&2

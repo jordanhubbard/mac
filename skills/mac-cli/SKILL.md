@@ -39,8 +39,10 @@ Cheap checks, in order: `mac task show <id>` for current state, and
 objects that matter day to day are `project`, `task` and `agent`. Everything
 else lives under `admin`.
 
-`--json` works in any position: `mac task list --json` and `mac --json task
-list` are the same command.
+Non-interactive stdout defaults to JSON and disables pagers. Interactive
+terminals default to compact text. `--json` explicitly selects JSON in any
+position: `mac task list --json` and `mac --json task list` are the same
+command.
 
 ## If you are registered as an agent, send your own heartbeat
 
@@ -167,11 +169,17 @@ called "help".
     mac admin dispatch submit <file>    literate-ai execution requests
     mac admin judgement status          process-quality daemon last report
     mac admin judgement run             run one judgement cycle now
+    mac admin events news --follow      significant task and agent activity
     mac admin login --local-console     hub-local enrollment without SSH
     mac admin plugin install --scope global
     mac admin plugin install --scope repo --repo PATH
     mac admin plugin status
     mac admin plugin uninstall
+
+`mac admin events news` is the human-facing fleet feed: task creation, claim and
+state changes plus meaningful agent lifecycle/status changes. Add `--follow` to
+subscribe continuously, `--project NAME` to restrict task activity to one
+project, or `--json` for newline-delimited records in follow mode.
 
 `mac admin login --local-console` is only for a shell on the hub. It asks the
 running API service for a new scoped, independently revocable credential over

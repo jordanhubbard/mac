@@ -127,6 +127,18 @@ def test_task_audit_project_filter_is_explicit(tmp_path):
     assert [row["task_id"] for row in report["tasks"]] == [selected["id"]]
 
 
+def test_task_audit_defaults_to_the_complete_unpaginated_ledger(tmp_path, capsys):
+    first = _create_task(tmp_path, title="audit first", project="project-a")
+    second = _create_task(tmp_path, title="audit second", project="project-b")
+    rc = main(["--db", dsn_for(tmp_path), "task", "audit", "--no-git"])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["snapshot"]["pagination"]["limit"] is None
+    assert report["snapshot"]["pagination"]["returned"] == 2
+    assert {row["task_id"] for row in report["tasks"]} == {first["id"], second["id"]}
+
+
 def test_task_throughput_reports_active_flow_and_slo(tmp_path):
     task = _create_task(tmp_path, title="throughput task", project="project-a")
 

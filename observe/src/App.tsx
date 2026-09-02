@@ -8,6 +8,7 @@ import { AgentsView, ProjectsView } from "./views/Fleet";
 import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
 import { MergeQueueView } from "./views/MergeQueue";
+import { NewsView } from "./views/News";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -17,6 +18,7 @@ const TOKEN_KEY = "mac.dashboard.token";
 
 const VIEWS = [
   { id: "live", label: "Live", group: "Movement" },
+  { id: "news", label: "News board", group: "Movement" },
   { id: "stuck", label: "Stuck work", group: "Movement" },
   { id: "agents", label: "Agents", group: "Fleet" },
   { id: "projects", label: "Projects", group: "Fleet" },
@@ -242,6 +244,14 @@ function Router({
       );
     case "stuck":
       return <StuckView snap={snap} onOpenTask={onOpenTask} />;
+    case "news":
+      return (
+        <NewsView
+          client={client}
+          refreshKey={snap.observability_sequence}
+          onOpenTask={onOpenTask}
+        />
+      );
     case "agents":
       return <AgentsView snap={snap} />;
     case "projects":

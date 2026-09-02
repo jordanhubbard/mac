@@ -31,6 +31,7 @@ class PullRequestResult:
     number: int
     url: str
     state: str
+    reused: bool = False
 
 
 @dataclass
@@ -953,6 +954,12 @@ def open_pull_request(
     title = title or ("mac: %s" % head)
     body = body or ""
 
+    task_id = _mac_task_id(title, body)
+    if task_id:
+        existing = _find_existing_task_pr(api_base, headers, owner, repo, host_kind, task_id, base)
+        if existing is not None:
+            return existing
+
     create_url = "%s/repos/%s/%s/pulls" % (api_base, owner, repo)
     payload = {"title": title, "body": body, "head": head, "base": base}
 
@@ -976,6 +983,51 @@ def open_pull_request(
         url=str(pr.get("html_url") or pr.get("url") or ""),
         state=str(pr.get("state") or "open"),
     )
+
+
+_MAC_TASK_MARKER_RE = re.compile(r"\btask_[0-9a-f]{8,32}\b")
+
+
+def _mac_task_id(title: str, body: str) -> str:
+    """Stable task identity embedded in every MAC-authored pull request."""
+    match = _MAC_TASK_MARKER_RE.search("%s\n%s" % (title, body))
+    return match.group(0) if match else ""
+
+
+def _find_existing_task_pr(
+    api_base: str,
+    headers: dict,
+    owner: str,
+    repo: str,
+    host_kind: str,
+    task_id: str,
+    base: str,
+) -> Optional[PullRequestResult]:
+    """Find an open PR for a task across lease-specific branch names."""
+    list_url = "%s/repos/%s/%s/pulls?state=open" % (api_base, owner, repo)
+    try:
+        data = _http_get_json(list_url, headers)
+    except Exception:
+        # Fail closed: an unreadable task index must not mint a possible duplicate.
+        raise RuntimeError("could not verify whether task %s already has an open PR" % task_id)
+    if not isinstance(data, list):
+        raise RuntimeError("forge returned an invalid open-PR index for task %s" % task_id)
+    for pr in data:
+        if not isinstance(pr, dict):
+            continue
+        pr_base = (pr.get("base") or {}).get("ref") if isinstance(pr.get("base"), dict) else None
+        if pr_base and pr_base != base:
+            continue
+        if task_id not in "%s\n%s" % (pr.get("title") or "", pr.get("body") or ""):
+            continue
+        return PullRequestResult(
+            host=host_kind,
+            number=int(pr.get("number") or 0),
+            url=str(pr.get("html_url") or pr.get("url") or ""),
+            state=str(pr.get("state") or "open"),
+            reused=True,
+        )
+    return None
 
 
 def _find_existing_pr(
@@ -1807,6 +1859,7 @@ def open_pull_request_for_target(
         "base": base,
         "head": head,
         "opened_by": "agent",
+        "reused": bool(pr.reused),
     }
 
 

@@ -131,8 +131,8 @@ def _read_json_arg(
         raise SystemExit("invalid JSON in %s: %s" % (label, exc))
 
 
-# Output mode. Text (human-readable one-liners) is the DEFAULT; the global
-# --json flag switches every command to JSON. Set from main().
+# Output mode. Interactive terminals default to compact text; redirected and
+# machine-driven invocations default to JSON. Set from main().
 _OUTPUT_JSON = False
 
 # Short-id mode. When False (the default), task list lines show a short unique
@@ -143,6 +143,24 @@ _FULL_IDS = False
 def _set_output_json(enabled: bool) -> None:
     global _OUTPUT_JSON
     _OUTPUT_JSON = bool(enabled)
+
+
+def _stdout_is_interactive() -> bool:
+    isatty = getattr(sys.stdout, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _disable_noninteractive_pagers() -> None:
+    """Keep every child CLI on a pipe-safe, non-blocking output path."""
+    os.environ.update(
+        {
+            "PAGER": "cat",
+            "GIT_PAGER": "cat",
+            "GH_PAGER": "cat",
+            "SYSTEMD_PAGER": "cat",
+            "MANPAGER": "cat",
+        }
+    )
 
 
 def _set_full_ids(enabled: bool) -> None:
@@ -7040,6 +7058,67 @@ def cmd_events_list(args: argparse.Namespace) -> None:
     )
 
 
+def _news_item_dict(item: Any) -> Dict[str, Any]:
+    return item.to_dict() if hasattr(item, "to_dict") else dict(item)
+
+
+def _emit_news_item(item: Any) -> None:
+    row = _news_item_dict(item)
+    if _OUTPUT_JSON:
+        print(json.dumps(row, sort_keys=True))
+        return
+    stamp = str(row.get("created_at") or "").replace("T", " ")[:19]
+    print("%s  %-5s  %s" % (stamp or "?", row.get("kind") or "?", row.get("summary") or ""))
+
+
+def cmd_news(args: argparse.Namespace) -> None:
+    """Show recent significant activity and optionally follow it live."""
+    cp = _plane(args)
+    page = cp.list_news(project=args.project, limit=args.limit)
+    page_dict = page.to_dict() if hasattr(page, "to_dict") else dict(page)
+    items = list(page_dict.get("items") or [])
+    if not args.follow:
+        if _OUTPUT_JSON:
+            _print(page_dict)
+        elif not items:
+            print("(none)")
+        else:
+            for item in items:
+                _emit_news_item(item)
+        return
+
+    for item in reversed(items):
+        _emit_news_item(item)
+    cursor = int(page_dict.get("cursor") or 0)
+    streamer = getattr(cp, "stream_news", None)
+    try:
+        while True:
+            if streamer is not None:
+                for item in streamer(
+                    after_sequence=cursor,
+                    project=args.project,
+                    timeout_seconds=55,
+                    poll_interval_seconds=1,
+                ):
+                    row = _news_item_dict(item)
+                    cursor = max(cursor, int(row.get("sequence") or 0))
+                    _emit_news_item(row)
+                continue
+            time.sleep(args.poll_interval)
+            next_page = cp.list_news(
+                after_sequence=cursor,
+                project=args.project,
+                limit=500,
+            )
+            next_dict = next_page.to_dict() if hasattr(next_page, "to_dict") else dict(next_page)
+            for item in next_dict.get("items") or []:
+                row = _news_item_dict(item)
+                cursor = max(cursor, int(row.get("sequence") or 0))
+                _emit_news_item(row)
+    except KeyboardInterrupt:
+        return
+
+
 def cmd_action_events_list(args: argparse.Namespace) -> None:
     _print(
         [
@@ -7693,8 +7772,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit JSON instead of the default human-readable text. Works in any "
-        "position (e.g. `mac task list --json` or `mac --json task list`).",
+        help="Emit JSON explicitly. Non-interactive stdout already defaults to JSON; "
+        "interactive terminals default to human-readable text. Works in any position "
+        "(e.g. `mac task list --json` or `mac --json task list`).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -11949,6 +12029,20 @@ def build_parser() -> argparse.ArgumentParser:
     events_list.add_argument("--until", help="ISO timestamp upper bound (inclusive)")
     events_list.add_argument("--limit", type=int, default=100)
     _set(cmd_events_list, events_list)
+    news = events.add_parser(
+        "news",
+        help="significant task and agent transitions as a human-readable feed",
+    )
+    news.add_argument("--project", help="show task activity for one project (omits agents)")
+    news.add_argument("--limit", type=int, default=50, help="recent items to show initially")
+    news.add_argument("--follow", action="store_true", help="stay subscribed for new activity")
+    news.add_argument(
+        "--poll-interval",
+        type=float,
+        default=2.0,
+        help="local-authority fallback interval in seconds",
+    )
+    _set(cmd_news, news)
 
     action_events = sub.add_parser(
         "action-events",
@@ -12405,8 +12499,12 @@ def _redirect_moved_command(raw: Sequence[str]) -> None:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     raw = list(argv) if argv is not None else list(sys.argv[1:])
+    interactive = _stdout_is_interactive()
+    _set_output_json(not interactive)
+    if not interactive:
+        _disable_noninteractive_pagers()
     # --json is position-independent: strip it before argparse (so it works after
-    # the subcommand too) and switch output mode. Text is the default.
+    # the subcommand too) and switch output mode explicitly.
     if "--json" in raw:
         _set_output_json(True)
         raw = [a for a in raw if a != "--json"]

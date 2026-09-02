@@ -199,7 +199,7 @@ def test_a_failed_stop_does_not_abort_the_start(tmp_path):
     assert "created" in calls.read_text(encoding="utf-8")
 
 
-def test_un_checkpointed_contents_are_salvaged_before_deletion(tmp_path):
+def test_un_checkpointed_workspace_is_salvaged_before_deletion(tmp_path):
     """Reclaiming must not silently discard the delta since the last checkpoint."""
     launcher, _stopper, env, calls, sandbox_state = _prepare(tmp_path)
     sandbox_state.write_text("present\n", encoding="utf-8")
@@ -214,7 +214,8 @@ def test_un_checkpointed_contents_are_salvaged_before_deletion(tmp_path):
     )
     salvaged = list(archives[0].rglob("marker.txt"))
     assert salvaged, "salvage archive %s is empty" % archives[0]
-    assert "salvaged un-checkpointed contents" in result.stderr
+    assert "salvaged un-checkpointed workspace" in result.stderr
+    assert not list(archives[0].glob("state")), "live SQLite state must never be salvaged"
 
 
 def test_service_is_restored_even_when_salvage_fails(tmp_path):
@@ -230,7 +231,7 @@ def test_service_is_restored_even_when_salvage_fails(tmp_path):
 
     result = _run(launcher, env)
 
-    assert "could not salvage" in result.stderr
+    assert "could not salvage sandbox workspace" in result.stderr
     assert "created" in calls.read_text(encoding="utf-8"), (
         "the gateway must still start when salvage is impossible.\n"
         "stderr:\n%s" % result.stderr[-2000:]

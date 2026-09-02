@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+from unittest import mock
 
 from mac.test_support import dsn_for
 from mac.cli import main
@@ -131,9 +132,8 @@ def test_machine_list_text_output(tmp_path):
     old = sys.stdout
     sys.stdout = out
     try:
-        # Explicitly reset the output mode before running without --json
-        _cli_mod._set_output_json(False)
-        rc_text = main(["--db", dsn_for(tmp_path), "admin", "machine", "list"])
+        with mock.patch.object(_cli_mod, "_stdout_is_interactive", return_value=True):
+            rc_text = main(["--db", dsn_for(tmp_path), "admin", "machine", "list"])
     finally:
         sys.stdout = old
     assert rc_text == 0
@@ -168,8 +168,8 @@ def test_machine_list_hardware_summary(tmp_path):
     old = sys.stdout
     sys.stdout = out
     try:
-        _cli_mod._set_output_json(False)
-        main(["--db", dsn_for(tmp_path), "admin", "machine", "list"])
+        with mock.patch.object(_cli_mod, "_stdout_is_interactive", return_value=True):
+            main(["--db", dsn_for(tmp_path), "admin", "machine", "list"])
     finally:
         sys.stdout = old
     line = out.getvalue().strip()
