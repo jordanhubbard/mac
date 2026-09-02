@@ -4,7 +4,7 @@ description: >
   Use when a MAC fleet agent task fails with a terminal:timeout tool_error, or
   when running long-lived MAC-repo operations (contract tests, bootstrap,
   large git operations) to avoid timing out mid-task.
-version: 1.1.0
+version: 1.2.0
 platforms: [linux, macos, wsl2]
 metadata:
   hermes:
@@ -29,8 +29,9 @@ Apply this skill when:
 ## Root cause
 
 The Hermes `terminal()` tool defaults to a 180-second timeout. MAC contract
-tests consistently run for 4-5 minutes (260+ seconds observed on fleet
-workers). With the default timeout, the terminal call is cancelled mid-suite,
+tests can exceed 30 minutes on a heterogeneous fleet (a recent Darwin run
+reached 29% after ten minutes without a failing test). With the default timeout,
+the terminal call is cancelled mid-suite,
 leaving no test results and causing the task to be blocked with a
 `terminal:timeout` error.
 
@@ -41,7 +42,7 @@ for MAC repo work:
 
 | Operation                       | Recommended timeout (seconds) |
 |---------------------------------|-------------------------------|
-| `scripts/run-contract-tests.sh` | 600                           |
+| `scripts/run-contract-tests.sh` | 3600                          |
 | `python3 scripts/bootstrap-project.py` | 300                  |
 | `git clone --depth 1 <repo>`    | 240                           |
 | Any `pip install` / `uv sync`   | 300                           |
@@ -49,10 +50,13 @@ for MAC repo work:
 Example — running the contract test suite:
 
 ```python
-terminal(command="scripts/run-contract-tests.sh", timeout=600, workdir=worktree)
+terminal(command="scripts/run-contract-tests.sh", timeout=3600, workdir=worktree)
 ```
 
-Never use the default timeout for any of the operations above.
+Never use the default timeout for any of the operations above. The contract
+suite timeout is deliberately finite: it allows a slow, healthy suite to
+finish, while still surfacing a genuine hang with enough time for diagnostic
+output to identify the stalled phase.
 
 ## Recovery when a timeout has already occurred
 

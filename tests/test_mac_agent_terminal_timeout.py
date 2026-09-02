@@ -46,7 +46,8 @@ def test_terminal_timeout_skill_documents_the_timeout_fix():
     # The core remedy: an explicit terminal() timeout for the slow operations.
     assert "terminal:timeout" in text
     assert "scripts/run-contract-tests.sh" in text
-    assert "timeout=600" in text
+    assert "timeout=3600" in text
+    assert "deliberately finite" in text
     # Recovery guidance still points at the environment_delta evidence record.
     assert "environment_delta" in text
 
