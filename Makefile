@@ -39,7 +39,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
-	install-hooks setup deploy test coverage test-api test-cli test-local-console test-systemd-local-console test-ui test-schema-migrations cli-coverage lint lint-fix lint-local-console format-local-console \
+	install-hooks setup deploy release test coverage test-api test-cli test-local-console test-systemd-local-console test-ui test-schema-migrations cli-coverage lint lint-fix lint-local-console format-local-console \
 	test-portfolio impact-map fault-replay sanity-test compatibility-test postgres-schema \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-graph docs-lab docs-reference env-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
@@ -240,6 +240,9 @@ deploy: require-python ## Deploy to an already configured fleet hub.
 		exit 2; \
 	fi
 	$(PYTHON) setup.py $(if $(HUB),--hub $(HUB),) $(ARGS)
+
+release: ## Create a tagged GitHub release (BUMP=patch; FLEET=<name> deploys it).
+	scripts/release.sh $(BUMP) $(if $(FLEET),--fleet $(FLEET),)
 
 # ---------------------------------------------------------------------------
 # Tests and quality gates.
