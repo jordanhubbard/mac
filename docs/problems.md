@@ -45,6 +45,94 @@ Therefore the accurate statement is: **all three current supervisors and
 heartbeats are live, but none of the three has a completed, hub-verified
 end-to-end canary receipt.**
 
+## Deep-dive root causes
+
+Subsequent implementation and live-state inspection proved that the recovery
+is blocked by multiple independent authority failures. Repeating supervisor
+restarts or canaries cannot repair them.
+
+### Attestation authority split after an interrupted phase two
+
+The fleet deploy installs each staged attestation candidate into the node's
+`mac.env` and restarts the worker before the hub commits the epoch. The hub
+continues to verify evidence with the predecessor key until commit. If phase
+two is interrupted and recovery chooses `retain_forward`, the candidate stays
+active on the node while hub abort deletes the staged candidate and retains the
+predecessor as authoritative.
+
+This is the exact Rocky failure. The fingerprint of the key used by Rocky's
+failed canary matched Rocky's candidate in aborted epoch
+`474408245fe2cc33fd22c6f9420fd78fcd87d4ef:20260903T032757Z:4e24978af16255192533a7c23db2764c`.
+The existing `reconcile_bound_worker_attestation_key` deploy helper implements
+the necessary probe/recover/install/re-prove shape but is not called by the
+deployment workflow. Hub retained-key verification does not cover this
+direction of divergence: it tolerates evidence signed before a completed
+rotation, not evidence signed by an uncommitted candidate that is ahead of hub
+authority.
+
+The later local cohort journal for epoch
+`474408245fe2cc33fd22c6f9420fd78fcd87d4ef:20260903T040051Z:c4620df9a042ed4fbda70f489130638e`
+is stale at `phase=quiesced` and `hub_state=open`. The authoritative hub receipt
+records that epoch as aborted at `2026-09-03T04:06:39.351183Z`. It did not reach
+phase two, so its three different staged candidates are not the source of the
+current key split, but the journal must be reconciled before another rollout.
+
+### Missing live OpenClaw sandboxes hidden by stale projections
+
+Natasha and Bullwinkle both report the same current executable failure:
+
+```text
+code: 'Some requested entity was not found', message: "sandbox not found"
+```
+
+The deployed self-test correctly classifies this runtime probe failure as
+non-blocking, leaving the worker process alive and normally dispatch-capable
+under advisory health rules. It does not mean the advertised gateway works.
+The hub's `chat_gateway` projection still reports each missing sandbox as
+`verified=true` based on the earlier deployment, while `mac admin openshell
+status` reports historical deployment rows as active with `sandbox_id=null`.
+`OpenShellService.get_agent_status` derives `deployed=true` and
+`fail_closed=false` solely from the persisted status string; it does not check
+report age, sandbox identity, or the current startup probe. These are stale
+control-plane projections, not evidence of a live gateway.
+
+### Conflicting health predicates block the chosen canary path
+
+Normal allocation accepts `health_status=degraded` when the startup report is
+`degraded` with no blocking problems. Break-glass authorization instead
+requires the raw health status to equal `healthy`. Consequently Natasha and
+Bullwinkle are eligible for normal targeted dispatch but cannot receive the
+break-glass canaries originally chosen for contained recovery. This is a policy
+asymmetry, not evidence that either gateway is healthy.
+
+### Coding execution is also unproven
+
+Rocky currently has verified Claude and OpenCode routes, while its Cursor and
+Codex host probes fail. Natasha and Bullwinkle have no verified coding CLI:
+their configured Claude/Cursor probes fail, Natasha's Codex probe fails, and
+Bullwinkle's Codex provider returns a server error. A gateway-only sentinel
+therefore cannot establish that either Linux worker can complete the normal
+repository execution contract.
+
+### Evidence persistence crossed the secret boundary
+
+One Rocky canary copied the worker process environment into durable
+`metadata.verification.result`, including credential values, despite
+`HERMES_REDACT_SECRETS=true`. The task and cascading evidence/artifacts were
+deleted from the authoritative hub. A replacement hub token has been staged
+with an overlap window, but the old value must remain accepted until every
+worker receives the replacement; other exposed authorities still require
+owner-side rotation. Prompt-level redaction is not a security boundary.
+Follow-up task: `task_e2dcfa7ebaa14478b0b2d51a45b7d79c` (P0, held).
+
+The overlap cannot yet be pruned safely because token scoping has two names for
+the same fleet: the registry key is `rocky`, while its configured `fleet_name`
+and worker runtime identity are `mac`. `rotate-token --fleet rocky` updated
+`MAC_API_TOKEN__ROCKY`; deployed workers resolve `MAC_WORKER_TOKEN__MAC` and
+the deployment helpers prefer `MAC_API_TOKEN__MAC`. Rotation and rollout must
+derive one canonical suffix from the same immutable fleet identity before the
+old token is revoked.
+
 ## Timeline of what was observed and attempted
 
 ### 1. Interrupted release and retained successor state
@@ -263,17 +351,24 @@ The following work is outstanding and must not be silently assumed complete:
 1. Repair the retained release epoch and return worker credentials from the
    temporary compatibility recovery path to the intended per-agent bound
    credential lifecycle.
-2. Repair evidence signing/attestation registration so Rocky's normal evidence
-   is accepted by the hub.
-3. Diagnose the exact OpenClaw startup self-test failure on Natasha and
-   Bullwinkle and restore healthy status.
-4. Re-run one targeted read-only canary for each current worker and let each
+2. Reconcile the stale local cohort journal with the hub's authoritative
+   aborted receipt.
+3. Repair node/hub attestation authority on all three workers and fix
+   retain-forward recovery so an aborted candidate cannot remain active on a
+   node after the hub discards it.
+4. Recreate and verify the missing Natasha and Bullwinkle OpenClaw sandboxes,
+   replace stale gateway/OpenShell projections, and restore healthy status.
+5. Establish at least one verified coding CLI route on each Linux worker.
+6. Re-run one targeted read-only canary for each current worker and let each
    complete normal evidence verification and review.
-5. Decide whether to keep normal dispatch held until all three canaries pass;
+7. Decide whether to keep normal dispatch held until all three canaries pass;
    the safe default is yes.
-6. Obtain valid HGX authentication before creating the two optional fungible
+8. Complete credential-exposure response: rotate every exposed authority,
+   reject old values, audit other evidence, and add structural redaction before
+   persistence.
+9. Obtain valid HGX authentication before creating the two optional fungible
    runners.
-7. After any source/configuration repair, make a successor release and deploy
+10. After any source/configuration repair, make a successor release and deploy
    it via the normal fix-forward procedure; do not claim a manual host repair
    is a released fleet state.
 
@@ -296,11 +391,18 @@ The recovery is complete only after all gates below are true, in order.
 
 1. On Natasha and Bullwinkle, inspect the complete OpenClaw startup report and
    gateway logs, redacting credentials.
-2. Correct the specific failing runtime condition rather than suppressing the
-   self-test.
-3. Restart each ordinary supervisor and wait for fresh heartbeats that report
+2. Recreate the named managed sandbox and prove the OpenClaw sentinel from
+   inside it; do not accept a historical `verified` advertisement or active
+   OpenShell row as proof.
+3. Publish a fresh gateway ownership/runtime advertisement tied to the live
+   sandbox identity.
+4. Correct the stale OpenShell status projection so absent or expired
+   sandboxes fail closed.
+5. Restart each ordinary supervisor and wait for fresh heartbeats that report
    `health_status=healthy`.
-4. Confirm a health gate can authorize each one normally.
+6. Establish a verified coding CLI route and confirm the normal repository
+   executor can select it.
+7. Confirm a health gate can authorize each one normally.
 
 ### C. Establish per-worker end-to-end proof
 
