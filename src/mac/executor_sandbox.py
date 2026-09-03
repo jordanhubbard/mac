@@ -2153,8 +2153,15 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
 # Copying a static key into a throwaway sandbox carries no rotation risk, so
 # -- unlike codex -- there is no env-var-present gate here: the file is the
 # only working credential path for these CLIs on this fleet.
+#
+# opencode.json is not a credential (opencode's auth.json already carries the
+# key) but its absence is just as fatal: without it opencode falls back to
+# its own built-in default model, observed live to be one the configured
+# provider has since retired ("has reached its end of life"), rather than
+# the model this fleet actually provisions in the host config.
 _SANDBOX_SAFE_CREDENTIAL_FILES: Tuple[Tuple[str, str], ...] = (
     (".local/share/opencode/auth.json", "opencode"),
+    (".config/opencode/opencode.json", "opencode"),
     (".pi/agent/auth.json", "pi"),
 )
 
