@@ -58,6 +58,21 @@ DEFAULT_READ_SILENCE_SECONDS = 24 * 60 * 60.0
 # that left one worker three weeks stale while heartbeating "healthy").
 DEFAULT_PIN_DIVERGENCE_SECONDS = 3 * 60 * 60.0
 DEFAULT_AGENT_SILENCE_SECONDS = 60 * 60.0
+# deploy/deploy-mac-fleet.sh stamps hold_reason="mac admin fleet roll-forward
+# repair retained after ${deploy_ts}" on an agent it could not finish
+# deploying, then leaves that hold for an operator to notice -- there is no
+# companion reconciliation pass. Deploys observed on this fleet complete (or
+# fail back to this hold) within ~15-20 minutes, so one hour is a conservative
+# multiple, not a tight guess.
+DEFAULT_STALE_DEPLOY_HOLD_SECONDS = 60 * 60.0
+# A worker forces status="draining"/health="degraded" on every heartbeat while
+# its deployment barrier file (~/.mac/deploy-start-barrier) still names the
+# generation it was deployed under (worker.py _deployment_barrier_state); the
+# deploy tool's finalize step is supposed to remove that file once the node
+# rejoins the cohort. A deploy's own drain window is bounded by
+# MAC_PHASE1_TOTAL_TIMEOUT_SECONDS (default 600s); 30 minutes gives real
+# deploys generous headroom without leaving a stuck agent unreported for hours.
+DEFAULT_STUCK_DRAINING_SECONDS = 30 * 60.0
 DEFAULT_MAX_ATTEMPTS = 3
 # Per-cycle cap on how many DISTINCT new fix tasks one sentinel run may file.
 # Fingerprint dedup stops re-filing a standing finding, but a single cycle that
@@ -101,6 +116,8 @@ class SelfHealingConfig:
     read_silence_seconds: float = DEFAULT_READ_SILENCE_SECONDS
     pin_divergence_seconds: float = DEFAULT_PIN_DIVERGENCE_SECONDS
     agent_silence_seconds: float = DEFAULT_AGENT_SILENCE_SECONDS
+    stale_deploy_hold_seconds: float = DEFAULT_STALE_DEPLOY_HOLD_SECONDS
+    stuck_draining_seconds: float = DEFAULT_STUCK_DRAINING_SECONDS
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     max_tasks_per_cycle: int = DEFAULT_MAX_TASKS_PER_CYCLE
     configuration_error: str = ""
@@ -166,6 +183,18 @@ class SelfHealingConfig:
                 DEFAULT_AGENT_SILENCE_SECONDS,
                 10 * 60.0,
                 7 * 24 * 60 * 60.0,
+            ),
+            stale_deploy_hold_seconds=_num(
+                "MAC_SELF_HEAL_STALE_DEPLOY_HOLD_SECONDS",
+                DEFAULT_STALE_DEPLOY_HOLD_SECONDS,
+                5 * 60.0,
+                7 * 24 * 60 * 60.0,
+            ),
+            stuck_draining_seconds=_num(
+                "MAC_SELF_HEAL_STUCK_DRAINING_SECONDS",
+                DEFAULT_STUCK_DRAINING_SECONDS,
+                5 * 60.0,
+                24 * 60 * 60.0,
             ),
             max_attempts=int(_num("MAC_SELF_HEAL_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS, 1, 10)),
             max_tasks_per_cycle=bounded_env_int(
@@ -291,6 +320,8 @@ class SelfHealingSentinel:
                 self._check_daemon_heartbeats,
                 self._check_read_path_silence,
                 self._check_stuck_quarantine,
+                self._check_stale_deploy_hold,
+                self._check_stuck_draining,
                 self._check_fleet_pin_divergence,
                 self._check_agent_unhealthy,
             ):
@@ -549,6 +580,102 @@ class SelfHealingSentinel:
                         ),
                     },
                     # Deliberately unpinned: the held agent cannot claim work.
+                )
+            )
+        return findings
+
+    _ROLL_FORWARD_REPAIR_HOLD_PREFIX = "mac admin fleet roll-forward repair retained after "
+
+    def _check_stale_deploy_hold(self) -> List[Finding]:
+        """A failed deploy leaves an agent held for "roll-forward repair"
+        with no companion process to ever notice or release it -- observed
+        live on 2026-09-01: three agents stayed held for hours across two
+        failed deploy attempts until an operator went looking."""
+        findings: List[Finding] = []
+        now = _utcnow()
+        for agent in self.control_plane.list_agents():
+            if not getattr(agent, "dispatch_hold", False):
+                continue
+            reason = str(getattr(agent, "dispatch_hold_reason", "") or "")
+            if not reason.startswith(self._ROLL_FORWARD_REPAIR_HOLD_PREFIX):
+                continue  # operator/auto-quarantine holds are deliberate; leave them alone
+            held_at = _parse_ts(getattr(agent, "dispatch_hold_at", None))
+            age = None if held_at is None else (now - held_at).total_seconds()
+            if age is not None and age < self.config.stale_deploy_hold_seconds:
+                continue
+            agent_id = str(getattr(agent, "id", "") or "")
+            findings.append(
+                Finding(
+                    fingerprint="stale_deploy_hold:%s" % agent_id,
+                    kind="stale_deploy_hold",
+                    summary=(
+                        "agent %s has been held for roll-forward repair for %s"
+                        % (
+                            agent_id,
+                            "%.0f minutes" % (age / 60.0) if age is not None else "an unknown time",
+                        )
+                    ),
+                    detail={
+                        "agent_id": agent_id,
+                        "hold_reason": reason,
+                        "held_at": getattr(agent, "dispatch_hold_at", None),
+                        "remediation": (
+                            "Confirm the node is actually running the deployed "
+                            "generation and its worker service is healthy (it "
+                            "usually is -- the deploy tool's own finalize step "
+                            "just failed to release the hold). If so, release it "
+                            "with `mac agent resume %s`. If the node is genuinely "
+                            "broken, fix the host first." % agent_id
+                        ),
+                    },
+                    target_agent_id=agent_id,
+                )
+            )
+        return findings
+
+    def _check_stuck_draining(self) -> List[Finding]:
+        """A worker forces status=draining on every heartbeat while its
+        deployment barrier file still names the generation it was deployed
+        under; the deploy tool's finalize step is supposed to remove that
+        file and doesn't always. Observed live on 2026-09-03: an agent sat
+        draining, invisible to dispatch, until an operator noticed."""
+        findings: List[Finding] = []
+        now = _utcnow()
+        for agent in self.control_plane.list_agents():
+            if str(getattr(agent, "status", "") or "") != "draining":
+                continue
+            updated_at = _parse_ts(getattr(agent, "updated_at", None))
+            age = None if updated_at is None else (now - updated_at).total_seconds()
+            if age is not None and age < self.config.stuck_draining_seconds:
+                continue
+            agent_id = str(getattr(agent, "id", "") or "")
+            findings.append(
+                Finding(
+                    fingerprint="stuck_draining:%s" % agent_id,
+                    kind="stuck_draining",
+                    summary=(
+                        "agent %s has been draining for %s"
+                        % (
+                            agent_id,
+                            "%.0f minutes" % (age / 60.0) if age is not None else "an unknown time",
+                        )
+                    ),
+                    detail={
+                        "agent_id": agent_id,
+                        "health_status": str(getattr(agent, "health_status", "") or ""),
+                        "updated_at": getattr(agent, "updated_at", None),
+                        "remediation": (
+                            "SSH to the host and check whether "
+                            "~/.mac/deploy-start-barrier still names the "
+                            "MAC_WORKER_DEPLOY_GENERATION currently in its "
+                            "environment (src/mac/worker.py "
+                            "_deployment_barrier_state()). If so and the node "
+                            "is otherwise healthy on the current generation, "
+                            "remove that file so the next heartbeat drops the "
+                            "drain fence."
+                        ),
+                    },
+                    target_agent_id=agent_id,
                 )
             )
         return findings
