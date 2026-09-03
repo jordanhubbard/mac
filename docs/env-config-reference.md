@@ -1076,7 +1076,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SELF_HEAL_NAP_STALL_SECONDS` | int | consumer-defined | core | Core setting: self heal nap stall seconds. |
 | `MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal pin divergence seconds. |
 | `MAC_SELF_HEAL_READ_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal read silence seconds. |
+| `MAC_SELF_HEAL_STALE_DEPLOY_HOLD_SECONDS` | int | consumer-defined | core | Core setting: self heal stale deploy hold seconds. |
 | `MAC_SELF_HEAL_STARVATION_SECONDS` | int | consumer-defined | core | Core setting: self heal starvation seconds. |
+| `MAC_SELF_HEAL_STUCK_DRAINING_SECONDS` | int | consumer-defined | core | Core setting: self heal stuck draining seconds. |
 | `MAC_SELF_UPDATE_GIT_TIMEOUT` | int | consumer-defined | core | Core setting: self update git timeout. |
 | `MAC_SELF_UPDATE_REPO` | str | consumer-defined | core | Core setting: self update repo. |
 | `MAC_SELF_UPDATE_SERVICE_TIMEOUT` | int | consumer-defined | core | Core setting: self update service timeout. |

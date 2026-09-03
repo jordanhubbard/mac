@@ -12698,9 +12698,31 @@
   },
   {
     "default": null,
+    "description": "Core setting: self heal stale deploy hold seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_STALE_DEPLOY_HOLD_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: self heal starvation seconds.",
     "family": "core",
     "name": "MAC_SELF_HEAL_STARVATION_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal stuck draining seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_STUCK_DRAINING_SECONDS",
     "retired": false,
     "sources": [
       "src/mac/self_healing.py"
@@ -14322,6 +14344,7 @@
       "deploy/fleet-node-machine-onboard.py",
       "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
+      "src/mac/self_healing.py",
       "src/mac/worker.py"
     ],
     "type": "str"
