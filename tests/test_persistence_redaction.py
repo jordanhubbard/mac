@@ -55,6 +55,26 @@ def test_redact_for_persistence_redacts_assignments_embedded_in_prose(template: 
     assert secret_paths(raw) == ["$.summary"]
 
 
+def test_redact_for_persistence_preserves_prose_after_unquoted_assignment():
+    secret = "opaque-credential-fixture"
+    raw = f"executor failed with CURSOR_AUTH_TOKEN={secret} retrying build"
+
+    redacted = redact_for_persistence(raw)
+
+    assert_secret_absent(secret, redacted, path="$")
+    assert redacted == f"executor failed with CURSOR_AUTH_TOKEN={REDACTION_MARKER} retrying build"
+
+
+def test_redact_for_persistence_preserves_prose_after_quoted_assignment():
+    secret = "opaque-credential-fixture"
+    raw = f'executor failed with CURSOR_AUTH_TOKEN="{secret} value" retrying build'
+
+    redacted = redact_for_persistence(raw)
+
+    assert_secret_absent(secret, redacted, path="$")
+    assert redacted == f"executor failed with CURSOR_AUTH_TOKEN={REDACTION_MARKER} retrying build"
+
+
 def test_secret_paths_reports_paths_without_values():
     secret = "unique-do-not-echo"
     value = {"verification": {"result": f"CURSOR_AUTH_TOKEN={secret}"}}

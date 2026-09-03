@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 import types
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import pytest
 
@@ -77,6 +77,16 @@ def register_worker_fixture(cp: ControlPlane):
 def assert_secret_absent(secret: str, value: object, *, path: str) -> None:
     if secret in str(value):
         pytest.fail(f"credential fixture persisted at {path}", pytrace=False)
+
+
+def assert_raises_safely(exception_type: type[BaseException], action: Callable[[], object]) -> None:
+    try:
+        action()
+    except exception_type:
+        return
+    except BaseException:
+        pytest.fail("unexpected exception type", pytrace=False)
+    pytest.fail("expected exception was not raised", pytrace=False)
 
 
 def evidence_artifact_text(cp: ControlPlane, evidence_id: str) -> Dict[str, str]:
@@ -654,8 +664,7 @@ def test_worker_exception_redacts_message_and_traceback_before_persistence(tmp_p
         attestation_key=cp._agent_attestation_key(agent.id),
     )
 
-    with pytest.raises(RuntimeError, match="worker failed"):
-        worker.run_once()
+    assert_raises_safely(RuntimeError, worker.run_once)
 
     persisted = persisted_task_state(cp, task.id)
     assert_secret_absent(secret, persisted, path="exception.persistence")
@@ -2846,6 +2855,57 @@ def test_mac_worker_does_not_mutate_task_after_losing_lease(tmp_path: Path):
     assert cp.list_evidence(task.id) == []
     observations = cp.list_observability(layer="worker", limit=20)
     assert any(item.name == "worker.execution.stale_result" for item in observations)
+
+
+def test_stale_exception_redacts_reason_before_observability_and_result(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    first = register_worker_fixture(cp)
+    machine = cp.register_machine("stale-exception-worker-host")
+    second = cp.register_agent(machine.id, "second-worker", capabilities=["python"])
+    task = cp.create_task("Secret-safe stale exception", required_capabilities=["python"])
+    cp.claim_task(task.id, first.id)
+    client = TestClient(create_app(control_plane=cp))
+    secret = "opaque-credential-fixture"
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        current_lease_id = cp.get_task(task.id).lease_id
+        assert current_lease_id is not None
+        expired_at = "2000-01-01T00:00:00+00:00"
+        cp.store.execute(
+            "UPDATE leases SET expires_at = ?, updated_at = ? WHERE id = ?",
+            (expired_at, expired_at, current_lease_id),
+        )
+        cp.store.execute(
+            "UPDATE tasks SET leased_until = ?, updated_at = ? WHERE id = ?",
+            (expired_at, expired_at, task.id),
+        )
+        cp.expire_leases()
+        _, second_lease = cp.claim_task(task.id, second.id)
+        cp.start_task(task.id, second.id, lease_id=second_lease.id)
+        raise RuntimeError(f"stale executor failed with CURSOR_AUTH_TOKEN={secret}")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        first.id,
+        tmp_path,
+        executor,
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "stale_result"
+    assert_secret_absent(secret, result.error, path="stale_result.error")
+    observations = [
+        item.to_dict()
+        for item in cp.list_observability(
+            layer="worker",
+            name="worker.execution.stale_result",
+            subject_id=task.id,
+            limit=20,
+        )
+    ]
+    assert_secret_absent(secret, observations, path="stale_result.observability")
+    assert "stale executor failed" in str(observations)
 
 
 def test_mac_worker_run_forever_drains_queue_then_reports_offline(tmp_path: Path):

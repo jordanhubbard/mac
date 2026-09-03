@@ -1888,7 +1888,8 @@ class MacWorker(
             )
         except subprocess.TimeoutExpired as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             stdout = _coerce_process_output(exc.stdout)
             stderr = _coerce_process_output(exc.stderr)
             execution = WorkerExecution(
@@ -1940,7 +1941,8 @@ class MacWorker(
             )
         except Exception as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             # A bare ``worker_exception`` transition used to carry only
             # ``error=str(exc)`` -- none of the keys ``_diagnostic_output_tail``
             # scans (stdout/stderr/output/*_tail), so the hub recorded an empty

@@ -19,7 +19,7 @@ _SECRET_KEY_TERMS = (
 _ASSIGNMENT_RE = re.compile(
     r"(?im)(\b(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*"
     r"(?:KEY|PASSWORD|SECRET|TOKEN)[A-Za-z0-9_]*[ \t]*=[ \t]*)"
-    r"(?:\"[^\r\n\"]*\"|'[^\r\n']*'|[^\r\n]*)"
+    r"(?:\"[^\r\n\"]*\"|'[^\r\n']*'|[^\s;]+)"
 )
 _AUTHORIZATION_RE = re.compile(r"(?im)(\bauthorization\s*:\s*(?:bearer\s+)?)[^\r\n]*")
 _URL_USERINFO_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)([^/@\s]+)@")
