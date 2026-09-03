@@ -17,12 +17,11 @@ _SECRET_KEY_TERMS = (
     "token",
 )
 _ASSIGNMENT_RE = re.compile(
-    r"(?im)^([ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*"
-    r"(?:KEY|PASSWORD|SECRET|TOKEN)[A-Za-z0-9_]*[ \t]*=[ \t]*)([^\r\n]*)$"
+    r"(?im)(\b(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*"
+    r"(?:KEY|PASSWORD|SECRET|TOKEN)[A-Za-z0-9_]*[ \t]*=[ \t]*)"
+    r"(?:\"[^\r\n\"]*\"|'[^\r\n']*'|[^\r\n]*)"
 )
-_AUTHORIZATION_RE = re.compile(
-    r"(?im)(\bauthorization\s*:\s*(?:bearer\s+)?)[^\r\n]*"
-)
+_AUTHORIZATION_RE = re.compile(r"(?im)(\bauthorization\s*:\s*(?:bearer\s+)?)[^\r\n]*")
 _URL_USERINFO_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)([^/@\s]+)@")
 _KNOWN_TOKEN_RE = re.compile(
     r"\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{12,}|"
@@ -58,7 +57,7 @@ def _apply_secret_redactions(text: str) -> str:
     value = _PEM_PRIVATE_KEY_RE.sub(REDACTION_MARKER, text)
     value = _URL_USERINFO_RE.sub(r"\1%s@" % REDACTION_MARKER, value)
     value = _AUTHORIZATION_RE.sub(r"\1%s" % REDACTION_MARKER, value)
-    value = _ASSIGNMENT_RE.sub(lambda match: match.group(1) + REDACTION_MARKER, value)
+    value = _ASSIGNMENT_RE.sub(r"\1%s" % REDACTION_MARKER, value)
     return _KNOWN_TOKEN_RE.sub(REDACTION_MARKER, value)
 
 

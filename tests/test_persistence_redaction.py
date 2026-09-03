@@ -11,6 +11,11 @@ from mac.persistence_redaction import (
 )
 
 
+def assert_secret_absent(secret: str, value: object, *, path: str) -> None:
+    if secret in str(value):
+        pytest.fail(f"credential fixture persisted at {path}", pytrace=False)
+
+
 def test_redact_for_persistence_preserves_shape_and_redacts_secret_fields():
     raw = {
         "verification": {
@@ -30,6 +35,24 @@ def test_redact_for_persistence_preserves_shape_and_redacts_secret_fields():
 def test_redact_for_persistence_keeps_nonsecret_token_prose():
     raw = {"summary": "Token accounting processed 42 input tokens."}
     assert redact_for_persistence(raw) == raw
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "executor failed with CURSOR_AUTH_TOKEN={secret}",
+        'executor failed with CURSOR_AUTH_TOKEN="{secret} value"',
+        "executor failed with CURSOR_AUTH_TOKEN = {secret} value",
+    ],
+)
+def test_redact_for_persistence_redacts_assignments_embedded_in_prose(template: str):
+    secret = "opaque-credential-fixture"
+    raw = {"summary": template.format(secret=secret)}
+
+    redacted = redact_for_persistence(raw)
+
+    assert_secret_absent(secret, redacted, path="$.summary")
+    assert secret_paths(raw) == ["$.summary"]
 
 
 def test_secret_paths_reports_paths_without_values():
@@ -106,11 +129,7 @@ def test_redact_for_persistence_redacts_known_token_formats():
 
 def test_redact_for_persistence_redacts_pem_private_key_under_neutral_key():
     secret = "PEM-BODY-DO-NOT-ECHO"
-    pem = (
-        "-----BEGIN PRIVATE KEY-----\n"
-        f"{secret}\n"
-        "-----END PRIVATE KEY-----"
-    )
+    pem = f"-----BEGIN PRIVATE KEY-----\n{secret}\n-----END PRIVATE KEY-----"
     raw = {"output": pem}
     redacted = redact_for_persistence(raw)
     assert secret not in str(redacted)
