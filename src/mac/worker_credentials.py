@@ -1097,6 +1097,19 @@ def install_vm_manifest(
     values = read_env_file(path)
     previous_worker_token = str(values.get("MAC_WORKER_TOKEN") or "")
     values.update(expected_values)
+    # Fleet-scoped worker-token variants (MAC_WORKER_TOKEN__<FLEET>, see
+    # mac.fleet_env) are a *second name for the same credential*, not an
+    # independent value. Resolution deliberately prefers the scoped form over
+    # the flat one, so if only the flat form is rotated here, every deployed
+    # worker keeps authenticating with the stale scoped token forever --
+    # reproduced live as a heartbeat that never proves worker_credential_
+    # authenticated, permanently starving the release-proof gate. Roll every
+    # scoped alias forward unconditionally: there is exactly one live worker
+    # credential for this agent, so any MAC_WORKER_TOKEN__* key present must
+    # equal the one just installed.
+    for key in list(values):
+        if key == "MAC_WORKER_TOKEN" or key.startswith("MAC_WORKER_TOKEN__"):
+            values[key] = token
     if previous_worker_token and previous_worker_token != token:
         for key in _HUB_FACING_WORKER_TOKEN_ALIASES:
             if values.get(key) == previous_worker_token:
