@@ -301,6 +301,50 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     assert "mac_sandbox_toolchain_setup" in argv[-1]
 
 
+def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, monkeypatch):
+    """opencode/pi's static API-key files must reach the sandbox's HOME.
+
+    Unlike codex's ~/.codex/auth.json (a rotating OAuth refresh token,
+    deliberately excluded -- see _coding_agent_auth_is_safe_for_openshell),
+    opencode's ~/.local/share/opencode/auth.json and pi's
+    ~/.pi/agent/auth.json are static keys with no rotation risk from being
+    copied into a disposable sandbox. Without this forwarding, opencode/pi
+    are present and correctly detected on the host but every in-sandbox
+    preflight fails "route verification failed" because the sandbox process
+    never sees the credential -- reproduced live on a real fleet node.
+    """
+    fake_home = tmp_path / "home"
+    opencode_auth = fake_home / ".local" / "share" / "opencode" / "auth.json"
+    opencode_auth.parent.mkdir(parents=True)
+    opencode_auth.write_text('{"nvidia": {"type": "api", "key": "sk-test"}}', encoding="utf-8")
+    monkeypatch.setattr(te.Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+
+    workspace = tmp_path / "task"
+    workspace.mkdir(parents=True)
+    te._write_sandbox_runtime_files(workspace, "/sandbox/task")
+    argv = te._build_sandbox_create_argv(
+        "sb",
+        workspace,
+        "task",
+        [
+            "python",
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            "/sandbox/task/command.json",
+            "--prompt-file",
+            "/sandbox/task/prompt.txt",
+        ],
+    )
+
+    assert "--upload" in argv
+    uploads = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--upload"]
+    assert "%s:/tmp/.local/share/opencode/auth.json" % opencode_auth in uploads
+    # pi's file doesn't exist in this fixture, so it must not be forwarded.
+    assert not any(".pi/agent/auth.json" in upload for upload in uploads)
+
+
 def test_openshell_create_args_drop_stale_codex_file_auth_when_env_auth_wins(
     monkeypatch,
 ):

@@ -2146,6 +2146,40 @@ def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
     return filtered
 
 
+# Unlike codex's ~/.codex/auth.json (an OAuth *refresh* token: consuming it
+# inside a disposable sandbox can rotate it and desync the host copy, see
+# _coding_agent_auth_is_safe_for_openshell), these are static API-key files
+# (coding_agent.py's "api_key_file" auth_kind, never "oauth_file"/"oauth").
+# Copying a static key into a throwaway sandbox carries no rotation risk, so
+# -- unlike codex -- there is no env-var-present gate here: the file is the
+# only working credential path for these CLIs on this fleet.
+_SANDBOX_SAFE_CREDENTIAL_FILES: Tuple[Tuple[str, str], ...] = (
+    (".local/share/opencode/auth.json", "opencode"),
+    (".pi/agent/auth.json", "pi"),
+)
+
+
+def _sandbox_credential_upload_argv() -> List[str]:
+    """``--upload`` args copying safe, non-rotating coding-agent credential
+    files from the host's HOME into the sandbox's HOME (_SANDBOX_HOME).
+
+    Only files that actually exist are forwarded, so a host without opencode/pi
+    configured emits nothing extra.
+    """
+    home = Path.home()
+    argv: List[str] = []
+    for relative, _agent in _SANDBOX_SAFE_CREDENTIAL_FILES:
+        source = home / relative
+        try:
+            if not source.is_file():
+                continue
+        except OSError:
+            continue
+        destination = "%s/%s" % (_SANDBOX_HOME, relative)
+        argv += ["--upload", "%s:%s" % (source, destination)]
+    return argv
+
+
 _MANAGED_OPENSHELL_RUNTIME_REF_RE = _re.compile(
     r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}"
 )
@@ -2393,6 +2427,7 @@ def _build_sandbox_create_argv(
     argv += _sandbox_label_argv("task", keep=env_bool("MAC_OPENSHELL_KEEP"))
     argv += _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
+    argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sub),
@@ -5030,7 +5065,13 @@ def coding_agent_sandbox_which(name: str) -> Optional[str]:
 
 
 def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Path) -> List[str]:
-    """Build a credential-free process argv for the coding-agent probe."""
+    """Build the coding-agent probe's process argv.
+
+    No process-visible secrets: the prompt/command are private uploaded files
+    (see agent_argv's mac.agent_command wrapper), and any credential file this
+    probe needs is copied via _sandbox_credential_upload_argv() -- only the
+    static, non-rotating kinds (coding_agent.py's "api_key_file" auth_kind).
+    """
     if "mac.agent_command" not in agent_argv:
         raise ValueError("sandbox probe must use the private-file command wrapper")
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
@@ -5039,6 +5080,7 @@ def _build_sandbox_probe_argv(name: str, agent_argv: List[str], private_dir: Pat
     argv += _openshell_extra_create_argv()
     sandbox_dir = "/sandbox/%s" % private_dir.name
     argv += ["--upload", "%s:/sandbox" % private_dir]
+    argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
         [
             "cd %s" % shlex.quote(sandbox_dir),
