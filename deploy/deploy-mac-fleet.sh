@@ -8075,10 +8075,31 @@ quiesce_remote_agent_for_cohort() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)"
+  # Daemon stop wrappers (especially a managed OpenClaw sandbox checkpoint) can
+  # exceed the node default quiescence bound the same way they can at phase 2
+  # (see deploy_host's identical forward a few hundred lines below) -- an
+  # operator override is worthless if it only reaches phase 2, since phase 1
+  # (this quiesce step) is where the daemon is actually stopped and where
+  # "managed OpenClaw stop wrapper timed out" is actually raised. Forward only
+  # when set so an empty assignment cannot fail-close bounded_number() on the
+  # node.
+  local daemon_timeout_env="" _timeout_var
+  for _timeout_var in \
+    MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS \
+    MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS \
+    MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS \
+    MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS \
+    MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS \
+    MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS
+  do
+    if [ -n "${!_timeout_var:-}" ]; then
+      daemon_timeout_env="${daemon_timeout_env}${_timeout_var}=$(shell_quote "${!_timeout_var}") "
+    fi
+  done
   if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" <<'REMOTE_PHASE1'
+    "${daemon_timeout_env}MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" <<'REMOTE_PHASE1'
 set -euo pipefail
 helper="${MAC_PHASE1_HELPER:?}"
 functions="${MAC_PHASE1_FUNCTIONS:?}"
