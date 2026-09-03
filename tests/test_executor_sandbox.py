@@ -227,3 +227,30 @@ def test_lease_reconcile_best_effort_swallows_errors(monkeypatch) -> None:
 
     # Best-effort: a reconcile failure must never propagate into the guarded run.
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
+
+
+def test_coding_agent_sandbox_which_declares_every_reviewed_cli() -> None:
+    """Regression for a stale allow-list that silently excluded two shipped CLIs.
+
+    coding_agent_sandbox_which is a DECLARED inventory, not a live probe (its
+    own docstring). ``deploy/openshell/mac-hermes.Containerfile`` installs
+    opencode and pi at the same standard PATH locations as claude/codex/cursor
+    and its build gates on ``command -v opencode`` / ``pi --version`` -- so a
+    working opencode/pi is a proven property of every published sandbox
+    image. Before this fix the frozenset omitted them, so routing rejected
+    opencode as "not on PATH" before any real in-sandbox preflight ran, even
+    though opencode is coding_agent.AGENT_PRIORITY's first choice (observed
+    live on the fleet 2026-09-03: bullwinkle and natasha both failed every
+    task -- including read-only ones -- because claude/codex/cursor all had
+    real credential problems and opencode was rejected outright rather than
+    tried).
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    coding_agent = importlib.import_module("mac.coding_agent")
+
+    for name in coding_agent.AGENT_PRIORITY:
+        assert sandbox.coding_agent_sandbox_which(name) == name, (
+            "%s is a reviewed coding agent but is missing from "
+            "_SANDBOX_CODING_AGENT_BINARIES" % name
+        )
+    assert sandbox.coding_agent_sandbox_which("not-a-real-cli") is None

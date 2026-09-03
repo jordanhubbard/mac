@@ -200,6 +200,37 @@ def test_stale_deploy_hold_waits_out_the_grace_period(cp):
     assert ("stale_deploy_hold:%s" % agent.id) not in fingerprints
 
 
+def test_stale_deploy_hold_is_remediated_directly_without_filing_a_task(cp, monkeypatch):
+    # The whole point: releasing a stale hold must not depend on the
+    # task-execution pipeline (a coding agent, an OpenShell sandbox,
+    # attestation-signed evidence, PR review) -- that pipeline can itself be
+    # broken by the very hold being released (task_7d83fbce, 2026-09-03:
+    # agent_rocky's own fix attempt failed because ITS attestation key was
+    # one of the things left broken by an earlier interrupted deploy).
+    agent = _register_agent(cp, name="abandoned-by-deploy")
+    cp.set_agent_dispatch_hold(
+        agent.id, "mac admin fleet roll-forward repair retained after 20260901T151713Z"
+    )
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    real_now = sh._utcnow()
+    monkeypatch.setattr(sh, "_utcnow", lambda: real_now + timedelta(hours=2))
+    report = _sentinel(cp).run_once()
+
+    assert report["remediated_count"] == 1
+    finding = next(
+        f for f in report["findings"] if f["fingerprint"] == "stale_deploy_hold:%s" % agent.id
+    )
+    assert finding["action"] == "remediated"
+    assert cp.get_agent(agent.id).dispatch_hold is False
+    assert _self_heal_tasks(cp, "stale_deploy_hold:%s" % agent.id) == []
+    assert any(
+        n.event_type == "self_heal.remediated" and n.subject_id == agent.id
+        for n in cp.list_notifications()
+    )
+
+
 def test_stuck_draining_finding_waits_out_a_real_deploys_drain_window(cp, monkeypatch):
     agent = _register_agent(cp, name="draining-agent")
     cp.store.execute("UPDATE agents SET status='draining' WHERE id=?", (agent.id,))
