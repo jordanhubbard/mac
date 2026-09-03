@@ -951,7 +951,12 @@ def _sandbox_name() -> str:
         return explicit
     import uuid
 
-    return "mac-task-" + uuid.uuid4().hex[:12]
+    # openshell rejects sandbox names over 19 characters ("name exceeds
+    # maximum length (21 > 19)" was observed live with a 12-hex-char
+    # suffix, i.e. "mac-task-" (9) + 12 = 21). 8 hex chars keeps the total
+    # at 17, under the limit with margin, while still giving 32 bits of
+    # randomness -- ample for a per-task ephemeral sandbox name.
+    return "mac-task-" + uuid.uuid4().hex[:8]
 
 
 def _sandbox_identity_labels() -> List[str]:

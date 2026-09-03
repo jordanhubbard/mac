@@ -24,6 +24,24 @@ def test_compatibility_monkeypatch_changes_canonical_module(monkeypatch) -> None
     assert executor_sandbox._openshell_bin is sentinel
 
 
+def test_generated_sandbox_name_fits_openshells_length_limit(monkeypatch) -> None:
+    """openshell rejects sandbox names over 19 chars.
+
+    Live-reproduced: "mac-task-" + 12 hex chars (21 total) failed with
+    "name exceeds maximum length (21 > 19)", which then cascaded into every
+    later sandbox operation (upload, download, cleanup) failing with
+    "sandbox not found" -- the executor never even got a real sandbox to
+    fail *in*.
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX_NAME", raising=False)
+
+    name = sandbox._sandbox_name()
+
+    assert len(name) <= 19
+    assert name.startswith("mac-task-")
+
+
 def test_loopback_urls_are_rewritten_for_the_sandbox_host() -> None:
     sandbox = importlib.import_module("mac.executor_sandbox")
 

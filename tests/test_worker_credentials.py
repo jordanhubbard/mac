@@ -399,6 +399,41 @@ def test_vm_install_removes_shared_hub_bearer_aliases_without_touching_upstream_
     assert shared not in env_path.read_text(encoding="utf-8")
 
 
+def test_vm_install_rolls_every_fleet_scoped_worker_token_alias_forward(
+    tmp_path: Path,
+) -> None:
+    """MAC_WORKER_TOKEN__<FLEET> is a second name for the same credential.
+
+    mac.fleet_env resolution deliberately prefers the scoped form over the
+    flat MAC_WORKER_TOKEN (to stop a stale flat token from shadowing a
+    correct scoped one). If install only rotates the flat key, every
+    deployed worker keeps authenticating with a scoped token that is stale
+    by one or more rotations forever -- reproduced live as a worker that
+    heartbeats successfully but never proves worker_credential_authenticated,
+    permanently starving the deploy release-proof gate. A stale scoped value
+    equal to neither the previous nor the new token (i.e. stale by more than
+    one rotation) must still be rolled forward.
+    """
+    cp = _plane(ephemeral_dsn())
+    issue = _package_issue(WorkerCredentialLifecycle(cp.store))
+    env_path = tmp_path / "mac.env"
+    env_path.write_text(
+        "\n".join(
+            (
+                "MAC_WORKER_TOKEN=stale-flat-token-from-last-rotation",
+                "MAC_WORKER_TOKEN__MAC=even-staler-scoped-token-from-two-rotations-ago",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    install_vm_manifest(installation_manifest(issue), env_path, expected_agent_id="agent_alpha")
+    values = read_env_file(env_path)
+    assert values["MAC_WORKER_TOKEN"] == issue.token
+    assert values["MAC_WORKER_TOKEN__MAC"] == issue.token
+
+
 def test_kubernetes_apply_verifies_secret_readback_without_token_in_argv(
     tmp_path: Path,
 ) -> None:

@@ -81,7 +81,7 @@ def resolve(
          warning when ``base_name`` is a fleet-scoped credential.
     """
     src = os.environ if env is None else env
-    active_fleet = fleet or src.get("MAC_FLEET")
+    active_fleet = fleet or src.get("MAC_FLEET") or src.get("MAC_FLEET_NAME")
     scoped_value = _resolve_scoped(base_name, active_fleet, env=src)
     if scoped_value is not None:
         return scoped_value
@@ -313,7 +313,7 @@ def resolve_first(
     consistently.
     """
     src = os.environ if env is None else env
-    active_fleet = fleet or src.get("MAC_FLEET")
+    active_fleet = fleet or src.get("MAC_FLEET") or src.get("MAC_FLEET_NAME")
     names = list(base_names)
     for name in names:
         value = _resolve_scoped(name, active_fleet, env=src)
