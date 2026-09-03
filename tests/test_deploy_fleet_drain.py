@@ -4758,6 +4758,61 @@ printf '%s\n' "$result"
     ]
 
 
+def test_phase1_quiesce_forwards_daemon_timeout_overrides_to_the_node(tmp_path, monkeypatch):
+    # Regression: an operator-set MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS
+    # override reached deploy_host's phase-2 SSH command (see
+    # test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set) but NOT
+    # this phase-1 quiesce SSH command -- the one that actually stops the
+    # daemon and raises "managed OpenClaw stop wrapper timed out" when the
+    # node's 20s default is too tight. An override that never reaches the
+    # step it exists for is worthless; observed live on 2026-09-03: setting
+    # the override made no difference across repeated deploy attempts,
+    # every one failing at this exact quiesce step with the node's
+    # unmodified 20s default.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    quiesce = (
+        "quiesce_remote_agent_for_cohort() {"
+        + deploy.split("quiesce_remote_agent_for_cohort() {", 1)[1].split(
+            "\n}\n\nprepare_remote_mac_agent_deployment", 1
+        )[0]
+        + "\n}"
+    )
+    ssh_command_file = tmp_path / "ssh-command"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+DEPLOY_CONTROLLER_NONCE=controller
+PHASE1_QUIESCE_HELPER=/fixture/helper
+PHASE1_DAEMON_FUNCTIONS=/fixture/functions
+OPENSHELL_REVIEWED_CLI_VERSION=fixture-version
+GIT_REV=fixture-revision
+MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS=300
+MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS=600
+stable_worker_agent_id() {{ printf '%s\n' agent_fixture; }}
+phase1_restore_contract_digest_for_agent() {{ printf '%s\n' restore-sha; }}
+reviewed_openshell_cli_status_value() {{ printf '%s\n' "$2-sha"; }}
+fenced_remote_upload() {{ return 0; }}
+ssh_target_args() {{ printf '%s\\0' fixture-target; }}
+remote_deployment_fenced_exec() {{ printf '%s\n' fixture-fence; }}
+shell_quote() {{ printf '%q' "$1"; }}
+ssh() {{ printf '%s\n' "${{@: -1}}" > {shlex.quote(str(ssh_command_file))}; return 23; }}
+{quiesce}
+set +e
+quiesce_remote_agent_for_cohort fixture exact-generation systemd mac linux
+true
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    command = ssh_command_file.read_text(encoding="utf-8")
+    assert "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS=300" in command
+    assert "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS=600" in command
+    # Unset overrides must not appear as empty assignments (would fail-close
+    # bounded_number() on the node).
+    assert "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS=" not in command
+    assert "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS=" not in command
+    assert "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS=" not in command
+    assert "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS=" not in command
+
+
 def test_recovery_aborts_unmutated_pre_route_without_route_attestation(tmp_path):
     # The journal classifier can report direction=abort_unmutated for a
     # transaction that never bound a route identity or mutated the hub/nodes
