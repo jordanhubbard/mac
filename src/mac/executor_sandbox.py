@@ -5008,7 +5008,9 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
     return "unverified"
 
 
-_SANDBOX_CODING_AGENT_BINARIES = frozenset({"claude", "codex", "cursor", "cursor-agent"})
+_SANDBOX_CODING_AGENT_BINARIES = frozenset(
+    {"claude", "codex", "cursor", "cursor-agent", "opencode", "pi"}
+)
 
 
 def coding_agent_sandbox_which(name: str) -> Optional[str]:
