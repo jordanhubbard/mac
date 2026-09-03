@@ -123,6 +123,70 @@ def test_recovery_manifest_install_is_owner_only_atomic_and_one_use(tmp_path):
     assert os.stat(env_file).st_mode & 0o077 == 0
 
 
+def test_recovery_install_does_not_clobber_a_concurrent_generation_write(tmp_path):
+    """A deploy's env-file write must survive a concurrent attestation install.
+
+    Both writers do read-whole-file -> mutate one key -> write-whole-file back.
+    Without mutual exclusion, whichever write lands last silently discards the
+    other's key -- this is exactly what made a live deploy's freshly-written
+    MAC_WORKER_DEPLOY_GENERATION vanish from mac.env, which then made every
+    later generation-match guard (including the release barrier's) fail
+    forever. Holding the env file's lock from the main thread while a
+    background thread runs the attestation install proves the install
+    actually blocks on the lock (rather than racing ahead), and that both
+    writers' keys survive once both have run.
+    """
+    import threading
+    import time
+
+    from mac.deploy_env import env_file_lock, read_env_file, write_env_file
+
+    env_file = tmp_path / "mac.env"
+    _write_env(env_file, "old-key-that-is-at-least-thirty-two-bytes")
+    manifest_path = tmp_path / "recovery.json"
+    manifest_path.write_text(
+        json.dumps(
+            recovery_manifest(
+                "agent_worker", "deployment-2", "new-key-that-is-at-least-thirty-two-bytes"
+            )
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.chmod(0o600)
+
+    install_started = threading.Event()
+    install_finished = threading.Event()
+
+    def run_install():
+        install_started.set()
+        install_recovery_manifest(
+            manifest_path,
+            env_file,
+            expected_agent_id="agent_worker",
+            expected_deployment_id="deployment-2",
+        )
+        install_finished.set()
+
+    thread = threading.Thread(target=run_install)
+    with env_file_lock(env_file):
+        values = read_env_file(env_file)
+        values["MAC_WORKER_DEPLOY_GENERATION"] = "generation-abc"
+        thread.start()
+        install_started.wait(timeout=5)
+        # The install thread is blocked waiting for the lock we hold; give it
+        # a moment to prove it hasn't raced ahead before we write and release.
+        time.sleep(0.2)
+        assert not install_finished.is_set()
+        write_env_file(env_file, values)
+
+    thread.join(timeout=5)
+    assert install_finished.is_set()
+
+    final = read_env_file(env_file)
+    assert final["MAC_WORKER_DEPLOY_GENERATION"] == "generation-abc"
+    assert "new-key" in final["MAC_ATTESTATION_KEY"]
+
+
 def test_recovery_install_rejects_public_or_symlink_manifest(tmp_path):
     with pytest.raises(DeploymentAttestationError, match="unreadable"):
         install_recovery_manifest(
@@ -333,7 +397,9 @@ def test_recovery_install_replace_failure_is_atomic_and_preserves_manifest(tmp_p
         )
     assert source.exists()
     assert destination.read_text(encoding="utf-8") == original
-    assert list(tmp_path.glob("mac.env.*")) == []
+    # mac.env.lock is expected, persistent lock-sidecar state (env_file_lock);
+    # only leftover temp-write artifacts would indicate a non-atomic failure.
+    assert list(tmp_path.glob("mac.env.*tmp*")) == []
 
 
 def test_command_handoff_writes_private_probe_and_install_artifacts(tmp_path, capsys):

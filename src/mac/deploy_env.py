@@ -7,9 +7,11 @@ or deploy venv exists.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
+import fcntl
 import ipaddress
 import os
 import re
@@ -17,7 +19,7 @@ import secrets
 import shlex
 import sys
 import urllib.parse
-from typing import Callable, Dict, Mapping, MutableMapping, Optional, Sequence
+from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Optional, Sequence
 
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
 from mac.mesh_bind import (
@@ -263,6 +265,32 @@ def read_env_file(path: Path) -> Dict[str, str]:
     if not path.exists():
         return {}
     return parse_env_text(path.read_text(encoding="utf-8"))
+
+
+@contextmanager
+def env_file_lock(path: Path) -> Iterator[None]:
+    """Serialize read-modify-write access to a deployment env file.
+
+    Several independent processes (deploy generation/barrier writes,
+    attestation-key installation) each read the whole env file, change one
+    key, and write the whole file back. Without mutual exclusion, whichever
+    write lands last silently discards the other's key -- observed in
+    practice as a deploy generation write being clobbered back to a stale
+    value by a concurrent attestation-key install, which then makes every
+    later generation-match guard fail. Callers must perform their full
+    read-modify-write cycle inside this context.
+    """
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 _ENV_SAFE = re.compile(r"^[A-Za-z0-9_./:@=,+%-]*$")
