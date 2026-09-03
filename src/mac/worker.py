@@ -103,6 +103,7 @@ from mac.repository_contract import (
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.persistence_redaction import redact_for_persistence
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -387,6 +388,25 @@ class WorkerExecution:
     @property
     def succeeded(self) -> bool:
         return self.returncode == 0
+
+
+def _redact_worker_text(value: str) -> str:
+    redacted = redact_for_persistence(value)
+    return re.sub(
+        r"\S+",
+        lambda match: redact_for_persistence(match.group(0)),
+        redacted,
+    )
+
+
+def _redact_worker_execution(execution: WorkerExecution) -> WorkerExecution:
+    return WorkerExecution(
+        returncode=execution.returncode,
+        summary=_redact_worker_text(execution.summary),
+        stdout=_redact_worker_text(execution.stdout),
+        stderr=_redact_worker_text(execution.stderr),
+        metadata=redact_for_persistence(execution.metadata),
+    )
 
 
 @dataclass
@@ -1647,6 +1667,7 @@ class MacWorker(
             )
             started = time.monotonic()
             execution = self._execute_with_lease_renewal(task, lease, task_dir)
+            execution = _redact_worker_execution(execution)
             duration_ms = (time.monotonic() - started) * 1000.0
             self._observe_metric(
                 "worker.execution.duration_ms",
@@ -1697,6 +1718,7 @@ class MacWorker(
                 if _b_recovered:
                     started = time.monotonic()
                     execution = self._execute_with_lease_renewal(task, lease, task_dir)
+                    execution = _redact_worker_execution(execution)
             evidence = self._record_execution(
                 task_id,
                 task_dir,
@@ -4320,6 +4342,7 @@ class MacWorker(
         lease_id: str,
         attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         if execution.succeeded:

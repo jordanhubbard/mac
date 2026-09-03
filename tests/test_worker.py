@@ -38,7 +38,11 @@ from mac.fleet_learning import (
 )
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
-from mac.services import ControlPlane, sign_verification_manifest
+from mac.services import (
+    ControlPlane,
+    sign_verification_manifest,
+    verify_verification_manifest_signature,
+)
 from mac.worker import (
     MacWorker,
     SubprocessExecutor,
@@ -410,6 +414,118 @@ def test_mac_worker_submits_durable_evidence_artifacts(tmp_path: Path):
     stderr_artifact = cp.get_evidence_artifact(evidence.id, by_name["stderr.txt"]["id"])
     assert base64.b64decode(stdout_artifact["content_base64"]) == b"durable stdout\n"
     assert base64.b64decode(stderr_artifact["content_base64"]) == b"durable stderr\n"
+
+
+def test_record_execution_redacts_before_manifest_signing_and_artifact_capture(
+    tmp_path: Path,
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe operator result")
+    cp.claim_task(task.id, agent.id)
+    cp.start_task(task.id, agent.id)
+    client = TestClient(create_app(control_plane=cp))
+    leaked = "never-persist-this-value"
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        lambda _task, _task_dir: WorkerExecution(0, "unused"),
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    task_dir = tmp_path / task.id
+    task_dir.mkdir()
+    (task_dir / "task.json").write_text(
+        json.dumps({"task": task.to_dict()}),
+        encoding="utf-8",
+    )
+    execution = WorkerExecution(
+        0,
+        f"completed with CURSOR_AUTH_TOKEN={leaked}",
+        stdout=f"MAC_ATTESTATION_KEY={leaked}\n",
+        stderr=f"Authorization: Bearer {leaked}\n",
+        metadata={
+            "verification": {
+                "schema": "mac.worker_evidence.v1",
+                "status": "pass",
+                "evidence_type": "operator_result",
+                "result": f"MAC_CONTROL_PLANE_DB_PASSWORD={leaked}",
+            }
+        },
+    )
+
+    evidence_result = worker._record_execution(
+        task.id,
+        task_dir,
+        execution,
+        lease_id=cp.get_task(task.id).lease_id,
+    )
+
+    evidence = cp.get_evidence(evidence_result["id"])
+    serialized = json.dumps(evidence.to_dict(), sort_keys=True)
+    artifacts = cp.list_evidence_artifacts(evidence.id)
+    serialized_artifacts = json.dumps(
+        [
+            cp.get_evidence_artifact(evidence.id, artifact["id"])
+            for artifact in artifacts
+        ],
+        sort_keys=True,
+    )
+    assert leaked not in serialized
+    assert leaked not in serialized_artifacts
+    verification = evidence.metadata["verification"]
+    assert verify_verification_manifest_signature(
+        cp._agent_attestation_key(agent.id),
+        verification,
+        verification["signature"],
+    )
+
+
+def test_failed_execution_redacts_persisted_diagnostics_without_changing_returncode(
+    tmp_path: Path,
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe failed result", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+    leaked = "never-persist-this-value"
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        return WorkerExecution(
+            17,
+            f"RuntimeError: CURSOR_AUTH_TOKEN={leaked}",
+            stdout=f"build step failed\nMAC_ATTESTATION_KEY={leaked}\n",
+            stderr=f"Authorization: Bearer {leaked}\n",
+        )
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    evidence = cp.list_evidence(task.id)[0]
+    artifacts = cp.list_evidence_artifacts(evidence.id)
+    persisted = json.dumps(
+        {
+            "evidence": evidence.to_dict(),
+            "artifacts": [
+                cp.get_evidence_artifact(evidence.id, artifact["id"])
+                for artifact in artifacts
+            ],
+            "activity": cp.get_task(task.id).metadata.get("activity"),
+            "history": [event.to_dict() for event in cp.task_history(task.id)],
+        },
+        sort_keys=True,
+    )
+    assert leaked not in persisted
+    assert evidence.metadata["returncode"] == 17
+    assert "build step failed" in persisted
 
 
 def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
