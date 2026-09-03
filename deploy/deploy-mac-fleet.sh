@@ -8459,26 +8459,27 @@ import os
 import tempfile
 from pathlib import Path
 
-from mac.deploy_env import read_env_file, write_env_file
+from mac.deploy_env import env_file_lock, read_env_file, write_env_file
 
 env_path = Path(os.environ["MAC_DEPLOY_ENV_FILE"])
 barrier_path = Path(os.environ["MAC_DEPLOY_BARRIER_FILE"])
 generation = os.environ["MAC_DEPLOY_RESTART_GENERATION"]
-values = read_env_file(env_path)
-values["MAC_WORKER_DEPLOY_GENERATION"] = generation
-values["MAC_WORKER_DEPLOY_BARRIER_FILE"] = str(barrier_path)
-values["MAC_STARTUP_CLEAR_HOLD"] = "0"
-fd, raw = tempfile.mkstemp(prefix=env_path.name + ".", dir=str(env_path.parent))
-os.close(fd)
-tmp = Path(raw)
-try:
-    write_env_file(tmp, values)
-    os.replace(tmp, env_path)
-finally:
+with env_file_lock(env_path):
+    values = read_env_file(env_path)
+    values["MAC_WORKER_DEPLOY_GENERATION"] = generation
+    values["MAC_WORKER_DEPLOY_BARRIER_FILE"] = str(barrier_path)
+    values["MAC_STARTUP_CLEAR_HOLD"] = "0"
+    fd, raw = tempfile.mkstemp(prefix=env_path.name + ".", dir=str(env_path.parent))
+    os.close(fd)
+    tmp = Path(raw)
     try:
-        tmp.unlink()
-    except FileNotFoundError:
-        pass
+        write_env_file(tmp, values)
+        os.replace(tmp, env_path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 barrier_tmp = barrier_path.with_name(barrier_path.name + ".tmp.%s" % os.getpid())
 barrier_tmp.write_text(generation + "\n", encoding="utf-8")
 barrier_tmp.chmod(0o600)
