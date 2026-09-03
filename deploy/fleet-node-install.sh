@@ -7469,7 +7469,10 @@ def classify_live_task_sandbox(sandbox):
         return record
     if owner != "mac":
         return record
-    if kind not in managed_task_sandbox_kinds:
+    # Only executor task sandboxes carry a durable task lease. Verification
+    # and probe sandboxes can be owned by long-lived hub processes and must
+    # not be mistaken for worker work that can drain during a fleet rollout.
+    if kind != "task":
         return record
     if not pid_raw:
         return record
