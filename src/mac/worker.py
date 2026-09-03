@@ -235,18 +235,57 @@ def _env_float(name: str, default: float) -> float:
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 540.0
 
 
+#: Ceiling on how long this worker will hold itself out of dispatch waiting
+#: for the deploy controller's release call. deploy-mac-fleet.sh's own
+#: REMOTE_TYPED_BARRIER_RELEASE step is supposed to remove the barrier file
+#: once the node is safe to rejoin the cohort, but that release is not
+#: atomic with the barrier's creation: an interrupted deploy can die between
+#: the two, leaving the worker fenced forever with no external process ever
+#: coming back to unfence it. Observed live on 2026-09-03 (natasha stuck
+#: status=draining for hours after a deploy claimed "synchronized typed
+#: cohort finalized"). Real deploys observed on this fleet complete within
+#: ~15-20 minutes; 45 minutes is a conservative multiple that still resolves
+#: the fence in well under an hour rather than requiring an operator to
+#: notice and intervene by hand.
+DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS = 45 * 60.0
+
+
+def _deployment_barrier_max_age_seconds() -> float:
+    raw = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS")
+    if not raw:
+        return DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+    return value if value > 0 else DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+
+
 def _deployment_barrier_state() -> tuple[str, bool]:
-    """Return the configured rollout generation and whether its barrier is live."""
+    """Return the configured rollout generation and whether its barrier is live.
+
+    A barrier older than ``_deployment_barrier_max_age_seconds()`` is treated
+    as expired rather than live: the deploy that armed it is long past any
+    realistic completion window, so continuing to fence this worker out of
+    dispatch serves no one and nothing else is coming to release it (see the
+    constant's docstring above).
+    """
 
     generation = (os.environ.get("MAC_WORKER_DEPLOY_GENERATION") or "").strip()
     barrier = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_FILE") or ""
     if not generation or not barrier:
         return generation, False
+    barrier_path = Path(barrier)
     try:
-        barrier_generation = Path(barrier).read_text(encoding="utf-8").strip()
+        barrier_generation = barrier_path.read_text(encoding="utf-8").strip()
+        barrier_age = time.time() - barrier_path.stat().st_mtime
     except OSError:
-        barrier_generation = ""
-    return generation, barrier_generation == generation
+        return generation, False
+    if barrier_generation != generation:
+        return generation, False
+    if barrier_age > _deployment_barrier_max_age_seconds():
+        return generation, False
+    return generation, True
 
 
 def _deployment_heartbeat_payload(

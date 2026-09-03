@@ -3174,6 +3174,51 @@ def test_worker_generation_barrier_heartbeats_draining_until_authorized(
     assert authorized.resources["deployment_generation"] == generation
 
 
+def test_worker_generation_barrier_self_releases_past_its_max_age(monkeypatch, tmp_path: Path):
+    # deploy-mac-fleet.sh's REMOTE_TYPED_BARRIER_RELEASE step removes this
+    # file once it is safe to rejoin dispatch, but that release is not
+    # atomic with the barrier's creation: an interrupted deploy (observed
+    # live 2026-09-03, natasha stuck draining for hours after a deploy
+    # claimed full success) can die between the two with nothing external
+    # ever coming back to unfence the worker. Past a generous age ceiling
+    # the worker must stop waiting for that call.
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    client = TestClient(create_app(control_plane=cp))
+    barrier = tmp_path / "deploy-start-barrier"
+    generation = "sha256:revision:agent_worker:attempt-1"
+    barrier.write_text(generation + "\n", encoding="utf-8")
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_GENERATION", generation)
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_BARRIER_FILE", str(barrier))
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS", "60")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    monkeypatch.setattr(worker, "_maybe_start_coding_route_probe", lambda: None)
+    monkeypatch.setattr(worker, "_maybe_command_inventory_resources", lambda: {})
+
+    worker._heartbeat()
+    draining = cp.get_agent(agent.id)
+    assert draining.status == "draining"
+
+    # The barrier file is still present and still names this generation --
+    # only its age has changed. No release call, no external actor.
+    import os
+
+    stale_mtime = time.time() - 120
+    os.utime(barrier, (stale_mtime, stale_mtime))
+    worker._heartbeat()
+    self_released = cp.get_agent(agent.id)
+    assert self_released.status == "idle"
+    assert self_released.resources["deployment_generation"] == generation
+    # Nothing deleted the file; the worker just stopped honoring it.
+    assert barrier.exists()
+
+
 def test_worker_generation_barrier_registers_draining_atomically(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("barrier-worker-host", machine_id="machine_barrier")

@@ -343,6 +343,7 @@ class SelfHealingSentinel:
             "trigger": trigger,
             "finding_count": len(findings),
             "filed_count": sum(1 for a in actions if a.get("action") == "task_filed"),
+            "remediated_count": sum(1 for a in actions if a.get("action") == "remediated"),
             "escalated_count": sum(1 for a in actions if a.get("action") == "escalated"),
             "capped_count": sum(1 for a in actions if a.get("action") == "skipped"),
             "budget": self.config.max_tasks_per_cycle,
@@ -870,7 +871,53 @@ class SelfHealingSentinel:
             actions.append(action)
         return actions
 
+    #: Findings this sentinel can fix directly, in-process, without routing
+    #: through the task-execution pipeline (a coding agent, an OpenShell
+    #: sandbox, attestation-signed evidence, PR review). This exists because
+    #: routing an INFRASTRUCTURE fix through that pipeline is circular when
+    #: the infrastructure fault is what broke the pipeline: on 2026-09-03,
+    #: agent_rocky's own attempt at fixing a deploy defect failed because its
+    #: attestation key was one of the things left broken by an earlier
+    #: interrupted deploy -- it could not get its own fix verified. A finding
+    #: whose remediation is "release/reset one field this process can already
+    #: safely write" must not wait on the very system it is unblocking.
+    _DIRECT_REMEDIATIONS = ("stale_deploy_hold",)
+
+    def _remediate_directly(self, finding: Finding) -> Dict[str, Any]:
+        """Fix a finding in-process; return the outcome dict for the report.
+
+        Never raises: a remediation that fails falls back to filing a fix
+        task exactly as before, so a bug in the direct path degrades to the
+        pre-existing, slower-but-safe behavior rather than losing the finding.
+        """
+        if finding.kind == "stale_deploy_hold":
+            agent_id = str(finding.detail.get("agent_id") or "")
+            if not agent_id:
+                return {"action": "error", "error": "stale_deploy_hold finding missing agent_id"}
+            self.control_plane.clear_agent_dispatch_hold(agent_id)
+            self.control_plane.record_notification(
+                "self_heal.remediated",
+                "Self-heal released a stale deploy hold",
+                "%s\n\nReleased directly (mac agent resume equivalent) -- no fix "
+                "task was needed; this is an in-process infrastructure repair, "
+                "not a code change." % finding.summary,
+                subject_type="agent",
+                subject_id=agent_id,
+                metadata={"kind": finding.kind, "fingerprint": finding.fingerprint},
+            )
+            return {"action": "remediated", "agent_id": agent_id}
+        raise ValueError("no direct remediation registered for kind=%s" % finding.kind)
+
     def _act_on(self, finding: Finding, *, actor: str) -> Dict[str, Any]:
+        if finding.kind in self._DIRECT_REMEDIATIONS:
+            try:
+                return self._remediate_directly(finding)
+            except Exception:  # noqa: BLE001 - fall back to task filing below.
+                _log.warning(
+                    "direct remediation failed for %s; falling back to a fix task",
+                    finding.fingerprint,
+                    exc_info=True,
+                )
         active_task, completed_attempts, newest_completed = self._history_for(finding.fingerprint)
         if active_task is not None:
             return {"action": "in_progress", "task_id": getattr(active_task, "id", None)}

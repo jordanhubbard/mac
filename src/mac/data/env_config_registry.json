@@ -14334,6 +14334,17 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker deploy barrier max age seconds.",
+    "family": "worker",
+    "name": "MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker deploy generation.",
     "family": "worker",
     "name": "MAC_WORKER_DEPLOY_GENERATION",

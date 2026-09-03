@@ -1205,6 +1205,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_CREDENTIAL_VERSION` | str | consumer-defined | worker | Worker setting: worker credential version. |
 | `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
 | `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Worker setting: worker deploy barrier file. |
+| `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Worker setting: worker deploy barrier max age seconds. |
 | `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Worker setting: worker deploy generation. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |
