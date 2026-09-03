@@ -97,8 +97,12 @@ def run_setup_fleet(args: Sequence[str]) -> int:
 
 
 def deploy_env(env_file: Path | None = None) -> Dict[str, str]:
-    env = dict(os.environ)
-    env.update(parse_env_file((env_file or DEFAULT_ENV_FILE).expanduser()))
+    # The file supplies durable operator defaults; an explicit invocation
+    # override must reach deploy/deploy-mac-fleet.sh unchanged.  In particular,
+    # bounded recovery knobs are deliberately set on one deploy command and
+    # must not be silently reset by a stale value in ~/.mac/.env.
+    env = parse_env_file((env_file or DEFAULT_ENV_FILE).expanduser())
+    env.update(os.environ)
     env["PYTHON"] = sys.executable
     return env
 
