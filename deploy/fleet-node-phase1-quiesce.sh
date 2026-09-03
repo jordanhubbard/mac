@@ -1135,6 +1135,28 @@ def run_bounded(
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise QuiescenceFailure("phase-1 supervisor deadline expired")
+    started = time.monotonic()
+    # Manager argv contains only reviewed service identities. Including the
+    # operation and target makes a timeout actionable without exposing manager
+    # output or the ambient deployment environment.
+    operation = next(
+        (
+            value
+            for value in argv
+            if value
+            in {
+                "show",
+                "is-enabled",
+                "stop",
+                "start",
+                "print",
+                "bootout",
+                "status",
+            }
+        ),
+        "unknown",
+    )
+    target = argv[-1] if argv else "unknown"
     try:
         with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(
             mode="w+b"
@@ -1153,7 +1175,12 @@ def run_bounded(
                 # Every manager command owns a fresh process group so a timeout
                 # cannot strand sudo helpers or manager descendants.
                 _terminate_process_group(process)
-                raise QuiescenceFailure("phase-1 supervisor command timed out")
+                elapsed = time.monotonic() - started
+                raise QuiescenceFailure(
+                    "phase-1 supervisor command timed out: "
+                    "operation=%s target=%s elapsed_seconds=%.1f limit_seconds=%.1f"
+                    % (operation, target, elapsed, min(command_timeout, remaining))
+                )
             stdout_size = os.fstat(stdout_file.fileno()).st_size
             stderr_size = os.fstat(stderr_file.fileno()).st_size
             if (
@@ -3012,7 +3039,20 @@ except Exception as exc:
 PY
 }
 
-run_supervisor_phase1_operation
+supervisor_rc=0
+run_supervisor_phase1_operation || supervisor_rc=$?
+if [ "$supervisor_rc" -ne 0 ]; then
+  if [ "$ACTION" = quiesce ]; then
+    if MAC_PHASE1_SUPERVISOR_COMPENSATE=1 run_supervisor_phase1_operation; then
+      printf '%s\n' \
+        "phase-1 supervisor operation failed; supervisor restored to its pre-attempt state" >&2
+    else
+      printf '%s\n' \
+        "phase-1 supervisor operation failed AND supervisor compensation failed; worker service may be stopped" >&2
+    fi
+  fi
+  exit "$supervisor_rc"
+fi
 
 if [ "$ACTION" = resume_media ]; then
   printf 'phase-1 media resume complete: agent=%s generation=%s proof=%s\n' \

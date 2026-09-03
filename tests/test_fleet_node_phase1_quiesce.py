@@ -434,6 +434,10 @@ case "$command" in
     ;;
   stop)
     unit=${1:?}
+    if [ "${FAKE_SYSTEMD_MODE:-normal}" = timeout-after-agent-stop ] \
+        && [ "$unit" = mac-hermes-gateway.service ]; then
+      sleep 30
+    fi
     : > "$FAKE_SYSTEMD_STATE/$unit"
     printf 'systemd:%s\\n' "$unit" >> "$FAKE_PHASE1_EVENTS"
     ;;
@@ -1015,6 +1019,10 @@ def test_supervisor_subprocess_timeout_is_bounded(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "command timed out" in result.stderr
+    assert "operation=show" in result.stderr
+    assert "target=mac-agent.service" in result.stderr
+    assert "elapsed_seconds=" in result.stderr
+    assert "limit_seconds=0.5" in result.stderr
     assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
     child_pid = int(Path(env["FAKE_TIMEOUT_CHILD_PID_FILE"]).read_text(encoding="utf-8"))
     child_deadline = time.monotonic() + 15
@@ -1026,6 +1034,31 @@ def test_supervisor_subprocess_timeout_is_bounded(tmp_path: Path) -> None:
         time.sleep(0.01)
     else:
         pytest.fail("timed-out supervisor command left a child process running")
+
+
+def test_supervisor_failure_restores_services_stopped_before_later_timeout(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env.update(
+        {
+            "FAKE_SYSTEMD_STATE": str(state),
+            "FAKE_SYSTEMD_MODE": "timeout-after-agent-stop",
+            "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS": "0.5",
+            "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "8",
+        }
+    )
+    _install_systemctl(tmp_path / "bin")
+
+    result = _run(env)
+
+    assert result.returncode != 0
+    assert "operation=stop" in result.stderr
+    assert "target=mac-hermes-gateway.service" in result.stderr
+    assert "supervisor restored to its pre-attempt state" in result.stderr
+    assert not (state / "mac-agent.service").exists()
 
 
 def test_supervisor_output_is_kernel_capped_while_command_runs(tmp_path: Path) -> None:
