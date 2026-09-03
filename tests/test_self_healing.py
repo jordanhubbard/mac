@@ -165,6 +165,59 @@ def test_stuck_quarantine_finding_ignores_operator_holds(cp, monkeypatch):
     assert ("stuck_quarantine:%s" % manual.id) not in fingerprints
 
 
+def test_stale_deploy_hold_finding_ignores_other_hold_reasons(cp, monkeypatch):
+    abandoned = _register_agent(cp, name="abandoned-by-deploy")
+    quarantined = _register_agent(cp, name="zombie")
+    interactive = _register_agent(cp, name="interactive-session")
+    # The exact reason string deploy/deploy-mac-fleet.sh stamps on a hold it
+    # never releases (hold_reason="mac admin fleet roll-forward repair
+    # retained after ${deploy_ts}").
+    cp.set_agent_dispatch_hold(
+        abandoned.id, "mac admin fleet roll-forward repair retained after 20260901T151713Z"
+    )
+    cp.set_agent_dispatch_hold(quarantined.id, "auto_quarantine:consecutive_expiries_no_telemetry")
+    cp.set_agent_dispatch_hold(interactive.id, "Interactive Cursor session; do not dispatch")
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    real_now = sh._utcnow()
+    monkeypatch.setattr(sh, "_utcnow", lambda: real_now + timedelta(hours=2))
+    report = _sentinel(cp).run_once()
+    fingerprints = [f["fingerprint"] for f in report["findings"]]
+    assert ("stale_deploy_hold:%s" % abandoned.id) in fingerprints
+    assert ("stale_deploy_hold:%s" % quarantined.id) not in fingerprints
+    assert ("stale_deploy_hold:%s" % interactive.id) not in fingerprints
+
+
+def test_stale_deploy_hold_waits_out_the_grace_period(cp):
+    agent = _register_agent(cp, name="mid-deploy")
+    cp.set_agent_dispatch_hold(
+        agent.id, "mac admin fleet roll-forward repair retained after 20260901T151713Z"
+    )
+    # Fresh hold: a deploy could still legitimately own it right now.
+    report = _sentinel(cp).run_once()
+    fingerprints = [f["fingerprint"] for f in report["findings"]]
+    assert ("stale_deploy_hold:%s" % agent.id) not in fingerprints
+
+
+def test_stuck_draining_finding_waits_out_a_real_deploys_drain_window(cp, monkeypatch):
+    agent = _register_agent(cp, name="draining-agent")
+    cp.store.execute("UPDATE agents SET status='draining' WHERE id=?", (agent.id,))
+
+    # Freshly drained: could be a real, in-progress deploy.
+    report = _sentinel(cp).run_once()
+    assert ("stuck_draining:%s" % agent.id) not in [f["fingerprint"] for f in report["findings"]]
+
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    real_now = sh._utcnow()
+    monkeypatch.setattr(sh, "_utcnow", lambda: real_now + timedelta(hours=1))
+    report = _sentinel(cp).run_once()
+    fingerprints = [f["fingerprint"] for f in report["findings"]]
+    assert ("stuck_draining:%s" % agent.id) in fingerprints
+
+
 # ── act: dedupe ──────────────────────────────────────────────────────────────
 
 
