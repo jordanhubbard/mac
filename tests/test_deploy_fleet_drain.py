@@ -1140,6 +1140,36 @@ def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
         assert name in deploy
 
 
+def test_hub_agent_restart_gate_poll_ceiling_is_configurable_not_hardcoded():
+    # Regression: hub_agent_restart_gate's three poll loops
+    # (prepare-new/verify/arm-release) each bounded themselves at
+    # `min(timeout, 300.0)` -- a bare literal that ignored
+    # MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS entirely, so an operator who set that
+    # to something larger got no relief. Live-confirmed on 2026-09-03: a
+    # freshly-restarted worker's mac-agent restart had been deferred through
+    # a long preceding OpenClaw verification sequence, so it had not
+    # published a single heartbeat yet when this 300s clock started --
+    # "deployment release proof failed: agent lacks strict idle,
+    # dispatch-ready health, generation, hold, lease, credential, or
+    # report-executor proof" every time, with no way to grant it more time.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "min(timeout, 300.0)" not in deploy
+    # 3 poll loops (prepare-new/verify/arm-release) plus 1 explanatory
+    # comment naming the pattern.
+    assert deploy.count("min(timeout, gate_max_wait)") == 4
+    assert (
+        'gate_max_wait = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_MAX_WAIT") or "300"))'
+        in deploy
+    )
+    # Same default (300s) preserved when the operator sets nothing, and the
+    # override is threaded all the way from the local env through the SSH
+    # command that runs the gate on the hub.
+    assert (
+        'MAC_DEPLOY_GATE_MAX_WAIT=$(shell_quote "${MAC_DEPLOY_GATE_MAX_WAIT_SECONDS:-300}")'
+        in deploy
+    )
+
+
 def _arm_phase2_rollback_source():
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     return (

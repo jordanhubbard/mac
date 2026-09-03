@@ -2625,6 +2625,28 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy gate max wait.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_MAX_WAIT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate max wait seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_MAX_WAIT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy gate phase.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GATE_PHASE",
@@ -6893,6 +6915,7 @@
     "name": "MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
@@ -6961,6 +6984,7 @@
     "name": "MAC_LAUNCHD_POLL_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "int"
@@ -6983,6 +7007,7 @@
     "name": "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "int"

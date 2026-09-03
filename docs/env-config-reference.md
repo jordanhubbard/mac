@@ -222,6 +222,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID` | str | consumer-defined | deployment | Deployment setting: deploy gate expected principal id. |
 | `MAC_DEPLOY_GATE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy gate generation. |
 | `MAC_DEPLOY_GATE_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate hold reason. |
+| `MAC_DEPLOY_GATE_MAX_WAIT` | str | consumer-defined | deployment | Deployment setting: deploy gate max wait. |
+| `MAC_DEPLOY_GATE_MAX_WAIT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy gate max wait seconds. |
 | `MAC_DEPLOY_GATE_PHASE` | str | consumer-defined | deployment | Deployment setting: deploy gate phase. |
 | `MAC_DEPLOY_GATE_PRIOR_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate prior hold reason. |
 | `MAC_DEPLOY_GATE_PRIOR_OWNED` | str | consumer-defined | deployment | Deployment setting: deploy gate prior owned. |

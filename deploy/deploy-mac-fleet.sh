@@ -4046,7 +4046,7 @@ hub_agent_restart_gate() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_GATE_PHASE=$(shell_quote "$phase") MAC_DEPLOY_GATE_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_GATE_GENERATION=$(shell_quote "$generation") MAC_DEPLOY_GATE_BASELINE=$(shell_quote "$baseline_seen") MAC_DEPLOY_GATE_HOLD_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_GATE_PRIOR_HOLD_REASON=$(shell_quote "$prior_hold_reason") MAC_DEPLOY_GATE_PRIOR_OWNED=$(shell_quote "$prior_owned") MAC_DEPLOY_GATE_ALLOW_MISSING=$(shell_quote "$allow_missing") MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED=$(shell_quote "$require_authenticated") MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID=$(shell_quote "$expected_principal_id") MAC_DEPLOY_GATE_ADOPT_REASON=$(shell_quote "$authorized_prior_reason") MAC_DEPLOY_GATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR=$(shell_quote "$require_report_executor") MAC_DEPLOY_GATE_TIMEOUT=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}") bash -s" <<'REMOTE_HUB_GATE'
+    "MAC_DEPLOY_GATE_PHASE=$(shell_quote "$phase") MAC_DEPLOY_GATE_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_GATE_GENERATION=$(shell_quote "$generation") MAC_DEPLOY_GATE_BASELINE=$(shell_quote "$baseline_seen") MAC_DEPLOY_GATE_HOLD_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_GATE_PRIOR_HOLD_REASON=$(shell_quote "$prior_hold_reason") MAC_DEPLOY_GATE_PRIOR_OWNED=$(shell_quote "$prior_owned") MAC_DEPLOY_GATE_ALLOW_MISSING=$(shell_quote "$allow_missing") MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED=$(shell_quote "$require_authenticated") MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID=$(shell_quote "$expected_principal_id") MAC_DEPLOY_GATE_ADOPT_REASON=$(shell_quote "$authorized_prior_reason") MAC_DEPLOY_GATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR=$(shell_quote "$require_report_executor") MAC_DEPLOY_GATE_TIMEOUT=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}") MAC_DEPLOY_GATE_MAX_WAIT=$(shell_quote "${MAC_DEPLOY_GATE_MAX_WAIT_SECONDS:-300}") bash -s" <<'REMOTE_HUB_GATE'
 set -euo pipefail
 set -a
 # shellcheck source=/dev/null -- owner-only hub deployment environment.
@@ -4079,6 +4079,17 @@ require_report_executor = (
     os.environ.get("MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR", "0") == "1"
 )
 timeout = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_TIMEOUT") or "1800"))
+# Every poll loop below bounds itself at min(timeout, gate_max_wait) rather
+# than at `timeout` directly, as a fail-fast safety net independent of
+# whatever MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS an operator configured. That net
+# used to be a bare 300.0 with no override at all -- on 2026-09-03 a
+# freshly-restarted worker still had not published a single heartbeat by the
+# time this poll started (its restart had been deferred through a long
+# preceding OpenClaw verification sequence), so a real, healthy restart
+# could not possibly clear the "arm"/"release" gate's several simultaneous
+# conditions within that fixed 300s regardless of how long the operator was
+# willing to wait. Same default as before; now actually overridable.
+gate_max_wait = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_MAX_WAIT") or "300"))
 hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
 token = os.environ.get("MAC_DEPLOY_GATE_ADMIN_TOKEN") or ""
 if not hub_url or not token or not agent_id:
@@ -4273,7 +4284,7 @@ if phase == "legacy-bootstrap":
     raise SystemExit(0)
 
 if phase == "prepare-new":
-    deadline = time.monotonic() + min(timeout, 300.0)
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
     while agent_row(missing_ok=True) is None:
         if time.monotonic() >= deadline:
             raise RuntimeError(
@@ -4372,7 +4383,7 @@ elif phase == "verify":
     if not generation or not baseline_text:
         raise RuntimeError("restart verification lacks generation or hub baseline")
     baseline = parse_seen(baseline_text)
-    deadline = time.monotonic() + min(timeout, 300.0)
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
     last_error = "heartbeat not observed"
     while time.monotonic() < deadline:
         row = agent_row()
@@ -4398,7 +4409,7 @@ elif phase in {"arm", "release"}:
     if not generation or not baseline_text:
         raise RuntimeError("deployment release lacks generation or hub baseline")
     baseline = parse_seen(baseline_text)
-    deadline = time.monotonic() + min(timeout, 300.0)
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
     last_error = "worker-generated idle heartbeat not observed"
     while time.monotonic() < deadline:
         row = agent_row()
