@@ -14077,7 +14077,7 @@ PY
 }
 
 recover_cohort_node() {
-  local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4"
+  local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4" hub_agent="$5"
   local values agent stable_id runtime_generation deployment_id deploy_ts source_commit
   local os_kind supervisor requested_action restore_contract_sha256 probe action evidence
   local phase2_evidence phase1_evidence
@@ -14207,6 +14207,40 @@ PY
   if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
     return 1
   fi
+  if [ "$action" = retain_forward ]; then
+    # retain_forward preserves node state as-is, including any attestation
+    # candidate key that install_and_prove_attestation_candidate already
+    # installed before the hub epoch aborted. Hub abort discards the pending
+    # candidate row, so the node's installed key and the hub's registered
+    # authoritative key can now diverge -- the node keeps signing with a key
+    # the hub no longer recognizes (or vice versa). Reconcile now: probe the
+    # node, verify against the hub's currently registered key, and only
+    # rotate if that verification fails. No split authority may survive
+    # this recovery step.
+    #
+    # reconcile_bound_worker_attestation_key asserts (does not acquire) a
+    # lock under its own freshly computed deployment_id_for_agent -- the
+    # aborted generation's lock above was already released, so acquire a new
+    # one under that exact id for this standalone reconciliation, distinct
+    # from both the aborted generation and any later fresh deployment.
+    [ -n "$hub_agent" ] || {
+      echo "ERROR: ${agent}: retain_forward recovery lacks the hub agent needed to reconcile attestation authority" >&2
+      return 1
+    }
+    local reconcile_deployment_id
+    reconcile_deployment_id="$(deployment_id_for_agent "$agent")"
+    if ! acquire_remote_deployment_lock "$agent" "$reconcile_deployment_id" 0; then
+      return 1
+    fi
+    if ! reconcile_bound_worker_attestation_key \
+      "$agent" "$hub_agent" "$supervisor" "$fleet_name"; then
+      release_remote_deployment_lock "$agent" "$reconcile_deployment_id" >/dev/null 2>&1 || true
+      return 1
+    fi
+    if ! release_remote_deployment_lock "$agent" "$reconcile_deployment_id"; then
+      return 1
+    fi
+  fi
   if ! cohort_journal_mutate aborted-node "$epoch_id" \
     "$COHORT_JOURNAL_REVISION" "aborted-${stable_id}" "$owner_nonce" \
     --agent-name "$agent" --stable-id "$stable_id" \
@@ -14313,7 +14347,7 @@ PY
   while IFS= read -r candidate_b64; do
     [ -n "$candidate_b64" ] || continue
     recover_cohort_node \
-      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64"
+      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"
   done < <(printf '%s' "$status" | "$PYTHON_BIN" -c '
 import base64,json,sys
 status=json.load(sys.stdin)
@@ -14863,7 +14897,7 @@ PY
     while IFS= read -r candidate_b64; do
       [ -n "$candidate_b64" ] || continue
       if ! recover_cohort_node \
-        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64"; then
+        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"; then
         return 1
       fi
     done < "$candidates_file"
