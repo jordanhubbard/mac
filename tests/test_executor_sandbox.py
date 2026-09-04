@@ -42,6 +42,36 @@ def test_generated_sandbox_name_fits_openshells_length_limit(monkeypatch) -> Non
     assert name.startswith("mac-task-")
 
 
+def test_coding_agent_preflight_probe_sandbox_name_fits_length_limit() -> None:
+    """A second, separate name-generation site with the same 19-char bug.
+
+    "mac-codingcap-<agent>-<12 hex>" was 29-35 chars depending on agent
+    (e.g. "mac-codingcap-opencode-...") -- every coding-agent preflight
+    failed to even create its probe sandbox with "name exceeds maximum
+    length", surfacing as an opaque "probe_failed"/"route verification
+    failed" for every configured CLI. Live-reproduced on a real fleet node
+    after the primary _sandbox_name() fix was already deployed.
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+
+    name = sandbox._coding_agent_probe_sandbox_name()
+
+    assert len(name) <= 19
+
+
+def test_read_only_verifier_sandbox_name_fits_length_limit() -> None:
+    """A third name-generation site with the same 19-char bug.
+
+    "<task-sandbox-name>-verify-<8 hex>" derived from an already-shortened
+    17-char task sandbox name was still 33+ chars.
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+
+    name = sandbox._read_only_verifier_sandbox_name()
+
+    assert len(name) <= 19
+
+
 def test_loopback_urls_are_rewritten_for_the_sandbox_host() -> None:
     sandbox = importlib.import_module("mac.executor_sandbox")
 
