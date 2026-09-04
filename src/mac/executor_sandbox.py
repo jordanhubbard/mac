@@ -959,6 +959,37 @@ def _sandbox_name() -> str:
     return "mac-task-" + uuid.uuid4().hex[:8]
 
 
+_OPENSHELL_SANDBOX_NAME_MAX_LENGTH = 19
+
+
+def _coding_agent_probe_sandbox_name() -> str:
+    """A unique name for the throwaway coding-agent preflight probe sandbox.
+
+    "mac-codingcap-<agent>-<12 hex>" was 29-35 chars depending on agent --
+    every coding-agent preflight failed to even create its probe sandbox
+    with "name exceeds maximum length", surfacing as an opaque
+    "probe_failed"/"route verification failed" for every configured CLI.
+    The agent/route identity already lives in the sandbox's
+    mac.kind=codingcap label, so it isn't needed in the name too.
+    """
+    import uuid
+
+    return "mac-cc-%s" % uuid.uuid4().hex[:10]
+
+
+def _read_only_verifier_sandbox_name() -> str:
+    """A unique name for the read-only-report second verification sandbox.
+
+    "<task-sandbox-name>-verify-<8 hex>" derived from an already-shortened
+    17-char task sandbox name was still 33+ chars. This is a distinct
+    sandbox, so it gets its own compact name rather than deriving from the
+    parent task sandbox's.
+    """
+    import uuid
+
+    return "mac-vf-%s" % uuid.uuid4().hex[:10]
+
+
 def _sandbox_identity_labels() -> List[str]:
     """Durable lease-authority identity labels for the current executor.
 
@@ -3557,9 +3588,7 @@ def _sandbox_run_read_only_repository_verification(
     separately named sandbox, and downloads exactly one bounded result file.
     """
 
-    import uuid
-
-    verifier_name = "%s-verify-%s" % (name[:38], uuid.uuid4().hex[:8])
+    verifier_name = _read_only_verifier_sandbox_name()
     trusted = workspace / _TRUSTED_READ_ONLY_VERIFICATION_FILE
     trusted.unlink(missing_ok=True)
     try:
@@ -5171,9 +5200,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
     is NOT sufficient. The probe sandbox is always deleted."""
     from . import coding_agent as _ca
 
-    import uuid
-
-    name = "mac-codingcap-%s-%s" % (choice.agent, uuid.uuid4().hex[:12])
+    name = _coding_agent_probe_sandbox_name()
     with tempfile.TemporaryDirectory(prefix="mac-coding-agent-probe-") as tmp:
         private_dir = Path(tmp)
         sandbox_choice = _coding_agent_choice_for_sandbox(choice)
