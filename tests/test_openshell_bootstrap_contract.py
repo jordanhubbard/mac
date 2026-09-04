@@ -511,6 +511,10 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     )
     assert '"$OSH_DOCKER_BIN" run --rm "$OSH_SUPERVISOR_IMAGE" --version' in bootstrap
     assert '"openshell-sandbox $OPENSHELL_VERSION"' in bootstrap
+    assert '"$OSH_DOCKER_BIN" cp "$container_id:$entrypoint" "$extracted"' in bootstrap
+    assert 'install -m700 "$extracted" "$MAC_HOME/bin/openshell-sandbox"' in bootstrap
+    assert "if kind == 3:  # PT_INTERP" in bootstrap
+    assert "reviewed OpenShell supervisor is not statically linked" in bootstrap
     firewall = bootstrap.index("# --- 7. firewall :17670")
     gateway = bootstrap.index("# --- 8. gateway service + register")
     assert firewall < gateway
