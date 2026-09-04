@@ -854,7 +854,7 @@ def _coordination_section(task: Dict[str, Any]) -> str:
 
 
 def build_task_prompt(
-    task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None
+    task: Dict[str, Any], lessons: Optional[List[str]] = None
 ) -> str:
     """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
@@ -910,7 +910,18 @@ def build_task_prompt(
     lessons_section = _lessons_section(lessons or [])
     if lessons_section:
         parts.append(lessons_section)
-    parts.append("Read the full task from: %s" % str(task_file))
+    # NOT str(task_file): the prompt is built once, on the host, before the
+    # OpenShell sandbox exists. A host-absolute path baked in here (the
+    # worker's own $MAC_TASK_FILE, e.g. ~/.mac/agent-workspaces/task_.../
+    # task.json) does not exist inside the sandbox, where the file lands at
+    # /sandbox/<basename>/task.json instead. $MAC_TASK_FILE is exported by
+    # both the sandboxed and non-sandboxed execution paths pointing at
+    # whichever location is actually correct for that run, so deferring to
+    # it (matching the $MAC_TASK_WORKSPACE references above) resolves
+    # correctly either way. Live-reproduced: opencode read this line
+    # literally and tried the wrong (host) absolute path, which its own
+    # sandbox permission model then auto-rejected as "external_directory".
+    parts.append("Read the full task from: $MAC_TASK_FILE")
     return "\n\n".join(parts)
 
 

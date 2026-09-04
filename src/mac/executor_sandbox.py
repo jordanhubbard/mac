@@ -6006,7 +6006,6 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
             rc = _run_executor(
                 runner=runner,
                 task=task,
-                task_file=task_file,
                 task_workspace=task_workspace,
                 task_id=task_id,
                 review_context=review_context,
@@ -6172,7 +6171,6 @@ def _run_executor(
     *,
     runner: Callable[..., Any],
     task: Any,
-    task_file: Path,
     task_workspace: Path,
     task_id: Any,
     review_context: Any,
@@ -6297,10 +6295,10 @@ def _run_executor(
             except Exception:  # noqa: BLE001
                 plan_lessons = []
             combined_lessons = (lessons or []) + (plan_lessons or [])
-            prompt = build_planning_prompt(task, task_file, combined_lessons)
+            prompt = build_planning_prompt(task, combined_lessons)
             emit_telemetry("planning_phase_started", task_id=task_id, level="info")
         else:
-            prompt = build_task_prompt(task, task_file, lessons)
+            prompt = build_task_prompt(task, lessons)
             if _wanted_planning:
                 prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
 

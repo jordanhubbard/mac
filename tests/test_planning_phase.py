@@ -158,55 +158,58 @@ class TestIsPlanningPhase:
 class TestBuildPlanningPrompt:
     def test_contains_planning_mode_header(self, tmp_path: Path):
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "PLANNING MODE" in prompt
 
     def test_contains_trigger_reason_scope_estimate(self, tmp_path: Path):
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "scope_estimate.size=large" in prompt
 
     def test_contains_trigger_reason_plan_first(self, tmp_path: Path):
         task = _task(metadata={"plan_first": True})
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "plan_first=true" in prompt.lower() or "metadata.plan_first=true" in prompt
 
     def test_contains_logical_dependency_ordering(self, tmp_path: Path):
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "logical dependency ordering" in prompt
         assert "prerequisites run before dependents" in prompt
 
     def test_contains_children_endpoint(self, tmp_path: Path, monkeypatch):
         monkeypatch.setenv("MAC_HUB_URL", "http://hub.example.com")
         task = _large_task(title="T", task_id="task_abc123")
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "task_abc123" in prompt
         assert "/children" in prompt
 
     def test_contains_plan_decomposed_evidence_type(self, tmp_path: Path):
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "plan_decomposed" in prompt
 
     def test_contains_do_not_write_code_instruction(self, tmp_path: Path):
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert (
             "DO NOT write any code" in prompt
             or "NOT to implement" in prompt
             or "NOT implement" in prompt
         )
 
-    def test_contains_task_file_path(self, tmp_path: Path):
-        task_file = tmp_path / "task.json"
+    def test_contains_task_file_reference(self):
+        """Must defer to $MAC_TASK_FILE, not a host path baked in at build
+        time: the prompt is built on the host before the OpenShell sandbox
+        exists, so a literal host-absolute path is wrong once the prompt is
+        consumed inside the sandbox (see build_task_prompt)."""
         task = _large_task()
-        prompt = te.build_planning_prompt(task, task_file)
-        assert str(task_file) in prompt
+        prompt = te.build_planning_prompt(task)
+        assert "$MAC_TASK_FILE" in prompt
 
     def test_contains_children_schema_fields(self, tmp_path: Path):
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert '"node_id"' in prompt
         assert '"depends_on"' in prompt
         assert "List order alone NEVER implies a dependency" in prompt
@@ -216,12 +219,12 @@ class TestBuildPlanningPrompt:
     def test_injects_lessons(self, tmp_path: Path):
         task = _large_task()
         lessons = ["lesson one: always test", "lesson two: check deps first"]
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json", lessons=lessons)
+        prompt = te.build_planning_prompt(task, lessons=lessons)
         assert "lesson one" in prompt
 
     def test_returns_string(self, tmp_path: Path):
         task = _large_task()
-        result = te.build_planning_prompt(task, tmp_path / "task.json")
+        result = te.build_planning_prompt(task)
         assert isinstance(result, str)
         assert len(result) > 100
 
@@ -229,7 +232,7 @@ class TestBuildPlanningPrompt:
         monkeypatch.delenv("MAC_HUB_URL", raising=False)
         monkeypatch.delenv("MAC_URL", raising=False)
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "/children" in prompt  # fallback still mentions the endpoint path
 
 
@@ -412,7 +415,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_large001",
             review_context=None,
@@ -433,7 +435,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_large_atomic",
             review_context=None,
@@ -467,7 +468,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_large_nohub",
             review_context=None,
@@ -508,7 +508,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_empty_plan",
             review_context=None,
@@ -536,7 +535,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_large002",
             review_context=None,
@@ -560,7 +558,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_small001",
             review_context=None,
@@ -590,7 +587,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_planfirst001",
             review_context=None,
@@ -611,7 +607,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_rev001",
             review_context={"task_id": "task_original"},
@@ -646,7 +641,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_large003",
             review_context=None,
@@ -668,7 +662,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_child001",
             review_context=None,
@@ -685,7 +678,6 @@ class TestRunExecutorPlanningPhase:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_large_retry",
             review_context=None,
@@ -715,7 +707,7 @@ class TestLargeFixtureToChildren:
             title="Build the full authentication system with user management",
             description="Implement login, registration, profiles, sessions, and token rotation.",
         )
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
 
         assert "logical dependency ordering" in prompt
         assert "prerequisites run before dependents" in prompt
@@ -725,19 +717,19 @@ class TestLargeFixtureToChildren:
     def test_prompt_requires_two_to_ten_children(self, tmp_path: Path):
         """Planning prompt must require 2-10 child tasks."""
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "2-10" in prompt or "2 to 10" in prompt.lower()
 
     def test_prompt_requires_ordering_rationale(self, tmp_path: Path):
         """Plan manifest must include ordering_rationale field."""
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "ordering_rationale" in prompt
 
     def test_prompt_requires_coverage_claim(self, tmp_path: Path):
         """Plan manifest must include coverage_claim field."""
         task = _large_task()
-        prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+        prompt = te.build_planning_prompt(task)
         assert "coverage_claim" in prompt
 
     def test_plan_evidence_has_children_list(self, tmp_path: Path):

@@ -120,7 +120,7 @@ def test_render_reconcile_section_empty_without_snapshot():
     assert render_reconcile_section({"id": "t1", "title": "x"}) == ""
 
 
-def test_render_and_prompt_include_reconcile_facts_when_snapshot_attached(tmp_path):
+def test_render_and_prompt_include_reconcile_facts_when_snapshot_attached():
     task = {
         "id": "task_a0d06a48",
         "title": "stop `scripts/release.sh` from pushing main",
@@ -159,15 +159,14 @@ def test_render_and_prompt_include_reconcile_facts_when_snapshot_attached(tmp_pa
     assert "needs_restatement" in section
     assert "scripts/release.sh" in section
     assert "Do not treat these as already_published" in section
-    prompt = build_task_prompt(task, tmp_path / "task.json")
+    prompt = build_task_prompt(task)
     assert "Canonical HEAD reconcile" in prompt
     assert "repository tasks use evidence_type=repo_change" in prompt
 
 
-def test_non_repo_prompt_omits_reconcile_when_no_snapshot(tmp_path):
+def test_non_repo_prompt_omits_reconcile_when_no_snapshot():
     prompt = build_task_prompt(
         {"id": "t1", "title": "answer a question", "metadata": {}},
-        tmp_path / "task.json",
     )
     assert "Canonical HEAD reconcile" not in prompt
 

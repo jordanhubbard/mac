@@ -12939,7 +12939,7 @@ def test_decomposed_children_use_distinct_agents_and_feed_integrator(cp, tmp_pat
     assert not cp._agent_available_for(child_two_agent, integration_task)
     assert cp._agent_available_for(integrator, integration_task)
 
-    prompt = build_task_prompt(integration_task.to_dict(), tmp_path / "task.json")
+    prompt = build_task_prompt(integration_task.to_dict())
     assert "mandatory fan-in pass" in prompt
     assert "refs/heads" in prompt
     assert first_evidence.id in prompt and second_evidence.id in prompt

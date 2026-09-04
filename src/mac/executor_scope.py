@@ -338,7 +338,6 @@ def planning_phase_skip_notice(capability: Optional[Dict[str, Any]] = None) -> s
 
 def build_planning_prompt(
     task: Dict[str, Any],
-    task_file: Path,
     lessons: Optional[List[str]] = None,
 ) -> str:
     """Build the constrained prompt used for planning-only executor runs."""
@@ -408,7 +407,11 @@ def build_planning_prompt(
     lesson_text = _lessons_section(lessons or [])
     if lesson_text:
         parts.append(lesson_text)
-    parts.append("Read the full task from: %s" % str(task_file))
+    # See the matching comment in executor_prompt.py's build_task_prompt:
+    # a host-absolute path baked in here at build time is wrong once the
+    # prompt is consumed inside an OpenShell sandbox. $MAC_TASK_FILE is
+    # exported correctly for whichever context actually runs this prompt.
+    parts.append("Read the full task from: $MAC_TASK_FILE")
     parts.append(
         "Finally, for the per-task activity log, print a short plain-language recap "
         "of what you did and how you verified it (1-3 sentences, no code or diff), "
