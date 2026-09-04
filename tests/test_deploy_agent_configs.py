@@ -3188,7 +3188,14 @@ def test_executor_prompt_includes_repository_runtime_contract():
 
     assert "def repository_contract_section(task: Dict[str, Any]) -> str:" in script
     assert "Repository runtime contract:" in script
-    assert "metadata.runtime.repository_worktree" in script
+    assert "Use $MAC_TASK_REPO_WORKTREE as the only writable checkout." in script
+    # NOT advertised as an alternative: metadata.runtime.repository_worktree is a
+    # host-absolute path for the worker's own host-side orchestration, not one
+    # that exists inside the sandbox. An agent that read it and tried to access
+    # it directly was auto-rejected as "external_directory" -- the same failure
+    # mode $MAC_TASK_FILE's deferral fixed for task.json (see
+    # repository_contract_section's neighboring comment).
+    assert "metadata.runtime.repository_worktree" not in script
     assert "origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only" in script
     assert "Agent ownership ends with tested task-worktree changes" in script
     assert "deterministic host finalizer exclusively owns fetching" in script
