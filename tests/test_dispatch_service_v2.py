@@ -70,6 +70,30 @@ def test_pull_claim_triggers_global_round_and_ignores_request_filters():
     assert cp._active_assignment_for_agent(second_worker) is not None
 
 
+def test_pull_claims_explicit_target_without_global_allocation_round(monkeypatch):
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target")
+    task = cp.create_task(
+        "targeted",
+        project="mac",
+        required_capabilities=["python"],
+        metadata={"target_agent_id": target.id},
+    )
+
+    def global_round_must_not_run(**_kwargs):
+        raise AssertionError("explicit target should use the bounded direct path")
+
+    monkeypatch.setattr(cp.dispatch, "_allocate_v2_round", global_round_must_not_run)
+
+    assignment = cp.claim_next_for_agent(target.id)
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+    assert assignment["agent"]["id"] == target.id
+    assert cp.get_task(task.id).state == TaskState.CLAIMED.value
+
+
 def test_idle_pull_is_write_free_and_does_not_claim_reconciliation_leases():
     cp = ControlPlane.in_memory()
     active_project(cp)
@@ -265,3 +289,25 @@ def test_explain_non_open_task_uses_v2_task_rejection():
     assert explanation["task_ready"] is False
     assert explanation["dispatchable"] is False
     assert [reason["code"] for reason in explanation["task_reasons"]] == ["task_not_open"]
+
+
+def test_explain_builds_sync_barrier_state_once_for_all_agents(monkeypatch):
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    worker(cp, "first")
+    worker(cp, "second")
+    task = cp.create_task("explain", project="mac", required_capabilities=["python"])
+    calls = 0
+    real_non_terminal_tasks = cp._non_terminal_tasks
+
+    def counted_non_terminal_tasks():
+        nonlocal calls
+        calls += 1
+        return real_non_terminal_tasks()
+
+    monkeypatch.setattr(cp, "_non_terminal_tasks", counted_non_terminal_tasks)
+
+    explanation = cp.dispatch.explain_task_dispatch(task.id)
+
+    assert explanation["candidate_count"] == 2
+    assert calls == 1

@@ -622,6 +622,8 @@ class DispatchService:
             task_id.id if isinstance(task_id, Task) else str(task_id)
         )
         candidate_agents = list(agents) if agents is not None else self.control_plane.list_agents()
+        if sync_states is None:
+            sync_states = self._sync_barrier_states()
         agent_ids_by_name: Dict[str, List[str]] = {}
         for agent in candidate_agents:
             agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
@@ -706,6 +708,47 @@ class DispatchService:
                 },
             )
         return result
+
+    def _claim_targeted_task_for_agent(
+        self,
+        agent: Any,
+        *,
+        lease_seconds: int,
+    ) -> Optional[JsonDict]:
+        """Claim an explicit agent-id target without rebuilding a global round."""
+
+        rows = self.control_plane.store.query_all(
+            "SELECT * FROM tasks WHERE state = ? "
+            "AND json_extract(metadata, '$.target_agent_id') = ? "
+            "ORDER BY priority DESC, created_at, id LIMIT 100",
+            (TaskState.OPEN.value, agent.id),
+        )
+        if not rows:
+            return None
+        projects = {record.name: record for record in self.control_plane.list_project_records()}
+        agent_snapshot = self._v2_snapshot_agent(
+            agent,
+            self._sync_barrier_states(),
+        )
+        for row in rows:
+            task = self.control_plane._task_from_row(row)
+            task_snapshot = self._v2_snapshot_task(
+                task,
+                projects=projects,
+                agent_ids_by_name={agent.name: [agent.id]},
+            )
+            if not evaluate_pair(task_snapshot, agent_snapshot).allowed:
+                continue
+            try:
+                claimed = self.control_plane.claim_task_v2(
+                    task.id,
+                    agent.id,
+                    lease_seconds=lease_seconds,
+                )
+            except (AuthorizationError, TransitionError, ValidationError):
+                continue
+            return dict(claimed) if isinstance(claimed, Mapping) else claimed
+        return None
 
     def _allocation_v2_inputs(
         self,
@@ -1102,6 +1145,12 @@ class DispatchService:
             assignment = self.control_plane._active_assignment_for_agent(agent)
             if assignment is not None:
                 return assignment
+            targeted = self._claim_targeted_task_for_agent(
+                agent,
+                lease_seconds=lease_seconds,
+            )
+            if targeted is not None:
+                return targeted
 
         if dry_run:
             result, _tasks_by_id, _agents_by_id = self._allocate_v2_round(
