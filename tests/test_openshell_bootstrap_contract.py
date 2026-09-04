@@ -284,6 +284,31 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert all("--env" not in line and " -- " not in line for line in create_arg_lines)
 
 
+def test_bootstrap_pins_the_managed_gateway_endpoint_into_mac_env():
+    """Live-found on natasha (2026-09-04): the openshell CLI's own persisted
+    "active gateway" selection is local, unrelated state that any other
+    process (a NemoClaw pilot, in this case) can silently repoint. Because
+    mac-agent's executor never explicitly set OPENSHELL_GATEWAY_ENDPOINT, it
+    inherited whatever gateway happened to be selected, and every
+    coding-agent sandbox preflight probe (all 5 configured agents) failed
+    uniformly with no per-agent credential explanation -- they were all
+    quietly hitting the wrong gateway. bootstrap-openshell.sh must pin this
+    into mac.env exactly like it already pins its own
+    openshell_local_gateway() calls to OPENSHELL_LOCAL_GATEWAY_ENDPOINT, so
+    mac-agent's process (which sources mac.env) is immune to that drift."""
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"' in script
+    recipe = script.split('# --- 11. env recipe in mac.env', 1)[1].split(
+        "# sanity: mac.env must still source cleanly", 1
+    )[0]
+    assert 'echo "OPENSHELL_GATEWAY_ENDPOINT=$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"' in recipe
+    # The stale-key cleanup sed must also strip a prior run's value so
+    # rerunning bootstrap can never leave two conflicting definitions.
+    assert "/^OPENSHELL_GATEWAY_ENDPOINT=/d" in script
+
+
 def test_linux_bootstrap_installs_and_verifies_docker_buildx():
     script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
 
