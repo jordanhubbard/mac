@@ -2784,7 +2784,7 @@ def test_gateway_log_classifier_failure_is_non_fatal_by_default_for_openclaw():
         'if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then\n'
         "  # classify_gateway_logs exits nonzero",
         1,
-    )[1].split("log \"verifying hub health", 1)[0]
+    )[1].split('log "verifying hub health', 1)[0]
 
     assert "if ! classify_gateway_logs " in call_site
     assert "handle_failed_openclaw_successor " in call_site
@@ -2792,9 +2792,9 @@ def test_gateway_log_classifier_failure_is_non_fatal_by_default_for_openclaw():
     assert "note_gateway_degraded " in call_site
     # The old form let classify_gateway_logs's own SystemExit(1) propagate
     # unguarded straight into the script's error trap.
-    assert re.search(
-        r'^\s*classify_gateway_logs "\$gateway_log"\s*$', call_site, re.MULTILINE
-    ) is None
+    assert (
+        re.search(r'^\s*classify_gateway_logs "\$gateway_log"\s*$', call_site, re.MULTILINE) is None
+    )
 
 
 def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():

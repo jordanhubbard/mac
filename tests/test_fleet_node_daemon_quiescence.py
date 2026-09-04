@@ -1070,10 +1070,7 @@ def test_stop_wrapper_timeout_reports_actionable_timeout_evidence(tmp_path: Path
     assert "elapsed=" in run.result.stderr
     assert "effective_timeout=1.000s" in run.result.stderr
     assert "requested_timeout=1.000s" in run.result.stderr
-    assert (
-        "limiting_bound=MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS"
-        in run.result.stderr
-    )
+    assert "limiting_bound=MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS" in run.result.stderr
     _assert_no_secret(run)
 
 

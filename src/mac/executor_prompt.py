@@ -864,9 +864,7 @@ def _coordination_section(task: Dict[str, Any]) -> str:
     )
 
 
-def build_task_prompt(
-    task: Dict[str, Any], lessons: Optional[List[str]] = None
-) -> str:
+def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None) -> str:
     """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     evidence_contract = (

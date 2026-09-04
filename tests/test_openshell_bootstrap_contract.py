@@ -301,11 +301,9 @@ def test_bootstrap_pins_the_managed_gateway_endpoint_into_mac_env():
     into mac.env exactly like it already pins its own
     openshell_local_gateway() calls to OPENSHELL_LOCAL_GATEWAY_ENDPOINT, so
     mac-agent's process (which sources mac.env) is immune to that drift."""
-    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
     assert 'OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"' in script
-    recipe = script.split('# --- 11. env recipe in mac.env', 1)[1].split(
+    recipe = script.split("# --- 11. env recipe in mac.env", 1)[1].split(
         "# sanity: mac.env must still source cleanly", 1
     )[0]
     assert 'echo "OPENSHELL_GATEWAY_ENDPOINT=$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"' in recipe
