@@ -316,7 +316,7 @@ build_runtime_image() {
 }
 
 verify_supervisor_image() {
-  local runtime_config version_output
+  local runtime_config version_output container_id entrypoint extracted
   runtime_config="$(mktemp -d)"
   printf '{}' > "$runtime_config/config.json"
   log "pulling and verifying OpenShell supervisor $OSH_SUPERVISOR_IMAGE"
@@ -331,6 +331,53 @@ verify_supervisor_image() {
     echo "ERROR: OpenShell supervisor version mismatch: expected $OPENSHELL_VERSION, got '$version_output'" >&2
     return 1
   fi
+  entrypoint="$("$OSH_DOCKER_BIN" image inspect --format '{{json .Config.Entrypoint}}' \
+    "$OSH_SUPERVISOR_IMAGE")"
+  entrypoint="$(python3 -c '
+import json, sys
+value = json.loads(sys.argv[1])
+if not isinstance(value, list) or len(value) != 1 or not value[0].startswith("/"):
+    raise SystemExit("reviewed supervisor image has no exact absolute entrypoint")
+print(value[0])
+' "$entrypoint")" || return 1
+  container_id="$("$OSH_DOCKER_BIN" create "$OSH_SUPERVISOR_IMAGE")" || return 1
+  extracted="$(mktemp "${TMPDIR:-/tmp}/openshell-sandbox.XXXXXX")"
+  if ! "$OSH_DOCKER_BIN" cp "$container_id:$entrypoint" "$extracted"; then
+    "$OSH_DOCKER_BIN" rm -f "$container_id" >/dev/null 2>&1 || true
+    rm -f "$extracted"
+    echo "ERROR: failed to extract the reviewed OpenShell supervisor" >&2
+    return 1
+  fi
+  "$OSH_DOCKER_BIN" rm -f "$container_id" >/dev/null
+  if ! python3 - "$extracted" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_bytes()
+if raw[:4] != b"\x7fELF" or raw[4] not in (1, 2) or raw[5] not in (1, 2):
+    raise SystemExit("reviewed supervisor is not an ELF binary")
+order = "<" if raw[5] == 1 else ">"
+if raw[4] == 2:
+    (offset,) = struct.unpack_from(order + "Q", raw, 32)
+    entry_size, count = struct.unpack_from(order + "HH", raw, 54)
+else:
+    (offset,) = struct.unpack_from(order + "I", raw, 28)
+    entry_size, count = struct.unpack_from(order + "HH", raw, 42)
+if not entry_size or offset + entry_size * count > len(raw):
+    raise SystemExit("reviewed supervisor has an invalid ELF program table")
+for index in range(count):
+    (kind,) = struct.unpack_from(order + "I", raw, offset + index * entry_size)
+    if kind == 3:  # PT_INTERP means the binary requires a host/container loader.
+        raise SystemExit("reviewed supervisor is dynamically linked")
+PY
+  then
+    rm -f "$extracted"
+    echo "ERROR: reviewed OpenShell supervisor is not statically linked" >&2
+    return 1
+  fi
+  install -m700 "$extracted" "$MAC_HOME/bin/openshell-sandbox"
+  rm -f "$extracted"
   log "OpenShell supervisor: $version_output"
 }
 
