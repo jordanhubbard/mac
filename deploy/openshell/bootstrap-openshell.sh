@@ -1842,7 +1842,7 @@ else
   log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
 fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
+sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
 sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
 {
   echo ""
@@ -1855,6 +1855,17 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
   echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref$codex_uploads\""
   echo "MAC_OPENSHELL_GPU_AVAILABLE=$gpu_runtime_available"
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
+  # Pin the gateway every mac-agent subprocess talks to, matching what this
+  # script already uses for its own openshell_local_gateway() calls (line
+  # ~120). Without this, mac-agent's executor inherits whatever gateway the
+  # openshell CLI's own persisted "active gateway" selection happens to be --
+  # local, unrelated state any other process (e.g. a NemoClaw pilot) can
+  # silently repoint. Live-found on natasha (2026-09-04): the active gateway
+  # drifted to a NemoClaw pilot endpoint, so every coding-agent sandbox
+  # preflight probe uniformly failed (all 5 configured agents) with no
+  # per-agent credential explanation, because they were all quietly hitting
+  # the wrong gateway.
+  echo "OPENSHELL_GATEWAY_ENDPOINT=$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)
