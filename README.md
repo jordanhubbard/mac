@@ -2,6 +2,8 @@
 
 Multi-agent coordinator control plane.
 
+<!-- Pipeline-health checkpoint: 2026-09-04 UTC. -->
+
 `mac` is a clean-room control plane for fleets of AI agents. It is designed to
 sit underneath a human-facing agent runtime such as OpenClaw under OpenShell, NemoClaw Hermes, or a compatible system.
 
