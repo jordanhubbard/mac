@@ -120,6 +120,17 @@ openshell_local_gateway(){
   OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" "$cli" "$@"
 }
 
+wait_for_local_gateway(){
+  local cli="$1" attempt
+  for ((attempt = 1; attempt <= 120; attempt++)); do
+    if openshell_local_gateway "$cli" status >/dev/null 2>&1; then
+      return 0
+    fi
+    ((attempt == 120)) || sleep 1
+  done
+  return 1
+}
+
 register_and_select_local_gateway(){
   local cli="$1" registrations
   # `gateway add` is not idempotent. Remove the reviewed name when it already
@@ -1788,9 +1799,8 @@ else
   echo "ERROR: OpenShell gateway requires a working systemd user manager or supervisord" >&2
   exit 1
 fi
-sleep 3
-if ! register_and_select_local_gateway "$BIN/openshell" \
-    || ! openshell_local_gateway "$BIN/openshell" status >/dev/null 2>&1; then
+if ! wait_for_local_gateway "$BIN/openshell" \
+    || ! register_and_select_local_gateway "$BIN/openshell"; then
   stop_gateway_fail_closed
   echo "ERROR: OpenShell gateway did not pass its local status probe" >&2
   exit 1

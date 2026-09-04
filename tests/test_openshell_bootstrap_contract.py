@@ -256,6 +256,11 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "[program:openshell-gateway]" in script
     assert "sudo supervisorctl restart openshell-gateway" in script
     assert "run-gateway.sh" in script
+    assert "wait_for_local_gateway" in script
+    assert "for ((attempt = 1; attempt <= 120; attempt++))" in script
+    assert 'openshell_local_gateway "$cli" status' in script
+    assert "((attempt == 120)) || sleep 1" in script
+    assert "sleep 3" not in script
     assert "unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT" in script
     assert "[program:mac-openshell-firewall]" in script
     assert "chain=MAC_OPENSH_GW" in script
