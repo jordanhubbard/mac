@@ -2591,6 +2591,79 @@ def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(
     assert not (openclaw_home / "verification-pending.json").exists()
 
 
+def test_finalize_supervisord_no_such_process_exit_4_yields_not_installed(
+    tmp_path: Path,
+) -> None:
+    """supervisorctl's exit code for 'no such process' is not part of its
+    documented contract and has been observed as both 1 and 4 across
+    supervisord builds. Live-found on an HGX-provisioned fleet node whose
+    supervisorctl returned exit 4 for the identical 'ERROR (no such process)'
+    message that other builds return with exit 1: matching on rc==1 alone
+    misclassified this as a real inspection failure ("could not inspect
+    supervisord program mac-hermes-gateway (exit 4)"), which made
+    finalize_openclaw_gateway's exclusivity proof fail even though the
+    hermes-gateway program was correctly never configured on that node."""
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
+    sudo = bin_dir / "sudo"
+    sudo.write_text(
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    sudo.chmod(0o700)
+    supervisorctl = bin_dir / "supervisorctl"
+    supervisorctl.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        "  *-openclaw-gateway) echo 'mac-openclaw-gateway     RUNNING   pid 1234'; exit 0 ;;\n"
+        "  *-hermes-gateway)   echo 'mac-hermes-gateway: ERROR (no such process)'; exit 4 ;;\n"
+        "  *-nemoclaw-gateway) echo 'mac-nemoclaw-gateway: ERROR (no such process)'; exit 4 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    supervisorctl.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": "supervisord",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
+    }
+
+    subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    advertisement = json.loads(
+        (openclaw_home / "service-advertisement.json").read_text(encoding="utf-8")
+    )
+    assert advertisement["gateway_ownership"]["exclusive"] is True
+    assert advertisement["gateway_ownership"]["services"]["hermes"] == "not_installed"
+    assert advertisement["gateway_ownership"]["services"]["nemoclaw"] == "not_installed"
+    assert not (openclaw_home / "verification-pending.json").exists()
+
+
 def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
     tmp_path: Path,
 ) -> None:

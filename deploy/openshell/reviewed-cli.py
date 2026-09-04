@@ -186,13 +186,22 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
             "status": "migration_required",
             "reason": "managed_openclaw_identity_untrusted",
         }
-    required = bool(args.required) or managed
-    base.update(managed_openclaw=managed, required=required)
-    if not required:
-        return {**base, "status": "ready", "reason": "openclaw_not_managed"}
-
     canonical_dir = mac_home / "bin"
     canonical = canonical_dir / "openshell"
+    cli_ever_installed = canonical.exists() or canonical.is_symlink()
+    # A CLI can be installed for mac-agent's own task-sandbox use, independent
+    # of whether OpenClaw's gateway is itself sandbox-managed. Quiescence's
+    # stray-sandbox inventory check (list_openshell_sandboxes) needs a full,
+    # trustworthy reviewed identity whenever OpenShell is installed at all,
+    # not only when OpenClaw is managed -- so treat an already-installed CLI
+    # as requiring full validation too, rather than short-circuiting to a
+    # "ready" result that omits cli_sha256/receipt_sha256.
+    required = bool(args.required) or managed or cli_ever_installed
+    base.update(managed_openclaw=managed, required=required)
+    if not required:
+        # Nothing to validate: OpenClaw isn't sandbox-managed and no CLI was
+        # ever installed here, so there is no reviewed identity to compute.
+        return {**base, "status": "ready", "reason": "openclaw_not_managed"}
     receipt_path = mac_home / "openshell" / "reviewed-cli.json"
     try:
         parent = canonical_dir.lstat()
