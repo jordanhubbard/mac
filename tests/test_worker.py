@@ -89,6 +89,13 @@ def assert_raises_safely(exception_type: type[BaseException], action: Callable[[
     pytest.fail("expected exception was not raised", pytrace=False)
 
 
+def call_safely(action: Callable[[], object], *, path: str) -> Any:
+    try:
+        return action()
+    except BaseException:
+        pytest.fail(f"unexpected exception at {path}", pytrace=False)
+
+
 def evidence_artifact_text(cp: ControlPlane, evidence_id: str) -> Dict[str, str]:
     artifacts = cp.list_evidence_artifacts(evidence_id)
     return {
@@ -2891,7 +2898,7 @@ def test_stale_exception_redacts_reason_before_observability_and_result(tmp_path
         executor,
     )
 
-    result = worker.run_once()
+    result = call_safely(worker.run_once, path="stale_result")
 
     assert result.status == "stale_result"
     assert_secret_absent(secret, result.error, path="stale_result.error")

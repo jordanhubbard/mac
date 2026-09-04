@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from mac.persistence_redaction import (
@@ -14,6 +16,10 @@ from mac.persistence_redaction import (
 def assert_secret_absent(secret: str, value: object, *, path: str) -> None:
     if secret in str(value):
         pytest.fail(f"credential fixture persisted at {path}", pytrace=False)
+
+
+def credential_fixture(label: str) -> str:
+    return hashlib.sha256(f"test-only:{label}".encode()).hexdigest()
 
 
 def test_redact_for_persistence_preserves_shape_and_redacts_secret_fields():
@@ -73,6 +79,42 @@ def test_redact_for_persistence_preserves_prose_after_quoted_assignment():
 
     assert_secret_absent(secret, redacted, path="$")
     assert redacted == f"executor failed with CURSOR_AUTH_TOKEN={REDACTION_MARKER} retrying build"
+
+
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_redact_for_persistence_fails_closed_for_unterminated_quoted_assignment(
+    quote: str,
+):
+    secret = credential_fixture("unterminated-quote")
+    raw = f"executor failed with CURSOR_AUTH_TOKEN={quote}{secret} trailing text"
+
+    redacted = redact_for_persistence(raw)
+
+    assert_secret_absent(secret, redacted, path="$")
+    assert redacted == f"executor failed with CURSOR_AUTH_TOKEN={REDACTION_MARKER}"
+
+
+def test_redact_for_persistence_redacts_backslash_escaped_whitespace_value():
+    secret_head = credential_fixture("escaped-head")
+    secret_tail = credential_fixture("escaped-tail")
+    raw = f"executor failed with CURSOR_AUTH_TOKEN={secret_head}\\ {secret_tail} retrying build"
+
+    redacted = redact_for_persistence(raw)
+
+    assert_secret_absent(secret_head, redacted, path="$")
+    assert_secret_absent(secret_tail, redacted, path="$")
+    assert redacted == f"executor failed with CURSOR_AUTH_TOKEN={REDACTION_MARKER} retrying build"
+
+
+@pytest.mark.parametrize("operator", ["&&", "||", "|"])
+def test_redact_for_persistence_preserves_shell_operator_after_assignment(operator: str):
+    secret = credential_fixture("shell-operator")
+    raw = f"CURSOR_AUTH_TOKEN={secret}{operator} retrying build"
+
+    redacted = redact_for_persistence(raw)
+
+    assert_secret_absent(secret, redacted, path="$")
+    assert redacted == f"CURSOR_AUTH_TOKEN={REDACTION_MARKER}{operator} retrying build"
 
 
 def test_secret_paths_reports_paths_without_values():
