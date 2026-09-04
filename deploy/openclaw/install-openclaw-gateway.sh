@@ -458,7 +458,15 @@ supervisord_program_state() {
   local reported_pid=""
   output="$(run_supervisord_system_scope status "$program" 2>&1)" \
     || rc=$?
-  if [ "$rc" -eq 1 ] && [ "$output" = "$program: ERROR (no such process)" ]; then
+  # supervisorctl's exit code for "no such process" is not itself part of the
+  # documented contract and has been observed as both 1 and 4 across
+  # supervisord builds/versions; the one stable signal is the exact message.
+  # Matching on rc==1 alone made this branch never fire on a node whose
+  # supervisorctl reports the identical message with rc=4, so
+  # "could not inspect supervisord program ... (exit 4): ... ERROR (no such
+  # process)" was misclassified as a real inspection failure instead of the
+  # legitimate "this program was never configured" case it actually is.
+  if [ "$rc" -ne 0 ] && [ "$output" = "$program: ERROR (no such process)" ]; then
     printf '%s\n' not_installed
     return 0
   fi

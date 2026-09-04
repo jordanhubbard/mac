@@ -118,6 +118,53 @@ def test_publish_is_idempotent_owner_private_and_receipt_bound(tmp_path: Path) -
     assert payload["asset_sha256"] == "a" * 64
 
 
+def test_not_required_but_already_installed_cli_still_gets_full_identity(
+    tmp_path: Path,
+) -> None:
+    """OpenClaw need not be sandbox-managed for a node to have OpenShell
+    installed (e.g. mac-agent's own task-sandbox use, independent of
+    OpenClaw). Quiescence's stray-sandbox inventory check
+    (list_openshell_sandboxes) requires a full, trustworthy reviewed
+    identity whenever OpenShell is installed at all, regardless of whether
+    OpenClaw itself is managed -- so preflight must not take the
+    "openclaw_not_managed" short-circuit (which omits cli_sha256 and
+    receipt_sha256) once a canonical CLI is actually present on disk."""
+    module = _module()
+    mac_home = tmp_path / ".mac"
+    source = tmp_path / "openshell"
+    source.write_bytes(b"#!/bin/sh\nexit 0\n")
+    source.chmod(0o700)
+    args = _args(mac_home, hashlib.sha256(source.read_bytes()).hexdigest())
+    module.atomic_publish(args, source)
+
+    result = module.preflight(args)
+
+    assert result["managed_openclaw"] is False
+    assert result["required"] is True
+    assert result["status"] == "ready"
+    assert result["reason"] == "reviewed_cli_ready"
+    assert "cli_sha256" in result and result["cli_sha256"]
+    assert "receipt_sha256" in result and result["receipt_sha256"]
+
+
+def test_not_required_and_never_installed_still_short_circuits(tmp_path: Path) -> None:
+    """When OpenClaw isn't managed AND no CLI was ever installed, there is
+    nothing to validate -- the short-circuit "ready"/"openclaw_not_managed"
+    result (no cli_sha256/receipt_sha256) is correct and expected."""
+    module = _module()
+    mac_home = tmp_path / ".mac"
+    args = _args(mac_home)
+
+    result = module.preflight(args)
+
+    assert result["managed_openclaw"] is False
+    assert result["required"] is False
+    assert result["status"] == "ready"
+    assert result["reason"] == "openclaw_not_managed"
+    assert "cli_sha256" not in result
+    assert "receipt_sha256" not in result
+
+
 def test_group_writable_canonical_directory_is_never_trusted(tmp_path: Path) -> None:
     module = _module()
     mac_home = _managed_legacy_home(tmp_path)

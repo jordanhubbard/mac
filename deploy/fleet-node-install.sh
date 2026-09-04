@@ -1561,7 +1561,15 @@ PY
   done < <("$docker_bin" ps -a \
     --filter label=openshell.ai/managed-by=openshell --format '{{.ID}}')
 
-  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ]; then
+  # A degraded OpenClaw chat gateway (e.g. "exclusivity proof failed under
+  # supervisord") is a tolerated, non-fatal state -- task execution does not
+  # depend on it, and prepare_openclaw_gateway already logs a WARNING and
+  # continues past it rather than dying. When degraded, no advertisement is
+  # ever published, so treat a missing advertisement file the same way here:
+  # skip OpenClaw-specific sandbox conformance instead of crashing the whole
+  # node deploy over a chat surface that was already known to be unavailable.
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ] \
+      && [ -f "$MAC_HOME/openclaw/service-advertisement.json" ]; then
     expected_openclaw="$($PY - "$MAC_HOME/openclaw/service-advertisement.json" <<'PY'
 import json
 import re
