@@ -60,6 +60,26 @@ def test_openshell_policy_crud_versions_assignment_and_status():
     assert detail["assignment"]["id"] == assignment.id
 
 
+def test_active_status_with_no_sandbox_id_is_not_deployed_and_fails_closed():
+    """Live-found on rocky/natasha/bullwinkle (2026-09-03): retain-forward
+    recovery can leave a status row reporting status="active" with
+    sandbox_id=null after the sandbox itself never actually came back up.
+    effective.deployed must require a real recorded sandbox identity, not
+    just the historical status string -- otherwise a required-OpenShell
+    agent with no live sandbox is reported as deployed and not fail-closed."""
+    cp = ControlPlane.in_memory()
+    agent = _agent(cp)
+
+    cp.report_openshell_status(agent.id, status="active", sandbox_id=None)
+
+    detail = cp.get_openshell_status(agent.id)
+    assert detail["deployed_status"]["status"] == "active"
+    assert detail["deployed_status"]["sandbox_id"] is None
+    assert detail["required"] is True
+    assert detail["effective"]["deployed"] is False
+    assert detail["effective"]["fail_closed"] is True
+
+
 def test_action_events_project_command_audit_export_and_memory_summary():
     cp = ControlPlane.in_memory()
     agent = _agent(cp)
