@@ -13205,7 +13205,9 @@
     "name": "MAC_TASK_FILE",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
       "src/mac/worker_subprocess.py"

@@ -142,7 +142,7 @@ def test_the_prompt_the_agent_is_given_names_what_it_must_not_redo(tmp_path):
     task_dir.mkdir()
     instance._attach_bus_task_context(task, task_dir, REPO_CONTEXT)
 
-    prompt = build_task_prompt(task, task_dir / "task.json")
+    prompt = build_task_prompt(task)
 
     assert "AgentBus context" in prompt
     assert "ALREADY LANDED" in prompt
@@ -196,7 +196,7 @@ def test_the_prompt_names_canonical_head_reconcile_when_the_worker_attaches_it(t
     assert "scripts/release.sh" in snapshot["implicated_paths"]
     on_disk = json.loads((task_dir / "canonical-reconcile.json").read_text(encoding="utf-8"))
     assert on_disk["head_sha"] == head
-    prompt = build_task_prompt(task, task_dir / "task.json")
+    prompt = build_task_prompt(task)
     assert "Canonical HEAD reconcile" in prompt
     assert "still_valid" in prompt
     assert "already_satisfied" in prompt

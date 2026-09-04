@@ -467,7 +467,6 @@ class TestRunExecutorPlanLearningIntegration:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_plan_rec_001",
             review_context=None,
@@ -495,7 +494,6 @@ class TestRunExecutorPlanLearningIntegration:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_plan_recall_001",
             review_context=None,
@@ -519,7 +517,6 @@ class TestRunExecutorPlanLearningIntegration:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_plan_inject_001",
             review_context=None,
@@ -553,7 +550,6 @@ class TestRunExecutorPlanLearningIntegration:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_small_nop",
             review_context=None,
@@ -581,7 +577,6 @@ class TestRunExecutorPlanLearningIntegration:
         te._run_executor(
             runner=_fake_runner,
             task=task,
-            task_file=tmp_path / "task.json",
             task_workspace=tmp_path,
             task_id="task_plan_nomanifest",
             review_context=None,
@@ -683,7 +678,7 @@ def test_plan_lesson_recorded_and_recalled_e2e(tmp_path: Path, monkeypatch):
     )
 
     # Step 3: Verify the lesson appears in the planning prompt
-    prompt = te.build_planning_prompt(subsequent_task, tmp_path / "task.json", lessons=lessons)
+    prompt = te.build_planning_prompt(subsequent_task, lessons=lessons)
     assert "Migrate postgres schema v1" in prompt, (
         "Recalled plan lesson must appear in the planning prompt for the subsequent task"
     )

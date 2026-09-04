@@ -71,7 +71,7 @@ def test_build_planning_prompt_describes_symbolic_dependencies(tmp_path) -> None
         "attempt_count": 1,
         "metadata": {"plan_first": True, "decomposition": {"max_children": 3}},
     }
-    prompt = scope.build_planning_prompt(task, tmp_path / "task.json")
+    prompt = scope.build_planning_prompt(task)
     assert "PLANNING MODE" in prompt
     assert "depends_on" in prompt
     assert "List order alone NEVER implies a dependency" in prompt

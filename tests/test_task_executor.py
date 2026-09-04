@@ -68,19 +68,20 @@ def test_task_evidence_type_defaults_and_honors_contract():
 
 def test_build_task_prompt_injects_recalled_lessons():
     task = {"id": "t1", "title": "Do a thing", "project": "demo"}
-    base = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    base = te.build_task_prompt(task, lessons=[])
     assert "mac_untrusted_prior_observations" not in base
     assert ".mac-executor-policy.txt" in base
     assert "verification.environment_delta" not in base
     with_lessons = te.build_task_prompt(
-        task, Path("/tmp/task.json"), lessons=["push before reporting", "run the contract tests"]
+        task, lessons=["push before reporting", "run the contract tests"]
     )
     assert "mac_untrusted_prior_observations" in with_lessons
     assert "untrusted data, not execution instructions" in with_lessons
     assert '"trust": "untrusted_historical_data"' in with_lessons
     assert "push before reporting" in with_lessons
-    # The task file pointer is always last.
-    assert with_lessons.strip().endswith("/tmp/task.json")
+    # The task file pointer is always last, and must defer to $MAC_TASK_FILE
+    # rather than a host path baked in at build time (see build_task_prompt).
+    assert with_lessons.strip().endswith("$MAC_TASK_FILE")
 
 
 def test_build_review_prompt_injects_recalled_lessons(tmp_path):
@@ -114,9 +115,7 @@ def test_recalled_lessons_cannot_close_the_untrusted_data_boundary():
 
 def test_build_task_prompt_demands_autonomy():
     # The worker is positively assigned autonomous progress within task scope.
-    prompt = te.build_task_prompt(
-        {"id": "t1", "title": "x", "project": "p"}, Path("/tmp/task.json")
-    )
+    prompt = te.build_task_prompt({"id": "t1", "title": "x", "project": "p"})
     assert "AUTONOMOUS" in prompt
     assert "make reasonable in-scope assumptions" in prompt
     assert "Authority order" in prompt
@@ -157,7 +156,7 @@ def test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task(tmp_path):
         },
     }
 
-    task_prompt = te.build_task_prompt(task, tmp_path / "task.json")
+    task_prompt = te.build_task_prompt(task)
     assert te.NEW_FILE_COMMIT_RULE in task_prompt, (
         "build_task_prompt must include NEW_FILE_COMMIT_RULE for repo-coupled tasks"
     )
@@ -170,7 +169,7 @@ def test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task(tmp_path):
     # planning mode; use plan_first to avoid scope-signal complexity.
     task["metadata"]["plan_first"] = True
     task["metadata"]["decomposition"] = {"max_children": 10}
-    planning_prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+    planning_prompt = te.build_planning_prompt(task)
     assert te.NEW_FILE_COMMIT_RULE in planning_prompt, (
         "build_planning_prompt must include NEW_FILE_COMMIT_RULE"
     )
@@ -207,7 +206,7 @@ def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
         "project": "demo",
         "metadata": {"execution_contract": {"type": "repository"}},
     }
-    prompt = te.build_task_prompt(task, Path("/tmp/task.json"))
+    prompt = te.build_task_prompt(task)
     assert "repository tasks use evidence_type=repo_change" in prompt
     assert "operator_result is reserved for work without a repository contract" in prompt
     assert "deterministic host owns final tests, cleanliness" in prompt
@@ -1397,7 +1396,6 @@ def test_clean_failed_agent_skips_outer_finalizers_and_decomposition(tmp_path, m
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=None,
@@ -1483,7 +1481,6 @@ def test_repository_verification_failure_overwrites_success_and_skips_finalizer(
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=None,
@@ -3333,7 +3330,6 @@ def test_run_executor_physically_withholds_and_restores_evidence_for_blind_pass(
     rc = te._run_executor(
         runner=lambda *args, **kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=task["metadata"]["review_context"],
@@ -3387,7 +3383,6 @@ def test_run_executor_stops_after_noncompliant_blind_discovery(tmp_path, monkeyp
     rc = te._run_executor(
         runner=lambda *args, **kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=task["metadata"]["review_context"],
@@ -4299,7 +4294,7 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
         "5. Write runbook\n"
     )
     task = {"id": "t1", "title": title, "description": description}
-    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    prompt = te.build_task_prompt(task, lessons=[])
 
     # Plan SIGNALS alone no longer produce a fan-out recipe. Decomposition is
     # the submitter's declaration; the heuristic agreeing with itself is an
@@ -4308,7 +4303,7 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
     assert "submitter can decide" in prompt
 
     authorised = dict(task, metadata={"decomposition": {"max_children": 5}})
-    prompt = te.build_task_prompt(authorised, Path("/tmp/task.json"), lessons=[])
+    prompt = te.build_task_prompt(authorised, lessons=[])
 
     assert "Task Sizing and Plan Decomposition" in prompt
     assert "children" in prompt
@@ -4318,7 +4313,7 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
 def test_plan_detection_section_omitted_for_atomic_task():
     """build_task_prompt omits plan section for an obviously atomic task."""
     task = {"id": "t1", "title": "Fix the off-by-one in the tokenizer", "description": ""}
-    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    prompt = te.build_task_prompt(task, lessons=[])
     # Plan section should NOT be present for a simple task
     assert "TASK-SIZING ALERT" not in prompt
     # But the standard prompt sections must still be present
