@@ -664,6 +664,16 @@ class OpenShellService:
         )
         deployed = self._status_from_row(row) if row is not None else None
         required = self.agent_requires_openshell(agent_id)
+        # A status row of status="active" alone is not proof of a live sandbox:
+        # confirmed live (rocky/natasha/bullwinkle, 2026-09-03) that
+        # retain-forward recovery can leave a row reporting active with
+        # sandbox_id=null after the sandbox itself never came back up, so
+        # "deployed" must also require a real sandbox identity was recorded.
+        live_sandbox = (
+            deployed is not None
+            and deployed.status == "active"
+            and bool(deployed.sandbox_id)
+        )
         return {
             "schema": "mac.openshell.agent_status.v1",
             "agent_id": agent_id,
@@ -674,9 +684,8 @@ class OpenShellService:
             "deployed_status": deployed.to_dict() if deployed else None,
             "effective": {
                 "assigned": assignment is not None,
-                "deployed": deployed is not None and deployed.status == "active",
-                "fail_closed": required
-                and not (deployed is not None and deployed.status == "active"),
+                "deployed": live_sandbox,
+                "fail_closed": required and not live_sandbox,
             },
         }
 
