@@ -318,7 +318,9 @@ def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, mo
     opencode_auth.write_text('{"nvidia": {"type": "api", "key": "sk-test"}}', encoding="utf-8")
     opencode_config = fake_home / ".config" / "opencode" / "opencode.json"
     opencode_config.parent.mkdir(parents=True)
-    opencode_config.write_text('{"model": "nvidia-inference/switchyard/openai/gpt-5.6-sol"}', encoding="utf-8")
+    opencode_config.write_text(
+        '{"model": "nvidia-inference/switchyard/openai/gpt-5.6-sol"}', encoding="utf-8"
+    )
     monkeypatch.setattr(te.Path, "home", staticmethod(lambda: fake_home))
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
 

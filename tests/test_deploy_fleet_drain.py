@@ -4610,7 +4610,10 @@ def test_retain_forward_recovery_reconciles_attestation_authority_after_release(
     recovery = deploy.split("recover_cohort_node() {", 1)[1].split(
         "\n}\n\nrecover_active_cohort_transaction", 1
     )[0]
-    assert 'local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4" hub_agent="$5"' in recovery
+    assert (
+        'local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4" hub_agent="$5"'
+        in recovery
+    )
 
     retain_forward_case = recovery.split("retain_forward)", 1)[1].split("\n      ;;\n  esac", 1)[0]
     assert "retain_remote_generation_for_forward_repair" in retain_forward_case
@@ -4626,7 +4629,14 @@ def test_retain_forward_recovery_reconciles_attestation_authority_after_release(
         'release_remote_deployment_lock "$agent" "$reconcile_deployment_id"', reconcile_call
     )
     aborted_node = recovery.index("cohort_journal_mutate aborted-node", reconcile_release)
-    assert release_lock < reconcile_guard < reconcile_acquire < reconcile_call < reconcile_release < aborted_node
+    assert (
+        release_lock
+        < reconcile_guard
+        < reconcile_acquire
+        < reconcile_call
+        < reconcile_release
+        < aborted_node
+    )
 
     for call_site in (
         'recover_cohort_node \\\n      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',

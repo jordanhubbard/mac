@@ -670,9 +670,7 @@ class OpenShellService:
         # sandbox_id=null after the sandbox itself never came back up, so
         # "deployed" must also require a real sandbox identity was recorded.
         live_sandbox = (
-            deployed is not None
-            and deployed.status == "active"
-            and bool(deployed.sandbox_id)
+            deployed is not None and deployed.status == "active" and bool(deployed.sandbox_id)
         )
         return {
             "schema": "mac.openshell.agent_status.v1",
