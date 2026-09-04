@@ -317,6 +317,9 @@ def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, mo
     opencode_auth = fake_home / ".local" / "share" / "opencode" / "auth.json"
     opencode_auth.parent.mkdir(parents=True)
     opencode_auth.write_text('{"nvidia": {"type": "api", "key": "sk-test"}}', encoding="utf-8")
+    opencode_config = fake_home / ".config" / "opencode" / "opencode.json"
+    opencode_config.parent.mkdir(parents=True)
+    opencode_config.write_text('{"model": "nvidia-inference/switchyard/openai/gpt-5.6-sol"}', encoding="utf-8")
     monkeypatch.setattr(te.Path, "home", staticmethod(lambda: fake_home))
     monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
 
@@ -341,6 +344,7 @@ def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, mo
     assert "--upload" in argv
     uploads = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--upload"]
     assert "%s:/tmp/.local/share/opencode/auth.json" % opencode_auth in uploads
+    assert "%s:/tmp/.config/opencode/opencode.json" % opencode_config in uploads
     # pi's file doesn't exist in this fixture, so it must not be forwarded.
     assert not any(".pi/agent/auth.json" in upload for upload in uploads)
 
