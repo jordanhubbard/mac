@@ -4595,6 +4595,46 @@ def test_typed_prepare_and_composite_rollback_are_journal_ordered():
     assert phase2 < phase1 < composite < aborted
 
 
+def test_retain_forward_recovery_reconciles_attestation_authority_after_release():
+    """retain_forward preserves node state as-is, including any attestation
+    candidate key install_and_prove_attestation_candidate already installed
+    before the hub epoch aborted -- hub abort discards the pending candidate
+    row, so the node's installed key and the hub's registered key can
+    diverge. reconcile_bound_worker_attestation_key exists precisely to fix
+    this (probe, verify against the hub, rotate only if needed) but had no
+    call site. It must run only for retain_forward, only after that
+    recovery's own generation lock is released (reconcile asserts its own
+    freshly computed deployment_id_for_agent lock, which it acquires here
+    under a distinct id), and before the aborted-node journal mutation."""
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = deploy.split("recover_cohort_node() {", 1)[1].split(
+        "\n}\n\nrecover_active_cohort_transaction", 1
+    )[0]
+    assert 'local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4" hub_agent="$5"' in recovery
+
+    retain_forward_case = recovery.split("retain_forward)", 1)[1].split("\n      ;;\n  esac", 1)[0]
+    assert "retain_remote_generation_for_forward_repair" in retain_forward_case
+    assert "reconcile_bound_worker_attestation_key" not in retain_forward_case
+
+    release_lock = recovery.index('release_remote_deployment_lock "$agent" "$deployment_id"')
+    reconcile_guard = recovery.index('if [ "$action" = retain_forward ]; then', release_lock)
+    reconcile_acquire = recovery.index(
+        'acquire_remote_deployment_lock "$agent" "$reconcile_deployment_id" 0', reconcile_guard
+    )
+    reconcile_call = recovery.index("reconcile_bound_worker_attestation_key", reconcile_acquire)
+    reconcile_release = recovery.index(
+        'release_remote_deployment_lock "$agent" "$reconcile_deployment_id"', reconcile_call
+    )
+    aborted_node = recovery.index("cohort_journal_mutate aborted-node", reconcile_release)
+    assert release_lock < reconcile_guard < reconcile_acquire < reconcile_call < reconcile_release < aborted_node
+
+    for call_site in (
+        'recover_cohort_node \\\n      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
+        'recover_cohort_node \\\n        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
+    ):
+        assert call_site in deploy
+
+
 def test_phase1_recovery_replays_retained_helper_and_reviewed_cli_identity(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     restore_function = (
