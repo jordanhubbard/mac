@@ -516,7 +516,18 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
     lines.extend(
         [
             "For normal repository tasks, MAC prepares a task-owned git worktree before the executor starts.",
-            "Use $MAC_TASK_REPO_WORKTREE, or metadata.runtime.repository_worktree in task.json, as the only writable checkout.",
+            # Deliberately NOT offering task.json's runtime.repository_worktree
+            # metadata field here as an alternative: that field is a
+            # host-absolute path for the worker's own host-side orchestration
+            # (see worker.py/worker_repo_prep.py), not a path that exists
+            # inside the sandbox. Advertising it here previously sent an agent
+            # straight at it -- auto-rejected as "external_directory" by the
+            # sandbox's own permission model, the same failure mode
+            # $MAC_TASK_FILE's deferral fixed for task.json itself.
+            # $MAC_TASK_REPO_WORKTREE is exported correctly for both the
+            # sandboxed and non-sandboxed execution paths, so it is the only
+            # reference that belongs in agent-facing text.
+            "Use $MAC_TASK_REPO_WORKTREE as the only writable checkout.",
             "Treat origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only registered source state; do not edit it for feature or bug work.",
             "The registered source checkout remains clean; make and test all changes in the task worktree.",
             "Agent ownership ends with tested task-worktree changes and preliminary evidence. The deterministic host finalizer exclusively owns fetching canonical state, rebasing, committing tracked modifications, pushing, and publication; host-finalized evidence supplies the pushed ref.",
