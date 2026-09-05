@@ -1747,6 +1747,31 @@ for index, job in enumerate(jobs):
         break
 else:
     jobs.append(managed)
+# task_2e7e9e31: jobs sharing an identical cron expression fire the local
+# openclaw CLI at the same instant, and concurrent invocations race to open
+# the same host-persisted plugin-state SQLite database -- observed as
+# intermittent "database disk image is malformed" corruption on rocky
+# (dream-cycle and dream-synthesis were both migrated from Hermes with the
+# unstaggered "0 * * * *" expression). Stagger same-schedule jobs a few
+# minutes apart so they never fire simultaneously; only simple fixed-minute
+# schedules are adjusted, and the first job in each group keeps its original
+# minute so existing external expectations (e.g. dashboards) are undisturbed.
+by_cron = {}
+for index, job in enumerate(jobs):
+    cron = str(job.get("cron") or "").strip()
+    if cron:
+        by_cron.setdefault(cron, []).append(index)
+for cron, indices in by_cron.items():
+    if len(indices) < 2:
+        continue
+    fields = cron.split()
+    if len(fields) != 5 or not fields[0].isdigit():
+        continue
+    base_minute = int(fields[0])
+    for offset, index in enumerate(indices[1:], start=1):
+        staggered = list(fields)
+        staggered[0] = str((base_minute + offset * 5) % 60)
+        jobs[index]["cron"] = " ".join(staggered)
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(plan, handle, indent=2, sort_keys=True)
     handle.write("\n")

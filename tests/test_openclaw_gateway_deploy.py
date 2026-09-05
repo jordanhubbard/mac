@@ -690,6 +690,54 @@ def test_installer_preserves_public_identity_and_migrated_script_jobs() -> None:
     assert 'not str(job.get("legacy_script") or "").strip()' in installer
 
 
+def _extract_finalize_cron_plan_script() -> str:
+    """Pull the embedded python heredoc that finalizes MANAGED_DIR/cron-plan.json
+    (curiosity-job upsert + same-schedule staggering) out of the installer so it
+    can be executed directly against synthetic job data."""
+    installer = INSTALLER.read_text(encoding="utf-8")
+    marker = 'python3 - "$MANAGED_DIR/cron-plan.json" <<\'PY\'\n'
+    start = installer.index(marker) + len(marker)
+    end = installer.index("\nPY", start)
+    return installer[start:end]
+
+
+def test_finalize_cron_plan_staggers_jobs_sharing_an_identical_schedule(tmp_path: Path) -> None:
+    """task_2e7e9e31: dream-cycle and dream-synthesis were both migrated from
+    Hermes with the identical unstaggered cron expression "0 * * * *", so both
+    fire the local openclaw CLI at the same instant every hour. Concurrent
+    invocations race to open the same host-persisted plugin-state SQLite
+    database, observed on rocky as intermittent "database disk image is
+    malformed" corruption. Jobs sharing a schedule must be staggered a few
+    minutes apart when the plan is finalized."""
+    script = _extract_finalize_cron_plan_script()
+    assert "by_cron" in script, "finalize step must group jobs by cron expression"
+
+    plan_path = tmp_path / "cron-plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema": "mac.openclaw_cron_migration.v1",
+                "jobs": [
+                    {"legacy_id": "adf20933eff0", "name": "dream-cycle", "cron": "0 * * * *"},
+                    {"legacy_id": "2d437df2441e", "name": "dream-synthesis", "cron": "0 * * * *"},
+                    {"legacy_id": "61c34b2f9752", "name": "kslug-nightly-news", "cron": "0 6 * * *"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["python3", "-c", script, str(plan_path)], check=True, capture_output=True, text=True)
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    by_name = {job["name"]: job["cron"] for job in plan["jobs"]}
+    # First job in the colliding group keeps its original minute...
+    assert by_name["dream-cycle"] == "0 * * * *"
+    # ...the second is staggered away from it, so they no longer fire together.
+    assert by_name["dream-synthesis"] == "5 * * * *"
+    # A schedule with no collision is left untouched.
+    assert by_name["kslug-nightly-news"] == "0 6 * * *"
+
+
 def test_apply_cron_plan_receipt_counts_only_successful_cli_mutations(tmp_path: Path) -> None:
     result, evidence = _run_apply_cron_plan(tmp_path, "success")
 
