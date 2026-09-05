@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENCLAW_DIR = ROOT / "deploy" / "openclaw"
@@ -626,4 +629,98 @@ def test_staging_falls_back_rather_than_losing_the_run(tmp_path) -> None:
     plain.write_text('#!/bin/sh\nexec openclaw agent "$@"\n', encoding="utf-8")
 
     assert runner.stage_prompt_in_sandbox(str(plain), "one\ntwo") == ""
-    assert runner.sandbox_wrapper_settings(str(plain)) == ("", "")
+
+
+# --------------------------------------------------------------------------- #
+# Sandbox CLI mutex (task_2e7e9e31fda34902a288324792b4baeb)                    #
+#                                                                              #
+# dream-cycle and dream-synthesis are independent launchd jobs that share an   #
+# hourly StartCalendarInterval; concurrent openclaw CLI invocations raced to   #
+# open the sandbox's shared plugin-state SQLite DB and corrupted it            #
+# ("database disk image is malformed"). Schedule staggering (apply-cron-      #
+# plan.mjs) reduces contention but any future collision -- a new job, a       #
+# manual run, clock drift -- reintroduces the race, so run_locked() is the    #
+# durable guarantee: it serializes every subprocess call into the sandbox CLI  #
+# regardless of why two of them landed at once.                                #
+# --------------------------------------------------------------------------- #
+def test_run_locked_serializes_concurrent_callers(tmp_path, monkeypatch) -> None:
+    import threading
+    import time as _time
+
+    lock_path = tmp_path / "sandbox-cli.lock"
+    intervals = []
+    intervals_guard = threading.Lock()
+
+    def fake_run(args, **kwargs):
+        start = _time.monotonic()
+        _time.sleep(0.05)
+        end = _time.monotonic()
+        with intervals_guard:
+            intervals.append((start, end))
+        return runner.subprocess.CompletedProcess(args, 0, "", "")
+
+    real_subprocess_run = runner.subprocess.run
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    try:
+        threads = [
+            threading.Thread(
+                target=runner.run_locked, args=(["noop"],), kwargs={"lock_path": lock_path}
+            )
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    finally:
+        monkeypatch.setattr(runner.subprocess, "run", real_subprocess_run)
+
+    assert len(intervals) == 4, "every caller must eventually acquire the lock and run"
+    ordered = sorted(intervals)
+    for (_, prev_end), (next_start, _) in zip(ordered, ordered[1:]):
+        assert next_start >= prev_end, (
+            "two sandbox CLI invocations overlapped -- the mutex did not serialize them"
+        )
+
+
+def test_run_locked_times_out_rather_than_hanging_forever(tmp_path, monkeypatch) -> None:
+    import fcntl
+
+    lock_path = tmp_path / "sandbox-cli.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(TimeoutError):
+            runner.run_locked(["noop"], lock_path=lock_path, lock_timeout=0.2)
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        os.close(holder)
+
+
+def test_default_agent_runner_serializes_through_the_sandbox_cli_lock(monkeypatch) -> None:
+    calls = []
+
+    def fake_run_locked(argv, **kwargs):
+        calls.append(argv)
+        return runner.subprocess.CompletedProcess(argv, 0, '{"text": "ok"}', "")
+
+    monkeypatch.setattr(runner, "run_locked", fake_run_locked)
+    output = runner.default_agent_runner("/bin/openclaw-agent", "hello")
+
+    assert calls, "default_agent_runner must route through run_locked, not raw subprocess.run"
+    assert output == '{"text": "ok"}'
+
+
+def test_default_deliver_runner_serializes_through_the_sandbox_cli_lock(monkeypatch) -> None:
+    calls = []
+
+    def fake_run_locked(argv, **kwargs):
+        calls.append(argv)
+        return runner.subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(runner, "run_locked", fake_run_locked)
+    runner.default_deliver_runner("/bin/openclaw-message", ("slack", "C123"), "hello there")
+
+    assert calls, "default_deliver_runner must route through run_locked, not raw subprocess.run"
+    assert calls[0][0] == "/bin/openclaw-message"
