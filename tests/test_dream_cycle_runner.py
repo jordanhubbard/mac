@@ -216,63 +216,27 @@ def test_delivery_policy_allows_dm_and_home_channel_only() -> None:
     ) == (("slack", "C0LOCALNEWS"), "")
 
 
-def test_message_args_targets_channel_with_account_and_text() -> None:
+def test_message_args_targets_channel_with_text() -> None:
     args = runner.message_args(
-        "/bin/openclaw-message", "slack", "C0123ABC", "hello", account="acct1"
+        "/usr/local/bin/hermes", "slack", "C0123ABC", "hello", account="acct1"
     )
-    assert args[0] == "/bin/openclaw-message"
-    assert "--channel" in args and "slack" in args
-    assert "--account" in args and "acct1" in args
-    assert "channel:C0123ABC" in args
+    assert args[0] == "/usr/local/bin/hermes"
+    assert "send" in args
+    assert "--to" in args and "slack:C0123ABC" in args
     assert "hello" in args
 
 
-def test_no_argument_ever_carries_a_newline_across_the_sandbox_boundary() -> None:
-    """The defect that stopped every script job on the fleet.
-
-    ``openclaw-message`` execs ``openshell sandbox exec ... -- openclaw message``,
-    and OpenShell refuses any argv token containing a newline:
-    "command argument 12 contains newline or carriage return characters".
-    Script-job output is prose, so it is always multi-line. Three jobs on the hub
-    ran hourly and failed 220 times each on exactly this -- and the runner then
-    reported each failure through the same channel, so the error report failed
-    identically and nothing was ever notified.
-    """
+def test_the_multi_line_body_travels_intact_as_a_plain_argv_token() -> None:
+    """``hermes`` runs natively on the host (installed by the Hermes shell
+    installer, not sandboxed), so there is no argv-newline boundary to work
+    around the way the prior OpenClaw wrapper required -- the body passes
+    straight through, unescaped."""
     body = "first line\nsecond line\r\nthird line"
-    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
+    args = runner.message_args("/usr/local/bin/hermes", "slack", "C0123ABC", body, account="a")
 
-    assert not any("\n" in part or "\r" in part for part in args), (
-        "an argv token still carries a literal newline, so the sandbox will refuse it"
-    )
-
-
-def test_the_multi_line_body_survives_the_escaping() -> None:
-    """Escaping that loses the body would trade a loud failure for a quiet one.
-
-    The body travels in ``--message`` itself, encoded, and openclaw's own
-    ``send`` action unescapes it back into the delivered Slack text -- the
-    prior design put the body only in ``--presentation``, which openclaw
-    treats as additive structure, not the message text, so every job
-    delivered that way posted an empty-looking broadcast (header only).
-    """
-    body = "first line\nsecond line\nthird line"
-    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
-    message = args[args.index("--message") + 1]
-
-    assert message == "first line\\nsecond line\\nthird line"
+    assert body in args
     assert "--presentation" not in args
-
-
-def test_encode_message_body_is_never_empty() -> None:
-    """The CLI rejects a missing message, so whitespace-only output must not
-    fail for a second, unrelated reason."""
-    assert runner.encode_message_body("   \n\n  ") == "(no content)"
-    assert runner.encode_message_body("first line\nsecond line") == "first line\\nsecond line"
-
-
-def test_encode_message_body_normalizes_bare_and_windows_line_endings() -> None:
-    """A bare CR trips OpenShell's argv boundary exactly like a bare LF does."""
-    assert runner.encode_message_body("a\r\nb\rc") == "a\\nb\\nc"
+    assert "--message" not in args
 
 
 # --------------------------------------------------------------------------- #
@@ -595,51 +559,6 @@ def test_runner_and_installer_are_syntactically_valid() -> None:
 
     ast.parse(RUNNER_PATH.read_text(encoding="utf-8"))
     subprocess.run(["bash", "-n", str(INSTALLER)], check=True, timeout=30)
-
-
-def test_a_multi_line_prompt_is_staged_in_the_sandbox_not_passed_as_argv(
-    tmp_path, monkeypatch
-) -> None:
-    """The other half of the newline defect.
-
-    openclaw-agent is the same sandbox wrapper as openclaw-message, so a
-    multi-line prompt is refused identically -- and the refusal was returned AS
-    the agent's reply. Once delivery was fixed, the fleet published that error
-    to Slack hourly: a 138-character "dream report" that was the sandbox
-    complaining about newlines.
-    """
-    wrapper = tmp_path / "openclaw-agent"
-    wrapper.write_text(
-        'OPEN_SHELL=/bin/openshell\nSANDBOX=mac-openclaw-test\nexec "$OPEN_SHELL" sandbox exec\n',
-        encoding="utf-8",
-    )
-    seen = {}
-
-    import subprocess as _sp
-
-    def fake_run(args, **kwargs):
-        seen["args"] = args
-        seen["input"] = kwargs.get("input")
-        return _sp.CompletedProcess(args, 0, "", "")
-
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
-
-    path = runner.stage_prompt_in_sandbox(str(wrapper), "one\ntwo", session_id="s1")
-
-    assert path.startswith("/sandbox/prompts/")
-    assert seen["input"] == "one\ntwo", "the body must travel on stdin, which is not argv"
-    assert not any("\n" in str(part) for part in seen["args"]), (
-        "an argv token still carries a newline, so the sandbox will refuse it"
-    )
-
-
-def test_staging_falls_back_rather_than_losing_the_run(tmp_path) -> None:
-    """A path that is not a sandbox wrapper must degrade to the argv form, not
-    raise: a non-sandboxed deployment still has to work."""
-    plain = tmp_path / "not-a-wrapper"
-    plain.write_text('#!/bin/sh\nexec openclaw agent "$@"\n', encoding="utf-8")
-
-    assert runner.stage_prompt_in_sandbox(str(plain), "one\ntwo") == ""
 
 
 # --------------------------------------------------------------------------- #
