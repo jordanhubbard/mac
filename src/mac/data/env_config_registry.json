@@ -5501,6 +5501,18 @@
   },
   {
     "default": null,
+    "description": "Hermes Runtime setting: hermes agent bin.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_AGENT_BIN",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Hermes Runtime setting: hermes agent dir.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_AGENT_DIR",
@@ -5686,6 +5698,18 @@
     "retired": false,
     "sources": [
       "src/mac/hermes_startup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hermes Runtime setting: hermes message bin.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_MESSAGE_BIN",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py"
     ],
     "type": "str"
   },
@@ -8136,7 +8160,6 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openclaw/run-script-cron-job.py",
       "src/mac/acp/backend.py",
       "src/mac/worker_directable.py",
@@ -8494,7 +8517,6 @@
     "name": "MAC_OPENCLAW_MESSAGE_BIN",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openclaw/run-script-cron-job.py",
       "src/mac/worker.py"
     ],

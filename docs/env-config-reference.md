@@ -467,6 +467,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_GITHUB_INGEST_MAX_ISSUES_PER_REPO` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max issues per repo. |
 | `MAC_GITHUB_INGEST_MAX_OPEN_TASKS_PER_PROJECT` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max open tasks per project. |
 | `MAC_HEADSCALE_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: headscale command timeout seconds. |
+| `MAC_HERMES_AGENT_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent bin. |
 | `MAC_HERMES_AGENT_DIR` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent dir. |
 | `MAC_HERMES_ALLOW_APPROVAL_PROMPTS` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes allow approval prompts. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply gateway runtime shim. |
@@ -481,6 +482,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_HOME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes home. |
 | `MAC_HERMES_INSTANCE_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes instance id. |
 | `MAC_HERMES_LOG_SUMMARY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes log summary. |
+| `MAC_HERMES_MESSAGE_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes message bin. |
 | `MAC_HERMES_PERSONA_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes persona id. |
 | `MAC_HERMES_PYTHON` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes python. |
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context file. |
