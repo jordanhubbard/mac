@@ -25,6 +25,14 @@ WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
 STOP_WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway-stop"
 MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
 AGENT_WRAPPER_PATH="$MAC_HOME/bin/openclaw-agent"
+# Host script cron jobs (schedule_launchd_script_job / schedule_systemd_script_job)
+# run against whichever chat-gateway CLI is actually live on this host. Since
+# the 2026-09-05 Hermes cutover that CLI is ``hermes`` itself (installed
+# natively by the Hermes shell installer under ~/.local/bin, not one of the
+# OpenClaw sandbox wrappers above) -- resolve it the same way
+# ``run-script-cron-job.py``'s own ``_default_hermes_bin()`` does, so both
+# stay in sync.
+HERMES_CLI_PATH="$(command -v hermes 2>/dev/null || echo "$HOME/.local/bin/hermes")"
 CURIOSITY_WRAPPER_PATH="$MAC_HOME/bin/curiosity"
 VERIFICATION_RECORD_PATH="$OPENCLAW_HOST_DIR/verification-pending.json"
 ADVERTISEMENT_PATH="$OPENCLAW_HOST_DIR/service-advertisement.json"
@@ -2569,8 +2577,8 @@ schedule_launchd_script_job() {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MAC_OPENCLAW_AGENT_BIN</key><string>${AGENT_WRAPPER_PATH}</string>
-    <key>MAC_OPENCLAW_MESSAGE_BIN</key><string>${MESSAGE_WRAPPER_PATH}</string>
+    <key>MAC_HERMES_AGENT_BIN</key><string>${HERMES_CLI_PATH}</string>
+    <key>MAC_HERMES_MESSAGE_BIN</key><string>${HERMES_CLI_PATH}</string>
     <key>MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR</key><string>${scripts_dir}</string>
     <key>MAC_OPENCLAW_SLACK_ACCOUNT_ID</key><string>${MAC_OPENCLAW_SLACK_ACCOUNT_ID}</string>
     <key>MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR</key><string>${output_dir}</string>
@@ -2613,8 +2621,8 @@ Description=MAC OpenClaw host two-stage cron job (${name})
 
 [Service]
 Type=oneshot
-Environment=MAC_OPENCLAW_AGENT_BIN=${AGENT_WRAPPER_PATH}
-Environment=MAC_OPENCLAW_MESSAGE_BIN=${MESSAGE_WRAPPER_PATH}
+Environment=MAC_HERMES_AGENT_BIN=${HERMES_CLI_PATH}
+Environment=MAC_HERMES_MESSAGE_BIN=${HERMES_CLI_PATH}
 Environment=MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR=${scripts_dir}
 Environment=MAC_OPENCLAW_SLACK_ACCOUNT_ID=${MAC_OPENCLAW_SLACK_ACCOUNT_ID}
 Environment=MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR=${output_dir}
