@@ -108,16 +108,35 @@ This does not touch the deleted vendored-in-process model from the update
 above -- `install-hermes-gateway.sh` only shells out to the externally
 installed `hermes` CLI, the same as `run-script-cron-job.py` already does.
 
-**Known gap, not yet closed**: `deploy/fleet-node-install.sh`'s
-`MAC_CHAT_GATEWAY_IMPL` dispatch (the ~14k-line per-node installer
-`deploy-mac-fleet.sh` drives over SSH) still only wires up `openclaw`,
-`nemoclaw`, and `none` as first-class values in its systemd/launchd/supervisord
-branches; it does not yet call `install-hermes-gateway.sh`. Wiring `hermes` in
-there as a first-class value, matching the transactional
-prepare/verify/finalize/withdraw/rollback cutover `deploy-mac-fleet.sh` already
-orchestrates for OpenClaw, is real follow-up work, not done here -- it touches
-a large, live, critical file and deserved its own focused pass rather than a
-rushed edit alongside everything else in this update. Until that lands, a new
-node's Hermes gateway is set up the same way the three cutover nodes were:
-`deploy/hermes/install-hermes-gateway.sh prepare` run directly against the
-node, with `MAC_HERMES_*` env vars populated from its `fleets.yaml` entry.
+## Update (2026-09-05): fleet-orchestrated Hermes dispatch closed the gap
+
+The gap above is closed. `deploy/fleet-node-install.sh`'s `MAC_CHAT_GATEWAY_IMPL`
+dispatch already had a `hermes` case in its systemd and launchd branches --
+restored from before the OpenClaw migration -- but it called dead code: a
+`hermes-gateway` wrapper that hand-rolled a systemd unit / launchd plist
+around `python -m mac.hermes_gateway`, the same deleted in-process module
+this whole document is about. That wrapper never ran against upstream's real
+distribution model. It has been replaced with calls into
+`deploy/hermes/install-hermes-gateway.sh prepare`/`finalize`/`withdraw` (the
+script from the update above), matching exactly how the systemd/launchd/
+supervisord branches already call `install-openclaw-gateway.sh` for OpenClaw.
+A `hermes` case was also added to the previously-openclaw-only supervisord
+branch, and to the `gateway_impl=none` cleanup paths on all three supervisors
+(so switching a Hermes-running node to a pure worker actually stops it via
+`hermes gateway stop`, not just by disabling dead identities).
+
+The one deliberate asymmetry: `hermes gateway install` writes and names its
+own supervision unit (`hermes` manages this internally, not
+`deploy/fleet-node-install.sh`), so the fleet's generic identity-keyed
+gateway-readiness sampler -- which proves the *other* implementations are
+running by checking a specific `HERMES_SERVICE_NAME`/`HERMES_LAUNCHD_LABEL`/
+`HERMES_SUPERVISORD_PROG` unit -- cannot see it under those names. Hermes is
+exempted from that specific check; its readiness is instead proven directly,
+before this generic sampler runs, by `hermes gateway status --deep` inside
+`finalize_hermes_gateway()`. `tests/test_fleet_node_gateway_readiness.py`
+covers this exemption explicitly.
+
+A new node's Hermes gateway now goes through the same transactional
+prepare/verify/finalize/withdraw cutover `deploy-mac-fleet.sh` already
+orchestrates for OpenClaw -- no more manual `install-hermes-gateway.sh
+prepare` runs against individual nodes.

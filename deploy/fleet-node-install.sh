@@ -3221,6 +3221,13 @@ def gateway_readiness_summary(stage):
             raise SystemExit("gateway readiness has malformed process state")
         selected = owner == implementation
         if selected:
+            # Hermes supervises itself under a unit name `hermes gateway
+            # install` chooses, not the HERMES_* identity this script
+            # assigns -- its readiness was already proven out of band by
+            # `hermes gateway status --deep` in finalize_hermes_gateway(),
+            # so this identity-keyed sample is expected to show it absent.
+            if implementation == "hermes":
+                continue
             if item["state"] != "running" or item["pid"] <= 0:
                 raise SystemExit("gateway readiness selected process is not running")
             if supervisor == "systemd" and item.get("enabled") != "enabled":
@@ -11769,6 +11776,41 @@ withdraw_openclaw_gateway() {
     "$installer" withdraw
 }
 
+# Hermes is a bare host process (no OpenShell sandbox, no container
+# lifecycle) driven entirely through upstream's own `hermes` CLI -- this
+# script only shells out to it. See deploy/hermes/install-hermes-gateway.sh
+# and docs/hermes-vendor-fate.md for why (Hermes refuses a normal `pip
+# install`; it is not vendored in this repo).
+prepare_hermes_gateway() {
+  local installer="$SRC_DIR/deploy/hermes/install-hermes-gateway.sh"
+  [ -x "$installer" ] || die "Hermes installer not found/executable: $installer"
+  MAC_HERMES_FLEET_NAME="$FLEET_NAME" \
+  MAC_HERMES_SLACK_HOME_CHANNEL_NAME="${HERMES_SLACK_HOME_CHANNEL_NAME:-}" \
+  MAC_HERMES_GATEWAY_MODEL="${HERMES_GATEWAY_MODEL:-}" \
+  MAC_HERMES_GATEWAY_PROVIDER="${HERMES_GATEWAY_PROVIDER:-}" \
+  MAC_HERMES_GATEWAY_BASE_URL="${HERMES_GATEWAY_BASE_URL:-}" \
+    "$installer" prepare
+}
+
+verify_hermes_gateway() {
+  local installer="$SRC_DIR/deploy/hermes/install-hermes-gateway.sh"
+  MAC_HERMES_FLEET_NAME="$FLEET_NAME" \
+    "$installer" verify
+}
+
+finalize_hermes_gateway() {
+  local installer="$SRC_DIR/deploy/hermes/install-hermes-gateway.sh"
+  MAC_HERMES_FLEET_NAME="$FLEET_NAME" \
+    "$installer" finalize
+}
+
+withdraw_hermes_gateway() {
+  local installer="$SRC_DIR/deploy/hermes/install-hermes-gateway.sh"
+  [ -x "$installer" ] || { log "Hermes installer not found/executable: $installer; nothing to withdraw"; return 0; }
+  MAC_HERMES_FLEET_NAME="$FLEET_NAME" \
+    "$installer" withdraw
+}
+
 # WHAT A CHAT GATEWAY FAILURE MAY AND MAY NOT STOP.
 #
 # The OpenClaw gateway is the CONVERSATION surface. Task execution is OpenShell
@@ -11923,117 +11965,22 @@ install_linux_no_gateway_service() {
   for unit in "$OPENCLAW_SERVICE_NAME" "$HERMES_SERVICE_NAME" "$NEMOCLAW_SERVICE_NAME"; do
     disable_systemd_service_if_present "$unit"
   done
+  withdraw_hermes_gateway
   rm -f "$MAC_HOME/bin/openclaw-gateway" "$MAC_HOME/bin/hermes-gateway"
   install_linux_agent_service
 }
 
-# Restored 2026-08-04 from dbb25ad0^ after the OpenClaw migration was halted
-# (docs/hermes-retirement-premises.md). Removed 2026-07-25 as "inactive
-# Hermes gateway code"; the premises that justified removing it were later
-# measured false. Unchanged from the original apart from the selector rename
-# HERMES_GATEWAY_IMPL -> MAC_CHAT_GATEWAY_IMPL.
-install_hermes_gateway_wrapper() {
-  # Worker/gateway decoupling: a pure worker (gateway_impl=none) runs no chat
-  # gateway at all — only the mac-agent worker. Skip installing the Hermes
-  # gateway wrapper so the node is a clean executor, not a conversational agent.
-  if [ "${MAC_CHAT_GATEWAY_IMPL:-hermes}" = "none" ]; then
-    log "gateway_impl=none: pure worker; skipping Hermes gateway wrapper install"
-    return 0
-  fi
-  local wrapper="${1:-$MAC_HOME/bin/hermes-gateway}"
-  mkdir -p "$(dirname "$wrapper")"
-  cat > "$wrapper" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
-set -a
-set +u
-[ -f "${MAC_HOME:-$HOME/.mac}/openclaw/.env" ] && . "${MAC_HOME:-$HOME/.mac}/openclaw/.env"
-[ -f "${MAC_HOME:-$HOME/.mac}/mac.env" ] && . "${MAC_HOME:-$HOME/.mac}/mac.env"
-set -u
-set +a
-export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
-if [ -z "${HERMES_HOME:-}" ] || [ "${HERMES_HOME}" = "$HOME/.hermes" ] || [ "${HERMES_HOME}" = "$HOME/.hermes/" ]; then
-  export HERMES_HOME="${MAC_HOME:-$HOME/.mac}/openclaw"
-fi
-export HERMES_DISABLE_LAZY_INSTALLS=1
-export HERMES_REDACT_SECRETS=true
-if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
-  export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
-fi
-# ADR 0001 hu-04: run the vendored Hermes gateway in-process from the mac venv
-# (mac-hermes-gateway -> hermes_cli.main "gateway run --replace"), instead of a
-# separate hermes-agent venv. Validated in fleet rollout 2026-05-31.
-exec "$HOME/.mac/venv/bin/python" -m mac.hermes_gateway
-EOF
-  chmod 700 "$wrapper"
-}
-
+# Hermes runs as a bare host process managed entirely by its own `hermes`
+# CLI (`hermes gateway install`, a user-level systemd unit it writes itself)
+# -- see prepare_hermes_gateway() / deploy/hermes/install-hermes-gateway.sh.
+# A prior version of this function hand-rolled a system-level systemd unit
+# around an in-process `python -m mac.hermes_gateway` wrapper; that module
+# was deleted (docs/hermes-vendor-fate.md) and the unit never actually ran.
 install_linux_hermes_service() {
-  local unit="/etc/systemd/system/${HERMES_SERVICE_NAME}" restart_since control_after=""
-  local unit_staging="$LOG_DIR/${HERMES_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
   disable_systemd_service_if_present "$OPENCLAW_SERVICE_NAME"
   disable_systemd_service_if_present "$NEMOCLAW_SERVICE_NAME"
-  if control_plane_enabled; then
-    control_after="$MAC_SERVICE_NAME"
-  fi
-  log "installing systemd service $unit"
-  if sudo test -f "$unit"; then
-    HERMES_UNIT_BACKUP="$MAC_HOME/backups/${HERMES_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
-    snapshot_rollback_file "$unit" "$HERMES_UNIT_BACKUP" system
-    write_rollback_script
-  fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$HERMES_UNIT_BACKUP" ]; then
-    die "cannot mutate the Hermes unit without a prior-generation backup"
-  fi
-  HERMES_UNIT_MUTATED=1
-  write_rollback_script
-  cat > "$unit_staging" <<EOF
-[Unit]
-Description=mac-managed Hermes gateway
-After=network-online.target $control_after
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$MAC_HOME
-EnvironmentFile=$ENV_FILE
-ExecStart=$MAC_HOME/bin/hermes-gateway
-Restart=always
-RestartSec=5
-RestartForceExitStatus=75
-SuccessExitStatus=75
-KillMode=mixed
-KillSignal=SIGTERM
-ExecReload=/bin/kill -USR1 \$MAINPID
-# Must exceed the gateway's restart_drain_timeout so systemd doesn't SIGKILL it
-# mid-drain. Mirrors hermes_cli/gateway.py: max(60, restart_drain_timeout) + 30
-# (=210 for the default drain of 180). A too-low value triggers the gateway's
-# "Stale systemd unit detected" startup warning. Bump if restart_drain_timeout
-# is raised above 180.
-TimeoutStopSec=210
-LimitNOFILE=65536
-LimitCORE=infinity
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  mac_launchd_atomic_replace "$unit_staging" "$unit" system 0644 0 0
-  run_systemctl daemon-reload
-  run_systemctl enable "$HERMES_SERVICE_NAME"
-  restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  run_systemctl restart "$HERMES_SERVICE_NAME"
-  run_systemctl --no-pager -l status "$HERMES_SERVICE_NAME" \
-    > "$LOG_DIR/hermes-gateway-status.txt" || true
-  run_journalctl -u "$HERMES_SERVICE_NAME" --since "$restart_since" --no-pager \
-    > "$LOG_DIR/hermes-gateway-journal.txt" || true
+  prepare_hermes_gateway
+  finalize_hermes_gateway
   install_linux_agent_service
 }
 
@@ -13158,12 +13105,23 @@ stdout_logfile=$LOG_DIR/openclaw-gateway.log
 stderr_logfile=$LOG_DIR/openclaw-gateway.log
 environment=HOME=\"$HOME\""
     ;;
+  hermes)
+    # Hermes manages its own supervision (a user-level systemd/launchd unit
+    # written by `hermes gateway install`) rather than a supervisord program
+    # -- see prepare_hermes_gateway(). Nothing for supervisord itself to
+    # track; just install/start Hermes here.
+    active_gateway_program=""
+    gateway_program=""
+    prepare_hermes_gateway
+    finalize_hermes_gateway
+    ;;
   none)
     # A pure worker must not retain or start any chat-gateway program.  An
     # empty block also lets ``supervisorctl update`` remove stale gateway
     # programs from a node that was converted from a conversational role.
     active_gateway_program=""
     gateway_program=""
+    withdraw_hermes_gateway
     ;;
   *) die "unsupported supervisord gateway implementation: ${MAC_CHAT_GATEWAY_IMPL}" ;;
   esac
@@ -13546,6 +13504,7 @@ EOF
 
 install_darwin_no_gateway_service() {
   local uid="$1" label plist
+  withdraw_hermes_gateway
   local primary_label="$HERMES_LAUNCHD_LABEL"
   local primary_active="$DARWIN_HERMES_LAUNCHD_ACTIVE"
   if [ "$DARWIN_OPENCLAW_LAUNCHD_ACTIVE" = 1 ]; then
@@ -13597,85 +13556,21 @@ install_darwin_no_gateway_service() {
   mac_launchd_transaction_commit
 }
 
-# Restored 2026-08-04 from dbb25ad0^ after the OpenClaw migration was halted
-# (docs/hermes-retirement-premises.md). Removed 2026-07-25 as "inactive
-# Hermes gateway code"; the premises that justified removing it were later
-# measured false. Unchanged from the original apart from the selector rename
-# HERMES_GATEWAY_IMPL -> MAC_CHAT_GATEWAY_IMPL.
+# Hermes runs as a bare host process managed entirely by its own `hermes`
+# CLI (`hermes gateway install`, which writes and loads its own user-level
+# launchd job) -- see prepare_hermes_gateway() /
+# deploy/hermes/install-hermes-gateway.sh. A prior version of this function
+# hand-rolled a launchd plist around an in-process `python -m
+# mac.hermes_gateway` wrapper; that module was deleted
+# (docs/hermes-vendor-fate.md) and the plist never actually ran.
 install_darwin_hermes_service() {
-  local uid="$1" plist="$HOME/Library/LaunchAgents/${HERMES_LAUNCHD_LABEL}.plist"
-  local plist_staging="$HOME/Library/LaunchAgents/.${HERMES_LAUNCHD_LABEL}.${DEPLOY_TS}.$$.stage"
-  local wrapper="$MAC_HOME/bin/hermes-gateway"
-  local wrapper_staging="$MAC_HOME/bin/.hermes-gateway.${DEPLOY_TS}.$$.stage"
-  local openclaw_plist="$HOME/Library/LaunchAgents/${OPENCLAW_LAUNCHD_LABEL}.plist"
-  local nemoclaw_plist="$HOME/Library/LaunchAgents/${NEMOCLAW_LAUNCHD_LABEL}.plist"
-  if [ -f "$plist" ]; then
-    HERMES_PLIST_BACKUP="$MAC_HOME/backups/${HERMES_LAUNCHD_LABEL}.${AGENT}.${DEPLOY_TS}.plist"
-    snapshot_rollback_file "$plist" "$HERMES_PLIST_BACKUP" user
-    write_rollback_script
-  fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$HERMES_PLIST_BACKUP" ]; then
-    die "cannot mutate the Hermes launchd job without a prior plist backup"
-  fi
-  HERMES_PLIST_MUTATED=1
-  write_rollback_script
-  darwin_clear_auxiliary_restore
-  mac_launchd_transaction_begin \
-    "gui/$uid" "$plist" "gui/$uid/$HERMES_LAUNCHD_LABEL" \
-    "$HERMES_LAUNCHD_LABEL" user
-  mac_launchd_transaction_set_expected_prior_state \
-    "$(darwin_expected_prior_state "$DARWIN_HERMES_LAUNCHD_ACTIVE")"
-  mac_launchd_transaction_track_file "$wrapper"
-  mac_launchd_transaction_track_file "$openclaw_plist"
-  mac_launchd_transaction_track_file "$nemoclaw_plist"
-  mac_launchd_transaction_track_temporary "$wrapper_staging"
-  mac_launchd_transaction_track_temporary "$plist_staging"
-  if [ "$DARWIN_OPENCLAW_LAUNCHD_ACTIVE" = 1 ]; then
-    darwin_set_auxiliary_restore \
-      "gui/$uid" "$openclaw_plist" "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" \
-      "$OPENCLAW_LAUNCHD_LABEL" user
-  elif [ "$DARWIN_NEMOCLAW_LAUNCHD_ACTIVE" = 1 ]; then
-    darwin_set_auxiliary_restore \
-      "gui/$uid" "$nemoclaw_plist" "gui/$uid/$NEMOCLAW_LAUNCHD_LABEL" \
-      "$NEMOCLAW_LAUNCHD_LABEL" user
-  fi
-  install_hermes_gateway_wrapper "$wrapper_staging"
-  cat > "$plist_staging" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$HERMES_LAUNCHD_LABEL</string>
-  <key>ProgramArguments</key>
-  <array><string>$MAC_HOME/bin/hermes-gateway</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>$MAC_HOME</string>
-  <key>StandardOutPath</key><string>$LOG_DIR/hermes-gateway.log</string>
-  <key>StandardErrorPath</key><string>$LOG_DIR/hermes-gateway.log</string>
-</dict>
-</plist>
-EOF
-  /bin/bash -n "$wrapper_staging"
-  if command -v plutil >/dev/null 2>&1; then
-    plutil -lint "$plist_staging"
-  fi
-  mac_launchd_transaction_mark_mutating
+  local uid="$1"
   stop_gui_launchd_job_if_present "$uid" "$OPENCLAW_LAUNCHD_LABEL"
   darwin_disable_job "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" "$OPENCLAW_LAUNCHD_LABEL" user
   stop_gui_launchd_job_if_present "$uid" "$NEMOCLAW_LAUNCHD_LABEL"
   darwin_disable_job "gui/$uid/$NEMOCLAW_LAUNCHD_LABEL" "$NEMOCLAW_LAUNCHD_LABEL" user
-  stop_gui_launchd_job_if_present "$uid" "$HERMES_LAUNCHD_LABEL"
-  mac_launchd_transaction_replace "$wrapper_staging" "$wrapper" 0700
-  mac_launchd_transaction_replace "$plist_staging" "$plist" 0644
-  : > "$LOG_DIR/hermes-gateway.log"
-  mac_launchd_bootstrap_job \
-    "gui/$uid" "$plist" "gui/$uid/$HERMES_LAUNCHD_LABEL" \
-    "$HERMES_LAUNCHD_LABEL" user
-  verify_selected_gateway_supervisor_health
-  mac_launchd_transaction_commit
-  darwin_clear_auxiliary_restore
+  prepare_hermes_gateway
+  finalize_hermes_gateway
 }
 
 install_darwin_openclaw_service() {
@@ -14434,12 +14329,22 @@ sampler = {
 if sampler is None:
     fail("unsupported supervisor")
 samples = []
+# Hermes is a bare host process supervised by a unit `hermes gateway
+# install` writes and names itself (not the HERMES_SERVICE_NAME /
+# HERMES_LAUNCHD_LABEL / HERMES_SUPERVISORD_PROG identities this script
+# assigns the other implementations), so this generic sampler cannot find
+# it under those names. Its readiness is already proven, out of band, by
+# prepare_hermes_gateway()/finalize_hermes_gateway() calling
+# `hermes gateway status --deep` before this function runs. Still require
+# every OTHER gateway implementation's unit to be absent/disabled below.
+hermes_selected = implementation == "hermes"
 for observation in range(2):
     sample = sampler()
     selected_ready = (
-        implementation != "none" and sample[implementation]["state"] == "running"
+        implementation != "none"
+        and (hermes_selected or sample[implementation]["state"] == "running")
     )
-    if supervisor == "systemd" and implementation != "none":
+    if supervisor == "systemd" and implementation != "none" and not hermes_selected:
         selected_ready = selected_ready and sample[implementation].get("enabled") == "enabled"
     if not selected_ready and implementation != "none":
         fail("selected gateway implementation is not in its required state")
@@ -14464,7 +14369,7 @@ for observation in range(2):
     samples.append(sample)
     if observation == 0:
         time.sleep(min(2.0, remaining()))
-if implementation != "none":
+if implementation != "none" and not hermes_selected:
     first = samples[0][implementation]
     second = samples[1][implementation]
     if first["pid"] != second["pid"] or first["restarts"] != second["restarts"]:
