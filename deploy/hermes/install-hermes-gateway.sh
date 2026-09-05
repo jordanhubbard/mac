@@ -110,9 +110,15 @@ configure_gateway() {
   hermes="$(hermes_bin)" || die "hermes CLI not found"
   [ "$DRY_RUN" = 1 ] && { log "dry-run: skipping hermes config set calls"; return 0; }
 
-  [ -z "$GATEWAY_MODEL" ]    || "$hermes" config set model "$GATEWAY_MODEL" --force
-  [ -z "$GATEWAY_PROVIDER" ] || "$hermes" config set provider "$GATEWAY_PROVIDER" --force
-  [ -z "$GATEWAY_BASE_URL" ] || "$hermes" config set base_url "$GATEWAY_BASE_URL" --force
+  # Dotted paths ("model.default", not "model") are load-bearing here: Hermes
+  # stores the active model as a nested object (model.default/.provider/
+  # .base_url/.api_key). `config set model ...` replaces that whole object
+  # with a bare scalar, silently discarding base_url/api_key/provider --
+  # confirmed live: it broke a working custom-router setup on the first
+  # idempotent re-run of `prepare` against an already-configured node.
+  [ -z "$GATEWAY_MODEL" ]    || "$hermes" config set model.default "$GATEWAY_MODEL" --force
+  [ -z "$GATEWAY_PROVIDER" ] || "$hermes" config set model.provider "$GATEWAY_PROVIDER" --force
+  [ -z "$GATEWAY_BASE_URL" ] || "$hermes" config set model.base_url "$GATEWAY_BASE_URL" --force
 
   # Home channel: listen to and respond to everything, unprompted. Every
   # other channel the agent is invited into stays mention-only -- that is

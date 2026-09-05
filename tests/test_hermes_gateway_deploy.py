@@ -137,8 +137,20 @@ def test_configure_gateway_sets_only_provided_fields(tmp_path):
         },
     )
     assert result.returncode == 0, result.stderr
-    assert ["config", "set", "model", "azure/anthropic/claude-sonnet-4-6", "--force"] in calls
-    assert ["config", "set", "provider", "custom", "--force"] in calls
+    assert [
+        "config",
+        "set",
+        "model.default",
+        "azure/anthropic/claude-sonnet-4-6",
+        "--force",
+    ] in calls
+    assert ["config", "set", "model.provider", "custom", "--force"] in calls
+    assert not any(call[:3] == ["config", "set", "model.base_url"] for call in calls)
+    # Regression: a bare "model" (not "model.default") key replaces Hermes's
+    # whole nested model object, silently discarding base_url/api_key/
+    # provider -- confirmed live against a working custom-router setup.
+    assert not any(call[:3] == ["config", "set", "model"] for call in calls)
+    assert not any(call[:3] == ["config", "set", "provider"] for call in calls)
     assert not any(call[:3] == ["config", "set", "base_url"] for call in calls)
 
 
