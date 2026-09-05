@@ -47,10 +47,12 @@ wrappers.  Standard library only.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -361,6 +363,68 @@ def authorize_delivery_target(
     return None, "slack_broadcast_outside_home_channel"
 
 
+DEFAULT_SANDBOX_CLI_LOCK_TIMEOUT = 300.0
+
+
+def sandbox_cli_lock_path() -> Path:
+    """One host-wide mutex around every subprocess call into the sandboxed
+    OpenClaw CLI (``openclaw-agent`` / ``openclaw-message``).
+
+    launchd fires each script job (dream-cycle, dream-synthesis, ...) as an
+    independent process on its own ``StartCalendarInterval``; two jobs sharing
+    an hourly schedule race to open the sandbox's plugin-state SQLite DB and
+    intermittently corrupt it ("database disk image is malformed"). Staggering
+    schedules (apply-cron-plan.mjs) reduces contention but does not bound it —
+    a future job, a manual run, or clock drift can still collide. This lock is
+    the durable guarantee: any two invocations serialize regardless of when
+    they were scheduled to run.
+    """
+    return openclaw_home() / "sandbox-cli.lock"
+
+
+def run_locked(
+    argv: list,
+    *,
+    lock_path: Optional[Path] = None,
+    lock_timeout: float = DEFAULT_SANDBOX_CLI_LOCK_TIMEOUT,
+    **run_kwargs: Any,
+) -> "subprocess.CompletedProcess":
+    """``subprocess.run(argv, **run_kwargs)`` serialized against other callers.
+
+    Mirrors the checkpoint-lock idiom in install-openclaw-gateway.sh's host
+    wrapper: an exclusive, non-blocking ``flock`` retried until acquired or
+    ``lock_timeout`` elapses, on a regular file owned by the current user (so a
+    symlink or a file planted by another user cannot be used to interfere).
+    """
+    path = lock_path or sandbox_cli_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(str(path), flags, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+            raise RuntimeError("sandbox CLI lock identity is unsafe: %s" % path)
+        os.fchmod(descriptor, 0o600)
+        deadline = time.monotonic() + lock_timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "sandbox CLI lock timed out after %ss: %s" % (lock_timeout, path)
+                    )
+                time.sleep(0.1)
+        return subprocess.run(argv, **run_kwargs)
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(descriptor)
+
+
 # --------------------------------------------------------------------------- #
 # Default subprocess seams (thin, injected)                                    #
 # --------------------------------------------------------------------------- #
@@ -489,7 +553,7 @@ def default_agent_runner(
     if session_id:
         args += ["--session-id", session_id]
     args += ["--json"]
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+    result = run_locked(args, capture_output=True, text=True, timeout=timeout, check=False)
     output = (result.stdout or "").strip()
     if result.returncode != 0 and not output:
         return (result.stderr or "").strip()
@@ -502,11 +566,13 @@ def default_deliver_runner(
     text: str,
     *,
     account: str = "default",
+    timeout: float = DEFAULT_AGENT_TIMEOUT,
 ) -> None:
     """Deliver ``text`` to a Slack channel via the host ``openclaw-message`` wrapper."""
     platform, channel_id = target
-    subprocess.run(
+    run_locked(
         message_args(message_bin, platform, channel_id, text, account=account),
+        timeout=timeout,
         check=True,
     )
 
