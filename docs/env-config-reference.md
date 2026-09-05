@@ -472,7 +472,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_ALLOW_APPROVAL_PROMPTS` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes allow approval prompts. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply gateway runtime shim. |
 | `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply slack account shim. |
+| `MAC_HERMES_DRY_RUN` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes dry run. |
 | `MAC_HERMES_EXISTING_PORT` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes existing port. |
+| `MAC_HERMES_FLEET_NAME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes fleet name. |
+| `MAC_HERMES_FROM_INTERFACE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes from interface. |
 | `MAC_HERMES_GATEWAY_API_KEY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway api key. |
 | `MAC_HERMES_GATEWAY_BASE_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway base url. |
 | `MAC_HERMES_GATEWAY_MODEL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway model. |
@@ -480,9 +483,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_GATEWAY_REQUEST_TIMEOUT_SECONDS` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway request timeout seconds. |
 | `MAC_HERMES_GATEWAY_STALE_TIMEOUT_SECONDS` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway stale timeout seconds. |
 | `MAC_HERMES_HOME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes home. |
+| `MAC_HERMES_INSTALL_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes install url. |
 | `MAC_HERMES_INSTANCE_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes instance id. |
 | `MAC_HERMES_LOG_SUMMARY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes log summary. |
 | `MAC_HERMES_MESSAGE_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes message bin. |
+| `MAC_HERMES_OPENCLAW_SOURCE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes openclaw source. |
 | `MAC_HERMES_PERSONA_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes persona id. |
 | `MAC_HERMES_PYTHON` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes python. |
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context file. |

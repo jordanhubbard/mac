@@ -5322,6 +5322,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
@@ -5558,6 +5559,17 @@
   },
   {
     "default": null,
+    "description": "Hermes Runtime setting: hermes dry run.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_DRY_RUN",
+    "retired": false,
+    "sources": [
+      "deploy/hermes/install-hermes-gateway.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Hermes Runtime setting: hermes existing port.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_EXISTING_PORT",
@@ -5566,6 +5578,28 @@
       "deploy/nemoclaw/install-nemoclaw-pilot.sh"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Hermes Runtime setting: hermes fleet name.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_FLEET_NAME",
+    "retired": false,
+    "sources": [
+      "deploy/hermes/install-hermes-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hermes Runtime setting: hermes from interface.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_FROM_INTERFACE",
+    "retired": false,
+    "sources": [
+      "deploy/hermes/install-hermes-gateway.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -5594,6 +5628,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
@@ -5612,6 +5647,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
@@ -5631,6 +5667,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
@@ -5675,6 +5712,17 @@
   },
   {
     "default": null,
+    "description": "Hermes Runtime setting: hermes install url.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_INSTALL_URL",
+    "retired": false,
+    "sources": [
+      "deploy/hermes/install-hermes-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Hermes Runtime setting: hermes instance id.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_INSTANCE_ID",
@@ -5710,6 +5758,17 @@
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openclaw/run-script-cron-job.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hermes Runtime setting: hermes openclaw source.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_OPENCLAW_SOURCE",
+    "retired": false,
+    "sources": [
+      "deploy/hermes/install-hermes-gateway.sh"
     ],
     "type": "str"
   },
@@ -5830,6 +5889,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/sync-hermes-home-channels.py",
       "src/mac/deploy_env.py",
@@ -6139,6 +6199,7 @@
       "deploy/fleet-node-install.sh",
       "deploy/fleet-node-phase1-quiesce.sh",
       "deploy/fleet-node-substrate-adopt.py",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-postgres-service.sh",
