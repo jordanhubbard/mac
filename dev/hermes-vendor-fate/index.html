@@ -1791,6 +1791,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#update-2026-09-05-fleet-orchestrated-hermes-dispatch-closed-the-gap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update (2026-09-05): fleet-orchestrated Hermes dispatch closed the gap
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1936,19 +1947,35 @@ and install the gateway as a properly supervised background service
 <p>This does not touch the deleted vendored-in-process model from the update
 above -- <code>install-hermes-gateway.sh</code> only shells out to the externally
 installed <code>hermes</code> CLI, the same as <code>run-script-cron-job.py</code> already does.</p>
-<p><strong>Known gap, not yet closed</strong>: <code>deploy/fleet-node-install.sh</code>'s
-<code>MAC_CHAT_GATEWAY_IMPL</code> dispatch (the ~14k-line per-node installer
-<code>deploy-mac-fleet.sh</code> drives over SSH) still only wires up <code>openclaw</code>,
-<code>nemoclaw</code>, and <code>none</code> as first-class values in its systemd/launchd/supervisord
-branches; it does not yet call <code>install-hermes-gateway.sh</code>. Wiring <code>hermes</code> in
-there as a first-class value, matching the transactional
-prepare/verify/finalize/withdraw/rollback cutover <code>deploy-mac-fleet.sh</code> already
-orchestrates for OpenClaw, is real follow-up work, not done here -- it touches
-a large, live, critical file and deserved its own focused pass rather than a
-rushed edit alongside everything else in this update. Until that lands, a new
-node's Hermes gateway is set up the same way the three cutover nodes were:
-<code>deploy/hermes/install-hermes-gateway.sh prepare</code> run directly against the
-node, with <code>MAC_HERMES_*</code> env vars populated from its <code>fleets.yaml</code> entry.</p>
+<h2 id="update-2026-09-05-fleet-orchestrated-hermes-dispatch-closed-the-gap">Update (2026-09-05): fleet-orchestrated Hermes dispatch closed the gap<a class="headerlink" href="#update-2026-09-05-fleet-orchestrated-hermes-dispatch-closed-the-gap" title="Permanent link">&para;</a></h2>
+<p>The gap above is closed. <code>deploy/fleet-node-install.sh</code>'s <code>MAC_CHAT_GATEWAY_IMPL</code>
+dispatch already had a <code>hermes</code> case in its systemd and launchd branches --
+restored from before the OpenClaw migration -- but it called dead code: a
+<code>hermes-gateway</code> wrapper that hand-rolled a systemd unit / launchd plist
+around <code>python -m mac.hermes_gateway</code>, the same deleted in-process module
+this whole document is about. That wrapper never ran against upstream's real
+distribution model. It has been replaced with calls into
+<code>deploy/hermes/install-hermes-gateway.sh prepare</code>/<code>finalize</code>/<code>withdraw</code> (the
+script from the update above), matching exactly how the systemd/launchd/
+supervisord branches already call <code>install-openclaw-gateway.sh</code> for OpenClaw.
+A <code>hermes</code> case was also added to the previously-openclaw-only supervisord
+branch, and to the <code>gateway_impl=none</code> cleanup paths on all three supervisors
+(so switching a Hermes-running node to a pure worker actually stops it via
+<code>hermes gateway stop</code>, not just by disabling dead identities).</p>
+<p>The one deliberate asymmetry: <code>hermes gateway install</code> writes and names its
+own supervision unit (<code>hermes</code> manages this internally, not
+<code>deploy/fleet-node-install.sh</code>), so the fleet's generic identity-keyed
+gateway-readiness sampler -- which proves the <em>other</em> implementations are
+running by checking a specific <code>HERMES_SERVICE_NAME</code>/<code>HERMES_LAUNCHD_LABEL</code>/
+<code>HERMES_SUPERVISORD_PROG</code> unit -- cannot see it under those names. Hermes is
+exempted from that specific check; its readiness is instead proven directly,
+before this generic sampler runs, by <code>hermes gateway status --deep</code> inside
+<code>finalize_hermes_gateway()</code>. <code>tests/test_fleet_node_gateway_readiness.py</code>
+covers this exemption explicitly.</p>
+<p>A new node's Hermes gateway now goes through the same transactional
+prepare/verify/finalize/withdraw cutover <code>deploy-mac-fleet.sh</code> already
+orchestrates for OpenClaw -- no more manual <code>install-hermes-gateway.sh
+prepare</code> runs against individual nodes.</p>
 
 
 
