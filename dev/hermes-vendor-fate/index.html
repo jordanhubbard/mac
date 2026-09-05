@@ -1769,6 +1769,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#update-2026-09-05-hermes-reactivated-on-the-hub-still-not-vendored" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update (2026-09-05): Hermes reactivated on the hub, still not vendored
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1860,6 +1871,40 @@ auditable during the port.</p>
 <p>ADR 0001 is amended to <strong>Superseded (vendoring premise ended 2026-08-17)</strong>.
 Hermes can be fetched and patched on demand if needed again; git history
 retains the snapshot.</p>
+<h2 id="update-2026-09-05-hermes-reactivated-on-the-hub-still-not-vendored">Update (2026-09-05): Hermes reactivated on the hub, still not vendored<a class="headerlink" href="#update-2026-09-05-hermes-reactivated-on-the-hub-still-not-vendored" title="Permanent link">&para;</a></h2>
+<p>OpenClaw (the gateway that replaced Hermes above) turned out to be unreliable
+at a layer this repo does not own: its OpenShell sandbox's state mount runs
+on Docker Desktop's overlayfs, where POSIX advisory locking is broken enough
+that a fresh, empty SQLite WAL database hangs indefinitely under a trivial
+write load. Three OpenClaw-side fixes landed first (cron schedule collision,
+a host-side flock mutex, a message-body encoding bug) before this filesystem
+problem was isolated as the actual, unfixable-from-here root cause.</p>
+<p>The retirement premise above was that Hermes's memory capabilities were
+already covered by mac itself — true, but it did not account for OpenClaw's
+reliability. The hub's chat gateway was cut back to Hermes as a result.</p>
+<p><strong>This is not a re-vendoring.</strong> The mistake in 2026-08 was carrying a
+444k-line patched snapshot in-tree, not depending on Hermes at all. Hermes
+does not support a normal <code>pip install</code> either — its own <code>setup.py</code> refuses
+to build a wheel or sdist ("Hermes is distributed via the shell installer,
+Docker image, or Nix"). The hub runs it via upstream's own shell installer
+(<code>curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash</code>), which
+installs a fully self-contained checkout and venv under <code>~/.hermes/</code>,
+entirely outside this repo and outside <code>mac</code>'s own Python environment. There
+is nothing under <code>src/mac/</code> importing <code>hermes_cli</code>, no patch set, and no
+re-vendor job to maintain — the earlier in-process <code>mac.hermes_gateway</code>
+launcher (which assumed a pip-installed, importable <code>hermes_cli</code>) was removed
+again for exactly this reason; it never worked against upstream's real
+distribution model.</p>
+<p>Management is entirely through Hermes's own CLI, installed to
+<code>~/.local/bin/hermes</code>: <code>hermes gateway install</code> / <code>hermes gateway stop</code> for
+the service, <code>hermes send</code> for one-off/cron message delivery, <code>hermes -z
+&lt;prompt&gt;</code> for one-shot agent turns, and <code>hermes claw migrate</code> for pulling an
+OpenClaw workspace's identity/memory/skills across (used once, live, to bring
+the hub's accumulated OpenClaw state into Hermes during the cutover).
+<code>deploy/openclaw/run-script-cron-job.py</code>'s two-stage host cron runner
+(<code>mac-cron-script-runner</code>) now drives its agent turn and delivery through
+this CLI instead of the OpenClaw sandbox wrappers; see that file's
+<code>_default_hermes_bin()</code> / <code>default_agent_runner()</code> / <code>message_args()</code>.</p>
 
 
 
