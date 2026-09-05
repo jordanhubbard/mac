@@ -199,6 +199,7 @@ def test_prepare_ports_credentials_via_mac_human_interface(tmp_path):
         json.loads(line) for line in mac_calls_path.read_text(encoding="utf-8").splitlines() if line
     ]
     assert [
+        "admin",
         "human-interface",
         "port",
         "--from",
