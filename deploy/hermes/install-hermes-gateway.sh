@@ -17,7 +17,7 @@ HERMES_INSTALL_URL="${MAC_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.
 FLEET_NAME="${MAC_HERMES_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 # Migration source: the chat gateway Hermes is taking channel ownership from.
-# "openclaw" is the only interface `mac human-interface port` and
+# "openclaw" is the only interface `mac admin human-interface port` and
 # `hermes claw migrate` currently know how to read from.
 FROM_INTERFACE="${MAC_HERMES_FROM_INTERFACE:-openclaw}"
 OPENCLAW_HOME="${MAC_HERMES_OPENCLAW_SOURCE:-$HOME/.openclaw}"
@@ -56,8 +56,8 @@ install_hermes() {
 port_credentials() {
   command -v mac >/dev/null 2>&1 || { log "no 'mac' CLI on PATH; skipping credential port"; return 0; }
   log "porting identity/memory/messaging credentials from $FROM_INTERFACE to hermes"
-  [ "$DRY_RUN" = 1 ] && { mac human-interface port --from "$FROM_INTERFACE" --to hermes || true; return 0; }
-  mac human-interface port --from "$FROM_INTERFACE" --to hermes --apply \
+  [ "$DRY_RUN" = 1 ] && { mac admin human-interface port --from "$FROM_INTERFACE" --to hermes || true; return 0; }
+  mac admin human-interface port --from "$FROM_INTERFACE" --to hermes --apply \
     || log "WARNING: credential port reported a problem; continuing (Hermes may already have credentials)"
 }
 

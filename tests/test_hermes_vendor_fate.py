@@ -30,7 +30,18 @@ def test_vendored_hermes_tree_is_gone() -> None:
     assert not (SRC_MAC / "_hermes").exists()
     assert not (SRC_MAC / "hermes_vendor.py").exists()
     assert not (SRC_MAC / "hermes_gateway.py").exists()
-    assert not (ROOT / "deploy" / "hermes").exists()
+    # deploy/hermes/ itself came back (2026-09-05) to hold
+    # install-hermes-gateway.sh, the host-level lifecycle script that shells
+    # out to an externally-installed `hermes` CLI -- see
+    # docs/hermes-vendor-fate.md. What must stay gone is the vendoring
+    # machinery it used to hold: the pinned snapshot, its local patch set, and
+    # the plugin/tool overlay applied on top of it.
+    deploy_hermes = ROOT / "deploy" / "hermes"
+    assert not (deploy_hermes / "SNAPSHOT.md").exists()
+    assert not (deploy_hermes / "HERMES_TREE_SHA256").exists()
+    assert not (deploy_hermes / "LOCAL_PATCHES.md").exists()
+    assert not (deploy_hermes / "overlay").exists()
+    assert not list(deploy_hermes.glob("*.patch"))
 
 
 def test_a_no_live_hermes_cli_imports_in_mac_sources() -> None:
