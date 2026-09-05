@@ -587,7 +587,15 @@ def message_args(
 ) -> list:
     """Build the ``openclaw-message`` argv (kept pure so it is testable).
 
-    The body travels as JSON in ``--presentation``, never as ``--message``.
+    The full body travels in ``--message``, escaped, never in
+    ``--presentation``. A prior version of this function put the body only in
+    ``--presentation``'s JSON ``text`` field on the assumption that field was
+    the Slack message content. It is not: openclaw's ``send`` action builds
+    the delivered payload as ``{text: message, ...presentation}`` -- the
+    ``--message`` value becomes the Slack text, and ``presentation`` is
+    additive structure (blocks/context/dividers/buttons), not a text
+    replacement. Every job delivered this way posted only its short header
+    with the real content silently dropped.
 
     ``openclaw-message`` is a five-line wrapper that execs
     ``openshell sandbox exec ... -- openclaw message "$@"``, and OpenShell's exec
@@ -601,9 +609,11 @@ def message_args(
     job output is prose and is therefore always multi-line: on the hub, three
     jobs ran hourly and failed 220 times each on exactly this.
 
-    ``json.dumps`` escapes the newlines, so the token crossing the boundary has
-    none while the body survives intact. ``--message`` keeps a single-line
-    summary because the CLI requires it.
+    openclaw's own send path unescapes a literal ``\\n`` two-character
+    sequence back into a real newline before building the payload text
+    (``message.replaceAll("\\n", "\n")``), so encoding real newlines that way
+    survives the sandbox boundary (no literal newline byte in argv) while
+    still rendering as a multi-line Slack message.
     """
     return [
         message_bin,
@@ -615,26 +625,23 @@ def message_args(
         "--target",
         "channel:%s" % channel_id,
         "--message",
-        summary_line(text),
-        "--presentation",
-        json.dumps({"text": text}),
+        encode_message_body(text),
     ]
 
 
-def summary_line(text: str, *, limit: int = 200) -> str:
-    """A single-line stand-in for a multi-line body.
+def encode_message_body(text: str) -> str:
+    """Escape real newlines as literal ``\\n`` so a multi-line body survives
+    OpenShell's argv boundary and openclaw's own unescape step restores it.
+
+    Both CRLF and bare CR are normalized to LF first: OpenShell's argv
+    boundary refuses a literal carriage return exactly as it refuses a
+    literal newline, and openclaw's unescape step only restores ``\\n``.
 
     Never empty: the CLI rejects a missing message, and a job whose output was
     whitespace would otherwise fail for a second, unrelated reason.
     """
-    first = ""
-    for line in str(text or "").splitlines():
-        if line.strip():
-            first = line.strip()
-            break
-    if not first:
-        return "(no summary)"
-    return first[:limit]
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    return normalized.replace("\n", "\\n") or "(no content)"
 
 
 # --------------------------------------------------------------------------- #

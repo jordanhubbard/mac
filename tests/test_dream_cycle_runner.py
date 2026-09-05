@@ -247,21 +247,32 @@ def test_no_argument_ever_carries_a_newline_across_the_sandbox_boundary() -> Non
 
 
 def test_the_multi_line_body_survives_the_escaping() -> None:
-    """Escaping that loses the body would trade a loud failure for a quiet one."""
-    import json as _json
+    """Escaping that loses the body would trade a loud failure for a quiet one.
 
+    The body travels in ``--message`` itself, encoded, and openclaw's own
+    ``send`` action unescapes it back into the delivered Slack text -- the
+    prior design put the body only in ``--presentation``, which openclaw
+    treats as additive structure, not the message text, so every job
+    delivered that way posted an empty-looking broadcast (header only).
+    """
     body = "first line\nsecond line\nthird line"
     args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
-    presentation = args[args.index("--presentation") + 1]
+    message = args[args.index("--message") + 1]
 
-    assert _json.loads(presentation)["text"] == body
+    assert message == "first line\\nsecond line\\nthird line"
+    assert "--presentation" not in args
 
 
-def test_the_summary_line_is_never_empty() -> None:
+def test_encode_message_body_is_never_empty() -> None:
     """The CLI rejects a missing message, so whitespace-only output must not
     fail for a second, unrelated reason."""
-    assert runner.summary_line("   \n\n  ") == "(no summary)"
-    assert runner.summary_line("\n\nreal first line\nsecond") == "real first line"
+    assert runner.encode_message_body("   \n\n  ") == "(no content)"
+    assert runner.encode_message_body("first line\nsecond line") == "first line\\nsecond line"
+
+
+def test_encode_message_body_normalizes_bare_and_windows_line_endings() -> None:
+    """A bare CR trips OpenShell's argv boundary exactly like a bare LF does."""
+    assert runner.encode_message_body("a\r\nb\rc") == "a\\nb\\nc"
 
 
 # --------------------------------------------------------------------------- #
