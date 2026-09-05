@@ -526,11 +526,15 @@ def test_exact_probe_bounds_a_hung_supervisor_command(tmp_path: Path) -> None:
 def test_exact_probe_rejects_restart_between_observations(
     tmp_path: Path, sequence: list[dict[str, Any]]
 ) -> None:
+    # openclaw, not hermes: hermes is exempt from this identity-keyed sample
+    # (it supervises itself under a name `hermes gateway install` chooses,
+    # proven separately by `hermes gateway status --deep`), so this generic
+    # per-identity restart-detection contract is exercised against openclaw.
     completed, output = _run_probe(
         tmp_path,
         "systemd",
-        "hermes",
-        _state("systemd", "hermes", selected_sequence=sequence),
+        "openclaw",
+        _state("systemd", "openclaw", selected_sequence=sequence),
     )
     assert completed.returncode != 0
     assert "selected gateway restarted" in completed.stderr
@@ -605,9 +609,11 @@ def test_gatewayless_systemd_probe_rejects_autonomously_runnable_or_failed_units
 
 
 def test_selected_systemd_gateway_must_be_enabled(tmp_path: Path) -> None:
+    # openclaw, not hermes: hermes is exempt from this identity-keyed
+    # enabled-check (see test_exact_probe_rejects_restart_between_observations).
     states = _state(
         "systemd",
-        "hermes",
+        "openclaw",
         selected_sequence=[
             {
                 "state": "running",
@@ -617,10 +623,33 @@ def test_selected_systemd_gateway_must_be_enabled(tmp_path: Path) -> None:
             }
         ],
     )
-    completed, output = _run_probe(tmp_path, "systemd", "hermes", states)
+    completed, output = _run_probe(tmp_path, "systemd", "openclaw", states)
     assert completed.returncode != 0
     assert "selected gateway implementation is not in its required state" in completed.stderr
     assert not output.exists()
+
+
+def test_selected_hermes_gateway_bypasses_the_identity_keyed_sample(
+    tmp_path: Path,
+) -> None:
+    # Hermes supervises itself under a unit name `hermes gateway install`
+    # chooses, not the HERMES_SERVICE_NAME/HERMES_LAUNCHD_LABEL identity this
+    # script assigns the other implementations, so its readiness is proven
+    # out of band (by `hermes gateway status --deep` in
+    # finalize_hermes_gateway()) rather than by this identity-keyed sample.
+    # Even a "disabled"/never-restarted-looking hermes entry must still pass.
+    states = _state(
+        "systemd",
+        "hermes",
+        selected_sequence=[
+            {"state": "absent", "pid": 0, "restarts": 0, "enabled": "not-found"},
+            {"state": "absent", "pid": 0, "restarts": 0, "enabled": "not-found"},
+        ],
+    )
+    completed, output = _run_probe(tmp_path, "systemd", "hermes", states)
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    assert receipt["implementation"] == "hermes"
 
 
 def test_selected_systemd_gateway_allows_inactive_disabled_competitors(
@@ -763,7 +792,9 @@ def test_manifest_summary_rejects_wrong_schema_generation_or_permissions(
         lambda value: value.pop("observed_at"),
         lambda value: value.update(identities={}),
         lambda value: value.update(state={}),
-        lambda value: value["state"]["hermes"].update(pid=0),
+        # openclaw, not hermes: hermes's selected-pid check is bypassed (it
+        # supervises itself under a name this receipt's identities don't
+        # know), so this contract is exercised against openclaw instead.
         lambda value: value["state"]["openclaw"].update(pid=999),
         lambda value: value["state"]["openclaw"].update(state="running", pid=999),
     ],

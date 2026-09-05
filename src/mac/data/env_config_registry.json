@@ -5586,6 +5586,7 @@
     "name": "MAC_HERMES_FLEET_NAME",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/install-hermes-gateway.sh"
     ],
     "type": "str"
@@ -5608,7 +5609,6 @@
     "name": "MAC_HERMES_GATEWAY_API_KEY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/config.yaml",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",

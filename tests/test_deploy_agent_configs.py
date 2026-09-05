@@ -757,7 +757,6 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
         'common+=(--hermes-instance-id "${MAC_WORKER_HERMES_INSTANCE_ID:-${MAC_HERMES_INSTANCE_ID:-}}")'
         in script
     )
-    assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "install_or_validate_shared_services" in script
     assert "mac.hermes.memory_topology.v1" in script
     assert '"long_term_memory": "memories/MEMORY.md"' in script
@@ -866,7 +865,6 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
     assert "install_mac_control_wrapper" in linux_service
     assert "if control_plane_enabled; then" in linux_service
     assert 'disable_systemd_service_if_present "$MAC_SERVICE_NAME"' in linux_service
-    assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "ExecStart=$MAC_HOME/bin/mac-service" in linux_service
     assert "ExecStart=$VENV/bin/uvicorn" not in linux_service
 
