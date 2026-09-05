@@ -46,7 +46,7 @@ ADR 0001 is amended to **Superseded (vendoring premise ended 2026-08-17)**.
 Hermes can be fetched and patched on demand if needed again; git history
 retains the snapshot.
 
-## Update (2026-09-05): Hermes reactivated on rocky, still not vendored
+## Update (2026-09-05): Hermes reactivated on the hub, still not vendored
 
 OpenClaw (the gateway that replaced Hermes above) turned out to be unreliable
 at a layer this repo does not own: its OpenShell sandbox's state mount runs
@@ -58,13 +58,13 @@ problem was isolated as the actual, unfixable-from-here root cause.
 
 The retirement premise above was that Hermes's memory capabilities were
 already covered by mac itself — true, but it did not account for OpenClaw's
-reliability. Rocky's chat gateway was cut back to Hermes as a result.
+reliability. The hub's chat gateway was cut back to Hermes as a result.
 
 **This is not a re-vendoring.** The mistake in 2026-08 was carrying a
 444k-line patched snapshot in-tree, not depending on Hermes at all. Hermes
 does not support a normal `pip install` either — its own `setup.py` refuses
 to build a wheel or sdist ("Hermes is distributed via the shell installer,
-Docker image, or Nix"). Rocky runs it via upstream's own shell installer
+Docker image, or Nix"). The hub runs it via upstream's own shell installer
 (`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`), which
 installs a fully self-contained checkout and venv under `~/.hermes/`,
 entirely outside this repo and outside `mac`'s own Python environment. There
@@ -79,7 +79,7 @@ Management is entirely through Hermes's own CLI, installed to
 the service, `hermes send` for one-off/cron message delivery, `hermes -z
 <prompt>` for one-shot agent turns, and `hermes claw migrate` for pulling an
 OpenClaw workspace's identity/memory/skills across (used once, live, to bring
-rocky's accumulated OpenClaw state into Hermes during the cutover).
+the hub's accumulated OpenClaw state into Hermes during the cutover).
 `deploy/openclaw/run-script-cron-job.py`'s two-stage host cron runner
 (`mac-cron-script-runner`) now drives its agent turn and delivery through
 this CLI instead of the OpenClaw sandbox wrappers; see that file's
