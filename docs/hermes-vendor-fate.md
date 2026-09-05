@@ -84,3 +84,40 @@ the hub's accumulated OpenClaw state into Hermes during the cutover).
 (`mac-cron-script-runner`) now drives its agent turn and delivery through
 this CLI instead of the OpenClaw sandbox wrappers; see that file's
 `_default_hermes_bin()` / `default_agent_runner()` / `message_args()`.
+
+## Update (2026-09-05): repo-owned lifecycle automation restored
+
+The cutover above was driven by hand over SSH, once per node -- real, but not
+durable: a fresh node bootstrap, a redeploy, or a wiped `~/.hermes` would not
+reproduce it, and every step would need to be re-derived from memory. That gap
+is now closed by `deploy/hermes/install-hermes-gateway.sh`, the host-level
+sibling of `deploy/openclaw/install-openclaw-gateway.sh` (same
+`prepare`/`verify`/`finalize`/`withdraw` shape; no container lifecycle, since
+Hermes runs as a bare host process rather than an OpenShell sandbox). It
+codifies the same steps done by hand: run upstream's shell installer if
+`hermes` isn't already on `PATH`, port identity/memory/messaging credentials
+from OpenClaw (`mac human-interface port --from openclaw --to hermes --apply`),
+pull any existing OpenClaw workspace across (`hermes claw migrate`), set the
+channel-behavior policy from fleet config (`slack.require_mention` /
+`slack.free_response_channels`, resolved from the `hermes.slack_home_channel_name`
+fleet-config field to a channel id via Hermes's own cached channel directory),
+and install the gateway as a properly supervised background service
+(`hermes gateway install`).
+
+This does not touch the deleted vendored-in-process model from the update
+above -- `install-hermes-gateway.sh` only shells out to the externally
+installed `hermes` CLI, the same as `run-script-cron-job.py` already does.
+
+**Known gap, not yet closed**: `deploy/fleet-node-install.sh`'s
+`MAC_CHAT_GATEWAY_IMPL` dispatch (the ~14k-line per-node installer
+`deploy-mac-fleet.sh` drives over SSH) still only wires up `openclaw`,
+`nemoclaw`, and `none` as first-class values in its systemd/launchd/supervisord
+branches; it does not yet call `install-hermes-gateway.sh`. Wiring `hermes` in
+there as a first-class value, matching the transactional
+prepare/verify/finalize/withdraw/rollback cutover `deploy-mac-fleet.sh` already
+orchestrates for OpenClaw, is real follow-up work, not done here -- it touches
+a large, live, critical file and deserved its own focused pass rather than a
+rushed edit alongside everything else in this update. Until that lands, a new
+node's Hermes gateway is set up the same way the three cutover nodes were:
+`deploy/hermes/install-hermes-gateway.sh prepare` run directly against the
+node, with `MAC_HERMES_*` env vars populated from its `fleets.yaml` entry.
