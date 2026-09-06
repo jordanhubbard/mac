@@ -97,6 +97,22 @@ def test_argv_uses_run_not_the_bare_default(tmp_path):
     assert argv[-1] == "do the thing"
 
 
+def test_argv_auto_approves_permissions_non_interactively(tmp_path):
+    """opencode's own permission prompts (e.g. "external_directory") are never
+    answered in a non-interactive task run and get auto-rejected, blocking an
+    agent from even its own task worktree -- confirmed live. `--auto` bypasses
+    opencode's own approval gate; OpenShell remains the real confinement, same
+    as claude's --dangerously-skip-permissions and codex's
+    --dangerously-bypass-approvals-and-sandbox."""
+    choice = resolve_coding_agent(
+        env={"MAC_CODING_AGENT": "opencode"},
+        home=_home(tmp_path, auth=True),
+        which=_which({"opencode": "/usr/bin/opencode"}),
+    )
+    argv = coding_agent_argv(choice, "do the thing", env={})
+    assert argv[:3] == ["/usr/bin/opencode", "run", "--auto"]
+
+
 def test_model_pin_is_passed_through(tmp_path):
     choice = resolve_coding_agent(
         env={"MAC_CODING_AGENT": "opencode"},
@@ -105,7 +121,7 @@ def test_model_pin_is_passed_through(tmp_path):
     )
     model = "nvidia-inference/switchyard/openai/gpt-5.3-codex"
     argv = coding_agent_argv(choice, "p", env={"MAC_TASK_MODEL": model})
-    assert argv[2:4] == ["--model", model]
+    assert argv[3:5] == ["--model", model]
 
 
 def test_credential_sync_ships_both_trees(tmp_path):
