@@ -188,6 +188,7 @@ from mac.models import (
     WorkflowDraft,
 )
 from mac.repository_hygiene import (
+    AUTO_CLEANUP_DISPOSITIONS,
     repository_ref_lifecycle_for_transition,
 )
 from mac.env_config import resolve_hub_agent
@@ -24367,6 +24368,26 @@ class ControlPlane:
     def _dependency_state_satisfies_join(state: str, metadata: Any, join: str) -> bool:
         if state == TaskState.COMPLETED.value:
             return True
+        if state == TaskState.CANCELLED.value:
+            # A cancellation whose disposition asserts the underlying goal was
+            # met elsewhere (the same AUTO_CLEANUP_DISPOSITIONS set governing
+            # repository-ref cleanup: duplicate/superseded/not_applicable)
+            # satisfies even the strict "all_success" join -- it is not a
+            # failure to route around, it IS the resolution. Confirmed live:
+            # an onboarding task was closed --cancelled --disposition
+            # not_applicable after its repository contract was registered
+            # through a different, equally valid path; its 10 dependents had
+            # no join-policy opt-in (the default is "all_success") and stayed
+            # permanently blocked/waiting until dependencies were cleared by
+            # hand. A genuine "this isn't happening" cancellation
+            # (disposition=preserve, or none) still only satisfies
+            # "all_settled" below, unchanged.
+            lifecycle = ensure_json_object(
+                ensure_json_object(metadata).get("repository_ref_lifecycle")
+            )
+            disposition = str(lifecycle.get("disposition") or "").strip().lower()
+            if disposition in AUTO_CLEANUP_DISPOSITIONS:
+                return True
         if join != "all_settled":
             return False
         if state in {
