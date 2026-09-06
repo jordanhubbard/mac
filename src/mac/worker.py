@@ -223,6 +223,50 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+#: Bounded retry for a fenced-write conflict on a state-mutating API call
+#: (currently just POST .../start). A fenced write means the server detected
+#: a CONCURRENT, valid write racing this one and refused rather than
+#: corrupting state -- by construction transient, since the conflicting
+#: writer's own operation is already completing. Confirmed live: an unrelated
+#: concurrent operator call (mac task update --dependencies) racing an
+#: agent's claim+start on the same task produced exactly this 400, and the
+#: worker treated it as a fatal "worker_exception", transitioning the task
+#: straight to permanently blocked instead of retrying what the server's own
+#: error message says is retryable ("task state changed during fenced
+#: write; retry"). 3 attempts with a short, fixed backoff resolves this in
+#: virtually all real cases without masking a genuinely stuck/looping
+#: conflict behind indefinite retries.
+FENCED_WRITE_RETRY_ATTEMPTS = 3
+FENCED_WRITE_RETRY_DELAY_SECONDS = 0.5
+
+
+def _is_fenced_write_conflict(exc: "MacApiError") -> bool:
+    if exc.status_code != 400:
+        return False
+    return "fenced write" in (exc.detail or str(exc)).lower()
+
+
+def _post_with_fenced_write_retry(
+    client: "MacApiClient",
+    path: str,
+    payload: JsonDict,
+    *,
+    attempts: int = FENCED_WRITE_RETRY_ATTEMPTS,
+    delay_seconds: float = FENCED_WRITE_RETRY_DELAY_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Any:
+    last_exc: Optional[MacApiError] = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return client.post(path, payload)
+        except MacApiError as exc:
+            if not _is_fenced_write_conflict(exc) or attempt == attempts:
+                raise
+            last_exc = exc
+            sleep(delay_seconds)
+    raise last_exc  # pragma: no cover - unreachable, loop always returns or raises
+
+
 #: How long after the first SIGTERM/SIGINT the worker keeps letting the current
 #: task run before it actively abandons the assignment (releases the lease and
 #: goes offline). Tuned to the unit that runs it: ``mac-agent-service`` sets
@@ -1596,7 +1640,8 @@ class MacWorker(
             detail={"lease_id": lease_id, "agent_id": self.agent_id},
         )
         try:
-            self.client.post(
+            _post_with_fenced_write_retry(
+                self.client,
                 "/tasks/%s/start?%s"
                 % (
                     quote(task_id, safe=""),
@@ -5042,17 +5087,33 @@ class MacWorker(
         ):
             problems.append("verification.signed_by and verification.signature are required")
         if evidence_type:
-            if (
-                evidence_type == "investigation"
-                and declared_non_repository_outcome_evidence_type(
-                    ensure_json_object(task_payload.get("metadata"))
-                )
-                != "investigation"
-            ):
+            declared_outcome = declared_non_repository_outcome_evidence_type(
+                ensure_json_object(task_payload.get("metadata"))
+            )
+            if evidence_type == "investigation" and declared_outcome != "investigation":
                 problems.append(
                     "investigation evidence requires an operator-authored "
                     "investigation execution contract"
                 )
+            elif declared_outcome and evidence_type != declared_outcome:
+                # The reverse mismatch: the task's own execution contract
+                # declares a non-repository outcome (e.g. an onboarding
+                # contract-authoring task, evidence_type=investigation,
+                # repository_required=False -- see
+                # ControlPlane._normalize_task_execution_contract), but the
+                # agent's own evidence manifest claims a repo-coupled type
+                # (commonly "repo_change", the executor's generic default
+                # whenever it made a git commit). Trusting the agent's claim
+                # here demanded pushed=true/pr_url from a task whose own
+                # instructions explicitly say "do NOT push or open a pull
+                # request" -- confirmed live: an agent that followed those
+                # instructions correctly was blocked by its own tooling's
+                # wrong evidence_type default. The task's declared contract
+                # is the operator's authoritative intent; the agent cannot
+                # unilaterally impose a stricter requirement than what was
+                # asked. Coerce rather than reject: the agent already did
+                # the work correctly, so use the correct decoder for it.
+                evidence_type = declared_outcome
             problems.extend(
                 _worker_verification_contract_problems(
                     manifest,
