@@ -2438,11 +2438,23 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # is doing infra work, not user-facing writes).
         return "deploy"
     if path.startswith("/reviews/default"):
-        # The automated review tick is the closest thing the swarm has
-        # to an auto-merge button. Restrict to admin so an ordinary
-        # `write` token can't flush every reviewable task to
-        # COMPLETED on demand. mac-iez.
-        return "admin"
+        # The automated review tick is the closest thing the swarm has to an
+        # auto-merge button, so it does not fall under the generic `write`
+        # bucket (mac-iez). It is NOT admin-only either: a worker cannot
+        # advance a task's review to COMPLETED by calling this route --
+        # `advance_default_review_workflows` only lands work that already has
+        # a recorded, independently-authored verdict from `/reviews/{id}/decision`
+        # (itself gated by `_assert_review_actor`, so a worker can never
+        # author its own approval). This route just drains the queue for
+        # decisions that already exist. Without a scope a normal fleet worker
+        # holds, every worker's own post-verdict tick call was rejected with
+        # "token lacks required scope: admin", so the queue only drained when
+        # an admin-scoped caller happened to invoke it manually -- REVIEWING
+        # tasks piled up for months. `review:advance` is minted into every
+        # worker credential (WORKER_SCOPES) but is deliberately NOT inherited
+        # by a plain `write` token (TokenPrincipal.has_scope), so a
+        # non-fleet write-scoped caller still cannot flush the queue.
+        return "review:advance"
     if re.match(r"^/tasks/[^/]+/(force-complete|reopen|release|ask|answer)$", path):
         # These recovery/control-plane endpoints bypass normal worker flow or
         # make held work dispatchable. They must never be available to an

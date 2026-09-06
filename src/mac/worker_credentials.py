@@ -60,7 +60,7 @@ MODE_ENFORCED = "enforced"
 POLICY_MODES = frozenset({MODE_COMPATIBILITY, MODE_ENFORCED})
 
 PACKAGE_CAPABILITY = "work_package_v1"
-WORKER_SCOPES = ("agent", "dispatch", "read", "write")
+WORKER_SCOPES = ("agent", "dispatch", "read", "write", "review:advance")
 ACTIVE_AGENT_STATUSES = frozenset({"idle", "busy", "draining"})
 
 _K8S_NAME = re.compile(r"[^a-z0-9-]+")
