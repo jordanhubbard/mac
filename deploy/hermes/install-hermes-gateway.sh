@@ -120,6 +120,44 @@ ensure_user_allowlist() {
     || printf 'SLACK_ALLOWED_USERS=*\n' >> "$env_file"
 }
 
+# Set Hermes's own home channel (where it delivers cron-job results and
+# cross-platform messages) from fleet config, not the interactive `/hermes
+# sethome` Slack command -- confirmed live: every fleet node greeted its
+# first message with "No home channel is set for Slack... Type /hermes
+# sethome", because nothing had ever set one. `SLACK_HOME_CHANNEL` (+
+# `_NAME`) in ~/.hermes/.env is what Hermes's own config loader
+# (gateway/config_env.py::_slack_home) reads at every startup -- the same
+# load path already used for SLACK_ALLOWED_USERS, and distinct from
+# slack.free_response_channels/slack.require_mention (configure_gateway,
+# below), which govern response behavior, not delivery routing.
+#
+# Resolving the channel name to an ID needs channel_directory.json, which
+# Hermes only writes after its first successful Slack connection -- same
+# ordering constraint resolve_home_channel_id already has for
+# free_response_channels. A node that has never connected simply gets this
+# on its next prepare, after the gateway installed by this same run has
+# connected once.
+ensure_home_channel_env() {
+  [ -n "$SLACK_HOME_CHANNEL_NAME" ] || return 0
+  local env_file="$HERMES_HOME/.env" channel_id
+  mkdir -p "$HERMES_HOME"
+  touch "$env_file"
+  if channel_id="$(resolve_home_channel_id "$SLACK_HOME_CHANNEL_NAME")"; then
+    log "setting Hermes home channel to $SLACK_HOME_CHANNEL_NAME ($channel_id)"
+    grep -v '^SLACK_HOME_CHANNEL=\|^SLACK_HOME_CHANNEL_NAME=' "$env_file" > "$env_file.tmp" 2>/dev/null \
+      || : > "$env_file.tmp"
+    {
+      cat "$env_file.tmp"
+      printf 'SLACK_HOME_CHANNEL=%s\n' "$channel_id"
+      printf 'SLACK_HOME_CHANNEL_NAME=%s\n' "$SLACK_HOME_CHANNEL_NAME"
+    } > "$env_file"
+    rm -f "$env_file.tmp"
+  else
+    log "WARNING: could not resolve #$SLACK_HOME_CHANNEL_NAME to a channel id yet" \
+        "(gateway may not have connected to Slack before); re-run prepare after it has"
+  fi
+}
+
 configure_gateway() {
   local hermes
   hermes="$(hermes_bin)" || die "hermes CLI not found"
@@ -200,6 +238,7 @@ prepare() {
   port_credentials
   migrate_claw_state
   ensure_user_allowlist
+  ensure_home_channel_env
   configure_gateway
   install_service
 }
