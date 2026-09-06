@@ -149,7 +149,7 @@ def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -
 
     projected = WorkerCredentialPrincipalProvider(cp.store).tokens()
     assert projected[row["token_hash"]] == {
-        "scopes": ["agent", "dispatch", "read", "write"],
+        "scopes": ["agent", "dispatch", "read", "write", "review:advance"],
         "client_id": issue.record["id"],
         "agent_id": "agent_alpha",
         "principal_kind": "worker",
