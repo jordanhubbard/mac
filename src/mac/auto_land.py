@@ -391,15 +391,27 @@ def _default_subprocess_runner(argv, *, cwd=None):  # pragma: no cover - thin sh
 def run_contract_gate(
     repo_dir: str = ".",
     *,
-    script: str = _CONTRACT_SCRIPT,
+    command: Optional[str] = None,
     runner: Callable[..., Any] = _default_subprocess_runner,
 ) -> ContractResult:
     """Invoke the machine contract gate and translate exit code -> GREEN/RED.
 
+    ``command`` is the target repository's own contract test command (its
+    ``.mac/project.yaml`` ``test.command``, resolved by the caller -- this
+    function has no repository-registry access of its own). It defaults to
+    this repository's own ``scripts/run-contract-tests.sh`` only when the
+    caller has no repository-specific command to offer (e.g. landing this
+    repo itself, or a target with no registered contract).
+
+    Run via ``bash -c`` rather than treated as a script *file*: a real
+    contract's ``test.command`` is an arbitrary shell command (for example
+    ``pytest -q && mypy pkg``), not necessarily a bare path -- ``bash
+    -c`` handles both a bare path and a compound command identically.
     ``scripts/run-contract-tests.sh`` exits 0 only when the tests pass AND the
     coverage-policy floors hold; any nonzero exit is RED.
     """
-    proc = runner(["bash", script], cwd=repo_dir)
+    resolved = (command or _CONTRACT_SCRIPT).strip()
+    proc = runner(["bash", "-c", resolved], cwd=repo_dir)
     rc = int(getattr(proc, "returncode", 1))
     stdout = getattr(proc, "stdout", "") or ""
     stderr = getattr(proc, "stderr", "") or ""
@@ -746,6 +758,30 @@ def notify_human(
     return notification
 
 
+def _resolve_target_test_command(target: str, *, plane: Any) -> Optional[str]:
+    """Best-effort: the target task's own repository contract's test command.
+
+    ``target`` is usually a task id (the normal ``mac review auto-land
+    <task_id>`` shape); it may also be a bare branch/ref, which has no task
+    metadata to consult. Either way this never raises -- a target with no
+    resolvable contract command falls back to this repo's own contract
+    script in :func:`run_contract_gate`, which is the previous behavior.
+    """
+    if plane is None:
+        return None
+    try:
+        task = plane.get_task(target)
+    except Exception:  # noqa: BLE001 - not a task id, or lookup unavailable
+        return None
+    from mac.executor_prompt import _repository_contract_test_command
+
+    try:
+        command = _repository_contract_test_command({"metadata": task.metadata})
+    except Exception:  # noqa: BLE001 - malformed metadata must not block the gate
+        return None
+    return command.strip() or None
+
+
 def build_real_dependencies(
     *,
     plane: Any = None,
@@ -767,7 +803,9 @@ def build_real_dependencies(
     return {
         "author": author,
         "resolve_head_sha": lambda target: _resolve_head_sha(target, repo_dir=repo_dir),
-        "run_contract": lambda target: run_contract_gate(repo_dir),
+        "run_contract": lambda target: run_contract_gate(
+            repo_dir, command=_resolve_target_test_command(target, plane=plane)
+        ),
         "run_review": lambda target: run_adversarial_review(
             target, repo_dir=repo_dir, env=env, author=author
         ),

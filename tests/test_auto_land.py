@@ -219,6 +219,75 @@ def test_run_contract_gate_red_on_nonzero():
     assert result.details["returncode"] == 1
 
 
+def test_run_contract_gate_defaults_to_mac_own_script_via_bash_dash_c():
+    recorded = {}
+
+    def runner(argv, cwd=None):
+        recorded["argv"] = argv
+        recorded["cwd"] = cwd
+        return _Proc(0, "all pass")
+
+    result = run_contract_gate(".", runner=runner)
+    assert result.green is True
+    # "mac"'s own contract script is a bare path; bash -c must still run it
+    # correctly (no regression for the primary repo).
+    assert recorded["argv"] == ["bash", "-c", "scripts/run-contract-tests.sh"]
+
+
+def test_run_contract_gate_runs_a_foreign_repos_compound_test_command():
+    recorded = {}
+
+    def runner(argv, cwd=None):
+        recorded["argv"] = argv
+        return _Proc(0, "1 passed")
+
+    result = run_contract_gate(
+        "/some/other/repo",
+        command=".venv/bin/pytest -q && .venv/bin/mypy toolkit",
+        runner=runner,
+    )
+    assert result.green is True
+    # A compound shell command (&&) must run via `bash -c`, never treated as
+    # a filename -- `bash <that string>` would fail with "No such file".
+    assert recorded["argv"] == [
+        "bash",
+        "-c",
+        ".venv/bin/pytest -q && .venv/bin/mypy toolkit",
+    ]
+
+
+def test_resolve_target_test_command_uses_the_targets_own_repository_contract():
+    from mac.auto_land import _resolve_target_test_command
+
+    class _FakeTask:
+        metadata = {
+            "execution_contract": {
+                "repository_contract": {
+                    "test": {"command": ".venv/bin/pytest -q && .venv/bin/mypy toolkit"}
+                }
+            }
+        }
+
+    class _FakePlane:
+        def get_task(self, target):
+            assert target == "task_abc123"
+            return _FakeTask()
+
+    command = _resolve_target_test_command("task_abc123", plane=_FakePlane())
+    assert command == ".venv/bin/pytest -q && .venv/bin/mypy toolkit"
+
+
+def test_resolve_target_test_command_falls_back_to_none_for_a_non_task_target():
+    from mac.auto_land import _resolve_target_test_command
+
+    class _RaisingPlane:
+        def get_task(self, target):
+            raise LookupError("not a task id")
+
+    assert _resolve_target_test_command("some-branch", plane=_RaisingPlane()) is None
+    assert _resolve_target_test_command("task_x", plane=None) is None
+
+
 class _Choice:
     def __init__(self, available=True, agent="claude"):
         self.available = available

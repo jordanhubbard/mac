@@ -6296,6 +6296,9 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
     author = getattr(args, "author", "") or os.environ.get("MAC_AGENT_ID", "")
     if getattr(args, "dry_run", False):
         # Preview only: never runs the contract gate, spawns a reviewer, or lands.
+        # The literal script name below is a fixed label, not necessarily what
+        # will run -- the real gate resolves the target's own repository
+        # contract test command first (see auto_land.run_contract_gate).
         _print(
             {
                 "schema": "mac.auto_land.dry_run.v1",
@@ -6306,7 +6309,8 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
                 "author": author,
                 "would_run": ["contract-gate", "adversarial-review"],
                 "gates": [
-                    "contract (scripts/run-contract-tests.sh)",
+                    "contract (the target's own repository-contract test command,"
+                    " falling back to scripts/run-contract-tests.sh)",
                     "adversarial-review (independent agent, default-to-reject)",
                     "independence (reviewer != author)",
                     "head_sha (land only the reviewed revision)",
