@@ -928,6 +928,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
