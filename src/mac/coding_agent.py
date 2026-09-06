@@ -919,9 +919,16 @@ def _default_argv(agent: str, binary: str, prompt: str, *, model: str = "") -> L
         # `run` is the non-interactive entry point; the bare `opencode` default
         # subcommand starts a TUI and would hang a task run forever.
         #
-        # No approval-bypass flag is needed or offered: opencode does not
-        # prompt in `run` mode. Confinement is still the executor's OpenShell
-        # gate, exactly as for the others.
+        # `--auto` bypasses opencode's own permission prompts (e.g.
+        # "external_directory"). The comment this replaced claimed opencode
+        # never prompts in `run` mode -- false against current opencode:
+        # confirmed live, every real task execution was silently failing
+        # with every filesystem permission request auto-rejected (nothing
+        # answers an interactive prompt in a non-interactive task run),
+        # blocking agents from reading even their own task worktree.
+        # Confinement is still the executor's OpenShell gate, exactly as for
+        # the others (--dangerously-skip-permissions / --dangerously-bypass-
+        # approvals-and-sandbox above).
         #
         # Model names MUST carry the provider prefix that `opencode models`
         # prints -- "nvidia-inference/switchyard/openai/gpt-5.6-sol", not
@@ -929,7 +936,7 @@ def _default_argv(agent: str, binary: str, prompt: str, *, model: str = "") -> L
         # the CLI and then fails at the server as an opaque
         # "Unexpected server error", which is what a misconfigured node looked
         # like before this was understood.
-        argv = [binary, "run"]
+        argv = [binary, "run", "--auto"]
         if model:
             argv += ["--model", model]
         return [*argv, prompt]
