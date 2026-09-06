@@ -236,6 +236,74 @@ def test_free_response_channel_is_skipped_gracefully_when_unresolvable(tmp_path)
     assert not any(call[:3] == ["config", "set", "slack.free_response_channels"] for call in calls)
 
 
+def test_home_channel_env_is_set_when_directory_resolves_the_name(tmp_path):
+    # Regression: every fleet node greeted its first Slack message with
+    # "No home channel is set for Slack... Type /hermes sethome" because
+    # nothing had ever written SLACK_HOME_CHANNEL -- the env var Hermes's
+    # own config loader reads at every startup (distinct from
+    # slack.free_response_channels, which only governs response behavior).
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    directory = hermes_home / "channel_directory.json"
+    directory.write_text(
+        json.dumps({"channels": [{"name": "rockyandfriends", "id": "C0AMSBEU7CJ"}]}),
+        encoding="utf-8",
+    )
+    result, _calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={"MAC_HERMES_SLACK_HOME_CHANNEL_NAME": "rockyandfriends"},
+    )
+    assert result.returncode == 0, result.stderr
+    env_lines = (hermes_home / ".env").read_text(encoding="utf-8").splitlines()
+    assert "SLACK_HOME_CHANNEL=C0AMSBEU7CJ" in env_lines
+    assert "SLACK_HOME_CHANNEL_NAME=rockyandfriends" in env_lines
+
+
+def test_home_channel_env_is_skipped_gracefully_when_unresolvable(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    result, _calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={"MAC_HERMES_SLACK_HOME_CHANNEL_NAME": "somechannel"},
+    )
+    assert result.returncode == 0, result.stderr
+    env_text = (hermes_home / ".env").read_text(encoding="utf-8")
+    assert "SLACK_HOME_CHANNEL=" not in env_text
+
+
+def test_home_channel_env_rerun_replaces_rather_than_duplicates(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "channel_directory.json").write_text(
+        json.dumps({"channels": [{"name": "rockyandfriends", "id": "C0AMSBEU7CJ"}]}),
+        encoding="utf-8",
+    )
+    (hermes_home / ".env").write_text(
+        "SLACK_ALLOWED_USERS=*\n"
+        "SLACK_HOME_CHANNEL=CSTALE00000\n"
+        "SLACK_HOME_CHANNEL_NAME=stalechannel\n",
+        encoding="utf-8",
+    )
+    result, _calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={"MAC_HERMES_SLACK_HOME_CHANNEL_NAME": "rockyandfriends"},
+    )
+    assert result.returncode == 0, result.stderr
+    env_lines = (hermes_home / ".env").read_text(encoding="utf-8").splitlines()
+    assert env_lines.count("SLACK_HOME_CHANNEL=C0AMSBEU7CJ") == 1
+    assert "SLACK_HOME_CHANNEL=CSTALE00000" not in env_lines
+    assert "SLACK_HOME_CHANNEL_NAME=stalechannel" not in env_lines
+
+
 def test_prepare_skips_install_when_hermes_already_on_path(tmp_path):
     result, calls = _run(tmp_path, "prepare")
     assert result.returncode == 0, result.stderr
