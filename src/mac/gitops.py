@@ -1005,11 +1005,29 @@ def _find_existing_task_pr(
 ) -> Optional[PullRequestResult]:
     """Find an open PR for a task across lease-specific branch names."""
     list_url = "%s/repos/%s/%s/pulls?state=open" % (api_base, owner, repo)
-    try:
-        data = _http_get_json(list_url, headers)
-    except Exception:
+    last_exc: Optional[Exception] = None
+    data = None
+    # Concurrent agents publishing to the same small repo can transiently
+    # trip this GET (timeout, rate limiting, momentary forge hiccup) --
+    # confirmed live: one of three agents landing on the same fresh repo
+    # within seconds of each other hit this and silently never opened its
+    # PR, because the failure was fatal on the first try. A few short
+    # retries resolve the transient case without weakening the fail-closed
+    # duplicate-prevention guarantee below.
+    for attempt in range(3):
+        try:
+            data = _http_get_json(list_url, headers)
+            last_exc = None
+            break
+        except Exception as exc:  # noqa: BLE001 - retried below, re-raised with cause if exhausted
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+    if last_exc is not None:
         # Fail closed: an unreadable task index must not mint a possible duplicate.
-        raise RuntimeError("could not verify whether task %s already has an open PR" % task_id)
+        raise RuntimeError(
+            "could not verify whether task %s already has an open PR: %s" % (task_id, last_exc)
+        ) from last_exc
     if not isinstance(data, list):
         raise RuntimeError("forge returned an invalid open-PR index for task %s" % task_id)
     for pr in data:
