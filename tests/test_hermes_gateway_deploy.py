@@ -84,6 +84,10 @@ def _run(
     # ensure_user_allowlist) already ran.
     if not (extra_env or {}).get("_OMIT_ALLOWLIST_ENV"):
         (hermes_home / ".env").write_text("SLACK_ALLOWED_USERS=*\n", encoding="utf-8")
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, exist_ok=True)
+    if not (extra_env or {}).get("_OMIT_GATEWAY_IMPL_ENV"):
+        (mac_home / "mac.env").write_text("MAC_CHAT_GATEWAY_IMPL=hermes\n", encoding="utf-8")
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "HOME": str(home),
@@ -93,8 +97,9 @@ def _run(
         "FAKE_HERMES_SCENARIO": scenario,
         "FAKE_MAC_CALLS": str(mac_calls_path),
     }
+    _test_only_flags = {"_OMIT_ALLOWLIST_ENV", "_OMIT_GATEWAY_IMPL_ENV"}
     if extra_env:
-        env.update({k: v for k, v in extra_env.items() if k != "_OMIT_ALLOWLIST_ENV"})
+        env.update({k: v for k, v in extra_env.items() if k not in _test_only_flags})
     result = subprocess.run(
         ["bash", str(INSTALLER), subcommand],
         capture_output=True,
@@ -159,6 +164,44 @@ def test_prepare_does_not_duplicate_an_existing_allowlist_line(tmp_path):
     assert result.returncode == 0, result.stderr
     lines = [line for line in env_file.read_text(encoding="utf-8").splitlines() if line]
     assert lines == ["SLACK_ALLOWED_USERS=U0123"]
+
+
+def test_verify_fails_closed_when_gateway_impl_env_is_missing_or_wrong(tmp_path):
+    # Regression: mac-agent's own startup self-test derives its
+    # OpenClaw-required branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env.
+    # A Hermes cutover run through this installer (rather than the full
+    # fleet-node-install.sh deploy path) never touched that variable, so it
+    # kept claiming "openclaw" after the gateway was gone -- mac-agent then
+    # crash-loops forever demanding an OpenClaw advertisement that no longer
+    # exists, and the agent is offline/unhealthy for as long as it never
+    # starts. Confirmed live on all three fleet nodes.
+    result, _calls = _run(
+        tmp_path, "verify", scenario="healthy", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"}
+    )
+    assert result.returncode != 0
+    assert "mac_chat_gateway_impl" in result.stderr.lower()
+
+
+def test_prepare_writes_the_chat_gateway_impl_env_var(tmp_path):
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, exist_ok=True)
+    env_file = mac_home / "mac.env"
+    result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8").strip() == "MAC_CHAT_GATEWAY_IMPL=hermes"
+
+
+def test_prepare_corrects_a_stale_openclaw_gateway_impl_value(tmp_path):
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, exist_ok=True)
+    env_file = mac_home / "mac.env"
+    env_file.write_text("MAC_CHAT_GATEWAY_IMPL=openclaw\n", encoding="utf-8")
+    result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in env_file.read_text(encoding="utf-8").splitlines() if line]
+    assert lines == ["MAC_CHAT_GATEWAY_IMPL=hermes"]
 
 
 def test_withdraw_stops_the_gateway_without_uninstalling(tmp_path):
