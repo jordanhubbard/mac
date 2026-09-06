@@ -207,6 +207,7 @@ def test_open_pull_request_reuses_task_pr_across_lease_branches(monkeypatch) -> 
 
 def test_open_pull_request_fails_closed_when_task_pr_index_is_unreadable(monkeypatch) -> None:
     monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    monkeypatch.setattr("mac.gitops.time.sleep", lambda _seconds: None)
 
     def offline(req: Any, timeout: float = 0) -> _FakeResponse:
         url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
@@ -215,12 +216,51 @@ def test_open_pull_request_fails_closed_when_task_pr_index_is_unreadable(monkeyp
         return _FakeResponse({"default_branch": "main"})
 
     with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=offline):
-        with pytest.raises(RuntimeError, match="could not verify"):
+        with pytest.raises(RuntimeError, match="could not verify") as excinfo:
             open_pull_request(
                 "https://github.com/x/y.git",
                 head="lease-specific",
                 title="work (task_d5b6ebd1146e789c114037cda9fff9d9)",
             )
+    # The underlying transient error is preserved, not swallowed -- a bare
+    # "could not verify" with no cause is undiagnosable when this recurs.
+    assert "offline" in str(excinfo.value)
+    assert excinfo.value.__cause__ is not None
+
+
+def test_open_pull_request_retries_transient_pr_index_failure_then_succeeds(monkeypatch) -> None:
+    # Concurrent agents publishing to the same fresh repo can transiently trip
+    # this GET (rate limiting, a momentary forge hiccup) -- confirmed live: one
+    # of three agents landing on jordanhubbard/mac-fleet-canary within seconds
+    # of the others hit exactly this and never opened its PR because the first
+    # failure was treated as fatal.
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    monkeypatch.setattr("mac.gitops.time.sleep", lambda _seconds: None)
+    posts = []
+    attempts = {"list": 0}
+
+    def flaky_then_recovers(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if req.get_method() == "POST":
+            posts.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"number": 9, "html_url": "https://github.com/x/y/pull/9"})
+        if "/pulls?state=open" in url:
+            attempts["list"] += 1
+            if attempts["list"] < 3:
+                raise OSError("transient forge hiccup")
+            return _FakeResponse([])
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=flaky_then_recovers):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="lease-specific",
+            title="work (task_d5b6ebd1146e789c114037cda9fff9d9)",
+        )
+
+    assert result.number == 9
+    assert attempts["list"] == 3
+    assert len(posts) == 1
 
 
 def test_https_remote_for_token_auth_rewrites_ssh_when_token_present(
