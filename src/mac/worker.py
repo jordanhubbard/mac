@@ -1065,6 +1065,12 @@ class MacWorker(
         # Rate-limit self-heal rotations: one per window, so a non-key cause of
         # signature rejections can never drive a rotation loop.
         self._last_attestation_heal_at = 0.0
+        # Rate-limit the post-verdict review-tick failure log: a genuine,
+        # ongoing outage (not the routine "token lacks required scope: admin"
+        # rejection this used to hit before every worker credential carried
+        # `review:advance`) should still be visible, but not as a warning per
+        # verdict recorded.
+        self._last_review_advance_failure_logged_at = 0.0
         self.poll_interval_seconds = float(poll_interval_seconds)
         self._inner_loop_wake = threading.Event()
         self._inner_loop = PersistentAgentLoop(
@@ -2812,13 +2818,25 @@ class MacWorker(
                 {},
             )
         except Exception as exc:  # noqa: BLE001 - verdict evidence is already recorded.
-            self._observe_log(
-                "worker.review_workflow.advance_failed",
-                level="warning",
-                subject_type="task",
-                subject_id=task_id,
-                detail={"agent_id": self.agent_id, "error": str(exc)},
-            )
+            # This used to fire on every verdict recorded fleet-wide (any
+            # worker token lacked the scope for /reviews/default/tick,
+            # rejected "token lacks required scope: admin") -- a permanent,
+            # expected failure, not a transient one, so it was pure log spam
+            # rather than a signal anyone could act on. Now that
+            # `review:advance` is minted into every worker credential
+            # (WORKER_SCOPES), a failure here is a real, actionable signal
+            # again -- but still rate-limit it, since a genuine outage would
+            # otherwise still log once per verdict across the whole fleet.
+            now = time.monotonic()
+            if now - self._last_review_advance_failure_logged_at >= 300.0:
+                self._last_review_advance_failure_logged_at = now
+                self._observe_log(
+                    "worker.review_workflow.advance_failed",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"agent_id": self.agent_id, "error": str(exc)},
+                )
 
     def _process_agentbus_control(
         self, *, repository_update_only: bool = False
