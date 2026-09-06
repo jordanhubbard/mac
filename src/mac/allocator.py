@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, Mapping, Optional, 
 from uuid import uuid4
 
 from mac.agent_health import advisory_health_dispatch_ready
+from mac.models import REPORT_REPOSITORY_EXECUTOR_POSTURES
 from mac.roles_service import machine_hardware_satisfies
 
 
@@ -283,14 +284,47 @@ class AllocationAgent:
         # requirement; making silence disqualifying would strand every worker
         # mid-upgrade. The unsatisfiable-requirements diagnostic reports the
         # silent ones separately.
+        # ``openclaw_runtime.confinement`` describes the OpenClaw chat
+        # gateway's own OpenShell container -- a claim about that process,
+        # never about this agent's TASK-execution sandbox. It happened to be
+        # a usable proxy while every fleet node ran OpenClaw, and happens to
+        # keep working today only where a pre-cutover value is still sitting
+        # unrefreshed in the DB (confirmed live: natasha/bullwinkle still
+        # carry a 2026-09-04 OpenClaw-era snapshot after their chat gateway
+        # moved to Hermes). The moment that stale value is cleared by a
+        # normal re-registration -- which is exactly what happened to rocky
+        # this session -- a fully healthy host-install worker reads as
+        # "no execution boundary" and dispatch starves it, even though its
+        # own executor already reported a verified attestation for the
+        # thing this check actually cares about.
+        #
+        # ``report_repository_executor_attestation`` (worker.py's
+        # ``read_only_report_repository_executor_attestation``) is that
+        # thing: a fresh, per-registration, schema-versioned claim about
+        # THIS agent's task-execution boundary, covering both the Linux
+        # OpenShell/Landlock posture and the macOS host-install posture ADR
+        # 0015 establishes as the legitimate, by-design confinement for a
+        # darwin node (no container is possible there, so "macos_host" is
+        # not an absence of a boundary -- it is the boundary).
         runtime = resources.get("openclaw_runtime")
         confinement = runtime.get("confinement") if isinstance(runtime, Mapping) else None
-        proven = bool(
+        proven_legacy = bool(
             isinstance(confinement, Mapping)
             and str(confinement.get("provider") or "").strip()
             and isinstance(runtime, Mapping)
             and runtime.get("verified") is True
         )
+        attestation = resources.get("report_repository_executor_attestation")
+        proven_attestation = bool(
+            isinstance(attestation, Mapping)
+            and attestation.get("verified") is True
+            and (
+                str(attestation.get("platform") or ""),
+                str(attestation.get("isolation_posture") or ""),
+            )
+            in REPORT_REPOSITORY_EXECUTOR_POSTURES
+        )
+        proven = proven_legacy or proven_attestation
         contradicted = resources.get("openshell_required") is False
         execution_boundary_verified = proven or not contradicted
         return cls(
