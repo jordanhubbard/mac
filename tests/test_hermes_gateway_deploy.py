@@ -77,6 +77,13 @@ def _run(
     bin_dir = _prepare_bin(tmp_path, calls_path)
     home = tmp_path / "home"
     (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    # Every scenario except the one that explicitly tests its absence
+    # represents a fleet node where prepare (and therefore
+    # ensure_user_allowlist) already ran.
+    if not (extra_env or {}).get("_OMIT_ALLOWLIST_ENV"):
+        (hermes_home / ".env").write_text("SLACK_ALLOWED_USERS=*\n", encoding="utf-8")
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "HOME": str(home),
@@ -87,7 +94,7 @@ def _run(
         "FAKE_MAC_CALLS": str(mac_calls_path),
     }
     if extra_env:
-        env.update(extra_env)
+        env.update({k: v for k, v in extra_env.items() if k != "_OMIT_ALLOWLIST_ENV"})
     result = subprocess.run(
         ["bash", str(INSTALLER), subcommand],
         capture_output=True,
@@ -117,6 +124,41 @@ def test_verify_fails_when_gateway_is_unhealthy(tmp_path):
     result, _calls = _run(tmp_path, "verify", scenario="unhealthy")
     assert result.returncode != 0
     assert "not healthy" in result.stderr.lower()
+
+
+def test_verify_fails_closed_when_no_user_allowlist_is_configured(tmp_path):
+    # Regression: Hermes defaults every platform to dm_policy/group_policy=
+    # pairing and silently rejects every sender (including @mentions in a
+    # free_response_channels channel) with no startup failure -- confirmed
+    # live across all three fleet nodes. verify must catch this at deploy
+    # time rather than let a node come up looking healthy but mute.
+    result, _calls = _run(
+        tmp_path, "verify", scenario="healthy", extra_env={"_OMIT_ALLOWLIST_ENV": "1"}
+    )
+    assert result.returncode != 0
+    assert "slack_allowed_users" in result.stderr.lower()
+
+
+def test_prepare_writes_the_user_allowlist_env_var(tmp_path):
+    home = tmp_path / "home"
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    env_file = hermes_home / ".env"
+    result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_ALLOWLIST_ENV": "1"})
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8").strip() == "SLACK_ALLOWED_USERS=*"
+
+
+def test_prepare_does_not_duplicate_an_existing_allowlist_line(tmp_path):
+    home = tmp_path / "home"
+    hermes_home = home / ".hermes"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    env_file = hermes_home / ".env"
+    env_file.write_text("SLACK_ALLOWED_USERS=U0123\n", encoding="utf-8")
+    result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_ALLOWLIST_ENV": "1"})
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in env_file.read_text(encoding="utf-8").splitlines() if line]
+    assert lines == ["SLACK_ALLOWED_USERS=U0123"]
 
 
 def test_withdraw_stops_the_gateway_without_uninstalling(tmp_path):
