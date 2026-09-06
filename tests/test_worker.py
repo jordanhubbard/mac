@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 import types
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import pytest
 
@@ -38,7 +38,11 @@ from mac.fleet_learning import (
 )
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
-from mac.services import ControlPlane, sign_verification_manifest
+from mac.services import (
+    ControlPlane,
+    sign_verification_manifest,
+    verify_verification_manifest_signature,
+)
 from mac.worker import (
     MacWorker,
     SubprocessExecutor,
@@ -68,6 +72,52 @@ def register_worker_fixture(cp: ControlPlane):
     machine = cp.register_machine("worker-host")
     agent = cp.register_agent(machine.id, "worker", capabilities=["python"])
     return agent
+
+
+def assert_secret_absent(secret: str, value: object, *, path: str) -> None:
+    if secret in str(value):
+        pytest.fail(f"credential fixture persisted at {path}", pytrace=False)
+
+
+def assert_raises_safely(exception_type: type[BaseException], action: Callable[[], object]) -> None:
+    try:
+        action()
+    except exception_type:
+        return
+    except BaseException:
+        pytest.fail("unexpected exception type", pytrace=False)
+    pytest.fail("expected exception was not raised", pytrace=False)
+
+
+def call_safely(action: Callable[[], object], *, path: str) -> Any:
+    try:
+        return action()
+    except BaseException:
+        pytest.fail(f"unexpected exception at {path}", pytrace=False)
+
+
+def evidence_artifact_text(cp: ControlPlane, evidence_id: str) -> Dict[str, str]:
+    artifacts = cp.list_evidence_artifacts(evidence_id)
+    return {
+        artifact["name"]: base64.b64decode(
+            cp.get_evidence_artifact(evidence_id, artifact["id"])["content_base64"]
+        ).decode("utf-8", errors="replace")
+        for artifact in artifacts
+    }
+
+
+def persisted_task_state(cp: ControlPlane, task_id: str) -> Dict[str, Any]:
+    evidence = cp.list_evidence(task_id)
+    return {
+        "task": cp.get_task(task_id).to_dict(),
+        "evidence": [item.to_dict() for item in evidence],
+        "artifacts": {item.id: evidence_artifact_text(cp, item.id) for item in evidence},
+        "history": [event.to_dict() for event in cp.task_history(task_id)],
+        "observability": [
+            item.to_dict()
+            for item in cp.list_observability(subject_type="task", subject_id=task_id, limit=200)
+        ],
+    }
 
 
 def test_worker_claim_request_is_transport_only_and_policy_is_hub_visible(tmp_path: Path):
@@ -412,6 +462,222 @@ def test_mac_worker_submits_durable_evidence_artifacts(tmp_path: Path):
     assert base64.b64decode(stderr_artifact["content_base64"]) == b"durable stderr\n"
 
 
+def test_record_execution_redacts_before_manifest_signing_and_artifact_capture(
+    tmp_path: Path,
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe operator result")
+    cp.claim_task(task.id, agent.id)
+    cp.start_task(task.id, agent.id)
+    client = TestClient(create_app(control_plane=cp))
+    leaked = "never-persist-this-value"
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        lambda _task, _task_dir: WorkerExecution(0, "unused"),
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    task_dir = tmp_path / task.id
+    task_dir.mkdir()
+    (task_dir / "task.json").write_text(
+        json.dumps({"task": task.to_dict()}),
+        encoding="utf-8",
+    )
+    execution = WorkerExecution(
+        0,
+        f"completed with CURSOR_AUTH_TOKEN={leaked}",
+        stdout=f"MAC_ATTESTATION_KEY={leaked}\n",
+        stderr=f"Authorization: Bearer {leaked}\n",
+        metadata={
+            "verification": {
+                "schema": "mac.worker_evidence.v1",
+                "status": "pass",
+                "evidence_type": "operator_result",
+                "result": f"MAC_CONTROL_PLANE_DB_PASSWORD={leaked}",
+            }
+        },
+    )
+
+    evidence_result = worker._record_execution(
+        task.id,
+        task_dir,
+        execution,
+        lease_id=cp.get_task(task.id).lease_id,
+    )
+
+    evidence = cp.get_evidence(evidence_result["id"])
+    assert_secret_absent(leaked, evidence.to_dict(), path="evidence")
+    assert_secret_absent(
+        leaked,
+        evidence_artifact_text(cp, evidence.id),
+        path="evidence.artifacts",
+    )
+    verification = evidence.metadata["verification"]
+    assert verify_verification_manifest_signature(
+        cp._agent_attestation_key(agent.id),
+        verification,
+        verification["signature"],
+    )
+
+
+def test_record_execution_redacts_executor_authored_manifest_before_capture(
+    tmp_path: Path,
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe executor manifest")
+    cp.claim_task(task.id, agent.id)
+    cp.start_task(task.id, agent.id)
+    client = TestClient(create_app(control_plane=cp))
+    secret = "opaque-credential-fixture"
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        lambda _task, _task_dir: WorkerExecution(0, "unused"),
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    task_dir = tmp_path / task.id
+    task_dir.mkdir()
+    (task_dir / "task.json").write_text(
+        json.dumps({"task": task.to_dict()}),
+        encoding="utf-8",
+    )
+    manifest_path = task_dir / "mac-evidence.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "pass",
+                "evidence_type": "operator_result",
+                "result": f"operator completed with CURSOR_AUTH_TOKEN={secret}",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence_result = worker._record_execution(
+        task.id,
+        task_dir,
+        WorkerExecution(0, "operator completed"),
+        lease_id=cp.get_task(task.id).lease_id,
+    )
+
+    evidence = cp.get_evidence(evidence_result["id"])
+    assert_secret_absent(secret, evidence.to_dict(), path="evidence.verification")
+    assert_secret_absent(
+        secret,
+        manifest_path.read_text(encoding="utf-8"),
+        path="workspace.mac-evidence.json",
+    )
+    assert_secret_absent(
+        secret,
+        evidence_artifact_text(cp, evidence.id),
+        path="evidence.artifacts.mac-evidence.json",
+    )
+    verification = evidence.metadata["verification"]
+    assert verify_verification_manifest_signature(
+        cp._agent_attestation_key(agent.id),
+        verification,
+        verification["signature"],
+    )
+
+
+def test_failed_execution_redacts_persisted_diagnostics_without_changing_returncode(
+    tmp_path: Path,
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe failed result", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+    leaked = "never-persist-this-value"
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        return WorkerExecution(
+            17,
+            f"RuntimeError: CURSOR_AUTH_TOKEN={leaked}",
+            stdout=f"build step failed\nMAC_ATTESTATION_KEY={leaked}\n",
+            stderr=f"Authorization: Bearer {leaked}\n",
+        )
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    evidence = cp.list_evidence(task.id)[0]
+    persisted = persisted_task_state(cp, task.id)
+    assert_secret_absent(leaked, persisted, path="task.persistence")
+    assert evidence.metadata["returncode"] == 17
+    assert "build step failed" in str(persisted)
+
+
+def test_timeout_redacts_output_before_evidence_logs_and_history(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe timeout", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+    secret = "opaque-credential-fixture"
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        raise subprocess.TimeoutExpired(
+            cmd="opaque-command",
+            timeout=1,
+            output=f"build timed out\nMAC_ATTESTATION_KEY={secret}\n",
+            stderr=f"Authorization: Bearer {secret}\n",
+        )
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    evidence = cp.list_evidence(task.id)[0]
+    persisted = persisted_task_state(cp, task.id)
+    assert_secret_absent(secret, persisted, path="timeout.persistence")
+    assert evidence.metadata["returncode"] == 124
+    assert "build timed out" in str(persisted)
+
+
+def test_worker_exception_redacts_message_and_traceback_before_persistence(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Secret-safe exception", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+    secret = "opaque-credential-fixture"
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        raise RuntimeError(f"worker failed with CURSOR_AUTH_TOKEN={secret}")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    assert_raises_safely(RuntimeError, worker.run_once)
+
+    persisted = persisted_task_state(cp, task.id)
+    assert_secret_absent(secret, persisted, path="exception.persistence")
+    assert "worker failed" in str(persisted)
+
+
 def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
@@ -503,6 +769,7 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
     assert first["status"] == "waiting_for_reviewer_verdict"
     assert first["reviewer_agent_id"] == reviewer.id
     client = TestClient(create_app(control_plane=cp))
+    secret = "opaque-credential-fixture"
 
     def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
         context = task_payload["metadata"]["review_context"]
@@ -522,13 +789,18 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
             "repo": dict(executor_manifest["repo"]),
             "checks": [{"name": "reviewer independent verification", "returncode": 0}],
             "worktree_digest": "sha256:" + ("0" * 64),
-            "findings": ["executor evidence is signed and tests passed"],
+            "findings": [f"review completed with CURSOR_AUTH_TOKEN={secret}"],
         }
         (task_dir / "mac-evidence.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True),
             encoding="utf-8",
         )
-        return WorkerExecution(0, "review approved", stdout="approved\n")
+        return WorkerExecution(
+            0,
+            f"review approved with CURSOR_AUTH_TOKEN={secret}",
+            stdout=f"approved\nMAC_ATTESTATION_KEY={secret}\n",
+            stderr=f"Authorization: Bearer {secret}\n",
+        )
 
     worker = MacWorker(
         MacApiClient("http://mac.test", transport=api_transport(client)),
@@ -552,6 +824,11 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
     task_metadata = cp.get_task(task.id).metadata
     assert task_metadata["review_claims"][first["review_id"]]["reviewer_agent_id"] == reviewer.id
     assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
+    assert_secret_absent(
+        secret,
+        persisted_task_state(cp, task.id),
+        path="review.persistence",
+    )
 
 
 def test_review_nudge_prepares_review_worktree_and_git_main_publication(
@@ -2585,6 +2862,57 @@ def test_mac_worker_does_not_mutate_task_after_losing_lease(tmp_path: Path):
     assert cp.list_evidence(task.id) == []
     observations = cp.list_observability(layer="worker", limit=20)
     assert any(item.name == "worker.execution.stale_result" for item in observations)
+
+
+def test_stale_exception_redacts_reason_before_observability_and_result(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    first = register_worker_fixture(cp)
+    machine = cp.register_machine("stale-exception-worker-host")
+    second = cp.register_agent(machine.id, "second-worker", capabilities=["python"])
+    task = cp.create_task("Secret-safe stale exception", required_capabilities=["python"])
+    cp.claim_task(task.id, first.id)
+    client = TestClient(create_app(control_plane=cp))
+    secret = "opaque-credential-fixture"
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        current_lease_id = cp.get_task(task.id).lease_id
+        assert current_lease_id is not None
+        expired_at = "2000-01-01T00:00:00+00:00"
+        cp.store.execute(
+            "UPDATE leases SET expires_at = ?, updated_at = ? WHERE id = ?",
+            (expired_at, expired_at, current_lease_id),
+        )
+        cp.store.execute(
+            "UPDATE tasks SET leased_until = ?, updated_at = ? WHERE id = ?",
+            (expired_at, expired_at, task.id),
+        )
+        cp.expire_leases()
+        _, second_lease = cp.claim_task(task.id, second.id)
+        cp.start_task(task.id, second.id, lease_id=second_lease.id)
+        raise RuntimeError(f"stale executor failed with CURSOR_AUTH_TOKEN={secret}")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        first.id,
+        tmp_path,
+        executor,
+    )
+
+    result = call_safely(worker.run_once, path="stale_result")
+
+    assert result.status == "stale_result"
+    assert_secret_absent(secret, result.error, path="stale_result.error")
+    observations = [
+        item.to_dict()
+        for item in cp.list_observability(
+            layer="worker",
+            name="worker.execution.stale_result",
+            subject_id=task.id,
+            limit=20,
+        )
+    ]
+    assert_secret_absent(secret, observations, path="stale_result.observability")
+    assert "stale executor failed" in str(observations)
 
 
 def test_mac_worker_run_forever_drains_queue_then_reports_offline(tmp_path: Path):

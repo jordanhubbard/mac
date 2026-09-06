@@ -103,6 +103,7 @@ from mac.repository_contract import (
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.persistence_redaction import redact_for_persistence
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -431,6 +432,16 @@ class WorkerExecution:
     @property
     def succeeded(self) -> bool:
         return self.returncode == 0
+
+
+def _redact_worker_execution(execution: WorkerExecution) -> WorkerExecution:
+    return WorkerExecution(
+        returncode=execution.returncode,
+        summary=redact_for_persistence(execution.summary),
+        stdout=redact_for_persistence(execution.stdout),
+        stderr=redact_for_persistence(execution.stderr),
+        metadata=redact_for_persistence(execution.metadata),
+    )
 
 
 @dataclass
@@ -1922,7 +1933,8 @@ class MacWorker(
             )
         except subprocess.TimeoutExpired as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             stdout = _coerce_process_output(exc.stdout)
             stderr = _coerce_process_output(exc.stderr)
             execution = WorkerExecution(
@@ -1935,6 +1947,7 @@ class MacWorker(
                     "process_tree_terminated": True,
                 },
             )
+            execution = _redact_worker_execution(execution)
             evidence = (
                 self._record_execution(
                     task_id,
@@ -1973,7 +1986,8 @@ class MacWorker(
             )
         except Exception as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             # A bare ``worker_exception`` transition used to carry only
             # ``error=str(exc)`` -- none of the keys ``_diagnostic_output_tail``
             # scans (stdout/stderr/output/*_tail), so the hub recorded an empty
@@ -1983,20 +1997,21 @@ class MacWorker(
             # it (plus the exception type and evidence id) on the transition so
             # the failure is diagnosable from the task history alone.
             exc_type = type(exc).__name__
-            tb_text = traceback.format_exc()
+            error_text = str(redact_for_persistence(str(exc)))
+            tb_text = str(redact_for_persistence(traceback.format_exc()))
             self._observe_log(
                 "worker.execution.exception",
                 level="error",
                 subject_type="task",
                 subject_id=task_id,
-                detail={"error": str(exc), "exception_type": exc_type},
+                detail={"error": error_text, "exception_type": exc_type},
             )
             evidence: Optional[JsonDict] = None
             if task_dir is not None:
                 try:
                     exc_execution = WorkerExecution(
                         1,
-                        "worker raised %s: %s" % (exc_type, exc),
+                        "worker raised %s: %s" % (exc_type, error_text),
                         stdout="",
                         stderr=tb_text,
                         metadata={
@@ -2024,7 +2039,7 @@ class MacWorker(
                             # Same: an unexpected worker exception is not
                             # self-evidently operator-actionable.
                             "manual_repair_required": False,
-                            "error": str(exc),
+                            "error": error_text,
                             "exception_type": exc_type,
                             "output_tail": tb_text,
                             "evidence_id": evidence.get("id") if evidence else None,
@@ -2780,6 +2795,7 @@ class MacWorker(
                 error=None if execution.succeeded else execution.summary,
             )
         except Exception as exc:
+            error_text = str(redact_for_persistence(str(exc)))
             if isinstance(exc, RepositoryAccessError):
                 # The repository-access learning is written before the
                 # exception is raised. Re-run reviewer selection immediately
@@ -2799,11 +2815,11 @@ class MacWorker(
                     "message_id": message.get("id"),
                     "review_id": review_id,
                     "executor_evidence_id": executor_evidence_id,
-                    "error": str(exc),
+                    "error": error_text,
                     "failure_class": getattr(exc, "failure_class", ""),
                 },
             )
-            return WorkerRunResult(status="review_verdict_failed", error=str(exc))
+            return WorkerRunResult(status="review_verdict_failed", error=error_text)
 
     def _advance_review_workflow_after_verdict(self, task_id: str) -> None:
         try:
@@ -4365,6 +4381,8 @@ class MacWorker(
         lease_id: str,
         attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
+        self._redact_verification_manifest(task_dir)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         if execution.succeeded:
@@ -5269,6 +5287,8 @@ class MacWorker(
         executor_evidence_id: str,
         message_id: str,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
+        self._redact_verification_manifest(task_dir)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         result_path = task_dir / "review-result.json"
@@ -5461,6 +5481,48 @@ class MacWorker(
         )
         return False
 
+    def _redact_verification_manifest(self, task_dir: Path) -> None:
+        manifest_path = task_dir / "mac-evidence.json"
+        try:
+            source_info = manifest_path.lstat()
+        except FileNotFoundError:
+            return
+
+        loaded: Any
+        if not stat.S_ISREG(source_info.st_mode):
+            loaded = {
+                "schema": "mac.worker_evidence.v1",
+                "status": "invalid",
+                "problems": ["mac-evidence.json is not a regular file"],
+            }
+        else:
+            fd: Optional[int] = None
+            try:
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(manifest_path, flags)
+                opened = os.fstat(fd)
+                if not stat.S_ISREG(opened.st_mode):
+                    raise OSError("mac-evidence.json is not a regular file")
+                with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                    fd = None
+                    loaded = json.load(handle)
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                loaded = {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "invalid",
+                    "problems": ["could not parse mac-evidence.json"],
+                }
+            finally:
+                if fd is not None:
+                    os.close(fd)
+
+        redacted = redact_for_persistence(loaded)
+        _write_host_control_text(
+            manifest_path,
+            json.dumps(redacted, indent=2, sort_keys=True),
+            task_dir,
+        )
+
     def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
         manifest_path = task_dir / "mac-evidence.json"
         if not manifest_path.exists():
@@ -5500,10 +5562,12 @@ class MacWorker(
             prior_context = self.executor.audit_context
             self.executor.audit_context = audit_context
             try:
-                return self.executor(task, task_dir)
+                execution = self.executor(task, task_dir)
             finally:
                 self.executor.audit_context = prior_context
-        return self.executor(task, task_dir)
+        else:
+            execution = self.executor(task, task_dir)
+        return _redact_worker_execution(execution)
 
     def _record_command_audit(self, record: JsonDict) -> None:
         payload = {

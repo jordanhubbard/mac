@@ -204,6 +204,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`presentations/agentfabric-overview/prompts/image-prompts.md`](../presentations/agentfabric-overview/prompts/image-prompts.md) | Image prompts — intentionally empty |
 | supplemental reference | [`presentations/agentfabric-overview/qa-ledger.md`](../presentations/agentfabric-overview/qa-ledger.md) | QA ledger — AgentFabric overview |
 | supplemental reference | [`presentations/agentfabric-overview/source-notes.md`](../presentations/agentfabric-overview/source-notes.md) | Source notes — AgentFabric overview |
+| supplemental reference | [`problems.md`](../problems.md) | Fleet recovery: problems, evidence, and the path to readiness |
 | runbook | [`production-deployment.md`](../production-deployment.md) | Production Deployment |
 | generated reference | [`reference/cli.md`](../reference/cli.md) | Command-line reference |
 | generated reference | [`reference/documentation-inventory.md`](../reference/documentation-inventory.md) | Documentation inventory |
@@ -224,6 +225,7 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) | Autonomous Project Routing and Review/Fix Loop Design |
 | historical archive | [`superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md`](../superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md) | K8s bootstrap fleet registration — design |
 | historical archive | [`superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md`](../superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md) | Native Darwin OpenClaw and Slack home-channel routing — design |
+| historical archive | [`superpowers/specs/2026-09-03-three-agent-fleet-recovery-design.md`](../superpowers/specs/2026-09-03-three-agent-fleet-recovery-design.md) | Three-agent fleet recovery design |
 | runbook | [`synchronized-fleet-cutover.md`](../synchronized-fleet-cutover.md) | Synchronized Fleet Cut-over |
 | supplemental reference | [`task-dependency-semantics.md`](../task-dependency-semantics.md) | Task dependency failure semantics |
 | supplemental reference | [`task-throughput-observability.md`](../task-throughput-observability.md) | Task throughput observability |

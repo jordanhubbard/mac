@@ -893,6 +893,7 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Hermes Boundary](docs/hermes-boundary.md)
 - [Hermes Integration](docs/hermes-integration.md)
 - [Production Deployment](docs/production-deployment.md)
+- [Fleet Recovery Incident and Readiness Gates](docs/problems.md)
 - [Fleet Node Onboarding Checklist](docs/fleet-node-onboarding-checklist.md)
 - [SSH Client Bootstrap Contracts](docs/client-bootstrap-contract.md)
 - [Repository Runtime Contract](docs/repository-runtime-contract.md)
