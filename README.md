@@ -166,8 +166,8 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [The UI](docs/guide/04-ui.md) | the read-only console the hub serves at `/ui`, and the unshipped Fleet IDE prototype |
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
-| [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.3.5 deck](https://docs.google.com/presentation/d/11mrPpsYR-wzRTLYsCiKF3wWcniGP811D6s0zYgPIoV4/edit?usp=drivesdk), each pinned to the commit it describes |
-| [v1.3.5 capabilities (`c7a3fee1`)](docs/presentation/20260904T212515Z-c7a3fee1/README.md) | current release deck: OpenShell/OpenClaw onboarding fixes, fleet dispatch/attestation reliability — [Google Slides](https://docs.google.com/presentation/d/11mrPpsYR-wzRTLYsCiKF3wWcniGP811D6s0zYgPIoV4/edit?usp=drivesdk) |
+| [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.4.0 deck](https://docs.google.com/presentation/d/1EeHFRp5xLqiTCnnL62icNlg4Kb031tOuwiUUxJoFMXU/edit?usp=drivesdk), each pinned to the commit it describes |
+| [v1.4.0 capabilities (`69b7211c`)](docs/presentation/20260906T051311Z-69b7211c/README.md) | current release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1EeHFRp5xLqiTCnnL62icNlg4Kb031tOuwiUUxJoFMXU/edit?usp=drivesdk) |
 
 Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name

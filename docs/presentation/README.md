@@ -54,6 +54,7 @@ need to know, the failure message names it when it fires.
 
 | Directory | Commit | Deck | Subject |
 |---|---|---|---|
+| [`20260906T051311Z-69b7211c`](20260906T051311Z-69b7211c/README.md) | `69b7211c` | [Google Slides](https://docs.google.com/presentation/d/1EeHFRp5xLqiTCnnL62icNlg4Kb031tOuwiUUxJoFMXU/edit?usp=drivesdk) | v1.4.0 — OpenClaw chat-gateway reliability hardening, the filesystem root cause that forced a cutover, and the fleet's chat gateway moving back to Hermes |
 | [`20260904T212515Z-c7a3fee1`](20260904T212515Z-c7a3fee1/README.md) | `c7a3fee1` | [Google Slides](https://docs.google.com/presentation/d/11mrPpsYR-wzRTLYsCiKF3wWcniGP811D6s0zYgPIoV4/edit?usp=drivesdk) | v1.3.5 — OpenShell/OpenClaw onboarding root-cause fixes and fleet dispatch/attestation reliability fixes |
 | [`20260902T131314Z-a168e9d0`](20260902T131314Z-a168e9d0/README.md) | `a168e9d0` | [Google Slides](https://docs.google.com/presentation/d/16ZYljibDJ1toiyuBpKmxaiqSjsZ7j69bPDIuGB2tDH4/edit?usp=drivesdk) | v1.3.5 release candidate — artifact publication, deploy resilience, fleet visibility, the contract-test allowance, and the transactional release workflow |
 | [`20260831T143751Z-e78a7ba7`](20260831T143751Z-e78a7ba7/README.md) | `e78a7ba7` | [Google Slides](https://docs.google.com/presentation/d/1uPIlC_TYrp3XHd4ARIbrdxNjPiYgAE7pjdi2n_2FUD8/edit) | v1.3.4 — resilient contract gates, supported PostgreSQL CI, host-Python upgrade recovery, and bounded lease-telemetry clock skew |

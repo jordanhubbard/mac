@@ -105,6 +105,21 @@ raise SystemExit(1)
 PY
 }
 
+ensure_user_allowlist() {
+  # Hermes defaults every platform to dm_policy/group_policy=pairing and
+  # rejects any sender not on an explicit allowlist -- confirmed live: a
+  # cutover that never set this left all three fleet nodes silently
+  # rejecting every Slack message, including @mentions in the home channel,
+  # with no startup failure (only a log line: "No env user allowlists
+  # configured"). ~/.hermes/.env (not config.yaml) is what Hermes reads this
+  # from; idempotent append, since prepare may run more than once.
+  local env_file="$HERMES_HOME/.env"
+  mkdir -p "$HERMES_HOME"
+  touch "$env_file"
+  grep -q '^SLACK_ALLOWED_USERS=' "$env_file" 2>/dev/null \
+    || printf 'SLACK_ALLOWED_USERS=*\n' >> "$env_file"
+}
+
 configure_gateway() {
   local hermes
   hermes="$(hermes_bin)" || die "hermes CLI not found"
@@ -152,6 +167,11 @@ install_service() {
 verify_gateway() {
   local hermes status
   hermes="$(hermes_bin)" || die "hermes CLI not found"
+  grep -q '^SLACK_ALLOWED_USERS=' "$HERMES_HOME/.env" 2>/dev/null \
+    || die "SLACK_ALLOWED_USERS is not set in $HERMES_HOME/.env -- Hermes defaults" \
+           "every platform to dm_policy/group_policy=pairing and silently rejects" \
+           "every sender (including @mentions) with no startup failure; run" \
+           "ensure_user_allowlist (prepare) first"
   status="$("$hermes" gateway status --deep 2>&1)" || die "hermes gateway status failed:
 $status"
   printf '%s\n' "$status"
@@ -179,6 +199,7 @@ prepare() {
   install_hermes
   port_credentials
   migrate_claw_state
+  ensure_user_allowlist
   configure_gateway
   install_service
 }
