@@ -695,7 +695,7 @@ def _extract_finalize_cron_plan_script() -> str:
     (curiosity-job upsert + same-schedule staggering) out of the installer so it
     can be executed directly against synthetic job data."""
     installer = INSTALLER.read_text(encoding="utf-8")
-    marker = 'python3 - "$MANAGED_DIR/cron-plan.json" <<\'PY\'\n'
+    marker = "python3 - \"$MANAGED_DIR/cron-plan.json\" <<'PY'\n"
     start = installer.index(marker) + len(marker)
     end = installer.index("\nPY", start)
     return installer[start:end]
@@ -720,13 +720,19 @@ def test_finalize_cron_plan_staggers_jobs_sharing_an_identical_schedule(tmp_path
                 "jobs": [
                     {"legacy_id": "adf20933eff0", "name": "dream-cycle", "cron": "0 * * * *"},
                     {"legacy_id": "2d437df2441e", "name": "dream-synthesis", "cron": "0 * * * *"},
-                    {"legacy_id": "61c34b2f9752", "name": "kslug-nightly-news", "cron": "0 6 * * *"},
+                    {
+                        "legacy_id": "61c34b2f9752",
+                        "name": "kslug-nightly-news",
+                        "cron": "0 6 * * *",
+                    },
                 ],
             }
         ),
         encoding="utf-8",
     )
-    subprocess.run(["python3", "-c", script, str(plan_path)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["python3", "-c", script, str(plan_path)], check=True, capture_output=True, text=True
+    )
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     by_name = {job["name"]: job["cron"] for job in plan["jobs"]}
