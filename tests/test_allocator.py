@@ -91,3 +91,68 @@ def test_execution_boundary_reads_three_states_not_two():
     assert agent(proven_but_flagged).execution_boundary_verified is True
     assert agent({}).execution_boundary_verified is True
     assert agent({"openshell_required": True}).execution_boundary_verified is True
+
+
+def test_a_macos_host_install_attestation_proves_the_boundary_without_openclaw_runtime():
+    """``openclaw_runtime.confinement`` describes the chat gateway's own
+    sandbox, not this agent's task-execution boundary -- it was only ever a
+    usable proxy while every node ran OpenClaw as that gateway. Confirmed
+    live 2026-09-06: rocky's chat gateway moved to Hermes, a normal
+    re-registration cleared its now-stale ``openclaw_runtime`` value, and a
+    fully healthy macOS host-install worker (ADR 0015: no container is
+    possible on darwin, so ``macos_host`` posture *is* the boundary) read as
+    having no execution boundary at all -- even though its own executor had
+    already reported a verified attestation for exactly this.
+    """
+
+    def agent(resources):
+        return AllocationAgent.from_hub_record(
+            {
+                "id": "a",
+                "capabilities": ["python"],
+                "health_status": "healthy",
+                "resources": resources,
+            },
+            online=True,
+            capacity=1,
+            active_leases=0,
+            machine_trusted=True,
+        )
+
+    macos_host_no_container = {
+        "openshell_required": False,
+        "report_repository_executor_attestation": {
+            "platform": "darwin",
+            "isolation_posture": "macos_host",
+            "verified": True,
+        },
+    }
+    linux_landlock = {
+        "openshell_required": False,
+        "report_repository_executor_attestation": {
+            "platform": "linux",
+            "isolation_posture": "landlock_enforced",
+            "verified": True,
+        },
+    }
+    unverified_attestation = {
+        "openshell_required": False,
+        "report_repository_executor_attestation": {
+            "platform": "darwin",
+            "isolation_posture": "macos_host",
+            "verified": False,
+        },
+    }
+    unrecognized_posture = {
+        "openshell_required": False,
+        "report_repository_executor_attestation": {
+            "platform": "darwin",
+            "isolation_posture": "some_future_posture",
+            "verified": True,
+        },
+    }
+
+    assert agent(macos_host_no_container).execution_boundary_verified is True
+    assert agent(linux_landlock).execution_boundary_verified is True
+    assert agent(unverified_attestation).execution_boundary_verified is False
+    assert agent(unrecognized_posture).execution_boundary_verified is False
