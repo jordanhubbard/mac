@@ -86,6 +86,25 @@ def test_a_short_failure_is_not_mangled():
     assert _failure_excerpt(RuntimeError("boom")) == "boom"
 
 
+def test_the_publication_gate_also_runs_bootstrap_before_its_test_command():
+    """The projected-merge gate reuses _hub_verify_run_contract_test, which
+    needs bootstrap.command run before test.command in a fresh sandbox (see
+    test_hub_verify_evidence_window.py). Confirmed live: mac-fleet-canary's
+    review approved via hub_verify (which got the bootstrap fix), then
+    publication immediately failed with the identical
+    "full repository contract test failed" -- because this second call site
+    curried the runner without threading bootstrap_command through, so the
+    sandbox still had no venv for `.venv/bin/pytest`."""
+    source = inspect.getsource(services.ControlPlane._publish_git_target_attempt)
+
+    assert "_repository_contract_bootstrap_command_for_task" in source, (
+        "the projected-merge gate's runner must supply bootstrap_command to "
+        "_hub_verify_run_contract_test, or every repository whose "
+        "test.command assumes a pre-built toolchain fails publication even "
+        "after review approves it"
+    )
+
+
 def test_the_chosen_gate_command_is_recorded():
     """The scoped and full commands take ~15 and ~45 minutes, and only one fits
     the timeout. A silent fallback to full is indistinguishable from a hang."""
