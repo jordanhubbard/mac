@@ -1200,6 +1200,38 @@ def test_an_entry_marked_tested_with_no_trees_still_cannot_land():
     assert (ok, why) == (False, "entry carries no tested trees")
 
 
+def test_evict_exhausted_clears_a_tested_entry_that_can_never_get_a_pr(queue):
+    """A slot that wins, tests clean, but can never open a PR must not wedge.
+
+    Reproduces a live incident: a task's branch had no commits against main
+    (another entry already landed the same change first), so every
+    publication attempt failed with GitHub 422 "No commits between main and
+    <branch>" and pull_request_number stayed 0 forever. claim_slot() only
+    increments attempts -- it does not judge them -- so the entry sat at the
+    front of the queue burning every publish cycle for the entries behind it,
+    because evict_exhausted() (the reaper built for exactly this) was never
+    called from anywhere in production.
+    """
+
+    front = _claim(queue, "task_no_diff", "A" * 40)
+    assert front.admitted is True
+    queue.record_tested(
+        front.entry.id,
+        owner="hub-a",
+        base_sha="A" * 40,
+        base_tree="tree-a",
+        merge_tree="tree-a",
+    )
+    behind = _admit(queue, "task_alive", "B" * 40)
+
+    evicted = queue.evict_exhausted(REPO, BRANCH)
+    assert evicted == [front.entry.id]
+
+    live = queue.live_entries(REPO, BRANCH)
+    assert [entry.task_id for entry in live] == ["task_alive"]
+    assert live[0].id == behind.id
+
+
 def test_evict_for_task_clears_a_never_attempted_head_of_line_entry(queue):
     """A task cancelled before it ever wins a slot must not wedge the queue.
 
