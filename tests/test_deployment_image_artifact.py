@@ -365,6 +365,16 @@ def test_every_per_commit_tag_the_nightly_pulls_has_a_producer() -> None:
     )
 
 
+def test_nightly_waits_for_overlapping_image_publication() -> None:
+    """A scheduled docs run must tolerate the current SHA still publishing."""
+    docs = (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+
+    assert 'image="ghcr.io/jordanhubbard/mac:git-${GITHUB_SHA}"' in docs
+    assert 'deadline=$((SECONDS + 1800))' in docs
+    assert 'until docker manifest inspect "$image" >/dev/null 2>&1; do' in docs
+    assert 'docker run --rm --platform linux/arm64 \\' in docs
+
+
 def test_all_publishers_pin_qemu_before_buildx() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     qemu = "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130"
