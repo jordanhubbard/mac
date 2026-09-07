@@ -1161,6 +1161,29 @@ class NativeMergeQueue:
     #: the PR, so a queued entry with no number is normal and momentary.
     PR_REQUIRING_STATES = (STATE_TESTING, STATE_TESTED)
 
+    def evict_for_task(self, task_id: str, *, reason: str) -> Optional[JsonDict]:
+        """Evict this task's live queue entry, wherever it is, if it has one.
+
+        Covers the case ``stalled_entries``/``evict_exhausted`` cannot: a task
+        that is cancelled (superseded, admin-closed, ...) before it ever wins a
+        slot leaves an entry with ``attempts == 0``, which neither of those
+        checks touches. Nothing else will ever retry ``claim_slot`` for a
+        cancelled task, so that entry -- often the head of the line -- sits
+        forever, blocking every entry behind it. The caller (task cancellation)
+        knows only the task id, not the entry's repository/branch, so this
+        looks the entry up directly rather than requiring both.
+        """
+
+        row = self._store.query_one(
+            "SELECT * FROM merge_queue_entries WHERE task_id = ? AND state IN (?, ?, ?) "
+            "ORDER BY position DESC LIMIT 1",
+            (task_id, *LIVE_STATES),
+        )
+        if row is None:
+            return None
+        entry = self._from_row(row)
+        return self.evict(entry.id, reason=reason)
+
     def stalled_entries(self, repository: str, branch: str) -> List[QueueEntry]:
         """Live entries that cannot progress, however long they are left.
 
