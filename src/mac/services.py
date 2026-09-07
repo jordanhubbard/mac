@@ -448,6 +448,23 @@ def _repository_contract_test_command_for_task(task: "Task") -> str:
     return ""
 
 
+def _repository_contract_bootstrap_command_for_task(task: "Task") -> str:
+    """The repository contract's bootstrap command for a task, or "" if none
+    is declared. Mirrors ``_repository_contract_test_command_for_task``."""
+    metadata = ensure_json_object(task.metadata)
+    for path in (
+        ("execution_contract", "bootstrap"),
+        ("execution_contract", "repository_contract", "bootstrap"),
+        ("origin", "repository_contract", "bootstrap"),
+        ("repository_contract", "bootstrap"),
+    ):
+        node = _nested_json_object(metadata, *path)
+        command = str(node.get("command") or "").strip()
+        if command:
+            return command
+    return ""
+
+
 def _repository_contracts_from_metadata(metadata: JsonDict) -> List[JsonDict]:
     contracts: List[JsonDict] = []
     seen: set[str] = set()
@@ -27251,7 +27268,12 @@ class ControlPlane:
         }
 
     def _hub_verify_run_contract_test(
-        self, remote_url: str, branch: str, head_sha: str, test_command: str
+        self,
+        remote_url: str,
+        branch: str,
+        head_sha: str,
+        test_command: str,
+        bootstrap_command: str = "",
     ) -> Tuple[int, str]:
         """Clone the pushed branch and run the contract test in an isolated
         OpenShell sandbox on the hub. Returns (returncode, tail_of_output).
@@ -27418,10 +27440,11 @@ class ControlPlane:
                 "/bin/bash",
                 "-c",
                 "export PATH=%s; hash -r 2>/dev/null || true; "
-                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s"
+                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s%s"
                 % (
                     SANDBOX_BASE_PATH,
                     _HUB_VERIFY_GIT_PREFLIGHT,
+                    ("%s && " % bootstrap_command) if bootstrap_command else "",
                     test_command or "scripts/run-contract-tests.sh",
                 ),
             ]
@@ -27736,9 +27759,14 @@ class ControlPlane:
         # suite for broad or uncertain changes. This keeps the independent hub
         # environment without unconditionally duplicating mainline coverage.
         test_command = self._hub_review_test_command(task, info)
+        bootstrap_command = _repository_contract_bootstrap_command_for_task(task)
         try:
             returncode, output = self._hub_verify_run_contract_test(
-                info["remote_url"], info["branch"], info["head_sha"], test_command
+                info["remote_url"],
+                info["branch"],
+                info["head_sha"],
+                test_command,
+                bootstrap_command,
             )
         except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
             self._record_default_review_observation(
