@@ -986,10 +986,31 @@ def open_pull_request(
 
 
 _MAC_TASK_MARKER_RE = re.compile(r"\btask_[0-9a-f]{8,32}\b")
+_MAC_TASK_BODY_MARKER_RE = re.compile(r"- task: `(task_[0-9a-f]{8,32})`")
 
 
 def _mac_task_id(title: str, body: str) -> str:
-    """Stable task identity embedded in every MAC-authored pull request."""
+    """Stable task identity embedded in every MAC-authored pull request.
+
+    Every PR body mac opens carries an unambiguous ``- task: `<id>` ``
+    marker (see ``agent_pull_request`` / the hub's own publish body) naming
+    the task that actually owns this PR, so that marker is checked first.
+    Falling back to the first task-id-shaped token anywhere in title+body
+    misidentifies a conflict-integration task's PR: its title deliberately
+    names the ORIGINAL task it is repairing (see
+    ``_handoff_conflict_to_integration``) before its own id, e.g. "Integrate
+    conflicting approved task task_A onto current main (task_B)" -- a bare
+    first-match search returns task_A, so the reuse lookup below finds and
+    silently "reuses" task_A's already-open, unrelated PR. That PR's head
+    branch is immutable once created, so the reuse is a no-op: the real fix
+    lands on an orphaned branch with no open PR, while the stale PR stays
+    permanently CONFLICTING. Observed live on mac-fleet-canary: every
+    retry for hours kept "successfully" reusing PR #1 (task_A's PR) for
+    task_B's resolved commits.
+    """
+    body_match = _MAC_TASK_BODY_MARKER_RE.search(body or "")
+    if body_match:
+        return body_match.group(1)
     match = _MAC_TASK_MARKER_RE.search("%s\n%s" % (title, body))
     return match.group(0) if match else ""
 

@@ -205,6 +205,54 @@ def test_open_pull_request_reuses_task_pr_across_lease_branches(monkeypatch) -> 
     assert posts == []
 
 
+def test_open_pull_request_does_not_reuse_an_unrelated_tasks_pr(monkeypatch) -> None:
+    """A conflict-integration task's title deliberately names the ORIGINAL
+    task it repairs (see _handoff_conflict_to_integration), e.g. "Integrate
+    conflicting approved task task_A onto current main (task_B)". Reusing
+    task_A's already-open PR for task_B's push is wrong: that PR's head
+    branch is immutable, so it silently stays bound to task_A's stale
+    branch forever while task_B's resolved commits land on an orphaned,
+    PR-less branch. Observed live on mac-fleet-canary."""
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    posts = []
+    task_a = "task_3ac578f2ec0a4ea98371edf41e29b8d4"
+    task_b = "task_00b35c19f421d211cdf8076763046914"
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if req.get_method() == "POST":
+            posts.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"number": 2, "html_url": "https://github.com/x/y/pull/2"})
+        if "/pulls?state=open" in url:
+            return _FakeResponse(
+                [
+                    {
+                        "number": 1,
+                        "html_url": "https://github.com/x/y/pull/1",
+                        "state": "open",
+                        "title": "canary: implement toolkit/union_find.py (%s)" % task_a,
+                        "body": "- task: `%s`" % task_a,
+                        "head": {"ref": "mac/agent_rocky/%s-lease_old" % task_a},
+                        "base": {"ref": "main"},
+                    }
+                ]
+            )
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="mac/agent_rocky/%s-lease_new" % task_b,
+            title="Integrate conflicting approved task %s onto current main (%s)" % (task_a, task_b),
+            body="- task: `%s`\n- head: `deadbeef`\n- base at push: `cafef00d`\n" % task_b,
+        )
+
+    assert result.number == 2
+    assert result.reused is False
+    assert len(posts) == 1
+    assert posts[0]["head"] == "mac/agent_rocky/%s-lease_new" % task_b
+
+
 def test_open_pull_request_fails_closed_when_task_pr_index_is_unreadable(monkeypatch) -> None:
     monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
     monkeypatch.setattr("mac.gitops.time.sleep", lambda _seconds: None)
