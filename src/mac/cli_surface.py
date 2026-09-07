@@ -197,6 +197,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("openshell", "sandboxed execution environments for agents"),
             ("mcp", "serve the ledger to coding agents as Model Context Protocol tools"),
             ("plugin", "install mac skills and MCP into Claude, Codex, Cursor, OpenCode"),
+            ("cli-session", "auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)"),
             ("sandbox-image", "the sandbox IMAGE: its bill of materials and its rollout"),
             ("runtime", "runtime images and environment definitions"),
             ("rollout", "staged rollout of a runtime or configuration"),

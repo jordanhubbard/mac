@@ -1,6 +1,6 @@
 # ADR 0032: CLI sessions use each harness's hooks, not tmux, for recording and AgentBus injection
 
-- Status: Proposed
+- Status: Partially implemented (2026-09-07: auto-trigger + Claude Code inject job)
 - Date: 2026-08-24
 - Decision owner: MAC fleet owner
 - Related: [ADR 0023](0023-one-skill-source-many-harness-plugins.md) — one
@@ -201,3 +201,49 @@ the bus is the announcement. Same posture as ADR 0026 §2 for emission.
 - Replacing OpenShell isolation, leases, or the merge queue.
 - Recording raw transcripts into Qdrant. ADR 0030 still wants an
   extract, not a pane dump.
+
+## Update 2026-09-07: the install step is now automatic
+
+The original decision assumed an operator runs `mac admin plugin
+install` by hand to wire a harness's hook config. That is a gap of its
+own: a session that never runs the installer is deaf, silently, with
+no error to notice — the exact failure shape this ADR exists to fix,
+one layer up.
+
+`src/mac/cli_session.py` removes the manual step. `mac`'s `main()`
+now calls `cli_session.auto_join()` on every invocation; it is a
+total no-op unless a known coding-CLI harness is detected in the
+environment (`CLAUDECODE=1` for Claude Code — the only signal
+verified against a live session so far), in which case it:
+
+1. Idempotently registers a durable `(machine, agent)` identity
+   scoped to `(hostname, os-user)`, owned by the caller's `Human`
+   principal when one resolves, `visibility="private"` otherwise
+   `"shared"`. Both `register_machine`/`register_agent` are
+   `INSERT ... ON CONFLICT DO UPDATE` upserts, so repeated calls are
+   free; a local cache under `~/.mac/cli-session/` additionally
+   skips the network round trip within `DEFAULT_CACHE_TTL_SECONDS`.
+2. Idempotently merges a fail-open adapter for `mac admin cli-session
+   hook` into the harness's own hook config (`~/.claude/settings.json`
+   `hooks.SessionStart` / `hooks.UserPromptSubmit` for Claude Code) —
+   merges alongside whatever hooks already exist, never replaces the
+   array. The adapter emits valid empty hook JSON if the installed
+   `mac` binary is temporarily older than the config.
+
+`mac admin cli-session hook` is the adapter program this ADR
+describes: a non-blocking `drain_agentbus_inbox` call rendered as the
+harness's hook-output JSON shape (`hookSpecificOutput.additionalContext`
+for Claude Code), empty inbox → empty context, any failure → empty
+context, never a blocked prompt or a non-zero exit.
+
+**Shipped**: the auto-trigger mechanism, generically; the Claude Code
+inject job, fully verified from inside a live Claude Code session.
+
+**Deferred, tracked as a follow-up task**:
+- Codex, Cursor, and OpenCode adapters. Their harness-detection env
+  vars and hook config shapes are named in this ADR's table but were
+  not verified against a live session of each, and guessing wrong
+  would silently install into the wrong config file — worse than not
+  installing at all.
+- The **record** job (`PreToolUse`/`PostToolUse`/`Stop`/`SessionEnd`
+  → `mac.cli_session.turn.v1`). Only inject shipped in this pass.

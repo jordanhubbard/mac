@@ -795,6 +795,26 @@ def _plane(args: argparse.Namespace) -> Any:
     return resolve_dispatch(args)
 
 
+def _maybe_auto_join_cli_session(args: argparse.Namespace) -> None:
+    """Best-effort ADR 0032 auto-trigger: never affects the command's outcome.
+
+    Skips its own subcommands (``mac admin cli-session ...``) to avoid a
+    redundant registration call ahead of the explicit one, and is a total
+    no-op when no known coding-CLI harness is detected in the environment --
+    the overwhelmingly common case for scripted/CI/plain-terminal usage.
+    """
+    if getattr(args, "cli_session_command", None) is not None:
+        return
+    try:
+        from mac import cli_session
+
+        if cli_session.detect_live_harness() is None:
+            return
+        cli_session.auto_join(_plane(args))
+    except Exception:  # noqa: BLE001 - ambient side effect, never fatal
+        pass
+
+
 def cmd_mcp_serve(args: argparse.Namespace) -> None:
     """Serve the mac ledger to a coding agent as MCP tools, over stdio.
 
@@ -810,6 +830,37 @@ def cmd_mcp_serve(args: argparse.Namespace) -> None:
     from mac.mcp_server import serve
 
     raise SystemExit(serve(_plane(args)))
+
+
+def cmd_cli_session_ensure_registered(args: argparse.Namespace) -> None:
+    """Idempotently register this host+user as a live AgentBus identity.
+
+    ``main()`` calls this automatically when a known coding-CLI harness is
+    detected (ADR 0032's auto-trigger addendum); this verb exists so an
+    operator can also run it by hand, or a script can pre-warm the cache.
+    """
+    from mac import cli_session
+
+    identity = cli_session.ensure_registered_cached(
+        _plane(args),
+        harness=args.harness or cli_session.detect_live_harness() or "unknown",
+    )
+    cli_session.install_hook_config(args.harness or cli_session.detect_live_harness() or "")
+    _print(identity)
+
+
+def cmd_cli_session_hook(args: argparse.Namespace) -> None:
+    """The program a harness's hook config invokes at a turn boundary.
+
+    Drains this session's AgentBus inbox without blocking and prints the
+    harness's own hook-output JSON shape. Never raises and never exits
+    non-zero for a drain failure -- an empty/failed drain must look like a
+    normal turn to the harness, not a broken hook (ADR 0032 §5).
+    """
+    from mac import cli_session
+
+    output = cli_session.run_hook(_plane(args), harness=args.harness, event=args.event)
+    _print(output)
 
 
 def cmd_plugin_install(args: argparse.Namespace) -> None:
@@ -9526,6 +9577,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the user home used to find harness config directories",
     )
     _set(cmd_plugin_uninstall, plugin_uninstall)
+    cli_session = sub.add_parser(
+        "cli-session",
+        help="auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)",
+    ).add_subparsers(dest="cli_session_command", required=True)
+    cli_session_ensure = cli_session.add_parser(
+        "ensure-registered",
+        help="idempotently register this host+user as a live AgentBus identity",
+    )
+    cli_session_ensure.add_argument(
+        "--harness",
+        help="coding CLI harness (default: auto-detect from the environment)",
+    )
+    _set(cmd_cli_session_ensure_registered, cli_session_ensure)
+    cli_session_hook = cli_session.add_parser(
+        "hook",
+        help="drain this session's AgentBus inbox; invoked by a harness's own hook config",
+    )
+    cli_session_hook.add_argument("--harness", default="claude")
+    cli_session_hook.add_argument(
+        "--event",
+        choices=("SessionStart", "UserPromptSubmit"),
+        default="UserPromptSubmit",
+    )
+    _set(cmd_cli_session_hook, cli_session_hook)
     openshell = sub.add_parser(
         "openshell", help="OpenShell sandbox guardrail commands"
     ).add_subparsers(dest="openshell_command", required=True)
@@ -12530,6 +12605,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 0
     _redirect_moved_command(raw)
     args = parser.parse_args(raw)
+    _maybe_auto_join_cli_session(args)
     try:
         args.func(args)
     except MACError as exc:
