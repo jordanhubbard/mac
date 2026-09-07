@@ -770,6 +770,15 @@ def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    queue = cp._native_merge_queue()
+    reaper_calls: list[tuple[str, str]] = []
+
+    def reap_stalled(repository, branch):
+        reaper_calls.append((repository, branch))
+        return ["mergeq_stalled"]
+
+    monkeypatch.setattr(queue, "evict_exhausted", reap_stalled)
+    monkeypatch.setattr(cp, "_native_merge_queue", lambda: queue)
 
     # Someone else lands on main between the gate and the merge -- exactly once,
     # so the second attempt projects onto the tip that is really there.
@@ -798,6 +807,10 @@ def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp
 
     assert publication.status == "published"
     detail = published_detail(cp, task.id)
+    assert reaper_calls
+    assert next(
+        item for item in detail["commands"] if item["name"] == "merge_queue_stalled_reaper"
+    )["evicted_entry_ids"] == ["mergeq_stalled"]
     # The first attempt refused to merge a projection that was already stale.
     assert detail["attempt"] == 2
     assert [item["sha"] for item in forge.merges] == [task_head]
