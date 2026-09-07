@@ -11029,7 +11029,7 @@ class ControlPlane:
             TaskState.CANCELLED.value,
         }:
             raise ValidationError("operator close only supports completed or cancelled")
-        return self._transition_task_impl(
+        result = self._transition_task_impl(
             task_id,
             target,
             actor,
@@ -11039,6 +11039,9 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
+        if target == TaskState.CANCELLED.value:
+            self._evict_merge_queue_entry_for_cancelled_task(task_id)
+        return result
 
     def transition_task(
         self,
@@ -11050,7 +11053,7 @@ class ControlPlane:
         lease_id: Optional[str] = None,
         drain_outbox: bool = True,
     ) -> Task:
-        return self._transition_task_impl(
+        result = self._transition_task_impl(
             task_id,
             target_state,
             actor,
@@ -11060,6 +11063,32 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
+        if _state_value(target_state) == TaskState.CANCELLED.value:
+            self._evict_merge_queue_entry_for_cancelled_task(task_id)
+        return result
+
+    def _evict_merge_queue_entry_for_cancelled_task(self, task_id: str) -> None:
+        """Clear this task's live merge-queue entry, if it has one.
+
+        A cancelled task will never call ``claim_slot`` again, so an entry it
+        already holds -- often still at ``attempts == 0`` because it was
+        cancelled before winning a slot -- would otherwise sit in the queue
+        forever with no reaper able to touch it (``stalled_entries`` requires
+        ``attempts >= 1``). Left alone, that is a permanent head-of-line block
+        for every entry behind it. Best-effort: a queue lookup failure must
+        never block the cancellation itself.
+        """
+
+        try:
+            self._native_merge_queue().evict_for_task(
+                task_id, reason="owning task was cancelled"
+            )
+        except Exception:  # noqa: BLE001 - cancellation must still succeed.
+            logging.getLogger("mac.merge_queue").warning(
+                "failed to evict merge queue entry for cancelled task %s",
+                task_id,
+                exc_info=True,
+            )
 
     def request_task_input(
         self,
