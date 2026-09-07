@@ -15,6 +15,7 @@ set -euo pipefail
 
 HERMES_INSTALL_URL="${MAC_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}"
 FLEET_NAME="${MAC_HERMES_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
+MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 # Migration source: the chat gateway Hermes is taking channel ownership from.
 # "openclaw" is the only interface `mac admin human-interface port` and
@@ -210,6 +211,11 @@ verify_gateway() {
            "every platform to dm_policy/group_policy=pairing and silently rejects" \
            "every sender (including @mentions) with no startup failure; run" \
            "ensure_user_allowlist (prepare) first"
+  grep -q '^MAC_CHAT_GATEWAY_IMPL=hermes$' "$MAC_HOME/mac.env" 2>/dev/null \
+    || die "MAC_CHAT_GATEWAY_IMPL is not 'hermes' in $MAC_HOME/mac.env -- mac-agent's" \
+           "own startup self-test derives its OpenClaw-required branch from this" \
+           "variable and will crash-loop forever demanding an OpenClaw advertisement" \
+           "that no longer exists; run ensure_chat_gateway_impl_env (prepare) first"
   status="$("$hermes" gateway status --deep 2>&1)" || die "hermes gateway status failed:
 $status"
   printf '%s\n' "$status"
@@ -233,12 +239,34 @@ $status" ;;
   esac
 }
 
+ensure_chat_gateway_impl_env() {
+  # mac-agent's own startup self-test derives its OpenClaw-required-or-not
+  # branch from MAC_CHAT_GATEWAY_IMPL in ~/.mac/mac.env (see
+  # deploy/fleet-node-install.sh's embedded self-test:
+  # `openclaw_required = MAC_CHAT_GATEWAY_IMPL == "openclaw"`) -- but only
+  # fleet-node-install.sh's own full deploy path ever wrote that variable.
+  # A cutover run through this standalone installer (as every node's Hermes
+  # cutover was, this session) never touched it, so mac.env kept claiming
+  # "openclaw" after the gateway was gone. Confirmed live: mac-agent then
+  # crash-loops forever at startup, since the self-test hard-requires an
+  # OpenClaw advertisement that no longer exists -- and the agent is
+  # `agent_offline`/`agent_unhealthy` for as long as it never starts.
+  local env_file="$MAC_HOME/mac.env"
+  mkdir -p "$MAC_HOME"
+  touch "$env_file"
+  if grep -q '^MAC_CHAT_GATEWAY_IMPL=' "$env_file" 2>/dev/null; then
+    sed -i.bak '/^MAC_CHAT_GATEWAY_IMPL=/d' "$env_file" && rm -f "$env_file.bak"
+  fi
+  printf 'MAC_CHAT_GATEWAY_IMPL=hermes\n' >> "$env_file"
+}
+
 prepare() {
   install_hermes
   port_credentials
   migrate_claw_state
   ensure_user_allowlist
   ensure_home_channel_env
+  ensure_chat_gateway_impl_env
   configure_gateway
   install_service
 }
