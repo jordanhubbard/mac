@@ -22944,13 +22944,25 @@ class ControlPlane:
                 # and fall through to publication.
                 pass
             elif self._verdict_value(verdict_evidence) == "rejected":
-                review = self.submit_review(
-                    review.id,
-                    ReviewStatus.REJECTED.value,
-                    review.reviewer_agent_id,
-                    reason="reviewer rejected via signed verdict evidence",
-                    evidence_id=verdict_evidence.id,
-                )
+                try:
+                    review = self.submit_review(
+                        review.id,
+                        ReviewStatus.REJECTED.value,
+                        review.reviewer_agent_id,
+                        reason="reviewer rejected via signed verdict evidence",
+                        evidence_id=verdict_evidence.id,
+                    )
+                except ValidationError:
+                    # A concurrent advancer (the event-driven consumer and the
+                    # periodic sweep both call this function) may have already
+                    # submitted the same verdict between our stale read and
+                    # this write. If the review already landed in the state we
+                    # were about to write, this is a duplicate, not a failure
+                    # -- fall through with the winner's row instead of
+                    # dropping the advancement on the floor.
+                    review = self.reviews.get_review(review.id)
+                    if review.status != ReviewStatus.REJECTED.value:
+                        raise
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.rejected",
@@ -22974,13 +22986,20 @@ class ControlPlane:
                     evidence_id=verdict_evidence.id,
                 )
             else:
-                review = self.submit_review(
-                    review.id,
-                    ReviewStatus.APPROVED.value,
-                    review.reviewer_agent_id,
-                    reason="reviewer approved via signed verdict evidence",
-                    evidence_id=verdict_evidence.id,
-                )
+                try:
+                    review = self.submit_review(
+                        review.id,
+                        ReviewStatus.APPROVED.value,
+                        review.reviewer_agent_id,
+                        reason="reviewer approved via signed verdict evidence",
+                        evidence_id=verdict_evidence.id,
+                    )
+                except ValidationError:
+                    # See the rejected branch above: a concurrent advancer may
+                    # have already submitted this same approval.
+                    review = self.reviews.get_review(review.id)
+                    if review.status != ReviewStatus.APPROVED.value:
+                        raise
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.approved",
