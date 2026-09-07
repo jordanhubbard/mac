@@ -21489,7 +21489,23 @@ class ControlPlane:
             else:
                 publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
                 if publication_test_runner is None:
-                    publication_test_runner = self._hub_verify_run_contract_test
+                    # The projected-merge gate reuses the hub_verify sandbox
+                    # runner, which also needs bootstrap.command run before
+                    # test.command (see _hub_verify_run_contract_test) -- but
+                    # ContractTestRunner's signature has no bootstrap slot, so
+                    # curry it in here rather than widening that protocol.
+                    run_contract_test = self._hub_verify_run_contract_test
+                    publication_bootstrap_command = _repository_contract_bootstrap_command_for_task(
+                        task
+                    )
+
+                    def publication_test_runner(
+                        repo_dir: str, branch: str, head_sha: str, command: str
+                    ) -> Tuple[int, str]:
+                        return run_contract_test(
+                            repo_dir, branch, head_sha, command, publication_bootstrap_command
+                        )
+
                 contract_gate = validate_projected_merge_contract(
                     str(root),
                     projected_base_sha,
