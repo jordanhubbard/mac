@@ -105,6 +105,26 @@ def test_the_publication_gate_also_runs_bootstrap_before_its_test_command():
     )
 
 
+def test_the_publish_attempt_reaps_stalled_merge_queue_entries():
+    """evict_exhausted() must run on the same cadence as reconcile_front().
+
+    An entry that wins a slot, tests clean, and then can never open a pull
+    request (its branch has no commits against main because another entry
+    already landed the same change) is invisible to claim_slot() -- that
+    method only increments attempts, it never judges them. evict_exhausted()
+    is the reaper built for exactly this, but it was defined in
+    native_merge_queue.py and never called from anywhere in services.py, so
+    it never ran and a stalled entry blocked the front of the queue forever.
+    """
+    source = inspect.getsource(services.ControlPlane._publish_git_target_attempt)
+
+    assert "evict_exhausted" in source, (
+        "the publish-attempt loop must call queue.evict_exhausted() before "
+        "claim_slot(), or an entry that wins a slot and then can never open "
+        "a pull request wedges the front of the queue forever"
+    )
+
+
 def test_the_chosen_gate_command_is_recorded():
     """The scoped and full commands take ~15 and ~45 minutes, and only one fits
     the timeout. A silent fallback to full is indistinguishable from a hang."""

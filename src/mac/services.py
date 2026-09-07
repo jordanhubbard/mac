@@ -21332,6 +21332,25 @@ class ControlPlane:
                     ).get("stdout")
                     or ""
                 ).strip()
+                # Same rationale as reconcile_front below, for a different way an
+                # entry can stop moving: it wins its slot, tests clean, and then
+                # every publication attempt fails for a reason retrying cannot
+                # fix (its branch has no commits against main because another
+                # entry already carried the same change home first). It is
+                # never evicted on its own -- claim_slot() only increments
+                # attempts, it does not judge them -- so it sits at the front
+                # forever, burning every publish attempt for entries behind it
+                # too. evict_exhausted() is the reaper for exactly this; it was
+                # defined but never called from anywhere, so it never ran.
+                evicted_stalled = queue.evict_exhausted(queue_repository, canonical_branch)
+                if evicted_stalled:
+                    commands.append(
+                        {
+                            "name": "merge_queue_stalled_reaper",
+                            "attempt": attempt,
+                            "evicted_entry_ids": evicted_stalled,
+                        }
+                    )
                 commands.append(
                     {
                         "name": "merge_queue_front_recovery",
