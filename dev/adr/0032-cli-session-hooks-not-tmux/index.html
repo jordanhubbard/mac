@@ -1858,6 +1858,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#update-2026-09-07-the-install-step-is-now-automatic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update 2026-09-07: the install step is now automatic
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1885,7 +1896,7 @@
 
 <h1 id="adr-0032-cli-sessions-use-each-harnesss-hooks-not-tmux-for-recording-and-agentbus-injection">ADR 0032: CLI sessions use each harness's hooks, not tmux, for recording and AgentBus injection<a class="headerlink" href="#adr-0032-cli-sessions-use-each-harnesss-hooks-not-tmux-for-recording-and-agentbus-injection" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Proposed</li>
+<li>Status: Partially implemented (2026-09-07: auto-trigger + Claude Code inject job)</li>
 <li>Date: 2026-08-24</li>
 <li>Decision owner: MAC fleet owner</li>
 <li>Related: <a href="../0023-one-skill-source-many-harness-plugins/">ADR 0023</a> — one
@@ -2097,6 +2108,47 @@ the bus is the announcement. Same posture as ADR 0026 §2 for emission.</p>
 <li>Recording raw transcripts into Qdrant. ADR 0030 still wants an
   extract, not a pane dump.</li>
 </ul>
+<h2 id="update-2026-09-07-the-install-step-is-now-automatic">Update 2026-09-07: the install step is now automatic<a class="headerlink" href="#update-2026-09-07-the-install-step-is-now-automatic" title="Permanent link">&para;</a></h2>
+<p>The original decision assumed an operator runs <code>mac admin plugin
+install</code> by hand to wire a harness's hook config. That is a gap of its
+own: a session that never runs the installer is deaf, silently, with
+no error to notice — the exact failure shape this ADR exists to fix,
+one layer up.</p>
+<p><code>src/mac/cli_session.py</code> removes the manual step. <code>mac</code>'s <code>main()</code>
+now calls <code>cli_session.auto_join()</code> on every invocation; it is a
+total no-op unless a known coding-CLI harness is detected in the
+environment (<code>CLAUDECODE=1</code> for Claude Code — the only signal
+verified against a live session so far), in which case it:</p>
+<ol>
+<li>Idempotently registers a durable <code>(machine, agent)</code> identity
+   scoped to <code>(hostname, os-user)</code>, owned by the caller's <code>Human</code>
+   principal when one resolves, <code>visibility="private"</code> otherwise
+   <code>"shared"</code>. Both <code>register_machine</code>/<code>register_agent</code> are
+   <code>INSERT ... ON CONFLICT DO UPDATE</code> upserts, so repeated calls are
+   free; a local cache under <code>~/.mac/cli-session/</code> additionally
+   skips the network round trip within <code>DEFAULT_CACHE_TTL_SECONDS</code>.</li>
+<li>Idempotently merges a fail-open adapter for <code>mac admin cli-session
+   hook</code> into the harness's own hook config (<code>~/.claude/settings.json</code>
+   <code>hooks.SessionStart</code> / <code>hooks.UserPromptSubmit</code> for Claude Code) —
+   merges alongside whatever hooks already exist, never replaces the
+   array. The adapter emits valid empty hook JSON if the installed
+   <code>mac</code> binary is temporarily older than the config.</li>
+</ol>
+<p><code>mac admin cli-session hook</code> is the adapter program this ADR
+describes: a non-blocking <code>drain_agentbus_inbox</code> call rendered as the
+harness's hook-output JSON shape (<code>hookSpecificOutput.additionalContext</code>
+for Claude Code), empty inbox → empty context, any failure → empty
+context, never a blocked prompt or a non-zero exit.</p>
+<p><strong>Shipped</strong>: the auto-trigger mechanism, generically; the Claude Code
+inject job, fully verified from inside a live Claude Code session.</p>
+<p><strong>Deferred, tracked as a follow-up task</strong>:
+- Codex, Cursor, and OpenCode adapters. Their harness-detection env
+  vars and hook config shapes are named in this ADR's table but were
+  not verified against a live session of each, and guessing wrong
+  would silently install into the wrong config file — worse than not
+  installing at all.
+- The <strong>record</strong> job (<code>PreToolUse</code>/<code>PostToolUse</code>/<code>Stop</code>/<code>SessionEnd</code>
+  → <code>mac.cli_session.turn.v1</code>). Only inject shipped in this pass.</p>
 
 
 
