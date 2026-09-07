@@ -110,6 +110,18 @@ def _no_ticket_mirror(monkeypatch):
     monkeypatch.setenv("MAC_NO_TICKET_MIRROR", "1")
 
 
+@pytest.fixture(autouse=True)
+def _no_live_coding_harness(monkeypatch):
+    """Tests never inherit a developer's live coding-harness identity.
+
+    CLI tests call ``main()`` in-process. Inheriting ``CLAUDECODE=1`` made an
+    unreleased auto-join implementation write to the developer's real
+    ``~/.claude/settings.json`` during pytest. Tests that exercise harness
+    detection pass an explicit environment or opt in with ``monkeypatch``.
+    """
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+
+
 # ----------------------------------------------------------------------
 # Live-Postgres fixtures (K8s Phase 3.6).
 #

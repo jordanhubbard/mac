@@ -6650,6 +6650,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: human username.",
+    "family": "core",
+    "name": "MAC_HUMAN_USERNAME",
+    "retired": false,
+    "sources": [
+      "src/mac/cli_session.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: ide handoff file.",
     "family": "core",
     "name": "MAC_IDE_HANDOFF_FILE",
