@@ -1652,7 +1652,14 @@ def pull_request_state(
             "error": _scrub_secret(str(exc), token)[:300],
         }
     if not isinstance(pr, dict):
-        return {"known": False, "merged": False, "sha": "", "state": "", "head_sha": ""}
+        return {
+            "known": False,
+            "merged": False,
+            "sha": "",
+            "state": "",
+            "head_sha": "",
+            "head_ref": "",
+        }
     head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
     return {
         "known": True,
@@ -1660,6 +1667,7 @@ def pull_request_state(
         "sha": str(pr.get("merge_commit_sha") or pr.get("merged_commit_id") or "").strip(),
         "state": str(pr.get("state") or ""),
         "head_sha": str((head or {}).get("sha") or "").strip(),
+        "head_ref": str((head or {}).get("ref") or "").strip(),
         "host": host_kind,
     }
 

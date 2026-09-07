@@ -20683,6 +20683,26 @@ class ControlPlane:
             and (not agent_pr_base or agent_pr_base == canonical_branch)
         )
         if reuse_agent_pr:
+            # The evidence's cached PR reference can be stale: a task-id
+            # marker collision in the reuse lookup (fixed going forward by
+            # requiring a head-branch match, but not retroactively for
+            # evidence recorded before that fix) can leave this number
+            # pointing at a branch other than the one just pushed. A
+            # GitHub PR's head branch is immutable once created, so
+            # reusing a mismatched number is not a retry -- it is a
+            # permanent, silent no-op: the push lands on ``branch``, the
+            # recorded PR keeps whatever branch it always had, and every
+            # future publish attempt "succeeds" at reusing the wrong PR
+            # forever while genuinely conflicting against main. Verify the
+            # live head before trusting the cached reference.
+            observed_pr_head = _gitops.pull_request_state(api_url, agent_pr_number)
+            if (
+                observed_pr_head.get("known")
+                and observed_pr_head.get("head_ref")
+                and observed_pr_head.get("head_ref") != branch
+            ):
+                reuse_agent_pr = False
+        if reuse_agent_pr:
             pr = _gitops.PullRequestResult(
                 host=str(agent_pr.get("forge") or ""),
                 number=agent_pr_number,
