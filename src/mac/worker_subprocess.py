@@ -102,11 +102,13 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
     """
     alive: List[Any] = []
     descendants: List[Any] = []
+    tree_snapshot_verified = False
     try:
         import psutil
 
         parent = psutil.Process(process.pid)
         descendants = parent.children(recursive=True)
+        tree_snapshot_verified = True
         for child in reversed(descendants):
             try:
                 child.terminate()
@@ -125,6 +127,8 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
                 item.kill()
             except psutil.NoSuchProcess:
                 pass
+        if alive:
+            _, alive = psutil.wait_procs(alive, timeout=max(0.0, float(grace_seconds)))
     except Exception:  # noqa: BLE001 - process cleanup must retain a fallback.
         pass
 
@@ -139,14 +143,19 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
     except (ProcessLookupError, PermissionError, OSError):
         pass
     try:
+        process.wait(timeout=max(0.0, float(grace_seconds)))
+    except (subprocess.TimeoutExpired, ChildProcessError, OSError):
+        pass
+    direct_process_terminated = process.poll() is not None
+    try:
         import psutil
 
         descendants_alive = any(
             item.is_running() and item.status() != psutil.STATUS_ZOMBIE for item in descendants
         )
     except Exception:  # noqa: BLE001 - inability to verify is not success.
-        descendants_alive = bool(alive)
-    return not descendants_alive
+        return False
+    return tree_snapshot_verified and direct_process_terminated and not descendants_alive
 
 
 def _cleanup_task_sandbox_after_timeout(name: str, task_dir: Path) -> Dict[str, Any]:

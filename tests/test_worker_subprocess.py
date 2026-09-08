@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import subprocess
@@ -14,6 +15,7 @@ from mac.worker_subprocess import (
     SubprocessExecutor,
     _cargo_path_dirs,
     _ensure_json_object,
+    _terminate_process_tree,
 )
 
 
@@ -130,6 +132,24 @@ def test_executor_timeout_preserves_timeout_evidence(tmp_path) -> None:
     assert records[-1]["metadata"]["timeout_seconds"] == 0.01
     assert records[-1]["metadata"]["process_tree_terminated"] is True
     assert executor.has_active_process() is False
+
+
+def test_process_tree_cleanup_reports_unverified_without_psutil(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def import_without_psutil(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("psutil deliberately unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_psutil)
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert _terminate_process_tree(process, grace_seconds=0.2) is False
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
 
 
 def test_executor_timeout_harvests_and_deletes_exact_sandbox(tmp_path, monkeypatch) -> None:
