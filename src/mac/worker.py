@@ -1931,6 +1931,10 @@ class MacWorker(
                 return self._stale_result(task_id, lease, str(exc))
             stdout = _coerce_process_output(exc.stdout)
             stderr = _coerce_process_output(exc.stderr)
+            process_tree_terminated = bool(
+                getattr(exc, "process_tree_terminated", False)
+            )
+            sandbox_cleanup = getattr(exc, "sandbox_cleanup", {})
             execution = WorkerExecution(
                 124,
                 "executor timed out after %ss" % exc.timeout,
@@ -1938,7 +1942,8 @@ class MacWorker(
                 stderr=stderr,
                 metadata={
                     "timeout_seconds": exc.timeout,
-                    "process_tree_terminated": True,
+                    "process_tree_terminated": process_tree_terminated,
+                    "sandbox_cleanup": sandbox_cleanup,
                 },
             )
             evidence = (
@@ -1965,7 +1970,8 @@ class MacWorker(
                         "manual_repair_required": False,
                         "output_tail": _executor_output_tail(execution),
                         "timeout_seconds": exc.timeout,
-                        "process_tree_terminated": True,
+                        "process_tree_terminated": process_tree_terminated,
+                        "sandbox_cleanup": sandbox_cleanup,
                         "evidence_id": evidence.get("id") if evidence else None,
                     },
                 },
