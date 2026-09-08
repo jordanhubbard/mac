@@ -1345,12 +1345,13 @@ def test_subprocess_executor_timeout_kills_descendants_in_other_sessions(tmp_pat
     task_dir.mkdir()
     executor = SubprocessExecutor([sys.executable, str(executor_script)], timeout=0.5)
 
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
         executor({"id": "task_timeout_tree"}, task_dir)
 
     child_pid = int((task_dir / "child.pid").read_text(encoding="utf-8"))
     import psutil
 
+    assert caught.value.process_tree_terminated is True
     assert (
         not psutil.pid_exists(child_pid)
         or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
@@ -1482,6 +1483,7 @@ def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
     ][-1]
     assert timeout_transition.detail["reason"] == "executor_timeout"
     assert timeout_transition.detail["process_tree_terminated"] is True
+    assert timeout_transition.detail["sandbox_cleanup"] == {}
 
 
 def test_validate_git_remote_url_rejects_argv_smuggling():

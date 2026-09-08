@@ -4986,6 +4986,7 @@ verified_contract_call \
   --supervisor "\$rollback_supervisor" \
   --control-plane-mode "\$rollback_control_mode" \
   --control-plane-port "\$MAC_PORT" \
+  --control-plane-host 127.0.0.1 \
   --receipt "\$ROLLBACK_LOG_DIR/rollback-\$ROLLBACK_TS-quiesce.json" \
   "\${rollback_args[@]}"
 
@@ -6613,6 +6614,9 @@ stop_existing_services_for_deploy() {
   if control_plane_enabled; then
     control_mode=active
   fi
+  while IFS= read -r host; do
+    [ -z "$host" ] || args+=(--control-plane-host "$host")
+  done < <(printf '%s' "${MAC_BIND_HOST:-127.0.0.1}" | tr ',' '\n')
   case "$SUPERVISOR_KIND" in
     systemd)
       args=(
@@ -7673,6 +7677,129 @@ def delete_managed_task_sandbox(name):
         raise QuiescenceFailure("OpenShell task sandbox deletion failed")
 
 
+def legacy_task_container_candidates(runtimes, openshell_sandboxes):
+    """Find stopped pre-label task containers with corroborating identities."""
+
+    listed_sandboxes = {str(row.get("name") or "") for row in openshell_sandboxes}
+    candidates = []
+    for runtime in runtimes:
+        for identifier in list_managed_openshell_ids(runtime, all_states=True):
+            inspected = runtime_result(runtime, "inspect", identifier)
+            if inspected.timed_out or inspected.returncode != 0:
+                # A container may disappear after the inventory snapshot.  Accept
+                # that race only after an exact second inventory proves absence;
+                # otherwise the failed inspection leaves its identity unknown.
+                if identifier not in list_managed_openshell_ids(runtime, all_states=True):
+                    continue
+                raise QuiescenceFailure("legacy OpenShell container inspection failed")
+            try:
+                payload = json.loads(inspected.stdout)
+            except (TypeError, ValueError):
+                raise QuiescenceFailure("legacy OpenShell container inspection is malformed")
+            if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+                raise QuiescenceFailure("legacy OpenShell container inspection is ambiguous")
+            container = payload[0]
+            config = container.get("Config")
+            state = container.get("State")
+            labels = config.get("Labels") if isinstance(config, dict) else None
+            if not isinstance(state, dict) or not isinstance(labels, dict):
+                raise QuiescenceFailure("legacy OpenShell container inspection is incomplete")
+            sandbox = labels.get("openshell.ai/sandbox-name")
+            legacy_identity = (
+                state.get("Running") is False
+                and labels.get("openshell.ai/managed-by") == "openshell"
+                and isinstance(sandbox, str)
+                and sandbox.startswith("mac-task-")
+                and managed_task_sandbox_name.fullmatch(sandbox)
+                and sandbox not in listed_sandboxes
+                and all(
+                    not str(labels.get(key) or "").strip()
+                    for key in ("mac.owner", "mac.task-id", "mac.task.id")
+                )
+            )
+            if not legacy_identity:
+                continue
+            container_name = str(container.get("Name") or "").lstrip("/")
+            if not container_name or container_name == "openshell-" + sandbox:
+                # The normal OpenShell name is compatible but does not
+                # corroborate the unlabeled legacy identity strongly enough for
+                # this exact cleanup path.  Leave it untouched.
+                continue
+            if container_name != sandbox:
+                raise QuiescenceFailure("legacy OpenShell container identity is ambiguous")
+            candidates.append((runtime, identifier, sandbox))
+    return candidates
+
+
+def preserve_legacy_task_container(runtime, container_id, name):
+    recovery_root = mac_home / "openshell-recovery"
+    recovery_root.mkdir(mode=0o700, exist_ok=True)
+    require_private_directory(recovery_root)
+    recovery_id = hashlib.sha256(
+        ("legacy-container\0%s\0%s\0%s\0%s" % (container_id, name, generation, revision)).encode()
+    ).hexdigest()[:20]
+    destination = recovery_root / ("%s-%s" % (name, recovery_id))
+    if destination.exists():
+        require_private_directory(destination)
+        return recovery_id
+    temporary = Path(tempfile.mkdtemp(prefix=".preserve-", dir=str(recovery_root)))
+    temporary.chmod(0o700)
+    try:
+        copied = runtime_result(
+            runtime, "cp", "%s:/sandbox" % container_id, str(temporary / "workspace")
+        )
+        if copied.timed_out or copied.returncode != 0:
+            raise QuiescenceFailure("OpenShell legacy task preservation failed")
+        if not (temporary / "workspace").is_dir():
+            raise QuiescenceFailure("OpenShell legacy task preservation produced no workspace")
+        atomic_write_certificate(
+            temporary / "manifest.json",
+            {
+                "schema": "mac.openshell.legacy_task_preservation.v1",
+                "sandbox": name,
+                "container_id": container_id,
+                "runtime": runtime_identity(runtime),
+                "generation": generation,
+                "revision": revision,
+                "recovery_id": recovery_id,
+                "identity_evidence": {
+                    "container_name_matches_sandbox": True,
+                    "openshell_managed": True,
+                    "openshell_inventory_absent": True,
+                    "state": "stopped",
+                    "legacy_mac_labels_absent": True,
+                },
+            },
+        )
+        os.replace(temporary, destination)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return recovery_id
+
+
+def reconcile_legacy_task_containers(runtimes):
+    reconciled = []
+    preservation_ids = {}
+    for runtime, container_id, name in legacy_task_container_candidates(
+        runtimes, list_openshell_sandboxes()
+    ):
+        preservation_ids[name] = preserve_legacy_task_container(runtime, container_id, name)
+        removed = runtime_result(runtime, "rm", "-f", container_id)
+        if removed.timed_out or removed.returncode != 0:
+            raise QuiescenceFailure("OpenShell legacy task container deletion failed")
+        if container_id in list_managed_openshell_ids(runtime, all_states=True):
+            raise QuiescenceFailure("OpenShell legacy task container survived exact deletion")
+        reconciled.append(name)
+    return {
+        "reconciled": sorted(reconciled),
+        "reconciled_count": len(reconciled),
+        "preservation_ids": {
+            name: preservation_ids[name] for name in sorted(preservation_ids)
+        },
+    }
+
+
 def summarize_managed_task_sandboxes(sandboxes):
     managed = 0
     reap_eligible = 0
@@ -8440,10 +8567,12 @@ safe_container_id = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 managed_sandbox_name = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
-def list_managed_openshell_ids(runtime):
+def list_managed_openshell_ids(runtime, *, all_states=False):
+    state_args = ["-a"] if all_states else []
     listed = runtime_result(
         runtime,
         "ps",
+        *state_args,
         "--filter",
         "label=openshell.ai/managed-by=openshell",
         "--format",
@@ -9073,6 +9202,9 @@ try:
         retained = prove_legacy_nemoclaw_inactive(runtimes)
         sandbox = quiesce_openclaw_sandbox()
         openshell_task_sandboxes = reconcile_managed_task_sandboxes()
+        openshell_task_sandboxes["legacy_containers"] = (
+            reconcile_legacy_task_containers(runtimes)
+        )
         openshell_managed = prove_managed_openshell_inactive(runtimes)
         write_pre_source_certificate(
             certificate,

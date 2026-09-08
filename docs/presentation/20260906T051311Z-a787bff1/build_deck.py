@@ -115,7 +115,10 @@ def hardening_slide() -> None:
             body, head, 21, BLUE if index % 2 == 0 else AMBER, bold=True, first=index == 0, after=2
         )
         line(body, detail, 17, SLATE, after=12)
-    notes(slide, "Each point is a shipped fix, traced in AUDIT.md. None of them fixed the underlying problem.")
+    notes(
+        slide,
+        "Each point is a shipped fix, traced in AUDIT.md. None of them fixed the underlying problem.",
+    )
 
 
 def root_cause_slide() -> None:
@@ -181,7 +184,10 @@ def cutover_slide() -> None:
             body, head, 21, BLUE if index % 2 == 0 else AMBER, bold=True, first=index == 0, after=2
         )
         line(body, detail, 17, SLATE, after=12)
-    notes(slide, "Each point closes a gap between the manual cutover and durable, reproducible automation.")
+    notes(
+        slide,
+        "Each point closes a gap between the manual cutover and durable, reproducible automation.",
+    )
 
 
 def caught_live_slide() -> None:
@@ -216,7 +222,10 @@ def caught_live_slide() -> None:
         BLUE,
         bold=True,
     )
-    notes(slide, "This is the kind of bug a test suite doesn't catch: it only reproduces against real, prior state.")
+    notes(
+        slide,
+        "This is the kind of bug a test suite doesn't catch: it only reproduces against real, prior state.",
+    )
 
 
 def closing_slide() -> None:

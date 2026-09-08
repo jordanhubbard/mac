@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -90,7 +91,7 @@ def _assert_approved_read_only_report_host_executor(
         raise RuntimeError("read-only repository report host artifacts differ from hub approval")
 
 
-def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: float = 1.0) -> None:
+def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: float = 1.0) -> bool:
     """Terminate *process* and every descendant, including new sessions.
 
     Executor children are allowed to create their own process groups (the test
@@ -99,11 +100,15 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
     cross-platform recursive tree walk; the process-group fallback also catches
     descendants that race between the walk and termination.
     """
+    alive: List[Any] = []
+    descendants: List[Any] = []
+    tree_snapshot_verified = False
     try:
         import psutil
 
         parent = psutil.Process(process.pid)
         descendants = parent.children(recursive=True)
+        tree_snapshot_verified = True
         for child in reversed(descendants):
             try:
                 child.terminate()
@@ -122,6 +127,8 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
                 item.kill()
             except psutil.NoSuchProcess:
                 pass
+        if alive:
+            _, alive = psutil.wait_procs(alive, timeout=max(0.0, float(grace_seconds)))
     except Exception:  # noqa: BLE001 - process cleanup must retain a fallback.
         pass
 
@@ -135,6 +142,42 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
             process.kill()
     except (ProcessLookupError, PermissionError, OSError):
         pass
+    try:
+        process.wait(timeout=max(0.0, float(grace_seconds)))
+    except (subprocess.TimeoutExpired, ChildProcessError, OSError):
+        pass
+    direct_process_terminated = process.poll() is not None
+    try:
+        import psutil
+
+        descendants_alive = any(
+            item.is_running() and item.status() != psutil.STATUS_ZOMBIE for item in descendants
+        )
+    except Exception:  # noqa: BLE001 - inability to verify is not success.
+        return False
+    return tree_snapshot_verified and direct_process_terminated and not descendants_alive
+
+
+def _cleanup_task_sandbox_after_timeout(name: str, task_dir: Path) -> Dict[str, Any]:
+    """Harvest and delete the exact OpenShell sandbox after its CLI is killed."""
+    outcome: Dict[str, Any] = {
+        "sandbox": name,
+        "harvested": False,
+        "deleted": False,
+    }
+    if not name:
+        return outcome
+    try:
+        from mac import executor_sandbox
+
+        outcome["harvested"] = executor_sandbox._sandbox_download(name, task_dir.name, task_dir)
+        if not outcome["harvested"]:
+            outcome["error"] = "sandbox harvest did not complete; retained for recovery"
+            return outcome
+        outcome["deleted"] = executor_sandbox._sandbox_delete(name)
+    except Exception as exc:  # noqa: BLE001 - report cleanup failure truthfully.
+        outcome["error"] = str(exc)
+    return outcome
 
 
 def _cargo_path_dirs() -> List[str]:
@@ -214,6 +257,17 @@ class SubprocessExecutor:
         )
 
         env = os.environ.copy()
+        task_sandbox_name = ""
+        if env.get("MAC_OPENSHELL_SANDBOX", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            task_sandbox_name = env.get("MAC_OPENSHELL_SANDBOX_NAME", "").strip()
+            if not task_sandbox_name:
+                task_sandbox_name = "mac-task-" + uuid.uuid4().hex[:8]
+                env["MAC_OPENSHELL_SANDBOX_NAME"] = task_sandbox_name
         # These are task-scoped inputs, not worker defaults.  A long-lived
         # worker may itself have been launched from an operator shell (or an
         # older service definition) that carried values from a previous task.
@@ -325,12 +379,21 @@ class SubprocessExecutor:
                         self._cancel_reason = ""
                         self._active_process = process
                     timed_out = False
+                    process_tree_terminated = False
+                    sandbox_cleanup: Dict[str, Any] = {}
                     try:
                         process.wait(timeout=self.timeout)
                     except subprocess.TimeoutExpired:
                         timed_out = True
-                        _terminate_process_tree(process)
+                        process_tree_terminated = _terminate_process_tree(process)
                         process.wait()
+                        if task_sandbox_name:
+                            sandbox_cleanup = _cleanup_task_sandbox_after_timeout(
+                                task_sandbox_name, task_dir
+                            )
+                            process_tree_terminated = process_tree_terminated and bool(
+                                sandbox_cleanup.get("deleted")
+                            )
                     finally:
                         # A successful command may still have background
                         # descendants.  Retire them before releasing the task.
@@ -343,12 +406,15 @@ class SubprocessExecutor:
                     stdout = stdout_file.read()
                     stderr = stderr_file.read()
                     if timed_out:
-                        raise subprocess.TimeoutExpired(
+                        timeout_exc = subprocess.TimeoutExpired(
                             self.argv,
                             self.timeout or 0.0,
                             output=stdout,
                             stderr=stderr,
                         )
+                        timeout_exc.process_tree_terminated = process_tree_terminated
+                        timeout_exc.sandbox_cleanup = sandbox_cleanup
+                        raise timeout_exc
                     completed = subprocess.CompletedProcess(
                         self.argv,
                         int(process.returncode),
@@ -372,6 +438,10 @@ class SubprocessExecutor:
                     "metadata": {
                         **base_record["metadata"],
                         "timeout_seconds": self.timeout,
+                        "process_tree_terminated": bool(
+                            getattr(exc, "process_tree_terminated", False)
+                        ),
+                        "sandbox_cleanup": getattr(exc, "sandbox_cleanup", {}),
                     },
                 }
             )
