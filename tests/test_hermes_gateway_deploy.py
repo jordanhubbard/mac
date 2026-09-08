@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -89,7 +90,10 @@ def _run(
     if not (extra_env or {}).get("_OMIT_GATEWAY_IMPL_ENV"):
         (mac_home / "mac.env").write_text("MAC_CHAT_GATEWAY_IMPL=hermes\n", encoding="utf-8")
     env = {
-        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        # The verifier's Python may live outside /usr/bin (notably in the
+        # Linux/aarch64 sandbox). Keep the fake CLI shebangs resolvable without
+        # inheriting host tools or state through the ambient PATH.
+        "PATH": os.pathsep.join((str(bin_dir), str(Path(sys.executable).parent), os.defpath)),
         "HOME": str(home),
         "HERMES_HOME": str(home / ".hermes"),
         "MAC_HERMES_OPENCLAW_SOURCE": str(home / "no-openclaw-here"),
