@@ -14,6 +14,7 @@ from mac.api_client import MacApiError
 from mac.worker_subprocess import (
     SubprocessExecutor,
     _cargo_path_dirs,
+    _cleanup_task_sandbox_after_timeout,
     _ensure_json_object,
     _terminate_process_tree,
 )
@@ -194,6 +195,28 @@ def test_executor_timeout_reports_failed_sandbox_delete_truthfully(tmp_path, mon
         executor({"id": "task_timeout_leak", "metadata": {}}, tmp_path)
 
     assert caught.value.process_tree_terminated is False
+
+
+def test_timeout_cleanup_retains_sandbox_when_harvest_fails(tmp_path, monkeypatch) -> None:
+    deleted = []
+    monkeypatch.setattr(
+        "mac.executor_sandbox._sandbox_download",
+        lambda _name, _workspace, _destination: False,
+    )
+    monkeypatch.setattr(
+        "mac.executor_sandbox._sandbox_delete",
+        lambda name: deleted.append(name) or True,
+    )
+
+    outcome = _cleanup_task_sandbox_after_timeout("mac-task-preserve", tmp_path)
+
+    assert outcome == {
+        "sandbox": "mac-task-preserve",
+        "harvested": False,
+        "deleted": False,
+        "error": "sandbox harvest did not complete; retained for recovery",
+    }
+    assert deleted == []
 
 
 def test_audit_failures_do_not_mask_task_execution() -> None:

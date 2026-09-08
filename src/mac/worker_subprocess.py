@@ -171,6 +171,9 @@ def _cleanup_task_sandbox_after_timeout(name: str, task_dir: Path) -> Dict[str, 
         from mac import executor_sandbox
 
         outcome["harvested"] = executor_sandbox._sandbox_download(name, task_dir.name, task_dir)
+        if not outcome["harvested"]:
+            outcome["error"] = "sandbox harvest did not complete; retained for recovery"
+            return outcome
         outcome["deleted"] = executor_sandbox._sandbox_delete(name)
     except Exception as exc:  # noqa: BLE001 - report cleanup failure truthfully.
         outcome["error"] = str(exc)
