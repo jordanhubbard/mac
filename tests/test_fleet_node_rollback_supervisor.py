@@ -458,6 +458,60 @@ def test_systemd_quiesce_proves_all_services_inactive_and_scrubs_selectors(
         assert item["pid"] == 0
 
 
+def test_quiesce_terminates_only_exact_orphaned_hub_listener(tmp_path: Path) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    _write_state(tmp_path, _loaded_systemd_state())
+    listener = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import socket,time;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1],flush=True);s.listen();time.sleep(30)",
+            "mac.hub_serve",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        port = int(listener.stdout.readline())
+        command, receipt = _base_command(tmp_path, "quiesce", "systemd", port, SYSTEMD_NAMES)
+        command.extend(["--systemctl", str(systemctl)])
+        result = _run(command)
+        assert result.returncode == 0, result.stderr
+        assert listener.wait(timeout=5) != 0
+        _assert_passed_receipt(receipt, "quiesce", "systemd")
+    finally:
+        if listener.poll() is None:
+            listener.terminate()
+            listener.wait(timeout=5)
+
+
+def test_quiesce_refuses_to_terminate_an_unrelated_listener(tmp_path: Path) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    _write_state(tmp_path, _loaded_systemd_state())
+    listener = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import socket,time;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1],flush=True);s.listen();time.sleep(30)",
+            "unrelated-service",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        port = int(listener.stdout.readline())
+        command, receipt = _base_command(tmp_path, "quiesce", "systemd", port, SYSTEMD_NAMES)
+        command.extend(["--systemctl", str(systemctl)])
+        result = _run(command)
+        assert result.returncode != 0
+        assert "listener is not owned" in result.stderr
+        assert listener.poll() is None
+        assert not receipt.exists()
+    finally:
+        listener.terminate()
+        listener.wait(timeout=5)
+
+
 def test_systemd_quiesce_stops_explicit_auxiliary_media_before_restore(
     tmp_path: Path,
 ) -> None:

@@ -4986,6 +4986,7 @@ verified_contract_call \
   --supervisor "\$rollback_supervisor" \
   --control-plane-mode "\$rollback_control_mode" \
   --control-plane-port "\$MAC_PORT" \
+  --control-plane-host 127.0.0.1 \
   --receipt "\$ROLLBACK_LOG_DIR/rollback-\$ROLLBACK_TS-quiesce.json" \
   "\${rollback_args[@]}"
 
@@ -6613,6 +6614,9 @@ stop_existing_services_for_deploy() {
   if control_plane_enabled; then
     control_mode=active
   fi
+  while IFS= read -r host; do
+    [ -z "$host" ] || args+=(--control-plane-host "$host")
+  done < <(printf '%s' "${MAC_BIND_HOST:-127.0.0.1}" | tr ',' '\n')
   case "$SUPERVISOR_KIND" in
     systemd)
       args=(
