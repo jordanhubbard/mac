@@ -11582,6 +11582,7 @@
     "name": "MAC_ROLLBACK_DIRECTORY_SNAPSHOT_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
