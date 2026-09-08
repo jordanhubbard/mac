@@ -775,7 +775,19 @@ class JudgementProcess:
             }:
                 interventions_used += 1
 
-        for finding in findings:
+        reconciliation_findings = [
+            finding for finding in findings if finding.recommended_action == "reconcile_merged_task"
+        ]
+        intervention_findings = [
+            finding for finding in findings if finding.recommended_action != "reconcile_merged_task"
+        ]
+
+        # Trusted forge reconciliation repairs durable ledger state; it must
+        # run before, and outside, the bounded intervention budget.
+        for finding in reconciliation_findings:
+            actions.append(self._reconcile_merged_task(actor=actor, finding=finding))
+
+        for finding in intervention_findings:
             if interventions_used >= budget:
                 actions.append(
                     {
@@ -789,9 +801,6 @@ class JudgementProcess:
             recommended = finding.recommended_action
             if recommended == "close_pr":
                 append_result(self._close_pull_request(actor=actor, finding=finding))
-                continue
-            if recommended == "reconcile_merged_task":
-                append_result(self._reconcile_merged_task(actor=actor, finding=finding))
                 continue
             if recommended == "fleet_stop":
                 if fleet_stopped:
