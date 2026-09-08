@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mac.judgement import (
+    Finding,
     HOLD_REASON_PREFIX,
     JUDGEMENT_SCHEMA,
     JudgementConfig,
@@ -229,6 +230,92 @@ def test_cycle_budget_caps_interventions(cp):
     skipped = [action for action in report["actions"] if action.get("reason") == "cycle_budget"]
     assert len(stopped) == 1
     assert skipped
+
+
+def test_terminal_and_already_stopped_findings_do_not_consume_action_budget(cp):
+    failed = cp.create_task("failed historical row", project="mac")
+    stopped = cp.create_task("already parked", project="mac")
+    live = cp.create_task("live intervention", project="mac")
+    with cp.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("failed", failed.id))
+    cp.stop_task(stopped.id, actor="test", reason="fixture")
+    findings = [
+        Finding(
+            kind="old_failure",
+            task_id=failed.id,
+            summary="terminal",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="already_parked",
+            task_id=stopped.id,
+            summary="stopped",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="live_problem",
+            task_id=live.id,
+            summary="actionable",
+            recommended_action="stop_task",
+        ),
+    ]
+
+    actions = _process(cp, max_actions_per_cycle=1)._act_on_findings(
+        findings, actor="test", run_id="budget"
+    )
+
+    assert [action["action"] for action in actions] == [
+        "skipped",
+        "already_stopped",
+        "task_stopped",
+    ]
+    assert cp.get_task(live.id).state == TaskState.STOPPED.value
+
+
+def test_merged_pull_request_reconciles_the_named_repository_task(cp):
+    head_sha = "a" * 40
+    merge_sha = "b" * 40
+    task = cp.create_task(
+        "merged out of band",
+        project="mac",
+        metadata={
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {"canonical_branch": "main"},
+            }
+        },
+    )
+
+    def lister(_root):
+        return {
+            "open": [],
+            "merged": [
+                {
+                    "number": 776,
+                    "title": "land repair (%s)" % task.id,
+                    "body": "",
+                    "headRefName": "codex/repair",
+                    "baseRefName": "main",
+                    "headRefOid": head_sha,
+                    "mergeCommit": {"oid": merge_sha},
+                    "mergedAt": "2026-09-07T23:03:55Z",
+                    "url": "https://example.test/776",
+                    "mergeable": "UNKNOWN",
+                }
+            ],
+        }
+
+    report = _process(cp, pr_lister=lister).run_once()
+
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert any(action["action"] == "task_reconciled" for action in report["actions"])
+    proofs = [
+        evidence.metadata["verification"]["canonical_integration"]
+        for evidence in cp.list_evidence(task.id)
+        if evidence.metadata.get("verification", {}).get("canonical_integration")
+    ]
+    assert proofs[-1]["canonical_tip_sha"] == merge_sha
+    assert proofs[-1]["reviewed_head_sha"] == head_sha
 
 
 def test_orphaned_pull_request_is_closed(cp):

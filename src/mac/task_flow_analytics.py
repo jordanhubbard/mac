@@ -1426,6 +1426,8 @@ class TaskFlowAnalyticsService:
     def _stranding_reason(
         stage: str,
         dispatch: Optional[Mapping[str, Any]],
+        *,
+        dispatch_diagnostic: str = "available",
     ) -> str:
         if stage == TaskFlowStage.READY_QUEUE.value:
             if dispatch is not None:
@@ -1436,6 +1438,8 @@ class TaskFlowAnalyticsService:
                         return str(first["code"])
                 if dispatch.get("dispatchable"):
                     return "dispatcher_backlog"
+            if dispatch_diagnostic != "available":
+                return "dispatch_diagnostic_%s" % dispatch_diagnostic
             return "ready_unclaimed"
         return {
             TaskFlowStage.INTAKE.value: "dependency_or_intake_wait",
@@ -1609,7 +1613,8 @@ class TaskFlowAnalyticsService:
         active_rows = [
             _row_dict(row)
             for row in self.store.query_all(
-                "SELECT s.*, t.title, t.state, t.owner_agent_id, t.updated_at AS task_updated_at "
+                "SELECT s.*, t.title, t.state, t.metadata AS task_metadata, "
+                "t.owner_agent_id, t.updated_at AS task_updated_at "
                 "FROM task_flow_spans s JOIN tasks t ON t.id = s.task_id "
                 "WHERE %s ORDER BY s.started_at, s.task_id LIMIT 500"
                 % " AND ".join(active_clauses),
@@ -1622,10 +1627,23 @@ class TaskFlowAnalyticsService:
         dispatch_explanation_count = 0
         dispatch_explanation_limit = 50
         for row in active_rows:
+            # A deliberate operator/task hold is not stranded work. Old spans
+            # can remain open while a task is parked, so filtering only SQL
+            # terminal states mislabeled held rows as ready-unclaimed once the
+            # bounded explanation budget was exhausted.
+            if str(row["state"]) == TaskState.STOPPED.value:
+                continue
+            task_metadata = json_loads(row.get("task_metadata"), {})
+            if (
+                row["stage"] == TaskFlowStage.READY_QUEUE.value
+                and ensure_json_object(task_metadata).get("no_dispatch") is True
+            ):
+                continue
             age = _seconds(str(row["started_at"]), now)
             if age < float(warning_seconds):
                 continue
             dispatch: Optional[Mapping[str, Any]] = None
+            dispatch_diagnostic = "available"
             if (
                 dispatch_explainer is not None
                 and row["stage"] == TaskFlowStage.READY_QUEUE.value
@@ -1635,9 +1653,18 @@ class TaskFlowAnalyticsService:
                     dispatch = dispatch_explainer(str(row["task_id"]))
                     dispatch_explanation_count += 1
                 except Exception:
-                    dispatch = None
+                    dispatch_diagnostic = "failed"
+            elif (
+                dispatch_explainer is not None
+                and row["stage"] == TaskFlowStage.READY_QUEUE.value
+            ):
+                dispatch_diagnostic = "deferred"
             severity = "critical" if age >= float(critical_seconds) else "warning"
-            reason = self._stranding_reason(str(row["stage"]), dispatch)
+            reason = self._stranding_reason(
+                str(row["stage"]),
+                dispatch,
+                dispatch_diagnostic=dispatch_diagnostic,
+            )
             fingerprint = hashlib.sha256(
                 (
                     "%s\x00%s\x00%s\x00%s"
