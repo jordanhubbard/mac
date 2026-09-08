@@ -1321,6 +1321,23 @@ def test_two_zero_telemetry_expiries_auto_quarantine_agent(monkeypatch):
     assert any(stream.topic == REFLECT_REQUEST_TOPIC for stream in streams)
 
 
+def test_tick_expires_machine_hold_but_preserves_operator_hold(monkeypatch):
+    monkeypatch.setenv("MAC_AGENT_DISPATCH_HOLD_TTL_SECONDS", "60")
+    cp = _make_cp()
+    machine = _register_agent(cp, "machine-held")
+    operator = _register_agent(cp, "operator-held")
+    cp.set_agent_dispatch_hold(machine.id, "source_convergence:generation=1")
+    cp.set_agent_dispatch_hold(operator.id, "operator:investigation")
+    old = "2000-01-01T00:00:00+00:00"
+    cp.store.execute("UPDATE agents SET dispatch_hold_at = ?", (old,))
+
+    result = cp.tick(limit=0)
+
+    assert [item["agent_id"] for item in result["expired_dispatch_holds"]] == [machine.id]
+    assert cp.get_agent(machine.id).dispatch_hold is False
+    assert cp.get_agent(operator.id).dispatch_hold is True
+
+
 def test_virtual_agent_lease_expiry_never_quarantines(monkeypatch):
     """A virtual, hub-driven agent (e.g. the hub_verify review verifier) has no
     worker process and by design emits no executor telemetry, so its expired

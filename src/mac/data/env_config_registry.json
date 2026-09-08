@@ -1,5 +1,16 @@
 [
   {
+    "default": 3600,
+    "description": "Maximum age in seconds for machine-set agent dispatch holds before automatic release.",
+    "family": "agent",
+    "name": "MAC_AGENT_DISPATCH_HOLD_TTL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
     "default": null,
     "description": "Acp setting: acp agent cmd.",
     "family": "acp",
