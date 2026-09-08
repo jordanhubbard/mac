@@ -272,6 +272,53 @@ def test_terminal_and_already_stopped_findings_do_not_consume_action_budget(cp):
     assert cp.get_task(live.id).state == TaskState.STOPPED.value
 
 
+def test_merged_reconciliation_precedes_and_does_not_consume_intervention_budget(cp):
+    first = cp.create_task("first intervention", project="mac")
+    second = cp.create_task("second intervention", project="mac")
+    merged = cp.create_task("already merged", project="mac")
+    findings = [
+        Finding(
+            kind="ordinary_first",
+            task_id=first.id,
+            summary="first",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="ordinary_second",
+            task_id=second.id,
+            summary="second",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="merged_task_not_reconciled",
+            task_id=merged.id,
+            summary="merged",
+            detail={
+                "pr_number": 777,
+                "url": "https://example.test/777",
+                "base_ref_name": "main",
+                "head_sha": "a" * 40,
+                "merge_sha": "b" * 40,
+            },
+            recommended_action="reconcile_merged_task",
+        ),
+    ]
+
+    actions = _process(cp, max_actions_per_cycle=1)._act_on_findings(
+        findings, actor="test", run_id="merged-first"
+    )
+
+    assert [action["action"] for action in actions] == [
+        "task_reconciled",
+        "task_stopped",
+        "skipped",
+    ]
+    assert actions[-1]["reason"] == "cycle_budget"
+    assert cp.get_task(merged.id).state == TaskState.COMPLETED.value
+    assert cp.get_task(first.id).state == TaskState.STOPPED.value
+    assert cp.get_task(second.id).state == TaskState.OPEN.value
+
+
 def test_merged_pull_request_reconciles_the_named_repository_task(cp):
     head_sha = "a" * 40
     merge_sha = "b" * 40
