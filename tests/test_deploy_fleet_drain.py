@@ -1126,6 +1126,7 @@ def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
         "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
         "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
         "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
+        "MAC_ROLLBACK_DIRECTORY_SNAPSHOT_TIMEOUT_SECONDS",
         # launchd-lifecycle.sh's own bounded-command timeouts (macOS phase-2
         # rollback snapshotting, e.g. "could not durably snapshot MAC_HOME/
         # openclaw for rollback" -- live-confirmed on 2026-09-03 to time out
