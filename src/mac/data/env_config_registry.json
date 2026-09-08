@@ -9459,7 +9459,8 @@
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_policy.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -9481,7 +9482,8 @@
     "name": "MAC_OPENSHELL_SANDBOX_NAME",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },

@@ -132,16 +132,16 @@ def test_executor_timeout_preserves_timeout_evidence(tmp_path) -> None:
     assert executor.has_active_process() is False
 
 
-def test_executor_timeout_harvests_and_deletes_exact_sandbox(
-    tmp_path, monkeypatch
-) -> None:
+def test_executor_timeout_harvests_and_deletes_exact_sandbox(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "mac-task-timeout")
     cleanups = []
     monkeypatch.setattr(
         "mac.worker_subprocess._cleanup_task_sandbox_after_timeout",
-        lambda name, workspace: cleanups.append((name, workspace))
-        or {"sandbox": name, "harvested": True, "deleted": True},
+        lambda name, workspace: (
+            cleanups.append((name, workspace))
+            or {"sandbox": name, "harvested": True, "deleted": True}
+        ),
     )
     executor = SubprocessExecutor(
         [sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.01
@@ -159,9 +159,7 @@ def test_executor_timeout_harvests_and_deletes_exact_sandbox(
     }
 
 
-def test_executor_timeout_reports_failed_sandbox_delete_truthfully(
-    tmp_path, monkeypatch
-) -> None:
+def test_executor_timeout_reports_failed_sandbox_delete_truthfully(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "mac-task-leaked")
     monkeypatch.setattr(

@@ -1931,9 +1931,7 @@ class MacWorker(
                 return self._stale_result(task_id, lease, str(exc))
             stdout = _coerce_process_output(exc.stdout)
             stderr = _coerce_process_output(exc.stderr)
-            process_tree_terminated = bool(
-                getattr(exc, "process_tree_terminated", False)
-            )
+            process_tree_terminated = bool(getattr(exc, "process_tree_terminated", False))
             sandbox_cleanup = getattr(exc, "sandbox_cleanup", {})
             execution = WorkerExecution(
                 124,

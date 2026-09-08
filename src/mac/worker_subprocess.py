@@ -91,9 +91,7 @@ def _assert_approved_read_only_report_host_executor(
         raise RuntimeError("read-only repository report host artifacts differ from hub approval")
 
 
-def _terminate_process_tree(
-    process: subprocess.Popen[Any], *, grace_seconds: float = 1.0
-) -> bool:
+def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: float = 1.0) -> bool:
     """Terminate *process* and every descendant, including new sessions.
 
     Executor children are allowed to create their own process groups (the test
@@ -163,9 +161,7 @@ def _cleanup_task_sandbox_after_timeout(name: str, task_dir: Path) -> Dict[str, 
     try:
         from mac import executor_sandbox
 
-        outcome["harvested"] = executor_sandbox._sandbox_download(
-            name, task_dir.name, task_dir
-        )
+        outcome["harvested"] = executor_sandbox._sandbox_download(name, task_dir.name, task_dir)
         outcome["deleted"] = executor_sandbox._sandbox_delete(name)
     except Exception as exc:  # noqa: BLE001 - report cleanup failure truthfully.
         outcome["error"] = str(exc)
