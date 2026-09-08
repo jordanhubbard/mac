@@ -1482,6 +1482,7 @@ def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
     ][-1]
     assert timeout_transition.detail["reason"] == "executor_timeout"
     assert timeout_transition.detail["process_tree_terminated"] is True
+    assert timeout_transition.detail["sandbox_cleanup"] == {}
 
 
 def test_validate_git_remote_url_rejects_argv_smuggling():
