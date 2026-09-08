@@ -243,7 +243,8 @@ def test_open_pull_request_does_not_reuse_an_unrelated_tasks_pr(monkeypatch) -> 
         result = open_pull_request(
             "https://github.com/x/y.git",
             head="mac/agent_rocky/%s-lease_new" % task_b,
-            title="Integrate conflicting approved task %s onto current main (%s)" % (task_a, task_b),
+            title="Integrate conflicting approved task %s onto current main (%s)"
+            % (task_a, task_b),
             body="- task: `%s`\n- head: `deadbeef`\n- base at push: `cafef00d`\n" % task_b,
         )
 

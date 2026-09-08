@@ -11080,9 +11080,7 @@ class ControlPlane:
         """
 
         try:
-            self._native_merge_queue().evict_for_task(
-                task_id, reason="owning task was cancelled"
-            )
+            self._native_merge_queue().evict_for_task(task_id, reason="owning task was cancelled")
         except Exception:  # noqa: BLE001 - cancellation must still succeed.
             logging.getLogger("mac.merge_queue").warning(
                 "failed to evict merge queue entry for cancelled task %s",

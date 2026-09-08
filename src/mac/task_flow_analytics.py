@@ -1654,10 +1654,7 @@ class TaskFlowAnalyticsService:
                     dispatch_explanation_count += 1
                 except Exception:
                     dispatch_diagnostic = "failed"
-            elif (
-                dispatch_explainer is not None
-                and row["stage"] == TaskFlowStage.READY_QUEUE.value
-            ):
+            elif dispatch_explainer is not None and row["stage"] == TaskFlowStage.READY_QUEUE.value:
                 dispatch_diagnostic = "deferred"
             severity = "critical" if age >= float(critical_seconds) else "warning"
             reason = self._stranding_reason(

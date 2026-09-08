@@ -1243,9 +1243,7 @@ def test_stopped_legacy_task_container_is_preserved_before_exact_deletion(
     assert proof["reconciled_count"] == 1
     calls = _call_lines(run)
     copy_index = next(
-        index
-        for index, line in enumerate(calls)
-        if f"cp {container_id}:/sandbox" in line
+        index for index, line in enumerate(calls) if f"cp {container_id}:/sandbox" in line
     )
     delete_index = calls.index(f"docker:--context default rm -f {container_id}")
     assert copy_index < delete_index

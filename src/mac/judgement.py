@@ -643,9 +643,10 @@ class JudgementProcess:
                     Finding(
                         kind="merged_task_not_reconciled",
                         task_id=task_id,
-                        summary=("PR #%d merged but %s is still %s" % (
-                            int(pr.get("number") or 0), task_id, state or "unknown"
-                        )),
+                        summary=(
+                            "PR #%d merged but %s is still %s"
+                            % (int(pr.get("number") or 0), task_id, state or "unknown")
+                        ),
                         detail={
                             "pr_number": int(pr.get("number") or 0),
                             "url": str(pr.get("url") or ""),
