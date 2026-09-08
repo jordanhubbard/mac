@@ -142,7 +142,12 @@ class AllocationTask:
     # it wants evidence about which kinds are genuinely executor-free rather
     # than a guess.
     requires_execution: bool = True
+    # Operator/safety exclusions are hard. Retry exclusions are a placement
+    # preference that is relaxed only when every otherwise-valid pair is
+    # excluded; keeping them separate is what lets the claim transaction
+    # repeat the allocator's exact decision.
     excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
+    retry_excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     required_capabilities: FrozenSet[str] = field(default_factory=frozenset)
     required_resources: Mapping[str, Any] = field(default_factory=dict)
     required_hardware: Mapping[str, Any] = field(default_factory=dict)
@@ -389,6 +394,7 @@ class AssignmentProposal:
     agent_id: str
     task_rank: int
     agent_rank: int
+    retry_exclusion_relaxed: bool = False
 
     def to_dict(self) -> JsonDict:
         return {
@@ -397,6 +403,7 @@ class AssignmentProposal:
             "agent_id": self.agent_id,
             "task_rank": self.task_rank,
             "agent_rank": self.agent_rank,
+            "retry_exclusion_relaxed": self.retry_exclusion_relaxed,
         }
 
 
@@ -943,7 +950,7 @@ def evaluate_pair(
         # requirements -- pointing the operator at agent capabilities when the
         # actual bar was an exclusion. Codes are matched on their stem
         # (rejection_kind), so suffixing is backwards compatible.
-        if agent.id in task.excluded_agent_ids:
+        if agent.id in task.excluded_agent_ids or agent.id in task.retry_excluded_agent_ids:
             reasons.append("%s:excluded" % AGENT_TARGET_MISMATCH)
         if task.target_agent_id is not None and task.target_agent_id != agent.id:
             reasons.append("%s:pinned" % AGENT_TARGET_MISMATCH)
@@ -998,6 +1005,29 @@ def evaluate_pair(
         agent_id=agent.id,
         agent_rejections=tuple(reasons),
     )
+
+
+def relax_retry_exclusions(
+    task: AllocationTask,
+    agents: Iterable[AllocationAgent],
+) -> Tuple[AllocationTask, Tuple[str, ...]]:
+    """Drop retry-only exclusions when they are the sole placement barrier.
+
+    Explicit operator/safety exclusions remain hard. The returned agent ids
+    make the relaxation an explicit part of the proposal handed to the
+    transactional claim boundary instead of an allocator-local fiction.
+    """
+
+    agent_list = list(agents)
+    if not task.retry_excluded_agent_ids:
+        return task, ()
+    if any(evaluate_pair(task, agent).allowed for agent in agent_list):
+        return task, ()
+    unbarred = replace(task, retry_excluded_agent_ids=frozenset())
+    recovered = tuple(
+        sorted(agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed)
+    )
+    return (unbarred, recovered) if recovered else (task, ())
 
 
 class AuthoritativeAllocator:
@@ -1110,12 +1140,9 @@ class AuthoritativeAllocator:
         # which is how the first attempt at this fix silently changed nothing.
         relaxed_exclusions: Dict[str, tuple[str, ...]] = {}
         for index, task in enumerate(task_list):
-            if not task_evaluations[task.id].allowed or not task.excluded_agent_ids:
+            if not task_evaluations[task.id].allowed or not task.retry_excluded_agent_ids:
                 continue
-            if any(base_pairs[(task.id, agent.id)].allowed for agent in agent_list):
-                continue
-            unbarred = replace(task, excluded_agent_ids=frozenset())
-            recovered = [agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed]
+            unbarred, recovered = relax_retry_exclusions(task, agent_list)
             if not recovered:
                 continue
             task_list[index] = unbarred
@@ -1239,6 +1266,7 @@ class AuthoritativeAllocator:
                     agent_id=agent.id,
                     task_rank=task_rank,
                     agent_rank=agent_rank,
+                    retry_exclusion_relaxed=task.id in relaxed_exclusions,
                 )
                 try:
                     committed = claim_pair(proposal)

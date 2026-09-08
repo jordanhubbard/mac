@@ -94,6 +94,39 @@ def test_pull_claims_explicit_target_without_global_allocation_round(monkeypatch
     assert cp.get_task(task.id).state == TaskState.CLAIMED.value
 
 
+def test_retry_exclusion_relaxation_reaches_the_transactional_claim_boundary():
+    """Regression: allocator selection and the locked claim must agree.
+
+    The former fake-claim coverage passed while the live dispatcher selected
+    the pinned worker and then rejected it from persisted metadata forever.
+    """
+
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target")
+    task = cp.create_task(
+        "targeted retry",
+        project="mac",
+        required_capabilities=["python"],
+        metadata={
+            "target_agent_id": target.id,
+            "retry_excluded_agent_ids": [target.id],
+        },
+    )
+
+    explanation = cp.dispatch.explain_task_dispatch(task.id)
+    assignment = cp.dispatch_once()
+
+    assert explanation["task_ready"] is True
+    assert explanation["dispatchable"] is True
+    assert explanation["retry_exclusion_relaxed"] is True
+    assert explanation["retry_exclusion_relaxed_agent_ids"] == [target.id]
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+    assert assignment["agent"]["id"] == target.id
+    assert cp.get_task(task.id).state == TaskState.CLAIMED.value
+
+
 def test_targeted_task_ineligible_falls_through_to_the_global_round():
     """A target_agent_id task the agent is not actually eligible for (missing
     capability) must be skipped by the bounded direct path, not claimed

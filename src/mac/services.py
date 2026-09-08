@@ -11793,13 +11793,28 @@ class ControlPlane:
                 and reviewed_sha == head_sha
                 and integration.get("squash_merged") is True
             )
+            # The hourly forge reconciler observes GitHub's merged PR record
+            # directly. That proves the reviewed head's content landed even
+            # when the checkout no longer has enough graph history to
+            # distinguish merge, squash, and rebase strategies.
+            proof_forge_merged = (
+                _GIT_SHA_RE.match(reviewed_sha)
+                and reviewed_sha == head_sha
+                and integration.get("forge_merged") is True
+                and int(integration.get("pull_request_number") or 0) > 0
+            )
             if (
                 str(integration.get("status") or "").strip().lower() in {"pass", "passed"}
                 and integration.get("remote_verified") is True
                 and str(integration.get("canonical_ref") or "").strip() == canonical_ref
                 and _GIT_SHA_RE.match(head_sha)
                 and _GIT_SHA_RE.match(proof_sha)
-                and (head_sha == proof_sha or proof_carries_reviewed_head or proof_squash_merged)
+                and (
+                    head_sha == proof_sha
+                    or proof_carries_reviewed_head
+                    or proof_squash_merged
+                    or proof_forge_merged
+                )
             ):
                 return
         raise ValidationError(
@@ -11813,6 +11828,8 @@ class ControlPlane:
         task_id: str,
         agent_id: str,
         lease_seconds: int = 900,
+        *,
+        allow_retry_exclusion_reuse: bool = False,
     ) -> JsonDict:
         """Atomically commit an allocator-v2 task/agent proposal.
 
@@ -11830,6 +11847,7 @@ class ControlPlane:
             sync_beads=False,
             assignment_allocator="authoritative-hub",
             authoritative_allocator_v2=True,
+            allow_retry_exclusion_reuse=allow_retry_exclusion_reuse,
         )
         agent = self.get_agent(agent_id)
         return {
@@ -11848,6 +11866,7 @@ class ControlPlane:
         allow_cooperative_reuse: bool = False,
         assignment_allocator: str = "control-plane",
         authoritative_allocator_v2: bool = False,
+        allow_retry_exclusion_reuse: bool = False,
     ) -> Tuple[Task, Lease]:
         lease_seconds = self._validated_task_lease_seconds(lease_seconds)
         task = self.get_task(task_id)
@@ -12114,6 +12133,7 @@ class ControlPlane:
                     project_paused=project_paused,
                     break_glass=break_glass,
                     role_reason=role_reason,
+                    allow_retry_exclusion_reuse=allow_retry_exclusion_reuse,
                 )
             else:
                 ineligible_reason = self._claim_snapshot_ineligibility_reason(
@@ -26259,6 +26279,7 @@ class ControlPlane:
         project_paused: bool,
         break_glass: Optional[BreakGlassAuthorization],
         role_reason: Optional[str],
+        allow_retry_exclusion_reuse: bool = False,
     ) -> Optional[str]:
         """Re-check only allocator-v2 hard constraints under transaction locks.
 
@@ -26299,11 +26320,15 @@ class ControlPlane:
             return None
 
         metadata = ensure_json_object(task.metadata)
-        excluded: set[str] = set()
-        for key in ("excluded_agent_ids", "retry_excluded_agent_ids"):
-            values = metadata.get(key)
-            if isinstance(values, list):
-                excluded.update(str(value) for value in values if str(value))
+        excluded = (
+            {str(value) for value in metadata.get("excluded_agent_ids", []) if str(value)}
+            if isinstance(metadata.get("excluded_agent_ids"), list)
+            else set()
+        )
+        if not allow_retry_exclusion_reuse:
+            retry_excluded = metadata.get("retry_excluded_agent_ids")
+            if isinstance(retry_excluded, list):
+                excluded.update(str(value) for value in retry_excluded if str(value))
         if agent.id in excluded:
             return "explicit_agent_excluded"
         target_agent_id = str(metadata.get("target_agent_id") or "").strip()
