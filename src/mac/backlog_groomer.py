@@ -430,6 +430,11 @@ class BacklogGroomer:
             "origin": origin,
             # Repo-coupled (repo cloned) but held to an investigation write-up,
             # not code-substance verification — same contract as onboarding.
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
             "evidence_type": "investigation",
         }
         return self.control_plane.create_task(
