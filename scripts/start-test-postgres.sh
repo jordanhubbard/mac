@@ -39,7 +39,13 @@ for brew_bin in \
   /opt/homebrew/bin \
   /usr/local/bin; do
   if [ -x "$brew_bin/pg_isready" ] || [ -x "$brew_bin/pg_ctl" ]; then
-    PATH="$brew_bin:${PATH:-}"
+    # Preserve explicit caller overrides (including CI/test shims for docker
+    # and podman).  These directories only fill commands missing from PATH;
+    # putting them first can silently bypass an operator's chosen executable.
+    case ":${PATH:-}:" in
+      *":$brew_bin:"*) ;;
+      *) PATH="${PATH:+${PATH}:}$brew_bin" ;;
+    esac
   fi
 done
 export PATH

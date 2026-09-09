@@ -5528,14 +5528,7 @@ class ControlPlane:
                 for key, item in value.items():
                     child_path = "%s.%s" % (path, key)
                     if key in {"evidence_type", "expected_evidence_type"}:
-                        native_contract_value = (
-                            path == "metadata.execution_contract"
-                            and str(value.get("type") or "").strip().lower() == "operator_directive"
-                            and key == "evidence_type"
-                            and str(item or "").strip().lower() == "operator_result"
-                        )
-                        if not native_contract_value:
-                            paths.append(child_path)
+                        paths.append(child_path)
                     collect(item, child_path)
             elif isinstance(value, list):
                 for index, item in enumerate(value):
@@ -5615,8 +5608,7 @@ class ControlPlane:
                 "read-only repository reports require execution_contract to be an object"
             )
         execution = ensure_json_object(raw_execution)
-        execution_type = str(execution.get("type") or "").strip().lower()
-        if execution and execution_type not in {"repository", "operator_directive"}:
+        if execution and str(execution.get("type") or "").strip().lower() != "repository":
             raise ValidationError(
                 "read-only repository reports require a repository execution contract"
             )
@@ -5662,11 +5654,9 @@ class ControlPlane:
             contract = current
             canonical_execution: JsonDict = {
                 "schema": "mac.task_execution_contract.v1",
-                "type": "operator_directive",
-                "quality": "weak",
+                "type": "repository",
+                "quality": "strong",
                 "source": "registered_project",
-                "repository_required": False,
-                "evidence_type": "operator_result",
                 "repository_id": repo.id,
                 "repository_path": repo.path,
                 "repository_contract": contract,
@@ -5720,10 +5710,7 @@ class ControlPlane:
                     "read-only repository report execution_contract.schema is unsupported"
                 )
             canonical_execution["schema"] = "mac.task_execution_contract.v1"
-            canonical_execution["type"] = "operator_directive"
-            canonical_execution["quality"] = "weak"
-            canonical_execution["repository_required"] = False
-            canonical_execution["evidence_type"] = "operator_result"
+            canonical_execution["type"] = "repository"
             canonical_execution["repository_contract"] = contract
             origin_remote = str(origin.get("repository_url") or "").strip()
             if origin_remote:
@@ -5780,8 +5767,7 @@ class ControlPlane:
         execution = ensure_json_object(metadata.get("execution_contract"))
         if (
             execution.get("schema") != "mac.task_execution_contract.v1"
-            or str(execution.get("type") or "").strip().lower() != "operator_directive"
-            or str(execution.get("evidence_type") or "").strip().lower() != "operator_result"
+            or str(execution.get("type") or "").strip().lower() != "repository"
         ):
             raise ValidationError(
                 "read-only repository report lacks its normalized current execution contract"

@@ -60,6 +60,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_homebrew_discovery_preserves_explicit_path_precedence():
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert 'PATH="${PATH:+${PATH}:}$brew_bin"' in source
+    assert 'PATH="$brew_bin:${PATH:-}"' not in source
+
+
 @pytest.fixture()
 def short_tmp():
     """A short temp dir: a unix socket path is capped near 104 bytes, and
