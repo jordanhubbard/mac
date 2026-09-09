@@ -164,6 +164,11 @@ def test_grooms_idle_opted_in_project():
     assert created["metadata"]["origin"]["type"] == "backlog_grooming"
     # repo-coupled (origin has url) but investigation-gated, not code
     assert created["metadata"]["origin"]["repository_url"] == "https://github.com/o/r"
+    assert created["metadata"]["deliverable"] == "report"
+    assert created["metadata"]["report_repository_access"] == {
+        "schema": "mac.report_repository_access.v1",
+        "mode": "read_only",
+    }
     assert created["metadata"]["evidence_type"] == "investigation"
 
 
