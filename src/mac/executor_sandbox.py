@@ -5735,7 +5735,28 @@ def _invoke_agent(
     if break_glass_authorization is not None:
         _prepare_host_break_glass_environment(break_glass_authorization)
     wrap = _openshell_enabled() and break_glass_authorization is None
-    if read_only_repository and (break_glass_authorization is not None or not wrap):
+    approved_macos_host = (
+        sys.platform == "darwin"
+        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM") == "darwin"
+        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE")
+        == REPORT_REPOSITORY_MACOS_HOST_POSTURE
+        and all(
+            os.environ.get(name)
+            for name in (
+                "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
+                "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
+                "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH",
+                "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256",
+                "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH",
+                "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
+                "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
+                "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+            )
+        )
+    )
+    if read_only_repository and (
+        break_glass_authorization is not None or (not wrap and not approved_macos_host)
+    ):
         raise RuntimeError(
             "read-only repository reports require per-task OpenShell confinement; "
             "direct, supervisor-only, and host break-glass execution are forbidden"

@@ -1180,6 +1180,32 @@ def test_read_only_report_and_reviewer_reject_direct_execution(monkeypatch, tmp_
         )
 
 
+def test_controller_approved_macos_host_report_may_run_without_openshell(monkeypatch, tmp_path):
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
+    monkeypatch.setattr(te.sys, "platform", "darwin")
+    for name in (
+        "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
+        "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
+        "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH",
+        "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256",
+        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH",
+        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
+        "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
+        "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+    ):
+        monkeypatch.setenv(name, "approved")
+    monkeypatch.setenv("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM", "darwin")
+    monkeypatch.setenv("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE", "macos_host")
+    runner = FakeRunner()
+
+    te._invoke_agent(
+        runner, "inspect", tmp_path / "task", "tid", {"task": _read_only_report_task()}
+    )
+
+    assert runner.calls
+
+
 def test_read_only_report_rejects_acp_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_EXECUTOR_BACKEND", "acp")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
