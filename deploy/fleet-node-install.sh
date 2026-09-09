@@ -12733,7 +12733,11 @@ def add_report_executor_attestation_problem(message: str) -> None:
     report_executor_attestation_problems.append(message)
 
 
-if openshell_enabled and str(os.environ.get("MAC_WORKER_MODE") or "").strip() == "loop":
+# Darwin host installs have no OpenShell runtime to attest, but still bind the
+# executor, Python, wrapper script, and source tree by digest.  Run the same
+# loop-worker probe there so the startup proof can be matched to the hub's
+# current worker claim and approved for read-only repository reports.
+if str(os.environ.get("MAC_WORKER_MODE") or "").strip() == "loop":
     try:
         from mac.worker import _read_only_report_executor_attestation
 
