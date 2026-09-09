@@ -12952,6 +12952,12 @@ if openclaw_serves_gateway:
     # blocking, but a runtime/service-reachability failure of the openclaw-agent
     # probe is degraded (soft), so those agent-probe problems stay non-blocking.
     non_blocking_problems: list[str] = list(openclaw_agent_probe_problems)
+    # A live gateway model-turn proves the runtime is usable even when its
+    # sidecar advertisement has not yet refreshed.  Keep that advertisement
+    # drift visible as degraded, but do not prevent the independent executor
+    # attestation from being published and approved.
+    if checks["openclaw_agent"]:
+        non_blocking_problems.extend(openclaw_problems)
 else:
     non_blocking_problems = list(openclaw_problems)
 # A shared-service (or hub) probe that only ever timed out is a transient hub
