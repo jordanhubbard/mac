@@ -12957,7 +12957,14 @@ if openclaw_serves_gateway:
     # drift visible as degraded, but do not prevent the independent executor
     # attestation from being published and approved.
     if checks["openclaw_agent"]:
-        non_blocking_problems.extend(openclaw_problems)
+        non_blocking_problems.extend(
+            problem
+            for problem in openclaw_problems
+            if problem in {
+                "OpenClaw runtime advertisement is missing or has the wrong implementation",
+                "OpenClaw gateway ownership proof is missing",
+            }
+        )
 else:
     non_blocking_problems = list(openclaw_problems)
 # A shared-service (or hub) probe that only ever timed out is a transient hub
