@@ -5916,7 +5916,9 @@ def test_registered_read_only_report_has_one_unambiguous_persisted_contract(cp, 
     )
     persisted = cp.get_task(created.id)
 
-    assert persisted.metadata["execution_contract"]["type"] == "repository"
+    assert persisted.metadata["execution_contract"]["type"] == "operator_directive"
+    assert persisted.metadata["execution_contract"]["evidence_type"] == "operator_result"
+    assert persisted.metadata["execution_contract"]["repository_required"] is False
     assert (
         persisted.metadata["execution_contract"]["repository_contract"]
         == (cp.get_project_repository("mac").metadata["repository_contract"])
@@ -5925,7 +5927,9 @@ def test_registered_read_only_report_has_one_unambiguous_persisted_contract(cp, 
     assert "repository_contract" not in {
         key: value for key, value in persisted.metadata.items() if key != "execution_contract"
     }
-    assert "evidence_type" not in json.dumps(persisted.metadata, sort_keys=True)
+    assert "evidence_type" not in {
+        key: value for key, value in persisted.metadata.items() if key != "execution_contract"
+    }
     assert metadata_declares_read_only_report_repository(persisted.metadata)
     assert persisted.id in {task.id for task in cp.ready_tasks()}
 
@@ -5933,7 +5937,7 @@ def test_registered_read_only_report_has_one_unambiguous_persisted_contract(cp, 
     assert _lease.agent_id == worker.id
     assert claimed.state == TaskState.CLAIMED.value
     assert metadata_declares_read_only_report_repository(claimed.metadata)
-    assert "evidence_type" not in json.dumps(claimed.metadata, sort_keys=True)
+    assert claimed.metadata["execution_contract"]["evidence_type"] == "operator_result"
 
 
 @pytest.mark.parametrize(
@@ -6154,7 +6158,11 @@ def test_read_only_report_child_uses_current_contract_and_invalid_batch_is_atomi
         == (cp.get_project_repository("mac").metadata["repository_contract"])
     )
     assert "repository_contract" not in child.metadata["origin"]
-    assert "evidence_type" not in json.dumps(child.metadata, sort_keys=True)
+    assert child.metadata["execution_contract"]["type"] == "operator_directive"
+    assert child.metadata["execution_contract"]["evidence_type"] == "operator_result"
+    assert "evidence_type" not in {
+        key: value for key, value in child.metadata.items() if key != "execution_contract"
+    }
 
     direct_parent = cp.create_task("Direct parent")
     before = cp.get_task(direct_parent.id)
