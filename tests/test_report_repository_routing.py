@@ -701,14 +701,20 @@ def test_retargeted_python_symlink_cannot_change_approved_invocation(
     assert worker._apply_read_only_report_executor_approval(
         _marker_resources(attestation), os.environ
     )
-    # Approval stamps the resolved no-follow file, so retargeting the original
-    # launcher cannot influence what the generated wrapper will execute.
-    launcher.unlink()
-    launcher.symlink_to(alternate_python)
-    assert os.environ["MAC_TASK_EXECUTOR_PYTHON"] == str(original_python)
+    # Preserve the configured launcher so Python can retain its venv context,
+    # while approval still identifies its resolved no-follow target.
+    assert os.environ["MAC_TASK_EXECUTOR_PYTHON"] == str(launcher)
     worker_subprocess._assert_approved_read_only_report_host_executor(
         [str(executor)], dict(os.environ)
     )
+
+    # Retargeting the original launcher must be caught before spawn.
+    launcher.unlink()
+    launcher.symlink_to(alternate_python)
+    with pytest.raises(RuntimeError, match="differ from hub approval"):
+        worker_subprocess._assert_approved_read_only_report_host_executor(
+            [str(executor)], dict(os.environ)
+        )
 
 
 def test_deployed_report_wrapper_execs_only_approved_absolute_artifacts():

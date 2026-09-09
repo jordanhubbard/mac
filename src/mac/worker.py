@@ -849,11 +849,28 @@ def _apply_read_only_report_executor_approval(resources: Any, environ: Dict[str,
     for key, name in _REPORT_EXECUTOR_APPROVAL_ENV.items():
         environ[name] = str(marker[key])
     # The generated fleet wrapper historically embedded these paths instead of
-    # exporting them. Bind the actual spawned runtime to the exact same paths
-    # the hub approved, including on a deployment-realistic environment where
-    # none of the three variables existed before registration.
+    # exporting them. A Python venv commonly uses a symlinked launcher:
+    # resolving it is necessary to attest the immutable executable, while
+    # invoking it through the venv path is necessary for Python to discover
+    # pyvenv.cfg and the installed ``mac`` package. Retain a configured
+    # launcher only when its resolved no-follow identity still matches the
+    # approved tuple; otherwise replace it with the approved executable.
+    python_runtime_name = _REPORT_EXECUTOR_RUNTIME_PATH_ENV["python_path"]
+    configured_python = environ.get(python_runtime_name, "")
+    try:
+        configured_python_identity = nofollow_regular_file_identity(
+            Path(configured_python).expanduser().resolve(strict=True)
+        )
+    except Exception:  # noqa: BLE001 - an unusable launcher must not survive approval.
+        configured_python_identity = ("", "")
+    if configured_python_identity != (
+        str(marker["python_path"]),
+        str(marker["python_sha256"]),
+    ):
+        environ[python_runtime_name] = str(marker["python_path"])
     for key, name in _REPORT_EXECUTOR_RUNTIME_PATH_ENV.items():
-        environ[name] = str(marker[key])
+        if key != "python_path" and not environ.get(name):
+            environ[name] = str(marker[key])
     return True
 
 
