@@ -106,6 +106,13 @@ class FakeCP:
     def list_tasks(self):
         return list(self._tasks)
 
+    def ready_tasks(self):
+        return [
+            task
+            for task in self._tasks
+            if task.state == "open" and not bool(task.metadata.get("no_dispatch"))
+        ]
+
     def create_task(
         self,
         title,
@@ -167,12 +174,30 @@ def test_skips_project_not_opted_in():
 
 
 def test_skips_when_not_idle():
-    # 2 pending tasks meets min_ready=2 -> not idle
-    tasks = [FakeTask("a", "mac", "open"), FakeTask("b", "mac", "running")]
+    # "Idle" means the dispatch-ready backlog is already at its threshold.
+    tasks = [FakeTask("a", "mac", "open"), FakeTask("b", "mac", "open")]
     cp = FakeCP([_proj()], tasks=tasks)
     report = _groomer(cp).run_once()
     assert report["groomed_count"] == 0
-    assert "not idle" in report["projects"][0]["skipped_reason"]
+    result = report["projects"][0]
+    assert result["active_tasks"] == 2
+    assert result["ready_tasks"] == 2
+    assert "ready backlog sufficient" in result["skipped_reason"]
+
+
+def test_parked_and_in_flight_work_does_not_suppress_grooming():
+    tasks = [
+        FakeTask("held", "mac", "open", {"no_dispatch": True}),
+        FakeTask("blocked", "mac", "blocked"),
+        FakeTask("running", "mac", "running"),
+        FakeTask("reviewing", "mac", "reviewing"),
+    ]
+    cp = FakeCP([_proj()], tasks=tasks)
+    report = _groomer(cp).run_once()
+    assert report["groomed_count"] == 1
+    result = report["projects"][0]
+    assert result["active_tasks"] == 4
+    assert result["ready_tasks"] == 0
 
 
 def test_grooming_tasks_do_not_count_as_project_work():

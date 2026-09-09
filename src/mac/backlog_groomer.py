@@ -53,7 +53,9 @@ DEFAULT_BACKLOG_SIZE = 5
 
 _log = logging.getLogger("mac.backlog_groomer")
 
-# Task states that count as "pending or in-flight work" for idle detection.
+# Task states retained for total-work telemetry and the one-live-groom guard.
+# They must not decide whether the ready backlog is stocked: held, blocked, and
+# reviewing tasks cannot keep an idle worker busy.
 _ACTIVE_STATES = frozenset(
     {"open", "waiting", "blocked", "claimed", "running", "needs_review", "reviewing"}
 )
@@ -272,13 +274,14 @@ class BacklogGroomer:
         results: List[Dict[str, Any]] = []
         run_id = "groom_%s" % uuid.uuid4().hex
         try:
-            active_counts, latest_groom = self._project_work_snapshot()
+            active_counts, ready_counts, latest_groom = self._project_work_snapshot()
             for record in self._candidate_projects():
                 results.append(
                     self._groom_project(
                         record,
                         actor=actor,
                         active_counts=active_counts,
+                        ready_counts=ready_counts,
                         latest_groom=latest_groom,
                     )
                 )
@@ -306,14 +309,15 @@ class BacklogGroomer:
             return []
 
     def _project_work_snapshot(self):
-        """Return (active-task count per project, newest grooming-task time per project)."""
+        """Return active + allocator-ready counts and newest grooming time by project."""
         active_counts: Dict[str, int] = {}
+        ready_counts: Dict[str, int] = {}
         latest_groom: Dict[str, datetime] = {}
         try:
             tasks = list(self.control_plane.list_tasks())
         except Exception as exc:  # noqa: BLE001
             _log.warning("backlog-groom could not list tasks: %s", exc)
-            return active_counts, latest_groom
+            return active_counts, None, latest_groom
         for task in tasks:
             project = str(getattr(task, "project", "") or "")
             state = str(getattr(task, "state", "") or "")
@@ -333,7 +337,23 @@ class BacklogGroomer:
                 # Record that an open grooming task exists so we don't stack them.
                 if state in _ACTIVE_STATES:
                     latest_groom.setdefault("__open__:" + project, _utcnow())
-        return active_counts, latest_groom
+
+        # Use the dispatcher's task gates as the single definition of ready.
+        # Counting every non-terminal state here used to let parked work
+        # suppress grooming forever while every worker sat idle.
+        try:
+            ready_tasks = list(self.control_plane.ready_tasks())
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("backlog-groom could not list ready tasks: %s", exc)
+            return active_counts, None, latest_groom
+        for task in ready_tasks:
+            project = str(getattr(task, "project", "") or "")
+            metadata = getattr(task, "metadata", None) or {}
+            origin = metadata.get("origin") if isinstance(metadata, Mapping) else None
+            is_groom = isinstance(origin, Mapping) and origin.get("type") == "backlog_grooming"
+            if not is_groom:
+                ready_counts[project] = ready_counts.get(project, 0) + 1
+        return active_counts, ready_counts, latest_groom
 
     def _groom_project(
         self,
@@ -341,6 +361,7 @@ class BacklogGroomer:
         *,
         actor: str,
         active_counts: Dict[str, int],
+        ready_counts: Optional[Dict[str, int]],
         latest_groom: Dict[str, datetime],
     ) -> Dict[str, Any]:
         project = str(getattr(record, "name", "") or "")
@@ -358,8 +379,17 @@ class BacklogGroomer:
         min_ready = policy.min_ready if policy.min_ready is not None else self.config.min_ready
         active = int(active_counts.get(project, 0))
         result["active_tasks"] = active
-        if active >= min_ready:
-            result["skipped_reason"] = "not idle (%d >= %d pending)" % (active, min_ready)
+        if ready_counts is None:
+            result["error"] = "ready task snapshot unavailable"
+            result["skipped_reason"] = "could not determine ready backlog"
+            return result
+        ready = int(ready_counts.get(project, 0))
+        result["ready_tasks"] = ready
+        if ready >= min_ready:
+            result["skipped_reason"] = "ready backlog sufficient (%d >= %d)" % (
+                ready,
+                min_ready,
+            )
             return result
 
         # Don't stack grooming tasks: skip if one is already open for the project.
