@@ -139,6 +139,11 @@ class FakeCP:
         self.logs.append((a, k))
 
 
+class FailingReadyCP(FakeCP):
+    def ready_tasks(self):
+        raise RuntimeError("ready query failed")
+
+
 def _proj(name="mac", url="https://github.com/o/r", **groom):
     md = {"repository_url": url, "backlog_grooming": {"enabled": True, **groom}}
     return FakeProject(name=name, metadata=md)
@@ -219,6 +224,30 @@ def test_grooming_tasks_do_not_count_as_project_work():
     report = _groomer(cp).run_once()
     assert report["groomed_count"] == 0
     assert report["projects"][0]["skipped_reason"] == "grooming task already open"
+
+
+def test_completed_grooming_task_does_not_count_as_ready_work():
+    old = FakeTask(
+        "g",
+        "mac",
+        "open",
+        {"origin": {"type": "backlog_grooming"}},
+        created_at=_iso(datetime.now(timezone.utc) - timedelta(hours=8)),
+    )
+    cp = FakeCP([_proj()], tasks=[old])
+    report = _groomer(cp, regroom_interval_seconds=3600).run_once()
+    assert report["groomed_count"] == 0
+    assert report["projects"][0]["ready_tasks"] == 0
+    assert report["projects"][0]["skipped_reason"] == "grooming task already open"
+
+
+def test_ready_snapshot_failure_skips_grooming():
+    cp = FailingReadyCP([_proj()])
+    report = _groomer(cp).run_once()
+    result = report["projects"][0]
+    assert report["groomed_count"] == 0
+    assert result["error"] == "ready task snapshot unavailable"
+    assert result["skipped_reason"] == "could not determine ready backlog"
 
 
 def test_skips_non_repo_project():
