@@ -10,11 +10,10 @@ Design (deliberately small — it reuses existing machinery):
 * On a slow schedule, for each opted-in project that is *going idle* (its
   count of pending/in-flight tasks is below a low-water mark) and is past its
   grooming cadence, create ONE **grooming task**.
-* The grooming task mirrors the onboarding "investigation" task: it is
-  repo-coupled (``origin.repository_url`` → MAC clones the repo) but declares
-  ``evidence_type: "investigation"`` so it is not held to code-substance
-  verification. Its prompt asks the agent to analyze the repo and emit a
-  prioritized backlog as ``plan_steps`` in ``mac-evidence.json``.
+* The grooming task is a native ``operator_directive`` report with read-only
+  repository context. Its prompt asks the agent to analyze the repo and emit a
+  prioritized backlog as ``plan_steps`` in ``mac-evidence.json`` using
+  ``operator_result`` evidence.
 * The executor's existing ``maybe_auto_decompose`` hook promotes those
   ``plan_steps`` into child tasks (inheriting the parent's project, so they are
   repo-coupled), which the normal hub tick then dispatches. No new promotion
@@ -170,9 +169,9 @@ def build_grooming_description(project: str, repo_url: str, backlog_size: int) -
         [
             "Autonomous backlog grooming for project %s (%s)." % (project, repo_url),
             "",
-            "MAC has cloned a clean, writable checkout for you at $MAC_TASK_REPO_WORKTREE.",
-            "This is READ-ONLY with respect to the remote: do NOT push or open a pull "
-            "request. This task produces a PLAN, not code.",
+            "MAC has prepared a clean checkout for you at $MAC_TASK_REPO_WORKTREE.",
+            "Treat the repository as READ-ONLY: do not modify files, commit, push, or "
+            "open a pull request. This task produces a PLAN, not code.",
             "",
             "Analyze the repository (start from README.md, AGENTS.md, PLAN.md, open "
             "issues/TODOs, failing or missing tests, and obvious gaps). Reconcile "
@@ -186,9 +185,10 @@ def build_grooming_description(project: str, repo_url: str, backlog_size: int) -
             '  - "description": what to do and how to know it is done (acceptance criteria)',
             '  - "required_capabilities": optional list (e.g. ["python"], ["docs"])',
             "",
-            "Evidence shape (evidence_type=investigation):",
-            '  {"plan_steps": [ {"title": "...", "description": "..."}, ... ],',
-            '   "rationale": "one line on how you prioritized"}',
+            "Evidence shape (evidence_type=operator_result):",
+            '  {"evidence_type": "operator_result",',
+            '   "summary": "one line on how you prioritized",',
+            '   "plan_steps": [ {"title": "...", "description": "..."}, ... ]}',
             "",
             "Keep each step small enough for one focused task. Do NOT include "
             "already-open work. Quality over quantity: fewer, well-scoped steps beat "
@@ -428,14 +428,13 @@ class BacklogGroomer:
         }
         metadata = {
             "origin": origin,
-            # Repo-coupled (repo cloned) but held to an investigation write-up,
-            # not code-substance verification — same contract as onboarding.
+            # The native read-only report path derives an operator_directive /
+            # operator_result contract while preserving repository context.
             "deliverable": "report",
             "report_repository_access": {
                 "schema": "mac.report_repository_access.v1",
                 "mode": "read_only",
             },
-            "evidence_type": "investigation",
         }
         return self.control_plane.create_task(
             "Groom backlog for %s" % project,
