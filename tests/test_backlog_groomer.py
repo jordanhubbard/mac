@@ -15,6 +15,7 @@ from mac.backlog_groomer import (
     build_grooming_description,
 )
 from mac.executor_scope import maybe_auto_decompose
+from mac.executor_prompt import task_evidence_type
 from mac.services import ControlPlane
 from mac.test_support import ephemeral_store
 
@@ -226,10 +227,9 @@ def test_grooming_task_passes_real_control_plane_normalization(tmp_path, monkeyp
         "schema": "mac.report_repository_access.v1",
         "mode": "read_only",
     }
-    assert task.metadata["execution_contract"]["type"] == "operator_directive"
-    assert task.metadata["execution_contract"]["evidence_type"] == "operator_result"
-    assert task.metadata["execution_contract"]["repository_required"] is False
+    assert task.metadata["execution_contract"]["type"] == "repository"
     assert task.metadata["execution_contract"]["repository_contract"]["project"] == "mac"
+    assert task_evidence_type(task.to_dict()) == "operator_result"
     assert "plan_steps" in task.description
 
     workspace = tmp_path / "workspace"
