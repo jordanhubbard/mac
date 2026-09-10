@@ -108,20 +108,35 @@ def task_outcome(store: Any, task_id: str) -> dict:
         ),
         None,
     )
-    deployment = next(
-        (
-            e
-            for e in evidence
-            if e["kind"] == "deployment"
-            and _object(e["metadata"]).get("executor_evidence_id") == target
-            and target
-        ),
-        None,
+    # Publication closes the code task's evidence write boundary. A later
+    # rollout records the exact deployed result under its own dependent task's
+    # lease. Read the newest explicit record across those authorized contexts.
+    deployment_row = (
+        store.query_one(
+            "SELECT e.id, e.task_id FROM evidence e "
+            "WHERE e.kind = 'deployment' "
+            "AND json_extract(e.metadata, '$.executor_evidence_id') = ? "
+            "AND (e.task_id = ? OR e.task_id IN "
+            "(SELECT task_id FROM task_edges WHERE dependency_task_id = ?)) "
+            "ORDER BY e.created_at DESC, e.id DESC LIMIT 1",
+            (target, task_id, task_id),
+        )
+        if target
+        else None
     )
+    deployment = dict(deployment_row) if deployment_row is not None else None
     tid = shlex.quote(task_id)
     actions = [
         {"label": "Inspect current state", "command": f"mac task show {tid}", "requires": "read"}
     ]
+    if deployment:
+        actions.append(
+            {
+                "label": "Inspect recorded deployment evidence",
+                "command": f"mac task show {shlex.quote(deployment['task_id'])}",
+                "requires": "read",
+            }
+        )
     state = task["state"]
     if state == "needs_input":
         actions.append(
@@ -170,6 +185,7 @@ def task_outcome(store: Any, task_id: str) -> dict:
         "deployment": {
             "status": "recorded" if deployment else "unknown",
             "evidence_id": deployment["id"] if deployment else None,
+            "task_id": deployment["task_id"] if deployment else None,
         },
         "evidence_truncated": len(evidence) > 500,
         "actions": actions,

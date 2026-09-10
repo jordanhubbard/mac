@@ -54,6 +54,14 @@ invalidates the displayed acceptance and requires a new decision. Avoid editing
 a reviewed request to mean something different; file the changed request as new
 work so its history and acceptance remain meaningful.
 
+Deployment after publication belongs to a separate task that depends on the
+completed code task. While holding that deployment task's lease, record evidence
+of kind `deployment` whose metadata names the code task's exact
+`executor_evidence_id`. The outcome view follows that dependency and offers an
+inspection command for the deployment task. Unlinked records and records for an
+older executor result do not count. This preserves the completed code task's
+evidence boundary; do not reopen it merely to append a rollout claim.
+
 The shipped console's Task view shows the same evidence and task-specific CLI
 handoffs. Use an authenticated profile for the same hub. Its HTTP layer remains
 read-only; commands execute only when you run them.

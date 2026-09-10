@@ -196,3 +196,52 @@ def test_throughput_does_not_count_idle_operator_or_held_worker():
     report = cp.task_flow_report()
     assert report["active"]["idle_worker_count"] == 0
     assert report["active"]["execution_capacity"]["idle_identity_count"] >= 1
+
+
+def test_deployment_after_publication_uses_a_dependent_tasks_evidence_boundary():
+    from mac.models import AuthorizationError
+
+    cp = ControlPlane.in_memory()
+    tid, eid = _reviewing(cp)
+    cp.store.execute(
+        "UPDATE tasks SET state='completed', completed_at=? WHERE id=?", (utcnow(), tid)
+    )
+    machine = cp.register_machine("deployment-host")
+    agent = cp.register_agent(machine.id, "deployment-operator")
+    rollout = cp.create_task("Deploy the published result", project="trust", dependencies=[tid])
+    _, lease = cp.claim_task(rollout.id, agent.id)
+    cp.start_task(rollout.id, agent.id, lease_id=lease.id)
+    with pytest.raises(AuthorizationError):
+        cp.add_evidence(
+            tid, "deployment", "test://runtime", "Observed runtime", agent.id, lease_id=lease.id
+        )
+    cp.add_evidence(
+        rollout.id,
+        "deployment",
+        "test://old-runtime",
+        "Old result",
+        agent.id,
+        lease_id=lease.id,
+        metadata={"executor_evidence_id": "old-evidence"},
+    )
+    assert cp.task_outcome(tid)["deployment"]["status"] == "unknown"
+    evidence = cp.add_evidence(
+        rollout.id,
+        "deployment",
+        "test://runtime",
+        "Observed exact result",
+        agent.id,
+        lease_id=lease.id,
+        metadata={"executor_evidence_id": eid},
+    )
+    outcome = cp.task_outcome(tid)
+    assert outcome["deployment"] == {
+        "status": "recorded",
+        "task_id": rollout.id,
+        "evidence_id": evidence.id,
+    }
+    assert any(action["command"] == f"mac task show {rollout.id}" for action in outcome["actions"])
+    assert cp.get_task(tid).state == "completed"
+    # Merely naming the evidence from an unrelated task is not a linkage.
+    cp.store.execute("DELETE FROM task_edges WHERE task_id=?", (rollout.id,))
+    assert cp.task_outcome(tid)["deployment"]["status"] == "unknown"
