@@ -173,6 +173,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`guide/03-advanced.md`](../guide/03-advanced.md) | Advanced Concepts |
 | supplemental reference | [`guide/04-ui.md`](../guide/04-ui.md) | The UI |
 | supplemental reference | [`guide/05-developer-guide.md`](../guide/05-developer-guide.md) | Developer Guide |
+| supplemental reference | [`guide/06-trust-workflow.md`](../guide/06-trust-workflow.md) | A request people can verify |
 | supplemental reference | [`guide/README.md`](../guide/README.md) | mac documentation |
 | supplemental reference | [`hermes-boundary.md`](../hermes-boundary.md) | Hermes Boundary |
 | supplemental reference | [`hermes-integration.md`](../hermes-integration.md) | Hermes Integration |

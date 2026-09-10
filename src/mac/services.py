@@ -6850,7 +6850,7 @@ class ControlPlane:
         if not 0 <= refresh_value <= 500:
             raise ValidationError("refresh_limit must be between 0 and 500")
         agents = self.list_agents()
-        idle_worker_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
+        idle_identity_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
 
         # Build the two fleet-wide inputs every stranded-task explanation needs
         # exactly ONCE and reuse them.  ``explain_task_dispatch`` otherwise
@@ -6863,6 +6863,13 @@ class ControlPlane:
         # already computes once per round for exactly this reason.
         projects = {record.name: record for record in self.list_project_records()}
         sync_states = self.dispatch._sync_barrier_states()
+
+        from mac.allocator import summarize_execution_capacity
+
+        capacity = summarize_execution_capacity(
+            self.dispatch._v2_snapshot_agent(agent, sync_states=sync_states) for agent in agents
+        )
+        capacity["idle_identity_count"] = idle_identity_count
 
         def explain(task_id: str) -> JsonDict:
             return self.explain_task_dispatch(
@@ -6879,7 +6886,8 @@ class ControlPlane:
             critical_seconds=critical_value,
             refresh_limit=refresh_value,
             dispatch_explainer=explain,
-            idle_worker_count=idle_worker_count,
+            idle_worker_count=capacity["executable_idle_worker_count"],
+            execution_capacity=capacity,
         )
 
     def update_task(
@@ -8276,6 +8284,32 @@ class ControlPlane:
         # only thing requiring a package, and a tool nothing asks for is still
         # sitting in the security boundary with nothing that would ever notice.
         self.check_sandbox_bom_drift(actor=actor)
+
+    def task_outcome(self, task_id: str) -> JsonDict:
+        from mac.task_outcomes import task_outcome
+
+        return task_outcome(self.store, self.get_task(task_id).id)
+
+    def record_task_acceptance(
+        self, task_id: str, *, evidence_id: str, reason: str, actor: str, accepted: bool = True
+    ) -> JsonDict:
+        from mac.task_outcomes import record_acceptance
+
+        return record_acceptance(
+            self.store,
+            self.get_task(task_id).id,
+            evidence_id=evidence_id,
+            reason=reason,
+            actor=actor,
+            accepted=accepted,
+        )
+
+    def task_outcome_cohort(
+        self, *, project: Optional[str] = None, since_hours: float = 24, limit: int = 100
+    ) -> JsonDict:
+        from mac.task_outcomes import outcome_cohort
+
+        return outcome_cohort(self.store, project=project, since_hours=since_hours, limit=limit)
 
     def task_detail(
         self,

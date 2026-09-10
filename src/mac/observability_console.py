@@ -794,6 +794,9 @@ def build_task_drilldown(
     payload["evidence"] = sections.run("evidence", evidence_section)
     payload["reviews"] = sections.run("reviews", reviews_section)
     payload["publications"] = sections.run("publications", publications_section)
+    from mac.task_outcomes import task_outcome
+
+    payload["outcome"] = sections.run("outcome", lambda: task_outcome(store, task_id))
 
     for key in [k for k, v in payload.items() if v is None]:
         payload.pop(key)

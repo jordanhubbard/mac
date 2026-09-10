@@ -49,7 +49,8 @@ export type TokenProvider = () => string;
 
 function assertReadOnly(method: string): AllowedMethod {
   const upper = String(method || "GET").toUpperCase();
-  if (upper !== "GET" && upper !== "HEAD") throw new MutationAttemptError(upper);
+  if (upper !== "GET" && upper !== "HEAD")
+    throw new MutationAttemptError(upper);
   return upper;
 }
 
@@ -81,10 +82,9 @@ export function createReadOnlyFetch(
       timeoutMs > 0
         ? setTimeout(() => controller.abort(new Error("timeout")), timeoutMs)
         : undefined;
-    if (request.signal) {
-      if (request.signal.aborted) controller.abort();
-      else request.signal.addEventListener("abort", () => controller.abort());
-    }
+    const abort = () => controller.abort(request.signal?.reason);
+    if (request.signal?.aborted) abort();
+    else request.signal?.addEventListener("abort", abort, { once: true });
 
     let response: Response;
     try {
@@ -94,15 +94,34 @@ export function createReadOnlyFetch(
         signal: controller.signal,
         cache: "no-store",
       });
+      // A finite request owns its body deadline too. Returning a buffered
+      // response keeps callers' JSON parsing inside that bound. timeout=0
+      // is reserved for the incremental subscription stream.
+      if (timeoutMs > 0) {
+        const body = await response.arrayBuffer();
+        response = new Response(
+          method === "HEAD" || [204, 205, 304].includes(response.status)
+            ? null
+            : body,
+          {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          },
+        );
+      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new HubUnreachableError(
-        timeoutMs > 0 && /abort|timeout/i.test(reason)
+        timeoutMs > 0 && controller.signal.aborted && !request.signal?.aborted
           ? `no response from hub within ${Math.round(timeoutMs / 1000)}s`
           : `cannot reach hub: ${reason}`,
       );
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      // The caller must still be able to cancel a streaming response body.
+      if (timeoutMs > 0 || controller.signal.aborted)
+        request.signal?.removeEventListener("abort", abort);
     }
 
     if (!response.ok) {

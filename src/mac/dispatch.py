@@ -513,6 +513,15 @@ class RemoteDispatch:
             refresh_limit=refresh_limit,
         )
 
+    def task_outcome(self, task_id: str) -> _Dictish:
+        return _Dictish(self._get("/tasks/%s/outcome" % quote(task_id, safe="")))
+
+    def record_task_acceptance(self, task_id: str, **kwargs: Any) -> _Dictish:
+        return _Dictish(self._post("/tasks/%s/acceptance" % quote(task_id, safe=""), kwargs))
+
+    def task_outcome_cohort(self, **kwargs: Any) -> _Dictish:
+        return _Dictish(self._get("/tasks/outcomes", **kwargs))
+
     def diagnostics_report(
         self,
         *,

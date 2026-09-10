@@ -905,6 +905,12 @@ class TaskAnswerRequest(BaseModel):
     replaced_by: Optional[str] = None
 
 
+class TaskAcceptanceRequest(BaseModel):
+    evidence_id: str
+    reason: str = Field(min_length=1, max_length=8000)
+    accepted: bool = True
+
+
 class EvidenceCreate(BaseModel):
     kind: str
     uri: str
@@ -5734,6 +5740,31 @@ def create_app(
         return cp.task_ledger_audit(
             project=project, verify_git=verify_git, offset=offset, limit=limit
         )
+
+    @app.get("/tasks/outcomes")
+    def task_outcome_cohort(
+        project: Optional[str] = Query(default=None),
+        since_hours: float = Query(default=24, gt=0, le=2160),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        return cp.task_outcome_cohort(project=project, since_hours=since_hours, limit=limit)
+
+    @app.get("/tasks/{task_id}/outcome")
+    def task_outcome(task_id: str) -> Dict[str, Any]:
+        return cp.task_outcome(task_id)
+
+    @app.post("/tasks/{task_id}/acceptance")
+    def record_task_acceptance(
+        task_id: str,
+        body: TaskAcceptanceRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if principal.agent_id:
+            raise AuthorizationError("request acceptance requires an operator token")
+        task = cp.get_task(task_id)
+        principal.assert_tenant(cp._task_tenant_id(task))
+        actor = principal.human_id or principal.client_id or "operator"
+        return cp.record_task_acceptance(task.id, actor=actor, **_data(body))
 
     @app.get("/tasks/{task_id}")
     def get_task(

@@ -192,27 +192,17 @@ Use `mac admin login renew --local-console` to rotate a direct local-console
 profile through the same socket; the new bearer is validated before replacing
 the local credential.
 
-## File tasks in dependency order, because there is no second chance
+## Sequence tasks before releasing them
 
-`mac task create` takes `--dependencies`. **`mac task update` does not.** Only
-creation can establish an edge, so a task filed without one can never be
-sequenced afterwards through the CLI — you would have to `PUT /tasks/<id>`
-against the hub with a dependencies array.
+Both `mac task create` and `mac task update` accept `--dependencies`.
+Update replaces the dependency list; pass `--dependencies ""` to remove it.
+Editable-state and cycle checks still apply. A running task is not editable.
 
-That matters because the ledger dispatches fast. A task filed now is claimed by
-a fleet agent within minutes — sooner than it takes to file the next few tasks
-and work out how they relate. There is no "file them all, sequence them after".
-
-So when a batch of findings has an order:
-
-1. File the gating task first — the ADR, the decision, the thing that must be
-   settled before anything else is safe to touch.
-2. Note its id.
-3. Create each dependent task WITH `--dependencies` in the same command.
-
-A dependent task enters `waiting` rather than `open`, and stops being claimable
-until its blocker reaches a terminal state. That is the whole mechanism; it
-simply cannot be applied retroactively.
+File gating tasks first and create dependents with their dependencies already
+set. If you need to assemble a batch before sequencing it, create it with
+`--no-dispatch`, update the dependencies, inspect them, then release the tasks.
+Under the default `all_success` join policy, only completed dependencies
+release their dependents; failed or cancelled dependencies do not.
 
 **What happens if you skip this.** On 2026-08-20 eleven tasks were filed flat in
 one session. Within the hour four were `reviewing`, four `failed`, one

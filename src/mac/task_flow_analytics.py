@@ -1544,6 +1544,7 @@ class TaskFlowAnalyticsService:
         refresh_limit: int = 100,
         dispatch_explainer: Optional[Callable[[str], Mapping[str, Any]]] = None,
         idle_worker_count: Optional[int] = None,
+        execution_capacity: Optional[Mapping[str, Any]] = None,
         observed_at: Optional[str] = None,
     ) -> JsonDict:
         """Return and persist a bounded point-in-time throughput snapshot."""
@@ -1838,6 +1839,9 @@ class TaskFlowAnalyticsService:
             "active": {
                 "count": len(active_rows),
                 "idle_worker_count": idle_worker_count,
+                "execution_capacity": dict(execution_capacity)
+                if execution_capacity is not None
+                else None,
                 "age": _distribution(
                     [_seconds(str(row["started_at"]), now) for row in active_rows]
                 ),

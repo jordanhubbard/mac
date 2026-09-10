@@ -336,6 +336,23 @@ export interface TaskDrilldown {
   evidence?: EvidenceRow[];
   reviews?: ReviewRow[];
   publications?: PublicationRow[];
+  outcome?: TaskOutcome;
+}
+
+export interface TaskOutcome {
+  schema: string;
+  task_id: string;
+  executor_evidence_id: string | null;
+  tests: { status: string; reason: string; evidence_id?: string };
+  acceptance: { status: string; reason: string; actor?: string };
+  publication: {
+    status: string;
+    target: string | null;
+    content_hash: string | null;
+  };
+  deployment: { status: string; evidence_id: string | null };
+  evidence_truncated: boolean;
+  actions: { label: string; command: string; requires: string }[];
 }
 
 export interface ClippedText {
@@ -433,9 +450,12 @@ export class ConsoleClient {
   }
 
   async news(limit = 100): Promise<NewsFeed> {
-    const response = await this.get(`/news?limit=${encodeURIComponent(limit)}`, {
-      timeoutMs: 20_000,
-    });
+    const response = await this.get(
+      `/news?limit=${encodeURIComponent(limit)}`,
+      {
+        timeoutMs: 20_000,
+      },
+    );
     return (await response.json()) as NewsFeed;
   }
 

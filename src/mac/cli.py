@@ -3515,6 +3515,33 @@ def cmd_task_generator_yield(args: argparse.Namespace) -> None:
     _print(_plane(args).generator_yield_report())
 
 
+def cmd_task_outcome(args: argparse.Namespace) -> None:
+    _print(_plane(args).task_outcome(args.task_id))
+
+
+def cmd_task_accept(args: argparse.Namespace) -> None:
+    reason = _read_text_arg(args.reason, args.reason_file, label="acceptance reason").strip()
+    _print(
+        _plane(args).record_task_acceptance(
+            args.task_id,
+            evidence_id=args.evidence,
+            reason=reason,
+            actor="operator",
+            accepted=not args.reject,
+        )
+    )
+
+
+def cmd_task_outcomes(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).task_outcome_cohort(
+            project=_effective_read_project(args),
+            since_hours=args.since_hours,
+            limit=args.limit,
+        )
+    )
+
+
 def cmd_task_throughput(args: argparse.Namespace) -> None:
     """Print task-flow KPIs, stranded work, and shared-resource collisions."""
 
@@ -4530,7 +4557,14 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
             pending = _pending_inbox_summary(cp, str(row.get("id") or ""))
             row["pending_inbox_count"] = (pending or {}).get("count")
     if getattr(args, "health", False):
-        age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
+        from mac.dispatch import DispatchError
+
+        try:
+            age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
+        except DispatchError:
+            # RemoteDispatch rejects unsupported attributes at lookup time.
+            # The agent response already carries the fallback timestamps.
+            age_helper = None
         for row in rows:
             age: Optional[float]
             if callable(age_helper):
@@ -8936,6 +8970,31 @@ def build_parser() -> argparse.ArgumentParser:
             "yield gate is letting it file",
         ),
     )
+
+    outcome = task.add_parser(
+        "outcome", help="inspect tests, acceptance, publication and deployment separately"
+    )
+    outcome.add_argument("task_id")
+    _set(cmd_task_outcome, outcome)
+    accept = task.add_parser(
+        "accept", help="record operator acceptance of the current executor evidence"
+    )
+    accept.add_argument("task_id")
+    accept.add_argument("--evidence", required=True)
+    accept.add_argument("--reason")
+    accept.add_argument(
+        "--reason-file", help="read the acceptance reason from a file or stdin with -"
+    )
+    accept.add_argument(
+        "--reject", action="store_true", help="record that the result does not meet the request"
+    )
+    _set(cmd_task_accept, accept)
+    outcomes = task.add_parser("outcomes", help="measure a bounded cohort by task creation time")
+    outcomes.add_argument("--project")
+    outcomes.add_argument("--all", action="store_true")
+    outcomes.add_argument("--since-hours", type=float, default=24)
+    outcomes.add_argument("--limit", type=int, default=100)
+    _set(cmd_task_outcomes, outcomes)
 
     throughput = task.add_parser(
         "throughput",

@@ -7,7 +7,14 @@ import type {
 } from "../lib/api";
 import { useTask, useTranscript } from "../lib/useTask";
 import { Empty, Panel, Tile, Unavailable } from "../components/primitives";
-import { UNKNOWN, bytes, clockTime, count, duration, shortId } from "../lib/format";
+import {
+  UNKNOWN,
+  bytes,
+  clockTime,
+  count,
+  duration,
+  shortId,
+} from "../lib/format";
 import { healthColor, taskStateColor } from "../lib/states";
 
 function reason(detail: TaskDrilldown, section: string): string | undefined {
@@ -41,8 +48,8 @@ export function TaskView({
   if (!taskId) {
     return (
       <Empty>
-        Pick a task from <strong>Live</strong> or <strong>Stuck work</strong> to see
-        its history, transcript and commands.
+        Pick a task from <strong>Live</strong> or <strong>Stuck work</strong> to
+        see its history, transcript and commands.
       </Empty>
     );
   }
@@ -115,7 +122,11 @@ export function TaskView({
           value={duration(task.dwell_seconds)}
           accent={taskStateColor(task.state)}
         />
-        <Tile label="age" value={duration(task.age_seconds)} accent="var(--series-1)" />
+        <Tile
+          label="age"
+          value={duration(task.age_seconds)}
+          accent="var(--series-1)"
+        />
         <Tile
           label="attempts"
           value={`${count(task.attempt_count)}/${count(task.max_attempts)}`}
@@ -126,19 +137,94 @@ export function TaskView({
           label="project"
           value={task.project ?? null}
           accent="var(--series-2)"
-          note={task.owner_agent_id ? `owner ${task.owner_agent_id}` : "unowned"}
+          note={
+            task.owner_agent_id ? `owner ${task.owner_agent_id}` : "unowned"
+          }
         />
         <Tile
           label="transcript turns"
           value={transcripts ? transcripts.count : null}
           accent="var(--series-5)"
           note={
-            transcripts && transcripts.count === 0 ? "nothing recorded" : undefined
+            transcripts && transcripts.count === 0
+              ? "nothing recorded"
+              : undefined
           }
         />
       </div>
 
       <div className="grid">
+        <Panel title="Result evidence" accent="var(--series-2)">
+          {detail.outcome ? (
+            <>
+              <p>
+                Test results, request acceptance, publication and deployment are
+                separate facts.
+              </p>
+              <dl>
+                <dt>Tests</dt>
+                <dd>
+                  {detail.outcome.tests.status.replaceAll("_", " ")} —{" "}
+                  {detail.outcome.tests.reason}
+                </dd>
+                <dt>Request acceptance</dt>
+                <dd>
+                  {detail.outcome.acceptance.status} —{" "}
+                  {detail.outcome.acceptance.reason}
+                </dd>
+                <dt>Publication</dt>
+                <dd>
+                  {detail.outcome.publication.status}
+                  {detail.outcome.publication.target
+                    ? ` · ${detail.outcome.publication.target}`
+                    : ""}
+                </dd>
+                <dt>Deployment</dt>
+                <dd>
+                  {detail.outcome.deployment.status === "recorded"
+                    ? "Evidence recorded; inspect the target and runtime proof."
+                    : "Unknown — publication does not prove deployment."}
+                </dd>
+              </dl>
+              {detail.outcome.executor_evidence_id ? (
+                <p>
+                  Current result:{" "}
+                  <code>{detail.outcome.executor_evidence_id}</code>
+                </p>
+              ) : null}
+              {detail.outcome.evidence_truncated ? (
+                <p>
+                  Evidence list is truncated; missing results may exist outside
+                  this view.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <Unavailable what="Outcome" reason={reason(detail, "outcome")} />
+          )}
+        </Panel>
+        <Panel title="Next action" accent="var(--series-4)">
+          <p>
+            Use an authenticated CLI profile for this hub. Inspect current state
+            before acting; the hub rechecks permissions and task state.
+          </p>
+          {detail.outcome ? (
+            detail.outcome.actions.map((action) => (
+              <div key={action.command}>
+                <p>
+                  {action.label}{" "}
+                  <span className="micro">requires {action.requires}</span>
+                </p>
+                <pre tabIndex={0}>{action.command}</pre>
+              </div>
+            ))
+          ) : (
+            <Unavailable
+              what="Task actions"
+              reason={reason(detail, "outcome")}
+            />
+          )}
+        </Panel>
         <Panel
           title="State history"
           accent="var(--series-1)"
@@ -176,8 +262,13 @@ export function TaskView({
                         <td style={{ whiteSpace: "nowrap" }}>
                           {event.to_state ? (
                             <>
-                              <span className="id">{event.from_state ?? "?"}</span>
-                              <span style={{ color: "var(--ink-muted)" }}> → </span>
+                              <span className="id">
+                                {event.from_state ?? "?"}
+                              </span>
+                              <span style={{ color: "var(--ink-muted)" }}>
+                                {" "}
+                                →{" "}
+                              </span>
                               <span className="chip">
                                 <span
                                   className="swatch"
@@ -189,10 +280,14 @@ export function TaskView({
                               </span>
                             </>
                           ) : (
-                            <span className="unknown-text">not a transition</span>
+                            <span className="unknown-text">
+                              not a transition
+                            </span>
                           )}
                         </td>
-                        <td className="id truncate">{event.actor ?? UNKNOWN}</td>
+                        <td className="id truncate">
+                          {event.actor ?? UNKNOWN}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -224,17 +319,23 @@ export function TaskView({
                   client={client}
                   turns={transcripts.rows}
                   openTurn={openTurn}
-                  onToggle={(id) => setOpenTurn((current) => (current === id ? null : id))}
+                  onToggle={(id) =>
+                    setOpenTurn((current) => (current === id ? null : id))
+                  }
                 />
               )}
               {transcripts.truncated_list ? (
                 <p className="unknown-text" style={{ fontSize: 11 }}>
-                  Only the first {count(transcripts.rows.length)} turns are listed.
+                  Only the first {count(transcripts.rows.length)} turns are
+                  listed.
                 </p>
               ) : null}
             </>
           ) : (
-            <Unavailable what="Transcript" reason={reason(detail, "transcripts")} />
+            <Unavailable
+              what="Transcript"
+              reason={reason(detail, "transcripts")}
+            />
           )}
         </Panel>
 
@@ -242,7 +343,11 @@ export function TaskView({
           title="Harness commands"
           wide
           accent="var(--series-3)"
-          sub={detail.commands ? `${count(detail.commands.length)} audited` : undefined}
+          sub={
+            detail.commands
+              ? `${count(detail.commands.length)} audited`
+              : undefined
+          }
         >
           {detail.commands ? (
             <>
@@ -252,17 +357,17 @@ export function TaskView({
                 </span>
                 <span>
                   <strong>This is not everything that ran.</strong>{" "}
-                  <code>command_audit</code> records the commands the MAC harness
-                  itself spawned. Whatever the coding CLI executed inside its
-                  sandbox is not captured here, so an empty or short list does not
-                  mean the agent was idle.
+                  <code>command_audit</code> records the commands the MAC
+                  harness itself spawned. Whatever the coding CLI executed
+                  inside its sandbox is not captured here, so an empty or short
+                  list does not mean the agent was idle.
                 </span>
               </div>
               {detail.commands.length === 0 ? (
                 <Empty>
-                  The harness recorded no command spawns for this task. Given the
-                  caveat above, read this as "nothing the harness itself ran",
-                  not "nothing ran".
+                  The harness recorded no command spawns for this task. Given
+                  the caveat above, read this as "nothing the harness itself
+                  ran", not "nothing ran".
                 </Empty>
               ) : (
                 <table className="data">
@@ -294,7 +399,9 @@ export function TaskView({
                               : undefined
                           }
                         >
-                          {command.returncode === null ? UNKNOWN : command.returncode}
+                          {command.returncode === null
+                            ? UNKNOWN
+                            : command.returncode}
                         </td>
                         <td className="n">
                           {command.duration_ms === null
@@ -302,7 +409,8 @@ export function TaskView({
                             : `${Math.round(command.duration_ms)}ms`}
                         </td>
                         <td className="n" style={{ color: "var(--ink-muted)" }}>
-                          {bytes(command.stdout_bytes)}/{bytes(command.stderr_bytes)}
+                          {bytes(command.stdout_bytes)}/
+                          {bytes(command.stderr_bytes)}
                         </td>
                       </tr>
                     ))}
@@ -332,7 +440,10 @@ export function TaskView({
                   {detail.evidence.map((row) => (
                     <tr key={row.id}>
                       <td className="id">{row.kind}</td>
-                      <td className="truncate" title={`${row.summary} — ${row.uri}`}>
+                      <td
+                        className="truncate"
+                        title={`${row.summary} — ${row.uri}`}
+                      >
                         {row.summary || row.uri}
                       </td>
                       <td className="id truncate">{row.created_by}</td>
@@ -396,7 +507,9 @@ export function TaskView({
           ) : (
             <Unavailable
               what="Reviews"
-              reason={reason(detail, "reviews") ?? reason(detail, "publications")}
+              reason={
+                reason(detail, "reviews") ?? reason(detail, "publications")
+              }
             />
           )}
         </Panel>
@@ -432,18 +545,19 @@ function CoverageNote({
           !
         </span>
         <span>
-          <strong>No transcript was recorded for this task.</strong> That is a gap
-          in recording, not evidence that the agent did nothing — the two are
-          indistinguishable from here.
+          <strong>No transcript was recorded for this task.</strong> That is a
+          gap in recording, not evidence that the agent did nothing — the two
+          are indistinguishable from here.
           {pct ? (
             <div className="unknown-text">
-              Fleet-wide, {pct} of tasks ({count(coverage!.tasks_with_transcript)} of{" "}
+              Fleet-wide, {pct} of tasks (
+              {count(coverage!.tasks_with_transcript)} of{" "}
               {count(coverage!.tasks_total)}) have any transcript at all.
             </div>
           ) : (
             <div className="unknown-text">
-              Fleet-wide transcript coverage is unknown — the console could not read
-              it.
+              Fleet-wide transcript coverage is unknown — the console could not
+              read it.
             </div>
           )}
         </span>
@@ -454,7 +568,8 @@ function CoverageNote({
   if (!pct) return null;
   return (
     <p className="unknown-text" style={{ fontSize: 11, marginTop: 0 }}>
-      Fleet-wide, only {pct} of tasks have any transcript; this one is among them.
+      Fleet-wide, only {pct} of tasks have any transcript; this one is among
+      them.
     </p>
   );
 }
@@ -496,7 +611,10 @@ function Turn({
   open: boolean;
   onToggle: () => void;
 }) {
-  const { entry, error, loading } = useTranscript(client, open ? turn.id : null);
+  const { entry, error, loading } = useTranscript(
+    client,
+    open ? turn.id : null,
+  );
   return (
     <div className="turn">
       <button
@@ -511,13 +629,24 @@ function Turn({
             blank cell here would read as "no CLI ran". */}
         {turn.coding_agent ? (
           <span className="chip">
-            <span className="swatch" style={{ background: "var(--series-5)" }} />
+            <span
+              className="swatch"
+              style={{ background: "var(--series-5)" }}
+            />
             {turn.coding_agent}
-            {turn.model ? <span className="unknown-text"> · {turn.model}</span> : null}
+            {turn.model ? (
+              <span className="unknown-text"> · {turn.model}</span>
+            ) : null}
           </span>
         ) : (
-          <span className="chip" title="coding_agent and model were not recorded">
-            <span className="swatch" style={{ background: "var(--ink-muted)" }} />
+          <span
+            className="chip"
+            title="coding_agent and model were not recorded"
+          >
+            <span
+              className="swatch"
+              style={{ background: "var(--ink-muted)" }}
+            />
             <span className="unknown-text">unattributed</span>
           </span>
         )}
@@ -565,10 +694,12 @@ function Turn({
                     !
                   </span>
                   <span>
-                    <strong>This turn was recorded with an empty payload.</strong>{" "}
+                    <strong>
+                      This turn was recorded with an empty payload.
+                    </strong>{" "}
                     The row exists, so something was written — but there is no
-                    prompt or response text in it. That is different from the task
-                    having no transcript at all.
+                    prompt or response text in it. That is different from the
+                    task having no transcript at all.
                   </span>
                 </div>
               ) : null}
@@ -611,7 +742,9 @@ function TurnText({
       </span>
       <pre
         className="turn-pre"
-        style={tone === "critical" ? { color: "var(--status-serious)" } : undefined}
+        style={
+          tone === "critical" ? { color: "var(--status-serious)" } : undefined
+        }
       >
         {value.text}
       </pre>

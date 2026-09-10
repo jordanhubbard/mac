@@ -8,8 +8,9 @@ sit underneath a human-facing agent runtime such as OpenClaw under OpenShell, Ne
 The human-facing runtime owns conversation, personality, adaptive memory,
 skills, and messaging gateways. `mac` owns durable operational truth: tasks,
 leases, routing, reviews, evidence, secrets, runtime manifests, rollout state,
-and audit trails. Fleet deployments use stock OpenClaw in OpenShell for the
-human-channel role; internal agents may share a stable public identity.
+and audit trails. The fleet registry selects the human-channel runtime; the committed fleet
+default is Hermes (`gateway_impl: hermes`). OpenClaw is another deployment
+option. Internal agents may share a stable public identity.
 
 The goal is to let a user talk to an agent with a real
 personality and memory, then let that agent create durable work that a broader
@@ -34,7 +35,7 @@ integration or protocol influence is not mistaken for copied source:
   not a vendored tree:** MAC learned from Hermes Agent's loop, gateways, and
   skills. The in-tree snapshot of that runtime was removed in PR #377
   (`3ebde2dd`); see [the vendor-fate record](docs/hermes-vendor-fate.md).
-  Live fleet chat uses stock OpenClaw. First-party `mac.hermes_adapter` is
+  The gateway runtime is installed separately. First-party `mac.hermes_adapter` is
   clean-room MAC code, not a copy of that snapshot. ADR 0001 is superseded
   on the vendoring premise.
 - **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) — execution
@@ -45,7 +46,7 @@ integration or protocol influence is not mistaken for copied source:
   integration:** NemoClaw remains compatibility and design reference material;
   it is not the implementation behind MAC's `openclaw` deployment mode.
 - **[OpenClaw](https://github.com/openclaw/openclaw) — conversational gateway
-  runtime:** MAC deploys a pinned stock OpenClaw image inside a MAC-authored
+  runtime option:** MAC can deploy a pinned stock OpenClaw image inside a MAC-authored
   OpenShell policy for always-on chat channels while MAC remains the durable
   task and fleet control plane. See
   [OpenClaw public identities](docs/openclaw-identities.md).
@@ -127,7 +128,7 @@ This project provides durable contracts for coordinating a fleet:
 
 ## Boundary With Hermes
 
-Hermes is the primary interaction agent:
+With the default Hermes gateway, Hermes owns interaction:
 
 - Slack, Telegram, Discord, CLI, and other message apps terminate in Hermes.
 - `SOUL.md`, `USER.md`, `MEMORY.md`, skills, and session memory belong to Hermes.
@@ -165,6 +166,7 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [Advanced Concepts](docs/guide/03-advanced.md) | leases, evidence, review, publication, and the known gaps |
 | [The UI](docs/guide/04-ui.md) | the read-only console the hub serves at `/ui`, and the unshipped Fleet IDE prototype |
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
+| [Trust workflow](docs/guide/06-trust-workflow.md) | one request through acceptance, recovery, and measured results |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
 | [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.4.0 deck](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk), each pinned to the commit it describes |
 | [v1.4.0 capabilities (`a787bff1`)](docs/presentation/20260906T051311Z-a787bff1/README.md) | current release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) |
