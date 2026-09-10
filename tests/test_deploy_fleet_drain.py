@@ -1915,13 +1915,17 @@ def test_same_host_attestation_recovery_keeps_distinct_hub_and_worker_copies():
         "\n)\n\nreconcile_report_repository_executor_approval", 1
     )[0]
 
-    hub_path = next(line.strip() for line in recovery.splitlines() if "local hub_manifest=" in line)
+    hub_path = next(line.strip() for line in recovery.splitlines() if "hub_manifest=" in line)
     worker_path = next(
         line.strip() for line in recovery.splitlines() if "local worker_manifest=" in line
     )
     assert "attestation-recovery-hub-" in hub_path
     assert "attestation-recovery-worker-" in worker_path
     assert hub_path != worker_path
+    assert 'mkdir -p "$HOME/.mac/attestation-recovery"' in recovery
+    assert 'chmod 0700 "$HOME/.mac/attestation-recovery"' in recovery
+    assert 'hub_manifest="${hub_relay_dir}/mac-attestation-recovery-hub-' in recovery
+    assert 'local hub_manifest="/tmp/' not in recovery
     assert 'Path(os.environ["MAC_DEPLOY_ATTESTATION_MANIFEST"]).unlink(' in recovery
     assert "missing_ok=True" in recovery
 
