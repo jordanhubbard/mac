@@ -2105,13 +2105,14 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     assert "--account omgjkh --target channel:C456HOME" in calls_text
 
 
-def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
+def test_fleet_deploy_defaults_to_hermes_while_retaining_explicit_legacy_cleanup() -> None:
     config = FLEET_CONFIG.read_text(encoding="utf-8")
     deploy = (
         DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     )
     unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
-    assert "gateway_impl: openclaw" in config
+    assert "gateway_impl: hermes" in config
+    assert '*) MAC_CHAT_GATEWAY_IMPL="hermes"' in deploy
     assert 'openclaw|"")\n      install_linux_openclaw_service' in deploy
     assert "install_darwin_openclaw_service" in deploy
     assert "OPENCLAW_SUPERVISORD_PROG" in deploy

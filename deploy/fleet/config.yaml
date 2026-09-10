@@ -29,14 +29,13 @@ defaults:
     gateway_base_url: ""
     # gateway_impl selects the chat-gateway service installed on this host.
     # Values:
-    #   openclaw  — stock OpenClaw in a MAC-owned OpenShell sandbox (primary)
-    #   hermes    — vendored Hermes gateway (rollback path until retirement)
-    #   nemoclaw  — retained reference/compatibility path; not the primary
+    #   hermes    — Hermes gateway (primary)
+    #   none      — a pure worker with no chat gateway
     # The fleet deploy script reads this field to decide which service unit to
     # install/enable and which to stop/disable. Task execution uses a verified
     # coding-agent CLI in its own OpenShell sandbox and never falls back to a
     # chat gateway.
-    gateway_impl: openclaw
+    gateway_impl: hermes
     # Human-facing identity is optional.  Empty means a headless OpenClaw
     # runtime represented through the fleet's default identity.  Assign the
     # same stable logical name (for example mac-hive) to exactly one active
