@@ -10864,6 +10864,7 @@
     "name": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
     "retired": false,
     "sources": [
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -10876,6 +10877,7 @@
     "name": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
     "retired": false,
     "sources": [
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_subprocess.py"
     ],
