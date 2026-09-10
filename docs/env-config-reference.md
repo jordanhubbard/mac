@@ -842,6 +842,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_HELPER_SOURCE` | str | consumer-defined | core | Core setting: phase1 helper source. |
 | `MAC_PHASE1_LOCAL_RESTORE_MANIFEST` | str | consumer-defined | core | Core setting: phase1 local restore manifest. |
 | `MAC_PHASE1_MEDIA_READINESS_SECONDS` | int | consumer-defined | core | Core setting: phase1 media readiness seconds. |
+| `MAC_PHASE1_OPENSHELL_ENABLED` | bool | consumer-defined | core | Core setting: phase1 openshell enabled. |
 | `MAC_PHASE1_OS` | str | consumer-defined | core | Core setting: phase1 os. |
 | `MAC_PHASE1_OSH_ASSET_SHA` | str | consumer-defined | core | Core setting: phase1 osh asset sha. |
 | `MAC_PHASE1_OSH_CLI_SHA` | str | consumer-defined | core | Core setting: phase1 osh cli sha. |

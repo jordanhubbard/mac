@@ -2754,6 +2754,11 @@ def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
         'add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"'
     ) in deploy
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL_ENABLED "$openshell_enabled"' in deploy
+    # Phase one executes a separate retained helper before the normal remote
+    # installer.  Its explicit policy route must not silently fall back to
+    # inventorying a retired gateway on a disabled host.
+    assert 'MAC_PHASE1_OPENSHELL_ENABLED=$(shell_quote "$openshell_enabled")' in deploy
+    assert 'MAC_DEPLOY_OPENSHELL_ENABLED="${MAC_PHASE1_OPENSHELL_ENABLED:?}"' in deploy
     assert (
         'add_remote_env MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS "$effective_openshell_args"'
     ) in deploy

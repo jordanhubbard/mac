@@ -7874,7 +7874,7 @@ cleanup_failed_phase1_prepare_lock() {
 }
 
 prepare_remote_phase1_restore_contract() {
-  local agent="$1" deployment_id="$2" supervisor="$3" fleet_name="$4" os_kind="$5"
+  local agent="$1" deployment_id="$2" supervisor="$3" fleet_name="$4" os_kind="$5" openshell_enabled="${6:-0}"
   local remote_helper="/tmp/mac-phase1-prepare-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local remote_functions="/tmp/mac-phase1-prepare-functions-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local ssh_parts=() ssh_args=() ssh_target item last_index fence_exec
@@ -7910,7 +7910,7 @@ prepare_remote_phase1_restore_contract() {
   if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" > "$contract_raw" <<'REMOTE_PHASE1_PREPARE'
+    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_OPENSHELL_ENABLED=$(shell_quote "$openshell_enabled") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" > "$contract_raw" <<'REMOTE_PHASE1_PREPARE'
 set -euo pipefail
 helper="${MAC_PHASE1_HELPER:?}"
 functions="${MAC_PHASE1_FUNCTIONS:?}"
@@ -7942,6 +7942,7 @@ OS_KIND="${MAC_PHASE1_OS:?}" \
 DEPLOY_REV="${MAC_PHASE1_REV:?}" \
 DEPLOY_GENERATION="${MAC_PHASE1_GENERATION:?}" \
 SUPERVISOR_KIND="${MAC_PHASE1_SUPERVISOR:?}" \
+MAC_DEPLOY_OPENSHELL_ENABLED="${MAC_PHASE1_OPENSHELL_ENABLED:?}" \
 MAC_HOME="$HOME/.mac" \
 PY="$phase1_python" \
 MAC_PHASE1_HELPER_SOURCE="$helper" \
@@ -8060,7 +8061,7 @@ PY
 }
 
 quiesce_remote_agent_for_cohort() {
-  local agent="$1" deployment_id="$2" supervisor="$3" fleet_name="$4" os_kind="$5"
+  local agent="$1" deployment_id="$2" supervisor="$3" fleet_name="$4" os_kind="$5" openshell_enabled="${6:-0}"
   local remote_helper="/tmp/mac-phase1-quiesce-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local remote_functions="/tmp/mac-phase1-daemon-functions-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local ssh_parts=() ssh_args=() ssh_target item last_index fence_exec proof
@@ -8110,7 +8111,7 @@ quiesce_remote_agent_for_cohort() {
   if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "${daemon_timeout_env}MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" <<'REMOTE_PHASE1'
+    "${daemon_timeout_env}MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_OPENSHELL_ENABLED=$(shell_quote "$openshell_enabled") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" <<'REMOTE_PHASE1'
 set -euo pipefail
 helper="${MAC_PHASE1_HELPER:?}"
 functions="${MAC_PHASE1_FUNCTIONS:?}"
@@ -8146,6 +8147,7 @@ OS_KIND="${MAC_PHASE1_OS:?}" \
 DEPLOY_REV="${MAC_PHASE1_REV:?}" \
 DEPLOY_GENERATION="${MAC_PHASE1_GENERATION:?}" \
 SUPERVISOR_KIND="${MAC_PHASE1_SUPERVISOR:?}" \
+MAC_DEPLOY_OPENSHELL_ENABLED="${MAC_PHASE1_OPENSHELL_ENABLED:?}" \
 MAC_HOME="$HOME/.mac" \
 PY="$phase1_python" \
 MAC_PHASE1_RESTORE_CONTRACT_SHA256="${MAC_PHASE1_RESTORE_SHA256:?}" \
@@ -15802,12 +15804,13 @@ enforce_bound_worker_credentials() {
 }
 
 typed_phase1_prepare_worker() {
-  local spec="$1" fields=() agent supervisor fleet_name os_kind
+  local spec="$1" fields=() agent supervisor fleet_name os_kind openshell_enabled=0
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"; supervisor="${fields[14]:-auto}"
   fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
+  [ "$(normalize_boolean_token "${MAC_DEPLOY_OPENSHELL:-}")" = 1 ] || [ "$(normalize_boolean_token "${fields[53]:-0}")" = 1 ] && openshell_enabled=1
   prepare_remote_phase1_restore_contract "$agent" \
-    "$(deployment_id_for_agent "$agent")" "$supervisor" "$fleet_name" "$os_kind"
+    "$(deployment_id_for_agent "$agent")" "$supervisor" "$fleet_name" "$os_kind" "$openshell_enabled"
 }
 
 start_control_master_worker() {
@@ -15823,12 +15826,13 @@ typed_staging_worker() {
 }
 
 typed_quiesce_worker() {
-  local spec="$1" fields=() agent supervisor fleet_name os_kind
+  local spec="$1" fields=() agent supervisor fleet_name os_kind openshell_enabled=0
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"; supervisor="${fields[14]:-auto}"
   fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
+  [ "$(normalize_boolean_token "${MAC_DEPLOY_OPENSHELL:-}")" = 1 ] || [ "$(normalize_boolean_token "${fields[53]:-0}")" = 1 ] && openshell_enabled=1
   quiesce_remote_agent_for_cohort "$agent" "$(deployment_id_for_agent "$agent")" \
-    "$supervisor" "$fleet_name" "$os_kind"
+    "$supervisor" "$fleet_name" "$os_kind" "$openshell_enabled"
 }
 
 release_typed_worker_start_barrier() {
