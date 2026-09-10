@@ -59,16 +59,8 @@ defaults:
     capabilities:
       - ops
       - python
-      - openclaw
+      - hermes
       - review
-      - api
-      - architecture
-      - cli
-      - docs
-      - security
-      - testing
-      - typescript
-      - ui
       - web_search
       - web_extract
       - web_crawl

@@ -1019,15 +1019,17 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
-DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+DEFAULT_WORKER_CAPABILITIES = "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"
 LEGACY_WORKER_CAPABILITIES = {
-    "ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"
+    "ops", "python", "openclaw", "review", "api", "architecture", "cli", "docs", "security", "testing", "typescript", "ui", "web_search", "web_extract", "web_crawl", "firecrawl"
 }
 
 
 def worker_capabilities_field(value: Any) -> str:
     items = [item.strip() for item in text_field(value).split(",") if item.strip()]
-    if not items or set(items) == LEGACY_WORKER_CAPABILITIES:
+    items = list(dict.fromkeys("hermes" if item == "openclaw" else item for item in items))
+    retired_default = {"hermes" if item == "openclaw" else item for item in LEGACY_WORKER_CAPABILITIES}
+    if not items or set(items) == retired_default:
         return DEFAULT_WORKER_CAPABILITIES
     return ",".join(items)
 
@@ -1361,6 +1363,11 @@ if mode != "specs":
 for name in selected:
     agent = by_name[name]
     hermes = merge_dicts(defaults.get("hermes", {}) if isinstance(defaults.get("hermes"), dict) else {}, agent.get("hermes", {}) if isinstance(agent.get("hermes"), dict) else {})
+    # OpenClaw was retired.  A stale registry must not select it again merely
+    # because its old setting survived in a saved deployment environment.  Keep
+    # ``none`` for explicit pure workers; every conversational node is Hermes.
+    if text_field(hermes.get("gateway_impl")).lower() != "none":
+        hermes["gateway_impl"] = "hermes"
     worker = merge_dicts(defaults.get("worker", {}) if isinstance(defaults.get("worker"), dict) else {}, agent.get("worker", {}) if isinstance(agent.get("worker"), dict) else {})
     qdrant = merge_dicts(defaults.get("qdrant", {}) if isinstance(defaults.get("qdrant"), dict) else {}, agent.get("qdrant", {}) if isinstance(agent.get("qdrant"), dict) else {})
     firecrawl = merge_dicts(defaults.get("firecrawl", {}) if isinstance(defaults.get("firecrawl"), dict) else {}, agent.get("firecrawl", {}) if isinstance(agent.get("firecrawl"), dict) else {})

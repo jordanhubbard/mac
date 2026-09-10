@@ -379,8 +379,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     script = deploy_script_text()
     cfg = load_sample_fleet_config()
     expected = (
-        "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
-        "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+        "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"
     )
 
     assert 'worker_capabilities_field(worker.get("capabilities"))' in script
@@ -391,16 +390,8 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     assert cfg["defaults"]["worker"]["capabilities"] == [
         "ops",
         "python",
-        "openclaw",
+        "hermes",
         "review",
-        "api",
-        "architecture",
-        "cli",
-        "docs",
-        "security",
-        "testing",
-        "typescript",
-        "ui",
         "web_search",
         "web_extract",
         "web_crawl",
@@ -417,7 +408,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     assert module._default_worker_capabilities() == expected.split(",")
 
     assert normalize_worker_capabilities(LEGACY_WORKER_CAPABILITIES) == expected
-    assert normalize_worker_capabilities("python,custom") == "python,custom"
+    assert normalize_worker_capabilities("python,openclaw,custom") == "python,hermes,custom"
 
 
 def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
@@ -945,7 +936,7 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert (
         "    fetch_slack_secrets_from_vault\n"
         "    reload_mac_env\n"
-        '    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" != "openclaw" ]; then\n'
+        '    if [ "${MAC_CHAT_GATEWAY_IMPL:-hermes}" = "hermes" ]; then\n'
         "      sync_hermes_slack_identity_env\n"
         "      sync_hermes_home_channels"
     ) in script
@@ -4374,7 +4365,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
             "MAC_DEPLOY_OPENSHELL_REQUIRED": "true",
             "OPENSHELL_DEPLOY_ENABLED": "0",
             "OPENSHELL_EFFECTIVE_ARGS": "",
-            "MAC_CHAT_GATEWAY_IMPL": "openclaw",
+            "MAC_CHAT_GATEWAY_IMPL": "hermes",
         },
         capture_output=True,
         text=True,
@@ -4384,7 +4375,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
     assert calls.read_text(encoding="utf-8").splitlines() == [
         f"runtime={digest}",
         f"input={input_sha256}",
-        "expected=mac-openclaw-bullwinkle",
+            "expected=",
         "argc=2",
         "arg=--enable",
         "arg=--fail-closed",

@@ -279,7 +279,7 @@ HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
 WORKER_MODE="${MAC_DEPLOY_WORKER_MODE:-heartbeat}"
-WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl}"
 WORKER_ALLOWED_PROJECTS="${MAC_DEPLOY_WORKER_ALLOWED_PROJECTS:-}"
 WORKER_REQUIRED_METADATA="${MAC_DEPLOY_WORKER_REQUIRED_METADATA:-}"
 WORKER_CLAIM_ONLY_CANARY_TASKS="${MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS:-0}"
@@ -1394,23 +1394,12 @@ PY
     done
   fi
 
-  expected_openclaw=""
-  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ]; then
-    # Derive the expected OpenClaw sandbox identity from this node's own frozen
-    # AGENT, exactly as install-openclaw-gateway.sh names the sandbox when
-    # MAC_AGENT_ID is unset (agent_$AGENT). Reading an ambient MAC_AGENT_ID here
-    # is unsafe: a value leaked from an unrelated controller/session would make
-    # the schema-safe pre-upgrade retirement checkpoint (or fail to checkpoint)
-    # the wrong OpenClaw container before the drained-node gateway upgrade.
-    suffix="$(printf '%s' "agent_$AGENT" \
-      | sed -E 's/^agent_//; s/[^A-Za-z0-9]+/-/g; s/^-+//; s/-+$//' \
-      | tr '[:upper:]' '[:lower:]')"
-    expected_openclaw="mac-openclaw-${suffix:-gateway}"
-  fi
-
   log "bootstrapping final OpenShell gateway before any chat or worker sandbox is created"
   if [ "${#bootstrap_args[@]}" -gt 0 ]; then
-    MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX="$expected_openclaw" \
+    # The retired OpenClaw sandbox is never an expected live resource during a
+    # Hermes deployment.  Passing an empty value makes the bootstrap converge
+    # it away instead of preserving a stale container by name.
+    MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX="" \
       OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE" \
       OSH_RUNTIME_INPUT_SHA256="$OPENSHELL_RUNTIME_INPUT_SHA256" \
       "$bootstrap" "${bootstrap_args[@]}"
@@ -2844,7 +2833,7 @@ def rollback_contract_summary(stage):
 
 
 def daemon_quiescence_summary(stage, mac_home):
-    gateway_implementation = os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "openclaw"
+    gateway_implementation = os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "hermes"
     required_phases = ["pre_source", "pre_install", "post_install"]
     if gateway_implementation == "openclaw":
         required_phases = [
@@ -3111,7 +3100,7 @@ def media_runtime_readiness_summary(stage, mac_home):
 
 
 def gateway_readiness_summary(stage):
-    implementation = os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "openclaw"
+    implementation = os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "hermes"
     supervisor = os.environ.get("SUPERVISOR_KIND") or (
         "launchd" if os.environ["OS_KIND"] == "darwin" else "systemd"
     )
@@ -11763,12 +11752,12 @@ sync_messaging_config() {
   # secrets, identity, or home-channel data at all. Skip the whole Hermes/Slack
   # block — otherwise the home-channel sync fails on a gateway-less node and
   # aborts the worker deploy (the != "openclaw" guard wrongly included "none").
-  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "none" ]; then
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-hermes}" = "none" ]; then
     log "gateway_impl=none: pure worker; skipping Hermes/Slack gateway setup"
   else
     fetch_slack_secrets_from_vault
     reload_mac_env
-    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" != "openclaw" ]; then
+    if [ "${MAC_CHAT_GATEWAY_IMPL:-hermes}" = "hermes" ]; then
       sync_hermes_slack_identity_env
       sync_hermes_home_channels
     fi
@@ -12311,7 +12300,7 @@ agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
 mode="${MAC_WORKER_MODE:-heartbeat}"
-capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl}"
 # Hardware capability probes: always append cpu; append gpu/cuda only when a
 # host GPU is present AND the bootstrap proved a nested OpenShell sandbox can
 # actually use it.

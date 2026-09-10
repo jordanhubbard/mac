@@ -31,19 +31,26 @@ from mac.mesh_bind import (
 
 
 DEFAULT_WORKER_CAPABILITIES = (
-    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
-    "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+    "ops,python,hermes,review,web_search,web_extract,web_crawl,firecrawl"
 )
 LEGACY_WORKER_CAPABILITIES = (
-    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 
 
 def normalize_worker_capabilities(value: str) -> str:
-    """Upgrade the former fleet default without overriding real customization."""
+    """Retire the former OpenClaw default without overriding real customization."""
     items = [item.strip() for item in str(value or "").split(",") if item.strip()]
-    if not items or set(items) == set(LEGACY_WORKER_CAPABILITIES.split(",")):
+    # ``openclaw`` was a runtime identity, not a worker capability.  Replace it
+    # wherever a stale environment still advertises it, retaining deliberate
+    # non-runtime capability customization.
+    items = ["hermes" if item == "openclaw" else item for item in items]
+    items = list(dict.fromkeys(items))
+    if not items or set(items) == set(
+        "hermes" if item == "openclaw" else item
+        for item in LEGACY_WORKER_CAPABILITIES.split(",")
+    ):
         return DEFAULT_WORKER_CAPABILITIES
     return ",".join(items)
 
