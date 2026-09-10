@@ -215,7 +215,7 @@ export function TaskView({
                   {action.label}{" "}
                   <span className="micro">requires {action.requires}</span>
                 </p>
-                <pre tabIndex={0}>{action.command}</pre>
+                <pre className="turn-pre" tabIndex={0}>{action.command}</pre>
               </div>
             ))
           ) : (
