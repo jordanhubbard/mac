@@ -360,26 +360,17 @@ def test_prepare_skips_install_when_hermes_already_on_path(tmp_path):
     assert ["gateway", "install", "--force", "--start-now", "--start-on-login"] in calls
 
 
-def test_prepare_ports_credentials_via_mac_human_interface(tmp_path):
+def test_prepare_does_not_port_a_retired_openclaw_profile(tmp_path):
     result, calls = _run(tmp_path, "prepare")
     assert result.returncode == 0, result.stderr
     mac_calls_path = tmp_path / "mac-calls.jsonl"
     mac_calls = [
         json.loads(line) for line in mac_calls_path.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert [
-        "admin",
-        "human-interface",
-        "port",
-        "--from",
-        "openclaw",
-        "--to",
-        "hermes",
-        "--apply",
-    ] in mac_calls
+    assert mac_calls == []
 
 
-def test_prepare_migrates_claw_state_when_openclaw_home_present(tmp_path):
+def test_prepare_ignores_retired_openclaw_state_when_present(tmp_path):
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
     openclaw_home = home / ".openclaw"
@@ -390,16 +381,7 @@ def test_prepare_migrates_claw_state_when_openclaw_home_present(tmp_path):
         extra_env={"MAC_HERMES_OPENCLAW_SOURCE": str(openclaw_home)},
     )
     assert result.returncode == 0, result.stderr
-    assert [
-        "claw",
-        "migrate",
-        "--source",
-        str(openclaw_home),
-        "--preset",
-        "full",
-        "--overwrite",
-        "--yes",
-    ] in calls
+    assert not any(call[:2] == ["claw", "migrate"] for call in calls)
 
 
 def test_prepare_skips_claw_migrate_when_no_openclaw_home(tmp_path):

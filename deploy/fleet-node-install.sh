@@ -183,31 +183,26 @@ HERMES_SURFACE_B64="${MAC_DEPLOY_HERMES_SURFACE_B64:-}"
 #   hermes   — the vendored Hermes gateway (mac-hermes-gateway console script)
 #   openclaw — stock OpenClaw inside a MAC-authored OpenShell policy
 #   none     — pure worker with no chat gateway
-# Decoded from the hermes_surface_b64 payload; also injectable via env. Any
-# unrecognized value is normalized to openclaw.
+# Decoded from the hermes_surface_b64 payload; also injectable via env. Hermes
+# is the fleet default, so stale or invalid settings cannot resurrect OpenClaw.
 MAC_CHAT_GATEWAY_IMPL="${MAC_DEPLOY_CHAT_GATEWAY_IMPL:-$(
   if [ -n "${MAC_DEPLOY_HERMES_SURFACE_B64:-}" ]; then
     python3 -c "
 import base64, json, sys
 try:
     p = json.loads(base64.b64decode(sys.argv[1]))
-    print(p.get('runtime', {}).get('gateway_impl', 'openclaw'))
+    print(p.get('runtime', {}).get('gateway_impl', 'hermes'))
 except Exception:
-    print('openclaw')
-" "${MAC_DEPLOY_HERMES_SURFACE_B64}" 2>/dev/null || echo "openclaw"
+    print('hermes')
+" "${MAC_DEPLOY_HERMES_SURFACE_B64}" 2>/dev/null || echo "hermes"
   else
-    echo "openclaw"
+    echo "hermes"
   fi
 )}"
-# hermes was normalized away here on 2026-07-26 when OpenClaw was to be the
-# sole gateway. That migration was HALTED 2026-08-04 after all three of its
-# premises measured false (docs/hermes-retirement-premises.md), so hermes is a
-# selectable gateway again. The Hermes branches further down this script were
-# never removed -- they were only made unreachable by this normalization.
-# Anything still unrecognized normalizes to openclaw, as before.
+# Hermes is the active fleet gateway. Anything unrecognized normalizes to it.
 case "$MAC_CHAT_GATEWAY_IMPL" in
   none|hermes) : ;;
-  *) MAC_CHAT_GATEWAY_IMPL="openclaw" ;;
+  *) MAC_CHAT_GATEWAY_IMPL="hermes" ;;
 esac
 
 # Switching human interfaces without porting the agent's profile first silently
@@ -257,10 +252,8 @@ PY
   done
   return 0
 }
-if ! gate_human_interface_switch "$MAC_CHAT_GATEWAY_IMPL"; then
-  echo "ERROR: refusing to switch the human interface without porting the agent profile first" >&2
-  exit 1
-fi
+# OpenClaw has been retired. Hermes owns the existing active profile tree, so
+# a reinitialization must not demand a port from a deprecated environment.
 
 openclaw_runtime_value() {
   local key="$1" fallback="${2:-}"

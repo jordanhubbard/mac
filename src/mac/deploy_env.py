@@ -534,19 +534,17 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
 def _chat_gateway_values(cfg: DeployEnvConfig, env: Mapping[str, str]) -> Dict[str, str]:
     """Point worker registration at verified chat-gateway service metadata.
 
-    OpenClaw is the sole chat gateway. The installer creates this file only
-    after its liveness, readiness, model, and channel probes pass, so a failed
-    prepare cannot advertise desired state as live state. The only supported
-    runtime selections are ``openclaw`` (a chat-gateway host) and ``none`` (a
-    pure worker); any other value is normalized to ``openclaw``.
+    Hermes is the fleet chat gateway; ``none`` remains available for a pure
+    worker. A legacy or invalid selector normalizes to Hermes so a stale
+    environment cannot recreate deprecated OpenClaw state.
     """
     implementation = (
-        (env.get("MAC_CHAT_GATEWAY_IMPL") or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL") or "openclaw")
+        (env.get("MAC_CHAT_GATEWAY_IMPL") or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL") or "hermes")
         .strip()
         .lower()
     )
-    if implementation != "none":
-        implementation = "openclaw"
+    if implementation not in {"hermes", "none"}:
+        implementation = "hermes"
     values = {"MAC_CHAT_GATEWAY_IMPL": implementation}
     if implementation == "openclaw":
         public_identity = (

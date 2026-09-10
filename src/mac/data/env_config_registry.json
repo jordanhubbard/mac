@@ -5595,17 +5595,6 @@
   },
   {
     "default": null,
-    "description": "Hermes Runtime setting: hermes from interface.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_FROM_INTERFACE",
-    "retired": false,
-    "sources": [
-      "deploy/hermes/install-hermes-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hermes Runtime setting: hermes gateway api key.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_GATEWAY_API_KEY",
@@ -5760,17 +5749,6 @@
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openclaw/run-script-cron-job.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hermes Runtime setting: hermes openclaw source.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_OPENCLAW_SOURCE",
-    "retired": false,
-    "sources": [
-      "deploy/hermes/install-hermes-gateway.sh"
     ],
     "type": "str"
   },

@@ -17,11 +17,6 @@ HERMES_INSTALL_URL="${MAC_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.
 FLEET_NAME="${MAC_HERMES_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-# Migration source: the chat gateway Hermes is taking channel ownership from.
-# "openclaw" is the only interface `mac admin human-interface port` and
-# `hermes claw migrate` currently know how to read from.
-FROM_INTERFACE="${MAC_HERMES_FROM_INTERFACE:-openclaw}"
-OPENCLAW_HOME="${MAC_HERMES_OPENCLAW_SOURCE:-$HOME/.openclaw}"
 DRY_RUN="${MAC_HERMES_DRY_RUN:-0}"
 
 # Fleet-config-supplied gateway policy (docs/fleet-registry-schema.md's
@@ -52,24 +47,6 @@ install_hermes() {
   curl -fsSL "$HERMES_INSTALL_URL" | bash \
     || die "Hermes shell installer failed"
   hermes_bin >/dev/null 2>&1 || die "hermes CLI not found on PATH or in ~/.local/bin after install"
-}
-
-port_credentials() {
-  command -v mac >/dev/null 2>&1 || { log "no 'mac' CLI on PATH; skipping credential port"; return 0; }
-  log "porting identity/memory/messaging credentials from $FROM_INTERFACE to hermes"
-  [ "$DRY_RUN" = 1 ] && { mac admin human-interface port --from "$FROM_INTERFACE" --to hermes || true; return 0; }
-  mac admin human-interface port --from "$FROM_INTERFACE" --to hermes --apply \
-    || log "WARNING: credential port reported a problem; continuing (Hermes may already have credentials)"
-}
-
-migrate_claw_state() {
-  [ -d "$OPENCLAW_HOME" ] || { log "no OpenClaw home at $OPENCLAW_HOME; skipping claw migrate"; return 0; }
-  local hermes
-  hermes="$(hermes_bin)" || die "hermes CLI not found"
-  log "migrating OpenClaw identity/memory/skills into Hermes ($OPENCLAW_HOME -> $HERMES_HOME)"
-  [ "$DRY_RUN" = 1 ] && { "$hermes" claw migrate --source "$OPENCLAW_HOME" --dry-run || true; return 0; }
-  "$hermes" claw migrate --source "$OPENCLAW_HOME" --preset full --overwrite --yes \
-    || log "WARNING: claw migrate reported a problem; continuing with whatever Hermes already has"
 }
 
 # Resolve a Slack channel *name* (e.g. "rockyandfriends") to the channel ID
@@ -262,8 +239,6 @@ ensure_chat_gateway_impl_env() {
 
 prepare() {
   install_hermes
-  port_credentials
-  migrate_claw_state
   ensure_user_allowlist
   ensure_home_channel_env
   ensure_chat_gateway_impl_env
