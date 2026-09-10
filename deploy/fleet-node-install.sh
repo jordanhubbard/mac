@@ -7183,6 +7183,7 @@ test_child_environment = (
     "FAKE_GATE_CAPTURE",
     "FAKE_STALE_SANDBOXES",
     "FAKE_LIVE_DRAIN_LISTS",
+    "MAC_DEPLOY_OPENSHELL_ENABLED",
 )
 
 
@@ -7220,7 +7221,25 @@ def openshell_ever_installed():
     return openshell.exists() or openshell.is_symlink()
 
 
+def openshell_disabled_for_deployment():
+    """Whether this generation explicitly retires OpenShell task isolation.
+
+    A legacy CLI without a reachable gateway cannot prove an inventory.  On a
+    node explicitly configured without OpenShell, it is not a live sandbox
+    authority and must not preserve a broken pre-deployment state forever.
+    Enabled (or malformed) configurations remain fail-closed below.
+    """
+    return os.environ.get("MAC_DEPLOY_OPENSHELL_ENABLED", "").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 def sandbox_inventory(expected):
+    if openshell_disabled_for_deployment():
+        return False
     if not openshell_ever_installed():
         return False
     openshell_target = resolve_owned_executable(openshell)
@@ -7441,7 +7460,7 @@ def list_openshell_sandboxes():
     MAC-managed task sandboxes.
     """
 
-    if not openshell_ever_installed():
+    if openshell_disabled_for_deployment() or not openshell_ever_installed():
         return []
     openshell_target = resolve_owned_executable(openshell)
     reviewed_openshell_cli_summary()
