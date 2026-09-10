@@ -12102,7 +12102,11 @@ reconcile_bound_worker_attestation_key() (
   # These must remain distinct even when the selected worker is the hub host:
   # installation consumes the worker copy, while the hub copy is retained
   # until the restarted worker proves the newly installed key.
-  local hub_manifest="/tmp/mac-attestation-recovery-hub-${agent_id}-${TS}.json"
+  # The attestation writer deliberately rejects world-writable parents.  Do
+  # not relay through /tmp: obtain an absolute path below a dedicated private
+  # directory on the hub so this also works when the controller and hub have
+  # different home directories.
+  local hub_relay_dir hub_manifest
   local worker_manifest="/tmp/mac-attestation-recovery-worker-${agent_id}-${TS}.json"
   local worker_receipt="/tmp/mac-attestation-recovery-${agent_id}-${TS}-receipt.json"
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
@@ -12116,6 +12120,14 @@ reconcile_bound_worker_attestation_key() (
   last_index=$((${#worker_ssh_parts[@]} - 1))
   worker_ssh_target="${worker_ssh_parts[$last_index]}"
   worker_ssh_args=("${worker_ssh_parts[@]:0:$last_index}")
+  hub_relay_dir="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    'set -e; umask 077; mkdir -p "$HOME/.mac/attestation-recovery"; chmod 0700 "$HOME/.mac/attestation-recovery"; printf "%s" "$HOME/.mac/attestation-recovery"')"
+  [ -n "$hub_relay_dir" ] || {
+    echo "ERROR: ${agent}: hub attestation relay directory was not created" >&2
+    return 1
+  }
+  hub_manifest="${hub_relay_dir}/mac-attestation-recovery-hub-${agent_id}-${TS}.json"
 
   cleanup_attestation_relay() {
     rm -f "$probe" "$second_probe" "$manifest"
