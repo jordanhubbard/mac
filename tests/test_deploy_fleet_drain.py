@@ -1277,6 +1277,11 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
 
     assert 'path_check("mac-cli", mac_bin, executable=True)' in builder
     assert 'path_check("github-cli", github_cli, executable=True)' in builder
+    # The prerequisite runs in an SSH shell, whose PATH does not necessarily
+    # include the user-owned MAC toolchain.  Prefer its modern Git before the
+    # Ubuntu 22.04 system Git (2.34) so the merge-queue floor can be proved.
+    assert 'mac_home / "bin" / "git"' in builder
+    assert builder.index('mac_home / "bin" / "git"') < builder.index('shutil.which("git")')
     assert "MAC_PREREQ_NETWORK_PROVIDER=" in builder
     assert 'provider in {"tailscale", "headscale"}' in builder
     assert 'ipaddress.ip_network("100.64.0.0/10")' in builder

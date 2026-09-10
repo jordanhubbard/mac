@@ -7316,8 +7316,23 @@ openshell_checks = (
     if openshell_required
     else [path_check("openshell-disabled-state", mac_home)]
 )
+# A node-local MAC toolchain is intentional onboarding state.  The remote
+# prerequisite shell is entered over SSH, whose default PATH commonly omits
+# ~/.mac/bin; prefer that sealed executable before considering the host Git.
+# This is essential for provider Ubuntu 22.04 images, where /usr/bin/git is
+# 2.34 but MAC supplies the >=2.38 merge-queue toolchain without sudo.
 git_cli = next(
-    (str(Path(candidate).resolve()) for candidate in (shutil.which("git"), "/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git") if candidate and Path(candidate).is_file()),
+    (
+        str(Path(candidate).resolve())
+        for candidate in (
+            mac_home / "bin" / "git",
+            shutil.which("git"),
+            "/opt/homebrew/bin/git",
+            "/usr/local/bin/git",
+            "/usr/bin/git",
+        )
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK)
+    ),
     None,
 )
 if git_cli is None:
