@@ -6761,6 +6761,10 @@ EOF
     "MAC_DEPLOY_DAEMON_RUNTIME_PATHS=$runtime_paths"
     "MAC_DEPLOY_DAEMON_RUNTIME_PATHS_CONFIGURED=$runtime_paths_configured"
   )
+  # MAC_DEPLOY_OPENSHELL_ENABLED is deployment policy rather than a secret.
+  # Forward it through this outer env -i boundary and the Python child
+  # allowlist below so an explicitly disabled node does not inventory a
+  # retired legacy gateway.
   for env_name in \
     USER LOGNAME TMPDIR SHELL \
     XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR \
@@ -6779,6 +6783,7 @@ EOF
     MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256 \
     MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256 \
     MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256 \
+    MAC_DEPLOY_OPENSHELL_ENABLED \
     MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS \
     MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS; do
     env_value="${!env_name-}"
@@ -7167,6 +7172,11 @@ common_child_environment = (
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
     "DBUS_SESSION_BUS_ADDRESS",
+    # Deployment policy is authority, not test fixture state.  The phase-one
+    # gate runs in an isolated child, so this must be part of its production
+    # allowlist for an explicitly disabled OpenShell deployment to retire an
+    # unreachable legacy gateway.
+    "MAC_DEPLOY_OPENSHELL_ENABLED",
 )
 test_child_environment = (
     "FAKE_DAEMON_CALLS",
@@ -7183,7 +7193,6 @@ test_child_environment = (
     "FAKE_GATE_CAPTURE",
     "FAKE_STALE_SANDBOXES",
     "FAKE_LIVE_DRAIN_LISTS",
-    "MAC_DEPLOY_OPENSHELL_ENABLED",
 )
 
 

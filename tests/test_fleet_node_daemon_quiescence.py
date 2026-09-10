@@ -817,6 +817,20 @@ def test_deploy_credentials_are_absent_from_gate_and_daemon_children(
     _assert_success_marker(run)
 
 
+def test_explicitly_disabled_openshell_skips_unreachable_legacy_inventory(
+    tmp_path: Path,
+) -> None:
+    """Phase-one policy must cross the isolated child-process boundary."""
+    run = _run_quiescence(
+        tmp_path,
+        openshell_mode="nonzero",
+        extra_env={"MAC_DEPLOY_OPENSHELL_ENABLED": "0"},
+    )
+
+    _assert_success_marker(run)
+    assert not any(line.startswith("openshell:") for line in _call_lines(run))
+
+
 def test_container_probe_gets_metadata_only_docker_config(tmp_path: Path) -> None:
     docker_config = tmp_path / "docker-config-with-auth"
     docker_config.mkdir()
