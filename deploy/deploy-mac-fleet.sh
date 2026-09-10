@@ -11135,12 +11135,12 @@ run_bounded_node_phase() {
           reaped_any=1
           if [ "$status" -ne 0 ]; then failed=1; fi
         elif [ "${phase_active[scan]:-0}" = 1 ] \
-            && { ! kill -0 "${phase_pids[scan]}" 2>/dev/null \
-              || ! jobs -pr | awk -v wanted="${phase_pids[scan]}" \
-                '$0 == wanted { found=1 } END { exit(found ? 0 : 1) }'; }; then
+            && ! kill -0 "${phase_pids[scan]}" 2>/dev/null; then
           # The child died before publishing its atomic status (for example,
-          # SIGKILL, or a `jobs -pr` race against a child that already
-          # exited). Reap it and synthesize a controller failure instead of
+          # SIGKILL). `jobs -pr` is deliberately not a liveness authority:
+          # on some shells it briefly omits a live child while that child is
+          # atomically publishing its status file. Reap it and synthesize a
+          # controller failure instead of
           # polling a receipt that can never appear. Say so explicitly: an
           # unexplained status=125 with no matching phase-log error reads as
           # a mysterious phase failure rather than what it is -- the
@@ -11179,9 +11179,7 @@ run_bounded_node_phase() {
         reaped_any=1
         if [ "$status" -ne 0 ]; then failed=1; fi
       elif [ "${phase_active[scan]:-0}" = 1 ] \
-          && { ! kill -0 "${phase_pids[scan]}" 2>/dev/null \
-            || ! jobs -pr | awk -v wanted="${phase_pids[scan]}" \
-              '$0 == wanted { found=1 } END { exit(found ? 0 : 1) }'; }; then
+          && ! kill -0 "${phase_pids[scan]}" 2>/dev/null; then
         echo "==> ${phase_agents[scan]}: ${phase} child exited without publishing its status file (status=125 synthesized); this is a controller/job-control condition, not necessarily a command failure inside the phase -- retry" >&2
         wait "${phase_pids[scan]}" 2>/dev/null || true
         phase_statuses[scan]=125
