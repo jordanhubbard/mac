@@ -9981,6 +9981,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: phase1 openshell enabled.",
+    "family": "core",
+    "name": "MAC_PHASE1_OPENSHELL_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Core setting: phase1 os.",
     "family": "core",
     "name": "MAC_PHASE1_OS",
