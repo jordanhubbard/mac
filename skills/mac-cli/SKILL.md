@@ -262,7 +262,17 @@ So:
 
     mac admin machine register <host> --machine-id machine_<host>
     mac agent register machine_<host> <session-name> --agent-id agent_<name>
-    mac task claim <task_id> <agent_id>      # BEFORE you start work
+    mac agent hold <agent_id> --reason "Interactive session; do not auto-dispatch"
+
+An ordinary claim respects agent and task holds. For an explicitly authorized
+local host implementation, record the single-task execution-boundary exception
+with `mac task break-glass <task_id> <agent_id> --reason "..."`, then claim and
+start that exact task. The authorization expires and is consumed once; it does
+not release other work. Inspect `mac task break-glass-list <task_id>` to confirm
+it. Normal fleet execution uses the ordinary allocator, without this exception.
+
+    mac task claim <task_id> <agent_id>
+    mac task start <task_id> <agent_id>
 
 **Register held, and understand what the hold does.** An interactive session
 must never be a dispatch target — it cannot answer an assignment. `mac agent
@@ -275,10 +285,11 @@ because it stops an agent that would have done the work.
 state machine is what stops you: from `open` the only legal moves are `blocked,
 cancelled, claimed, failed, needs_input, waiting` — `completed` is not among
 them. Completion is reachable only through `claimed -> running -> needs_review`,
-i.e. through the fleet's own review loop. Work finished outside that loop
-cannot be marked completed at all; the only exit is `cancel` with an
-explanatory reason, which files finished work under abandonment. Do not assume
-this ledger's cancelled count means work was abandoned.
+i.e. through the fleet's own review loop. Repository completion still requires canonical integration proof, including
+for `force-complete`. Do not substitute an operator acceptance record for that
+proof. If a held task is superseded by another implementation task, use the
+explicit superseded disposition and replacement task so the ledger preserves
+why no separate execution is needed.
 
 **Releasing a hold hands the task out immediately.** `mac task release` clears
 a `--no-dispatch` hold (use it — do not hand-edit `metadata.no_dispatch`).
