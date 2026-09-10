@@ -757,6 +757,37 @@ run_bounded_node_phase {shlex.quote(str(specs))} die-before-status self_destruct
     assert "ERROR: victim: die-before-status failed with status 125" in result.stderr
 
 
+def test_bounded_node_phase_does_not_treat_jobs_listing_as_child_liveness(tmp_path):
+    # A 2026-09-10 HGX prerequisite command completed successfully but its
+    # child was temporarily absent from `jobs -pr` while publishing the
+    # atomic status file. The controller must use the child's PID instead.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    bounded = (
+        "run_bounded_node_phase() {"
+        + deploy.split("run_bounded_node_phase() {", 1)[1].split(
+            "\n}\n\npreflight_probe_helper_source", 1
+        )[0]
+        + "\n}"
+    )
+    specs = tmp_path / "selected-specs"
+    specs.write_text("healthy|fixture\n", encoding="utf-8")
+    snippet = f"""set -euo pipefail
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+NODE_PARALLELISM=1
+BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=0
+stable_worker_agent_id() {{ printf '%s\\n' "$1"; }}
+jobs() {{ return 0; }}
+live_worker() {{ sleep 0.2; printf 'completed\\n'; }}
+{bounded}
+run_bounded_node_phase {shlex.quote(str(specs))} jobs-race live_worker
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "healthy: jobs-race passed" in result.stdout
+    assert "status=125 synthesized" not in result.stderr
+
+
 def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     legacy = deploy.split("legacy_hub_bootstrap() {", 1)[1].split(
