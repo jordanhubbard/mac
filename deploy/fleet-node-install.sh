@@ -14652,9 +14652,25 @@ if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
     note_gateway_degraded "OpenClaw gateway log contains actionable errors"
   fi
 elif [ "$SUPERVISOR_KIND" = "systemd" ]; then
-  classify_gateway_logs "$LOG_DIR/hermes-gateway-journal.txt"
+  # Hermes is likewise a conversation surface, not a task-execution
+  # dependency.  Do not let a transient gateway traceback strand an otherwise
+  # healthy executor cohort.  Keep the strict opt-in available to operators
+  # who explicitly require chat health before accepting a deployment.
+  gateway_log="$LOG_DIR/hermes-gateway-journal.txt"
+  if ! classify_gateway_logs "$gateway_log"; then
+    if gateway_probe_is_fatal; then
+      exit 1
+    fi
+    note_gateway_degraded "Hermes gateway log contains actionable errors"
+  fi
 else
-  classify_gateway_logs "$LOG_DIR/hermes-gateway.log"
+  gateway_log="$LOG_DIR/hermes-gateway.log"
+  if ! classify_gateway_logs "$gateway_log"; then
+    if gateway_probe_is_fatal; then
+      exit 1
+    fi
+    note_gateway_degraded "Hermes gateway log contains actionable errors"
+  fi
 fi
 
 log "verifying hub health and local executor startup report"

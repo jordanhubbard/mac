@@ -2800,6 +2800,30 @@ def test_gateway_log_classifier_failure_is_non_fatal_by_default_for_openclaw():
     )
 
 
+def test_gateway_log_classifier_failure_is_non_fatal_by_default_for_hermes():
+    # The Hermes branch must honor the same gateway-probe policy.  On
+    # 2026-09-10 a single transient traceback in Rocky's Hermes log bypassed
+    # this guard and stranded a healthy held fleet before it wrote its post
+    # manifest.
+    script = deploy_script_text()
+    call_site = script.split(
+        'elif [ "$SUPERVISOR_KIND" = "systemd" ]; then\n'
+        "  # Hermes is likewise a conversation surface, not a task-execution\n",
+        1,
+    )[1].split('log "verifying hub health', 1)[0]
+
+    assert call_site.count('if ! classify_gateway_logs "$gateway_log"; then') == 2
+    assert call_site.count("if gateway_probe_is_fatal; then") == 2
+    assert (
+        call_site.count('note_gateway_degraded "Hermes gateway log contains actionable errors"')
+        == 2
+    )
+    assert (
+        re.search(r'^\s*classify_gateway_logs "\$LOG_DIR/hermes-gateway', call_site, re.MULTILINE)
+        is None
+    )
+
+
 def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
     script = deploy_script_text()
     classifier = script.split("classify_gateway_logs() {", 1)[1].split(
