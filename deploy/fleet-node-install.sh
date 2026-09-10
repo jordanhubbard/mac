@@ -3947,8 +3947,28 @@ if destination.exists() or destination.is_symlink():
 temporary = destination.with_name(".%s.stage.%d" % (destination.name, os.getpid()))
 if temporary.exists() or temporary.is_symlink():
     raise SystemExit("rollback bin staging path already exists")
+
+
+def ignore_live_sockets(directory, names):
+    """Sockets are process endpoints, never durable Hermes state."""
+    ignored = []
+    for name in names:
+        try:
+            item = (Path(directory) / name).lstat()
+        except FileNotFoundError:
+            # A gateway may unlink its endpoint as it shuts down.  It cannot
+            # become part of a consistent rollback snapshot after that race.
+            continue
+        if stat.S_ISSOCK(item.st_mode):
+            ignored.append(name)
+    return ignored
+
+
 try:
-    shutil.copytree(source, temporary, symlinks=True)
+    # Personality, memory, and other regular durable state are copied exactly.
+    # A Unix-domain socket is a live gateway endpoint, not state that can be
+    # restored, and shutil deliberately refuses to copy it.
+    shutil.copytree(source, temporary, symlinks=True, ignore=ignore_live_sockets)
     for root, directories, files in os.walk(temporary, topdown=False):
         root_path = Path(root)
         for name in files:

@@ -5,8 +5,10 @@ import hashlib
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Mapping
 
@@ -1064,6 +1066,54 @@ def test_injected_mutable_snapshot_failure_leaves_prior_generation_roots_untouch
     assert (venv / "generation").read_text(encoding="utf-8") == "venv"
     assert (openclaw / "generation").read_text(encoding="utf-8") == "openclaw"
     assert not (mac_home / "backups").exists()
+
+
+def test_rollback_snapshot_excludes_live_sockets_but_preserves_durable_hermes_state(
+    tmp_path: Path,
+) -> None:
+    source = NODE_INSTALL.read_text(encoding="utf-8")
+    function = source.split("snapshot_rollback_directory() {", 1)[1].split(
+        "\n}\n\nsnapshot_bin_directory_for_rollback() {", 1
+    )[0]
+    # macOS limits AF_UNIX paths to 104 bytes; pytest's normal temporary path
+    # is longer than that, so the runtime fixture itself needs a short root.
+    with tempfile.TemporaryDirectory(prefix="mac-snapshot-", dir="/tmp") as raw_runtime:
+        runtime = Path(raw_runtime) / "openclaw"
+        runtime.mkdir()
+        (runtime / "SOUL.md").write_text("# durable personality\n", encoding="utf-8")
+        state = runtime / "state"
+        state.mkdir()
+        endpoint = state / "gateway.sock"
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(endpoint))
+        destination = Path(raw_runtime) / "backup"
+        harness = tmp_path / "snapshot-socket.sh"
+        harness.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            + "die() { printf '%s\\n' \"$*\" >&2; exit 73; }\n"
+            + "mac_launchd_run_python_bounded() {\n"
+            + "  local _mode=$1 _timeout=$2 _program=$3; shift 3\n"
+            + "  python3 -c \"$_program\" \"$@\"\n}\n"
+            + "snapshot_rollback_directory() {"
+            + function
+            + "\n}\n"
+            + "snapshot_rollback_directory "
+            + shlex.quote(str(runtime))
+            + " "
+            + shlex.quote(str(destination))
+            + " Hermes-state\n",
+            encoding="utf-8",
+        )
+        try:
+            result = subprocess.run(
+                ["/bin/bash", str(harness)], text=True, capture_output=True, check=False
+            )
+        finally:
+            listener.close()
+
+        assert result.returncode == 0, result.stderr
+        assert (destination / "SOUL.md").read_text(encoding="utf-8") == "# durable personality\n"
+        assert not (destination / "state" / "gateway.sock").exists()
 
 
 def test_generated_rollback_preflight_fails_before_quiesce_or_mutation(
