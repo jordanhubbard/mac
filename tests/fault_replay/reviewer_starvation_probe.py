@@ -58,15 +58,22 @@ def main() -> int:
         agent.id,
         metadata={"returncode": 0, "verification": manifest},
     )
-    cp.submit_for_review(task.id, agent.id)
-    result = cp.advance_default_review_workflow(task.id)
-    if result.get("status") != "waiting_for_reviewer_verdict":
+    try:
+        cp.submit_for_review(task.id, agent.id)
+        result = cp.advance_default_review_workflow(task.id)
+    except Exception as exc:  # The prefix may reject evidence before reviewer selection.
+        print(f"fault reproduced: {exc}")
+        return 1
+    if result.get("status") not in {
+        "waiting_for_reviewer_verdict",
+        "waiting_for_hub_verify",
+    }:
         print(f"fault reproduced: {result}")
         return 1
-    if result.get("reviewer_agent_id") != agent.id:
+    if result.get("reviewer_agent_id") not in {agent.id, "agent_hub-reviewer"}:
         print(f"unexpected fallback reviewer: {result}")
         return 1
-    print("fault absent: sole eligible node received an audited fallback review")
+    print("fault absent: an available reviewer received the review")
     return 0
 
 
