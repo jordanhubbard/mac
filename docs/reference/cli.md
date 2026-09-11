@@ -120,6 +120,9 @@ Break-glass:
 Reporting:
   throughput       task-to-main KPIs, stage dwell, stranded work, and resource collisions
   generator-yield  show each task origin's completion yield and whether the yield gate is letting it file
+  outcome          inspect tests, acceptance, publication and deployment separately
+  outcomes         measure a bounded cohort by task creation time
+  accept           record operator acceptance of the current executor evidence
 
 Migration:
   detect-beads       inspect a repo for .beads/ artifacts (read-only)

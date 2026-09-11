@@ -1007,6 +1007,35 @@ def evaluate_pair(
     )
 
 
+def summarize_execution_capacity(agents: Iterable[AllocationAgent]) -> Dict[str, Any]:
+    """Baseline async capacity, using the allocator's actual pair decisions.
+
+    This is not a promise that a particular project's task can run: capability,
+    project, tenant and routing requirements still need a task evaluation.
+    """
+    eligible: list[str] = []
+    excluded: list[Dict[str, Any]] = []
+    for agent in agents:
+        # Count capacity in any tenant this machine admits, not just the
+        # default tenant. A particular task must still match its own tenant.
+        tenants = agent.authorized_tenants
+        tenant = next(iter(sorted(tenants - agent.denied_tenants)), None) if tenants else None
+        probe = AllocationTask(id="capacity-probe", priority=0, created_at="", tenant_id=tenant)
+        decision = evaluate_pair(probe, agent)
+        if decision.allowed:
+            eligible.append(agent.id)
+        else:
+            excluded.append({"agent_id": agent.id, "reasons": list(decision.agent_rejections)})
+    return {
+        "schema": "mac.execution_capacity.v1",
+        "scope": "baseline_async_execution",
+        "eligible_worker_ids": sorted(eligible),
+        "executable_idle_worker_count": len(eligible),
+        "excluded": excluded,
+        "task_compatibility": "Use task ready or task why-unclaimed for project and task requirements.",
+    }
+
+
 def relax_retry_exclusions(
     task: AllocationTask,
     agents: Iterable[AllocationAgent],

@@ -23,37 +23,63 @@ function describe(err: unknown): string {
  * and re-fetching it under the cursor would move the turn you were reading.
  * It reloads on demand and when the task id changes.
  */
-export function useTask(client: ConsoleClient, taskId: string | null): TaskState {
-  const [detail, setDetail] = useState<TaskDrilldown | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!taskId) {
-      setDetail(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    try {
-      setDetail(await client.task(taskId));
-      setError(null);
-    } catch (err) {
-      // Keep nothing: a stale drill-down for a DIFFERENT task would be worse
-      // than an empty pane, because the header would name the task you asked
-      // for while the body described another.
-      setDetail(null);
-      setError(describe(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, taskId]);
-
+export function useTask(
+  client: ConsoleClient,
+  taskId: string | null,
+): TaskState {
+  const [revision, setRevision] = useState(0);
+  const [result, setResult] = useState<{
+    client: ConsoleClient;
+    taskId: string | null;
+    detail: TaskDrilldown | null;
+    error: string | null;
+    loading: boolean;
+  } | null>(null);
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    setResult((previous) => ({
+      client,
+      taskId,
+      detail:
+        taskId && previous?.client === client && previous.taskId === taskId
+          ? previous.detail
+          : null,
+      error: null,
+      loading: Boolean(taskId),
+    }));
+    if (taskId) {
+      void client.task(taskId).then(
+        (detail) => {
+          if (!cancelled)
+            setResult({ client, taskId, detail, error: null, loading: false });
+        },
+        (err) => {
+          if (!cancelled)
+            setResult({
+              client,
+              taskId,
+              detail: null,
+              error: describe(err),
+              loading: false,
+            });
+        },
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [client, taskId, revision]);
 
-  return { detail, error, loading, reload: () => void load() };
+  // Reject the previous identity even in the render before the effect runs.
+  const current =
+    result?.client === client && result.taskId === taskId ? result : null;
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  return {
+    detail: current?.detail ?? null,
+    error: current?.error ?? null,
+    loading: current?.loading ?? Boolean(taskId),
+    reload,
+  };
 }
 
 export interface TranscriptState {

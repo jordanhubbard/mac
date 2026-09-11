@@ -27,7 +27,7 @@ so rather than assuming it will not happen.
 make install
 ```
 
-This links `mac` into `~/.local/bin` and builds the Fleet IDE.
+This links `mac` into `~/.local/bin` and builds the observability console.
 
 ```console
 mac --version
@@ -84,19 +84,29 @@ heard from.
 
 ## Run your first task
 
-```console
-mac --fleet <name> task create "Add a --version flag to the CLI" \
-    --description-file=brief.txt
-```
-
-Watch it move:
+Use one repository and one executable worker first. From the repository you
+want the fleet to change, register it and inspect the result:
 
 ```console
-mac --fleet <name> task list          # active work only, by default
-mac --fleet <name> task show <id>     # state, history, evidence, reviews
+mac --fleet <name> project register
+mac --fleet <name> project list
+mac --fleet <name> task throughput
 ```
 
-Open `http://<hub>:8789/ui` in a browser for the live view.
+Use the returned project name explicitly. Write `brief.txt` with one small
+change, the exact behavior to demonstrate, and the test command. Then create
+one task:
+
+```console
+mac --fleet <name> task create "Implement the behavior in brief.txt" \
+    --project <project> --description-file=brief.txt
+mac --fleet <name> task show <id>
+mac --fleet <name> task why-unclaimed <id>
+```
+
+Open `http://<hub>:8789/ui` for the live view. A pull request and passing tests
+are intermediate evidence. Follow [the trust workflow](06-trust-workflow.md)
+to check publication and explicitly accept the requested behavior.
 
 ## When a task does not move
 

@@ -1430,6 +1430,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
             "authorization_id": "break_glass_authorization_id"
         },
         ("POST", "/tasks/{task_id}/reviews"): {"task_id": "review_task_id"},
+        ("POST", "/tasks/{task_id}/acceptance"): {"task_id": "publication_task_id"},
         ("DELETE", "/fleets/{fleet_id_or_name}"): {"fleet_id_or_name": "delete_fleet_id"},
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {
@@ -2650,6 +2651,11 @@ edges:
         ("POST", "/tasks/{task_id}/reviews"): {
             "reviewer_agent_id": ctx["reviewer_agent_id"],
             "actor": "dispatcher",
+        },
+        ("POST", "/tasks/{task_id}/acceptance"): {
+            "evidence_id": ctx["publication_evidence_id"],
+            "reason": "Operator inspected the exact result prepared for publication.",
+            "accepted": True,
         },
         ("POST", "/reviews/{review_id}/claim"): {
             "reviewer_agent_id": ctx["reviewer_agent_id"],

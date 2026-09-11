@@ -13736,6 +13736,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: test pg local.",
+    "family": "core",
+    "name": "MAC_TEST_PG_LOCAL",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh",
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test pg max connections.",
     "family": "core",
     "name": "MAC_TEST_PG_MAX_CONNECTIONS",

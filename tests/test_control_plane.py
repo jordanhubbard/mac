@@ -13914,17 +13914,13 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)
 
 
-def test_hub_verify_sandbox_injects_dedicated_test_pg_url(cp, monkeypatch):
-    """Hub-verify must pass a test DSN into the sandbox. Observed live on
-    task_d894080c: the OpenShell sandbox had no MAC_TEST_PG_URL, start-test-postgres
-    could not provision inside --no-auto-providers, and review retried as
-    hub_verify_unavailable."""
+def test_hub_verify_sandbox_provisions_its_own_postgres(cp, monkeypatch):
+    """Remote Linux verification must not start or depend on a hub-host DB."""
     import subprocess as _subprocess
 
     from mac import services as services_mod
 
     captured = []
-    dsn = "postgresql://mac_test@host.openshell.internal:55432/mac_hubverify"
 
     def fake_run(argv, **kwargs):
         captured.append(list(argv))
@@ -13933,7 +13929,11 @@ def test_hub_verify_sandbox_injects_dedicated_test_pg_url(cp, monkeypatch):
         return _subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
-    monkeypatch.setattr(services_mod, "hub_verify_test_pg_url", lambda repo_root: dsn)
+
+    def reject_host_database(repo_root):
+        pytest.fail("verification must provision PostgreSQL inside the sandbox")
+
+    monkeypatch.setattr(services_mod, "hub_verify_test_pg_url", reject_host_database)
     monkeypatch.setenv(
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
@@ -13944,7 +13944,8 @@ def test_hub_verify_sandbox_injects_dedicated_test_pg_url(cp, monkeypatch):
     assert rc == 0
     create = next(a for a in captured if "create" in a and "--upload" in a)
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
-    assert "MAC_TEST_PG_URL=%s" % dsn in env_values
+    assert "MAC_TEST_PG_LOCAL=1" in env_values
+    assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)
 
 
 def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypatch):

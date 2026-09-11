@@ -1292,6 +1292,8 @@ def hub_verify_sandbox_env_pairs(*, test_pg_url: Optional[str] = None) -> List[s
     dsn = (test_pg_url or "").strip()
     if dsn:
         pairs.append("MAC_TEST_PG_URL=%s" % dsn)
+    else:
+        pairs.append("MAC_TEST_PG_LOCAL=1")
     return pairs
 
 
@@ -6850,7 +6852,7 @@ class ControlPlane:
         if not 0 <= refresh_value <= 500:
             raise ValidationError("refresh_limit must be between 0 and 500")
         agents = self.list_agents()
-        idle_worker_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
+        idle_identity_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
 
         # Build the two fleet-wide inputs every stranded-task explanation needs
         # exactly ONCE and reuse them.  ``explain_task_dispatch`` otherwise
@@ -6863,6 +6865,13 @@ class ControlPlane:
         # already computes once per round for exactly this reason.
         projects = {record.name: record for record in self.list_project_records()}
         sync_states = self.dispatch._sync_barrier_states()
+
+        from mac.allocator import summarize_execution_capacity
+
+        capacity = summarize_execution_capacity(
+            self.dispatch._v2_snapshot_agent(agent, sync_states=sync_states) for agent in agents
+        )
+        capacity["idle_identity_count"] = idle_identity_count
 
         def explain(task_id: str) -> JsonDict:
             return self.explain_task_dispatch(
@@ -6879,7 +6888,8 @@ class ControlPlane:
             critical_seconds=critical_value,
             refresh_limit=refresh_value,
             dispatch_explainer=explain,
-            idle_worker_count=idle_worker_count,
+            idle_worker_count=capacity["executable_idle_worker_count"],
+            execution_capacity=capacity,
         )
 
     def update_task(
@@ -8276,6 +8286,32 @@ class ControlPlane:
         # only thing requiring a package, and a tool nothing asks for is still
         # sitting in the security boundary with nothing that would ever notice.
         self.check_sandbox_bom_drift(actor=actor)
+
+    def task_outcome(self, task_id: str) -> JsonDict:
+        from mac.task_outcomes import task_outcome
+
+        return task_outcome(self.store, self.get_task(task_id).id)
+
+    def record_task_acceptance(
+        self, task_id: str, *, evidence_id: str, reason: str, actor: str, accepted: bool = True
+    ) -> JsonDict:
+        from mac.task_outcomes import record_acceptance
+
+        return record_acceptance(
+            self.store,
+            self.get_task(task_id).id,
+            evidence_id=evidence_id,
+            reason=reason,
+            actor=actor,
+            accepted=accepted,
+        )
+
+    def task_outcome_cohort(
+        self, *, project: Optional[str] = None, since_hours: float = 24, limit: int = 100
+    ) -> JsonDict:
+        from mac.task_outcomes import outcome_cohort
+
+        return outcome_cohort(self.store, project=project, since_hours=since_hours, limit=limit)
 
     def task_detail(
         self,
@@ -27383,10 +27419,10 @@ class ControlPlane:
         bootstrap_command: str = "",
     ) -> Tuple[int, str]:
         """Clone the pushed branch and run the contract test in an isolated
-        OpenShell sandbox on the hub. Returns (returncode, tail_of_output).
+        OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
 
         Isolation is mandatory: this executes pushed (agent-authored) test code
-        on the control-plane node, so it must not run on the hub host. Injected
+        for the control plane, so it must not run on the hub host. Injected
         via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
         ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
         runner = getattr(self, "_hub_verify_runner", None)
@@ -27518,7 +27554,6 @@ class ControlPlane:
             argv = [openshell, "sandbox", "create", "--no-auto-providers"]
             if policy:
                 argv += ["--policy", policy]
-            test_pg_url = hub_verify_test_pg_url(tmp / "repo")
             argv += [
                 "--name",
                 name,
@@ -27536,9 +27571,10 @@ class ControlPlane:
             # OpenShell's supervisor resets PATH on fresh create/exec
             # commands instead of preserving the image ENV. Pass the
             # sandbox-owned runtime path explicitly; never inherit the
-            # control-plane host's PATH. MAC_TEST_PG_URL is a dedicated
-            # test DSN on host.openshell.internal (never the live hub Postgres).
-            for value in hub_verify_sandbox_env_pairs(test_pg_url=test_pg_url):
+            # control-plane host's PATH. The test database belongs inside the
+            # sandbox too: the gateway may run on a separate Linux fleet host,
+            # and libpq cannot use OpenShell's HTTP network proxy.
+            for value in hub_verify_sandbox_env_pairs():
                 argv += ["--env", value]
             argv += [
                 "--upload",

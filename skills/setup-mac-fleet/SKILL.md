@@ -16,8 +16,8 @@ agent onto a specific host type (bare metal, VM, or container).
 - Do not commit fleet topology or secrets. Fleet topology belongs in
   `~/.mac/fleets.yaml`; local deploy secrets belong in `~/.mac/.env`.
 - Provider API keys (`NVIDIA_API_KEY`, `OPENAI_API_KEY`, etc.) belong in
-  `~/.mac/.env` — the wizard collects them and TokenHub absorbs them on first
-  deploy. Do not put them in fleet YAML or any committed file.
+  `~/.mac/.env` — the wizard collects them and deployment configures the
+  selected runtime. Do not put them in fleet YAML or any committed file.
 - Keep committed fleet examples generic. Personal fleets must live only in the
   home-scoped fleet registry.
 - The host type is not its own deploy command — it is a combination of `OS`,
@@ -71,9 +71,9 @@ agent onto a specific host type (bare metal, VM, or container).
    bash setup.sh --new-hub <hub-node> --target user@host[:port]
    ```
 
-   Provider keys in `~/.mac/.env` are forwarded through the SSH layer to
-   `seed_or_merge_credentials()`, which writes them into
-   `~/.tokenhub/credentials` on the hub.
+   Provider configuration in `~/.mac/.env` is forwarded through the deployment
+   transport. Inspect the selected runtime's configuration when diagnosing
+   credentials; the current path does not promise a TokenHub credential store.
 
 5. If asked to inspect or edit the fleet later, edit
    `~/.mac/fleets.yaml`, not `deploy/fleet/config.yaml`.
@@ -133,8 +133,10 @@ today.
 
 ## Agent host types
 
-The system runs the same mac agent (vendored Hermes runtime + control-plane /
-worker) on three host types. `deploy/deploy-mac-fleet.sh` is the single deploy
+The system runs the MAC control plane and worker with a separately installed,
+configured gateway runtime on three host types. Hermes is the committed default;
+its stock gateway is installed through `deploy/hermes/install-hermes-gateway.sh`,
+not a vendored `src/mac/_hermes` tree. `deploy/deploy-mac-fleet.sh` is the single deploy
 path for all three; what changes per host is **OS**, **supervisor**, and **SSH
 transport**. The wizard records these per node (`OS`, `supervisor`, `target`,
 and the fleet's `ssh_jump` / network provider). Re-deploy any node with:

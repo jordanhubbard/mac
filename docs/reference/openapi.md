@@ -359,6 +359,7 @@ request and response definitions.
 | `GET` | `/tasks/audit` | Audit Tasks |
 | `POST` | `/tasks/batch` | Apply Task Batch |
 | `GET` | `/tasks/generator-yield` | Task Generator Yield |
+| `GET` | `/tasks/outcomes` | Task Outcome Cohort |
 | `POST` | `/tasks/preflight` | Dispatch Preflight |
 | `GET` | `/tasks/ready` | Ready Tasks |
 | `GET` | `/tasks/ready/explain` | Ready Task Explanations |
@@ -370,6 +371,7 @@ request and response definitions.
 | `DELETE` | `/tasks/{task_id}` | Delete Task |
 | `GET` | `/tasks/{task_id}` | Get Task |
 | `PUT` | `/tasks/{task_id}` | Update Task |
+| `POST` | `/tasks/{task_id}/acceptance` | Record Task Acceptance |
 | `POST` | `/tasks/{task_id}/activity` | Append Task Activity |
 | `POST` | `/tasks/{task_id}/answer` | Answer Task |
 | `POST` | `/tasks/{task_id}/ask` | Ask Task |
@@ -381,6 +383,7 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/evidence` | Add Evidence |
 | `GET` | `/tasks/{task_id}/export` | Export Task |
 | `POST` | `/tasks/{task_id}/force-complete` | Force Complete Task |
+| `GET` | `/tasks/{task_id}/outcome` | Task Outcome |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
 | `POST` | `/tasks/{task_id}/reopen` | Reopen Task |
 | `POST` | `/tasks/{task_id}/review-experiment` | Assign Review Experiment |

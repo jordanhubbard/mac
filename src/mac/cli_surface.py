@@ -121,7 +121,7 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
                 ),
             ),
             ("Break-glass", ("break-glass", "break-glass-list", "break-glass-revoke")),
-            ("Reporting", ("throughput", "generator-yield")),
+            ("Reporting", ("throughput", "generator-yield", "outcome", "outcomes", "accept")),
             (
                 "Migration",
                 (

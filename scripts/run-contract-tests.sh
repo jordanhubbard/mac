@@ -81,6 +81,15 @@ _MAC_CONTRACT_RUNTIME_VENV_REQUESTED="${MAC_CONTRACT_RUNTIME_VENV:-}"
 # sweep silently removes it and every test fails with "MAC_TEST_PG_URL is
 # unset", pointing at the CI provisioning step rather than at this line.
 _MAC_TEST_PG_URL_REQUESTED="${MAC_TEST_PG_URL:-}"
+# A remote OpenShell gateway cannot reach the hub's loopback database through
+# its HTTP proxy. Provision PostgreSQL inside that sandbox instead. Explicit
+# local mode takes precedence over an inherited test DSN; normal callers keep
+# their configured database.
+case "${MAC_TEST_PG_LOCAL:-0}" in
+    0) ;;
+    1) _MAC_TEST_PG_URL_REQUESTED="" ;;
+    *) echo "run-contract-tests.sh: MAC_TEST_PG_LOCAL must be 0 or 1" >&2; exit 2 ;;
+esac
 _MAC_COVERAGE_DIR=""
 # The merge-gate suite and the production merge queue both call
 # `git merge-tree --write-tree`, which only exists in git >= 2.38. Resolve

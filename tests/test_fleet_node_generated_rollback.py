@@ -1093,7 +1093,7 @@ def test_rollback_snapshot_excludes_live_sockets_but_preserves_durable_hermes_st
             + "die() { printf '%s\\n' \"$*\" >&2; exit 73; }\n"
             + "mac_launchd_run_python_bounded() {\n"
             + "  local _mode=$1 _timeout=$2 _program=$3; shift 3\n"
-            + "  python3 -c \"$_program\" \"$@\"\n}\n"
+            + '  python3 -c "$_program" "$@"\n}\n'
             + "snapshot_rollback_directory() {"
             + function
             + "\n}\n"

@@ -192,27 +192,17 @@ Use `mac admin login renew --local-console` to rotate a direct local-console
 profile through the same socket; the new bearer is validated before replacing
 the local credential.
 
-## File tasks in dependency order, because there is no second chance
+## Sequence tasks before releasing them
 
-`mac task create` takes `--dependencies`. **`mac task update` does not.** Only
-creation can establish an edge, so a task filed without one can never be
-sequenced afterwards through the CLI — you would have to `PUT /tasks/<id>`
-against the hub with a dependencies array.
+Both `mac task create` and `mac task update` accept `--dependencies`.
+Update replaces the dependency list; pass `--dependencies ""` to remove it.
+Editable-state and cycle checks still apply. A running task is not editable.
 
-That matters because the ledger dispatches fast. A task filed now is claimed by
-a fleet agent within minutes — sooner than it takes to file the next few tasks
-and work out how they relate. There is no "file them all, sequence them after".
-
-So when a batch of findings has an order:
-
-1. File the gating task first — the ADR, the decision, the thing that must be
-   settled before anything else is safe to touch.
-2. Note its id.
-3. Create each dependent task WITH `--dependencies` in the same command.
-
-A dependent task enters `waiting` rather than `open`, and stops being claimable
-until its blocker reaches a terminal state. That is the whole mechanism; it
-simply cannot be applied retroactively.
+File gating tasks first and create dependents with their dependencies already
+set. If you need to assemble a batch before sequencing it, create it with
+`--no-dispatch`, update the dependencies, inspect them, then release the tasks.
+Under the default `all_success` join policy, only completed dependencies
+release their dependents; failed or cancelled dependencies do not.
 
 **What happens if you skip this.** On 2026-08-20 eleven tasks were filed flat in
 one session. Within the hour four were `reviewing`, four `failed`, one
@@ -272,7 +262,17 @@ So:
 
     mac admin machine register <host> --machine-id machine_<host>
     mac agent register machine_<host> <session-name> --agent-id agent_<name>
-    mac task claim <task_id> <agent_id>      # BEFORE you start work
+    mac agent hold <agent_id> --reason "Interactive session; do not auto-dispatch"
+
+An ordinary claim respects agent and task holds. For an explicitly authorized
+local host implementation, record the single-task execution-boundary exception
+with `mac task break-glass <task_id> <agent_id> --reason "..."`, then claim and
+start that exact task. The authorization expires and is consumed once; it does
+not release other work. Inspect `mac task break-glass-list <task_id>` to confirm
+it. Normal fleet execution uses the ordinary allocator, without this exception.
+
+    mac task claim <task_id> <agent_id>
+    mac task start <task_id> <agent_id>
 
 **Register held, and understand what the hold does.** An interactive session
 must never be a dispatch target — it cannot answer an assignment. `mac agent
@@ -285,10 +285,11 @@ because it stops an agent that would have done the work.
 state machine is what stops you: from `open` the only legal moves are `blocked,
 cancelled, claimed, failed, needs_input, waiting` — `completed` is not among
 them. Completion is reachable only through `claimed -> running -> needs_review`,
-i.e. through the fleet's own review loop. Work finished outside that loop
-cannot be marked completed at all; the only exit is `cancel` with an
-explanatory reason, which files finished work under abandonment. Do not assume
-this ledger's cancelled count means work was abandoned.
+i.e. through the fleet's own review loop. Repository completion still requires canonical integration proof, including
+for `force-complete`. Do not substitute an operator acceptance record for that
+proof. If a held task is superseded by another implementation task, use the
+explicit superseded disposition and replacement task so the ledger preserves
+why no separate execution is needed.
 
 **Releasing a hold hands the task out immediately.** `mac task release` clears
 a `--no-dispatch` hold (use it — do not hand-edit `metadata.no_dispatch`).
