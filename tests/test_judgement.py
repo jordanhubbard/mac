@@ -436,17 +436,21 @@ def test_open_pull_request_preserves_semantic_review_intervention(cp):
 def test_open_pull_request_does_not_stop_pending_hub_review(cp, state):
     reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
     task = _park_in_review(cp, "independent verification", reviewer)
+    # Keep the separate population guard out of this per-PR regression.
+    cp.create_task("queued work", project="mac")
     with cp.store.transaction() as conn:
         conn.execute("UPDATE tasks SET state = ? WHERE id = ?", (state, task.id))
 
     report = _process(
         cp,
+        excessive_reviewing_fraction=1.0,
         pr_lister=lambda _root: {
             "open": [{"number": 803, "title": task.id}],
             "merged": [],
         },
     ).run_once()
     kinds = [finding["kind"] for finding in report["findings"]]
+    assert "excessive_reviewing_population" not in kinds
     assert ("unlanded_pull_request" in kinds) == (state in {"blocked", "failed"})
     assert cp.get_task(task.id).state == ("stopped" if state == "blocked" else state)
 
