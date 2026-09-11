@@ -2025,7 +2025,7 @@ so rather than assuming it will not happen.</p>
 <h2 id="install-the-cli">Install the CLI<a class="headerlink" href="#install-the-cli" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">make install</span>
 </code></pre></div>
-<p>This links <code>mac</code> into <code>~/.local/bin</code> and builds the Fleet IDE.</p>
+<p>This links <code>mac</code> into <code>~/.local/bin</code> and builds the observability console.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac --version</span>
 </code></pre></div>
 <h2 id="create-a-fleet">Create a fleet<a class="headerlink" href="#create-a-fleet" title="Permanent link">&para;</a></h2>
@@ -2060,14 +2060,23 @@ process over the record: the hub stores a <em>reported</em> status, and the cons
 Agents view exists to put that next to the last time the agent was actually
 heard from.</p>
 <h2 id="run-your-first-task">Run your first task<a class="headerlink" href="#run-your-first-task" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac --fleet &lt;name&gt; task create &quot;Add a --version flag to the CLI&quot; \</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">    --description-file=brief.txt</span>
+<p>Use one repository and one executable worker first. From the repository you
+want the fleet to change, register it and inspect the result:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac --fleet &lt;name&gt; project register</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">mac --fleet &lt;name&gt; project list</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">mac --fleet &lt;name&gt; task throughput</span>
 </code></pre></div>
-<p>Watch it move:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac --fleet &lt;name&gt; task list          # active work only, by default</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">mac --fleet &lt;name&gt; task show &lt;id&gt;     # state, history, evidence, reviews</span>
+<p>Use the returned project name explicitly. Write <code>brief.txt</code> with one small
+change, the exact behavior to demonstrate, and the test command. Then create
+one task:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac --fleet &lt;name&gt; task create &quot;Implement the behavior in brief.txt&quot; \</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">    --project &lt;project&gt; --description-file=brief.txt</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">mac --fleet &lt;name&gt; task show &lt;id&gt;</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac --fleet &lt;name&gt; task why-unclaimed &lt;id&gt;</span>
 </code></pre></div>
-<p>Open <code>http://&lt;hub&gt;:8789/ui</code> in a browser for the live view.</p>
+<p>Open <code>http://&lt;hub&gt;:8789/ui</code> for the live view. A pull request and passing tests
+are intermediate evidence. Follow <a href="../06-trust-workflow/">the trust workflow</a>
+to check publication and explicitly accept the requested behavior.</p>
 <h2 id="when-a-task-does-not-move">When a task does not move<a class="headerlink" href="#when-a-task-does-not-move" title="Permanent link">&para;</a></h2>
 <p>This is the most common early frustration, and it has three usual causes.</p>
 <p><strong>It was never claimable.</strong> Ask before filing:</p>

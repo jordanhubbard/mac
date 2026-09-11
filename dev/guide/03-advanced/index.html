@@ -582,63 +582,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#known-gaps" class="md-nav__link">
+  <a href="#recovery-and-delivery-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Known gaps
+        Recovery and delivery limits
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Known gaps">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#agentbus-consumption-is-partial" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        AgentBus consumption is partial
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#what-the-hub-cannot-do-yet" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What the hub cannot do yet
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#permanent-failures-are-retried-as-transient" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Permanent failures are retried as transient
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dead-dependencies-are-indistinguishable-from-live-ones" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dead dependencies are indistinguishable from live ones
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -2029,63 +1979,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#known-gaps" class="md-nav__link">
+  <a href="#recovery-and-delivery-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Known gaps
+        Recovery and delivery limits
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Known gaps">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#agentbus-consumption-is-partial" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        AgentBus consumption is partial
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#what-the-hub-cannot-do-yet" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What the hub cannot do yet
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#permanent-failures-are-retried-as-transient" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Permanent failures are retried as transient
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dead-dependencies-are-indistinguishable-from-live-ones" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dead dependencies are indistinguishable from live ones
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -2139,15 +2039,21 @@ also means lease expiry is a <em>retry</em>, not an error — and a task whose w
 cannot land will be retried until <code>max_attempts</code>, which is exactly how one task
 can produce many pull requests.</p>
 <h2 id="evidence-and-review">Evidence and review<a class="headerlink" href="#evidence-and-review" title="Permanent link">&para;</a></h2>
-<p>Work is not accepted because an agent says it succeeded. It is accepted because
-<strong>evidence</strong> was recorded and a <strong>review</strong> judged it.</p>
+<p>A successful executor exit is not proof that the request was satisfied.
+<strong>Evidence</strong>, <strong>review</strong>, <strong>publication</strong>, and <strong>operator acceptance</strong> record
+different facts.</p>
 <ul>
 <li>Evidence is typed. A <code>code</code> deliverable expects a repository change; a
   <code>report</code> deliverable is satisfied by an <code>operator_result</code> — a substantive
   summary with no diff. That distinction exists so a non-code task cannot be
   closed by a diff, and a code task cannot be closed by prose.</li>
 <li>The default review workflow runs on the hub's publication worker, clones the
-  repository, and runs a contract gate.</li>
+  repository, and runs a contract gate. That validates the recorded tests, not
+  every behavior in the request. Qualifying non-repository results can follow
+  a deterministic approval path; do not read that as independent user acceptance.</li>
+<li><code>mac task outcome &lt;id&gt;</code> separates these facts. <code>mac task accept</code> records an
+  operator decision against the current executor evidence and attempt. It
+  cannot bypass review, complete a task, or prove deployment.</li>
 </ul>
 <h2 id="publication-the-hard-part">Publication: the hard part<a class="headerlink" href="#publication-the-hard-part" title="Permanent link">&para;</a></h2>
 <p>A task is not complete when a pull request opens. It is complete when the work
@@ -2205,72 +2111,37 @@ column holding ISO-8601 with a <code>T</code>. Comparing it against
 cast produces a space-separated string and <code>'T' &gt; ' '</code>. Filter with an
 ISO-formatted literal instead. The same trap has produced wrong retention
 metrics and wrong incident rates.</p>
-<h2 id="known-gaps">Known gaps<a class="headerlink" href="#known-gaps" title="Permanent link">&para;</a></h2>
-<p>These are real, measured, and tracked. They are here so you can operate around
-them.</p>
-<h3 id="agentbus-consumption-is-partial">AgentBus consumption is partial<a class="headerlink" href="#agentbus-consumption-is-partial" title="Permanent link">&para;</a></h3>
-<p>Workers emit typed events (<code>git.pushed</code>, <code>task.claimed</code>, <code>capacity.saturated</code>
-and others) from their own git and task paths, and the hub emits the terminal
-ones from the path that performs them: <code>git.pr_opened</code>, <code>git.merged</code> and
-<code>git.canonical_advanced</code>.</p>
-<p>Two consumers exist. Between tasks a worker acts on <code>sandbox.policy_changed</code>
-and declines to claim under a superseded guardrail. Before a task starts, the
-worker reads the recent feed, keeps the events relevant to that task (same
-task, repository, project, or a branch/tip the task builds on), and attaches at
-most 50 of them to the task record — which is what the coding agent's prompt
-renders as its <strong>AgentBus context</strong>, and what the finalizer checks before
-opening a pull request.</p>
-<p>That closes the failure this section used to describe: a task that opened eight
-pull requests across eight leases, one every ~30 minutes, because nothing could
-tell it its own work had already merged.</p>
-<p>What is still open:</p>
-<ul>
-<li><strong>The addressed bus (<code>/agentbus/traffic</code>) has no consumer.</strong> Broadcasts are
-  read; point-to-point messages are still only read by a human running
-  <code>mac admin agentbus read</code>.</li>
-<li><strong>Filtered reads can starve.</strong> The hub's filtered read scans a bounded ten
-  pages and returns nothing on a miss <em>without advancing the caller's cursor</em>,
-  so a rare event type can sit permanently beyond the window. Every consumer in
-  the codebase works around it by reading unfiltered and filtering locally
-  (tracked as <code>task_8cc72ba4</code>).</li>
-<li><strong>Retention is the only bound on the feed's history</strong>, so context older than
-  the retained window is not recoverable from the bus — use the ledger.</li>
-</ul>
-<h3 id="what-the-hub-cannot-do-yet">What the hub cannot do yet<a class="headerlink" href="#what-the-hub-cannot-do-yet" title="Permanent link">&para;</a></h3>
-<p>The hub <em>detects</em> runaway conditions — the signal above fired on that task
-while it was happening — but cannot act. The AgentBus lifecycle vocabulary has
-<code>fleet</code>, <code>project</code>, <code>agent</code> and <code>task</code> scopes, and the verbs <code>stand_down</code>,
-<code>abort</code>, <code>pause</code>, <code>resume</code>, <code>status</code>; but nothing consumes a directive, and the
-hub has no authority to issue one. Detection without a channel is a report
-nobody reads.</p>
-<h3 id="permanent-failures-are-retried-as-transient">Permanent failures are retried as transient<a class="headerlink" href="#permanent-failures-are-retried-as-transient" title="Permanent link">&para;</a></h3>
-<p>Publication treats every failure as retryable. That is right for a network
-error, a lease conflict or a full queue window, and wrong for a reviewed commit
-that no longer exists:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git publication verify_commit failed:
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>fatal: Not a valid object name &lt;sha&gt;^{commit}
-</code></pre></div>
-<p>No number of retries makes that SHA resolve. Until classification lands, a task
-in this state consumes publication sweep slots indefinitely. The mitigation is
-to park it: <code>mac task ask &lt;id&gt; --question "..."</code> moves it to <code>needs_input</code> and
-out of the sweep.</p>
-<h3 id="dead-dependencies-are-indistinguishable-from-live-ones">Dead dependencies are indistinguishable from live ones<a class="headerlink" href="#dead-dependencies-are-indistinguishable-from-live-ones" title="Permanent link">&para;</a></h3>
-<p>A task blocked on a <code>failed</code> dependency looks exactly like one legitimately
-sequenced behind live work, in every list view. Nothing computes whether a
-blocker can still arrive.</p>
+<h2 id="recovery-and-delivery-limits">Recovery and delivery limits<a class="headerlink" href="#recovery-and-delivery-limits" title="Permanent link">&para;</a></h2>
+<p>AgentBus broadcasts supply context between tasks. Harness hooks also provide
+partial in-flight delivery; support varies by harness and message type. A
+queued message is not proof that the executor read or acted on it. Consult
+<a href="../../adr/0032-cli-session-hooks-not-tmux/">the hook implementation status</a>
+and inspect acknowledgments. For a required stop, use the authenticated
+<code>mac task stop</code> lifecycle operation, which checks executor abort, rather than
+relying on conversational delivery.</p>
+<p>Use <code>mac task why-unclaimed &lt;id&gt;</code> and <code>mac task throughput</code> to distinguish live
+dependencies, failed blockers, held work, and publication parks. Recovery is
+state-specific: neither repeated publication sweeps nor cancelling a failed
+dependency guarantees progress. The <a href="../06-trust-workflow/">trust workflow</a>
+shows the operator handoff and the evidence to preserve before retrying.</p>
+<p>An idle identity is not execution capacity. Throughput reports baseline
+allocator-eligible workers separately from idle identities, with exclusion
+reasons. A baseline-eligible worker may still fail a particular task's
+capability, hardware, project, or tenant requirements; inspect the task's
+allocation explanation before changing fleet size.</p>
 <h2 id="operating-notes">Operating notes<a class="headerlink" href="#operating-notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>MAC_REVIEW_TICK_LIMIT</code></strong> caps how many tasks the publication sweep
   advances per cycle. Raising it to work around a starved sweep gives the
   starving task more slots too; fix the cause instead.</li>
-<li><strong>The hub serves code from <code>~/.mac/src/mac</code></strong>, not from a developer checkout.
-  Deploy is a fast-forward there plus a supervisor restart, and it is verified
-  by PID change rather than checkout SHA — <code>refresh-source</code> has reported
-  <code>restart_requested: false</code> while the checkout advanced.</li>
-<li><strong><code>schema.sql</code> is <code>CREATE TABLE IF NOT EXISTS</code> with no migration framework.</strong>
-  It creates missing <em>tables</em> on restart, so a new table provisions itself. It
-  is a <strong>no-op for a new column on an existing table</strong> — those need a
-  hand-applied <code>ALTER</code>, and <code>migrations/</code> is manual-only; nothing reads it.</li>
+<li><strong>The hub serves deployed code</strong>, not the operator's checkout. Verify the
+  deployed revision and the running process after a rollout; a source update
+  alone does not prove that the process loaded it.</li>
+<li><strong>Schema changes use versioned migrations.</strong> <code>mac.schema_migrations</code> owns
+  the ordered checksum ledger and transactional application. Deploy invokes
+  <code>mac-schema-migrate</code>; ordinary startup verifies the schema and fails on
+  drift. Editing the bootstrap <code>schema.sql</code> is not an upgrade procedure. See
+  <a href="../../adr/0021-schema-changes-need-versioned-migrations/">the migration contract</a>.</li>
 </ul>
 
 
