@@ -116,12 +116,15 @@ ask another agent to re-implement the same change.
 
 ### 10. `unlanded_pull_request`
 
-A PR is still open, the task is `failed` / `blocked` / `reviewing`,
+A PR is still open, the task is `failed` / `blocked` / `waiting`,
 and nothing with that task id has merged. This is the good work that
 got stuck in semantic review and never landed — `#643` (docs audit),
 `#634` (route-ladder ADR), and dozens more.
 
-**Intervene:** stop the looping task. Do **not** close the PR. The
+**Intervene:** stop a blocked task; retain failed or waiting work for recovery.
+An open PR is normal during `needs_review` or `reviewing` and does not justify
+stopping it. The age, repeated rejection and semantic reviewer checks above
+handle actual review stalls. Do **not** close the PR. The
 branch is the salvage. Hub-verify is the only gate left; a later
 operator or judgement cycle can land it. Closing it is how the work
 disappears a second time.

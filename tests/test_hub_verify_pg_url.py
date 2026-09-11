@@ -78,6 +78,7 @@ def test_hub_verify_env_pairs_include_path_and_optional_dsn() -> None:
     assert "HOME=/tmp" in pairs
     assert "PATH=%s" % SANDBOX_BASE_PATH in pairs
     assert not any(item.startswith("MAC_TEST_PG_URL=") for item in pairs)
+    assert "MAC_TEST_PG_LOCAL=1" in pairs
     injected = hub_verify_sandbox_env_pairs(
         test_pg_url="postgresql://mac_test@host.openshell.internal:55432/mac_hubverify"
     )
@@ -85,6 +86,7 @@ def test_hub_verify_env_pairs_include_path_and_optional_dsn() -> None:
         "MAC_TEST_PG_URL=postgresql://mac_test@host.openshell.internal:55432/mac_hubverify"
         in injected
     )
+    assert "MAC_TEST_PG_LOCAL=1" not in injected
 
 
 def test_hub_verify_test_pg_url_runs_helper_on_dedicated_port(tmp_path: Path, monkeypatch) -> None:

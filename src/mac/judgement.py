@@ -51,7 +51,9 @@ DEFAULT_TOO_MANY_GATES = 3
 _ACTIVE_REVIEW_STATES = frozenset({"needs_review", "reviewing"})
 _IN_FLIGHT_STATES = frozenset({"claimed", "running", "needs_review", "reviewing"})
 _ORPHAN_PR_STATES = frozenset({"completed", "cancelled"})
-_UNLANDED_PR_STATES = frozenset({"failed", "blocked", "reviewing", "needs_review", "waiting"})
+# Pending review normally has an open PR. Age, repeated rejection and semantic
+# reviewer checks own review intervention; PR existence is not a failure signal.
+_UNLANDED_PR_STATES = frozenset({"failed", "blocked", "waiting"})
 _TASK_ID_RE = re.compile(r"task_[0-9a-f]{8,}")
 _FULL_TASK_ID_RE = re.compile(r"task_[0-9a-f]{32}$")
 _GIT_SHA_RE = re.compile(r"[0-9a-fA-F]{40}$")
@@ -721,11 +723,7 @@ class JudgementProcess:
                                 "task_state": state,
                                 "mergeable": pr.get("mergeable"),
                             },
-                            recommended_action=(
-                                "stop_task"
-                                if state in (_ACTIVE_REVIEW_STATES | {"blocked"})
-                                else ""
-                            ),
+                            recommended_action="stop_task" if state == "blocked" else "",
                         )
                     )
         for task_id, prs in by_task.items():

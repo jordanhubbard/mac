@@ -1292,6 +1292,8 @@ def hub_verify_sandbox_env_pairs(*, test_pg_url: Optional[str] = None) -> List[s
     dsn = (test_pg_url or "").strip()
     if dsn:
         pairs.append("MAC_TEST_PG_URL=%s" % dsn)
+    else:
+        pairs.append("MAC_TEST_PG_LOCAL=1")
     return pairs
 
 
@@ -27417,10 +27419,10 @@ class ControlPlane:
         bootstrap_command: str = "",
     ) -> Tuple[int, str]:
         """Clone the pushed branch and run the contract test in an isolated
-        OpenShell sandbox on the hub. Returns (returncode, tail_of_output).
+        OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
 
         Isolation is mandatory: this executes pushed (agent-authored) test code
-        on the control-plane node, so it must not run on the hub host. Injected
+        for the control plane, so it must not run on the hub host. Injected
         via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
         ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
         runner = getattr(self, "_hub_verify_runner", None)
@@ -27552,7 +27554,6 @@ class ControlPlane:
             argv = [openshell, "sandbox", "create", "--no-auto-providers"]
             if policy:
                 argv += ["--policy", policy]
-            test_pg_url = hub_verify_test_pg_url(tmp / "repo")
             argv += [
                 "--name",
                 name,
@@ -27570,9 +27571,10 @@ class ControlPlane:
             # OpenShell's supervisor resets PATH on fresh create/exec
             # commands instead of preserving the image ENV. Pass the
             # sandbox-owned runtime path explicitly; never inherit the
-            # control-plane host's PATH. MAC_TEST_PG_URL is a dedicated
-            # test DSN on host.openshell.internal (never the live hub Postgres).
-            for value in hub_verify_sandbox_env_pairs(test_pg_url=test_pg_url):
+            # control-plane host's PATH. The test database belongs inside the
+            # sandbox too: the gateway may run on a separate Linux fleet host,
+            # and libpq cannot use OpenShell's HTTP network proxy.
+            for value in hub_verify_sandbox_env_pairs():
                 argv += ["--env", value]
             argv += [
                 "--upload",

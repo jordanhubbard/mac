@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-contract-tests.sh"
@@ -611,6 +612,50 @@ def _stage_interpreter_repo(
     ):
         env.pop(marker, None)
     return repo, env
+
+
+@pytest.mark.parametrize("local", ["0", "1", "invalid"])
+def test_contract_runner_local_postgres_overrides_only_when_requested(tmp_path, local):
+    repo, env = _stage_interpreter_repo(tmp_path, broken_venv=False, provide_builder=True)
+    probe = tmp_path / "database-probe"
+    helper = repo / "scripts" / "start-test-postgres.sh"
+    _write_exec(
+        helper,
+        "#!/bin/sh\n"
+        'test -z "${MAC_TEST_PG_URL:-}" || exit 31\n'
+        'echo provisioned > "$DB_PROBE.helper"\n'
+        "echo export MAC_TEST_PG_URL=postgresql://sandbox@127.0.0.1/mac_test\n",
+    )
+    _write_exec(
+        repo / ".venv" / "bin" / "python",
+        "#!/bin/sh\n"
+        'printf "%s" "${MAC_TEST_PG_URL:-}" > "$DB_PROBE"\n' + _GOOD_PY_BODY.split("\n", 1)[1],
+    )
+    env.update(
+        DB_PROBE=str(probe),
+        MAC_TEST_PG_LOCAL=local,
+        MAC_TEST_PG_URL="postgresql://external.invalid/test",
+    )
+    result = subprocess.run(
+        [str(repo / "scripts" / "run-contract-tests.sh")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if local == "invalid":
+        assert result.returncode == 2
+        assert "MAC_TEST_PG_LOCAL must be 0 or 1" in result.stderr
+        assert not probe.exists()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert probe.read_text() == (
+            "postgresql://sandbox@127.0.0.1/mac_test"
+            if local == "1"
+            else "postgresql://external.invalid/test"
+        )
+    assert Path(str(probe) + ".helper").exists() == (local == "1")
 
 
 def test_contract_runner_rebuilds_a_broken_preexisting_venv(tmp_path):

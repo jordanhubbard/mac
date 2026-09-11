@@ -1159,6 +1159,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_PG_DATADIR` | str | consumer-defined | core | Core setting: test pg datadir. |
 | `MAC_TEST_PG_DB` | str | consumer-defined | core | Core setting: test pg db. |
 | `MAC_TEST_PG_IMAGE` | str | consumer-defined | core | Core setting: test pg image. |
+| `MAC_TEST_PG_LOCAL` | str | consumer-defined | core | Core setting: test pg local. |
 | `MAC_TEST_PG_MAX_CONNECTIONS` | str | consumer-defined | core | Core setting: test pg max connections. |
 | `MAC_TEST_PG_MAX_LOCKS` | str | consumer-defined | core | Core setting: test pg max locks. |
 | `MAC_TEST_PG_PORT` | int | consumer-defined | core | Core setting: test pg port. |

@@ -400,7 +400,7 @@ def test_orphaned_pull_request_is_closed(cp):
     assert "orphaned_pull_request" in closed[0][1]
 
 
-def test_unlanded_pull_request_stops_review_but_does_not_close(cp):
+def test_open_pull_request_preserves_semantic_review_intervention(cp):
     reviewer = _register_agent(cp, "bullwinkle")
     task = _park_in_review(cp, "good work never landed", reviewer)
     closed = []
@@ -426,9 +426,29 @@ def test_unlanded_pull_request_stops_review_but_does_not_close(cp):
 
     report = _process(cp, pr_lister=lister, pr_closer=closer).run_once()
     kinds = [finding["kind"] for finding in report["findings"]]
-    assert "unlanded_pull_request" in kinds
+    assert "unlanded_pull_request" not in kinds
+    assert "semantic_reviewer_still_assigned" in kinds
     assert closed == []
     assert cp.get_task(task.id).state == TaskState.STOPPED.value
+
+
+@pytest.mark.parametrize("state", ["needs_review", "reviewing", "blocked", "failed"])
+def test_open_pull_request_does_not_stop_pending_hub_review(cp, state):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    task = _park_in_review(cp, "independent verification", reviewer)
+    with cp.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", (state, task.id))
+
+    report = _process(
+        cp,
+        pr_lister=lambda _root: {
+            "open": [{"number": 803, "title": task.id}],
+            "merged": [],
+        },
+    ).run_once()
+    kinds = [finding["kind"] for finding in report["findings"]]
+    assert ("unlanded_pull_request" in kinds) == (state in {"blocked", "failed"})
+    assert cp.get_task(task.id).state == ("stopped" if state == "blocked" else state)
 
 
 def test_duplicate_open_prs_close_the_older_copy(cp):
