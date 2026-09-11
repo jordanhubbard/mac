@@ -74,22 +74,59 @@ transaction or equivalent durable evidence.
   forward or back by bounded cohorts.
 - [ ] Crash recovery, authorization failures, failed health proofs, and cohort
   rollback are covered and proven in the live fleet.
-- [x] The current `main` source commit is deployed and attested on the hub,
+- [ ] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
-  Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and
-  gpu-worker after typed cohort `20260827T060057Z` (`make deploy HUB=<hub>`
-  with hold-adoptions after a retained roll-forward). Hub `/health` ok;
-  workers idle and unheld; `HERMES_HOME=$MAC_HOME/openclaw`.
-- [x] A failed or interrupted fleet deployment can safely resume without
+  The earlier `060acc50` receipt was valid for its cohort, but it no longer
+  proves this rolling property: Rocky, Natasha, and Bullwinkle remain on
+  `47440824` while newer source exists, and none has a current completed
+  end-to-end canary.
+- [ ] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation
   of generated authority files.
-  Verified by adopting hold
-  `mac admin fleet roll-forward repair retained after 20260827T054339Z`
-  and completing `20260827T060057Z` without rewriting generated authority.
+  The 2026-09-03 interrupted phase-two incident disproved the general claim:
+  `retain_forward` preserved node-side attestation candidates after hub abort
+  discarded them, producing split authority. Ledger
+  `task_99d9fccdb580449a81095b55a17442de`.
 - [ ] Darwin and parallel test harnesses are deterministic enough that required
   gates provide reliable release evidence on the supported development hosts.
 - [ ] Database and agent-owned state upgrades are versioned, ordered, recorded,
   and fail closed as specified by ADR 0027.
+
+### Three-agent fleet recovery
+
+The source-first recovery program is tracked by umbrella ledger
+`task_216da2b6e43b4316af8f8146e8f711e1`. Detailed incident evidence and proof
+criteria live in [Fleet recovery: problems, evidence, and the path to
+readiness](problems.md). The approved architecture is
+[Three-agent fleet recovery design](superpowers/specs/2026-09-03-three-agent-fleet-recovery-design.md).
+
+- [ ] Worker stdout, stderr, result, and manifest fields are structurally
+  redacted before durable persistence; all credentials exposed by the Rocky
+  canary are rotated and their predecessor values are rejected. Ledger
+  `task_e2dcfa7ebaa14478b0b2d51a45b7d79c`.
+- [ ] Fleet credential rotation and deployment derive scoped environment names
+  from one canonical immutable fleet identity, so registry key `rocky` and
+  runtime name `mac` cannot select different authorities. Ledger
+  `task_e2dcfa7ebaa14478b0b2d51a45b7d79c`.
+- [ ] Attestation candidates remain inactive on workers until hub promotion,
+  interrupted epochs cannot leave node and hub signing authority divergent,
+  and stale local journals reconcile to authoritative terminal receipts.
+  Ledger `task_99d9fccdb580449a81095b55a17442de`.
+- [ ] OpenShell and chat-gateway status fail closed when the named live sandbox
+  is absent, stale, or does not match the reported identity; historical
+  `active` and `verified` rows are not accepted as runtime proof. Ledger
+  `task_f2758902a67c4a11af432c169a1b3923`.
+- [ ] Natasha and Bullwinkle each have a recreated, ownership-verified OpenClaw
+  sandbox whose sentinel probe passes and whose fresh heartbeat projects
+  `health_status=healthy`. Ledger
+  `task_f2758902a67c4a11af432c169a1b3923`.
+- [ ] Natasha and Bullwinkle each expose at least one verified in-sandbox coding
+  route capable of satisfying the normal repository execution contract.
+  Ledger `task_f2758902a67c4a11af432c169a1b3923`.
+- [ ] A successor release is deployed to Rocky, Natasha, and Bullwinkle, and
+  each independently completes a target-pinned canary through claim, execution,
+  artifact upload, signature validation, review, completion, and idle return
+  without forced completion or broad break-glass.
 
 ## CLI and plugin distribution
 
@@ -128,17 +165,21 @@ transaction or equivalent durable evidence.
 
 ## Near-term order
 
-1. Complete and verify the top-of-tree hub rollout. Done: `060acc50`,
-   deploy `20260827T060057Z`.
-2. Restore the nightly `#localnews` report. Done: Slack delivery
-   `2026-08-26T22:23:31Z` plus launchd reinstall on `060acc50`.
-3. Prove the hub-mediated upgrade transaction across the full fleet.
-4. Close the autonomous review/repair/publication loop with a live `~/Src/mac`
+1. Close the Rocky evidence-exposure boundary and complete credential
+   rotation after canonical fleet-token naming is fixed.
+2. Repair interruption-safe attestation activation and journal reconciliation.
+3. Make OpenShell/gateway status truthful, then recreate and verify the two
+   missing Linux gateway sandboxes.
+4. Restore at least one verified coding route on each Linux worker.
+5. Ship a successor release and obtain three independent signed end-to-end
+   canary receipts.
+6. Prove the hub-mediated upgrade transaction across the full fleet.
+7. Close the autonomous review/repair/publication loop with a live `~/Src/mac`
    task.
-5. Repair the MAC CLI, verify deterministic plugin generation, and migrate the
+8. Repair the MAC CLI, verify deterministic plugin generation, and migrate the
    fleet to plugin-based CLI installation.
-6. Implement hierarchical sandbox ACL feedback and profile placement.
-7. Revisit dream-cycle analysis only after the higher-priority proofs are
+9. Implement hierarchical sandbox ACL feedback and profile placement.
+10. Revisit dream-cycle analysis only after the higher-priority proofs are
    durable.
 
 ## Known defects from the v1.3.0 capabilities deck (slide 12)
