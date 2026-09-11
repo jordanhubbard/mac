@@ -208,11 +208,6 @@ class SourceConvergenceService:
                 summary["blocked"] += 1
                 continue
 
-            self.cp.set_agent_dispatch_hold(
-                agent_id,
-                "%sgeneration=%d:desired=%s" % (_HOLD_PREFIX, generation, desired_sha[:12]),
-            )
-            summary["held"] += 1
             if dirty:
                 self._write_node(
                     state,
@@ -265,6 +260,11 @@ class SourceConvergenceService:
                 )
                 summary["blocked"] += 1
                 continue
+            self.cp.set_agent_dispatch_hold(
+                agent_id,
+                "%sgeneration=%d:desired=%s" % (_HOLD_PREFIX, generation, desired_sha[:12]),
+            )
+            summary["held"] += 1
             if str(row["current_task_id"] or "") or str(row["status"]) == AgentStatus.BUSY.value:
                 self._write_node(
                     state,

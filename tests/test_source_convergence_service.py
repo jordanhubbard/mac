@@ -134,8 +134,31 @@ def test_controller_fails_closed_without_impact_plan(monkeypatch):
     node = cp.source_convergence_status(fleet_id=fleet.id)["nodes"][0]
     assert node["phase"] == "blocked"
     assert node["blocker_code"] == "operator_direction_required"
-    assert cp.get_agent(agent.id).dispatch_hold is True
+    assert cp.get_agent(agent.id).dispatch_hold is False
     assert cp.list_agentbus_streams(agent_id=agent.id) == []
+
+
+def test_controller_does_not_hold_dirty_checkout_it_will_not_remediate(monkeypatch):
+    cp, fleet, agent = _fixture()
+    monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", agent.id)
+    cp.heartbeat_agent(
+        agent.id,
+        resources={
+            "source_state": {
+                "schema": "mac.worker_source_state.v1",
+                "commit_sha": OLD_SHA,
+                "tree_sha": "a" * 40,
+                "dirty": True,
+            }
+        },
+    )
+
+    result = cp.tick_source_convergence()
+
+    assert result["blocked"] == 1
+    assert cp.get_agent(agent.id).dispatch_hold is False
+    node = cp.source_convergence_status(fleet_id=fleet.id)["nodes"][0]
+    assert node["blocker_code"] == "dirty_checkout"
 
 
 def test_controller_preserves_unrelated_operator_hold(monkeypatch):

@@ -327,6 +327,12 @@ MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
 DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
 AUTO_QUARANTINE_REASON = "auto_quarantine:consecutive_expiries_no_telemetry"
+MACHINE_DISPATCH_HOLD_PREFIXES = (
+    "auto_quarantine:",
+    "fleet_upgrade:",
+    "judgement:",
+    "source_convergence:",
+)
 BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 BREAK_GLASS_EXECUTION_BOUNDARY = "host"
 BREAK_GLASS_MIN_TTL_SECONDS = 60
@@ -379,6 +385,14 @@ def _agent_quarantine_threshold() -> int:
 
 def _agent_zombie_stream_age_seconds() -> int:
     return _env_int("MAC_AGENT_ZOMBIE_STREAM_AGE_SECONDS", 300, minimum=1)
+
+
+def _agent_dispatch_hold_ttl_seconds() -> int:
+    return _env_int("MAC_AGENT_DISPATCH_HOLD_TTL_SECONDS", 3600, minimum=1)
+
+
+def _machine_set_dispatch_hold(reason: Any) -> bool:
+    return str(reason or "").strip().startswith(MACHINE_DISPATCH_HOLD_PREFIXES)
 
 
 def _evidence_artifact_max_bytes() -> int:
@@ -16364,6 +16378,53 @@ class ControlPlane:
         self.agentbus_broadcast.publish_system("agent.resumed.v1", payload={"agent_id": agent_id})
         return agent
 
+    def _release_expired_machine_dispatch_holds(self, *, limit: int) -> List[JsonDict]:
+        ttl_seconds = _agent_dispatch_hold_ttl_seconds()
+        cutoff = (parse_time(utcnow()) - timedelta(seconds=ttl_seconds)).isoformat()
+        reason_filter = " OR ".join(
+            "dispatch_hold_reason LIKE ?" for _ in MACHINE_DISPATCH_HOLD_PREFIXES
+        )
+        rows = self.store.query_all(
+            "SELECT id, dispatch_hold_reason, dispatch_hold_at FROM agents "
+            "WHERE dispatch_hold = 1 AND dispatch_hold_at IS NOT NULL "
+            "AND dispatch_hold_at <= ? AND (%s) "
+            "ORDER BY dispatch_hold_at, id LIMIT ?" % reason_filter,
+            (
+                cutoff,
+                *(prefix + "%" for prefix in MACHINE_DISPATCH_HOLD_PREFIXES),
+                max(1, int(limit)),
+            ),
+        )
+        released: List[JsonDict] = []
+        for row in rows:
+            reason = str(row["dispatch_hold_reason"] or "")
+            if not _machine_set_dispatch_hold(reason):
+                continue
+            changed, agent = self.release_agent_dispatch_hold(str(row["id"]), reason)
+            if not changed:
+                continue
+            detail = {
+                "agent_id": str(row["id"]),
+                "released_reason": reason,
+                "held_since": row["dispatch_hold_at"],
+                "ttl_seconds": ttl_seconds,
+            }
+            released.append(detail)
+            self.record_log(
+                "agent.machine_dispatch_hold_expired",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="info",
+                subject_type="agent",
+                subject_id=str(row["id"]),
+                detail=detail,
+            )
+            self.agentbus_broadcast.publish_system(
+                "agent.resumed.v1",
+                payload={"agent_id": agent.id, "reason": "machine_hold_ttl_expired"},
+            )
+        return released
+
     def unconsumed_control_stream_age_seconds(self, agent_id: str) -> Optional[float]:
         agent = self.get_agent(agent_id)
         published_at = agent.last_control_stream_published_at
@@ -16735,7 +16796,8 @@ class ControlPlane:
         if {"status", "health_status"} & set(meaningful_changes):
             self.dispatch.invalidate_pull_round_cache()
         self._ensure_agent_nap_schedule(agent.id, actor=actor or agent_id)
-        self._release_auto_quarantine_on_heartbeat(agent_before)
+        if resources is not None and resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY):
+            self._release_auto_quarantine_on_heartbeat(agent_before)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
@@ -16800,7 +16862,7 @@ class ControlPlane:
 
         AUTO_QUARANTINE_REASON means "consecutive lease expiries with no
         executor telemetry" -- i.e. the hub believes this worker is a zombie.
-        A heartbeat is direct counter-evidence. Nothing else in the codebase
+        Executor telemetry on a heartbeat is direct counter-evidence. Nothing else in the codebase
         clears this hold: clear_agent_dispatch_hold has only operator callers,
         so a single fleet-wide event (a deploy expiring every in-flight lease)
         could bench every agent permanently. Observed live twice on 2026-07-31.
@@ -16825,7 +16887,7 @@ class ControlPlane:
                 level="info",
                 detail={
                     "agent_id": agent.id,
-                    "reason": "heartbeat proves the agent is not a zombie",
+                    "reason": "heartbeat executor telemetry proves the agent is not a zombie",
                     "released_reason": AUTO_QUARANTINE_REASON,
                     "held_since": agent.dispatch_hold_at,
                 },
@@ -18620,6 +18682,17 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
+        try:
+            expired_dispatch_holds = self._release_expired_machine_dispatch_holds(limit=limit_value)
+        except Exception as exc:  # noqa: BLE001 - hold expiry must never stop dispatch.
+            expired_dispatch_holds = []
+            self.record_log(
+                "agent.machine_dispatch_hold_expiry_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         expired_page = self._expire_leases_sweep_page(limit=limit_value)
         expired = [task.to_dict() for task in expired_page["tasks"]]
         try:
@@ -18825,6 +18898,7 @@ class ControlPlane:
         return {
             "stale_agents": stale_agents,
             "expired_ephemeral_agents": expired_ephemerals,
+            "expired_dispatch_holds": expired_dispatch_holds,
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
