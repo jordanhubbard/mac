@@ -160,10 +160,22 @@ jobs:
         with:
           platforms: arm64
       - name: Execute the immutable main image on ARM64
-        run: >-
-          docker run --rm --platform linux/arm64
-          --entrypoint /opt/mac-venv/bin/mac
-          "ghcr.io/jordanhubbard/mac:git-${GITHUB_SHA}" --help
+        run: |
+          set -euo pipefail
+          image="ghcr.io/jordanhubbard/mac:git-${GITHUB_SHA}"
+          # A scheduled run can overlap the main CI run that publishes this
+          # commit's multi-platform image. Wait for that bounded dependency
+          # instead of treating publication latency as a missing artifact.
+          deadline=$((SECONDS + 1800))
+          until docker manifest inspect "$image" >/dev/null 2>&1; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::immutable main image was not published within 30 minutes: $image" >&2
+              exit 1
+            fi
+            sleep 15
+          done
+          docker run --rm --platform linux/arm64 \
+            --entrypoint /opt/mac-venv/bin/mac "$image" --help
 
   publish:
     name: Publish versioned documentation
