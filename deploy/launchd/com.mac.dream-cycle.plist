@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mac.dream-cycle</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jkh/mac/.venv/bin/python</string>
+        <string>-m</string>
+        <string>mac.cli</string>
+        <string>--db</string>
+        <string>postgres://jkh@localhost/mac_hub</string>
+        <string>admin</string>
+        <string>dream</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>mac</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MAC_DREAM_AUTO_PROMOTE</key>
+        <string>1</string>
+        <key>MAC_QDRANT_URL</key>
+        <string>http://127.0.0.1:6333</string>
+        <key>HOME</key>
+        <string>/Users/jkh</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/jkh/.mac/logs/dream-cycle.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jkh/.mac/logs/dream-cycle.err</string>
+</dict>
+</plist>
