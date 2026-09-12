@@ -236,7 +236,7 @@ verify_gateway() {
   # earlier processes. Only inspect the current service status here.
   status="$("$hermes" gateway status 2>&1)" || die "hermes gateway status failed:
 $status"
-  MAC_HERMES_SERVICE_STATUS="$status" python3 - "$HERMES_HOME" <<'PY_VERIFY'
+  python3 - "$HERMES_HOME" 3<<<"$status" <<'PY_VERIFY'
 import json
 import os
 from pathlib import Path
@@ -246,7 +246,8 @@ import subprocess
 import sys
 import time
 
-status = re.sub(r"\x1b\[[0-9;]*m", "", os.environ["MAC_HERMES_SERVICE_STATUS"])
+with os.fdopen(3) as stream:
+    status = re.sub(r"\x1b\[[0-9;]*m", "", stream.read())
 # Match upstream's current-state summary, never a substring in journal/log
 # history or the "registered but not supervising" fallback explanation.
 launchd = re.search(r"(?m)^[✓ ]*Gateway is supervised by launchd \(PID ([0-9]+)\)\s*$", status)
