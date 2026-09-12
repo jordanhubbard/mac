@@ -2390,6 +2390,7 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
             agent_has_active_lease=self._agent_has_active_lease,
+            agent_is_virtual=self._agent_is_virtual,
         )
         self.deploy = DeployService(
             self.store,
@@ -16742,6 +16743,19 @@ class ControlPlane:
 
     def _ensure_agent_nap_schedule(self, agent_id: str, *, actor: str) -> None:
         agent = self.get_agent(agent_id)
+        if self._agent_is_virtual(agent.id):
+            schedule = self.get_nap_schedule(agent.id)
+            if schedule is not None and schedule.enabled:
+                # Keep the old row and audit history, but retire the worker
+                # schedule that earlier versions assigned to this hub identity.
+                self.configure_nap(
+                    agent.id,
+                    offset_minutes=schedule.offset_minutes,
+                    window_minutes=schedule.window_minutes,
+                    enabled=False,
+                    actor=actor or agent.id,
+                )
+            return
         if agent.status == AgentStatus.OFFLINE.value:
             return
         if self.get_nap_schedule(agent.id) is None:
@@ -17723,6 +17737,8 @@ class ControlPlane:
         )
         due: List[JsonDict] = []
         for row in rows:
+            if self._agent_is_virtual(row["agent_id"]):
+                continue
             offset = int(row["offset_minutes"] or 0) % NAP_WINDOW_MINUTES
             window = int(row["window_minutes"] or 15)
             day_start = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)

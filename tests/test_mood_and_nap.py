@@ -156,6 +156,41 @@ def test_heartbeat_backfills_missing_nap_schedule(cp):
     assert schedule.agent_id == agent.id
 
 
+@pytest.mark.parametrize("name", ["hub-reviewer", "operator", "virtual-coordinator"])
+def test_virtual_agents_do_not_acquire_worker_nap_schedules(cp, name):
+    machine = cp.register_machine("virtual-host")
+    agent = cp.register_agent(machine.id, name, resources={"virtual": True})
+
+    assert cp.get_nap_schedule(agent.id) is None
+    cp.heartbeat_agent(agent.id)
+    assert cp.get_nap_schedule(agent.id) is None
+    with pytest.raises(ValidationError, match="virtual"):
+        cp.configure_nap(agent.id, enabled=True)
+    with pytest.raises(ValidationError, match="virtual"):
+        cp.begin_nap(agent.id)
+    assert cp.get_agent(agent.id).status == AgentStatus.IDLE.value
+
+
+def test_legacy_virtual_nap_schedule_is_ineligible_and_disabled_on_heartbeat(cp):
+    machine = cp.register_machine("virtual-host")
+    agent = cp.register_agent(machine.id, "virtual-coordinator", resources={"virtual": True})
+    # Preserve an old schedule as upgrade input, without creating a new nap.
+    cp.configure_nap(agent.id, offset_minutes=0, enabled=False)
+    cp.store.execute("UPDATE nap_schedules SET enabled = 1 WHERE agent_id = ?", (agent.id,))
+
+    assert cp.next_nap_window(agent.id) is None
+    assert agent.id not in {row["agent_id"] for row in cp.list_due_nap_agents()}
+    result = cp.run_nap_cycle(agent.id)
+    assert result["skipped"] is True
+    assert result["nap_run"] is None
+    assert "virtual" in result["skip_reason"]
+    assert cp.get_agent(agent.id).status == AgentStatus.IDLE.value
+    assert cp.store.query_one("SELECT id FROM nap_runs WHERE agent_id = ?", (agent.id,)) is None
+
+    cp.heartbeat_agent(agent.id)
+    assert cp.get_nap_schedule(agent.id).enabled is False
+
+
 def test_configure_nap_uses_deterministic_offset_when_unspecified(cp):
     a1 = _register_agent(cp, "rocky")
     a2 = _register_agent(cp, "natasha")
