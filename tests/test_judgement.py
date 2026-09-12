@@ -159,7 +159,105 @@ def test_stuck_reviewing_holds_the_semantic_reviewer(cp):
     assert str(getattr(held, "dispatch_hold_reason", "")).startswith(HOLD_REASON_PREFIX)
 
 
-def test_excessive_reviewing_stops_the_fleet_and_can_redeploy(cp):
+@pytest.mark.parametrize("count", [1, 25])
+def test_healthy_review_queue_preserves_reviews_and_running_work(cp, count):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    worker = _register_agent(cp, "worker")
+    reviews = [_park_in_review(cp, "healthy review %d" % index, reviewer) for index in range(count)]
+    running = cp.create_task("unrelated running work", project="mac")
+    cp.claim_task(running.id, worker.id)
+    cp.start_task(running.id, worker.id)
+    process = _process(cp)
+
+    for _ in range(2):
+        report = process.run_once()
+        assert report["check_errors"] == []
+        assert report["actions"] == []
+        assert cp.get_task(running.id).state == TaskState.RUNNING.value
+        assert cp.get_agent(worker.id).dispatch_hold is False
+        assert all(cp.get_task(task.id).state == TaskState.REVIEWING.value for task in reviews)
+
+
+def test_stale_review_queue_targets_stalls_before_fleet_intervention(cp):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    worker = _register_agent(cp, "worker")
+    stalled = [_park_in_review(cp, "stale review %d" % index, reviewer) for index in range(3)]
+    healthy = _park_in_review(cp, "fresh review", reviewer)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    for task in stalled:
+        cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (stale, task.id))
+    running = cp.create_task("unrelated running work", project="mac")
+    cp.claim_task(running.id, worker.id)
+    cp.start_task(running.id, worker.id)
+    process = _process(cp, excessive_reviewing_count=2)
+
+    report = process.run_once()
+    assert report["check_errors"] == []
+    assert {
+        action["task_id"] for action in report["actions"] if action["action"] == "task_stopped"
+    } == {task.id for task in stalled}
+    assert all(cp.get_task(task.id).state == TaskState.STOPPED.value for task in stalled)
+    assert cp.get_task(healthy.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(running.id).state == TaskState.RUNNING.value
+    assert cp.get_agent(worker.id).dispatch_hold is False
+    assert not any(
+        action["action"] in {"fleet_stopped", "fleet_held"} for action in report["actions"]
+    )
+    assert process.run_once()["actions"] == []
+
+
+@pytest.mark.parametrize("recovery_succeeds", [False, True])
+@pytest.mark.parametrize("stalled_count", [3, 25])
+def test_persistent_stale_review_queue_holds_new_dispatch_without_cancelling_work(
+    cp, monkeypatch, recovery_succeeds, stalled_count
+):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    worker = _register_agent(cp, "worker")
+    stalled = [
+        _park_in_review(cp, "stalled review %d" % index, reviewer) for index in range(stalled_count)
+    ]
+    stalled_ids = {task.id for task in stalled}
+    healthy = _park_in_review(cp, "fresh review", reviewer)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    for task in stalled:
+        cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (stale, task.id))
+    running = cp.create_task("unrelated running work", project="mac")
+    cp.claim_task(running.id, worker.id)
+    cp.start_task(running.id, worker.id)
+    original_stop = cp.stop_task
+    recovery = {"fails": True}
+
+    def stop(task_id, **kwargs):
+        if task_id in stalled_ids and recovery["fails"]:
+            raise RuntimeError("synthetic targeted recovery failure")
+        return original_stop(task_id, **kwargs)
+
+    monkeypatch.setattr(cp, "stop_task", stop)
+    process = _process(cp, excessive_reviewing_count=2 if stalled_count == 3 else 20)
+    first = process.run_once()
+    assert first["check_errors"] == []
+    assert any(action["action"] == "error" for action in first["actions"])
+    assert cp.get_agent(worker.id).dispatch_hold is False
+    recovery["fails"] = not recovery_succeeds
+    second = process.run_once()
+    assert second["check_errors"] == []
+    assert sum(action["action"] != "skipped" for action in second["actions"]) <= second["budget"]
+    holds = [action for action in second["actions"] if action["action"] == "fleet_held"]
+    assert bool(holds) is (not recovery_succeeds)
+    assert cp.get_agent(worker.id).dispatch_hold is (not recovery_succeeds)
+    assert cp.get_task(running.id).state == TaskState.RUNNING.value
+    assert cp.get_task(healthy.id).state == TaskState.REVIEWING.value
+    if holds:
+        assert holds[0]["stopped_tasks"] == []
+        assert holds[0]["held_agents"] == [worker.id]
+    else:
+        # With a large queue, the bounded next cycle finishes individual
+        # recovery after the aggregate has dropped below its threshold.
+        process.run_once()
+        assert all(cp.get_task(task.id).state == TaskState.STOPPED.value for task in stalled)
+
+
+def test_multiple_semantic_review_assignments_still_stop_and_redeploy_the_fleet(cp):
     worker = _register_agent(cp, "worker")
     reviewer = _register_agent(cp, "reviewer")
     for index in range(3):
@@ -174,15 +272,15 @@ def test_excessive_reviewing_stops_the_fleet_and_can_redeploy(cp):
     process = _process(
         cp,
         redeploy_runner=runner,
-        excessive_reviewing_count=2,
-        excessive_reviewing_fraction=0.01,
         repo_root="/tmp/mac-judgement",
         redeploy_command="/bin/true",
     )
     report = process.run_once()
     kinds = [finding["kind"] for finding in report["findings"]]
-    assert "excessive_reviewing_population" in kinds
+    assert "semantic_reviewer_still_assigned" in kinds
+    assert "excessive_reviewing_population" not in kinds
     assert any(action["action"] == "fleet_stopped" for action in report["actions"])
+    assert len(redeploys) == 1
 
 
 def test_redeploy_is_bounded_per_day(cp):
