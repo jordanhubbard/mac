@@ -3290,6 +3290,97 @@ def launchd_absence_is_proved(rc, text):
     return rc == 113 and len(not_found) == 1 and state is None and pid is None
 
 
+def systemd_gateway_scope(command, identities):
+    result = {}
+    for owner, name in identities.items():
+        rc, text = run_bounded(
+            command
+            + [
+                "show",
+                name,
+                "--no-pager",
+                "--property=LoadState",
+                "--property=ActiveState",
+                "--property=SubState",
+                "--property=MainPID",
+                "--property=NRestarts",
+            ],
+            clean_env,
+        )
+        fields = {}
+        for line in text.splitlines():
+            if not line or "=" not in line:
+                fail("systemd gateway state is malformed")
+            key, value = line.split("=", 1)
+            if key in fields:
+                fail("systemd gateway state is ambiguous")
+            fields[key] = value
+        if set(fields) != {
+            "LoadState",
+            "ActiveState",
+            "SubState",
+            "MainPID",
+            "NRestarts",
+        }:
+            fail("systemd gateway state is incomplete")
+        if fields.get("LoadState") == "not-found":
+            if fields.get("ActiveState") != "inactive" or fields.get("MainPID") != "0":
+                fail("systemd gateway absent state is contradictory")
+            result[owner] = {
+                "state": "absent",
+                "pid": 0,
+                "restarts": 0,
+                "enabled": "not-found",
+            }
+            continue
+        if rc != 0:
+            fail("systemd gateway state is unreadable")
+        if fields.get("LoadState") != "loaded":
+            fail("systemd gateway load state is unknown")
+        if fields.get("ActiveState") == "active" and fields.get("SubState") == "running":
+            try:
+                pid = int(fields.get("MainPID") or "0")
+                restarts = int(fields.get("NRestarts") or "0")
+            except ValueError:
+                fail("systemd gateway counters are malformed")
+            if pid <= 0 or restarts < 0:
+                fail("systemd gateway has no valid process")
+            state = "running"
+        elif (
+            fields.get("ActiveState") in {"inactive", "failed"}
+            and fields.get("MainPID") == "0"
+        ):
+            state = fields["ActiveState"]
+            pid = 0
+            restarts = 0
+        else:
+            fail("systemd gateway is transitional")
+        enabled_rc, enabled_text = run_bounded(
+            command + ["is-enabled", name], clean_env
+        )
+        enabled_lines = [
+            line.strip() for line in enabled_text.splitlines() if line.strip()
+        ]
+        if len(enabled_lines) != 1 or enabled_lines[0] not in {
+            "enabled",
+            "disabled",
+            "masked",
+            "static",
+            "indirect",
+        }:
+            fail("systemd gateway enablement is ambiguous")
+        enabled = enabled_lines[0]
+        if enabled == "enabled" and enabled_rc != 0:
+            fail("systemd gateway enablement is contradictory")
+        result[owner] = {
+            "state": state,
+            "pid": pid,
+            "restarts": restarts,
+            "enabled": enabled,
+        }
+    return result
+
+
 def live_gateway_sample():
     supervisor = gateway_summary["supervisor"]
     identities = gateway_summary["identities"]
@@ -3308,119 +3399,56 @@ def live_gateway_sample():
             if not sudo:
                 fail("systemd inspection requires noninteractive sudo")
             prefix = [sudo, "-n"]
-        for owner, name in identities.items():
-            rc, text = run_bounded(
-                prefix
-                + [
-                    systemctl,
-                    "show",
-                    name,
-                    "--no-pager",
-                    "--property=LoadState",
-                    "--property=ActiveState",
-                    "--property=SubState",
-                    "--property=MainPID",
-                    "--property=NRestarts",
-                ],
-                clean_env,
-            )
-            fields = {}
-            for line in text.splitlines():
-                if not line or "=" not in line:
-                    fail("systemd gateway state is malformed")
-                key, value = line.split("=", 1)
-                if key in fields:
-                    fail("systemd gateway state is ambiguous")
-                fields[key] = value
-            if set(fields) != {
-                "LoadState",
-                "ActiveState",
-                "SubState",
-                "MainPID",
-                "NRestarts",
+        system_identities = dict(identities)
+        system_identities["legacy_hermes"] = fleet + "-hermes-gateway.service"
+        system = systemd_gateway_scope(prefix + [systemctl], system_identities)
+        user = systemd_gateway_scope([systemctl, "--user"], {
+            "hermes": identities["hermes"], "legacy_hermes": system_identities["legacy_hermes"],
+        })
+        for item in (system["hermes"], system["legacy_hermes"], user["legacy_hermes"]):
+            if item["state"] not in {"absent", "inactive"} or item.get("enabled") not in {
+                "not-found", "disabled", "masked",
             }:
-                fail("systemd gateway state is incomplete")
-            if fields.get("LoadState") == "not-found":
-                if fields.get("ActiveState") != "inactive" or fields.get("MainPID") != "0":
-                    fail("systemd gateway absent state is contradictory")
-                result[owner] = {
-                    "state": "absent",
-                    "pid": 0,
-                    "restarts": 0,
-                    "enabled": "not-found",
-                }
-                continue
-            if rc != 0:
-                fail("systemd gateway state is unreadable")
-            if fields.get("LoadState") != "loaded":
-                fail("systemd gateway load state is unknown")
-            if fields.get("ActiveState") == "active" and fields.get("SubState") == "running":
-                try:
-                    pid = int(fields.get("MainPID") or "0")
-                    restarts = int(fields.get("NRestarts") or "0")
-                except ValueError:
-                    fail("systemd gateway counters are malformed")
-                if pid <= 0 or restarts < 0:
-                    fail("systemd gateway has no valid process")
-                state = "running"
-            elif (
-                fields.get("ActiveState") in {"inactive", "failed"}
-                and fields.get("MainPID") == "0"
-            ):
-                state = fields["ActiveState"]
-                pid = 0
-                restarts = 0
-            else:
-                fail("systemd gateway is transitional")
-            enabled_rc, enabled_text = run_bounded(
-                prefix + [systemctl, "is-enabled", name], clean_env
-            )
-            enabled_lines = [
-                line.strip() for line in enabled_text.splitlines() if line.strip()
-            ]
-            if len(enabled_lines) != 1 or enabled_lines[0] not in {
-                "enabled",
-                "disabled",
-                "masked",
-                "static",
-                "indirect",
-            }:
-                fail("systemd gateway enablement is ambiguous")
-            enabled = enabled_lines[0]
-            if enabled == "enabled" and enabled_rc != 0:
-                fail("systemd gateway enablement is contradictory")
-            result[owner] = {
-                "state": state,
-                "pid": pid,
-                "restarts": restarts,
-                "enabled": enabled,
-            }
+                fail("legacy or system Hermes gateway is not safely disabled")
+        system.pop("legacy_hermes")
+        system["hermes"] = user["hermes"]
+        result = system
     elif supervisor == "launchd":
         launchctl = shutil.which("launchctl")
         if not launchctl:
             fail("launchctl is unavailable")
-        domain = "gui/%d" % os.getuid()
         for owner, label in identities.items():
-            rc, text = run_bounded(
-                [launchctl, "print", domain + "/" + label], clean_env
-            )
-            if launchd_absence_is_proved(rc, text):
-                result[owner] = {"state": "absent", "pid": 0, "restarts": 0}
-                continue
-            if rc != 0:
-                fail("launchd gateway state is unreadable")
-            state = re.search(r"(?m)^\s*state\s*=\s*([^\s]+)", text)
-            pid_match = re.search(r"(?m)^\s*pid\s*=\s*([0-9]+)", text)
-            if not state or state.group(1) != "running" or not pid_match:
-                fail("launchd gateway is loaded but not running")
-            pid = int(pid_match.group(1))
-            if pid <= 0:
-                fail("launchd gateway has no valid process")
-            result[owner] = {
-                "state": "running",
-                "pid": pid,
-                "restarts": 0,
-            }
+            labels = [label]
+            legacy_label = "com." + fleet + ".hermes-gateway"
+            if owner == "hermes" and legacy_label not in labels:
+                labels.append(legacy_label)
+            loaded = []
+            for candidate in labels:
+                for scope in ("gui", "user"):
+                    domain = "%s/%d" % (scope, os.getuid())
+                    rc, text = run_bounded(
+                        [launchctl, "print", domain + "/" + candidate], clean_env
+                    )
+                    if launchd_absence_is_proved(rc, text):
+                        continue
+                    if rc != 0:
+                        fail("launchd gateway state is unreadable")
+                    state = re.search(r"(?m)^\s*state\s*=\s*([^\s]+)", text)
+                    pid_match = re.search(r"(?m)^\s*pid\s*=\s*([0-9]+)", text)
+                    if not state or state.group(1) != "running" or not pid_match:
+                        fail("launchd gateway is loaded but not running")
+                    pid = int(pid_match.group(1))
+                    if pid <= 0:
+                        fail("launchd gateway has no valid process")
+                    if candidate != label:
+                        fail("legacy Hermes launchd job is still loaded")
+                    loaded.append({
+                        "state": "running", "pid": pid, "restarts": 0, "domain": domain,
+                    })
+            if len(loaded) > 1:
+                fail("multiple launchd domains own one gateway")
+            result[owner] = loaded[0] if loaded else {"state": "absent", "pid": 0, "restarts": 0}
+
     else:
         supervisorctl = shutil.which("supervisorctl")
         if not supervisorctl:
@@ -3563,6 +3591,8 @@ if implementation != "none":
         or first_gateway["restarts"] != second_gateway["restarts"]
     ):
         fail("selected gateway restarted during release attestation")
+    if first_gateway.get("domain") != second_gateway.get("domain"):
+        fail("selected gateway changed launchd domain during release attestation")
 
 print(
     json.dumps(
