@@ -64,12 +64,21 @@ because the answer determines what other layers are allowed to stop checking.
 | platform | posture | what confines the agent |
 | --- | --- | --- |
 | Linux | OpenShell managed runtime | Landlock filesystem confinement, an allowed-command set, and a per-binary egress proxy. Fails closed: if the kernel cannot enforce Landlock the executor refuses to run. |
-| macOS | `macos_host` (ADR 0015) | Host OS protections — SIP, TCC, Gatekeeper. There is no OpenShell binary, runtime image or policy, and `MAC_OPENSHELL_SANDBOX` on darwin is a misconfiguration, not a posture to waive. |
+| macOS | `macos_host` (ADR 0015) | Host OS protections — SIP, TCC, Gatekeeper. No local OpenShell runtime; `MAC_OPENSHELL_SANDBOX` on darwin is a misconfiguration, not a posture to waive. The hub may use the OpenShell CLI to request isolated verification on Linux. |
 
 **Accepted, 2026-08-19.** macOS nodes run the agent as a plain host
 application and this is fine for the fleet's threat model: macOS applications
 carry their own OS-level protections, and the darwin nodes are operator
 machines rather than untrusted multi-tenant workers.
+
+For remote verification, `deploy/openshell/install-certifier-gateway-tunnel.sh`
+checks its explicit loopback endpoint with a bounded, read-only
+`sandbox list --limit 1 --names` RPC and confirms that the launchd tunnel job
+is still loaded. An empty sandbox list is healthy. OpenShell 0.0.72 `status`
+can exit successfully after displaying a connection error, so its exit code
+alone is insufficient. A failed readiness check restores the prior launchd
+generation. This proves tunnel and control-API readiness; sandbox execution
+and completion still require their own verification.
 
 Be precise about what that does and does not mean, so nobody over-reads it.
 macOS App Sandbox applies to *entitled application bundles*; a launchd-run
