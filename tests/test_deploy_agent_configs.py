@@ -226,19 +226,20 @@ def test_deploy_rejects_conflicting_service_profile_override(tmp_path):
         )
 
 
-def test_node_gateway_home_keeps_native_hermes_profile(tmp_path):
+@pytest.mark.parametrize("profile", [None, ".hermes", "custom profile"])
+def test_node_gateway_home_preserves_selected_hermes_profile(tmp_path, profile):
+    env = {"HOME": str(tmp_path), "MAC_HOME": str(tmp_path / ".mac")}
+    if profile is not None:
+        env["HERMES_HOME"] = str(tmp_path / profile)
     result = subprocess.run(
         ["bash", "-c", _extract_bash_fn("mac_gateway_home") + "\nmac_gateway_home"],
-        env={
-            "HOME": str(tmp_path),
-            "MAC_HOME": str(tmp_path / ".mac"),
-            "HERMES_HOME": str(tmp_path / ".hermes"),
-        },
+        env=env,
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result.stdout.strip() == str(tmp_path / ".hermes")
+    assert result.stdout.strip() == str(tmp_path / (profile or ".hermes"))
+    assert not (tmp_path / ".mac/openclaw").exists()
 
 
 def test_parse_env_text_skips_malformed_quoted_lines():
