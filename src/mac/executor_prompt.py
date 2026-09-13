@@ -338,7 +338,11 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     files_changed = repo.get("files_changed")
     files_problem = repo_files_changed_problem(files_changed)
     files_count = len(files_changed or []) if repo and not files_problem else None
-    if not files_problem and evidence_type in {"repo_change", "documentation"} and not files_changed:
+    if (
+        not files_problem
+        and evidence_type in {"repo_change", "documentation"}
+        and not files_changed
+    ):
         files_problem = "repo evidence requires changed files"
     # verification.tests is canonically a LIST of result objects (mac-wjy3), but
     # accept a bare dict for backward compatibility with older manifests.

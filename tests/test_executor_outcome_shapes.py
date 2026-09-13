@@ -84,9 +84,10 @@ def test_valid_paths_and_legacy_test_result_keep_their_meaning(tmp_path, legacy_
     assert outcome["signals"]["files_changed"] == 2
     assert outcome["signals"]["tests"] == "pass"
     assert _worker_verification_contract_problems(manifest, "repo_change") == []
-    assert validate_evidence_type(
-        "repo_change", manifest, passed_check_count=lambda _manifest: 1
-    ) == []
+    assert (
+        validate_evidence_type("repo_change", manifest, passed_check_count=lambda _manifest: 1)
+        == []
+    )
 
 
 @pytest.mark.parametrize("repo", [MISSING, {}, {"pushed": True, "files_changed": None}])
@@ -140,6 +141,8 @@ def test_worker_routes_bad_changed_files_to_contract_failure(tmp_path, value):
 
     assert result.status == "blocked"
     assert SHAPE_PROBLEM in result.error
-    event = next(event for event in reversed(cp.task_history(task.id)) if event.to_state == "blocked")
+    event = next(
+        event for event in reversed(cp.task_history(task.id)) if event.to_state == "blocked"
+    )
     assert event.detail["reason"] == "verification_contract_failed"
     assert "executor_execution_boundary_unavailable" not in json.dumps(event.detail)
