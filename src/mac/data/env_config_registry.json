@@ -6595,6 +6595,17 @@
     "type": "str"
   },
   {
+    "default": "default",
+    "description": "Independent verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Affects future review and projected-merge verifiers, not running sandboxes.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PROFILE",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
     "default": null,
     "description": "Hub setting: hub verify runner.",
     "family": "hub",
@@ -13673,7 +13684,8 @@
     "retired": false,
     "sources": [
       "scripts/run-contract-tests.sh",
-      "src/mac/hub_load_shed.py"
+      "src/mac/hub_load_shed.py",
+      "src/mac/services.py"
     ],
     "type": "str"
   },
