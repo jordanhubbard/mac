@@ -81,21 +81,23 @@ class SoulTools:
     def soul_query(self, query: str, hint: str = "", top_k: int = 5) -> JsonDict:
         """Semantic search over the soul graph.
 
-        ``hint`` is an MCP context string (e.g. current task description) that
-        biases traversal toward the relevant graph neighbourhood before the
-        main query runs. If hint is provided it is used as a secondary RAG
-        pass whose results are merged and de-duplicated with the primary.
+        ``hint`` is an MCP context string that biases traversal toward the
+        relevant graph neighbourhood before the main query runs.
         """
         g = self._g
-        results = g.semantic_search(query, top_k=top_k)
+
+        # semantic_search returns (SoulNode, score) tuples
+        def _nodes(hits):
+            return [n for n, _score in hits]
+
+        results = _nodes(g.semantic_search(query, top_k=top_k))
         if hint and hint != query:
-            hint_results = g.semantic_search(hint, top_k=top_k)
+            hint_nodes = _nodes(g.semantic_search(hint, top_k=top_k))
             seen = {n.id for n in results}
-            for n in hint_results:
+            for n in hint_nodes:
                 if n.id not in seen:
                     results.append(n)
                     seen.add(n.id)
-        # Splay every hit so the graph adapts to what was just retrieved
         for n in results:
             g.touch(n.id)
         return _text([
@@ -122,15 +124,41 @@ class SoulTools:
     def soul_discover(self, seed_id: str, hops: int = 2) -> JsonDict:
         """Walk the DAG from seed_id and return nodes you didn't explicitly query.
 
-        This is 'the needful you did not know you were' — graph-assisted
-        discovery of relevant context the caller didn't think to ask for.
+        Uses semantic_search to locate the seed, then walks children through
+        the DAG for ``hops`` levels — surfacing context you didn't think to ask for.
         """
-        nodes = self._g.discover(seed_id, hops=hops)
-        if not nodes:
-            return _text({"discovered": [], "note": f"No nodes reachable from '{seed_id}' in {hops} hops."})
-        return _text({"seed": seed_id, "hops": hops, "discovered": [
+        g = self._g
+        # Find seed — try exact id first, then semantic search
+        seed_node = g.nodes.get(seed_id)
+        if seed_node is None:
+            hits = g.semantic_search(seed_id, top_k=1)
+            if not hits:
+                return _text({"discovered": [], "note": f"No node matching '{seed_id}' found."})
+            seed_node, _ = hits[0]
+
+        # Walk children through DAG
+        visited = {seed_node.id}
+        frontier = set(seed_node.children)
+        discovered = []
+        for _ in range(hops):
+            next_frontier = set()
+            for nid in frontier:
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                nd = g.nodes.get(nid)
+                if nd:
+                    discovered.append(nd)
+                    g.touch(nid)
+                    next_frontier.update(nd.children)
+            frontier = next_frontier - visited
+
+        if not discovered:
+            return _text({"discovered": [], "seed": seed_node.id,
+                          "note": f"No children reachable from '{seed_node.id}' in {hops} hops."})
+        return _text({"seed": seed_node.id, "hops": hops, "discovered": [
             {"id": n.id, "content": n.content, "tags": sorted(n.tags)}
-            for n in nodes
+            for n in discovered
         ]})
 
     # ---- by_tag -----------------------------------------------------------
@@ -168,10 +196,12 @@ class SoulTools:
     def soul_explore(self, id: str, content: str, tags: Optional[List[str]] = None) -> JsonDict:
         """Add a hypothesis to the exploration branch.
 
-        Exploration nodes are isolated from the core graph until explicitly
-        promoted. Use this to test an idea without committing it to identity.
+        Creates or reuses a branch on this SoulTools instance.
+        Isolated from the core graph until soul_promote is called.
         """
-        node = self._g.branch(id=id, content=content, tags=set(tags or []))
+        if not hasattr(self, "_branch") or self._branch is None:
+            self._branch = self._g.branch()
+        node = self._branch.add(content, tags=set(tags or []), node_id=id)
         return _text({"exploring": node.id, "content": node.content,
                       "note": "In exploration branch. Call soul_promote to graduate."})
 
@@ -180,16 +210,28 @@ class SoulTools:
     def soul_promote(self, exp_id: str, parent_ids: Optional[List[str]] = None) -> JsonDict:
         """Promote a hypothesis from exploration into the core graph.
 
-        Optionally wire DAG parent edges on promotion so the new node's
-        causal lineage is recorded honestly.
+        Uses the branch stored on this SoulTools instance. The branch is a
+        full SoulGraph; merge_from copies new nodes into the core graph.
         """
-        node = self._g.merge(exp_id)
-        if node is None:
-            return _error(f"No exploration node '{exp_id}' found. (Use soul_explore first.)")
+        branch = getattr(self, "_branch", None)
+        if branch is None or exp_id not in branch.nodes:
+            return _error(
+                f"No exploration node '{exp_id}' found. "
+                "(Call soul_explore first — it creates a branch on this tools instance.)"
+            )
+        node = branch.nodes[exp_id]
+        # Wire any extra parent edges before merging
         for pid in (parent_ids or []):
-            self._g.link(pid, node.id)
-        return _text({"promoted": node.id, "content": node.content,
-                      "parents": node.parents,
+            if pid not in node.parents:
+                node.parents.append(pid)
+        self._g.merge_from(branch, new_only=True)
+        promoted = self._g.nodes.get(exp_id)
+        if promoted is None:
+            return _error(f"merge_from completed but '{exp_id}' not found in core graph.")
+        for pid in promoted.parents:
+            self._g.link(pid, promoted.id)
+        return _text({"promoted": promoted.id, "content": promoted.content,
+                      "parents": promoted.parents,
                       "note": "Now in core graph. Will splay and decay normally."})
 
     # ---- add --------------------------------------------------------------
@@ -247,25 +289,26 @@ class SoulTools:
             for nd in hot
         ]
 
-        # Step 2: pick seed for discovery — hottest non-axiom, or hottest axiom if all pinned
+        # Step 2: pick seed — hottest non-axiom
         seed = next((nd for nd in hot if not nd.pinned), hot[0] if hot else None)
-
         discovered_out: list = []
         seed_id = None
+
         if seed is not None:
             seed_id = seed.id
-            # Use context as the bias: if context names a node or tag, walk from there instead
             if context:
-                context_hits = g.semantic_search(context, top_k=1)
-                if context_hits:
-                    seed = context_hits[0]
+                # semantic_search returns (SoulNode, score) tuples
+                hits = g.semantic_search(context, top_k=1)
+                if hits:
+                    seed, _ = hits[0]
                     seed_id = seed.id
                     g.touch(seed_id)
-
-            discovered = g.discover(seed_id, hops=discovery_hops)
+            # Walk one hop of children from seed
             discovered_out = [
-                {"id": nd.id, "content": nd.content, "tags": sorted(nd.tags)}
-                for nd in discovered
+                {"id": g.nodes[cid].id, "content": g.nodes[cid].content,
+                 "tags": sorted(g.nodes[cid].tags)}
+                for cid in seed.children[:5]   # cap at 5 to stay cheap
+                if cid in g.nodes
             ]
 
         return _text({

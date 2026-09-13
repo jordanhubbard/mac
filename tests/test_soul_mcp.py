@@ -9,19 +9,34 @@ stub_node.id = "test_node"
 stub_node.content = "be genuinely helpful"
 stub_node.tags = {"axiom", "identity"}
 stub_node.parents = []
+stub_node.children = ["child_node"]
 stub_node.pinned = True
 stub_node.access_count = 3
 stub_node.recency_score.return_value = math.inf
 
+# child node for discover tests
+child_node = MagicMock()
+child_node.id = "child_node"
+child_node.content = "earn trust through competence"
+child_node.tags = {"axiom", "ethics"}
+child_node.parents = ["test_node"]
+child_node.children = []
+child_node.pinned = True
+child_node.access_count = 1
+child_node.recency_score.return_value = math.inf
+
 stub_graph = MagicMock()
-stub_graph.semantic_search.return_value = [stub_node]
+# semantic_search returns (node, score) tuples — Rocky's actual API
+stub_graph.semantic_search.return_value = [(stub_node, 0.9)]
 stub_graph.hot.return_value = [stub_node]
-stub_graph.discover.return_value = [stub_node]
 stub_graph.by_tag.return_value = [stub_node]
 stub_graph.touch.return_value = stub_node
 stub_graph.get.return_value = stub_node
 stub_graph.link.return_value = True
 stub_graph.summary.return_value = {"nodes": 5, "pinned": 1}
+stub_graph.branch.return_value = MagicMock()
+# nodes dict for soul_discover direct lookup
+stub_graph.nodes = {"test_node": stub_node, "child_node": child_node}
 
 # Inject stub module
 mac_mod = types.ModuleType("mac")
@@ -43,7 +58,8 @@ def test_soul_query_returns_results():
 
 
 def test_soul_query_hint_merges():
-    # hint triggers second search pass; stub returns same node so dedup applies
+    # hint triggers second search pass; same node → deduped
+    stub_graph.semantic_search.return_value = [(stub_node, 0.9)]
     r = tools().soul_query("helpful", hint="architecture")
     data = json.loads(r["content"][0]["text"])
     assert len(data) == 1  # deduped
@@ -56,18 +72,20 @@ def test_soul_hot():
 
 
 def test_soul_discover():
-    r = tools().soul_discover("test_node", hops=2)
+    # stub_node.children = ["child_node"], child_node is in stub_graph.nodes
+    r = tools().soul_discover("test_node", hops=1)
     data = json.loads(r["content"][0]["text"])
     assert data["seed"] == "test_node"
-    assert len(data["discovered"]) == 1
+    assert any(n["id"] == "child_node" for n in data["discovered"])
 
 
 def test_soul_discover_empty():
-    stub_graph.discover.return_value = []
-    r = tools().soul_discover("missing", hops=1)
+    # node with no children → empty discovered
+    stub_node.children = []
+    r = tools().soul_discover("test_node", hops=1)
     data = json.loads(r["content"][0]["text"])
     assert data["discovered"] == []
-    stub_graph.discover.return_value = [stub_node]
+    stub_node.children = ["child_node"]  # restore
 
 
 def test_soul_by_tag():
@@ -118,8 +136,7 @@ def test_soul_prime_no_context():
 
 
 def test_soul_prime_with_context():
-    stub_graph.semantic_search.return_value = [stub_node]
-    stub_graph.discover.return_value = [stub_node]
+    stub_graph.semantic_search.return_value = [(stub_node, 0.9)]
     r = tools().soul_prime(context="rockyandfriends soul architecture")
     data = json.loads(r["content"][0]["text"])
     assert data["context_hint"] == "rockyandfriends soul architecture"
@@ -127,15 +144,14 @@ def test_soul_prime_with_context():
 
 
 def test_soul_prime_varies_by_context():
-    # Same graph, different context → different seed used for discovery
-    stub_graph.semantic_search.side_effect = [[], [stub_node]]
+    # No hits for first context → falls back to splay seed; hits for second
+    stub_graph.semantic_search.side_effect = [[], [(stub_node, 0.9)]]
     r1 = tools().soul_prime(context="debugging")
     r2 = tools().soul_prime(context="architecture")
-    # Both complete without error; varying context is the mechanism not the assertion
     assert not r1.get("isError")
     assert not r2.get("isError")
     stub_graph.semantic_search.side_effect = None
-    stub_graph.semantic_search.return_value = [stub_node]
+    stub_graph.semantic_search.return_value = [(stub_node, 0.9)]
 
 
 def test_soul_prime_in_tools_list(tmp_path):
