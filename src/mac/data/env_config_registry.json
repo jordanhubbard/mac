@@ -479,7 +479,6 @@
     "name": "MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "int"
@@ -8212,7 +8211,6 @@
     "name": "MAC_OPENCLAW_AGENT_BIN",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/run-script-cron-job.py",
       "src/mac/acp/backend.py",
       "src/mac/worker_directable.py",
@@ -8876,17 +8874,6 @@
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Openclaw Runtime setting: openclaw startup ok.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_STARTUP_OK",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
   },
   {
     "default": null,
