@@ -13,10 +13,13 @@ import pytest
 
 from mac.models import (
     ACTIVE_TASK_STATES,
+    AuthorizationError,
+    LeaseStatus,
     TASK_TRANSITIONS,
     TERMINAL_TASK_STATES,
     TaskState,
     TransitionError,
+    ValidationError,
 )
 from mac.test_support import control_plane_on, dsn_for
 
@@ -80,6 +83,76 @@ def test_a_stopped_task_is_not_dispatchable(tmp_path):
 
     ready = [t.id for t in cp.ready_tasks()]
     assert task.id not in ready
+
+
+@pytest.mark.parametrize("start", [False, True], ids=["claimed", "running"])
+def test_stop_revokes_execution_authority_and_releases_agent_capacity(tmp_path, start):
+    cp = _cp(tmp_path)
+    task = cp.create_task(title="stoppable", description="original")
+    machine = cp.register_machine("h")
+    agent = cp.register_agent(machine.id, "w")
+    _, lease = cp.claim_task(task.id, agent.id)
+    if start:
+        cp.start_task(task.id, agent.id, lease_id=lease.id)
+
+    stopped = cp.stop_task(task.id, actor="op")
+
+    assert stopped.state == TaskState.STOPPED.value
+    assert stopped.owner_agent_id is None
+    assert stopped.lease_id is None
+    assert stopped.leased_until is None
+    assert cp.get_lease(lease.id).status == LeaseStatus.RELEASED.value
+    assert cp.get_agent(agent.id).current_task_id is None
+    assert cp.get_agent(agent.id).status == "idle"
+    with pytest.raises(ValidationError, match="only active leases"):
+        cp.renew_lease(lease.id, agent.id)
+    with pytest.raises(AuthorizationError):
+        cp.start_task(task.id, agent.id, lease_id=lease.id)
+    with pytest.raises(AuthorizationError):
+        cp.add_evidence(task.id, "test", "local:stale", "stale", agent.id, lease_id=lease.id)
+
+    next_task = cp.create_task(title="next task", description="independent work")
+    claimed, next_lease = cp.claim_task(next_task.id, agent.id)
+    assert claimed.lease_id == next_lease.id
+    assert cp.stop_task(task.id, actor="op").state == TaskState.STOPPED.value
+    assert cp.get_agent(agent.id).current_task_id == next_task.id
+    assert cp.get_lease(next_lease.id).status == LeaseStatus.ACTIVE.value
+
+
+@pytest.mark.parametrize("replace_on_read", [1, 2], ids=["stop-read", "transition-read"])
+def test_stale_stop_cannot_clear_a_newer_lease(tmp_path, monkeypatch, replace_on_read):
+    cp = _cp(tmp_path)
+    task, agent = _running_task(cp)
+    original_get = cp.get_task
+    reads = 0
+    replacement = None
+
+    def replace_after_transition_read(task_id):
+        nonlocal reads, replacement
+        observed = original_get(task_id)
+        if task_id == task.id:
+            reads += 1
+            if reads == replace_on_read:
+                # A completed stop/restart/claim wins after either snapshot
+                # read, before the outer stop reaches its guarded write.
+                monkeypatch.setattr(cp, "get_task", original_get)
+                cp.stop_task(task.id, actor="other operator")
+                cp.start_stopped_task(task.id, actor="other operator")
+                _, replacement = cp.claim_task(task.id, agent.id)
+                cp.start_task(task.id, agent.id, lease_id=replacement.id)
+        return observed
+
+    monkeypatch.setattr(cp, "get_task", replace_after_transition_read)
+    with pytest.raises(TransitionError, match="task state changed during transition"):
+        cp.stop_task(task.id, actor="delayed operator")
+
+    assert replacement is not None and replacement.id != task.lease_id
+    current = cp.get_task(task.id)
+    assert current.state == TaskState.RUNNING.value
+    assert current.lease_id == replacement.id
+    assert current.owner_agent_id == agent.id
+    assert cp.get_lease(replacement.id).status == LeaseStatus.ACTIVE.value
+    assert cp.get_agent(agent.id).current_task_id == task.id
 
 
 def test_stopping_a_terminal_task_is_refused(tmp_path):

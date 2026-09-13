@@ -117,6 +117,7 @@ def test_frozen_contract_covers_every_copy_arg_and_base_digest_boundary() -> Non
     runtime = module.IMAGE_SPECS["openshell-runtime"]
 
     assert _copy_sources(ROOT / "Dockerfile") == {
+        ".python-version",
         "README.md",
         "deploy/mac-crash-observer.py",
         "pyproject.toml",
@@ -125,6 +126,7 @@ def test_frozen_contract_covers_every_copy_arg_and_base_digest_boundary() -> Non
     }
     assert _copy_sources(ROOT / "deploy/openshell/mac-hermes.Containerfile") == {
         ".mac-openshell-build-assets",
+        ".python-version",
         "README.md",
         "deploy/verify-bash-contract.sh",
         "pyproject.toml",

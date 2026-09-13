@@ -1,7 +1,7 @@
 # mac-hermes sandbox image — the runtime image OpenShell runs the Hermes agent
 # inside (`openshell sandbox create --from localhost/mac-hermes:net`).
 #
-# Multi-arch: python:3.12-slim resolves to the host architecture, so the SAME
+# Multi-arch: the pinned Python image resolves to the host architecture, so the SAME
 # Containerfile builds natively on x86_64 (rocky, bullwinkle) and aarch64
 # (natasha / GB10). Build from the mac source tree as context:
 #
@@ -16,9 +16,9 @@
 # comments): a `sandbox` user/group, `iproute2` (the egress proxy's `ip`), the
 # hermes_cli path hook, and a sandbox-writable /sandbox for the Docker driver.
 
-FROM ghcr.io/astral-sh/uv@sha256:9874eb7afe5ca16c363fe80b294fe700e460df29a55532bbfea234a0f12eddb1 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.12@sha256:73d2665b478d8fa2de1cf105c6841f8e9cb6b09e568fc7700440c09f8fcd7ac4 AS uv
 
-FROM docker.io/library/python@sha256:60d9996b6a8a3689d36db740b49f4327be3be09a21122bd02fb8895abb38b50d
+FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f
 
 ENV DEBIAN_FRONTEND=noninteractive \
     UV_LINK_MODE=copy \
@@ -202,7 +202,7 @@ ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
 # mac/_hermes/hermes_cli, which `import hermes_cli` only finds if mac/_hermes is
 # on sys.path — so drop a .pth that adds it (the executor runs
 # `python -m hermes_cli.main chat`).
-COPY pyproject.toml uv.lock README.md /tmp/mac-src/
+COPY .python-version pyproject.toml uv.lock README.md /tmp/mac-src/
 COPY src /tmp/mac-src/src
 # Install the [dev] extra (pytest, coverage, psycopg, kubernetes) so the task
 # sandbox can RUN the repository contract test — scripts/run-contract-tests.sh
@@ -213,7 +213,8 @@ COPY src /tmp/mac-src/src
 # Coding-agent shell tools may install their own PATH while retaining
 # /usr/local/bin. Keep the image-owned mac entry point available there instead
 # of relying only on the image ENV's /opt/mac-venv/bin prefix.
-RUN uv sync --frozen --no-editable --extra dev --project /tmp/mac-src \
+RUN test "$(python3 --version)" = "Python $(cat /tmp/mac-src/.python-version)" \
+    && uv sync --frozen --no-editable --extra dev --project /tmp/mac-src \
     && /opt/mac-venv/bin/python -c "import mac; print('IMPORT_OK')" \
     && ln -sfn /opt/mac-venv/bin/mac /usr/local/bin/mac \
     && command -v mac \

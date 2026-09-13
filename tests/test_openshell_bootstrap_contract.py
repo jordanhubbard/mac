@@ -425,8 +425,8 @@ def test_openshell_image_uses_pinned_offline_assets():
 
     assert "prefetching pinned runtime-image assets on the host" in builder
     assert 'REVIEWED_TOOL_ASSETS="$ROOT/deploy/reviewed-tool-assets.sh"' in preparer
-    assert "FROM docker.io/library/python@sha256:" in containerfile
-    assert "FROM ghcr.io/astral-sh/uv@sha256:" in containerfile
+    assert "FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:" in containerfile
+    assert "FROM ghcr.io/astral-sh/uv:0.12.12@sha256:" in containerfile
     assert "docker.io/library/python:3.12" not in containerfile
     assert 'ARG NODE_VERSION="22.23.1"' in containerfile
     assert 'ARG PNPM_VERSION="11.13.1"' in containerfile
@@ -1385,6 +1385,6 @@ def test_openshell_image_installs_dev_extra_for_contract_tests():
         encoding="utf-8"
     )
     assert "uv sync --frozen --no-editable --extra dev" in containerfile
-    assert "COPY pyproject.toml uv.lock README.md /tmp/mac-src/" in containerfile
+    assert "COPY .python-version pyproject.toml uv.lock README.md /tmp/mac-src/" in containerfile
     assert "COPY src /tmp/mac-src/src" in containerfile
     assert "/tmp/mac-src[dev]" not in containerfile
