@@ -213,9 +213,7 @@ def _attach_publication_routing(cp, task):
     # Simulate persisted controller-owned routing, never caller-supplied input.
     route = {"schema": "mac.managed_single_task.route.v1", "activation": "legacy_compatibility"}
     metadata = {**task.metadata, "managed_fast_lane": route, "operator_note": "retain me"}
-    cp.store.execute(
-        "UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id)
-    )
+    cp.store.execute("UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id))
     return route
 
 
