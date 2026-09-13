@@ -2,6 +2,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import plistlib
 import re
 import signal
 import shlex
@@ -169,6 +170,76 @@ def test_deploy_env_render_round_trips_shell_quoted_values():
         "FOO": "bar baz",
         "QUOTED": "one'two",
     }
+
+
+@pytest.mark.parametrize("source", ["existing", "environ"])
+def test_deploy_preserves_explicit_hermes_profile(tmp_path, source):
+    selected = str(tmp_path / ".hermes")
+    values = {"HERMES_HOME": selected}
+    result = build_mac_env(
+        values if source == "existing" else {},
+        deploy_env_config(tmp_path),
+        environ=values if source == "environ" else {},
+        lookup=lambda **_: "",
+    )
+    assert result["HERMES_HOME"] == selected
+    assert result["MAC_MEMORY_TOPOLOGY_FILE"] == str(Path(selected) / "mac-memory-topology.json")
+
+
+@pytest.mark.parametrize("supervisor", ["launchd", "systemd"])
+def test_deploy_preserves_installed_profile_over_stale_mac_env(tmp_path, supervisor):
+    selected = tmp_path / "original profile"
+    if supervisor == "launchd":
+        service = tmp_path / "Library/LaunchAgents/ai.hermes.gateway.plist"
+        service.parent.mkdir(parents=True)
+        service.write_bytes(
+            plistlib.dumps({"EnvironmentVariables": {"HERMES_HOME": str(selected)}})
+        )
+    else:
+        service = tmp_path / ".config/systemd/user/hermes-gateway.service"
+        service.parent.mkdir(parents=True)
+        service.write_text('[Service]\nEnvironment="HERMES_HOME=' + str(selected) + '"\n')
+    stale = {"HERMES_HOME": str(tmp_path / ".mac/openclaw")}
+    result = build_mac_env(stale, deploy_env_config(tmp_path), environ=stale, lookup=lambda **_: "")
+    assert result["HERMES_HOME"] == str(selected)
+    assert result["MAC_HERMES_RUNTIME_CONTEXT_FILE"] == str(selected / "mac-runtime-context.json")
+    assert not selected.exists(), "Profile selection must not copy or invent credentials"
+    prerequisite = subprocess.run(
+        ["bash", "-c", _extract_bash_fn("mac_gateway_home") + "\nmac_gateway_home"],
+        env={"HOME": str(tmp_path), "HERMES_HOME": stale["HERMES_HOME"], "PY": sys.executable},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert prerequisite.stdout.strip() == result["HERMES_HOME"]
+
+
+def test_deploy_rejects_conflicting_service_profile_override(tmp_path):
+    service = tmp_path / "Library/LaunchAgents/ai.hermes.gateway.plist"
+    service.parent.mkdir(parents=True)
+    service.write_bytes(
+        plistlib.dumps({"EnvironmentVariables": {"HERMES_HOME": str(tmp_path / ".hermes")}})
+    )
+    with pytest.raises(ValueError, match="conflicts with the installed"):
+        build_mac_env(
+            {}, deploy_env_config(tmp_path), environ={"HERMES_HOME": str(tmp_path / "other")}
+        )
+
+
+@pytest.mark.parametrize("profile", [None, ".hermes", "custom profile"])
+def test_node_gateway_home_preserves_selected_hermes_profile(tmp_path, profile):
+    env = {"HOME": str(tmp_path), "MAC_HOME": str(tmp_path / ".mac")}
+    if profile is not None:
+        env["HERMES_HOME"] = str(tmp_path / profile)
+    result = subprocess.run(
+        ["bash", "-c", _extract_bash_fn("mac_gateway_home") + "\nmac_gateway_home"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == str(tmp_path / (profile or ".hermes"))
+    assert not (tmp_path / ".mac/openclaw").exists()
 
 
 def test_parse_env_text_skips_malformed_quoted_lines():
@@ -804,12 +875,12 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
         ROOT / "src" / "mac" / "hermes_runtime.py"
     ).read_text(encoding="utf-8")
     assert generated_env["MAC_HERMES_INSTANCE_ID"] == "hermes_spoke-a"
-    assert generated_env["HERMES_HOME"] == str(tmp_path / ".mac" / "openclaw")
+    assert generated_env["HERMES_HOME"] == str(tmp_path / ".hermes")
     assert generated_env["MAC_MEMORY_TOPOLOGY_FILE"] == str(
-        tmp_path / ".mac" / "openclaw" / "mac-memory-topology.json"
+        tmp_path / ".hermes" / "mac-memory-topology.json"
     )
     assert generated_env["MAC_HERMES_RUNTIME_CONTEXT_FILE"] == str(
-        tmp_path / ".mac" / "openclaw" / "mac-runtime-context.json"
+        tmp_path / ".hermes" / "mac-runtime-context.json"
     )
     assert generated_env["MAC_WORKER_HERMES_INSTANCE_ID"] == generated_env["MAC_HERMES_INSTANCE_ID"]
     assert (
@@ -1575,8 +1646,8 @@ def _run_scrub(tmp_path, *, agent, hub_agent, hermes_env_text):
         "DEPLOY_TS=test; DEPLOY_LOG=/dev/null\n"
         + ("PY=%r\n" % sys.executable)
         + (
-            "HOME=%r; MAC_HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
-            % (str(tmp_path), str(mac_home), agent, hub_agent)
+            "HOME=%r; MAC_HOME=%r; HERMES_HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
+            % (str(tmp_path), str(mac_home), str(gateway_home), agent, hub_agent)
         )
         + fn
         + "scrub_spoke_provider_secrets\n"
@@ -3553,9 +3624,11 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
 
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"' in script
     assert "reconcile_disabled_optional_openshell" in installer
-    legacy = installer.split('reload_mac_env\nif [ "$NODE_ACTION" = legacy-one-shot ]; then', 1)[
-        1
-    ].split('\nelse\n  log "typed phase 2 consumed infrastructure receipts', 1)[0]
+    legacy = (
+        installer.split('log "creating/updating mac environment file"', 1)[1]
+        .split('if [ "$NODE_ACTION" = legacy-one-shot ]; then', 1)[1]
+        .split('\nelse\n  log "typed phase 2 consumed infrastructure receipts', 1)[0]
+    )
     assert "reconcile_disabled_optional_openshell" in legacy
     for owned_state in (
         "openshell-gw",

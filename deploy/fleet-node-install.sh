@@ -377,16 +377,40 @@ OPENSHELL_RUNTIME_INPUT_SHA256="${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"
 OPENSHELL_LOCAL_IMAGE_BUILD="${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
 OPENSHELL_BOOTSTRAPPED=0
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
-# Live gateway home matches src/mac/mac_paths.py::gateway_home().
-# HERMES_HOME overrides unless it still names the vacated ~/.hermes tree.
-# Default is $MAC_HOME/openclaw. Never mkdir ~/.hermes.
+# Never redirect an explicit Hermes profile into a retired gateway directory.
+# deploy_env reconciles this with the installed upstream service definition.
 mac_gateway_home() {
-  local home="${HERMES_HOME:-}"
-  case "$home" in
-    ""|"$HOME/.hermes"|"$HOME/.hermes/")
-      home="$MAC_HOME/openclaw"
-      ;;
-  esac
+  local home="${HERMES_HOME:-$HOME/.hermes}"
+  # Prerequisites write the memory/context receipts before write-mac-env runs.
+  # Resolve the same installed profile here, including when a shared-service
+  # installer has reloaded a stale mac.env in the meantime.
+  if [ -f "$HOME/Library/LaunchAgents/ai.hermes.gateway.plist" ] \
+      || [ -f "$HOME/.config/systemd/user/hermes-gateway.service" ]; then
+    "${PY:-python3}" - "$HOME" <<'PY'
+from pathlib import Path
+import plistlib
+import shlex
+import sys
+
+root = Path(sys.argv[1])
+plist = root / "Library/LaunchAgents/ai.hermes.gateway.plist"
+selected = ""
+if plist.exists():
+    with plist.open("rb") as stream:
+        selected = plistlib.load(stream).get("EnvironmentVariables", {}).get("HERMES_HOME", "")
+else:
+    unit = root / ".config/systemd/user/hermes-gateway.service"
+    for line in unit.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("Environment="):
+            for assignment in shlex.split(line.strip().split("=", 1)[1]):
+                if assignment.startswith("HERMES_HOME="):
+                    selected = assignment.split("=", 1)[1]
+if not isinstance(selected, str) or not selected or not Path(selected).is_absolute():
+    raise SystemExit("Installed Hermes service has no absolute HERMES_HOME")
+print(selected)
+PY
+    return $?
+  fi
   printf '%s\n' "$home"
 }
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
@@ -3121,9 +3145,7 @@ def gateway_readiness_summary(stage):
         raise SystemExit("gateway readiness is malformed") from exc
     expected_identities = {
         "systemd": {
-            "hermes": os.environ.get(
-                "HERMES_SERVICE_NAME", os.environ["FLEET_NAME"] + "-hermes-gateway.service"
-            ),
+            "hermes": "hermes-gateway.service",
             "openclaw": os.environ.get(
                 "OPENCLAW_SERVICE_NAME", os.environ["FLEET_NAME"] + "-openclaw-gateway.service"
             ),
@@ -3132,9 +3154,7 @@ def gateway_readiness_summary(stage):
             ),
         },
         "launchd": {
-            "hermes": os.environ.get(
-                "HERMES_LAUNCHD_LABEL", "com." + os.environ["FLEET_NAME"] + ".hermes-gateway"
-            ),
+            "hermes": "ai.hermes.gateway",
             "openclaw": os.environ.get(
                 "OPENCLAW_LAUNCHD_LABEL", "com." + os.environ["FLEET_NAME"] + ".openclaw-gateway"
             ),
@@ -3194,13 +3214,6 @@ def gateway_readiness_summary(stage):
             raise SystemExit("gateway readiness has malformed process state")
         selected = owner == implementation
         if selected:
-            # Hermes supervises itself under a unit name `hermes gateway
-            # install` chooses, not the HERMES_* identity this script
-            # assigns -- its readiness was already proven out of band by
-            # `hermes gateway status --deep` in finalize_hermes_gateway(),
-            # so this identity-keyed sample is expected to show it absent.
-            if implementation == "hermes":
-                continue
             if item["state"] != "running" or item["pid"] <= 0:
                 raise SystemExit("gateway readiness selected process is not running")
             if supervisor == "systemd" and item.get("enabled") != "enabled":
@@ -11121,6 +11134,7 @@ PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env 
   "$WEBDAV_ENABLED" "$WEBDAV_URL_CONFIGURED" "$WEBDAV_PORT_CONFIGURED" \
   "$WEBDAV_ROOT_CONFIGURED" "$WEBDAV_PUBLIC_PATH_CONFIGURED"
 
+reload_mac_env
 normalize_hermes_redaction_env
 
 deploy_barrier_file="$MAC_HOME/deploy-start-barrier"
@@ -11133,7 +11147,6 @@ else
   rm -f "$deploy_barrier_file"
 fi
 
-reload_mac_env
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   reconcile_disabled_optional_openshell
   # gketun-02: the hub (shared-services manager) owns the reverse-tunnel keypair it
@@ -14037,6 +14050,8 @@ names = {
         "supervisord": nemoclaw_program,
     },
 }
+names["hermes"]["launchd"] = "ai.hermes.gateway"
+names["hermes"]["systemd"] = "hermes-gateway.service"
 if implementation not in {"hermes", "openclaw", "nemoclaw", "none"}:
     raise SystemExit("gateway readiness received an unsupported implementation")
 
@@ -14098,24 +14113,14 @@ def run(argv):
         return process.returncode, stdout_text, stderr_text
 
 
-def systemd_sample():
-    systemctl = shutil.which("systemctl")
-    if not systemctl:
-        fail("systemctl is unavailable")
-    prefix = []
-    sudo = shutil.which("sudo")
-    if os.geteuid() != 0:
-        if not sudo:
-            fail("systemd inspection requires noninteractive sudo")
-        prefix = [sudo, "-n"]
+def systemd_scope_sample(command, identities):
     result = {}
-    for owner, mapping in names.items():
+    for owner, name in identities.items():
         rc, text, _errors = run(
-            prefix
+            command
             + [
-                systemctl,
                 "show",
-                mapping["systemd"],
+                name,
                 "--no-pager",
                 "--property=LoadState",
                 "--property=ActiveState",
@@ -14166,7 +14171,7 @@ def systemd_sample():
         else:
             fail("systemd unit is transitional or unknown")
         enabled_rc, enabled_out, _enabled_errors = run(
-            prefix + [systemctl, "is-enabled", mapping["systemd"]]
+            command + ["is-enabled", name]
         )
         enabled_lines = [line.strip() for line in enabled_out.splitlines() if line.strip()]
         if len(enabled_lines) != 1 or enabled_lines[0] not in {
@@ -14189,40 +14194,73 @@ def systemd_sample():
     return result
 
 
+def systemd_sample():
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        fail("systemctl is unavailable")
+    command = [systemctl]
+    if os.geteuid() != 0:
+        sudo = shutil.which("sudo")
+        if not sudo:
+            fail("systemd inspection requires noninteractive sudo")
+        command = [sudo, "-n", systemctl]
+    identities = {owner: mapping["systemd"] for owner, mapping in names.items()}
+    identities["legacy_hermes"] = hermes_unit
+    system = systemd_scope_sample(command, identities)
+    user = systemd_scope_sample([systemctl, "--user"], {
+        "hermes": names["hermes"]["systemd"], "legacy_hermes": hermes_unit,
+    })
+    # Upstream installs a user service. A legacy MAC unit or a second system
+    # service must never compete for the same messaging credentials.
+    for item in (system["hermes"], system["legacy_hermes"], user["legacy_hermes"]):
+        if item["state"] not in {"absent", "inactive"} or item.get("enabled") not in {
+            "not-found", "disabled", "masked",
+        }:
+            fail("legacy or system Hermes gateway is not safely disabled")
+    system.pop("legacy_hermes")
+    system["hermes"] = user["hermes"]
+    return system
+
+
 def launchd_sample():
     launchctl = shutil.which("launchctl")
     if not launchctl:
         fail("launchctl is unavailable")
-    domain = "gui/%d" % os.getuid()
     result = {}
     for owner, mapping in names.items():
-        label = mapping["launchd"]
-        rc, stdout, stderr = run([launchctl, "print", domain + "/" + label])
-        text = stdout + stderr
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        legacy_absent = len(lines) == 1 and "Could not find service" in lines[0]
-        current_macos_absent = (
-            len(lines) == 2
-            and lines[0] == "Bad request."
-            and re.fullmatch(
-                r'Could not find service "[^"\r\n]+" in domain for user gui: [0-9]+',
-                lines[1],
-            )
-            is not None
-        )
-        if rc == 113 and (legacy_absent or current_macos_absent):
-            result[owner] = {"state": "absent", "pid": 0, "restarts": 0}
-            continue
-        if rc != 0:
-            fail("launchd state is unreadable")
-        state_match = re.search(r"(?m)^\s*state\s*=\s*([^\s]+)", text)
-        pid_match = re.search(r"(?m)^\s*pid\s*=\s*([0-9]+)", text)
-        if not state_match or state_match.group(1) != "running" or not pid_match:
-            fail("launchd job is loaded but not stably running")
-        pid = int(pid_match.group(1))
-        if pid <= 0:
-            fail("launchd running state lacks a valid process")
-        result[owner] = {"state": "running", "pid": pid, "restarts": 0}
+        labels = [mapping["launchd"]]
+        if owner == "hermes" and hermes_label not in labels:
+            labels.append(hermes_label)
+        loaded = []
+        for label in labels:
+            for scope in ("gui", "user"):
+                domain = "%s/%d" % (scope, os.getuid())
+                rc, stdout, stderr = run([launchctl, "print", domain + "/" + label])
+                text = stdout + stderr
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                absent = (
+                    rc == 113
+                    and len([line for line in lines if "Could not find service" in line]) == 1
+                    and all(line == "Bad request." or "Could not find service" in line for line in lines)
+                    and not re.search(r"(?m)^\s*(?:state|pid)\s*=", text)
+                )
+                if absent:
+                    continue
+                if rc != 0:
+                    fail("launchd state is unreadable")
+                state_match = re.search(r"(?m)^\s*state\s*=\s*([^\s]+)", text)
+                pid_match = re.search(r"(?m)^\s*pid\s*=\s*([0-9]+)", text)
+                if not state_match or state_match.group(1) != "running" or not pid_match:
+                    fail("launchd job is loaded but not stably running")
+                pid = int(pid_match.group(1))
+                if pid <= 0:
+                    fail("launchd running state lacks a valid process")
+                if label != mapping["launchd"]:
+                    fail("legacy Hermes launchd job is still loaded")
+                loaded.append({"state": "running", "pid": pid, "restarts": 0, "domain": domain})
+        if len(loaded) > 1:
+            fail("multiple launchd domains own one gateway")
+        result[owner] = loaded[0] if loaded else {"state": "absent", "pid": 0, "restarts": 0}
     return result
 
 
@@ -14282,22 +14320,13 @@ sampler = {
 if sampler is None:
     fail("unsupported supervisor")
 samples = []
-# Hermes is a bare host process supervised by a unit `hermes gateway
-# install` writes and names itself (not the HERMES_SERVICE_NAME /
-# HERMES_LAUNCHD_LABEL / HERMES_SUPERVISORD_PROG identities this script
-# assigns the other implementations), so this generic sampler cannot find
-# it under those names. Its readiness is already proven, out of band, by
-# prepare_hermes_gateway()/finalize_hermes_gateway() calling
-# `hermes gateway status --deep` before this function runs. Still require
-# every OTHER gateway implementation's unit to be absent/disabled below.
-hermes_selected = implementation == "hermes"
 for observation in range(2):
     sample = sampler()
     selected_ready = (
         implementation != "none"
-        and (hermes_selected or sample[implementation]["state"] == "running")
+        and sample[implementation]["state"] == "running"
     )
-    if supervisor == "systemd" and implementation != "none" and not hermes_selected:
+    if supervisor == "systemd" and implementation != "none":
         selected_ready = selected_ready and sample[implementation].get("enabled") == "enabled"
     if not selected_ready and implementation != "none":
         fail("selected gateway implementation is not in its required state")
@@ -14322,11 +14351,13 @@ for observation in range(2):
     samples.append(sample)
     if observation == 0:
         time.sleep(min(2.0, remaining()))
-if implementation != "none" and not hermes_selected:
+if implementation != "none":
     first = samples[0][implementation]
     second = samples[1][implementation]
     if first["pid"] != second["pid"] or first["restarts"] != second["restarts"]:
         fail("selected gateway restarted during the readiness proof")
+    if first.get("domain") != second.get("domain"):
+        fail("selected gateway changed launchd domain during the readiness proof")
 
 payload = {
     "schema": "mac.gateway_readiness.v1",
