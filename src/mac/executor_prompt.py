@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
+from mac.evidence_validators import repo_files_changed_problem
 from mac.agent_command import PROMPT_SENTINEL
 from mac.bus_task_context import (
     bus_context_from_task,
@@ -334,6 +335,11 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
             manifest = {}
     evidence_type = str(manifest.get("evidence_type") or task_evidence_type(task))
     repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+    files_changed = repo.get("files_changed")
+    files_problem = repo_files_changed_problem(files_changed)
+    files_count = len(files_changed or []) if repo and not files_problem else None
+    if not files_problem and evidence_type in {"repo_change", "documentation"} and not files_changed:
+        files_problem = "repo evidence requires changed files"
     # verification.tests is canonically a LIST of result objects (mac-wjy3), but
     # accept a bare dict for backward compatibility with older manifests.
     tests_raw = manifest.get("tests")
@@ -362,10 +368,12 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     signals = {
         "returncode": returncode,
         "pushed": bool(repo.get("pushed")) if repo else None,
-        "files_changed": len(repo.get("files_changed") or []) if repo else None,
+        "files_changed": files_count,
         "tests": tests_state,
         "checks_pass": checks_pass if checks else None,
     }
+    if files_problem:
+        signals["evidence_problem"] = files_problem
     # Surface the exact new files that were left uncommitted so the curated
     # lesson can tell the next agent to `git add -A` and commit ALL new files
     # up front instead of wasting an attempt on the same new-file refusal.
@@ -380,19 +388,25 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     success = (
         returncode == 0
         and bool(manifest)
+        and not files_problem
         and tests_state != "fail"
         and (checks_pass if checks else True)
         and (signals["pushed"] is not False)
     )
+    error_signature = ""
+    if not success:
+        error_signature = (
+            "untracked_new_files_at_finalize"
+            if new_file_refusal
+            else "verification_contract_failed: " + files_problem
+            if files_problem
+            else _error_signature(manifest)
+        )
     return {
         "evidence_type": evidence_type,
         "outcome": "success" if success else "failure",
         "signals": signals,
-        "error_signature": ""
-        if success
-        else (
-            "untracked_new_files_at_finalize" if new_file_refusal else _error_signature(manifest)
-        ),
+        "error_signature": error_signature,
     }
 
 
