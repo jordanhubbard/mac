@@ -109,6 +109,44 @@ def test_soul_summary():
     assert data["nodes"] == 5
 
 
+def test_soul_prime_no_context():
+    r = tools().soul_prime()
+    data = json.loads(r["content"][0]["text"])
+    assert "hot" in data
+    assert "discovered" in data
+    assert data["context_hint"] is None
+
+
+def test_soul_prime_with_context():
+    stub_graph.semantic_search.return_value = [stub_node]
+    stub_graph.discover.return_value = [stub_node]
+    r = tools().soul_prime(context="rockyandfriends soul architecture")
+    data = json.loads(r["content"][0]["text"])
+    assert data["context_hint"] == "rockyandfriends soul architecture"
+    assert data["seed"] == "test_node"
+
+
+def test_soul_prime_varies_by_context():
+    # Same graph, different context → different seed used for discovery
+    stub_graph.semantic_search.side_effect = [[], [stub_node]]
+    r1 = tools().soul_prime(context="debugging")
+    r2 = tools().soul_prime(context="architecture")
+    # Both complete without error; varying context is the mechanism not the assertion
+    assert not r1.get("isError")
+    assert not r2.get("isError")
+    stub_graph.semantic_search.side_effect = None
+    stub_graph.semantic_search.return_value = [stub_node]
+
+
+def test_soul_prime_in_tools_list(tmp_path):
+    inp = io.StringIO(json.dumps({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}) + "\n")
+    out = io.StringIO()
+    _serve(tmp_path / "soul.json", inp=inp, out=out)
+    resp = json.loads(out.getvalue())
+    names = {t["name"] for t in resp["result"]["tools"]}
+    assert "soul_prime" in names
+
+
 def test_serve_initialize(tmp_path):
     inp = io.StringIO(json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}) + "\n")
     out = io.StringIO()

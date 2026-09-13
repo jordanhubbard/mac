@@ -218,6 +218,68 @@ class SoulTools:
         """One-line stats: node count, pinned axioms, tags, exploration branch size."""
         return _text(self._g.summary())
 
+    # ---- prime (startup) --------------------------------------------------
+
+    def soul_prime(self, context: str = "", n_hot: int = 5, discovery_hops: int = 1) -> JsonDict:
+        """Cheap startup call — what to be and what to notice, without full retrieval cost.
+
+        Returns two things only:
+        1. The splay root (top-N hot nodes) — already sorted, no search needed,
+           cost is O(n). These are the axioms and most-recently-active beliefs.
+        2. One discovery hop from the hottest non-axiom node, guided by the
+           session context hint. This is the 'what to notice' — different every
+           session because the splay state is different and the context is different.
+
+        ``context`` should be whatever session metadata is available at startup:
+        channel name, thread topic, time of day, last task. It drives the
+        discovery hop so the first query is not automatic and always the same.
+
+        Token budget: n_hot node summaries + discovery hop results only.
+        No embeddings, no full graph scan. O(n_hot + edges_from_seed).
+        """
+        g = self._g
+
+        # Step 1: splay root — cheap, pre-sorted, no search
+        hot = g.hot(n_hot)
+        hot_out = [
+            {"id": nd.id, "content": nd.content, "tags": sorted(nd.tags),
+             "score": "pinned" if nd.pinned else round(nd.recency_score(), 4)}
+            for nd in hot
+        ]
+
+        # Step 2: pick seed for discovery — hottest non-axiom, or hottest axiom if all pinned
+        seed = next((nd for nd in hot if not nd.pinned), hot[0] if hot else None)
+
+        discovered_out: list = []
+        seed_id = None
+        if seed is not None:
+            seed_id = seed.id
+            # Use context as the bias: if context names a node or tag, walk from there instead
+            if context:
+                context_hits = g.semantic_search(context, top_k=1)
+                if context_hits:
+                    seed = context_hits[0]
+                    seed_id = seed.id
+                    g.touch(seed_id)
+
+            discovered = g.discover(seed_id, hops=discovery_hops)
+            discovered_out = [
+                {"id": nd.id, "content": nd.content, "tags": sorted(nd.tags)}
+                for nd in discovered
+            ]
+
+        return _text({
+            "hot": hot_out,
+            "seed": seed_id,
+            "context_hint": context or None,
+            "discovered": discovered_out,
+            "note": (
+                "Startup prime. Use soul_query/soul_discover for deeper retrieval. "
+                "The splay state shifts each session — 'hot' reflects recent history, "
+                "not a fixed identity snapshot."
+            ),
+        })
+
     # ---- tool registry ----------------------------------------------------
 
     TOOL_SPECS = [
@@ -337,6 +399,26 @@ class SoulTools:
             "name": "soul_summary",
             "description": "One-line stats: node count, pinned axioms, tags, exploration size.",
             "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "soul_prime",
+            "description": (
+                "Startup prime — call ONCE at session start. Returns splay root (who you are) "
+                "plus one context-guided discovery hop (what to notice this session). "
+                "Cheap: O(n_hot + hop). Pass context=<channel/topic/last_task> to make "
+                "the discovery non-uniform across sessions."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "context": {
+                        "type": "string",
+                        "description": "Session context: channel name, thread topic, time of day, last task",
+                    },
+                    "n_hot": {"type": "integer", "default": 5, "description": "Splay root size"},
+                    "discovery_hops": {"type": "integer", "default": 1},
+                },
+            },
         },
     ]
 

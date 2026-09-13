@@ -15,6 +15,7 @@ exploration branch (test hypotheses before committing to identity).
 
 | Tool | When to use |
 |---|---|
+| `soul_prime` | **Call once at startup.** Returns splay root + one context-guided discovery hop |
 | `soul_query` | Semantic search. Pass `hint=<current task>` for context-guided traversal |
 | `soul_hot` | Top-N splay nodes — who this agent is right now |
 | `soul_discover` | DAG walk from a seed — surfaces context you didn't ask for |
@@ -27,7 +28,20 @@ exploration branch (test hypotheses before committing to identity).
 | `soul_link` | Add a DAG edge between two existing nodes |
 | `soul_summary` | Stats: node count, axioms, tags, exploration size |
 
-## Context hint pattern
+## Startup pattern
+
+```
+# Once, at session start — cheap, non-uniform
+soul_prime(context="rockyandfriends, Saturday, last task: soul graph review")
+```
+
+The `context` string is what makes each startup different. Same graph, different
+context → different discovery seed → different 'what to notice'. The splay
+state also shifts between sessions so `hot` naturally varies. No full scan,
+no embeddings — just the sorted root plus one hop.
+
+After prime, query only when the conversation actually needs it.
+
 
 Always pass the current task as `hint` to `soul_query`. The graph biases
 traversal toward the relevant neighbourhood before running the main query:
