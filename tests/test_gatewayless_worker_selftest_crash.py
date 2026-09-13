@@ -129,9 +129,7 @@ def test_gatewayless_worker_missing_openclaw_artifacts_does_not_block_startup(
     assert report["status"] != "failed"
     assert report["blocking_problems"] == []
 
-    # The node advertises OpenClaw but has no installed gateway, so it is a pure
-    # worker and its OpenClaw deficiencies are non-blocking (degraded).
-    assert report["openclaw_gateway"]["impl_advertised"] is True
-    assert report["openclaw_gateway"]["installed"] is False
-    assert report["openclaw_gateway"]["serves_gateway"] is False
-    assert any(p.startswith("OpenClaw") for p in report["non_blocking_problems"])
+    assert report["status"] == "passed"
+    assert report["problems"] == []
+    assert "openclaw_gateway" not in report
+    assert not any("openclaw" in key for key in report["checks"])

@@ -2865,15 +2865,7 @@ class ControlPlane:
         if not isinstance(startup, dict):
             return False
         status = str(startup.get("status") or "").strip().lower()
-        if status in {"degraded", "failed"}:
-            return True
-        return bool(
-            str(
-                startup.get("openclaw_failure_class")
-                or startup.get("hermes_failure_class")  # pre-migration reports
-                or ""
-            ).strip()
-        )
+        return status in {"degraded", "failed"}
 
     def _project_agent_health_for_resources(
         self,
