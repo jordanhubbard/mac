@@ -499,6 +499,15 @@ class JudgementProcess:
                 for review in reviews
                 if str(getattr(review, "status", "") or "").lower() == "pending"
             ]
+            inflight = getattr(self.control_plane, "_hub_verify_inflight", ())
+            if any(
+                getattr(review, "id", "") in inflight
+                and self._agent_is_virtual(str(getattr(review, "reviewer_agent_id", "") or ""))
+                for review in pending
+            ):
+                # The bounded verifier owns this review's deadline. Task age
+                # alone must not cancel an external test run still in flight.
+                continue
             reviewer_id = ""
             if pending:
                 reviewer_id = str(getattr(pending[-1], "reviewer_agent_id", "") or "")
@@ -546,7 +555,7 @@ class JudgementProcess:
         return findings
 
     def _check_excessive_reviewing_population(self) -> List[Finding]:
-        tasks = self._all_known_tasks()
+        tasks = self._lifecycle_tasks()
         live = [
             task for task in tasks if str(getattr(task, "state", "") or "") in _NONTERMINAL_STATES
         ]
@@ -556,25 +565,44 @@ class JudgementProcess:
         if not live:
             return []
         fraction = len(reviewing) / float(len(live))
+        with self._state_lock:
+            previous = self._last_report or {}
+            previously_stalled = {
+                str(finding.get("task_id") or "")
+                for finding in previous.get("findings", [])
+                if finding.get("kind") == "stuck_reviewing"
+            }
+        stalled = {
+            finding.task_id
+            for finding in self._check_stuck_reviewing()
+            if finding.task_id in previously_stalled
+        }
+        persistent = [task for task in reviewing if task.id in stalled]
+        stalled_fraction = len(persistent) / float(len(live))
+        # First let targeted recovery address stale reviews. A small queue's
+        # percentage is unstable, and fresh or actively verified work is not
+        # evidence of a pile-up, even when it fills the review queue.
         if (
-            len(reviewing) < self.config.excessive_reviewing_count
-            and fraction < self.config.excessive_reviewing_fraction
+            len(persistent) < self.config.excessive_reviewing_count
+            or stalled_fraction < self.config.excessive_reviewing_fraction
         ):
             return []
         return [
             Finding(
                 kind="excessive_reviewing_population",
                 summary=(
-                    "%d of %d live tasks are in review (%.0f%%)"
-                    % (len(reviewing), len(live), fraction * 100.0)
+                    "%d of %d live tasks remained stalled in review across judgement cycles (%.0f%%)"
+                    % (len(persistent), len(live), stalled_fraction * 100.0)
                 ),
                 detail={
                     "reviewing_count": len(reviewing),
                     "live_count": len(live),
                     "fraction": fraction,
-                    "task_ids": [task.id for task in reviewing[:50]],
+                    "stalled_count": len(persistent),
+                    "stalled_fraction": stalled_fraction,
+                    "task_ids": [task.id for task in persistent[:50]],
                 },
-                recommended_action="fleet_stop",
+                recommended_action="fleet_hold",
             )
         ]
 
@@ -777,6 +805,9 @@ class JudgementProcess:
         intervention_findings = [
             finding for finding in findings if finding.recommended_action != "reconcile_merged_task"
         ]
+        hold_pending = any(
+            finding.recommended_action == "fleet_hold" for finding in intervention_findings
+        )
 
         # Trusted forge reconciliation repairs durable ledger state; it must
         # run before, and outside, the bounded intervention budget.
@@ -784,7 +815,12 @@ class JudgementProcess:
             actions.append(self._reconcile_merged_task(actor=actor, finding=finding))
 
         for finding in intervention_findings:
-            if interventions_used >= budget:
+            recommended = finding.recommended_action
+            # A persistent queue can itself exceed the cycle budget. Reserve
+            # one action for backpressure so failed individual recoveries
+            # cannot starve the fleet hold indefinitely.
+            available = budget - int(hold_pending and recommended != "fleet_hold")
+            if interventions_used >= available:
                 actions.append(
                     {
                         "action": "skipped",
@@ -794,14 +830,46 @@ class JudgementProcess:
                     }
                 )
                 continue
-            recommended = finding.recommended_action
+            if recommended == "fleet_hold":
+                hold_pending = False
             if recommended == "close_pr":
                 append_result(self._close_pull_request(actor=actor, finding=finding))
                 continue
-            if recommended == "fleet_stop":
+            if recommended in {"fleet_stop", "fleet_hold"}:
                 if fleet_stopped:
                     continue
-                append_result(self._fleet_stop(actor=actor, run_id=run_id, finding=finding))
+                if recommended == "fleet_hold":
+                    # Earlier actions in this cycle may have cleared the
+                    # queue. Recheck before applying fleet-wide backpressure.
+                    try:
+                        remaining = self._check_excessive_reviewing_population()
+                    except Exception as exc:  # noqa: BLE001
+                        append_result(
+                            {
+                                "action": "error",
+                                "finding_kind": finding.kind,
+                                "error": str(exc)[:200],
+                            }
+                        )
+                        continue
+                    if not remaining:
+                        actions.append(
+                            {
+                                "action": "skipped",
+                                "reason": "review_queue_recovered",
+                                "finding_kind": finding.kind,
+                            }
+                        )
+                        continue
+                    finding = remaining[0]
+                append_result(
+                    self._fleet_stop(
+                        actor=actor,
+                        run_id=run_id,
+                        finding=finding,
+                        stop_inflight=recommended == "fleet_stop",
+                    )
+                )
                 fleet_stopped = True
                 continue
             if recommended == "hold_agent" and finding.agent_id:
@@ -1027,11 +1095,18 @@ class JudgementProcess:
             "reason": reason,
         }
 
-    def _fleet_stop(self, *, actor: str, run_id: str, finding: Finding) -> Dict[str, Any]:
+    def _fleet_stop(
+        self, *, actor: str, run_id: str, finding: Finding, stop_inflight: bool = True
+    ) -> Dict[str, Any]:
         held: List[str] = []
         stopped: List[str] = []
         paused: List[str] = []
-        reason = "%sfleet_stop:%s" % (HOLD_REASON_PREFIX, run_id)
+        action = "fleet_stopped" if stop_inflight else "fleet_held"
+        reason = "%s%s:%s" % (
+            HOLD_REASON_PREFIX,
+            "fleet_stop" if stop_inflight else "fleet_hold",
+            run_id,
+        )
         for agent in self.control_plane.list_agents():
             if self._agent_is_virtual(agent.id):
                 continue
@@ -1042,7 +1117,7 @@ class JudgementProcess:
                 held.append(agent.id)
             except Exception:  # noqa: BLE001
                 continue
-        for task in self._lifecycle_tasks():
+        for task in self._lifecycle_tasks() if stop_inflight else []:
             if str(getattr(task, "state", "") or "") not in _IN_FLIGHT_STATES:
                 continue
             try:
@@ -1057,8 +1132,8 @@ class JudgementProcess:
             except Exception:  # noqa: BLE001
                 continue
         self._observe(
-            "judgement.fleet_stopped",
-            "error",
+            "judgement.fleet_stopped" if stop_inflight else "judgement.fleet_held",
+            "error" if stop_inflight else "warning",
             {
                 "run_id": run_id,
                 "kind": finding.kind,
@@ -1068,7 +1143,7 @@ class JudgementProcess:
             },
         )
         return {
-            "action": "fleet_stopped",
+            "action": action,
             "finding_kind": finding.kind,
             "held_agents": held,
             "stopped_tasks": stopped,

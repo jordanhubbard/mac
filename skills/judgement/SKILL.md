@@ -63,8 +63,9 @@ threshold (default two hours) without a publication. Twenty-two tasks were
 in `reviewing` on 2026-08-23, including a P0 titled "Diagnose why the hub
 self-tick fails to drain the 66 REVIEWING tasks".
 
-**Intervene:** if hub-verify can still run, leave it for the next review
-sweep. If it is waiting on an LLM reviewer, stop the task. If a
+**Intervene:** a pending virtual review in the hub's active verification guard
+belongs to its bounded external runner; task age alone must not stop it.
+For genuinely stale reviews without an active runner, stop the task. If a
 non-virtual agent holds the review, hold that agent.
 
 ### 5. `semantic_reviewer_still_assigned`
@@ -78,12 +79,18 @@ hub-reviewer plus the workers that were not part of the defect.
 
 ### 6. `excessive_reviewing_population`
 
-More than a tenth of non-terminal tasks, or more than twenty tasks, sit in
-`needs_review` / `reviewing`. That is a process pile-up, not a busy day.
+Queue size alone does not establish a process failure. Fresh reviews and
+active hub verification are normal work, including large review queues.
 
-**Intervene:** stop the oldest stuck reviews first. If the pile-up persists
-across a cycle, hold the worker fleet so new work stops feeding the queue,
-then redeploy.
+**Intervene:** address stuck reviews individually first. If the same stalled
+reviews persist into the next judgement cycle and meet both configured
+thresholds (default: at least twenty tasks and a tenth of non-terminal tasks),
+hold worker dispatch and pause registered projects so new work stops feeding
+the queue. Recheck after targeted recovery in that cycle; do not hold the fleet
+if recovery cleared the queue. This backpressure preserves healthy in-flight
+tasks and reviews. It does not cancel work or trigger an automatic redeploy.
+Reserve one intervention from the cycle budget for that hold so repeated
+individual recovery failures cannot exhaust the budget before backpressure.
 
 ### 7. `too_many_gates`
 

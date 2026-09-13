@@ -13637,6 +13637,43 @@ def test_hub_verify_uses_sanity_scope_and_fails_closed_for_unsafe_paths(cp):
     assert cp._hub_review_test_command(task, unsafe) == "scripts/run-contract-tests.sh"
 
 
+def test_judgement_preserves_inflight_hub_verification_past_task_age_threshold(cp, monkeypatch):
+    from datetime import datetime, timezone
+
+    from mac.judgement import JudgementConfig, JudgementProcess
+
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    reports = []
+    calls = []
+
+    def verify(*args):
+        calls.append(args)
+        review = cp.list_reviews(task.id)[0]
+        assert review.id in cp._hub_verify_inflight
+        stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (stale, task.id))
+        process = JudgementProcess(
+            cp,
+            JudgementConfig(enabled=True),
+            pr_lister=lambda _root: {"open": [], "merged": []},
+        )
+        reports.append(process.run_once())
+        assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+        assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
+        return 0, "all passed"
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, verify)
+    cp.advance_default_review_workflow(task.id)
+    cp.advance_default_review_workflow(task.id)
+
+    assert len(calls) == 1
+    assert len(reports) == 1
+    assert reports[0]["check_errors"] == []
+    assert reports[0]["actions"] == []
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert cp.list_reviews(task.id)[0].status == ReviewStatus.APPROVED.value
+
+
 def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     seen = []
