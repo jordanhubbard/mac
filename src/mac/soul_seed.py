@@ -8,7 +8,7 @@ The problem Reto identified (2026-09-12):
 
 Solution: a cheap, context-shaped seed that:
   1. Extracts 3-5 signal words from the incoming session context
-  2. Checks whether those words overlap with already-hot nodes
+  2. Checks whether those words overlap with already-hot nodes (content + tags)
   3. Only queries soul_discover() when the context is novel
   4. Returns a minimal injection — enough to know what to be, not a dump
 
@@ -43,7 +43,6 @@ def _extract_signal(text: str, n: int = 5) -> list[str]:
     for w in words:
         if w not in _STOP:
             seen[w] = seen.get(w, 0) + 1
-    # Sort by frequency, take top n
     return [w for w, _ in sorted(seen.items(), key=lambda x: -x[1])][:n]
 
 
@@ -59,6 +58,7 @@ def _hot_words(g: SoulGraph, n: int = 8) -> set[str]:
 def seed(
     session_context: str,
     soul_name: str = "soul",
+    soul_path: str | None = None,
     novelty_threshold: float = 0.4,
     max_inject_nodes: int = 3,
 ) -> dict:
@@ -71,27 +71,34 @@ def seed(
       "signal"   — the words extracted from session context
       "reason"   — why inject is what it is
 
+    soul_path: explicit path to soul JSON file. Overrides the default
+               ~/.hermes/{soul_name}_soul.json convention. Use when
+               soul file lives outside the default Hermes home.
+
     novelty_threshold: fraction of signal words NOT already in hot nodes
     that triggers a discover() call. Below threshold = already primed,
     skip the query.
     """
-    soul_path = _SOUL_DIR / f"{soul_name}_soul.json"
-    if not soul_path.exists():
+    if soul_path:
+        p = Path(soul_path)
+    else:
+        p = _SOUL_DIR / f"{soul_name}_soul.json"
+
+    if not p.exists():
         return {"inject": [], "queried": False, "signal": [], "reason": "no soul file"}
 
-    g = SoulGraph.load(soul_path)
+    g = SoulGraph.load(p)
     signal = _extract_signal(session_context)
 
     if not signal:
         return {"inject": [], "queried": False, "signal": [], "reason": "no signal"}
 
-    # Check overlap with already-hot nodes
+    # Check overlap with already-hot nodes (content + tags)
     hot = _hot_words(g)
     novel = [w for w in signal if w not in hot]
     novelty = len(novel) / len(signal)
 
     if novelty < novelty_threshold:
-        # Context is familiar — hot nodes are already right, don't query
         return {
             "inject": [],
             "queried": False,
@@ -103,8 +110,8 @@ def seed(
     query = " ".join(signal)
     results = g.discover(query, top_k=max_inject_nodes)
 
-    # Save touched nodes
-    g.save(soul_path)
+    # Save touched nodes back (discover splays them)
+    g.save(p)
 
     inject = [
         {"content": node.content, "tags": sorted(node.tags), "path_len": len(path)}
