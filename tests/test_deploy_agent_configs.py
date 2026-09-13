@@ -2,6 +2,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import plistlib
 import re
 import signal
 import shlex
@@ -169,6 +170,76 @@ def test_deploy_env_render_round_trips_shell_quoted_values():
         "FOO": "bar baz",
         "QUOTED": "one'two",
     }
+
+
+@pytest.mark.parametrize("source", ["existing", "environ"])
+def test_deploy_preserves_explicit_hermes_profile(tmp_path, source):
+    selected = str(tmp_path / ".hermes")
+    values = {"HERMES_HOME": selected}
+    result = build_mac_env(
+        values if source == "existing" else {},
+        deploy_env_config(tmp_path),
+        environ=values if source == "environ" else {},
+        lookup=lambda **_: "",
+    )
+    assert result["HERMES_HOME"] == selected
+    assert result["MAC_MEMORY_TOPOLOGY_FILE"] == str(Path(selected) / "mac-memory-topology.json")
+
+
+@pytest.mark.parametrize("supervisor", ["launchd", "systemd"])
+def test_deploy_preserves_installed_profile_over_stale_mac_env(tmp_path, supervisor):
+    selected = tmp_path / "original profile"
+    if supervisor == "launchd":
+        service = tmp_path / "Library/LaunchAgents/ai.hermes.gateway.plist"
+        service.parent.mkdir(parents=True)
+        service.write_bytes(
+            plistlib.dumps({"EnvironmentVariables": {"HERMES_HOME": str(selected)}})
+        )
+    else:
+        service = tmp_path / ".config/systemd/user/hermes-gateway.service"
+        service.parent.mkdir(parents=True)
+        service.write_text('[Service]\nEnvironment="HERMES_HOME=' + str(selected) + '"\n')
+    stale = {"HERMES_HOME": str(tmp_path / ".mac/openclaw")}
+    result = build_mac_env(stale, deploy_env_config(tmp_path), environ=stale, lookup=lambda **_: "")
+    assert result["HERMES_HOME"] == str(selected)
+    assert result["MAC_HERMES_RUNTIME_CONTEXT_FILE"] == str(selected / "mac-runtime-context.json")
+    assert not selected.exists(), "Profile selection must not copy or invent credentials"
+    prerequisite = subprocess.run(
+        ["bash", "-c", _extract_bash_fn("mac_gateway_home") + "\nmac_gateway_home"],
+        env={"HOME": str(tmp_path), "HERMES_HOME": stale["HERMES_HOME"], "PY": sys.executable},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert prerequisite.stdout.strip() == result["HERMES_HOME"]
+
+
+def test_deploy_rejects_conflicting_service_profile_override(tmp_path):
+    service = tmp_path / "Library/LaunchAgents/ai.hermes.gateway.plist"
+    service.parent.mkdir(parents=True)
+    service.write_bytes(
+        plistlib.dumps({"EnvironmentVariables": {"HERMES_HOME": str(tmp_path / ".hermes")}})
+    )
+    with pytest.raises(ValueError, match="conflicts with the installed"):
+        build_mac_env(
+            {}, deploy_env_config(tmp_path), environ={"HERMES_HOME": str(tmp_path / "other")}
+        )
+
+
+@pytest.mark.parametrize("profile", [None, ".hermes", "custom profile"])
+def test_node_gateway_home_preserves_selected_hermes_profile(tmp_path, profile):
+    env = {"HOME": str(tmp_path), "MAC_HOME": str(tmp_path / ".mac")}
+    if profile is not None:
+        env["HERMES_HOME"] = str(tmp_path / profile)
+    result = subprocess.run(
+        ["bash", "-c", _extract_bash_fn("mac_gateway_home") + "\nmac_gateway_home"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == str(tmp_path / (profile or ".hermes"))
+    assert not (tmp_path / ".mac/openclaw").exists()
 
 
 def test_parse_env_text_skips_malformed_quoted_lines():
@@ -548,10 +619,10 @@ def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
     assert r"\$_mac_tool_assets" in driver
     assert 'REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-' in installer
     assert '. "$REVIEWED_TOOL_ASSETS"' in installer
-    assert 'MAC_REVIEWED_UV_VERSION="0.8.22"' in (
+    assert 'MAC_REVIEWED_UV_VERSION="0.12.12"' in (
         ROOT / "deploy" / "reviewed-tool-assets.sh"
     ).read_text(encoding="utf-8")
-    assert 'MAC_REVIEWED_PYTHON_VERSION="3.12.11"' in (
+    assert 'MAC_REVIEWED_PYTHON_VERSION="3.14.7"' in (
         ROOT / "deploy" / "reviewed-tool-assets.sh"
     ).read_text(encoding="utf-8")
 
@@ -585,6 +656,53 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
     assert "SHA-256 mismatch for reviewed asset" in result.stderr
 
 
+def test_reviewed_download_preserves_proxy_trust_without_deploy_credentials(tmp_path):
+    assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
+    observed = tmp_path / "curl-environment"
+    curl = tmp_path / "curl"
+    curl.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "${SSL_CERT_FILE-}" "${CURL_CA_BUNDLE-}" '
+        '"${MAC_SECRET_KEY-unset}" > ' + shlex.quote(str(observed)) + "\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = -o ]; then printf payload > "$2"; exit 0; fi\n'
+        "  shift\n"
+        "done\nexit 1\n"
+    )
+    curl.chmod(0o755)
+    expected = hashlib.sha256(b"payload").hexdigest()
+    target = tmp_path / "download.tgz"
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            '. "$1"; '
+            'mac_reviewed_asset_spec() { printf "asset.tgz %s https://example.invalid/asset.tgz root\\n" "$digest"; }; '
+            'digest="$3"; mac_download_reviewed_asset uv "$2"',
+            "bash",
+            str(assets),
+            str(target),
+            expected,
+        ],
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "SSL_CERT_FILE": "/trusted/proxy-ca.pem",
+            "CURL_CA_BUNDLE": "/trusted/proxy-ca.pem",
+            "MAC_SECRET_KEY": "fixture-secret-must-not-enter-curl",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == b"payload"
+    assert observed.read_text().splitlines() == [
+        "/trusted/proxy-ca.pem",
+        "/trusted/proxy-ca.pem",
+        "unset",
+    ]
+
+
 @pytest.mark.parametrize(
     ("tool", "os_name", "architecture", "filename"),
     [
@@ -592,6 +710,18 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
         ("uv", "Linux", "aarch64", "uv-aarch64-unknown-linux-gnu.tar.gz"),
         ("uv", "Darwin", "x86_64", "uv-x86_64-apple-darwin.tar.gz"),
         ("uv", "Darwin", "arm64", "uv-aarch64-apple-darwin.tar.gz"),
+        (
+            "python",
+            "Linux",
+            "x86_64",
+            "cpython-3.14.7+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        ),
+        (
+            "python",
+            "Linux",
+            "aarch64",
+            "cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        ),
     ],
 )
 def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, architecture, filename):
@@ -616,8 +746,8 @@ def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, archit
     observed_name, digest, url, root = result.stdout.strip().split()
     assert observed_name == filename
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    assert url.startswith("https://github.com/") and url.endswith(filename)
-    assert root == filename.removesuffix(".tar.gz")
+    assert url.startswith("https://github.com/") and url.endswith(filename.replace("+", "%2B"))
+    assert root == ("python" if tool == "python" else filename.removesuffix(".tar.gz"))
 
 
 @pytest.mark.parametrize(
@@ -745,12 +875,12 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
         ROOT / "src" / "mac" / "hermes_runtime.py"
     ).read_text(encoding="utf-8")
     assert generated_env["MAC_HERMES_INSTANCE_ID"] == "hermes_spoke-a"
-    assert generated_env["HERMES_HOME"] == str(tmp_path / ".mac" / "openclaw")
+    assert generated_env["HERMES_HOME"] == str(tmp_path / ".hermes")
     assert generated_env["MAC_MEMORY_TOPOLOGY_FILE"] == str(
-        tmp_path / ".mac" / "openclaw" / "mac-memory-topology.json"
+        tmp_path / ".hermes" / "mac-memory-topology.json"
     )
     assert generated_env["MAC_HERMES_RUNTIME_CONTEXT_FILE"] == str(
-        tmp_path / ".mac" / "openclaw" / "mac-runtime-context.json"
+        tmp_path / ".hermes" / "mac-runtime-context.json"
     )
     assert generated_env["MAC_WORKER_HERMES_INSTANCE_ID"] == generated_env["MAC_HERMES_INSTANCE_ID"]
     assert (
@@ -1516,8 +1646,8 @@ def _run_scrub(tmp_path, *, agent, hub_agent, hermes_env_text):
         "DEPLOY_TS=test; DEPLOY_LOG=/dev/null\n"
         + ("PY=%r\n" % sys.executable)
         + (
-            "HOME=%r; MAC_HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
-            % (str(tmp_path), str(mac_home), agent, hub_agent)
+            "HOME=%r; MAC_HOME=%r; HERMES_HOME=%r; AGENT=%r; SHARED_SERVICES_MANAGER_AGENT=%r\n"
+            % (str(tmp_path), str(mac_home), str(gateway_home), agent, hub_agent)
         )
         + fn
         + "scrub_spoke_provider_secrets\n"
@@ -2284,10 +2414,10 @@ def test_setup_entrypoints_are_python_driven_and_make_exposed():
     assert "def configure_then_deploy" in setup_py
     assert "def deploy_env" in setup_py
     assert (
-        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python'
+        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.14 python3 python'
         in makefile
     )
-    assert "sys.version_info >= (3, 11)" in makefile
+    assert "platform.python_version() != sys.argv[1]" in makefile
     assert "setup: require-python" in makefile
     assert "deploy: require-python" in makefile
     assert "--(hub|new-hub)" in makefile
@@ -3171,18 +3301,11 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
 
     assert generated_env["MAC_AGENT_STARTUP_SELF_TEST"] == "1"
     assert '"$HOME/.mac/bin/mac-agent-startup-self-test"' in wrapper
-    assert 'openclaw_config["models"]["providers"]["mac-router"]' in selftest
     assert "MAC_REQUIRE_QDRANT_MEMORY must be true" in selftest
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
-    assert "str(openclaw_agent_bin)" in selftest
-    assert '"MAC_OPENCLAW_STARTUP_OK" in raw_agent_output' in selftest
-    assert '"exclusive_service_owner"' in selftest
-    assert 'runtime["confinement"].get("provider") != "openshell"' in selftest
-    assert "def output_text" in selftest
-    assert "output_text(exc.stdout)" in selftest
-    assert "classify_openclaw_agent_failure" in selftest
-    assert '"openclaw_failure_class": openclaw_failure_class' in selftest
+    assert "openclaw_agent" not in selftest
+    assert "OpenClaw" not in selftest
     assert '"blocking_problems": blocking_problems' in selftest
     assert 'payload = {"resources": {"startup_self_test": report}}' in selftest
     assert "if blocking_problems:" in selftest
@@ -3501,9 +3624,11 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
 
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"' in script
     assert "reconcile_disabled_optional_openshell" in installer
-    legacy = installer.split('reload_mac_env\nif [ "$NODE_ACTION" = legacy-one-shot ]; then', 1)[
-        1
-    ].split('\nelse\n  log "typed phase 2 consumed infrastructure receipts', 1)[0]
+    legacy = (
+        installer.split('log "creating/updating mac environment file"', 1)[1]
+        .split('if [ "$NODE_ACTION" = legacy-one-shot ]; then', 1)[1]
+        .split('\nelse\n  log "typed phase 2 consumed infrastructure receipts', 1)[0]
+    )
     assert "reconcile_disabled_optional_openshell" in legacy
     for owned_state in (
         "openshell-gw",
@@ -4521,13 +4646,8 @@ def _startup_self_test_source() -> str:
     return match.group(1)
 
 
-def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway):
-    """Exec the startup self-test in-process with reachable shared services stubbed.
-
-    ``install_gateway`` controls whether the OpenClaw gateway artifacts
-    (service-advertisement.json + openclaw-agent binary) exist on disk; both
-    scenarios advertise MAC_CHAT_GATEWAY_IMPL=openclaw. Returns (exit_code, report).
-    """
+def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway, gateway_impl="hermes"):
+    """Run real worker checks with shared services stubbed and stale gateway artifacts."""
     import urllib.request
     import subprocess as _subprocess
 
@@ -4539,8 +4659,7 @@ def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway):
     report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
 
     if install_gateway:
-        # A genuinely gateway-serving node: artifacts present but broken (the
-        # advertisement is missing its runtime/ownership proof), so it must fail hard.
+        # Leftover gateway artifacts must not affect independent worker health.
         (mac_home / "openclaw" / "service-advertisement.json").write_text(
             json.dumps({"openclaw_runtime": {}, "gateway_ownership": {}}), encoding="utf-8"
         )
@@ -4549,7 +4668,7 @@ def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway):
         agent_bin.chmod(0o755)
 
     env = {
-        "MAC_CHAT_GATEWAY_IMPL": "openclaw",
+        "MAC_CHAT_GATEWAY_IMPL": gateway_impl,
         "MAC_WORKER_AGENT_NAME": "worker1",
         "MAC_AGENT_ID": "agent_worker1",
         "MAC_HERMES_INSTANCE_ID": "hermes-1",
@@ -4574,8 +4693,7 @@ def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway):
             return b"{}"
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
-    # No openclaw-agent invocation should ever run for a gateway-less worker; for
-    # the installed case the runtime advertisement already fails before the binary.
+    # Worker health must never invoke the retired chat gateway.
     monkeypatch.setattr(
         _subprocess,
         "run",
@@ -4602,27 +4720,16 @@ def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway):
     return exit_code, report
 
 
-def test_gatewayless_worker_does_not_hard_crash_on_missing_openclaw_gateway(tmp_path, monkeypatch):
-    # Regression for crash_b24c6ac41f854074b6ea49cabbc24090: a pure worker with
-    # MAC_CHAT_GATEWAY_IMPL=openclaw but no installed gateway (missing
-    # service-advertisement.json + openclaw-agent) must degrade, not exit 1.
-    exit_code, report = _run_startup_self_test(tmp_path, monkeypatch, install_gateway=False)
+@pytest.mark.parametrize("gateway_impl", ["hermes", "openclaw", ""])
+@pytest.mark.parametrize("install_gateway", [False, True])
+def test_worker_health_ignores_retired_gateway_artifacts(
+    tmp_path, monkeypatch, install_gateway, gateway_impl
+):
+    exit_code, report = _run_startup_self_test(
+        tmp_path, monkeypatch, install_gateway=install_gateway, gateway_impl=gateway_impl
+    )
     assert exit_code == 0, report["blocking_problems"]
-    assert report["status"] == "degraded"
-    assert report["blocking_problems"] == []
-    assert report["openclaw_gateway"]["impl_advertised"] is True
-    assert report["openclaw_gateway"]["installed"] is False
-    assert report["openclaw_gateway"]["serves_gateway"] is False
-    assert any(p.startswith("OpenClaw") for p in report["non_blocking_problems"])
-
-
-def test_gateway_serving_node_still_fails_hard_when_gateway_broken(tmp_path, monkeypatch):
-    # A node that actually installed the gateway artifacts but whose advertisement
-    # is broken must still fail hard (exit 1) — the decoupling relief is only for
-    # gateway-less workers.
-    exit_code, report = _run_startup_self_test(tmp_path, monkeypatch, install_gateway=True)
-    assert exit_code == 1
-    assert report["status"] == "failed"
-    assert report["openclaw_gateway"]["installed"] is True
-    assert report["openclaw_gateway"]["serves_gateway"] is True
-    assert any(p.startswith("OpenClaw") for p in report["blocking_problems"])
+    assert report["status"] == "passed"
+    assert report["problems"] == []
+    assert not any("openclaw" in key for key in report)
+    assert not any("openclaw" in key for key in report["checks"])

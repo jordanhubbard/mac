@@ -71,3 +71,27 @@ def test_a_choices_group_without_a_tail_is_untouched():
     generator = _generator()
     text = "                {create,list,show}\n\npositional arguments:"
     assert generator._normalize_usage(text) == text
+
+
+def test_openapi_reference_closes_its_owned_pool(monkeypatch):
+    from types import SimpleNamespace
+
+    import pytest
+
+    generator = _generator()
+    closed = []
+    plane = SimpleNamespace(store=SimpleNamespace(close=lambda: closed.append(True)))
+    monkeypatch.setattr(generator.ControlPlane, "in_memory", lambda: plane)
+    monkeypatch.setattr(
+        generator, "create_app", lambda **kw: SimpleNamespace(openapi=lambda: {"paths": {}})
+    )
+    assert "# HTTP API reference" in generator.openapi_reference()
+    assert closed == [True]
+
+    def fail_schema(**kw):
+        raise RuntimeError("schema failed")
+
+    monkeypatch.setattr(generator, "create_app", fail_schema)
+    with pytest.raises(RuntimeError, match="schema failed"):
+        generator.openapi_reference()
+    assert closed == [True, True]

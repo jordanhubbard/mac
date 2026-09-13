@@ -1,14 +1,19 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+# Prepare editable builds in older verifier images without allowing a
+# task-owned uv executable to make network requests. Runtime installs omit it.
+verifier-bootstrap = ["hatchling==1.32.0", "editables==0.6"]
 
 [project]
 name = "mac"
 dynamic = ["version"]
 description = "Trustworthy coordination layer for a fleet of AI agents."
 readme = "README.md"
-# Bumped 3.9 -> 3.11 for the vendored Hermes runtime (ADR 0001).
-requires-python = ">=3.11"
+# Fleet, development and CI use the reviewed patch in .python-version.
+requires-python = ">=3.14.7,<3.15"
 dependencies = [
     # --- mac control plane ---
     "fastapi>=0.111,<1.0",

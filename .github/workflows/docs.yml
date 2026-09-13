@@ -29,10 +29,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --extra postgres --python 3.11
+        run: uv sync --locked --extra docs --extra postgres
       - name: Start test PostgreSQL
         shell: bash
         run: |
@@ -80,10 +82,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --extra postgres --python 3.11
+        run: uv sync --locked --extra docs --extra postgres
       - name: Start test PostgreSQL
         # generate-docs-reference builds the OpenAPI reference from a live app,
         # which needs a control plane, which is now always PostgreSQL.
@@ -132,10 +136,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install test and documentation dependencies
-        run: uv sync --extra dev --extra docs --python 3.11
+        run: uv sync --locked --extra dev --extra docs
       - name: Exercise the PostgreSQL contract used by the deployment chapter
         run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
       - name: Validate Kubernetes manifests
@@ -182,10 +188,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --python 3.11
+        run: uv sync --locked --extra docs
       - name: Configure publication identity
         run: |
           git config user.name github-actions[bot]

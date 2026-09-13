@@ -14,6 +14,7 @@ import argparse
 import fcntl
 import ipaddress
 import os
+import plistlib
 import re
 import secrets
 import shlex
@@ -387,7 +388,44 @@ def _apply_openshell_deploy_config(
     return True
 
 
-def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
+def _gateway_home(
+    cfg: DeployEnvConfig, existing: Mapping[str, str], env: Mapping[str, str]
+) -> Path:
+    """Preserve the upstream service's profile instead of migrating credentials.
+
+    mac.env may contain a stale deploy-generated HERMES_HOME. The installed
+    service definition is the authority for the profile it actually runs.
+    A conflicting new override needs an explicit service migration first.
+    """
+    service_home = ""
+    plist = cfg.paths.home / "Library/LaunchAgents/ai.hermes.gateway.plist"
+    unit = cfg.paths.home / ".config/systemd/user/hermes-gateway.service"
+    if plist.exists():
+        with plist.open("rb") as stream:
+            definition = plistlib.load(stream)
+        service_home = definition.get("EnvironmentVariables", {}).get("HERMES_HOME", "")
+        if not service_home:
+            raise ValueError("Installed Hermes launchd service has no HERMES_HOME")
+    elif unit.exists():
+        for line in unit.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("Environment="):
+                for assignment in shlex.split(line.strip().split("=", 1)[1]):
+                    if assignment.startswith("HERMES_HOME="):
+                        service_home = assignment.split("=", 1)[1]
+        if not service_home:
+            raise ValueError("Installed Hermes systemd service has no HERMES_HOME")
+    requested = str(env.get("HERMES_HOME") or "").strip()
+    previous = str(existing.get("HERMES_HOME") or "").strip()
+    if service_home and requested and requested != previous:
+        if Path(requested) != Path(service_home):
+            raise ValueError("HERMES_HOME conflicts with the installed Hermes service profile")
+    selected = service_home or requested or previous or str(cfg.paths.home / ".hermes")
+    if not isinstance(selected, str) or not Path(selected).is_absolute():
+        raise ValueError("Hermes service profile must be an absolute path")
+    return Path(selected)
+
+
+def _path_values(cfg: DeployEnvConfig, gateway_home: Path) -> Dict[str, str]:
     paths = cfg.paths
     hub_url = _mac_hub_url(cfg)
     values = {
@@ -398,7 +436,7 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_URL": hub_url,
         "MAC_SUPERVISOR_KIND": cfg.control.supervisor_kind,
         "MAC_NETWORK_PROVIDER": cfg.control.network_provider,
-        "HERMES_HOME": str(paths.mac_home / "openclaw"),
+        "HERMES_HOME": str(gateway_home),
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REDACT_SECRETS": "true",
         "ACC_DIR": str(paths.home / ".acc"),
@@ -409,17 +447,13 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM": "1",
         "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
         "MAC_HERMES_STARTUP_CHECK": "1",
-        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(
-            paths.mac_home / "openclaw" / "mac-runtime-context.json"
-        ),
-        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(
-            paths.mac_home / "openclaw" / "mac-runtime-context.md"
-        ),
+        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(gateway_home / "mac-runtime-context.json"),
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(gateway_home / "mac-runtime-context.md"),
         "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
         "MAC_HERMES_WORKSPACE": str(paths.mac_home / "src" / "mac"),
         "MAC_PROJECT_CONTRACT_FILE": str(paths.mac_home / "src" / "mac" / ".mac" / "project.yaml"),
         "MAC_SELF_UPDATE_REPO": str(paths.mac_home / "src" / "mac"),
-        "MAC_MEMORY_TOPOLOGY_FILE": str(paths.mac_home / "openclaw" / "mac-memory-topology.json"),
+        "MAC_MEMORY_TOPOLOGY_FILE": str(gateway_home / "mac-memory-topology.json"),
     }
     if cfg.identity.is_hub:
         values.update(
@@ -927,7 +961,7 @@ def build_mac_env(
             ),
         )
     _ensure_secret_values(values)
-    values.update(_path_values(cfg))
+    values.update(_path_values(cfg, _gateway_home(cfg, existing, env)))
     finder = lookup or lookup_tailscale_ipv4
     tailscale_ip = finder(environ=env)
     if not tailscale_ip:

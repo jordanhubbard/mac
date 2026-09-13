@@ -7734,7 +7734,8 @@ def test_degraded_startup_self_test_survives_liveness_heartbeat_until_passed(cp)
 
     passed = dict(report)
     passed["status"] = "passed"
-    passed["hermes_failure_class"] = ""
+    # Retired gateway-specific fields must not override a fresh worker verdict.
+    passed["openclaw_failure_class"] = "provider_unavailable"
     recovered = cp.heartbeat_agent(
         worker.id,
         health_status=HealthStatus.HEALTHY.value,

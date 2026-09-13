@@ -6,18 +6,9 @@
 # Build:
 #   docker build -f Dockerfile.e2e -t mac-executor-e2e:latest .
 #
-# Note on openshell Python 3.14 compatibility:
-#   openshell 0.0.59 has a protobuf circular-import issue on Python 3.14
-#   (the _proto/__init__.py greedily imports generated pb2 modules before
-#   they are fully initialized). The binary CLI (openshell run ...) works
-#   correctly; only the Python SDK import path is affected on 3.14.
-#   The e2e harness never imports the openshell SDK at all: it asserts the argv
-#   that _build_sandbox_create_argv() hands to the openshell CLI.
-#   The OCSF translation seam (ocsf_to_observation) does not import openshell
-#   directly; it only uses mac.relay_observability + nemo_relay.
-#   This image uses python:3.11-slim to avoid the 3.14 import issue.
-
-FROM python:3.11-slim
+# The native OpenShell CLI is installed separately; these contracts do not
+# import its Python SDK. Use the same Python baseline as production and CI.
+FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f
 
 WORKDIR /app
 
@@ -54,10 +45,11 @@ COPY src/ /app/src/
 COPY deploy/ /app/deploy/
 # README.md too: pyproject's `readme = "README.md"` makes the build
 # backend fail metadata generation without it.
-COPY pyproject.toml README.md /app/
+COPY .python-version pyproject.toml README.md /app/
 
 # Install mac package in editable mode (no venv — this is a dedicated container)
-RUN pip install --no-cache-dir -e /app
+RUN test "$(python3 --version)" = "Python $(cat /app/.python-version)" \
+    && pip install --no-cache-dir -e /app
 
 ENV PYTHONPATH=/app/src
 ENV MAC_OPENSHELL_SANDBOX=0

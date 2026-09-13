@@ -554,6 +554,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_VERIFY_PG_HOST` | str | consumer-defined | hub | Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.openshell.internal` (OpenShell's host-bridge alias). Does not select the live hub Postgres. |
 | `MAC_HUB_VERIFY_PG_PORT` | int | consumer-defined | hub | Port passed to `scripts/start-test-postgres.sh` when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432. |
 | `MAC_HUB_VERIFY_PG_URL` | str | consumer-defined | hub | Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way. |
+| `MAC_HUB_VERIFY_PROFILE` | str | default | hub | Independent verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Affects future review and projected-merge verifiers, not running sandboxes. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
 | `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |
@@ -750,7 +751,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SLACK_APP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack app token. |
 | `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
 | `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
-| `MAC_OPENCLAW_STARTUP_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw startup ok. |
 | `MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw subprocess timeout seconds. |
 | `MAC_OPENCLAW_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw supervisor. |
 | `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |

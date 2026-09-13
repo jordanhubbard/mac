@@ -240,8 +240,10 @@ make distclean     # also remove .venv and node_modules
 ```
 
 Use `make install-cli` or `make install-gui` when only one surface is needed.
-Installation requires Python 3.11+, Git, GitHub CLI (`gh`), and npm; build and
-test targets also require `uv`. Fleet configuration/deployment is intentionally
+Installation requires Python 3.14.7 (pinned in `.python-version`), `uv`, Git,
+GitHub CLI (`gh`), and npm. `uv python install` provisions the reviewed Python
+version. See [the Python baseline](docs/python-baseline.md) for environment
+updates. Fleet configuration/deployment is intentionally
 separate under `make setup` and `make deploy`.
 
 For local control-plane/API development after installation:

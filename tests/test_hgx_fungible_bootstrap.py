@@ -53,7 +53,7 @@ def _fresh_home(tmp_path: Path) -> Path:
 
 
 def _fake_interpreter(tmp_path: Path) -> Path:
-    interp = tmp_path / "uv" / "cpython-3.12.11" / "bin" / "python3.12"
+    interp = tmp_path / "uv" / "cpython-3.14.7" / "bin" / "python3.14"
     interp.parent.mkdir(parents=True)
     interp.write_text("#!/bin/sh\nexit 0\n")
     interp.chmod(0o755)
@@ -199,7 +199,7 @@ def test_partial_venv_is_cleared_not_trusted(mod, tmp_path):
 def test_missing_interpreter_fails_with_remediation_not_partial_venv(mod, tmp_path):
     home = _fresh_home(tmp_path)
     layout = mod.VolumeLayout.for_home(home)
-    missing = tmp_path / "nope" / "python3.12"
+    missing = tmp_path / "nope" / "python3.14"
     # Leave a partial venv to prove it is removed on failure.
     (layout.venv / "bin").mkdir(parents=True)
     (layout.venv / "bin" / "python").write_text("broken")
@@ -261,8 +261,8 @@ def test_layout_mirrors_hgx_provision_paths(mod, tmp_path):
 
 
 def test_toolchain_pins_match_onboarding_contract(mod):
-    assert mod.UV_VERSION == "0.8.22"
-    assert mod.PYTHON_VERSION == "3.12.11"
+    assert mod.UV_VERSION == "0.12.12"
+    assert mod.PYTHON_VERSION == "3.14.7"
 
 
 def test_cli_provision_then_validate_from_fresh_volume(tmp_path):
