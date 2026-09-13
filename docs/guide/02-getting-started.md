@@ -6,7 +6,7 @@ so rather than assuming it will not happen.
 
 ## What you need first
 
-- **Python 3.11+**. `make install` checks the interpreter *and* the one inside
+- **Python 3.14.7 and `uv`** (the reviewed version is in `.python-version`). `make install` checks the interpreter *and* the one inside
   an existing `.venv`, recreating a stale environment rather than installing
   into it.
 - **PostgreSQL.** The only supported backend. `scripts/start-test-postgres.sh`

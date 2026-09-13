@@ -1385,7 +1385,10 @@ def test_subprocess_executor_explicit_cancel_is_audited(tmp_path: Path):
     assert cancelled[0]["metadata"]["cancel_reason"] == "ledger task cancelled"
 
 
-def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_path: Path):
+@pytest.mark.parametrize("stop_task", [False, True], ids=["cancel", "stop"])
+def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(
+    tmp_path: Path, stop_task: bool
+):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     task = cp.create_task("cancel running executor", required_capabilities=["python"])
@@ -1410,12 +1413,15 @@ def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_pa
         time.sleep(0.01)
     assert executor.has_active_process()
 
-    cp._transition_task_internal(
-        task.id,
-        TaskState.CANCELLED.value,
-        "operator",
-        {"reason": "test cancellation"},
-    )
+    if stop_task:
+        cp.stop_task(task.id, actor="operator", reason="test stop")
+    else:
+        cp._transition_task_internal(
+            task.id,
+            TaskState.CANCELLED.value,
+            "operator",
+            {"reason": "test cancellation"},
+        )
     thread.join(timeout=5.0)
 
     assert not thread.is_alive()

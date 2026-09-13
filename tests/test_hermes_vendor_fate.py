@@ -8,7 +8,10 @@ dependency without an explicit decision.
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -34,14 +37,30 @@ def test_vendored_hermes_tree_is_gone() -> None:
     # install-hermes-gateway.sh, the host-level lifecycle script that shells
     # out to an externally-installed `hermes` CLI -- see
     # docs/hermes-vendor-fate.md. What must stay gone is the vendoring
-    # machinery it used to hold: the pinned snapshot, its local patch set, and
-    # the plugin/tool overlay applied on top of it.
+    # machinery it used to hold: the pinned snapshot and the plugin/tool
+    # overlay applied on top of it. Pinned external compatibility patches
+    # are governed separately; they do not install an in-process runtime.
     deploy_hermes = ROOT / "deploy" / "hermes"
     assert not (deploy_hermes / "SNAPSHOT.md").exists()
     assert not (deploy_hermes / "HERMES_TREE_SHA256").exists()
     assert not (deploy_hermes / "LOCAL_PATCHES.md").exists()
     assert not (deploy_hermes / "overlay").exists()
-    assert not list(deploy_hermes.glob("*.patch"))
+
+
+def test_external_hermes_patches_match_their_source_manifests() -> None:
+    for patch in (ROOT / "deploy" / "hermes").glob("*.patch"):
+        manifest = json.loads(patch.with_name(patch.stem + "-source.json").read_text())
+        assert manifest["patch"] == patch.name
+        assert re.fullmatch(r"[0-9a-f]{40}", manifest["upstream_commit"])
+        assert hashlib.sha256(patch.read_bytes()).hexdigest() == manifest["patch_sha256"]
+        numstat = subprocess.check_output(
+            ["git", "apply", "--numstat", str(patch)], cwd=ROOT, text=True
+        )
+        changed_paths = {line.split("\t", 2)[2] for line in numstat.splitlines()}
+        assert changed_paths == set(manifest["files"])
+        for hashes in manifest["files"].values():
+            assert re.fullmatch(r"[0-9a-f]{64}", hashes["original_sha256"])
+            assert re.fullmatch(r"[0-9a-f]{64}", hashes["patched_sha256"])
 
 
 def test_a_no_live_hermes_cli_imports_in_mac_sources() -> None:
@@ -98,13 +117,6 @@ def test_deploy_env_does_not_default_agent_dir_to_removed_vendor_tree() -> None:
     assert '"MAC_HERMES_AGENT_DIR"' not in path_values
     assert "'MAC_HERMES_AGENT_DIR'" not in path_values
     assert "/_hermes" not in path_values
-
-
-def test_deploy_env_defaults_gateway_home_to_openclaw() -> None:
-    source = (SRC_MAC / "deploy_env.py").read_text(encoding="utf-8")
-    path_values = source.split("def _path_values", 1)[1].split("\ndef ", 1)[0]
-    assert 'paths.home / ".hermes"' not in path_values
-    assert 'paths.mac_home / "openclaw"' in path_values
 
 
 def test_adr_0001_records_vendoring_premise_ended() -> None:

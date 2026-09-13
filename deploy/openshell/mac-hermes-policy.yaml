@@ -372,6 +372,9 @@ network_policies:
         enforcement: enforce
         access: read-only
     binaries:
+      # Locked bootstrap uses the reviewed image-owned uv, never a writable
+      # task-local executable. Reuse the existing read-only package hosts.
+      - { path: /usr/local/bin/uv }
       - { path: /usr/local/bin/python3 }
       - { path: /usr/local/bin/python }
       - { path: /usr/bin/python3 }

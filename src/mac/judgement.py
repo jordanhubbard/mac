@@ -54,7 +54,7 @@ _ORPHAN_PR_STATES = frozenset({"completed", "cancelled"})
 # Pending review normally has an open PR. Age, repeated rejection and semantic
 # reviewer checks own review intervention; PR existence is not a failure signal.
 _UNLANDED_PR_STATES = frozenset({"failed", "blocked", "waiting"})
-_TASK_ID_RE = re.compile(r"task_[0-9a-f]{8,}")
+_TASK_ID_RE = re.compile(r"\btask_[0-9a-f]{8,32}\b")
 _FULL_TASK_ID_RE = re.compile(r"task_[0-9a-f]{32}$")
 _GIT_SHA_RE = re.compile(r"[0-9a-fA-F]{40}$")
 _NONTERMINAL_STATES = frozenset(
@@ -88,16 +88,31 @@ def _parse_ts(value: Any) -> Optional[datetime]:
         return None
 
 
-def _merged_pr_task_ids(pr: Mapping[str, Any]) -> set[str]:
-    """Return only task ids the merged PR identifies as its own work."""
+def _pr_task_ids(pr: Mapping[str, Any]) -> set[str]:
+    """Resolve one owning identity; supporting references confer no authority."""
 
     ids = _task_ids_from_text(
         " ".join([str(pr.get("title") or ""), str(pr.get("headRefName") or "")])
     )
-    for line in str(pr.get("body") or "").splitlines():
-        if re.match(r"^\s*task(?:\s+id)?\s*:", line, flags=re.IGNORECASE):
-            ids |= _task_ids_from_text(line)
-    return ids
+    body = str(pr.get("body") or "")
+    for line in body.splitlines():
+        declaration = re.match(r"^\s*task(?:\s+id)?\s*:\s*(.*)", line, flags=re.IGNORECASE)
+        if declaration:
+            # A following sentence may identify an investigation or dependency.
+            # Multiple ids in the ownership field itself remain ambiguous.
+            field = re.split(r"[.;]", declaration.group(1), maxsplit=1)[0]
+            owners = _task_ids_from_text(field)
+            if not owners:
+                return set()
+            ids |= owners
+    if _FULL_TASK_ID_RE.fullmatch(body.strip()):
+        ids.add(body.strip())
+    if not ids:
+        return set()
+    longest = max(ids, key=len)
+    # A title's short id and the body's full id may name the same owner.
+    # Conflicting declarations must not close a PR or complete either task.
+    return {longest} if all(longest.startswith(ident) for ident in ids) else set()
 
 
 @dataclass(frozen=True)
@@ -639,18 +654,13 @@ class JudgementProcess:
         merged_prs = [pr for pr in (listing.get("merged") or []) if isinstance(pr, Mapping)]
         merged_task_ids = set()
         for pr in merged_prs:
-            merged_task_ids |= _task_ids_from_text(
-                " ".join(
-                    [
-                        str(pr.get("title") or ""),
-                        str(pr.get("body") or ""),
-                        str(pr.get("headRefName") or ""),
-                    ]
-                )
-            )
+            for raw_id in _pr_task_ids(pr):
+                task = self._resolve_task(raw_id)
+                if task is not None:
+                    merged_task_ids.add(str(task.id))
         findings: List[Finding] = []
         for pr in merged_prs:
-            ids = _merged_pr_task_ids(pr)
+            ids = _pr_task_ids(pr)
             for raw_id in ids:
                 # Automatic completion is materially stronger than the
                 # operator-facing prefix resolver. Require the PR to carry the
@@ -691,31 +701,18 @@ class JudgementProcess:
                 )
         by_task: Dict[str, List[Mapping[str, Any]]] = {}
         for pr in open_prs:
-            ids = _task_ids_from_text(
-                " ".join(
-                    [
-                        str(pr.get("title") or ""),
-                        str(pr.get("body") or ""),
-                        str(pr.get("headRefName") or ""),
-                    ]
-                )
-            )
+            ids = _pr_task_ids(pr)
             number = int(pr.get("number") or 0)
             if number <= 0:
                 continue
             for raw_id in ids:
                 task = self._resolve_task(raw_id)
-                task_id = str(getattr(task, "id", "") or raw_id)
+                if task is None:
+                    continue
+                task_id = str(task.id)
                 by_task.setdefault(task_id, []).append(pr)
                 state = str(getattr(task, "state", "") or "").lower()
-                already_merged = bool(
-                    raw_id in merged_task_ids
-                    or task_id in merged_task_ids
-                    or any(
-                        raw_id.startswith(merged) or merged.startswith(raw_id)
-                        for merged in merged_task_ids
-                    )
-                )
+                already_merged = task_id in merged_task_ids
                 if already_merged or state in _ORPHAN_PR_STATES:
                     findings.append(
                         Finding(
@@ -1283,21 +1280,16 @@ class JudgementProcess:
         raw = str(task_id or "").strip()
         if not raw:
             return None
-        getter = getattr(self.control_plane, "get_task", None)
-        if callable(getter):
-            for candidate in (raw, raw[:13] if len(raw) > 13 else ""):
-                if not candidate:
-                    continue
-                try:
-                    return getter(candidate)
-                except Exception:  # noqa: BLE001
-                    continue
-        prefix = raw if len(raw) <= 13 else raw[:13]
-        for task in self._all_known_tasks():
-            ident = str(getattr(task, "id", "") or "")
-            if ident == raw or ident.startswith(prefix) or raw.startswith(ident):
-                return task
-        return None
+        if _FULL_TASK_ID_RE.fullmatch(raw):
+            try:
+                task = self.control_plane.get_task(raw)
+            except Exception:  # noqa: BLE001 - missing identity is not authority
+                return None
+            return task if str(getattr(task, "id", "")) == raw else None
+        matches = [
+            task for task in self._all_known_tasks() if str(getattr(task, "id", "")).startswith(raw)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _semantic_assignment_count(self, findings: Sequence[Finding]) -> int:
         return sum(1 for finding in findings if finding.kind == "semantic_reviewer_still_assigned")

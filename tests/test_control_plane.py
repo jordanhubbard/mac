@@ -7734,7 +7734,8 @@ def test_degraded_startup_self_test_survives_liveness_heartbeat_until_passed(cp)
 
     passed = dict(report)
     passed["status"] = "passed"
-    passed["hermes_failure_class"] = ""
+    # Retired gateway-specific fields must not override a fresh worker verdict.
+    passed["openclaw_failure_class"] = "provider_unavailable"
     recovered = cp.heartbeat_agent(
         worker.id,
         health_status=HealthStatus.HEALTHY.value,
@@ -13813,6 +13814,64 @@ def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
     result = cp._run_hub_review_verification(task, review, evidence, "test")
     assert result is None
     assert calls == []
+
+
+@pytest.mark.parametrize("retract_after_tick", [False, True])
+def test_hub_review_survives_virtual_nap_tick_without_accepting_stale_verdict(
+    cp, monkeypatch, retract_after_tick
+):
+    from mac.nap_ticker import NapTicker, NapTickerConfig
+
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    calls = []
+    draining_sweeps = []
+
+    def sweep_during_nap(agent_id, **kwargs):
+        draining_sweeps.append(cp.get_agent(agent_id).status)
+        cp.advance_default_review_workflow(task.id)
+        return {"groups": 0, "records_considered": 0}
+
+    monkeypatch.setattr(cp, "consolidate_nap", sweep_during_nap)
+
+    def verify(*args):
+        calls.append(args)
+        assert len(calls) == 1, "a scheduler cycle launched a duplicate verifier"
+        review = cp.list_reviews(task.id)[0]
+        virtual = cp.get_agent(review.reviewer_agent_id)
+        assert cp._agent_is_virtual(virtual.id)
+        cp.configure_nap(virtual.id, offset_minutes=0, enabled=False)
+        cp.store.execute("UPDATE nap_schedules SET enabled = 1 WHERE agent_id = ?", (virtual.id,))
+        report = NapTicker(cp, NapTickerConfig(enabled=True)).run_once()
+        assert report["napped_count"] == 0
+        assert cp.get_agent(virtual.id).status == virtual.status
+        # Re-enter the review sweep while its external test runner is active.
+        # The pending review and in-flight guard must prevent a second run.
+        cp.advance_default_review_workflow(task.id)
+        assert len(cp.list_reviews(task.id)) == 1
+        assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
+        assert len(calls) == 1
+        if retract_after_tick:
+            cp._retract_default_review(review, "test", "explicit cancellation during verification")
+        return 0, "all passed"
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, verify)
+    for agent in (worker, reviewer):
+        cp.configure_nap(agent.id, enabled=False)
+    cp.advance_default_review_workflow(task.id)
+
+    assert len(calls) == 1
+    assert draining_sweeps == []
+    verdicts = [item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")]
+    if retract_after_tick:
+        assert cp.get_task(task.id).state != TaskState.COMPLETED.value
+        assert verdicts == []
+        assert cp.list_reviews(task.id)[0].status == ReviewStatus.RETRACTED.value
+    else:
+        cp.advance_default_review_workflow(task.id)
+        assert len(calls) == 1
+        assert len(cp.list_reviews(task.id)) == 1
+        assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+        assert len(verdicts) == 1
 
 
 def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):

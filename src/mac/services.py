@@ -1094,6 +1094,7 @@ _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
 
 
 _HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
+    "hub verifier resource profile unavailable",
     # cursor-agent's stream transport, the observed cause
     "ssh exited with status",
     "connection reset by peer",
@@ -2390,6 +2391,7 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
             agent_has_active_lease=self._agent_has_active_lease,
+            agent_is_virtual=self._agent_is_virtual,
         )
         self.deploy = DeployService(
             self.store,
@@ -2865,15 +2867,7 @@ class ControlPlane:
         if not isinstance(startup, dict):
             return False
         status = str(startup.get("status") or "").strip().lower()
-        if status in {"degraded", "failed"}:
-            return True
-        return bool(
-            str(
-                startup.get("openclaw_failure_class")
-                or startup.get("hermes_failure_class")  # pre-migration reports
-                or ""
-            ).strip()
-        )
+        return status in {"degraded", "failed"}
 
     def _project_agent_health_for_resources(
         self,
@@ -11339,8 +11333,9 @@ class ControlPlane:
             "reason": str(reason or "").strip() or "operator stopped the task",
             "previous_state": task.state,
             "was_in_flight": task.state in self.IN_FLIGHT_TASK_STATES,
-            # Recorded, never assumed. The worker confirms by releasing the
-            # lease; until then a process may still be running against this.
+            # Revoking assignment authority is not proof that the OS process
+            # has exited. The worker observes the revoked lease and reports
+            # termination separately; until then it may still be running.
             "abort_confirmed": False,
         }
         if task.owner_agent_id:
@@ -16742,6 +16737,19 @@ class ControlPlane:
 
     def _ensure_agent_nap_schedule(self, agent_id: str, *, actor: str) -> None:
         agent = self.get_agent(agent_id)
+        if self._agent_is_virtual(agent.id):
+            schedule = self.get_nap_schedule(agent.id)
+            if schedule is not None and schedule.enabled:
+                # Keep the old row and audit history, but retire the worker
+                # schedule that earlier versions assigned to this hub identity.
+                self.configure_nap(
+                    agent.id,
+                    offset_minutes=schedule.offset_minutes,
+                    window_minutes=schedule.window_minutes,
+                    enabled=False,
+                    actor=actor or agent.id,
+                )
+            return
         if agent.status == AgentStatus.OFFLINE.value:
             return
         if self.get_nap_schedule(agent.id) is None:
@@ -17723,6 +17731,8 @@ class ControlPlane:
         )
         due: List[JsonDict] = []
         for row in rows:
+            if self._agent_is_virtual(row["agent_id"]):
+                continue
             offset = int(row["offset_minutes"] or 0) % NAP_WINDOW_MINUTES
             window = int(row["window_minutes"] or 15)
             day_start = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -27448,6 +27458,53 @@ class ControlPlane:
                 "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
                 "the immutable repository-owned OpenShell runtime image"
             )
+        profile = (os.environ.get("MAC_HUB_VERIFY_PROFILE") or "").strip()
+        if profile not in {"", "default", "bounded-tmpfs"}:
+            return 1, (
+                "hub verifier resource profile unavailable: MAC_HUB_VERIFY_PROFILE "
+                "must be default or bounded-tmpfs"
+            )
+        profile_args: List[str] = []
+        profile_env: List[str] = []
+        profile_preflight = ""
+        profile_ready = "[hub-verifier-profile] bounded-tmpfs ready"
+        if profile == "bounded-tmpfs":
+            # Native Docker-driver storage, confined to this sandbox. A fixed
+            # opt-in profile avoids accepting host mounts or arbitrary CLI args.
+            profile_args = [
+                "--cpu",
+                "12",
+                "--memory",
+                "32Gi",
+                "--driver-config-json",
+                json.dumps(
+                    {
+                        "docker": {
+                            "mounts": [
+                                {
+                                    "type": "tmpfs",
+                                    "target": "/sandbox/test-storage",
+                                    "size_bytes": 8 * 1024**3,
+                                    "mode": 0o1777,
+                                    "options": ["exec"],
+                                }
+                            ]
+                        }
+                    }
+                ),
+            ]
+            profile_env = ["TMPDIR=/sandbox/test-storage", "MAC_TEST_JOBS=8"]
+            # Some drivers cannot honor Docker mounts. Prove the requested
+            # storage before any repository bootstrap/test code can execute.
+            profile_preflight = (
+                'if [ "$(uname -s)" != Linux ] || '
+                '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
+                "[ ! -w /sandbox/test-storage ]; then "
+                "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
+                "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
+                "export TMPDIR=/sandbox/test-storage MAC_TEST_JOBS=8; "
+                f"echo '{profile_ready}'; "
+            )
         policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
         try:
             # 1200s could not cover even a scoped run once cloning, uploading
@@ -27551,7 +27608,7 @@ class ControlPlane:
                 timeout=60,
                 check=False,
             )
-            argv = [openshell, "sandbox", "create", "--no-auto-providers"]
+            argv = [openshell, "sandbox", "create", "--no-auto-providers", *profile_args]
             if policy:
                 argv += ["--policy", policy]
             argv += [
@@ -27574,7 +27631,7 @@ class ControlPlane:
             # control-plane host's PATH. The test database belongs inside the
             # sandbox too: the gateway may run on a separate Linux fleet host,
             # and libpq cannot use OpenShell's HTTP network proxy.
-            for value in hub_verify_sandbox_env_pairs():
+            for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
                 argv += ["--env", value]
             argv += [
                 "--upload",
@@ -27583,9 +27640,10 @@ class ControlPlane:
                 "/bin/bash",
                 "-c",
                 "export PATH=%s; hash -r 2>/dev/null || true; "
-                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s%s"
+                "%scd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s%s"
                 % (
                     SANDBOX_BASE_PATH,
+                    profile_preflight,
                     _HUB_VERIFY_GIT_PREFLIGHT,
                     ("%s && " % bootstrap_command) if bootstrap_command else "",
                     test_command or "scripts/run-contract-tests.sh",
@@ -27596,6 +27654,12 @@ class ControlPlane:
                     argv, capture_output=True, text=True, timeout=timeout, check=False
                 )
                 out = (proc.stdout or "") + (proc.stderr or "")
+                if profile == "bounded-tmpfs" and profile_ready not in out:
+                    return 1, (
+                        "hub verifier resource profile unavailable: bounded-tmpfs "
+                        "was not established before repository execution\n"
+                        + _hub_review_failure_excerpt(out)
+                    )
                 # Head AND tail. A blind tail cannot see the verdict:
                 # run-contract-tests.sh prints the pytest failure first, then
                 # an unconditional whole-repo coverage report (~14KB, one row
