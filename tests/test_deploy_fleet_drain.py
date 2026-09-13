@@ -275,9 +275,7 @@ def test_launchd_quiescence_enforces_short_aggregate_deadline(tmp_path, mode):
         assert result.returncode != 0
         assert "remained loaded" in result.stderr
         assert 0.15 <= elapsed < 3, result.stderr
-        assert (variant_dir / mode / "calls").read_text(encoding="utf-8") == (
-            f"{expected_call}\n"
-        )
+        assert (variant_dir / mode / "calls").read_text(encoding="utf-8") == (f"{expected_call}\n")
         if mode == "failed":
             assert "launchctl bootout failed" in result.stderr
             assert "synthetic bootout refusal" in result.stderr
