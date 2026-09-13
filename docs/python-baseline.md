@@ -38,12 +38,41 @@ A Python update is a reviewed source change, followed by a fleet rollout:
    insufficient. Complete a coding canary on every enabled fleet node through
    independent verification and publication, then release fleet holds.
 
-Hermes has its own source and dependency contract. The installed revision and
-upstream source inspected on 2026-09-13 declare `>=3.11,<3.14`; this is a rollout
-prerequisite to resolve and test, not a reason to ignore `Requires-Python`.
-MAC's version policy does not by itself prove Hermes compatibility or migrate
-its environment. Preserve personality, memory and gateway configuration during
-that migration. The task ledger records the compatibility work and rollout.
+Hermes has its own source and dependency contract. Its installed upstream
+revision `9dd6634c5635321cf38840cc30e9b51226689128` declares `>=3.11,<3.14`.
+`deploy/hermes/python314-source.json` identifies that exact source and the
+before/after file hashes for `deploy/hermes/python314.patch`. The patch raises
+the ceiling to `<3.15`, adds the published CPython 3.14 wheel hashes to the
+lock, and adapts Hermes's daemon worker pool to CPython's changed worker
+context. All 255 locked package versions are preserved. Explicitly select
+Python 3.14.7 when preparing the environment; upstream's default remains 3.11.
+
+Apply this patch only to a separate checkout of the manifest's upstream commit,
+using `git apply --check` before `git apply`. Install from the patched lock with
+`uv sync --locked --python 3.14.7` and the required extras. Do not ignore
+`Requires-Python`, resolve new dependency versions, or patch a serving checkout.
+The patch is compatibility material for the rollout; the gateway installer does
+not apply it automatically. A fleet migration still needs a prepared replacement
+environment, preserved profiles and gateway configuration, running-process
+identity checks, and coding canaries before releasing holds.
+
+The patch also repairs three upstream test observations without changing their
+assertions: preserve the non-secret `TMPDIR` through the canonical runner's
+credential-stripping environment; trace the actual pooled database reader; and
+scope a simulated stat failure to the holder scan it tests. In the approved
+Linux OpenShell sandbox, losing `TMPDIR` made real SQLite disk sorts fail on
+both Python 3.12 and 3.14. The pooled-reader test exposed a WAL-mode observation
+mistake; Python 3.14's changed `Path.exists()` behavior exposed the overly broad
+stat mock. Runtime database repair and holder safety remain unchanged.
+
+Compatibility evidence belongs to `task_dbc0cad0381a4f33824bcb7e873b5f24` in the
+MAC ledger. A locked editable install, real terminal-tool dispatch, daemon-pool
+regressions, and database/runner checks have passed on Python 3.14.7; focused
+regressions also pass on 3.12.7. The full upstream suite has additional failures
+in this sandbox, including failures reproduced on the older interpreter. Keep
+those results visible: focused success is not a green full-suite result or
+proof of a deployed fleet. The rollout remains separately tracked in
+`task_7e957b6682ff463395894b881930fe78`.
 
 The MAC runtime default does not override a different project's declared
 interpreter requirements inside a task sandbox. Project-specific toolchains
