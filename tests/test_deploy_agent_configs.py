@@ -4527,8 +4527,7 @@ def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway, gateway_im
     report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
 
     if install_gateway:
-        # A genuinely gateway-serving node: artifacts present but broken (the
-        # advertisement is missing its runtime/ownership proof), so it must fail hard.
+        # Leftover gateway artifacts must not affect independent worker health.
         (mac_home / "openclaw" / "service-advertisement.json").write_text(
             json.dumps({"openclaw_runtime": {}, "gateway_ownership": {}}), encoding="utf-8"
         )
