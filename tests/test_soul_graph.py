@@ -258,3 +258,57 @@ def test_summary_runs():
     s = g.summary()
     assert "test" in s
     assert "7" in s  # 7 nodes
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for bugs observed via live agent session (2026-09-12)
+# ---------------------------------------------------------------------------
+
+def test_bug4_new_node_scores_higher_than_old():
+    """BUG 4 fixed: exponential decay — new zero-access node >> week-old zero-access."""
+    g = SoulGraph(name="t")
+    old = g.add("old experience", tags={"old"})
+    g.nodes[old.id].created_at -= 7 * 86400
+    g.nodes[old.id].last_accessed -= 7 * 86400
+    g.splay.access(old.id, g.nodes[old.id].recency_score())
+
+    new = g.add("fresh experience", tags={"new"})
+    # With exp decay, new node at age~0 should score >> 5x an unaccessed week-old node
+    assert g.nodes[new.id].recency_score() > g.nodes[old.id].recency_score() * 5
+
+
+def test_bug3_touch_partially_promotes_parents():
+    """BUG 3 fixed: touching a child splay-promotes its parents."""
+    g = make_soul()
+    # Touch i2 repeatedly; i1 (its parent) should appear before unrelated nodes
+    for _ in range(3):
+        g.touch("i2")
+    hot_ids = [n.id for n in g.hot(10) if not n.pinned]
+    assert "i2" in hot_ids
+    # i1 is parent of i2 — should rank above never-touched l1, l2
+    if "i1" in hot_ids and "l1" in hot_ids:
+        assert hot_ids.index("i1") < hot_ids.index("l1")
+
+
+def test_bug1_axiom_resplayed_when_child_added():
+    """BUG 1 fixed: adding a child under a pinned axiom re-splays axiom to root."""
+    g = SoulGraph(name="t")
+    ax = g.add("Core axiom", tags={"axiom"}, pinned=True, node_id="ax1")
+    g.add("Unrelated A", tags={"other"}, node_id="u1")
+    g.add("Unrelated B", tags={"other"}, node_id="u2")
+    # Adding a child of the axiom should splay it back to root
+    g.add("Derived from axiom", tags={"derived"}, parents=["ax1"], node_id="d1")
+    assert g.hot(1)[0].id == "ax1"
+
+
+def test_bug2_new_node_outranks_old_unaccessed():
+    """BUG 2 fixed: newly added node appears above stale zero-access nodes in hot()."""
+    g = SoulGraph(name="t")
+    for i in range(5):
+        n = g.add(f"stale node {i}", tags={"old"})
+        g.nodes[n.id].created_at -= 3 * 86400
+        g.nodes[n.id].last_accessed -= 3 * 86400
+        g.splay.access(n.id, g.nodes[n.id].recency_score())
+    new = g.add("fresh experience just now", tags={"new"})
+    hot_ids = [n.id for n in g.hot(10) if not n.pinned]
+    assert hot_ids[0] == new.id

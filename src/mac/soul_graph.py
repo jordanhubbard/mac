@@ -45,12 +45,19 @@ class SoulNode:
         self.access_count += 1
 
     def recency_score(self) -> float:
-        """Higher = more recently/frequently accessed. Pinned nodes = inf."""
+        """Higher = more recently/frequently accessed. Pinned nodes = inf.
+
+        FIX (observed 2026-09-12): original formula (acc+1)/(1+age/86400)
+        gave only 8x ratio between brand-new and week-old zero-access nodes.
+        New formula uses exponential decay so new nodes dominate strongly
+        and decay is meaningful within hours not weeks.
+        """
         if self.pinned:
             return math.inf
         age = time.time() - self.last_accessed
-        # Ebbinghaus-ish decay: score drops with age, boosted by access count
-        return (self.access_count + 1) / (1 + age / 86400)  # decay per day
+        # Exponential decay with half-life of 1 day; access count adds weight
+        decay = math.exp(-age / 86400)
+        return (self.access_count + 1) * decay
 
     def to_dict(self) -> dict:
         return {
@@ -289,6 +296,15 @@ class SoulGraph:
         for tag in tags:
             self._tag_index.setdefault(tag, set()).add(node.id)
 
+        # FIX (observed 2026-09-12): axiom activation — when a new node is
+        # added as a child of a pinned axiom, splay-promote the axiom so it
+        # appears in hot() alongside its derived nodes. Axioms that ground
+        # active work should be visible, not just philosophically present.
+        for pid in node.parents:
+            parent = self.nodes.get(pid)
+            if parent and parent.pinned:
+                self.splay.access(pid, math.inf)  # already inf, but re-splays to root
+
         return node
 
     def pin(self, node_id: str):
@@ -297,12 +313,27 @@ class SoulGraph:
             self.nodes[node_id].pinned = True
             self.splay.access(node_id, math.inf)
 
-    def touch(self, node_id: str) -> Optional[SoulNode]:
-        """Access a node — promotes it in splay tree."""
+    def touch(self, node_id: str, propagate_parents: bool = True) -> Optional[SoulNode]:
+        """Access a node — promotes it in splay tree.
+
+        FIX (observed 2026-09-12): child access should partially promote
+        parents too — if you use a derived insight, the foundations that
+        grounded it are also implicitly relevant. Parents get a fractional
+        touch (no access_count increment, just splay key update).
+        """
         node = self.nodes.get(node_id)
         if node:
             node.touch()
             self.splay.access(node_id, node.recency_score())
+            if propagate_parents:
+                for pid in node.parents:
+                    parent = self.nodes.get(pid)
+                    if parent and not parent.pinned:
+                        # Partial promotion: nudge last_accessed toward now
+                        # without incrementing acc — parent is implicitly relevant
+                        # but not the direct focus. Half the recency boost.
+                        parent.last_accessed = (parent.last_accessed + time.time()) / 2
+                        self.splay.access(pid, parent.recency_score())
         return node
 
     def link(self, parent_id: str, child_id: str):
