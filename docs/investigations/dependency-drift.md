@@ -32,6 +32,16 @@ package versions and the content digest of 6,998 non-bytecode environment
 files were identical before and after discovery. The only executed command
 was the selected interpreter's `import psycopg` check.
 
+Keeping the freshly installed dependencies exposed a separate test assumption:
+the dispatch route contract inspected only the top level of `app.routes`.
+With FastAPI 0.141.1, included routers remain nested there. A prefixed route
+still returned HTTP 200 and appeared in OpenAPI, while the old inventory
+missed it. The contract now reads public OpenAPI operations and query
+parameters, preserving full dispatch coverage and repeated-state validation.
+All seven route-contract tests passed with the newer dependencies, including
+a nested-prefix and dependency-query-alias regression. This fixes test
+inspection; it does not change the hub's routes.
+
 This reproduction identifies a mechanism consistent with the historical
 version discrepancy. It does not trace the historical process or establish
 that no other command changes dependencies. It also does not make the
