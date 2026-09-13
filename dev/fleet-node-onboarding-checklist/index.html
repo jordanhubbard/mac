@@ -508,6 +508,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-baseline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Baseline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2263,8 +2291,8 @@ network first; do not deploy to a guessed host.</p>
 <li>[ ] <code>MAC_WORKER_WORKSPACE_GC_ENABLED</code> is not disabled accidentally, and a
       <code>worker.workspace_gc.disk_low</code> warning is treated as a dispatch blocker.</li>
 <li>[ ] A pinned Python meeting the repository requirement is available. Fresh
-      hosts use the deployer's checksum-reviewed <code>uv 0.8.22</code> native asset to
-      provision exact Python <code>3.12.11</code> instead of inheriting an old base-image
+      hosts use the deployer's checksum-reviewed <code>uv 0.12.12</code> native asset to
+      provision exact Python <code>3.14.7</code> instead of inheriting an old base-image
       Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
       x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.</li>
 <li>[ ] <code>git</code>, <code>gh</code>, and the selected coding CLIs are present in the

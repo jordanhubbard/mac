@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/deploy-prerequisite-vs-phase1-audit/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/python-baseline/">
       
       
+        <link rel="prev" href="../guide/05-developer-guide/">
+      
+      
+        <link rel="next" href="../book/01-system/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics - MAC Documentation</title>
+        <title>Python Baseline - MAC Documentation</title>
       
     
     
@@ -76,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#audit-prove-deploy-prerequisites-before-phase-1-mutation-preserve-python-diagnostics" class="md-skip">
+        <a href="#python-baseline" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics
+              Python Baseline
             
           </span>
         </div>
@@ -288,8 +292,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -300,11 +306,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
@@ -325,7 +331,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -508,10 +514,19 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../python-baseline/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -527,6 +542,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -1747,114 +1763,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#finding-a-phase-1-worker-mutation-precedes-prerequisite-proof" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Finding A — phase-1 worker mutation precedes prerequisite proof
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Finding A — phase-1 worker mutation precedes prerequisite proof">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#required-source-edits-finding-a" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Required source edits (Finding A)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#required-test-edits-finding-a" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Required test edits (Finding A)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#finding-b-python-helper-diagnostics-swallowed-on-unexpected-failure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Finding B — Python helper diagnostics swallowed on unexpected failure
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Finding B — Python helper diagnostics swallowed on unexpected failure">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#required-source-edits-finding-b" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Required source edits (Finding B)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#required-test-edits-finding-b" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Required test edits (Finding B)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verification" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Verification
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#out-of-scope-not-implicated" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Out of scope / not implicated
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1870,7 +1778,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/deploy-prerequisite-vs-phase1-audit.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/python-baseline.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1878,127 +1786,58 @@
   
 
 
-<h1 id="audit-prove-deploy-prerequisites-before-phase-1-mutation-preserve-python-diagnostics">Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics<a class="headerlink" href="#audit-prove-deploy-prerequisites-before-phase-1-mutation-preserve-python-diagnostics" title="Permanent link">&para;</a></h1>
-<p>Investigation-only ground truth for the repair task
-"Prove all deploy prerequisites before phase-1 mutation and preserve Python
-diagnostics". No production behavior is changed by this document; it specifies
-the exact edits and test assertions the follow-on repair must make.</p>
-<h2 id="finding-a-phase-1-worker-mutation-precedes-prerequisite-proof">Finding A — phase-1 worker mutation precedes prerequisite proof<a class="headerlink" href="#finding-a-phase-1-worker-mutation-precedes-prerequisite-proof" title="Permanent link">&para;</a></h2>
-<p>In <code>deploy/deploy-mac-fleet.sh</code>, <code>run_typed_cohort()</code> runs the phases in this
-order:</p>
+<h1 id="python-baseline">Python baseline<a class="headerlink" href="#python-baseline" title="Permanent link">&para;</a></h1>
+<p>MAC development, CI, native services and Linux OpenShell execution use CPython
+<strong>3.14.7</strong>, the reviewed version in the root <code>.python-version</code> file. CI reads
+that file instead of maintaining a separate Python matrix. Packaging rejects
+older minor versions and unreviewed future minor versions.</p>
+<p>For a development checkout, install the existing uv tool, then run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">uv python install</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">&quot;$(uv python find)&quot; scripts/bootstrap-project.py</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">make test</span>
+</code></pre></div>
+<p>Bootstrap checks the exact Python patch and installs the committed <code>uv.lock</code>
+with the development extra. <code>MAC_VENV</code> still selects a custom environment.
+Lint uses the prepared environment without synchronizing packages again.
+Interpreter discovery does not download Python or synchronize dependencies.</p>
+<p>A Python update is a reviewed source change, followed by a fleet rollout:</p>
 <ol>
-<li><code>run_bounded_node_phase "$selected_specs_file" phase1-prepare
-   typed_phase1_prepare_worker</code></li>
-<li><code>run_bounded_node_phase "$selected_specs_file" prerequisites
-   typed_prerequisite_worker</code></li>
-<li><code>run_bounded_node_phase "$selected_specs_file" stage-bundle ...</code></li>
+<li>Update <code>.python-version</code>, the package requirement and the lockfile. Update
+   the standalone onboarding constants and their receipt checks together;
+   those helpers are uploaded individually before the repository is installed.</li>
+<li>Update the checksum-verified uv assets when its Python catalog needs an
+   update, and update the pinned multi-architecture Python/uv image digests.
+   Container builds verify the actual interpreter against <code>.python-version</code>.</li>
+<li>Run the full contract suite, generated-documentation checks and packaging
+   smoke on the new interpreter inside Linux OpenShell. Preserve the existing
+   network policy and independent publication workflow.</li>
+<li>Provision the new managed interpreter before quiescing fleet services.
+   Recreate service environments from the accepted source; preserve the prior
+   interpreter and environment for rollback until canaries pass. Do not change
+   system Python used by operating-system tools or recovery helpers.</li>
+<li>Check the Python executable and package identity of each <strong>running service</strong>,
+   including the separate Hermes environment. A matching command on PATH is
+   insufficient. Complete a coding canary on every enabled fleet node through
+   independent verification and publication, then release fleet holds.</li>
 </ol>
-<p><code>typed_phase1_prepare_worker</code> calls <code>prepare_remote_phase1_restore_contract</code>,
-which <code>acquire_remote_deployment_lock</code>, uploads the phase-1 quiesce helper /
-daemon-functions files to the worker, and runs <code>bash "$helper" prepare</code> on the
-remote worker. That is a real per-worker mutation (deployment lock acquisition
-plus remote helper execution that arms the restore contract).</p>
-<p><code>typed_prerequisite_worker</code> (<code>prepare_remote_prerequisite_bundle</code>) is the
-read-only prerequisite proof. It runs AFTER the phase-1 prepare mutation.</p>
-<p>Therefore phase-1 mutation currently begins before all read-only prerequisites
-are proven, violating the requirement to "prove all deploy prerequisites before
-phase-1 mutation".</p>
-<p>Additionally, <code>hub_dispatch_hold_transition_available()</code> (deploy-mac-fleet.sh
-~line 3406) is defined — the comment at ~line 3409 states the intent to "prove
-the POST operation itself before phase 1 mutates any worker" — but it has NO
-call site anywhere in the script. <code>hub_dispatch_hold_cas_available()</code> is the
-only availability gate actually invoked (in <code>prepare_remote_mac_agent_deployment</code>).
-So the transition-batch prerequisite is never proven before phase-1 mutation.</p>
-<h3 id="required-source-edits-finding-a">Required source edits (Finding A)<a class="headerlink" href="#required-source-edits-finding-a" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Invoke the read-only prerequisite proof before any phase-1 mutation. In
-  <code>run_typed_cohort()</code>, move the <code>prerequisites</code> bounded phase (and the
-  never-invoked <code>hub_dispatch_hold_transition_available</code> gate) ahead of the
-  <code>phase1-prepare</code> bounded phase / journal <code>phase1-prepare-start</code> mutation so
-  that read-only prerequisite proof and the transition-batch POST availability
-  check both complete before <code>typed_phase1_prepare_worker</code> acquires any remote
-  deployment lock or runs the remote <code>prepare</code> helper.</li>
-<li>Wire <code>hub_dispatch_hold_transition_available</code> into the pre-phase-1 gate
-  (mirroring how <code>hub_dispatch_hold_cas_available</code> is checked), failing closed
-  when the hub only exposes <code>release-batch</code> and lacks the distinct
-  <code>POST /agents/dispatch-hold/transition-batch</code> operation.</li>
-<li>Keep <code>assert_prerequisite_remaining_budget</code> (using
-  <code>MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS</code>, default 2400, and
-  <code>MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS</code>, default 120) applied so the
-  reordered prerequisite phase still enforces the remaining-time budget before
-  mutation.</li>
-</ul>
-<h3 id="required-test-edits-finding-a">Required test edits (Finding A)<a class="headerlink" href="#required-test-edits-finding-a" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>tests/test_deploy_fleet_parallel_staging.py::test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered</code>
-  currently codifies the buggy order: its <code>ordered</code> tuple places
-  <code>run_bounded_node_phase ... phase1-prepare</code> and <code>cohort_journal_mutate
-  phase1-armed</code> BEFORE <code>run_bounded_node_phase ... prerequisites</code>. Update this
-  tuple so <code>prerequisites</code> precedes <code>phase1-prepare</code>/<code>phase1-prepare-start</code>, and
-  keep the <code>positions == sorted(positions)</code> assertion.</li>
-<li>Add an assertion (here or in <code>tests/test_deploy_hold_adoptions.py</code>) that
-  <code>hub_dispatch_hold_transition_available</code> has a real call site in
-  <code>run_typed_cohort</code>/<code>main</code> and that its position precedes the first phase-1
-  mutation (<code>phase1-prepare-start</code> journal write / <code>typed_phase1_prepare_worker</code>).</li>
-<li><code>tests/test_deploy_hold_adoptions.py</code> currently only asserts the availability
-  helper's body inspects <code>/agents/dispatch-hold/transition-batch</code> and its
-  <code>post</code>; extend it to assert the helper is invoked before phase-1 mutation.</li>
-</ul>
-<h2 id="finding-b-python-helper-diagnostics-swallowed-on-unexpected-failure">Finding B — Python helper diagnostics swallowed on unexpected failure<a class="headerlink" href="#finding-b-python-helper-diagnostics-swallowed-on-unexpected-failure" title="Permanent link">&para;</a></h2>
-<p><code>deploy/fleet-node-phase1-quiesce.sh</code> embeds Python blocks whose top-level
-<code>except Exception</code> handlers discard the exception message and traceback,
-printing only the class name:</p>
-<ul>
-<li>~line 2952:
-  <code>print("phase-1 quiescence failed unexpectedly: %s" % type(exc).__name__, ...)</code></li>
-<li>~line 3744:
-  <code>print("phase-1 quiescence failed unexpectedly: %s" % type(exc).__name__, ...)</code></li>
-</ul>
-<p>On an unexpected failure an operator sees e.g. "phase-1 quiescence failed
-unexpectedly: KeyError" with no message and no traceback, making remote
-diagnosis impossible. The curated <code>QuiescenceFailure</code> / <code>ReceiptFailure</code>
-branches already print a useful message and must stay; only the unexpected
-fallback loses information.</p>
-<p>Note: the raw child-process (systemctl / launchctl / manager) stderr captured by
-<code>run_bounded()</code> is intentionally suppressed to avoid leaking secret-bearing
-command output (see <code>reject_secret_or_raw_output</code> and the
-<code>test_systemd_inspection_error_fails_closed_without_raw_output</code> contract). The
-fix must preserve the Python-level diagnostic (message + <code>traceback.format_exc()</code>
-of the helper itself) WITHOUT reintroducing raw child stderr.</p>
-<h3 id="required-source-edits-finding-b">Required source edits (Finding B)<a class="headerlink" href="#required-source-edits-finding-b" title="Permanent link">&para;</a></h3>
-<ul>
-<li>In both <code>except Exception as exc:</code> fallbacks, print the exception message and a
-  full Python traceback (e.g. <code>traceback.format_exc()</code>), not just
-  <code>type(exc).__name__</code>, to stderr before <code>raise SystemExit(1)</code>. Add
-  <code>import traceback</code> where needed. Keep the existing best-effort
-  <code>output_path.unlink()</code> cleanup in the receipt block.</li>
-<li>Do NOT surface raw child-process stdout/stderr; only the helper's own Python
-  message/traceback.</li>
-</ul>
-<h3 id="required-test-edits-finding-b">Required test edits (Finding B)<a class="headerlink" href="#required-test-edits-finding-b" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Add a test in <code>tests/test_fleet_node_phase1_quiesce.py</code> that forces an
-  unexpected (non-<code>QuiescenceFailure</code>) exception in each Python block and asserts
-  the helper stderr contains the exception message and traceback frames (e.g.
-  the exception type AND a <code>Traceback (most recent call last)</code> line and the
-  helper file/function), while still asserting no secret / raw child output
-  leaks (mirroring <code>test_systemd_inspection_error_fails_closed_without_raw_output</code>).</li>
-</ul>
-<h2 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Canonical command: <code>scripts/run-contract-tests.sh</code>.</li>
-<li>Targeted while iterating:
-  <code>.venv/bin/python -m pytest tests/test_deploy_fleet_parallel_staging.py
-  tests/test_deploy_hold_adoptions.py tests/test_fleet_node_phase1_quiesce.py -q</code>.</li>
-</ul>
-<h2 id="out-of-scope-not-implicated">Out of scope / not implicated<a class="headerlink" href="#out-of-scope-not-implicated" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>src/mac/diagnostics.py</code> is the read-only control-plane diagnostics registry
-  (<code>mac admin diagnostics</code>); it already isolates a raising check into an <code>error</code>
-  Finding and is unrelated to the phase-1 helper stderr loss. No change needed.</li>
-<li><code>src/mac/deploy_service.py</code> records deploy/dependency metadata; it does not run
-  the phase-1 helper or handle its stderr. No change needed.</li>
-</ul>
+<p>Hermes has its own source and dependency contract. The installed revision and
+upstream source inspected on 2026-09-13 declare <code>&gt;=3.11,&lt;3.14</code>; this is a rollout
+prerequisite to resolve and test, not a reason to ignore <code>Requires-Python</code>.
+MAC's version policy does not by itself prove Hermes compatibility or migrate
+its environment. Preserve personality, memory and gateway configuration during
+that migration. The task ledger records the compatibility work and rollout.</p>
+<p>The MAC runtime default does not override a different project's declared
+interpreter requirements inside a task sandbox. Project-specific toolchains
+remain isolated from the host service environment.</p>
+<p>An independent verifier whose approved Linux image predates this baseline can
+use <code>. scripts/bootstrap-verifier-python.sh</code> as its explicit bootstrap command.
+This downloads checksum-pinned Python and uv through the image-owned curl with
+the injected OpenShell CA, then uses image-owned pip to download hash-checked
+wheels from <code>uv.lock</code>. Task-owned tools install and run offline. The helper
+prepares development and documentation dependencies, removes temporary build
+dependencies, and prevents <code>uv run</code> from changing packages during verification.
+The normal full contract test follows it; network policy and review gates stay
+in force. This bridge does not install an OpenShell runtime on a macOS host.</p>
 
 
 
@@ -2029,6 +1868,44 @@ of the helper itself) WITHOUT reintroducing raw child stderr.</p>
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../guide/05-developer-guide/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Developer Guide">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Developer Guide
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../book/01-system/" class="md-footer__link md-footer__link--next" aria-label="Next: 1. MAC as a System">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                1. MAC as a System
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">

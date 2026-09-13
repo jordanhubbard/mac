@@ -504,6 +504,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python-baseline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Baseline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1989,14 +2017,15 @@ notification channels.</p>
 <p>Prerequisites:</p>
 <ul>
 <li>A terminal: a text window where you run commands.</li>
-<li>Python 3.11 or newer for setup orchestration.</li>
+<li>Python 3.14.7, matching the root <code>.python-version</code> file.</li>
 <li>This repository checked out locally.</li>
-<li><code>uv</code> installed, or a Python environment that can install the dependencies.</li>
+<li><code>uv</code> installed to provision the reviewed interpreter and locked dependencies.</li>
 </ul>
 <p>From the repository root:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">cd ~/Src/mac</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">python3 scripts/bootstrap-project.py</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">PATH=.venv/bin:$PATH .venv/bin/python -m pytest</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">uv python install</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">&quot;$(uv python find)&quot; scripts/bootstrap-project.py</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">scripts/run-contract-tests.sh</span>
 </code></pre></div>
 <p>Create a local secret key. MAC uses this to protect secret records. Keep the
 value private.</p>
@@ -2268,7 +2297,8 @@ Trust the key deliberately before deploying:</p>
 <code>~/.mac/fleets.yaml</code> for a host you control. The other classified causes are
 <code>host-key-changed</code> (the target's key no longer matches the pinned entry — never
 paper over this one), <code>auth-rejected</code>, <code>unreachable</code>, and <code>timeout</code>.</p>
-<p>The Make targets pick a Python 3.11+ <code>.venv/bin/python</code>, <code>python3.11</code>, <code>python3</code>, or <code>python</code> automatically:</p>
+<p>The Make targets select <code>.venv/bin/python</code>, <code>python3.14</code>, <code>python3</code>, or <code>python</code>
+only when it matches the exact version in <code>.python-version</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="go">make setup</span>
 <a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">make deploy HUB=horde</span>
 </code></pre></div>
