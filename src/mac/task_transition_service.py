@@ -387,6 +387,7 @@ class TaskTransitionService:
             TaskState.BLOCKED.value,
             TaskState.OPEN.value,
             TaskState.NEEDS_REVIEW.value,
+            TaskState.STOPPED.value,
             TaskState.FAILED.value,
             TaskState.CANCELLED.value,
         }:
@@ -451,9 +452,17 @@ class TaskTransitionService:
             else:
                 transition_where = "WHERE id = ? AND state = ?"
                 transition_guards = [task_id, task.state]
-                if fenced_lease_id:
+                # Retain the stop handler's lease snapshot across both reads;
+                # a stop/reclaim race can return to the same task state with
+                # a newer assignment before this transition engine reads it.
+                expected_lease_id = fenced_lease_id or (
+                    (transition_detail.get("revoked_lease_id") or task.lease_id)
+                    if target == TaskState.STOPPED.value
+                    else None
+                )
+                if expected_lease_id:
                     transition_where += " AND lease_id = ?"
-                    transition_guards.append(fenced_lease_id)
+                    transition_guards.append(expected_lease_id)
                 changed = conn.execute(
                     """
                     UPDATE tasks
@@ -491,6 +500,7 @@ class TaskTransitionService:
                     TaskState.BLOCKED.value,
                     TaskState.OPEN.value,
                     TaskState.NEEDS_REVIEW.value,
+                    TaskState.STOPPED.value,
                 }
             ):
                 self.control_plane._set_agent_idle(task.owner_agent_id, conn=conn)

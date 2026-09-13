@@ -15,13 +15,15 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Build and verify wheel
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          make package-cli PYTHON="$(uv python find 3.11)"
+          make package-cli PYTHON="$(uv python find)"
           wheel="$(find dist -maxdepth 1 -name 'mac-*.whl' -print -quit)"
           test -n "$wheel"
           version="${RELEASE_TAG#v}"
@@ -29,9 +31,11 @@ jobs:
             "mac-${version}-"*.whl) ;;
             *) echo "wheel $wheel does not match release $RELEASE_TAG" >&2; exit 1 ;;
           esac
-          uv venv --python 3.11 /tmp/mac-release-smoke
-          uv pip install --python /tmp/mac-release-smoke/bin/python \
-            "${wheel}[postgres,relay]"
+          uv venv --python "$(cat .python-version)" /tmp/mac-release-smoke
+          UV_PROJECT_ENVIRONMENT=/tmp/mac-release-smoke uv sync --locked \
+            --no-dev --no-install-project --extra postgres --extra relay
+          uv pip install --no-deps --python /tmp/mac-release-smoke/bin/python "$wheel"
+          uv pip check --python /tmp/mac-release-smoke/bin/python
           /tmp/mac-release-smoke/bin/python -c \
             'import mac, mac.task_executor; print(mac.__version__)'
       - name: Create release if needed and attach wheel

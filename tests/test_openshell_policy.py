@@ -202,3 +202,5 @@ def test_image_runtime_uses_in_image_paths_and_tmp_caches():
         "/usr/bin/python3",
         "/opt/mac-venv/bin/python",
     } <= package_bins
+    assert "/usr/local/bin/uv" in package_bins
+    assert not any(path.startswith(("/tmp/", "/sandbox/")) for path in package_bins)

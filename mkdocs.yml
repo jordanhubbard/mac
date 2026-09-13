@@ -143,6 +143,7 @@ nav:
       - "Advanced Concepts": guide/03-advanced.md
       - "The UI": guide/04-ui.md
       - "Developer Guide": guide/05-developer-guide.md
+      - "Python Baseline": python-baseline.md
   - Book:
       - "1. MAC as a System": book/01-system.md
       - "2. Install and Start Locally": book/02-local-start.md

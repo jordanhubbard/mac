@@ -17,7 +17,10 @@ def test_release_tags_publish_an_importable_version_matched_wheel() -> None:
     assert workflow["permissions"]["contents"] == "write"
     assert "make package-cli" in raw
     assert '"mac-${version}-"*.whl' in raw
-    assert '"${wheel}[postgres,relay]"' in raw
+    shell = " ".join(raw.replace("\\\n", " ").split())
+    assert "uv sync --locked --no-dev --no-install-project --extra postgres --extra relay" in shell
+    assert 'uv pip install --no-deps --python /tmp/mac-release-smoke/bin/python "$wheel"' in raw
+    assert "uv pip check --python /tmp/mac-release-smoke/bin/python" in raw
     assert "import mac, mac.task_executor" in raw
     assert 'gh release upload "$RELEASE_TAG" dist/mac-*.whl --clobber' in raw
 

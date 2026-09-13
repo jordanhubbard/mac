@@ -46,6 +46,24 @@ ADR 0001 is amended to **Superseded (vendoring premise ended 2026-08-17)**.
 Hermes can be fetched and patched on demand if needed again; git history
 retains the snapshot.
 
+## Update (2026-09-13): bounded external compatibility patch
+
+The shared Python 3.14.7 baseline exposes an incompatibility in the externally
+installed Hermes daemon thread pool. `deploy/hermes/python314.patch` records
+the repair and test-harness corrections against one upstream commit;
+`python314-source.json` pins that commit, the patch checksum, and every affected
+file's original and patched hashes. It preserves the locked dependency versions.
+Apply it to a separate external staging checkout, never a serving checkout.
+
+This accepts a limited patch-maintenance obligation for the requested migration.
+Requalify the patch when changing the upstream revision, and retire it once a
+qualified upstream release supplies the fixes. It does not restore the snapshot,
+an in-process import, an overlay, a re-vendor job, or a container `.pth` injection.
+The architecture tests retain those prohibitions and check external patch/manifest
+integrity instead of forbidding every file with a `.patch` suffix. The gateway
+installer does not apply the compatibility patch automatically; rollout and live
+canary evidence remain separate from this source artifact.
+
 ## Update (2026-09-05): Hermes reactivated on the hub, still not vendored
 
 OpenClaw (the gateway that replaced Hermes above) turned out to be unreliable

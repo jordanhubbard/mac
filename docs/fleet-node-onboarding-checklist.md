@@ -111,8 +111,8 @@ network first; do not deploy to a guessed host.
 - [ ] `MAC_WORKER_WORKSPACE_GC_ENABLED` is not disabled accidentally, and a
       `worker.workspace_gc.disk_low` warning is treated as a dispatch blocker.
 - [ ] A pinned Python meeting the repository requirement is available. Fresh
-      hosts use the deployer's checksum-reviewed `uv 0.8.22` native asset to
-      provision exact Python `3.12.11` instead of inheriting an old base-image
+      hosts use the deployer's checksum-reviewed `uv 0.12.12` native asset to
+      provision exact Python `3.14.7` instead of inheriting an old base-image
       Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
       x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.
 - [ ] `git`, `gh`, and the selected coding CLIs are present in the
