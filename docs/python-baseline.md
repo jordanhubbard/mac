@@ -48,3 +48,13 @@ that migration. The task ledger records the compatibility work and rollout.
 The MAC runtime default does not override a different project's declared
 interpreter requirements inside a task sandbox. Project-specific toolchains
 remain isolated from the host service environment.
+
+An independent verifier whose approved Linux image predates this baseline can
+use `. scripts/bootstrap-verifier-python.sh` as its explicit bootstrap command.
+This downloads checksum-pinned Python and uv through the image-owned curl with
+the injected OpenShell CA, then uses image-owned pip to download hash-checked
+wheels from `uv.lock`. Task-owned tools install and run offline. The helper
+prepares development and documentation dependencies, removes temporary build
+dependencies, and prevents `uv run` from changing packages during verification.
+The normal full contract test follows it; network policy and review gates stay
+in force. This bridge does not install an OpenShell runtime on a macOS host.

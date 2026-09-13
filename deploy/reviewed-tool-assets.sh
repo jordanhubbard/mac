@@ -53,6 +53,14 @@ mac_reviewed_asset_spec() {
       filename="uv-aarch64-apple-darwin.tar.gz"
       sha256="46740540b63fdee9a6cb2e19baf3f1f475b850c440a33e63455087a6871263f1"
       ;;
+    python:linux:amd64)
+      filename="cpython-3.14.7+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+      sha256="3959f92825141e04adf44982d3a83ee57af0877e893b0796e04c1468749d9b04"
+      ;;
+    python:linux:arm64)
+      filename="cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+      sha256="8a0798baa8a2c27b5751d590aced543eaa85e20b3f73d93c1af049688acdc9c5"
+      ;;
     *)
       echo "ERROR: unsupported reviewed tool/platform: $tool $os/$arch" >&2
       return 2
@@ -62,6 +70,10 @@ mac_reviewed_asset_spec() {
   case "$tool" in
     uv)
       url="https://github.com/astral-sh/uv/releases/download/${MAC_REVIEWED_UV_VERSION}/${filename}"
+      ;;
+    python)
+      root="python"
+      url="https://github.com/astral-sh/python-build-standalone/releases/download/20260901/${filename/+/%2B}"
       ;;
   esac
   printf '%s %s %s %s\n' "$filename" "$sha256" "$url" "$root"
@@ -117,11 +129,13 @@ mac_download_reviewed_asset() {
   # credential-bearing deploy process.
   # Start curl with a fresh environment so hub, GitHub, provider, and worker
   # credentials loaded by the deploy wrapper cannot enter the downloader's
-  # process environment. System trust roots remain available without env vars.
+  # process environment. Preserve only the non-secret TLS trust paths as well:
+  # OpenShell injects its proxy CA there instead of changing system trust roots.
   if ! env -i PATH="${PATH:-/usr/bin:/bin}" HOME="${HOME:-/}" \
       TMPDIR="${TMPDIR:-/tmp}" \
       HTTPS_PROXY="${HTTPS_PROXY:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
       NO_PROXY="${NO_PROXY:-}" \
+      SSL_CERT_FILE="${SSL_CERT_FILE:-}" CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-}" \
       "$curl_bin" -q --retry 5 --retry-all-errors --retry-delay 2 \
       --connect-timeout 15 --max-time 300 -fsSL -o "$temporary" "$url"; then
     rm -f "$temporary"

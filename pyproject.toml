@@ -1,6 +1,11 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+# Prepare editable builds in older verifier images without allowing a
+# task-owned uv executable to make network requests. Runtime installs omit it.
+verifier-bootstrap = ["hatchling==1.32.0", "editables==0.6"]
 
 [project]
 name = "mac"

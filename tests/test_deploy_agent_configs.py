@@ -585,6 +585,53 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
     assert "SHA-256 mismatch for reviewed asset" in result.stderr
 
 
+def test_reviewed_download_preserves_proxy_trust_without_deploy_credentials(tmp_path):
+    assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
+    observed = tmp_path / "curl-environment"
+    curl = tmp_path / "curl"
+    curl.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "${SSL_CERT_FILE-}" "${CURL_CA_BUNDLE-}" '
+        '"${MAC_SECRET_KEY-unset}" > ' + shlex.quote(str(observed)) + "\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = -o ]; then printf payload > "$2"; exit 0; fi\n'
+        "  shift\n"
+        "done\nexit 1\n"
+    )
+    curl.chmod(0o755)
+    expected = hashlib.sha256(b"payload").hexdigest()
+    target = tmp_path / "download.tgz"
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            '. "$1"; '
+            'mac_reviewed_asset_spec() { printf "asset.tgz %s https://example.invalid/asset.tgz root\\n" "$digest"; }; '
+            'digest="$3"; mac_download_reviewed_asset uv "$2"',
+            "bash",
+            str(assets),
+            str(target),
+            expected,
+        ],
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "SSL_CERT_FILE": "/trusted/proxy-ca.pem",
+            "CURL_CA_BUNDLE": "/trusted/proxy-ca.pem",
+            "MAC_SECRET_KEY": "fixture-secret-must-not-enter-curl",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == b"payload"
+    assert observed.read_text().splitlines() == [
+        "/trusted/proxy-ca.pem",
+        "/trusted/proxy-ca.pem",
+        "unset",
+    ]
+
+
 @pytest.mark.parametrize(
     ("tool", "os_name", "architecture", "filename"),
     [
@@ -592,6 +639,18 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
         ("uv", "Linux", "aarch64", "uv-aarch64-unknown-linux-gnu.tar.gz"),
         ("uv", "Darwin", "x86_64", "uv-x86_64-apple-darwin.tar.gz"),
         ("uv", "Darwin", "arm64", "uv-aarch64-apple-darwin.tar.gz"),
+        (
+            "python",
+            "Linux",
+            "x86_64",
+            "cpython-3.14.7+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        ),
+        (
+            "python",
+            "Linux",
+            "aarch64",
+            "cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        ),
     ],
 )
 def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, architecture, filename):
@@ -616,8 +675,8 @@ def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, archit
     observed_name, digest, url, root = result.stdout.strip().split()
     assert observed_name == filename
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    assert url.startswith("https://github.com/") and url.endswith(filename)
-    assert root == filename.removesuffix(".tar.gz")
+    assert url.startswith("https://github.com/") and url.endswith(filename.replace("+", "%2B"))
+    assert root == ("python" if tool == "python" else filename.removesuffix(".tar.gz"))
 
 
 @pytest.mark.parametrize(
