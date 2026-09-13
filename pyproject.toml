@@ -7,8 +7,8 @@ name = "mac"
 dynamic = ["version"]
 description = "Trustworthy coordination layer for a fleet of AI agents."
 readme = "README.md"
-# Bumped 3.9 -> 3.11 for the vendored Hermes runtime (ADR 0001).
-requires-python = ">=3.11"
+# Fleet, development and CI use the reviewed patch in .python-version.
+requires-python = ">=3.14.7,<3.15"
 dependencies = [
     # --- mac control plane ---
     "fastapi>=0.111,<1.0",

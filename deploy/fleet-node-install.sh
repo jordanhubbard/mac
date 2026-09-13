@@ -637,23 +637,14 @@ python_bin() {
   local candidate
   for candidate in \
     "${MAC_PYTHON:-}" \
-    "$MAC_HOME/lib/python"/cpython-"$MAC_REVIEWED_PYTHON_VERSION"-*/bin/python3.12 \
+    "$MAC_HOME/lib/python"/cpython-"$MAC_REVIEWED_PYTHON_VERSION"-*/bin/python3.14 \
     "$VENV/bin/python" \
-    /opt/homebrew/bin/python3 /usr/local/bin/python3 \
-    python3.13 python3.12 python3.11 python3.10 python3 python; do
+    /opt/homebrew/bin/python3.14 /usr/local/bin/python3.14 \
+    python3.14 python3 python; do
     [ -n "$candidate" ] || continue
-    if ! command -v "$candidate" >/dev/null 2>&1; then
-      continue
-    fi
-    candidate="$(command -v "$candidate")"
-    if "$candidate" - <<'PY' >/dev/null 2>&1
-import sys
-# Must match pyproject.toml requires-python (>=3.11); a 3.10 interpreter would
-# fail `pip install -e .` partway through the remote deploy. Skip it so we pick
-# a real 3.11+ (e.g. python3.12) instead of dying mid-install.
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
-PY
-    then
+    candidate="$(command -v "$candidate" 2>/dev/null)" || continue
+    if "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+        "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1; then
       candidate="$("$candidate" -c \
         'import os,sys; print(os.path.realpath(sys.executable))')" || continue
       [ -x "$candidate" ] || continue
@@ -661,32 +652,21 @@ PY
       return
     fi
   done
-  # Interpreter provisioning is monotonic onboarding, not a reversible cohort
-  # generation mutation.  Synchronized phase 2 only verifies that onboarding
-  # completed and fails closed before any node state is quiesced.
-  log "ERROR: Python >= 3.11 is missing; complete node onboarding before phase 2"
+  # Provision before a cohort starts, so this check cannot interrupt services.
+  log "ERROR: Python $MAC_REVIEWED_PYTHON_VERSION is missing; complete node onboarding before phase 2"
   exit 1
 }
 
 hermes_python_bin() {
-  local candidate
-  for candidate in "${MAC_HERMES_PYTHON:-}" python3.13 python3.12 python3.11 /opt/homebrew/bin/python3 /usr/local/bin/python3 python3 python; do
-    [ -n "$candidate" ] || continue
-    if ! command -v "$candidate" >/dev/null 2>&1; then
-      continue
-    fi
-    candidate="$(command -v "$candidate")"
-    if "$candidate" - <<'PY' >/dev/null 2>&1
-import sys
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
-PY
-    then
-      printf '%s\n' "$candidate"
-      return
-    fi
-  done
-  log "WARNING: Python >= 3.11 not found; Hermes agent venv will use $1 with --ignore-requires-python" >&2
-  printf '%s\n' "$1"
+  # Hermes and MAC share a reviewed interpreter, with separate service venvs.
+  # A conflicting override must fail before quiescing any running service.
+  local candidate="${MAC_HERMES_PYTHON:-$1}"
+  if ! "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+      "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1; then
+    log "ERROR: Hermes requires Python $MAC_REVIEWED_PYTHON_VERSION" >&2
+    return 1
+  fi
+  printf '%s\n' "$candidate"
 }
 
 PY="$(python_bin)"

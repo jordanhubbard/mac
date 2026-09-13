@@ -548,10 +548,10 @@ def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
     assert r"\$_mac_tool_assets" in driver
     assert 'REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-' in installer
     assert '. "$REVIEWED_TOOL_ASSETS"' in installer
-    assert 'MAC_REVIEWED_UV_VERSION="0.8.22"' in (
+    assert 'MAC_REVIEWED_UV_VERSION="0.12.12"' in (
         ROOT / "deploy" / "reviewed-tool-assets.sh"
     ).read_text(encoding="utf-8")
-    assert 'MAC_REVIEWED_PYTHON_VERSION="3.12.11"' in (
+    assert 'MAC_REVIEWED_PYTHON_VERSION="3.14.7"' in (
         ROOT / "deploy" / "reviewed-tool-assets.sh"
     ).read_text(encoding="utf-8")
 
@@ -2284,10 +2284,10 @@ def test_setup_entrypoints_are_python_driven_and_make_exposed():
     assert "def configure_then_deploy" in setup_py
     assert "def deploy_env" in setup_py
     assert (
-        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python'
+        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.14 python3 python'
         in makefile
     )
-    assert "sys.version_info >= (3, 11)" in makefile
+    assert "platform.python_version() != sys.argv[1]" in makefile
     assert "setup: require-python" in makefile
     assert "deploy: require-python" in makefile
     assert "--(hub|new-hub)" in makefile

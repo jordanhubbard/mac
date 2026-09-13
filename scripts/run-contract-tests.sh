@@ -296,15 +296,23 @@ if [ -n "$_MAC_CONTRACT_RUNTIME_VENV_REQUESTED" ]; then
 else
     _MAC_CONTRACT_RUNTIME_PYTHON="/opt/mac-venv/bin/python"
 fi
-if [ -x ".venv/bin/python" ]; then
-    PY=".venv/bin/python"
-elif [ -x "$_MAC_CONTRACT_RUNTIME_PYTHON" ]; then
-    PY="$_MAC_CONTRACT_RUNTIME_PYTHON"
-else
-    PY="$(command -v python3 || command -v python || true)"
-fi
-if [ -z "${PY}" ]; then
-    echo "run-contract-tests.sh: no python interpreter found (.venv, $_MAC_CONTRACT_RUNTIME_PYTHON, or PATH)" >&2
+_MAC_PYTHON_VERSION="$(cat .python-version)"
+_py_has_reviewed_version() {
+    "$1" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+        "$_MAC_PYTHON_VERSION" >/dev/null 2>&1
+}
+_find_reviewed_python() {
+    for candidate in .venv/bin/python "$_MAC_CONTRACT_RUNTIME_PYTHON" python3.14 python3 python; do
+        if _py_has_reviewed_version "$candidate"; then
+            command -v "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+PY="$(_find_reviewed_python || true)"
+if [ -z "$PY" ]; then
+    echo "run-contract-tests.sh: Python $_MAC_PYTHON_VERSION is required; run uv python install and bootstrap-project.py with that interpreter" >&2
     exit 1
 fi
 
@@ -317,7 +325,8 @@ fi
 # cheaply; when the interpreter can't run the suite and the repo ships its
 # bootstrap, build the hermetic .venv the execution contract already promises.
 _py_can_run_suite() {
-    "$1" -m coverage --version >/dev/null 2>&1 \
+    _py_has_reviewed_version "$1" \
+        && "$1" -m coverage --version >/dev/null 2>&1 \
         && "$1" -m pytest --version >/dev/null 2>&1 \
         && "$1" -c "import cryptography, fastapi, yaml" >/dev/null 2>&1
 }
@@ -334,11 +343,7 @@ if ! _py_can_run_suite "$PY"; then
         # $PY may have resolved to the .venv interpreter just removed; fall back
         # to the runtime venv or a PATH python so bootstrap has a real builder.
         if [ ! -x "$PY" ]; then
-            if [ -x "$_MAC_CONTRACT_RUNTIME_PYTHON" ]; then
-                PY="$_MAC_CONTRACT_RUNTIME_PYTHON"
-            else
-                PY="$(command -v python3 || command -v python || true)"
-            fi
+            PY="$(_find_reviewed_python || true)"
         fi
     fi
     if [ ! -x ".venv/bin/python" ] && [ -n "$PY" ] && [ -x "$PY" ] \

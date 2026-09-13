@@ -3,9 +3,11 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
+PYTHON_VERSION="$(cat "$ROOT/.python-version")"
+
 find_python() {
-  for candidate in "$ROOT/.venv/bin/python" python3.11 python3 python; do
-    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+  for candidate in "$ROOT/.venv/bin/python" python3.14 python3 python; do
+    if "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' "$PYTHON_VERSION" >/dev/null 2>&1; then
       command -v "$candidate" || printf '%s\n' "$candidate"
       return 0
     fi
@@ -14,7 +16,7 @@ find_python() {
 }
 
 if ! PYTHON="$(find_python)"; then
-  echo "setup.sh: Python 3.11+ is required (.venv/bin/python, python3.11, python3, or python)" >&2
+  echo "setup.sh: Python $PYTHON_VERSION is required; run uv python install" >&2
   exit 127
 fi
 

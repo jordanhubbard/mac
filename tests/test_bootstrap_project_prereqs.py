@@ -55,7 +55,7 @@ def test_check_mode_passes_without_mutating_venv(bootstrap, monkeypatch):
     def _fail(*args, **kwargs):  # pragma: no cover - must never run under --check
         raise AssertionError("--check must not create or mutate the venv")
 
-    monkeypatch.setattr(bootstrap, "run", _fail)
+    monkeypatch.setattr(bootstrap.subprocess, "run", _fail)
     monkeypatch.setattr(sys, "argv", ["bootstrap-project.py", "--check"])
     assert bootstrap.main() == 0
 
@@ -70,7 +70,7 @@ def test_check_mode_fails_with_actionable_hint_when_missing(bootstrap, monkeypat
 
 
 def test_venv_only_check_ignores_dev_tools(bootstrap, monkeypatch):
-    present = {"python3"}
+    present = {"python3", "uv"}
     monkeypatch.setattr(
         bootstrap.shutil,
         "which",

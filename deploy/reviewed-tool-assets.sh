@@ -5,8 +5,8 @@
 # deploy credentials in their environment. Only checksum-verified native
 # release archives are ever extracted or executed.
 
-MAC_REVIEWED_UV_VERSION="0.8.22"
-MAC_REVIEWED_PYTHON_VERSION="3.12.11"
+MAC_REVIEWED_UV_VERSION="0.12.12"
+MAC_REVIEWED_PYTHON_VERSION="3.14.7"
 
 mac_reviewed_platform() {
   local raw_os="${1:-$(uname -s)}" raw_arch="${2:-$(uname -m)}" os="" arch=""
@@ -39,19 +39,19 @@ mac_reviewed_asset_spec() {
   case "$tool:$os:$arch" in
     uv:linux:amd64)
       filename="uv-x86_64-unknown-linux-gnu.tar.gz"
-      sha256="741ff1f5742c5a4a25d2f829e8395355e43f7a5ae2ebc6368e9ae2df0efb69cf"
+      sha256="ab9b309d4586403f024e100abaceb396616e178a553e2500c36087d180f09509"
       ;;
     uv:linux:arm64)
       filename="uv-aarch64-unknown-linux-gnu.tar.gz"
-      sha256="726b72a137fda33565143325f7d31c42cd30ff9ccdf067e00d124d37b4081cb2"
+      sha256="fe08db50cc1b56cd1da7801065ed1103d27ed3f9571cd122386cfc7faf1b8df5"
       ;;
     uv:darwin:amd64)
       filename="uv-x86_64-apple-darwin.tar.gz"
-      sha256="76638fdcfa91357858771551a1c88de1f7c3b270b33ab1866f8a0618d9e442d8"
+      sha256="0dc8cd6c961582b0d140b5398f96b23502885277fb3464241456a2435e460dfa"
       ;;
     uv:darwin:arm64)
       filename="uv-aarch64-apple-darwin.tar.gz"
-      sha256="3f61099e261e449527141dbf125629fab33ad696468c8c90cebbac40185a306c"
+      sha256="46740540b63fdee9a6cb2e19baf3f1f475b850c440a33e63455087a6871263f1"
       ;;
     *)
       echo "ERROR: unsupported reviewed tool/platform: $tool $os/$arch" >&2

@@ -267,9 +267,9 @@ normalize_boolean_token() {
 
 resolve_python_bin() {
   local candidate
-  for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" "$ROOT/.venv/bin/python" python3.11 python3 python; do
+  for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" "$ROOT/.venv/bin/python" python3.14 python3 python; do
     [ -n "$candidate" ] || continue
-    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    if "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -773,7 +773,7 @@ if [ -n "$HOLD_ADOPTIONS_SOURCE" ]; then
 fi
 
 if ! PYTHON_BIN="$(resolve_python_bin)"; then
-  echo "ERROR: Python 3.11+ is required (.venv/bin/python, python3.11, python3, or python)" >&2
+  echo "ERROR: Python $MAC_REVIEWED_PYTHON_VERSION is required; run uv python install before deploying" >&2
   exit 127
 fi
 NODE_PARALLELISM="${MAC_DEPLOY_NODE_PARALLELISM:-4}"
@@ -6839,7 +6839,7 @@ if (
     or value.get("route_identity_sha256")!=sys.argv[5]
     or value.get("source_archive_sha256")!=sys.argv[6]
     or value.get("instance_kind")!="fungible"
-    or value.get("versions")!={"uv":"0.8.22","python":"3.12.11"}
+    or value.get("versions")!={"uv":"0.12.12","python":"3.14.7"}
 ):
     raise SystemExit("remote phase-zero stage receipt is invalid")
 PY
