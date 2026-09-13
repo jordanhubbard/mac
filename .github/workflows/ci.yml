@@ -66,15 +66,16 @@ jobs:
         # and restored from the newest entry for that branch: the checkpoint
         # validates itself against the tree and the runner fingerprint
         # (src/mac/test_checkpoint.py), so a wrong or stale restore costs a full
-        # run, never a wrong result. `always: true` so a RED run still saves the
-        # checkpoint -- a red run is precisely the one worth resuming from.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        # run, never a wrong result. The explicit always() save step below
+        # also preserves progress when the test gate fails. Cache entries are
+        # immutable, so each rerun attempt needs its own save key.
+        id: test_checkpoint_restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .mac-test-checkpoint
-          key: mac-test-checkpoint-sanity-${{ github.head_ref }}-${{ github.run_id }}
+          key: mac-test-checkpoint-sanity-${{ github.head_ref }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             mac-test-checkpoint-sanity-${{ github.head_ref }}-
-          save-always: true
       - name: Check the committed impact map is collectable
         # sanity-test depends on impact-map the same way test-schema-migrations
         # depends on postgres-schema. A stale interned node id is a pytest
@@ -86,6 +87,15 @@ jobs:
           MAC_TEST_CHECKPOINT: "1"
           MAC_IMPACT_MAP_CHECKED: "1"
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
+      - name: Save test-gate checkpoint
+        if: >-
+          always() &&
+          steps.test_checkpoint_restore.outputs.cache-primary-key != '' &&
+          steps.test_checkpoint_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .mac-test-checkpoint
+          key: ${{ steps.test_checkpoint_restore.outputs.cache-primary-key }}
 
   mainline:
     if: >-
@@ -126,18 +136,27 @@ jobs:
         # pass when the gate falls through to the whole-repo coverage run: the
         # complete, coverage-measured suite still runs before this job can go
         # green (src/mac/test_checkpoint.py, "COVERAGE FLOORS").
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: test_checkpoint_restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .mac-test-checkpoint
-          key: mac-test-checkpoint-mainline-${{ github.run_id }}
+          key: mac-test-checkpoint-mainline-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             mac-test-checkpoint-mainline-
-          save-always: true
       - name: Run impact-selected diff coverage gate (full on unsafe resolution)
         env:
           MAC_TEST_SELECT_BASE: ${{ github.event.before }}
           MAC_TEST_CHECKPOINT: "1"
         run: scripts/run-contract-tests.sh
+      - name: Save test-gate checkpoint
+        if: >-
+          always() &&
+          steps.test_checkpoint_restore.outputs.cache-primary-key != '' &&
+          steps.test_checkpoint_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .mac-test-checkpoint
+          key: ${{ steps.test_checkpoint_restore.outputs.cache-primary-key }}
       - name: Upload coverage policy evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
