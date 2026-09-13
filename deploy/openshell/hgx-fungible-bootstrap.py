@@ -5,7 +5,7 @@ Fresh HGX fungible instances (for example ``worker1`` and ``worker2``) were
 reachable but not deployable without manual host repair: the persistent volume
 exposed ``~/.mac`` with root ownership and group-readable modes, required tool
 links were missing, and no usable Python 3.12 runtime was present.  A
-direct symlink from ``~/.local/bin/python3.12`` to a uv-managed interpreter also
+direct symlink from ``~/.local/bin/python3.14`` to a uv-managed interpreter also
 broke ``sys.base_prefix`` (venv/ensurepip resolved the wrong Python home); an
 executable *wrapper* is required instead.
 
@@ -46,10 +46,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Reviewed runtime toolchain pins.  These MUST match the versions the fungible
 # onboarding contract verifies (see
-# ``deploy/fleet-node-machine-onboard.py``): uv 0.8.22 and CPython 3.12.11.
-UV_VERSION = "0.8.22"
-PYTHON_VERSION = "3.12.11"
-PYTHON_SERIES = "3.12"
+# ``deploy/fleet-node-machine-onboard.py``): uv 0.12.12 and CPython 3.14.7.
+UV_VERSION = "0.12.12"
+PYTHON_VERSION = "3.14.7"
+PYTHON_SERIES = "3.14"
 
 RECEIPT_SCHEMA = "mac.hgx_fungible_bootstrap_receipt.v1"
 REMEDIATION_SCHEMA = "mac.hgx_fungible_bootstrap_remediation.v1"
@@ -186,7 +186,7 @@ class VolumeLayout:
 def render_python_wrapper(interpreter: os.PathLike[str] | str) -> str:
     """Return an ``exec`` wrapper that preserves ``sys.base_prefix``.
 
-    A direct symlink ``~/.local/bin/python3.12 -> <uv interpreter>`` makes a
+    A direct symlink ``~/.local/bin/python3.14 -> <uv interpreter>`` makes a
     venv/ensurepip resolve the wrong Python home because the interpreter walks
     ``argv[0]`` back to the link's directory.  ``exec``-ing the real
     interpreter by its absolute path keeps ``sys.executable`` /

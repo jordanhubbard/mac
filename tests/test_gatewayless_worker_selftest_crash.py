@@ -1,19 +1,7 @@
-"""Regression for the gateway-less worker startup self-test crash.
+"""Worker health ignores absent retired OpenClaw gateway artifacts.
 
-Crash fingerprint sha256:cc2c8a8e...: a worker whose MAC_CHAT_GATEWAY_IMPL
-advertises OpenClaw but which lacks the installed gateway artifacts
-(``service-advertisement.json`` and the ``openclaw-agent`` binary) previously
-made ``mac-agent-startup-self-test`` exit non-zero / record blocking problems,
-which stops ``mac-agent-service``.  A pure worker has no gateway to serve, so
-its OpenClaw readiness gaps must be reported as degraded (non-blocking) and the
-self-test must exit 0.
-
-This extracts the embedded ``mac-agent-startup-self-test`` Python body from
-``install_mac_agent_wrapper`` in ``deploy/fleet-node-install.sh`` and runs it in
-a temporary HOME with the crash-inducing environment (no advertisement file and
-``MAC_OPENCLAW_AGENT_BIN`` pointing at a nonexistent path), asserting exit code 0
-with no blocking problems and a non-failed status.  It follows the extract-and-run
-pattern used by tests/test_deploy_agent_configs.py and tests/test_deploy_env_edges.py.
+A stale deployment setting must neither block startup nor degrade the worker.
+Shared-service and executor checks retain their own readiness contracts.
 """
 
 from __future__ import annotations
@@ -129,9 +117,7 @@ def test_gatewayless_worker_missing_openclaw_artifacts_does_not_block_startup(
     assert report["status"] != "failed"
     assert report["blocking_problems"] == []
 
-    # The node advertises OpenClaw but has no installed gateway, so it is a pure
-    # worker and its OpenClaw deficiencies are non-blocking (degraded).
-    assert report["openclaw_gateway"]["impl_advertised"] is True
-    assert report["openclaw_gateway"]["installed"] is False
-    assert report["openclaw_gateway"]["serves_gateway"] is False
-    assert any(p.startswith("OpenClaw") for p in report["non_blocking_problems"])
+    assert report["status"] == "passed"
+    assert report["problems"] == []
+    assert "openclaw_gateway" not in report
+    assert not any("openclaw" in key for key in report["checks"])

@@ -63,7 +63,7 @@ def _route(module, path: Path) -> Path:
 
 def _fake_toolchain(module, stage: Path):
     uv = stage / "tools" / "uv"
-    python = stage / "python" / "cpython-3.12.11-test" / "bin" / "python3.12"
+    python = stage / "python" / "cpython-3.14.7-test" / "bin" / "python3.14"
     for executable in (uv, python):
         executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -173,8 +173,8 @@ def test_prepare_is_generation_scoped_and_does_not_publish(module, tmp_path, mon
     stage = layout.stage("onboard:test")
     assert receipt["status"] == "prepared"
     assert receipt["versions"] == {
-        "uv": "0.8.22",
-        "python": "3.12.11",
+        "uv": "0.12.12",
+        "python": "3.14.7",
     }
     assert (stage / "source" / "pyproject.toml").is_file()
     assert stat.S_IMODE((stage / "stage.json").stat().st_mode) == 0o600
@@ -244,7 +244,7 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
                 executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 executable.chmod(0o755)
         if args[0].endswith("/python") and "-c" in args:
-            return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
+            return subprocess.CompletedProcess(args, 0, "3.14.7\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -326,7 +326,7 @@ def test_aborted_cohort_journal_is_preserved_while_precohort_receipt_commits(
                 executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 executable.chmod(0o755)
         if args[0].endswith("/python") and "-c" in args:
-            return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
+            return subprocess.CompletedProcess(args, 0, "3.14.7\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -429,7 +429,7 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
         + "\n}"
     )
     mac_home = tmp_path / ".mac"
-    managed = mac_home / "lib" / "python" / "cpython-3.12.11-test" / "bin" / "python3.12"
+    managed = mac_home / "lib" / "python" / "cpython-3.14.7-test" / "bin" / "python3.14"
     managed.parent.mkdir(parents=True)
     managed.symlink_to(Path(sys.executable))
     system_bin = tmp_path / "system-bin"
@@ -448,7 +448,7 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
                 'VENV="$MAC_HOME/venv"\n'
                 'PATH="$2:/usr/bin:/bin"\n'
                 "MAC_PYTHON=\n"
-                "MAC_REVIEWED_PYTHON_VERSION=3.12.11\n"
+                "MAC_REVIEWED_PYTHON_VERSION=3.14.7\n"
                 "log() { :; }\n"
                 f"{function}\n"
                 "python_bin\n"

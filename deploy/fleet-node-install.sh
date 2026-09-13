@@ -377,16 +377,40 @@ OPENSHELL_RUNTIME_INPUT_SHA256="${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"
 OPENSHELL_LOCAL_IMAGE_BUILD="${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
 OPENSHELL_BOOTSTRAPPED=0
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
-# Live gateway home matches src/mac/mac_paths.py::gateway_home().
-# HERMES_HOME overrides unless it still names the vacated ~/.hermes tree.
-# Default is $MAC_HOME/openclaw. Never mkdir ~/.hermes.
+# Never redirect an explicit Hermes profile into a retired gateway directory.
+# deploy_env reconciles this with the installed upstream service definition.
 mac_gateway_home() {
-  local home="${HERMES_HOME:-}"
-  case "$home" in
-    ""|"$HOME/.hermes"|"$HOME/.hermes/")
-      home="$MAC_HOME/openclaw"
-      ;;
-  esac
+  local home="${HERMES_HOME:-$HOME/.hermes}"
+  # Prerequisites write the memory/context receipts before write-mac-env runs.
+  # Resolve the same installed profile here, including when a shared-service
+  # installer has reloaded a stale mac.env in the meantime.
+  if [ -f "$HOME/Library/LaunchAgents/ai.hermes.gateway.plist" ] \
+      || [ -f "$HOME/.config/systemd/user/hermes-gateway.service" ]; then
+    "${PY:-python3}" - "$HOME" <<'PY'
+from pathlib import Path
+import plistlib
+import shlex
+import sys
+
+root = Path(sys.argv[1])
+plist = root / "Library/LaunchAgents/ai.hermes.gateway.plist"
+selected = ""
+if plist.exists():
+    with plist.open("rb") as stream:
+        selected = plistlib.load(stream).get("EnvironmentVariables", {}).get("HERMES_HOME", "")
+else:
+    unit = root / ".config/systemd/user/hermes-gateway.service"
+    for line in unit.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("Environment="):
+            for assignment in shlex.split(line.strip().split("=", 1)[1]):
+                if assignment.startswith("HERMES_HOME="):
+                    selected = assignment.split("=", 1)[1]
+if not isinstance(selected, str) or not selected or not Path(selected).is_absolute():
+    raise SystemExit("Installed Hermes service has no absolute HERMES_HOME")
+print(selected)
+PY
+    return $?
+  fi
   printf '%s\n' "$home"
 }
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
@@ -637,23 +661,14 @@ python_bin() {
   local candidate
   for candidate in \
     "${MAC_PYTHON:-}" \
-    "$MAC_HOME/lib/python"/cpython-"$MAC_REVIEWED_PYTHON_VERSION"-*/bin/python3.12 \
+    "$MAC_HOME/lib/python"/cpython-"$MAC_REVIEWED_PYTHON_VERSION"-*/bin/python3.14 \
     "$VENV/bin/python" \
-    /opt/homebrew/bin/python3 /usr/local/bin/python3 \
-    python3.13 python3.12 python3.11 python3.10 python3 python; do
+    /opt/homebrew/bin/python3.14 /usr/local/bin/python3.14 \
+    python3.14 python3 python; do
     [ -n "$candidate" ] || continue
-    if ! command -v "$candidate" >/dev/null 2>&1; then
-      continue
-    fi
-    candidate="$(command -v "$candidate")"
-    if "$candidate" - <<'PY' >/dev/null 2>&1
-import sys
-# Must match pyproject.toml requires-python (>=3.11); a 3.10 interpreter would
-# fail `pip install -e .` partway through the remote deploy. Skip it so we pick
-# a real 3.11+ (e.g. python3.12) instead of dying mid-install.
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
-PY
-    then
+    candidate="$(command -v "$candidate" 2>/dev/null)" || continue
+    if "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+        "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1; then
       candidate="$("$candidate" -c \
         'import os,sys; print(os.path.realpath(sys.executable))')" || continue
       [ -x "$candidate" ] || continue
@@ -661,32 +676,21 @@ PY
       return
     fi
   done
-  # Interpreter provisioning is monotonic onboarding, not a reversible cohort
-  # generation mutation.  Synchronized phase 2 only verifies that onboarding
-  # completed and fails closed before any node state is quiesced.
-  log "ERROR: Python >= 3.11 is missing; complete node onboarding before phase 2"
+  # Provision before a cohort starts, so this check cannot interrupt services.
+  log "ERROR: Python $MAC_REVIEWED_PYTHON_VERSION is missing; complete node onboarding before phase 2"
   exit 1
 }
 
 hermes_python_bin() {
-  local candidate
-  for candidate in "${MAC_HERMES_PYTHON:-}" python3.13 python3.12 python3.11 /opt/homebrew/bin/python3 /usr/local/bin/python3 python3 python; do
-    [ -n "$candidate" ] || continue
-    if ! command -v "$candidate" >/dev/null 2>&1; then
-      continue
-    fi
-    candidate="$(command -v "$candidate")"
-    if "$candidate" - <<'PY' >/dev/null 2>&1
-import sys
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
-PY
-    then
-      printf '%s\n' "$candidate"
-      return
-    fi
-  done
-  log "WARNING: Python >= 3.11 not found; Hermes agent venv will use $1 with --ignore-requires-python" >&2
-  printf '%s\n' "$1"
+  # Hermes and MAC share a reviewed interpreter, with separate service venvs.
+  # A conflicting override must fail before quiescing any running service.
+  local candidate="${MAC_HERMES_PYTHON:-$1}"
+  if ! "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+      "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1; then
+    log "ERROR: Hermes requires Python $MAC_REVIEWED_PYTHON_VERSION" >&2
+    return 1
+  fi
+  printf '%s\n' "$candidate"
 }
 
 PY="$(python_bin)"
@@ -3141,9 +3145,7 @@ def gateway_readiness_summary(stage):
         raise SystemExit("gateway readiness is malformed") from exc
     expected_identities = {
         "systemd": {
-            "hermes": os.environ.get(
-                "HERMES_SERVICE_NAME", os.environ["FLEET_NAME"] + "-hermes-gateway.service"
-            ),
+            "hermes": "hermes-gateway.service",
             "openclaw": os.environ.get(
                 "OPENCLAW_SERVICE_NAME", os.environ["FLEET_NAME"] + "-openclaw-gateway.service"
             ),
@@ -3152,9 +3154,7 @@ def gateway_readiness_summary(stage):
             ),
         },
         "launchd": {
-            "hermes": os.environ.get(
-                "HERMES_LAUNCHD_LABEL", "com." + os.environ["FLEET_NAME"] + ".hermes-gateway"
-            ),
+            "hermes": "ai.hermes.gateway",
             "openclaw": os.environ.get(
                 "OPENCLAW_LAUNCHD_LABEL", "com." + os.environ["FLEET_NAME"] + ".openclaw-gateway"
             ),
@@ -3214,13 +3214,6 @@ def gateway_readiness_summary(stage):
             raise SystemExit("gateway readiness has malformed process state")
         selected = owner == implementation
         if selected:
-            # Hermes supervises itself under a unit name `hermes gateway
-            # install` chooses, not the HERMES_* identity this script
-            # assigns -- its readiness was already proven out of band by
-            # `hermes gateway status --deep` in finalize_hermes_gateway(),
-            # so this identity-keyed sample is expected to show it absent.
-            if implementation == "hermes":
-                continue
             if item["state"] != "running" or item["pid"] <= 0:
                 raise SystemExit("gateway readiness selected process is not running")
             if supervisor == "systemd" and item.get("enabled") != "enabled":
@@ -11141,6 +11134,7 @@ PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env 
   "$WEBDAV_ENABLED" "$WEBDAV_URL_CONFIGURED" "$WEBDAV_PORT_CONFIGURED" \
   "$WEBDAV_ROOT_CONFIGURED" "$WEBDAV_PUBLIC_PATH_CONFIGURED"
 
+reload_mac_env
 normalize_hermes_redaction_env
 
 deploy_barrier_file="$MAC_HOME/deploy-start-barrier"
@@ -11153,7 +11147,6 @@ else
   rm -f "$deploy_barrier_file"
 fi
 
-reload_mac_env
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   reconcile_disabled_optional_openshell
   # gketun-02: the hub (shared-services manager) owns the reverse-tunnel keypair it
@@ -12537,21 +12530,6 @@ def stable_agent_id(name: str) -> str:
     return f"agent_{safe}"
 
 
-def tail(text: str, limit: int = 1200) -> str:
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    return text[-limit:]
-
-
-def output_text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
-    return str(value)
-
-
 def safe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
@@ -12602,26 +12580,6 @@ def probe_http(
     return False, last_error, last_timed_out
 
 
-def classify_openclaw_agent_failure(output: str) -> str:
-    normalized = output.lower()
-    if (
-        "budget_exceeded" in normalized
-        or "insufficient_quota" in normalized
-        or "exceeded your current quota" in normalized
-        or ("http 429" in normalized and "quota" in normalized)
-    ):
-        return "budget_exceeded"
-    if "no eligible models registered" in normalized:
-        return "no_eligible_models"
-    if (
-        "no provider could serve model=" in normalized
-        or "all_providers_unavailable" in normalized
-        or ("503" in normalized and "service unavailable" in normalized)
-    ):
-        return "provider_unavailable"
-    return ""
-
-
 home = Path.home()
 mac_home = home / ".mac"
 report_path = Path(
@@ -12643,12 +12601,7 @@ persona_id = os.environ.get("MAC_HERMES_PERSONA_ID") or ""
 tenant_id = os.environ.get("MAC_FLEET_TENANT_ID") or ""
 resources_path = Path(
     os.environ.get("MAC_WORKER_RESOURCES_FILE")
-    or mac_home / "openclaw" / "service-advertisement.json"
-)
-openclaw_config_path = mac_home / "openclaw" / "managed" / "openclaw.json"
-openclaw_agent_bin = Path(
-    os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-    or mac_home / "bin" / "openclaw-agent"
+    or mac_home / "worker-resources.json"
 )
 qdrant_url = str(
     os.environ.get("QDRANT_URL")
@@ -12669,21 +12622,14 @@ firecrawl_url = str(
 firecrawl_key = os.environ.get("FIRECRAWL_API_KEY") or ""
 firecrawl_required = True
 firecrawl_required_flag = os.environ.get("MAC_REQUIRE_FIRECRAWL")
-timeout = int(os.environ.get("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT") or "120")
 problems: list[str] = []
 checks: dict[str, object] = {
     "identity_env": False,
-    "openclaw_runtime": False,
     "openshell_executor_config": False,
     "report_repository_executor_attestation": False,
     "qdrant_shared_memory": False,
     "firecrawl_web_search": False,
-    "openclaw_agent": False,
 }
-runtime_provider: dict[str, object] = {}
-agent_output = ""
-agent_returncode: int | None = None
-openclaw_failure_class = ""
 
 openshell_create_args = str(os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
 openshell_enabled = truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
@@ -12764,7 +12710,7 @@ report_executor_attestation: dict[str, object] = {}
 # the attestation is healed at runtime by
 # mac.worker._resources_with_live_report_executor_attestation, so the self-test
 # must record the problem yet keep the service running.  These messages are tracked
-# here so they stay non-blocking, mirroring the transient/OpenClaw degraded plumbing
+# here so they stay non-blocking, mirroring the transient-service degraded plumbing
 # below, while every genuine misconfiguration remains blocking.
 report_executor_attestation_problems: list[str] = []
 
@@ -12812,79 +12758,9 @@ for key, value in {
         problems.append(f"missing required identity env {key}")
 checks["identity_env"] = not any(problem.startswith("missing required identity env") for problem in problems)
 
-# Worker/gateway decoupling: the OpenClaw runtime/ownership advertisement and the
-# openclaw-agent self-test only apply when this agent actually runs an OpenClaw
-# chat gateway. A pure worker (MAC_CHAT_GATEWAY_IMPL != "openclaw") has no gateway,
-# so these checks are skipped — otherwise a gateway-less worker could never pass
-# its startup self-test and would refuse to start (the whole point of a worker is
-# to claim and execute tasks, which needs no gateway).
-#
-# MAC_CHAT_GATEWAY_IMPL is set fleet-wide from the deploy-time gateway
-# implementation, so it is also "openclaw" on pure workers that never install or
-# serve the gateway.  A node only actually serves the gateway when its gateway
-# artifacts are installed on disk: the verified service-advertisement.json AND the
-# openclaw-agent binary.  When the impl advertises openclaw but those artifacts are
-# absent, this node is a gateway-less worker and its OpenClaw readiness deficiency
-# must be reported as degraded (non-blocking) instead of hard-crashing the worker.
-# A node that HAS the gateway installed but broken still fails hard.
-openclaw_required = os.environ.get("MAC_CHAT_GATEWAY_IMPL", "").strip().lower() == "openclaw"
-openclaw_gateway_installed = resources_path.is_file() and openclaw_agent_bin.is_file()
-openclaw_serves_gateway = openclaw_required and openclaw_gateway_installed
-openclaw_problems: list[str] = []
-# Persistent-but-transient shared-service timeouts (Qdrant/Firecrawl/hub) are
-# recorded here so they degrade the node instead of blocking startup, mirroring
-# the OpenClaw gateway-decoupling degraded pattern below.
+# Worker health covers task execution and shared services. Chat gateways
+# own their readiness checks; retired gateway artifacts cannot degrade a worker.
 transient_problems: list[str] = []
-
-
-def add_openclaw_problem(message: str) -> None:
-    problems.append(message)
-    openclaw_problems.append(message)
-
-
-# A non-zero / timed-out / sentinel-less openclaw-agent runtime probe is a soft,
-# DEGRADED condition (runtime/service reachability), not a hard startup
-# misconfiguration -- even on a node that actually serves the gateway.  These
-# agent-probe problems are tracked here so they stay non-blocking everywhere,
-# while hard misconfiguration problems (unreadable/missing/unverified
-# advertisement, model config, mandatory-service misconfig, etc.) remain
-# blocking on a gateway-serving node.
-openclaw_agent_probe_problems: list[str] = []
-
-
-def add_openclaw_agent_probe_problem(message: str) -> None:
-    add_openclaw_problem(message)
-    openclaw_agent_probe_problems.append(message)
-
-
-if not openclaw_required:
-    checks["openclaw_runtime"] = True
-    checks["openclaw_agent"] = True
-else:
-    try:
-        resources = json.loads(resources_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        resources = {}
-        add_openclaw_problem(
-            f"OpenClaw service advertisement unreadable at {resources_path}: {safe_error(exc)}"
-        )
-
-    runtime = resources.get("openclaw_runtime") if isinstance(resources, dict) else None
-    ownership = resources.get("gateway_ownership") if isinstance(resources, dict) else None
-    if not isinstance(runtime, dict) or runtime.get("implementation") != "openclaw":
-        add_openclaw_problem("OpenClaw runtime advertisement is missing or has the wrong implementation")
-    elif runtime.get("verified") is not True:
-        add_openclaw_problem("OpenClaw runtime advertisement is not verified")
-    elif runtime.get("exclusive_service_owner") is not True:
-        add_openclaw_problem("OpenClaw runtime lacks exclusive service-ownership proof")
-    elif not isinstance(runtime.get("confinement"), dict) or runtime["confinement"].get("provider") != "openshell":
-        add_openclaw_problem("OpenClaw runtime is not advertised inside OpenShell")
-    if not isinstance(ownership, dict) or ownership.get("exclusive") is not True:
-        add_openclaw_problem("OpenClaw gateway ownership proof is missing")
-    checks["openclaw_runtime"] = not any(
-        problem.startswith("OpenClaw") for problem in problems
-    )
-
 
 if not truthy(qdrant_required_flag):
     problems.append("MAC_REQUIRE_QDRANT_MEMORY must be true")
@@ -12920,98 +12796,7 @@ elif firecrawl_url:
             transient_problems.append(message)
     checks["firecrawl_web_search"] = ok
 
-if openclaw_required:
-    try:
-        openclaw_config = json.loads(openclaw_config_path.read_text(encoding="utf-8"))
-        provider = openclaw_config["models"]["providers"]["mac-router"]
-        primary_model = openclaw_config["agents"]["defaults"]["model"]["primary"]
-        runtime_provider = {
-            "provider": "mac-router",
-            "source": "openclaw_config",
-            "model": str(primary_model).removeprefix("mac-router/"),
-            "protocol": provider.get("api"),
-        }
-    except Exception as exc:
-        runtime_provider = {"error": safe_error(exc)}
-        add_openclaw_problem(f"OpenClaw model configuration is unreadable: {safe_error(exc)}")
-
-    prompt = "Respond exactly MAC_OPENCLAW_STARTUP_OK"
-    try:
-        for attempt in range(1, 4):
-            completed = subprocess.run(
-                [
-                    str(openclaw_agent_bin),
-                    "--agent",
-                    "main",
-                    "--message",
-                    prompt,
-                    "--session-id",
-                    f"mac-openclaw-startup-self-test-{agent_id}-{int(time.time())}-{attempt}",
-                    "--json",
-                ],
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-                check=False,
-                env={**os.environ, "MAC_AGENT_ID": agent_id},
-            )
-            agent_returncode = completed.returncode
-            raw_agent_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
-            agent_output = tail(raw_agent_output)
-            if "MAC_OPENCLAW_STARTUP_OK" in raw_agent_output:
-                # OpenClaw may report a non-zero CLI status after a gateway scope
-                # upgrade request while successfully completing the model turn via
-                # its embedded fallback runner. The sentinel proves the contract.
-                checks["openclaw_agent"] = True
-                openclaw_failure_class = ""
-                break
-            openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-            if openclaw_failure_class != "provider_unavailable" or attempt == 3:
-                if completed.returncode != 0:
-                    add_openclaw_agent_probe_problem(
-                        f"OpenClaw agent self-test exited {completed.returncode}"
-                    )
-                else:
-                    add_openclaw_agent_probe_problem(
-                        "OpenClaw agent self-test did not return its sentinel"
-                    )
-                break
-            time.sleep(attempt)
-    except subprocess.TimeoutExpired as exc:
-        agent_returncode = None
-        agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
-        openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-        add_openclaw_agent_probe_problem(f"OpenClaw agent self-test timed out after {timeout}s")
-    except Exception as exc:
-        agent_returncode = None
-        add_openclaw_agent_probe_problem(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
-
-# A gateway-less worker (impl advertises openclaw but the gateway artifacts are
-# not installed on this node) must not hard-crash on OpenClaw readiness gaps: the
-# worker/gateway decoupling contract says such a node can still claim and execute
-# tasks.  Its OpenClaw problems are therefore non-blocking (degraded) while every
-# other problem — and any OpenClaw failure on a node that actually serves the
-# gateway — stays blocking.
-if openclaw_serves_gateway:
-    # A gateway-serving node keeps hard OpenClaw misconfiguration problems
-    # blocking, but a runtime/service-reachability failure of the openclaw-agent
-    # probe is degraded (soft), so those agent-probe problems stay non-blocking.
-    non_blocking_problems: list[str] = list(openclaw_agent_probe_problems)
-    # A live gateway model-turn proves the runtime is usable even when its
-    # sidecar advertisement has not yet refreshed.  Keep that advertisement
-    # drift visible as degraded, but do not prevent the independent executor
-    # attestation from being published and approved.
-    if checks["openclaw_agent"]:
-        non_blocking_problems.extend(
-            problem
-            for problem in openclaw_problems
-            if problem in {
-                "OpenClaw runtime advertisement is missing or has the wrong implementation",
-                "OpenClaw gateway ownership proof is missing",
-            }
-        )
-else:
-    non_blocking_problems = list(openclaw_problems)
+non_blocking_problems: list[str] = []
 # A shared-service (or hub) probe that only ever timed out is a transient hub
 # blip after bounded retries, so it degrades the node instead of blocking start.
 for problem in transient_problems:
@@ -13056,15 +12841,6 @@ report = {
             "url_configured": bool(firecrawl_url),
         },
     },
-    "runtime_provider": runtime_provider,
-    "agent_returncode": agent_returncode,
-    "agent_output_tail": agent_output,
-    "openclaw_failure_class": openclaw_failure_class,
-    "openclaw_gateway": {
-        "impl_advertised": openclaw_required,
-        "installed": openclaw_gateway_installed,
-        "serves_gateway": openclaw_serves_gateway,
-    },
     "problems": problems,
     "blocking_problems": blocking_problems,
     "non_blocking_problems": non_blocking_problems,
@@ -13075,7 +12851,7 @@ report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", enco
 # Registration follows this self-test in mac-agent-service. Persist the report
 # into the exact resources document that registration consumes so a brand-new
 # agent cannot lose a degraded verdict to the expected pre-registration 404.
-# Existing OpenClaw runtime/ownership advertisements are preserved.
+# Other registration resources are preserved.
 resources_path.parent.mkdir(parents=True, exist_ok=True)
 try:
     registration_resources = (
@@ -14274,6 +14050,8 @@ names = {
         "supervisord": nemoclaw_program,
     },
 }
+names["hermes"]["launchd"] = "ai.hermes.gateway"
+names["hermes"]["systemd"] = "hermes-gateway.service"
 if implementation not in {"hermes", "openclaw", "nemoclaw", "none"}:
     raise SystemExit("gateway readiness received an unsupported implementation")
 
@@ -14335,24 +14113,14 @@ def run(argv):
         return process.returncode, stdout_text, stderr_text
 
 
-def systemd_sample():
-    systemctl = shutil.which("systemctl")
-    if not systemctl:
-        fail("systemctl is unavailable")
-    prefix = []
-    sudo = shutil.which("sudo")
-    if os.geteuid() != 0:
-        if not sudo:
-            fail("systemd inspection requires noninteractive sudo")
-        prefix = [sudo, "-n"]
+def systemd_scope_sample(command, identities):
     result = {}
-    for owner, mapping in names.items():
+    for owner, name in identities.items():
         rc, text, _errors = run(
-            prefix
+            command
             + [
-                systemctl,
                 "show",
-                mapping["systemd"],
+                name,
                 "--no-pager",
                 "--property=LoadState",
                 "--property=ActiveState",
@@ -14403,7 +14171,7 @@ def systemd_sample():
         else:
             fail("systemd unit is transitional or unknown")
         enabled_rc, enabled_out, _enabled_errors = run(
-            prefix + [systemctl, "is-enabled", mapping["systemd"]]
+            command + ["is-enabled", name]
         )
         enabled_lines = [line.strip() for line in enabled_out.splitlines() if line.strip()]
         if len(enabled_lines) != 1 or enabled_lines[0] not in {
@@ -14426,40 +14194,73 @@ def systemd_sample():
     return result
 
 
+def systemd_sample():
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        fail("systemctl is unavailable")
+    command = [systemctl]
+    if os.geteuid() != 0:
+        sudo = shutil.which("sudo")
+        if not sudo:
+            fail("systemd inspection requires noninteractive sudo")
+        command = [sudo, "-n", systemctl]
+    identities = {owner: mapping["systemd"] for owner, mapping in names.items()}
+    identities["legacy_hermes"] = hermes_unit
+    system = systemd_scope_sample(command, identities)
+    user = systemd_scope_sample([systemctl, "--user"], {
+        "hermes": names["hermes"]["systemd"], "legacy_hermes": hermes_unit,
+    })
+    # Upstream installs a user service. A legacy MAC unit or a second system
+    # service must never compete for the same messaging credentials.
+    for item in (system["hermes"], system["legacy_hermes"], user["legacy_hermes"]):
+        if item["state"] not in {"absent", "inactive"} or item.get("enabled") not in {
+            "not-found", "disabled", "masked",
+        }:
+            fail("legacy or system Hermes gateway is not safely disabled")
+    system.pop("legacy_hermes")
+    system["hermes"] = user["hermes"]
+    return system
+
+
 def launchd_sample():
     launchctl = shutil.which("launchctl")
     if not launchctl:
         fail("launchctl is unavailable")
-    domain = "gui/%d" % os.getuid()
     result = {}
     for owner, mapping in names.items():
-        label = mapping["launchd"]
-        rc, stdout, stderr = run([launchctl, "print", domain + "/" + label])
-        text = stdout + stderr
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        legacy_absent = len(lines) == 1 and "Could not find service" in lines[0]
-        current_macos_absent = (
-            len(lines) == 2
-            and lines[0] == "Bad request."
-            and re.fullmatch(
-                r'Could not find service "[^"\r\n]+" in domain for user gui: [0-9]+',
-                lines[1],
-            )
-            is not None
-        )
-        if rc == 113 and (legacy_absent or current_macos_absent):
-            result[owner] = {"state": "absent", "pid": 0, "restarts": 0}
-            continue
-        if rc != 0:
-            fail("launchd state is unreadable")
-        state_match = re.search(r"(?m)^\s*state\s*=\s*([^\s]+)", text)
-        pid_match = re.search(r"(?m)^\s*pid\s*=\s*([0-9]+)", text)
-        if not state_match or state_match.group(1) != "running" or not pid_match:
-            fail("launchd job is loaded but not stably running")
-        pid = int(pid_match.group(1))
-        if pid <= 0:
-            fail("launchd running state lacks a valid process")
-        result[owner] = {"state": "running", "pid": pid, "restarts": 0}
+        labels = [mapping["launchd"]]
+        if owner == "hermes" and hermes_label not in labels:
+            labels.append(hermes_label)
+        loaded = []
+        for label in labels:
+            for scope in ("gui", "user"):
+                domain = "%s/%d" % (scope, os.getuid())
+                rc, stdout, stderr = run([launchctl, "print", domain + "/" + label])
+                text = stdout + stderr
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                absent = (
+                    rc == 113
+                    and len([line for line in lines if "Could not find service" in line]) == 1
+                    and all(line == "Bad request." or "Could not find service" in line for line in lines)
+                    and not re.search(r"(?m)^\s*(?:state|pid)\s*=", text)
+                )
+                if absent:
+                    continue
+                if rc != 0:
+                    fail("launchd state is unreadable")
+                state_match = re.search(r"(?m)^\s*state\s*=\s*([^\s]+)", text)
+                pid_match = re.search(r"(?m)^\s*pid\s*=\s*([0-9]+)", text)
+                if not state_match or state_match.group(1) != "running" or not pid_match:
+                    fail("launchd job is loaded but not stably running")
+                pid = int(pid_match.group(1))
+                if pid <= 0:
+                    fail("launchd running state lacks a valid process")
+                if label != mapping["launchd"]:
+                    fail("legacy Hermes launchd job is still loaded")
+                loaded.append({"state": "running", "pid": pid, "restarts": 0, "domain": domain})
+        if len(loaded) > 1:
+            fail("multiple launchd domains own one gateway")
+        result[owner] = loaded[0] if loaded else {"state": "absent", "pid": 0, "restarts": 0}
     return result
 
 
@@ -14519,22 +14320,13 @@ sampler = {
 if sampler is None:
     fail("unsupported supervisor")
 samples = []
-# Hermes is a bare host process supervised by a unit `hermes gateway
-# install` writes and names itself (not the HERMES_SERVICE_NAME /
-# HERMES_LAUNCHD_LABEL / HERMES_SUPERVISORD_PROG identities this script
-# assigns the other implementations), so this generic sampler cannot find
-# it under those names. Its readiness is already proven, out of band, by
-# prepare_hermes_gateway()/finalize_hermes_gateway() calling
-# `hermes gateway status --deep` before this function runs. Still require
-# every OTHER gateway implementation's unit to be absent/disabled below.
-hermes_selected = implementation == "hermes"
 for observation in range(2):
     sample = sampler()
     selected_ready = (
         implementation != "none"
-        and (hermes_selected or sample[implementation]["state"] == "running")
+        and sample[implementation]["state"] == "running"
     )
-    if supervisor == "systemd" and implementation != "none" and not hermes_selected:
+    if supervisor == "systemd" and implementation != "none":
         selected_ready = selected_ready and sample[implementation].get("enabled") == "enabled"
     if not selected_ready and implementation != "none":
         fail("selected gateway implementation is not in its required state")
@@ -14559,11 +14351,13 @@ for observation in range(2):
     samples.append(sample)
     if observation == 0:
         time.sleep(min(2.0, remaining()))
-if implementation != "none" and not hermes_selected:
+if implementation != "none":
     first = samples[0][implementation]
     second = samples[1][implementation]
     if first["pid"] != second["pid"] or first["restarts"] != second["restarts"]:
         fail("selected gateway restarted during the readiness proof")
+    if first.get("domain") != second.get("domain"):
+        fail("selected gateway changed launchd domain during the readiness proof")
 
 payload = {
     "schema": "mac.gateway_readiness.v1",
