@@ -11331,8 +11331,9 @@ class ControlPlane:
             "reason": str(reason or "").strip() or "operator stopped the task",
             "previous_state": task.state,
             "was_in_flight": task.state in self.IN_FLIGHT_TASK_STATES,
-            # Recorded, never assumed. The worker confirms by releasing the
-            # lease; until then a process may still be running against this.
+            # Revoking assignment authority is not proof that the OS process
+            # has exited. The worker observes the revoked lease and reports
+            # termination separately; until then it may still be running.
             "abort_confirmed": False,
         }
         if task.owner_agent_id:
