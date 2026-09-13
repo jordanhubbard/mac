@@ -6182,6 +6182,7 @@
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-macos-services.sh",
       "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
@@ -6588,6 +6589,17 @@
     "description": "Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way.",
     "family": "hub",
     "name": "MAC_HUB_VERIFY_PG_URL",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": "default",
+    "description": "Independent verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Affects future review and projected-merge verifiers, not running sandboxes.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PROFILE",
     "retired": false,
     "sources": [
       "src/mac/services.py"
@@ -13683,7 +13695,8 @@
     "retired": false,
     "sources": [
       "scripts/run-contract-tests.sh",
-      "src/mac/hub_load_shed.py"
+      "src/mac/hub_load_shed.py",
+      "src/mac/services.py"
     ],
     "type": "str"
   },
