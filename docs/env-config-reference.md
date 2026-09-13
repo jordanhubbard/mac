@@ -750,7 +750,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SLACK_APP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack app token. |
 | `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
 | `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
-| `MAC_OPENCLAW_STARTUP_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw startup ok. |
 | `MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw subprocess timeout seconds. |
 | `MAC_OPENCLAW_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw supervisor. |
 | `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |
