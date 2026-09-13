@@ -1,0 +1,43 @@
+{
+  "upstream_repository": "https://github.com/NousResearch/hermes-agent",
+  "upstream_commit": "9dd6634c5635321cf38840cc30e9b51226689128",
+  "python_version": "3.14.7",
+  "uv_version": "0.12.12",
+  "patch": "python314.patch",
+  "patch_sha256": "60c767eec83212b28917dddf857d052970f836b70b842f2a77f901041f26522c",
+  "files": {
+    "pyproject.toml": {
+      "original_sha256": "153c8c9f550a89448f699e37384e78663462b8784e85242dd5ad4e35dbb5e093",
+      "patched_sha256": "2087c8799e81fe36397785f84e6a35d28afce648a60721e2137e16b35b5e50fc"
+    },
+    "uv.lock": {
+      "original_sha256": "6393f09ee88cc5683f0e563306f96b5c068f901a8baa60f7209f302c1ac602d9",
+      "patched_sha256": "4c386c5517e8d185154b0547d62fa5e3dd81ee6563030916092aefa1015474f5"
+    },
+    "tools/daemon_pool.py": {
+      "original_sha256": "f66c379ee655496a9a79ec0565766f383fd70ba6f5e56c8f7abb92fa236141a4",
+      "patched_sha256": "98edfab3edf8c3356a8d1c2dc8d01f5d3a1ee22c4dbdf82e9e3fbeb0b70741eb"
+    },
+    "tests/tools/test_daemon_pool.py": {
+      "original_sha256": "4a4872c43b1c5defcc56818cdc228a38eac403f4d85b610fd0ebacd87a3213ab",
+      "patched_sha256": "4146831efa077072970519870cda8ae49e9160661889ce7341c0268920e77019"
+    },
+    "scripts/run_tests.sh": {
+      "original_sha256": "9ef635bcee1f879d31f37b4eeccab6e203283036d38ed0bf4e249efcd7d0469e",
+      "patched_sha256": "fd27b5c09d255c6d041e2673f5366065b3b0d7005653122b5eeed461497b94ff"
+    },
+    "tests/test_run_tests_parallel.py": {
+      "original_sha256": "f4d64736bd34aedb3a70291871cc0de06c8bad30b82e365df1faa445e13ad6e2",
+      "patched_sha256": "2aa448f5dd8d9b1404831c35f98f0910628bb20a8eaa89815af928fec1878840"
+    },
+    "tests/test_hermes_state.py": {
+      "original_sha256": "2bd61a0a708b004c4f18ede48a5aba2609d79a654a55918d79aeb46b61fd6989",
+      "patched_sha256": "d463fb2c617986a97f5d697a33727648825fea358d7f75255e259ee180514714"
+    },
+    "tests/test_state_db_repair_live_writer_guard.py": {
+      "original_sha256": "511a22213ff3f7f510377264ce691be5cda6b40a3f9dfa63b6874db9fc52305a",
+      "patched_sha256": "b78dfdce4bc61b92a500738731a9fb224ef53ea97e6da9481908a2afd84c5d66"
+    }
+  },
+  "dependency_versions_changed": []
+}
