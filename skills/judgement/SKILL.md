@@ -96,7 +96,7 @@ the same class of defect that made the semantic reviewer worth removing.
 
 ### 8. `orphaned_pull_request`
 
-An open PR names a task that is already `completed` or `cancelled`, or
+An open PR identifies its owning task as already `completed` or `cancelled`, or
 the same task id already has a merged PR. Observed 2026-08-23: 56 open
 PRs against `main`, zero review decisions. Several were copies of work
 that later landed under another number (`#585` after `#577`, `#587`
@@ -105,9 +105,15 @@ after `#580`, `#582`/`#612` after `#614`).
 **Intervene:** close the orphaned PR. Do not open a replacement. The
 branch is archaeology, not a second review queue.
 
+Ownership comes from a consistent task identity in the title, branch or
+`Task:` / `Task ID:` field. Investigation, dependency and other body references
+are supporting context. They do not authorize PR closure or task completion.
+Conflicting ownership declarations and ambiguous short ids authorize neither.
+Merged-task reconciliation additionally requires the full durable owning id.
+
 ### 9. `duplicate_pull_request`
 
-Two or more open PRs name the same task. The deploy-generation
+Two or more open PRs identify the same owning task. The deploy-generation
 retirement record was opened five times (`#485`, `#609`–`#613`). Task
 stop/restart was opened three times (`#514`, `#641`, `#642`).
 
