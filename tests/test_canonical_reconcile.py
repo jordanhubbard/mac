@@ -311,15 +311,22 @@ def test_finalizer_no_change_already_satisfied_does_not_open_a_pr(tmp_path, monk
     assert names["canonical_head_matches_prepared_base"] == "pass"
 
     from mac.evidence_validators import validate_evidence_type
-    from mac.worker import _worker_passed_verification_check_count, _worker_verification_contract_problems
+    from mac.worker import (
+        _worker_passed_verification_check_count,
+        _worker_verification_contract_problems,
+    )
 
     assert manifest["canonical_reconcile"]["reason"] == "HEAD already uses gh pr create"
     assert _worker_verification_contract_problems(manifest, "no_change") == []
-    assert validate_evidence_type(
-        "no_change", manifest,
-        passed_check_count=_worker_passed_verification_check_count,
-        expected_reconcile_head_sha=head,
-    ) == []
+    assert (
+        validate_evidence_type(
+            "no_change",
+            manifest,
+            passed_check_count=_worker_passed_verification_check_count,
+            expected_reconcile_head_sha=head,
+        )
+        == []
+    )
 
 
 def test_finalizer_rejects_no_change_when_the_tree_is_dirty(tmp_path, monkeypatch):

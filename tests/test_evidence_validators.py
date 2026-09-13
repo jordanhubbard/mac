@@ -934,7 +934,12 @@ def test_no_change_reason_is_accepted_by_worker_and_hub(reason_field):
 
     manifest = _repo_manifest(
         evidence_type="no_change",
-        repo={"head_sha": "abcdef1234567890abcdef1234567890abcdef12", "dirty": False, "pushed": False, "files_changed": []},
+        repo={
+            "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+            "dirty": False,
+            "pushed": False,
+            "files_changed": [],
+        },
     )
     if reason_field == "canonical_reconcile":
         manifest[reason_field] = {
@@ -943,21 +948,52 @@ def test_no_change_reason_is_accepted_by_worker_and_hub(reason_field):
             "reason": "The inspected canonical revision already contains the requested repair.",
         }
     else:
-        manifest[reason_field] = "The inspected canonical revision already contains the requested repair."
+        manifest[reason_field] = (
+            "The inspected canonical revision already contains the requested repair."
+        )
     assert _worker_verification_contract_problems(manifest, "no_change") == []
-    assert validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count) == []
+    assert (
+        validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count) == []
+    )
 
 
 @pytest.mark.parametrize(
     "change, expected",
     [
-        ({"canonical_reconcile": {"decision": "already_satisfied", "head_sha": "abcdef1234567890abcdef1234567890abcdef12", "reason": " "}}, "requires a reason"),
+        (
+            {
+                "canonical_reconcile": {
+                    "decision": "already_satisfied",
+                    "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+                    "reason": " ",
+                }
+            },
+            "requires a reason",
+        ),
         ({"canonical_reconcile": []}, "requires a reason"),
-        ({"canonical_reconcile": "Already repaired", "summary": "Already repaired"}, "requires a reason"),
+        (
+            {"canonical_reconcile": "Already repaired", "summary": "Already repaired"},
+            "requires a reason",
+        ),
         ({"checks": []}, "requires at least one passing check"),
-        ({"checks": [{"name": "CI result", "status": "running"}]}, "requires at least one passing check"),
-        ({"checks": [{"name": "CI result", "returncode": 1}]}, "requires at least one passing check"),
-        ({"repo": {"head_sha": "abcdef1234567890abcdef1234567890abcdef12", "dirty": True, "files_changed": []}}, "dirty=false"),
+        (
+            {"checks": [{"name": "CI result", "status": "running"}]},
+            "requires at least one passing check",
+        ),
+        (
+            {"checks": [{"name": "CI result", "returncode": 1}]},
+            "requires at least one passing check",
+        ),
+        (
+            {
+                "repo": {
+                    "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+                    "dirty": True,
+                    "files_changed": [],
+                }
+            },
+            "dirty=false",
+        ),
     ],
 )
 def test_reconciliation_reason_does_not_replace_missing_evidence(change, expected):
@@ -965,7 +1001,11 @@ def test_reconciliation_reason_does_not_replace_missing_evidence(change, expecte
 
     manifest = _repo_manifest(
         evidence_type="no_change",
-        canonical_reconcile={"decision": "already_satisfied", "head_sha": "abcdef1234567890abcdef1234567890abcdef12", "reason": "Repair exists at this revision."},
+        canonical_reconcile={
+            "decision": "already_satisfied",
+            "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+            "reason": "Repair exists at this revision.",
+        },
     )
     manifest.update(change)
     for problems in [
@@ -979,9 +1019,34 @@ def test_reconciliation_reason_does_not_replace_missing_evidence(change, expecte
 def test_single_reconciliation_reason_still_requires_prepared_head(decision):
     manifest = _repo_manifest(
         evidence_type="no_change",
-        repo={"head_sha": "abcdef1234567890abcdef1234567890abcdef12", "dirty": False, "pushed": False, "files_changed": []},
-        canonical_reconcile={"decision": decision, "head_sha": "abcdef1234567890abcdef1234567890abcdef12", "reason": "The inspected revision resolves this task without mutation."},
+        repo={
+            "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+            "dirty": False,
+            "pushed": False,
+            "files_changed": [],
+        },
+        canonical_reconcile={
+            "decision": decision,
+            "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+            "reason": "The inspected revision resolves this task without mutation.",
+        },
     )
-    assert validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count, expected_reconcile_head_sha="abcdef1234567890abcdef1234567890abcdef12") == []
+    assert (
+        validate_evidence_type(
+            "no_change",
+            manifest,
+            passed_check_count=_passed_check_count,
+            expected_reconcile_head_sha="abcdef1234567890abcdef1234567890abcdef12",
+        )
+        == []
+    )
     manifest["canonical_reconcile"]["head_sha"] = "1234567890abcdef1234567890abcdef12345678"
-    assert "canonical_reconcile.head_sha must match the prepared canonical HEAD" in validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count, expected_reconcile_head_sha="abcdef1234567890abcdef1234567890abcdef12")
+    assert (
+        "canonical_reconcile.head_sha must match the prepared canonical HEAD"
+        in validate_evidence_type(
+            "no_change",
+            manifest,
+            passed_check_count=_passed_check_count,
+            expected_reconcile_head_sha="abcdef1234567890abcdef1234567890abcdef12",
+        )
+    )
