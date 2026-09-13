@@ -2028,6 +2028,13 @@ consolidation logic to any Hermes internals.</p>
 <p><strong>Boundary rule added:</strong> <code>nap_consolidator</code> MUST NOT write to Hermes
 <code>MEMORY.md</code> or any <code>HERMES_HOME</code> path. Its dream artifacts are readable
 by Hermes via the hub <code>/v1/memory/dreams/recall</code> API (pull, not push).</p>
+<p>Worker nap scheduling excludes identities marked <code>resources.virtual</code>, such
+as the hub reviewer and operator. They have no worker process to drain.
+Registration and heartbeat do not create their nap schedules; heartbeat
+disables legacy schedules while preserving their rows and audit history.
+The due-agent query and direct nap entry also reject these identities, so
+an old schedule cannot interrupt an in-flight hub review before heartbeat
+repairs it. Review cancellation and stale-verdict checks still apply.</p>
 <hr />
 <h3 id="module-3-soul_snapshotpy-partially-stays-in-mac-hub-state-capture-requires-formal-interface-contract">Module 3: <code>soul_snapshot.py</code> — <strong>Partially stays in mac; hub-state capture requires formal interface contract</strong><a class="headerlink" href="#module-3-soul_snapshotpy-partially-stays-in-mac-hub-state-capture-requires-formal-interface-contract" title="Permanent link">&para;</a></h3>
 <p><strong>Finding:</strong> <code>soul_snapshot.py</code> (380 lines) has two distinct sub-concerns
