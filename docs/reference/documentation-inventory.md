@@ -190,6 +190,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`integration-authority-contract.md`](../integration-authority-contract.md) | Integration Authority Contract |
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
+| supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
 | supplemental reference | [`memory-tier-schema.md`](../memory-tier-schema.md) | MAC vector memory tier — schema, collections, model, TTLs |
 | supplemental reference | [`memory-tier-verification.md`](../memory-tier-verification.md) | Memory tier — end-to-end verification |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
