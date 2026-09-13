@@ -102,12 +102,20 @@ def test_ci_uses_project_pin_and_keeps_fault_replay():
 
 
 def test_container_bases_match_pin_and_include_version_file():
-    for name in ["Dockerfile", "Dockerfile.e2e", "deploy/openshell/mac-hermes.Containerfile"]:
+    for name in [
+        "Dockerfile",
+        "Dockerfile.e2e",
+        "deploy/openshell/mac-hermes.Containerfile",
+        "deploy/certifier/Containerfile",
+    ]:
         source = (ROOT / name).read_text()
         bases = re.findall(r"^FROM (\S*library/python\S*)", source, re.M)
         assert bases, name
         assert all(f":{VERSION}-slim-bookworm@sha256:" in base for base in bases)
+        uv_bases = re.findall(r"^FROM (\S*astral-sh/uv\S*)", source, re.M)
+        assert all(":0.12.12@sha256:" in base for base in uv_bases)
         assert "COPY .python-version pyproject.toml" in source
+        assert "python3 --version" in source
 
 
 def test_make_rejects_explicit_wrong_python():
