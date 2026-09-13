@@ -32,8 +32,10 @@ jobs:
             *) echo "wheel $wheel does not match release $RELEASE_TAG" >&2; exit 1 ;;
           esac
           uv venv --python "$(cat .python-version)" /tmp/mac-release-smoke
-          uv pip install --python /tmp/mac-release-smoke/bin/python \
-            "${wheel}[postgres,relay]"
+          UV_PROJECT_ENVIRONMENT=/tmp/mac-release-smoke uv sync --locked \
+            --no-dev --no-install-project --extra postgres --extra relay
+          uv pip install --no-deps --python /tmp/mac-release-smoke/bin/python "$wheel"
+          uv pip check --python /tmp/mac-release-smoke/bin/python
           /tmp/mac-release-smoke/bin/python -c \
             'import mac, mac.task_executor; print(mac.__version__)'
       - name: Create release if needed and attach wheel
