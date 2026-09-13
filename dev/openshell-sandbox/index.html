@@ -1770,6 +1770,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#independent-verifier-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent verifier resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2105,6 +2116,17 @@
     <span class="md-ellipsis">
       
         Containment posture by platform
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independent-verifier-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent verifier resources
       
     </span>
   </a>
@@ -2464,7 +2486,7 @@ because the answer determines what other layers are allowed to stop checking.</p
 <tr>
 <td>macOS</td>
 <td><code>macos_host</code> (ADR 0015)</td>
-<td>Host OS protections — SIP, TCC, Gatekeeper. There is no OpenShell binary, runtime image or policy, and <code>MAC_OPENSHELL_SANDBOX</code> on darwin is a misconfiguration, not a posture to waive.</td>
+<td>Host OS protections — SIP, TCC, Gatekeeper. No local OpenShell runtime; a verifier CLI/tunnel may connect to a Linux gateway. <code>MAC_OPENSHELL_SANDBOX</code> on darwin is a misconfiguration, not a posture to waive.</td>
 </tr>
 </tbody>
 </table>
@@ -2486,6 +2508,29 @@ nothing on either platform while making the real boundary harder to see. Do not
 re-add it. If darwin confinement needs strengthening, strengthen it here — a
 <code>sandbox-exec</code> profile or a hardened launchd job — not by filtering data
 elsewhere in the system.</p>
+<h2 id="independent-verifier-resources">Independent verifier resources<a class="headerlink" href="#independent-verifier-resources" title="Permanent link">&para;</a></h2>
+<p>The hub runs pushed repository code on its configured Linux OpenShell gateway.
+A macOS hub may own the CLI/tunnel connection, but does not host that runtime.
+The same verifier execution path serves independent review and projected-merge
+publication checks.</p>
+<p><code>MAC_HUB_VERIFY_PROFILE</code> is an opt-in setting on the hub process. Unset, empty,
+or <code>default</code> retains the driver's existing behavior. <code>bounded-tmpfs</code> requests
+12 CPUs, 32 GiB memory and an 8 GiB Docker-driver tmpfs at
+<code>/sandbox/test-storage</code>, with <code>TMPDIR</code> pointing there and <code>MAC_TEST_JOBS=8</code>.
+The tmpfs uses mode 1777 and permits executable test fixtures; it does not
+expose a host directory. PostgreSQL keeps its normal durability settings.</p>
+<p>Before extracting or bootstrapping the repository, the sandbox proves that it
+is on Linux and that the requested path is a writable tmpfs. A missing proof,
+unknown profile or unsupported backend cannot produce a passing verification.
+No arbitrary driver JSON, host mounts or shell arguments are accepted through
+this setting. It changes resources, not test selection, coverage, signing or
+the isolation policy.</p>
+<p>Enable the profile only on a qualified Linux gateway through the supported
+hub configuration/deployment path. It affects future sandboxes; do not restart
+active verifiers to change their storage. Source publication alone does not
+prove activation: inspect the next independent sandbox's limits and mount,
+then observe its required tests and normal publication completing. Keep
+failed-run evidence when diagnosing resource exhaustion or unsupported drivers.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>MAC/OpenShell uses one container runtime: <strong>Docker Engine/Moby through
 OpenShell's Docker driver</strong>. This is the production contract for bare metal,

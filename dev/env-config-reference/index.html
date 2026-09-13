@@ -5833,6 +5833,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as <code>MAC_TEST_PG_URL</code>. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to <code>host.openshell.internal</code> (or <code>MAC_HUB_VERIFY_PG_HOST</code> / <code>MAC_OPENSHELL_HOST_ALIAS</code>) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs <code>scripts/start-test-postgres.sh</code> on a dedicated port (default 55432) and rewrites that DSN the same way.</td>
 </tr>
 <tr>
+<td><code>MAC_HUB_VERIFY_PROFILE</code></td>
+<td>str</td>
+<td>default</td>
+<td>hub</td>
+<td>Independent verifier resource profile. Unset, empty or <code>default</code> preserves driver defaults. <code>bounded-tmpfs</code> requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Affects future review and projected-merge verifiers, not running sandboxes.</td>
+</tr>
+<tr>
 <td><code>MAC_HUB_VERIFY_RUNNER</code></td>
 <td>str</td>
 <td>consumer-defined</td>
