@@ -7,7 +7,7 @@ older minor versions and unreviewed future minor versions.
 
 For a development checkout, install the existing uv tool, then run:
 
-```bash
+```console
 uv python install
 "$(uv python find)" scripts/bootstrap-project.py
 make test
