@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
+import plistlib
 import subprocess
+import sys
 
 import pytest
 
@@ -119,7 +122,7 @@ def test_certifier_gateway_tunnel_is_loopback_only_and_fail_closed() -> None:
     assert '"KeepAlive": True' in script
     assert 'OPENSHELL_GATEWAY_ENDPOINT="$endpoint"' in script
     assert "mac_retry_bounded" in script
-    assert '"$OPENSH_BIN" status' in script
+    assert '"$OPENSH_BIN" sandbox list --limit 1 --names' in script
     assert "certifier OpenShell tunnel did not become healthy" in script
     assert "openshell gateway select" not in script
     assert '. "$SCRIPT_DIR/../lib/launchd-lifecycle.sh"' in script
@@ -197,7 +200,7 @@ def test_install_and_remove_share_proved_launchd_retirement() -> None:
     bootstrap = install.index(
         'mac_launchd_bootstrap_job "$domain" "$plist" "$domain/$LABEL" "$LABEL"'
     )
-    health = install.index('"$OPENSH_BIN" status')
+    health = install.index('"$OPENSH_BIN" sandbox list --limit 1 --names')
     commit = install.index("mac_launchd_transaction_commit", health)
     assert stop < replace < bootstrap < health < commit
 
@@ -275,3 +278,119 @@ def test_linux_gateway_firewall_allows_only_exact_openshell_bridge() -> None:
     assert 'bridge_iface="br-${network_id:0:12}"' in bootstrap
     assert '"$ipt" -A "$chain" -j DROP' in bootstrap
     assert '-C INPUT -p tcp --dport 17670 -j "$chain"' in bootstrap
+
+
+@pytest.mark.parametrize("mode", ["empty", "populated", "rpc-error", "hang", "job-vanished"])
+def test_install_requires_bounded_gateway_rpc_and_restores_previous_generation(tmp_path, mode):
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    label = "com.mac.test-certifier"
+    plist = home / "Library" / "LaunchAgents" / f"{label}.plist"
+    plist.parent.mkdir(parents=True)
+    previous = plistlib.dumps({"Label": label, "ProgramArguments": ["old-tunnel"]})
+    plist.write_bytes(previous)
+    state = tmp_path / "loaded"
+    state.touch()
+    installed = tmp_path / "loaded-plist"
+    installed.write_bytes(previous)
+    calls = tmp_path / "rpc-calls.jsonl"
+    (fake_bin / "uname").write_text("#!/bin/sh\necho Darwin\n")
+    (fake_bin / "id").write_text('#!/bin/sh\n[ "$1" = -u ] && { echo 501; exit 0; }\nexit 64\n')
+    (fake_bin / "launchctl").write_text(
+        """#!/bin/sh
+set -eu
+case "$1" in
+  print)
+    [ -f "$FAKE_LOADED" ] && exit 0
+    echo 'Could not find service synthetic' >&2
+    exit 113 ;;
+  bootout) rm -f "$FAKE_LOADED" ;;
+  enable) exit 0 ;;
+  bootstrap) cp -f "$3" "$FAKE_LOADED_PLIST"; touch "$FAKE_LOADED" ;;
+  *) exit 64 ;;
+esac
+"""
+    )
+    openshell = fake_bin / "selected-openshell"
+    openshell.write_text(
+        f"#!{sys.executable}\n"
+        + """import json, os, sys, time
+from pathlib import Path
+args = sys.argv[1:]
+with open(os.environ['FAKE_RPC_CALLS'], 'a') as stream:
+    stream.write(json.dumps({'args': args, 'endpoint': os.environ.get('OPENSHELL_GATEWAY_ENDPOINT')}) + '\\n')
+if args == ['status']:
+    # OpenShell 0.0.72 can report this without failing its process.
+    print('Status: Disconnected\\nHTTP: 404 Not Found')
+    raise SystemExit(0)
+if args != ['sandbox', 'list', '--limit', '1', '--names']:
+    raise SystemExit(64)
+mode = os.environ['FAKE_RPC_MODE']
+if mode == 'rpc-error':
+    print('synthetic RPC failure', file=sys.stderr)
+    raise SystemExit(70)
+if mode == 'hang':
+    time.sleep(30)
+if mode == 'populated':
+    print('existing-sandbox')
+if mode == 'job-vanished':
+    Path(os.environ['FAKE_LOADED']).unlink()
+"""
+    )
+    for command in ("uname", "id", "launchctl", "selected-openshell"):
+        (fake_bin / command).chmod(0o755)
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--target",
+            "worker@example.test",
+            "--label",
+            label,
+            "--local-port",
+            "18771",
+            "--remote-port",
+            "18770",
+            "--openshell-bin",
+            str(openshell),
+        ],
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FAKE_LOADED": str(state),
+            "FAKE_LOADED_PLIST": str(installed),
+            "FAKE_RPC_CALLS": str(calls),
+            "FAKE_RPC_MODE": mode,
+            "MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS": "2",
+            "MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS": "1",
+            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "10",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    succeeds = mode in {"empty", "populated"}
+    assert (result.returncode == 0) is succeeds, result.stderr
+    probes = [json.loads(line) for line in calls.read_text().splitlines()]
+    assert probes and all(
+        probe
+        == {
+            "args": ["sandbox", "list", "--limit", "1", "--names"],
+            "endpoint": "http://127.0.0.1:18771",
+        }
+        for probe in probes
+    )
+    assert state.exists()
+    assert installed.read_bytes() == plist.read_bytes()
+    if succeeds:
+        assert "certifier OpenShell tunnel healthy" in result.stdout
+        assert plist.read_bytes() != previous
+        assert (
+            "127.0.0.1:18771:127.0.0.1:18770"
+            in plistlib.loads(plist.read_bytes())["ProgramArguments"]
+        )
+    else:
+        assert "certifier OpenShell tunnel healthy" not in result.stdout
+        assert "restored prior launchd generation" in result.stderr
+        assert plist.read_bytes() == previous

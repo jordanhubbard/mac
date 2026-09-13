@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 
-PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python; do if $$candidate -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then command -v $$candidate || printf '%s\n' "$$candidate"; break; fi; done)
+PYTHON_VERSION := $(shell cat .python-version)
+PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.14 python3 python; do if "$$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' "$(PYTHON_VERSION)" >/dev/null 2>&1; then command -v "$$candidate" || printf '%s\n' "$$candidate"; break; fi; done)
 ARGS ?=
 HUB ?=
 VENV ?= .venv
@@ -49,8 +50,8 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade
 help: ## Show the supported local build, install, run, test, and cleanup commands.
 	@printf '%s\n' \
 		'MAC local development and client commands' \
-		'Install prerequisites: Python 3.11+, git, gh, and npm.' \
-		'Build and test targets also require uv.' \
+		'Install prerequisites: Python $(PYTHON_VERSION), git, gh, and npm.' \
+		'Install, build and test targets require uv.' \
 		'' \
 		'  make install       Install/link the CLI and build the hub UI' \
 		'  make build         Build the CLI wheel and the hub UI bundle' \
@@ -64,8 +65,8 @@ help: ## Show the supported local build, install, run, test, and cleanup command
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 require-python:
-	@if [ -z "$(PYTHON)" ]; then \
-		echo "Python 3.11+ is required ($(VENV)/bin/python, python3.11, python3, or python)" >&2; \
+	@if [ -z "$(PYTHON)" ] || ! "$(PYTHON)" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' "$(PYTHON_VERSION)"; then \
+		echo "Python $(PYTHON_VERSION) is required; run uv python install and use its interpreter" >&2; \
 		exit 127; \
 	fi
 
@@ -119,7 +120,7 @@ package: package-cli package-gui ## Produce verified CLI and hub UI distribution
 package-cli: build-cli ## Verify the wheel's console-script entry points.
 	@whl=$$(ls dist/mac-*.whl); \
 		echo "verifying entry points in $$whl ..."; \
-		entries=$$(unzip -p "$$whl" 'mac-*.dist-info/entry_points.txt' 2>/dev/null); \
+		entries=$$("$(PYTHON)" -c 'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(z.read(next(n for n in z.namelist() if n.endswith(".dist-info/entry_points.txt"))).decode())' "$$whl") || exit 1; \
 		for s in $(CONSOLE_SCRIPTS); do \
 			if printf '%s\n' "$$entries" | grep -q "^$$s = "; then \
 				echo "  ok: $$s console script present"; \

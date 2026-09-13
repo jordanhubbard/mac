@@ -96,16 +96,17 @@ Start here before deploying a real fleet.
 Prerequisites:
 
 - A terminal: a text window where you run commands.
-- Python 3.11 or newer for setup orchestration.
+- Python 3.14.7, matching the root `.python-version` file.
 - This repository checked out locally.
-- `uv` installed, or a Python environment that can install the dependencies.
+- `uv` installed to provision the reviewed interpreter and locked dependencies.
 
 From the repository root:
 
 ```console
 cd ~/Src/mac
-python3 scripts/bootstrap-project.py
-PATH=.venv/bin:$PATH .venv/bin/python -m pytest
+uv python install
+"$(uv python find)" scripts/bootstrap-project.py
+scripts/run-contract-tests.sh
 ```
 
 Create a local secret key. MAC uses this to protect secret records. Keep the
@@ -461,7 +462,8 @@ Alternatively, give the fleet an explicit `ssh_known_hosts_file` /
 `host-key-changed` (the target's key no longer matches the pinned entry — never
 paper over this one), `auth-rejected`, `unreachable`, and `timeout`.
 
-The Make targets pick a Python 3.11+ `.venv/bin/python`, `python3.11`, `python3`, or `python` automatically:
+The Make targets select `.venv/bin/python`, `python3.14`, `python3`, or `python`
+only when it matches the exact version in `.python-version`:
 
 ```console
 make setup

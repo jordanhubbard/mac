@@ -4,6 +4,7 @@
 # provenance or consume transfer time.
 *
 !Dockerfile
+!.python-version
 !pyproject.toml
 !uv.lock
 !README.md
