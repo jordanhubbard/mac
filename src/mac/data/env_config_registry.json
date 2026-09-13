@@ -7980,6 +7980,7 @@
     "name": "MAC_NAP_TICK_ENABLED",
     "retired": false,
     "sources": [
+      "deploy/install-macos-services.sh",
       "src/mac/nap_ticker.py",
       "src/mac/self_healing.py"
     ],
