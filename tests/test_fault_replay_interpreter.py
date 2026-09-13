@@ -30,6 +30,7 @@ they can import the driver rather than assumed to.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,47 @@ def test_the_resolved_interpreter_can_import_the_driver(replay):
     assert completed.returncode == 0, (
         "fault-replay resolved %r, which cannot import psycopg" % interpreter
     )
+
+
+@pytest.mark.parametrize("project_environment", [True, False])
+def test_discovery_preserves_environment_when_uv_is_available(
+    replay, tmp_path, monkeypatch, project_environment
+):
+    root = tmp_path / "repo"
+    environment = root / ".venv"
+    environment.mkdir(parents=True)
+    installed = environment / "installed-version"
+    installed.write_text("already-installed", encoding="utf-8")
+    candidate = environment / "bin" / "python"
+    if project_environment:
+        candidate.parent.mkdir()
+        candidate.write_text(
+            "#!%s\nimport os, sys\nos.execv(%r, [%r, *sys.argv[1:]])\n"
+            % (sys.executable, sys.executable, sys.executable),
+            encoding="utf-8",
+        )
+        candidate.chmod(0o755)
+
+    # Model the package manager's real side effect at its executable boundary.
+    # Discovery must not invoke it, even when the project venv is absent and
+    # the already-running interpreter is the usable fallback.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    uv = bindir / "uv"
+    uv.write_text(
+        "#!%s\nfrom pathlib import Path\nimport sys\n"
+        "Path(%r).write_text('resynchronized')\nprint(sys.executable)\n"
+        % (sys.executable, str(installed)),
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    monkeypatch.setattr(replay, "ROOT", root)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+
+    selected = replay._probe_interpreter()
+
+    assert installed.read_text(encoding="utf-8") == "already-installed"
+    assert selected == (str(candidate) if project_environment else sys.executable)
 
 
 def test_resolution_verifies_rather_than_assumes(replay, tmp_path, monkeypatch):
