@@ -926,3 +926,62 @@ def test_no_change_already_satisfied_passes_when_prepared_head_is_set():
         )
         == []
     )
+
+
+@pytest.mark.parametrize("reason_field", ["canonical_reconcile", "reason", "no_change_reason"])
+def test_no_change_reason_is_accepted_by_worker_and_hub(reason_field):
+    from mac.worker import _worker_verification_contract_problems
+
+    manifest = _repo_manifest(
+        evidence_type="no_change",
+        repo={"head_sha": "abcdef1234567890", "dirty": False, "pushed": False, "files_changed": []},
+    )
+    if reason_field == "canonical_reconcile":
+        manifest[reason_field] = {
+            "decision": "already_satisfied",
+            "head_sha": "abcdef1234567890",
+            "reason": "The inspected canonical revision already contains the requested repair.",
+        }
+    else:
+        manifest[reason_field] = "The inspected canonical revision already contains the requested repair."
+    assert _worker_verification_contract_problems(manifest, "no_change") == []
+    assert validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count) == []
+
+
+@pytest.mark.parametrize(
+    "change, expected",
+    [
+        ({"canonical_reconcile": {"decision": "already_satisfied", "head_sha": "abcdef1234567890", "reason": " "}}, "requires a reason"),
+        ({"canonical_reconcile": []}, "requires a reason"),
+        ({"canonical_reconcile": "Already repaired", "summary": "Already repaired"}, "requires a reason"),
+        ({"checks": []}, "requires at least one passing check"),
+        ({"checks": [{"name": "CI result", "status": "running"}]}, "requires at least one passing check"),
+        ({"checks": [{"name": "CI result", "returncode": 1}]}, "requires at least one passing check"),
+        ({"repo": {"head_sha": "abcdef1234567890", "dirty": True, "files_changed": []}}, "clean"),
+    ],
+)
+def test_reconciliation_reason_does_not_replace_missing_evidence(change, expected):
+    from mac.worker import _worker_verification_contract_problems
+
+    manifest = _repo_manifest(
+        evidence_type="no_change",
+        canonical_reconcile={"decision": "already_satisfied", "head_sha": "abcdef1234567890", "reason": "Repair exists at this revision."},
+    )
+    manifest.update(change)
+    for problems in [
+        _worker_verification_contract_problems(manifest, "no_change"),
+        validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count),
+    ]:
+        assert any(expected in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("decision", ["already_satisfied", "needs_restatement"])
+def test_single_reconciliation_reason_still_requires_prepared_head(decision):
+    manifest = _repo_manifest(
+        evidence_type="no_change",
+        repo={"head_sha": "abcdef1234567890", "dirty": False, "pushed": False, "files_changed": []},
+        canonical_reconcile={"decision": decision, "head_sha": "abcdef1234567890", "reason": "The inspected revision resolves this task without mutation."},
+    )
+    assert validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count, expected_reconcile_head_sha="abcdef1234567890") == []
+    manifest["canonical_reconcile"]["head_sha"] = "1234567890abcdef"
+    assert "canonical_reconcile.head_sha must match the prepared canonical HEAD" in validate_evidence_type("no_change", manifest, passed_check_count=_passed_check_count, expected_reconcile_head_sha="abcdef1234567890")
