@@ -120,7 +120,7 @@ package: package-cli package-gui ## Produce verified CLI and hub UI distribution
 package-cli: build-cli ## Verify the wheel's console-script entry points.
 	@whl=$$(ls dist/mac-*.whl); \
 		echo "verifying entry points in $$whl ..."; \
-		entries=$$(unzip -p "$$whl" 'mac-*.dist-info/entry_points.txt' 2>/dev/null); \
+		entries=$$("$(PYTHON)" -c 'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(z.read(next(n for n in z.namelist() if n.endswith(".dist-info/entry_points.txt"))).decode())' "$$whl") || exit 1; \
 		for s in $(CONSOLE_SCRIPTS); do \
 			if printf '%s\n' "$$entries" | grep -q "^$$s = "; then \
 				echo "  ok: $$s console script present"; \
