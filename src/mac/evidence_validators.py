@@ -319,6 +319,15 @@ class ArtifactValidator(TestValidator):
         return problems
 
 
+def no_change_reason(manifest: Mapping[str, Any]) -> str:
+    """Read the explicit reason without requiring a duplicate of reconciliation."""
+    reconcile = manifest.get("canonical_reconcile")
+    reconcile = reconcile if isinstance(reconcile, Mapping) else {}
+    return str(
+        manifest.get("reason") or manifest.get("no_change_reason") or reconcile.get("reason") or ""
+    ).strip()
+
+
 class NoChangeValidator(EvidenceValidator):
     evidence_type = "no_change"
 
@@ -331,9 +340,7 @@ class NoChangeValidator(EvidenceValidator):
         # inspected, but requiring a newly pushed ref contradicts the evidence
         # type and turned correct investigations into deterministic retries.
         problems = self.require_clean_repo_anchor(manifest)
-        if not str(
-            manifest.raw.get("reason") or manifest.raw.get("no_change_reason") or ""
-        ).strip():
+        if not no_change_reason(manifest.raw):
             problems.append("no_change evidence requires a reason")
         if self.passed_checks(manifest, context) < 1:
             problems.append("no_change evidence requires at least one passing check")
