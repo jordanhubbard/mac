@@ -313,7 +313,7 @@ def test_finalizer_no_change_already_satisfied_does_not_open_a_pr(tmp_path, monk
     from mac.evidence_validators import validate_evidence_type
     from mac.worker import _worker_passed_verification_check_count, _worker_verification_contract_problems
 
-    assert "reason" not in manifest and "no_change_reason" not in manifest
+    assert manifest["canonical_reconcile"]["reason"] == "HEAD already uses gh pr create"
     assert _worker_verification_contract_problems(manifest, "no_change") == []
     assert validate_evidence_type(
         "no_change", manifest,
