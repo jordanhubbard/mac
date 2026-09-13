@@ -207,6 +207,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`presentations/agentfabric-overview/qa-ledger.md`](../presentations/agentfabric-overview/qa-ledger.md) | QA ledger — AgentFabric overview |
 | supplemental reference | [`presentations/agentfabric-overview/source-notes.md`](../presentations/agentfabric-overview/source-notes.md) | Source notes — AgentFabric overview |
 | runbook | [`production-deployment.md`](../production-deployment.md) | Production Deployment |
+| supplemental reference | [`python-baseline.md`](../python-baseline.md) | Python baseline |
 | generated reference | [`reference/cli.md`](../reference/cli.md) | Command-line reference |
 | generated reference | [`reference/documentation-inventory.md`](../reference/documentation-inventory.md) | Documentation inventory |
 | generated reference | [`reference/openapi.md`](../reference/openapi.md) | HTTP API reference |

@@ -23,6 +23,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Dead-code contract (vulture >=90%, allowlisted)
         run: scripts/dead-code-check.sh
 
@@ -37,10 +39,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -96,10 +100,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -149,10 +155,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up secondary Python
-        run: uv python install 3.12
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.12
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -168,7 +176,7 @@ jobs:
             exit 1
           fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
-      - name: Run secondary-version public/process compatibility slice
+      - name: Run public/process compatibility slice
         run: scripts/run-compatibility-tests.sh
 
   ide:
@@ -259,20 +267,18 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync PostgreSQL test dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Run live PostgreSQL schema, migration, and concurrency contracts
         run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
 
   nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
@@ -281,10 +287,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -300,10 +308,9 @@ jobs:
             exit 1
           fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
-      - name: Run full scheduled matrix
+      - name: Run full scheduled suite
         run: scripts/run-contract-tests.sh
       - name: Prove historical fault detection
-        if: matrix.python-version == '3.11'
         # Through `uv run`, not bare. Invoked bare, the script's
         # `#!/usr/bin/env python3` shebang selects the SYSTEM interpreter, which
         # has no psycopg -- and fault-replay spawns every probe with its own
@@ -312,7 +319,7 @@ jobs:
         # anything. The step still passed its own smoke checks, so the nightly
         # reported a failure that looked like a product regression and was a
         # missing interpreter.
-        run: uv run --extra dev --python ${{ matrix.python-version }} python scripts/fault-replay.py
+        run: uv run --extra dev python scripts/fault-replay.py
 
   portfolio:
     if: >-
@@ -331,10 +338,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -405,8 +414,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # This job ran pytest with no database at all -- the only pytest job in
         # the workflow missing this step. The suite fails fast rather than

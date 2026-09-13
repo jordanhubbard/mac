@@ -160,8 +160,14 @@ def cli_reference() -> str:
 
 
 def openapi_reference() -> str:
-    app = create_app(control_plane=ControlPlane.in_memory())
-    schema = app.openapi()
+    control_plane = ControlPlane.in_memory()
+    try:
+        app = create_app(control_plane=control_plane)
+        schema = app.openapi()
+    finally:
+        # Python 3.14 rejects thread joins during interpreter finalization.
+        # This generator owns the pool; close it while Python is still running.
+        control_plane.store.close()
     lines = [
         "# HTTP API reference",
         "",

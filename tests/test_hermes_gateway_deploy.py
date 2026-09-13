@@ -30,6 +30,13 @@ scenario = os.environ.get("FAKE_HERMES_SCENARIO", "healthy")
 if args[:2] == ["gateway", "stop"] and scenario == "stop_failed":
     raise SystemExit(1)
 
+if args[:2] == ["config", "get"]:
+    if args[2] == "terminal.backend":
+        print(os.environ.get("FAKE_TERMINAL_BACKEND", "local"))
+    elif args[2] == "terminal.cwd":
+        print(os.environ.get("FAKE_TERMINAL_CWD", os.environ["HOME"]))
+    raise SystemExit(0)
+
 if args[:2] == ["gateway", "status"]:
     if scenario == "unsupervised":
         print("Gateway is running as a detached process (not supervised).")
@@ -492,3 +499,57 @@ def test_unknown_subcommand_fails_closed(tmp_path):
     result, _calls = _run(tmp_path, "bogus")
     assert result.returncode != 0
     assert "usage" in result.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    "cwd", [".", "auto", "cwd", "", "/sandbox/workspace", "/sandbox/workspace/"]
+)
+def test_prepare_pins_local_terminal_directory_despite_legacy_environment(tmp_path, cwd):
+    result, calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={
+            "FAKE_TERMINAL_CWD": cwd,
+            "MESSAGING_CWD": "/sandbox/workspace",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    home = str((tmp_path / "home").resolve())
+    expected = ["config", "set", "terminal.cwd", home, "--force"]
+    assert expected in calls
+    assert calls.index(expected) < next(
+        i for i, call in enumerate(calls) if call[:2] == ["gateway", "install"]
+    )
+
+
+def test_prepare_preserves_explicit_host_terminal_directory(tmp_path):
+    directory = tmp_path / "custom project"
+    directory.mkdir()
+    result, calls = _run(tmp_path, "prepare", extra_env={"FAKE_TERMINAL_CWD": str(directory)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ["config", "set", "terminal.cwd", str(directory.resolve()), "--force"] in calls
+
+
+@pytest.mark.parametrize("command", ["prepare", "verify"])
+def test_local_terminal_missing_custom_directory_blocks_gateway_health(tmp_path, command):
+    result, calls = _run(
+        tmp_path, command, extra_env={"FAKE_TERMINAL_CWD": str(tmp_path / "absent")}
+    )
+    assert result.returncode != 0
+    assert "terminal.cwd" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
+
+
+@pytest.mark.parametrize("backend", ["docker", "ssh"])
+def test_remote_terminal_directory_is_not_rewritten_or_host_validated(tmp_path, backend):
+    for command in ("prepare", "verify"):
+        result, calls = _run(
+            tmp_path,
+            command,
+            extra_env={
+                "FAKE_TERMINAL_BACKEND": backend,
+                "FAKE_TERMINAL_CWD": "/sandbox/workspace",
+            },
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call[:3] == ["config", "set", "terminal.cwd"] for call in calls)

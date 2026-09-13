@@ -4,7 +4,7 @@ There were three, and they drifted, which is the whole reason this module
 exists.
 
 An agent's startup self-test can report a problem that is advisory rather than
-blocking -- an OpenClaw probe that cannot find a stale sandbox, say. An agent
+blocking -- a shared-service probe that times out, say. An agent
 in that state is `health_status == "degraded"` and is still perfectly able to
 run a coding task, so the fleet has always intended to dispatch to it. Three
 places implemented that intention independently:
