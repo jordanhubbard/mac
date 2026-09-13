@@ -11316,8 +11316,10 @@
     "name": "MAC_REVIEWED_PYTHON_VERSION",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
-      "deploy/reviewed-tool-assets.sh"
+      "deploy/reviewed-tool-assets.sh",
+      "scripts/bootstrap-verifier-python.sh"
     ],
     "type": "str"
   },

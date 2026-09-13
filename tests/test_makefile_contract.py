@@ -27,8 +27,8 @@ def test_make_help_exposes_conventional_lifecycle() -> None:
     # to say "canonical Fleet IDE" for a bundle no hub has ever mounted.
     assert "the hub serves at /ui" in result.stdout
     assert "canonical Fleet IDE" not in result.stdout
-    assert "Python 3.11+, git, gh, and npm" in result.stdout
-    assert "Build and test targets also require uv." in result.stdout
+    assert "Python 3.14.7, git, gh, and npm" in result.stdout
+    assert "Install, build and test targets require uv." in result.stdout
 
 
 def test_makefile_defaults_to_help_and_keeps_fleet_setup_distinct() -> None:

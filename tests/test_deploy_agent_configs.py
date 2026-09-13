@@ -548,10 +548,10 @@ def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
     assert r"\$_mac_tool_assets" in driver
     assert 'REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-' in installer
     assert '. "$REVIEWED_TOOL_ASSETS"' in installer
-    assert 'MAC_REVIEWED_UV_VERSION="0.8.22"' in (
+    assert 'MAC_REVIEWED_UV_VERSION="0.12.12"' in (
         ROOT / "deploy" / "reviewed-tool-assets.sh"
     ).read_text(encoding="utf-8")
-    assert 'MAC_REVIEWED_PYTHON_VERSION="3.12.11"' in (
+    assert 'MAC_REVIEWED_PYTHON_VERSION="3.14.7"' in (
         ROOT / "deploy" / "reviewed-tool-assets.sh"
     ).read_text(encoding="utf-8")
 
@@ -585,6 +585,53 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
     assert "SHA-256 mismatch for reviewed asset" in result.stderr
 
 
+def test_reviewed_download_preserves_proxy_trust_without_deploy_credentials(tmp_path):
+    assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
+    observed = tmp_path / "curl-environment"
+    curl = tmp_path / "curl"
+    curl.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "${SSL_CERT_FILE-}" "${CURL_CA_BUNDLE-}" '
+        '"${MAC_SECRET_KEY-unset}" > ' + shlex.quote(str(observed)) + "\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = -o ]; then printf payload > "$2"; exit 0; fi\n'
+        "  shift\n"
+        "done\nexit 1\n"
+    )
+    curl.chmod(0o755)
+    expected = hashlib.sha256(b"payload").hexdigest()
+    target = tmp_path / "download.tgz"
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            '. "$1"; '
+            'mac_reviewed_asset_spec() { printf "asset.tgz %s https://example.invalid/asset.tgz root\\n" "$digest"; }; '
+            'digest="$3"; mac_download_reviewed_asset uv "$2"',
+            "bash",
+            str(assets),
+            str(target),
+            expected,
+        ],
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "SSL_CERT_FILE": "/trusted/proxy-ca.pem",
+            "CURL_CA_BUNDLE": "/trusted/proxy-ca.pem",
+            "MAC_SECRET_KEY": "fixture-secret-must-not-enter-curl",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == b"payload"
+    assert observed.read_text().splitlines() == [
+        "/trusted/proxy-ca.pem",
+        "/trusted/proxy-ca.pem",
+        "unset",
+    ]
+
+
 @pytest.mark.parametrize(
     ("tool", "os_name", "architecture", "filename"),
     [
@@ -592,6 +639,18 @@ def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
         ("uv", "Linux", "aarch64", "uv-aarch64-unknown-linux-gnu.tar.gz"),
         ("uv", "Darwin", "x86_64", "uv-x86_64-apple-darwin.tar.gz"),
         ("uv", "Darwin", "arm64", "uv-aarch64-apple-darwin.tar.gz"),
+        (
+            "python",
+            "Linux",
+            "x86_64",
+            "cpython-3.14.7+20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        ),
+        (
+            "python",
+            "Linux",
+            "aarch64",
+            "cpython-3.14.7+20260901-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        ),
     ],
 )
 def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, architecture, filename):
@@ -616,8 +675,8 @@ def test_reviewed_tool_asset_matrix_covers_fleet_platforms(tool, os_name, archit
     observed_name, digest, url, root = result.stdout.strip().split()
     assert observed_name == filename
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    assert url.startswith("https://github.com/") and url.endswith(filename)
-    assert root == filename.removesuffix(".tar.gz")
+    assert url.startswith("https://github.com/") and url.endswith(filename.replace("+", "%2B"))
+    assert root == ("python" if tool == "python" else filename.removesuffix(".tar.gz"))
 
 
 @pytest.mark.parametrize(
@@ -2284,10 +2343,10 @@ def test_setup_entrypoints_are_python_driven_and_make_exposed():
     assert "def configure_then_deploy" in setup_py
     assert "def deploy_env" in setup_py
     assert (
-        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python'
+        'PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.14 python3 python'
         in makefile
     )
-    assert "sys.version_info >= (3, 11)" in makefile
+    assert "platform.python_version() != sys.argv[1]" in makefile
     assert "setup: require-python" in makefile
     assert "deploy: require-python" in makefile
     assert "--(hub|new-hub)" in makefile
