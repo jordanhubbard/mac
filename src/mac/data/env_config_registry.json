@@ -6182,6 +6182,7 @@
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-macos-services.sh",
       "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
