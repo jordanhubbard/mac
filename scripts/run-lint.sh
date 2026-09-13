@@ -18,6 +18,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Match bootstrap-project.py's environment selection, including home expansion.
+# An explicit MAC_VENV takes precedence over an ambient uv project environment.
+if [ -n "${MAC_VENV:-}" ]; then
+    UV_PROJECT_ENVIRONMENT="$(python3 -c 'import os; from pathlib import Path; print(Path(os.environ["MAC_VENV"]).expanduser())')"
+    export UV_PROJECT_ENVIRONMENT
+fi
+
 ruff() { uv run --no-sync ruff "$@"; }
 
 case "${1:-}" in
