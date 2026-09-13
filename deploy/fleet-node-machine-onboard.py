@@ -11,8 +11,8 @@ baseline after the controller has registered a draining fungible placeholder.
 The remote system Python only needs to run this standard-library helper.  The
 managed runtime is pinned by deploy/reviewed-tool-assets.sh:
 
-* uv 0.8.22
-* CPython 3.12.11 installed by that reviewed uv
+* uv 0.12.12
+* CPython 3.14.7 installed by that reviewed uv
 
 Publication is receipt-atomic: every canonical path is created while an
 exclusive owner lock is held, exact readback is performed, and an owner-only,
@@ -46,8 +46,8 @@ PLACEHOLDER_SCHEMA = "mac.fleet_machine_onboarding_placeholder.v1"
 RECEIPT_SCHEMA = "mac.fleet_machine_onboarding_receipt.v1"
 STATUS_SCHEMA = "mac.fleet_machine_onboarding_status.v1"
 ROUTE_SCHEMA = "mac.fleet_endpoint_identity.v1"
-UV_VERSION = "0.8.22"
-PYTHON_VERSION = "3.12.11"
+UV_VERSION = "0.12.12"
+PYTHON_VERSION = "3.14.7"
 MAX_JSON_BYTES = 1024 * 1024
 SAFE_GENERATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,511}$")
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -493,7 +493,7 @@ def install_reviewed_toolchain(
         ),
         env=python_env,
     )
-    candidates = sorted(python_root.glob("*/bin/python3.12"))
+    candidates = sorted(python_root.glob("*/bin/python3.14"))
     if len(candidates) != 1:
         raise OnboardingError("reviewed Python install did not yield one interpreter")
     version = _run(

@@ -17,20 +17,16 @@ if not VENV.is_absolute():
     VENV = ROOT / VENV
 BIN_DIR = "Scripts" if os.name == "nt" else "bin"
 VENV_PYTHON = VENV / BIN_DIR / ("python.exe" if os.name == "nt" else "python")
-REQUIRED_COMMANDS = ("python3", "git", "gh")
+REQUIRED_COMMANDS = ("python3", "git", "gh", "uv")
 # Actionable install hints keyed by required command. Surfaced when a
 # prerequisite is missing so environment-repair does not require guessing
 # which package provides the tool on the failing host.
 COMMAND_INSTALL_HINTS = {
-    "python3": "install Python 3.11+ from your OS package manager or python.org",
+    "python3": "install the version in .python-version with `uv python install`",
     "git": "install git (e.g. `apt-get install git`, `brew install git`)",
+    "uv": "install the reviewed uv release from https://docs.astral.sh/uv/",
     "gh": "install the GitHub CLI from https://cli.github.com (e.g. `brew install gh`)",
 }
-
-
-def run(command: list[str]) -> None:
-    print("+ %s" % " ".join(command), flush=True)
-    subprocess.run(command, cwd=str(ROOT), check=True)
 
 
 def missing_commands(required: tuple[str, ...]) -> list[str]:
@@ -50,11 +46,12 @@ def report_missing_commands(missing: list[str]) -> None:
             print("  - %s: %s" % (command, hint), file=sys.stderr)
 
 
-MIN_PYTHON = (3, 11)
+PYTHON_VERSION = (ROOT / ".python-version").read_text().strip()
+REQUIRED_PYTHON = tuple(int(part) for part in PYTHON_VERSION.split("."))
 
 
 def venv_python_is_supported() -> bool:
-    """Is the interpreter INSIDE the venv new enough?
+    """Does the interpreter INSIDE the venv match the reviewed patch?
 
     Asked separately from `sys.version_info` because they are different
     interpreters and only one of them was ever checked. Returns True when the
@@ -65,7 +62,7 @@ def venv_python_is_supported() -> bool:
         [
             str(VENV_PYTHON),
             "-c",
-            "import sys; print('%d.%d' % sys.version_info[:2])",
+            "import platform; print(platform.python_version())",
         ],
         capture_output=True,
         text=True,
@@ -73,61 +70,14 @@ def venv_python_is_supported() -> bool:
     if result.returncode != 0:
         return True
     try:
-        major, minor = (int(part) for part in result.stdout.strip().split(".", 1))
+        version = tuple(int(part) for part in result.stdout.strip().split("."))
     except ValueError:
         return True
-    return (major, minor) >= MIN_PYTHON
-
-
-def has_pip() -> bool:
-    return (
-        subprocess.run(
-            [str(VENV_PYTHON), "-m", "pip", "--version"],
-            cwd=str(ROOT),
-            capture_output=True,
-        ).returncode
-        == 0
-    )
-
-
-def ensure_pip() -> None:
-    """Make sure the venv has pip, even when something else created it.
-
-    An existing venv is REUSED -- the check above only builds one when the
-    interpreter is missing -- and a venv built by `uv venv` has no pip at all.
-    That is the likely state in this repository, which runs `uv run --extra dev`
-    everywhere, and it produced a bare failure on puck.local:
-
-        /Users/jkh/Src/mac/.venv/bin/python: No module named pip
-        make: *** [.venv/bin/mac] Error 1
-
-    `ensurepip` is tried first because it preserves the existing environment.
-    Some distributions ship Python without it, so recreating the venv is the
-    fallback -- noisy, but it leaves a working install rather than a message
-    about a module the user never chose to omit.
-    """
-    if has_pip():
-        return
-    print("venv has no pip (created by uv?); bootstrapping it", flush=True)
-    result = subprocess.run(
-        [str(VENV_PYTHON), "-m", "ensurepip", "--upgrade"],
-        cwd=str(ROOT),
-        capture_output=True,
-    )
-    if result.returncode == 0 and has_pip():
-        return
-    print("ensurepip unavailable; recreating the venv with python -m venv", flush=True)
-    shutil.rmtree(VENV)
-    run([sys.executable, "-m", "venv", str(VENV)])
-    if not has_pip():
-        raise SystemExit(
-            "could not provision pip in %s; create it with `python3 -m venv` "
-            "and re-run `make install`" % VENV
-        )
+    return version == REQUIRED_PYTHON
 
 
 def main() -> int:
-    # --venv-only: build just the .venv (pip install -e .[dev]) without the
+    # --venv-only: build just the .venv from uv.lock without the
     # dev-workflow tool checks. git/gh serve the human dev loop; verification
     # hosts (worker venvs, sandboxes) need only the venv, and requiring gh
     # there blocked contract-test bootstrap on the GKE pods.
@@ -137,14 +87,15 @@ def main() -> int:
     args = sys.argv[1:]
     venv_only = "--venv-only" in args
     check_only = "--check" in args
-    required = ("python3",) if venv_only else REQUIRED_COMMANDS
+    required = ("python3", "uv") if venv_only else REQUIRED_COMMANDS
     if not (ROOT / "pyproject.toml").exists():
         print("bootstrap-project.py must be run from a mac checkout", file=sys.stderr)
         return 2
-    if sys.version_info < MIN_PYTHON:
+    if sys.version_info[:3] != REQUIRED_PYTHON:
         print(
-            "Python %d.%d+ is required to bootstrap mac; current interpreter is %s"
-            % (MIN_PYTHON[0], MIN_PYTHON[1], sys.version.split()[0]),
+            "Python %s is required to bootstrap mac; current interpreter is %s. "
+            "Run `uv python install` then invoke this script with `uv python find`."
+            % (PYTHON_VERSION, sys.version.split()[0]),
             file=sys.stderr,
         )
         return 2
@@ -174,16 +125,20 @@ def main() -> int:
         # installs land in an interpreter mac does not support. The failure
         # arrives later, somewhere unrelated, as an import or a syntax error.
         print(
-            "recreating %s: its interpreter is older than Python %d.%d"
-            % (VENV, MIN_PYTHON[0], MIN_PYTHON[1]),
+            "recreating %s: its interpreter differs from Python %s" % (VENV, PYTHON_VERSION),
             flush=True,
         )
         shutil.rmtree(VENV)
-    if not VENV_PYTHON.exists():
-        run([sys.executable, "-m", "venv", str(VENV)])
-    ensure_pip()
-    run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
-    run([str(VENV_PYTHON), "-m", "pip", "install", "-e", ".[dev]"])
+    # Use the same locked dependency versions as CI and the runtime image.
+    # The explicit environment path preserves MAC_VENV; Python is the one
+    # checked above, never a different interpreter selected from ambient PATH.
+    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(VENV))
+    subprocess.run(
+        ["uv", "sync", "--locked", "--extra", "dev", "--python", sys.executable],
+        cwd=str(ROOT),
+        env=env,
+        check=True,
+    )
     return 0
 
 

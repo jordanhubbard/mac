@@ -29,6 +29,7 @@ def _run_with_fake_python(
     checkpoint_plan_status: int = 10,
     triage_pytest_status: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    (tmp_path / ".python-version").write_text((ROOT / ".python-version").read_text())
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log_path = tmp_path / "python.log"
@@ -534,6 +535,7 @@ def _stage_interpreter_repo(
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     (repo / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
+    (repo / ".python-version").write_text((ROOT / ".python-version").read_text())
     (repo / "scripts" / "run-contract-tests.sh").write_text(
         RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -702,6 +704,7 @@ def test_contract_runner_reports_when_no_interpreter_can_run_the_suite(tmp_path)
 
 
 def test_contract_runner_scrubs_provider_credentials_from_route_detection(tmp_path):
+    (tmp_path / ".python-version").write_text((ROOT / ".python-version").read_text())
     """The hermetic sweep must clear the non-MAC_-prefixed coding-agent
     provider credentials that ``coding_agent`` route detection fingerprints.
 
@@ -969,6 +972,7 @@ def _stage_git_runner(
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     (repo / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
+    (repo / ".python-version").write_text((ROOT / ".python-version").read_text())
     (repo / "scripts" / "run-contract-tests.sh").write_text(
         RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
     )

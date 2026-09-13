@@ -43,7 +43,7 @@ def test_deployment_image_uses_immutable_bases_and_frozen_lock() -> None:
     assert len(from_lines) == 3
     assert all("@sha256:" in line for line in from_lines)
     assert all(re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in from_lines)
-    assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
+    assert "COPY .python-version pyproject.toml uv.lock README.md ./" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     # `hermes-gateway` was dropped from pyproject with the vendored Hermes
     # runtime in #377. This assertion outlived it and pinned the broken state:
