@@ -8159,8 +8159,10 @@ def _worker_verification_contract_problems(
             problems.append("artifact evidence requires artifacts")
         return problems
     if evidence_type == "no_change":
+        from mac.evidence_validators import no_change_reason
+
         problems = _worker_require_clean_repo_anchor(manifest)
-        if not str(manifest.get("reason") or manifest.get("no_change_reason") or "").strip():
+        if not no_change_reason(manifest):
             problems.append("no_change evidence requires a reason")
         if _worker_passed_verification_check_count(manifest) < 1:
             problems.append("no_change evidence requires at least one passing check")

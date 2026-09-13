@@ -42,7 +42,9 @@ def _launchd_stop_function_variants():
     )
 
 
-def _run_launchd_stop_harness(tmp_path, functions, command, mode):
+def _run_launchd_stop_harness(
+    tmp_path, functions, command, mode, *, transition_timeout="2", poll_delay="0"
+):
     case_dir = tmp_path / mode
     fake_bin = case_dir / "bin"
     fake_bin.mkdir(parents=True)
@@ -62,6 +64,9 @@ case "$1" in
     IFS= read -r value < "$FAKE_LAUNCHCTL_COUNT"
     value=$((value + 1))
     printf '%s\n' "$value" > "$FAKE_LAUNCHCTL_COUNT"
+    if [ "$value" -gt 1 ] && [ "$FAKE_LAUNCHCTL_POLL_DELAY_SECONDS" != 0 ]; then
+      sleep "$FAKE_LAUNCHCTL_POLL_DELAY_SECONDS"
+    fi
     case "$mode" in
       absent) echo 'Could not find service synthetic' >&2; exit 113 ;;
       delayed)
@@ -118,23 +123,15 @@ exec "$@"
         "FAKE_LAUNCHCTL_STATE": str(state),
         "FAKE_LAUNCHCTL_COUNT": str(count),
         "FAKE_LAUNCHCTL_CALLS": str(calls),
-        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.15",
-        # The contract under test is the 150ms aggregate transition bound,
-        # not whether a freshly scheduled shell plus the Python process-group
-        # wrapper can start inside 50ms on a loaded xdist runner.  Keep the
-        # per-command bound finite but comfortably above scheduler jitter;
-        # mac_launchd_wait_unloaded still clamps each attempt to the smaller
-        # remaining aggregate deadline.
+        "FAKE_LAUNCHCTL_POLL_DELAY_SECONDS": poll_delay,
+        # State transitions need time for real subprocess scheduling. The
+        # short aggregate deadline has its own persistent-job assertions.
+        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": transition_timeout,
         "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
         "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
     }
-    # mac_run_bounded wraps each poll in a stdlib-only ``python -c`` process-group
-    # guard (never imports ``mac``). coverage.py's ``patch = ["subprocess"]`` would
-    # trace every such child via COVERAGE_PROCESS_{START,CONFIG} + a site .pth,
-    # adding ~5.6x interpreter-start overhead for ZERO src/mac coverage — enough to
-    # blow the 150ms aggregate bound (which needs multiple bounded polls) once xdist
-    # contention piles on, flaking the "delayed" case. Strip it so the wrapper runs
-    # at native speed; the 150ms contract stays exact and coverage is unaffected.
+    # The stdlib-only launchd wrappers do not import mac. Tracing their startup
+    # adds interpreter overhead without measuring any src/mac code.
     env.pop("COVERAGE_PROCESS_START", None)
     env.pop("COVERAGE_PROCESS_CONFIG", None)
     return subprocess.run(
@@ -148,6 +145,7 @@ exec "$@"
         check=False,
         capture_output=True,
         text=True,
+        timeout=6,
     )
 
 
@@ -224,30 +222,18 @@ def test_launchd_quiescence_waits_for_removal_and_fails_closed(tmp_path):
     ):
         variant_dir = tmp_path / str(variant)
 
-        delayed = _run_launchd_stop_harness(variant_dir, functions, command, "delayed")
+        delayed = _run_launchd_stop_harness(
+            variant_dir, functions, command, "delayed", poll_delay="0.10"
+        )
         assert delayed.returncode == 0, delayed.stderr
         assert (variant_dir / "delayed" / "calls").read_text(encoding="utf-8") == (
             f"{expected_call}\n"
         )
+        assert (variant_dir / "delayed" / "count").read_text(encoding="utf-8") == "3\n"
 
         absent = _run_launchd_stop_harness(variant_dir, functions, command, "absent")
         assert absent.returncode == 0, absent.stderr
         assert not (variant_dir / "absent" / "calls").exists()
-
-        persistent = _run_launchd_stop_harness(variant_dir, functions, command, "persistent")
-        assert persistent.returncode != 0
-        assert "remained loaded" in persistent.stderr
-        assert (variant_dir / "persistent" / "calls").read_text(
-            encoding="utf-8"
-        ) == f"{expected_call}\n"
-
-        failed = _run_launchd_stop_harness(variant_dir, functions, command, "failed")
-        assert failed.returncode != 0
-        assert "launchctl bootout failed" in failed.stderr
-        assert "synthetic bootout refusal" in failed.stderr
-        assert (variant_dir / "failed" / "calls").read_text(
-            encoding="utf-8"
-        ) == f"{expected_call}\n"
 
         inspect_error = _run_launchd_stop_harness(variant_dir, functions, command, "inspect-error")
         assert inspect_error.returncode != 0
@@ -271,6 +257,25 @@ def test_launchd_quiescence_waits_for_removal_and_fails_closed(tmp_path):
         assert (variant_dir / "failed-then-absent" / "calls").read_text(
             encoding="utf-8"
         ) == f"{expected_call}\n"
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize("mode", ["persistent", "failed"])
+def test_launchd_quiescence_enforces_short_aggregate_deadline(tmp_path, mode):
+    for variant, (functions, command, expected_call) in enumerate(
+        _launchd_stop_function_variants()
+    ):
+        variant_dir = tmp_path / str(variant)
+        result = _run_launchd_stop_harness(
+            variant_dir, functions, command, mode, transition_timeout="0.15"
+        )
+
+        assert result.returncode != 0
+        assert "remained loaded" in result.stderr
+        assert (variant_dir / mode / "calls").read_text(encoding="utf-8") == (f"{expected_call}\n")
+        if mode == "failed":
+            assert "launchctl bootout failed" in result.stderr
+            assert "synthetic bootout refusal" in result.stderr
 
 
 def test_launchd_mutation_boundary_delegates_to_exact_bounded_helper_and_fails_closed(

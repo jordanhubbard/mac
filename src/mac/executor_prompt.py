@@ -870,7 +870,7 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
     evidence_contract = (
         "This is a read-only repository report. Evidence must use evidence_type=operator_result; repository mutation, commit, push, and host finalization are forbidden."
         if metadata_declares_read_only_report_repository(metadata)
-        else "Evidence contract: repository tasks use evidence_type=repo_change when the requested change is still absent in this tree; already_satisfied and needs_restatement use evidence_type=no_change and must not open a pull request. operator_result is reserved for work without a repository contract. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
+        else "Evidence contract: repository tasks use evidence_type=repo_change when the requested change is still absent in this tree; already_satisfied and needs_restatement use evidence_type=no_change and must not open a pull request. operator_result is reserved for work without a repository contract. For no_change, canonical_reconcile.reason also supplies the explicit no-change reason; do not duplicate it at the top level. Include at least one completed passing check and what it established. A still-running check is not a pass. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
     )
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
