@@ -27,13 +27,29 @@ with Path(os.environ["FAKE_HERMES_CALLS"]).open("a", encoding="utf-8") as handle
 
 scenario = os.environ.get("FAKE_HERMES_SCENARIO", "healthy")
 
+if args[:2] == ["gateway", "stop"] and scenario == "stop_failed":
+    raise SystemExit(1)
+
+if args[:2] == ["config", "get"]:
+    if args[2] == "terminal.backend":
+        print(os.environ.get("FAKE_TERMINAL_BACKEND", "local"))
+    elif args[2] == "terminal.cwd":
+        print(os.environ.get("FAKE_TERMINAL_CWD", os.environ["HOME"]))
+    raise SystemExit(0)
+
 if args[:2] == ["gateway", "status"]:
     if scenario == "unsupervised":
         print("Gateway is running as a detached process (not supervised).")
     elif scenario == "unhealthy":
         print("Gateway is supervised by launchd, but reports Unhealthy.")
+    elif scenario == "systemd":
+        print("Main PID: " + os.environ["FAKE_GATEWAY_PID"] + " (hermes)")
+        print("Old journal entry: Gateway stopped")
+        print("✓ User gateway service is running")
     else:
-        print("Gateway is supervised by launchd and Running.")
+        print("✓ Gateway is supervised by launchd (PID " + os.environ["FAKE_GATEWAY_PID"] + ")")
+    if "--deep" in args and scenario == "historical_shutdown":
+        print("Recent logs: Gateway stopped. Unhealthy on previous startup.")
     raise SystemExit(0)
 
 raise SystemExit(0)
@@ -80,6 +96,24 @@ def _run(
     (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
     hermes_home = home / ".hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
+    runtime_pid = os.getpid()
+    if subcommand == "prepare" and scenario != "stop_still_running":
+        # A real exited process models an installed, already stopped service.
+        # The stuck-stop case keeps a real live PID while the fake CLI returns
+        # success, reproducing upstream's misleading exit code safely.
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait(timeout=10)
+        runtime_pid = exited.pid
+    runtime = {
+        "pid": runtime_pid,
+        "gateway_state": "running",
+        "platforms": {"slack": {"state": "connected", "writer_pid": runtime_pid}},
+    }
+    runtime.update((extra_env or {}).get("_RUNTIME_UPDATE", {}))
+    if not (extra_env or {}).get("_OMIT_RUNTIME"):
+        runtime_path = hermes_home / "gateway_state.json"
+        runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+        runtime_path.chmod(0o600)
     # Every scenario except the one that explicitly tests its absence
     # represents a fleet node where prepare (and therefore
     # ensure_user_allowlist) already ran.
@@ -99,9 +133,15 @@ def _run(
         "MAC_HERMES_OPENCLAW_SOURCE": str(home / "no-openclaw-here"),
         "FAKE_HERMES_CALLS": str(calls_path),
         "FAKE_HERMES_SCENARIO": scenario,
+        "FAKE_GATEWAY_PID": str(os.getpid()),
         "FAKE_MAC_CALLS": str(mac_calls_path),
     }
-    _test_only_flags = {"_OMIT_ALLOWLIST_ENV", "_OMIT_GATEWAY_IMPL_ENV"}
+    _test_only_flags = {
+        "_OMIT_ALLOWLIST_ENV",
+        "_OMIT_GATEWAY_IMPL_ENV",
+        "_OMIT_RUNTIME",
+        "_RUNTIME_UPDATE",
+    }
     if extra_env:
         env.update({k: v for k, v in extra_env.items() if k not in _test_only_flags})
     result = subprocess.run(
@@ -120,7 +160,39 @@ def _run(
 def test_verify_passes_when_gateway_is_supervised(tmp_path):
     result, calls = _run(tmp_path, "verify", scenario="healthy")
     assert result.returncode == 0, result.stderr
-    assert ["gateway", "status", "--deep"] in calls
+    assert ["gateway", "status"] in calls
+
+
+def test_verify_ignores_historical_shutdown_logs(tmp_path):
+    result, _calls = _run(tmp_path, "verify", scenario="historical_shutdown")
+    assert result.returncode == 0, result.stderr
+
+
+def test_verify_accepts_systemd_current_summary_despite_old_journal_shutdown(tmp_path):
+    result, _calls = _run(tmp_path, "verify", scenario="systemd")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"pid": 1},
+        {"gateway_state": "stopped"},
+        {"platforms": {"slack": {"state": "fatal", "error_message": "private-message"}}},
+        {"platforms": {"slack": {"state": "connected", "writer_pid": 1}}},
+    ],
+)
+def test_supervision_does_not_override_invalid_messaging_runtime(tmp_path, update):
+    result, _calls = _run(tmp_path, "verify", extra_env={"_RUNTIME_UPDATE": update})
+    assert result.returncode != 0
+    assert "messaging readiness failed" in result.stderr
+    assert "private-message" not in result.stderr + result.stdout
+
+
+def test_verify_requires_runtime_status_from_selected_profile(tmp_path):
+    result, _calls = _run(tmp_path, "verify", extra_env={"_OMIT_RUNTIME": True})
+    assert result.returncode != 0
+    assert "messaging readiness failed" in result.stderr
 
 
 def test_verify_fails_when_gateway_is_unsupervised(tmp_path):
@@ -360,6 +432,28 @@ def test_prepare_skips_install_when_hermes_already_on_path(tmp_path):
     assert ["gateway", "install", "--force", "--start-now", "--start-on-login"] in calls
 
 
+def test_prepare_stops_gateway_before_replacing_service(tmp_path):
+    result, calls = _run(tmp_path, "prepare")
+    assert result.returncode == 0, result.stderr
+    assert calls.index(["gateway", "stop"]) < next(
+        index for index, call in enumerate(calls) if call[:2] == ["gateway", "install"]
+    )
+
+
+def test_prepare_does_not_replace_service_after_stop_failure(tmp_path):
+    result, calls = _run(tmp_path, "prepare", scenario="stop_failed")
+    assert result.returncode != 0
+    assert "refusing service replacement" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
+
+
+def test_prepare_waits_for_actual_exit_even_when_stop_reports_success(tmp_path):
+    result, calls = _run(tmp_path, "prepare", scenario="stop_still_running")
+    assert result.returncode != 0
+    assert "still exiting; refusing service replacement" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
+
+
 def test_prepare_does_not_port_a_retired_openclaw_profile(tmp_path):
     result, calls = _run(tmp_path, "prepare")
     assert result.returncode == 0, result.stderr
@@ -393,7 +487,7 @@ def test_prepare_skips_claw_migrate_when_no_openclaw_home(tmp_path):
 def test_finalize_runs_verify(tmp_path):
     result, calls = _run(tmp_path, "finalize", scenario="healthy")
     assert result.returncode == 0, result.stderr
-    assert ["gateway", "status", "--deep"] in calls
+    assert ["gateway", "status"] in calls
 
 
 def test_finalize_fails_when_gateway_unhealthy(tmp_path):
@@ -405,3 +499,57 @@ def test_unknown_subcommand_fails_closed(tmp_path):
     result, _calls = _run(tmp_path, "bogus")
     assert result.returncode != 0
     assert "usage" in result.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    "cwd", [".", "auto", "cwd", "", "/sandbox/workspace", "/sandbox/workspace/"]
+)
+def test_prepare_pins_local_terminal_directory_despite_legacy_environment(tmp_path, cwd):
+    result, calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={
+            "FAKE_TERMINAL_CWD": cwd,
+            "MESSAGING_CWD": "/sandbox/workspace",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    home = str((tmp_path / "home").resolve())
+    expected = ["config", "set", "terminal.cwd", home, "--force"]
+    assert expected in calls
+    assert calls.index(expected) < next(
+        i for i, call in enumerate(calls) if call[:2] == ["gateway", "install"]
+    )
+
+
+def test_prepare_preserves_explicit_host_terminal_directory(tmp_path):
+    directory = tmp_path / "custom project"
+    directory.mkdir()
+    result, calls = _run(tmp_path, "prepare", extra_env={"FAKE_TERMINAL_CWD": str(directory)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ["config", "set", "terminal.cwd", str(directory.resolve()), "--force"] in calls
+
+
+@pytest.mark.parametrize("command", ["prepare", "verify"])
+def test_local_terminal_missing_custom_directory_blocks_gateway_health(tmp_path, command):
+    result, calls = _run(
+        tmp_path, command, extra_env={"FAKE_TERMINAL_CWD": str(tmp_path / "absent")}
+    )
+    assert result.returncode != 0
+    assert "terminal.cwd" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
+
+
+@pytest.mark.parametrize("backend", ["docker", "ssh"])
+def test_remote_terminal_directory_is_not_rewritten_or_host_validated(tmp_path, backend):
+    for command in ("prepare", "verify"):
+        result, calls = _run(
+            tmp_path,
+            command,
+            extra_env={
+                "FAKE_TERMINAL_BACKEND": backend,
+                "FAKE_TERMINAL_CWD": "/sandbox/workspace",
+            },
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call[:3] == ["config", "set", "terminal.cwd"] for call in calls)

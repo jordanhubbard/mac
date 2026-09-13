@@ -19,36 +19,18 @@ SCHEMA = "mac.historical_fault_replay.v1"
 
 
 def _probe_interpreter() -> str:
-    """An interpreter that can actually import the control plane.
+    """Find an existing interpreter that can import the PostgreSQL driver.
 
-    ``sys.executable`` is whatever ran THIS script, and CI invokes it bare --
-    ``scripts/fault-replay.py`` -- so the shebang picks the system python3,
-    which has no psycopg. That was harmless while ControlPlane.in_memory() used
-    SQLite; the Postgres migration made every probe need the driver, and the
-    replay started failing with a nested ImportError inside a captured
-    subprocess. It runs only in the scheduled nightly, so it was invisible on
-    every pull request and surfaced as a red main days later.
-
-    Prefer the project venv, then a uv-managed environment, then whatever is
-    running us. Resolved rather than assumed, so the script is correct however
-    it is invoked -- through `uv run`, through the shebang, or directly.
+    Prefer the project venv, then the interpreter running this script. A
+    caller using ``uv run`` has already selected its environment before we
+    start. Discovery must not invoke a package manager: doing so synchronized
+    the shared test venv while the full contract suite was still running.
     """
     candidates = [
         str(ROOT / ".venv" / "bin" / "python"),
         str(ROOT / ".venv" / "Scripts" / "python.exe"),
         sys.executable,
     ]
-    if shutil.which("uv"):
-        resolved = subprocess.run(
-            ["uv", "run", "python", "-c", "import sys; print(sys.executable)"],
-            cwd=str(ROOT),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if resolved.returncode == 0 and resolved.stdout.strip():
-            candidates.insert(0, resolved.stdout.strip())
-
     # EXISTING is not the same as USABLE. A first attempt preferred any
     # ROOT/.venv it found, and picked one that existed without the driver --
     # the same "looks configured, is not" failure this replay exists to catch.

@@ -17,6 +17,7 @@ HERMES_INSTALL_URL="${MAC_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.
 FLEET_NAME="${MAC_HERMES_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+export HERMES_HOME
 DRY_RUN="${MAC_HERMES_DRY_RUN:-0}"
 
 # Fleet-config-supplied gateway policy (docs/fleet-registry-schema.md's
@@ -141,6 +142,8 @@ configure_gateway() {
   hermes="$(hermes_bin)" || die "hermes CLI not found"
   [ "$DRY_RUN" = 1 ] && { log "dry-run: skipping hermes config set calls"; return 0; }
 
+  configure_terminal_cwd
+
   # Dotted paths ("model.default", not "model") are load-bearing here: Hermes
   # stores the active model as a nested object (model.default/.provider/
   # .base_url/.api_key). `config set model ...` replaces that whole object
@@ -167,11 +170,86 @@ configure_gateway() {
   fi
 }
 
+configure_terminal_cwd() {
+  local hermes backend cwd
+  hermes="$(hermes_bin)" || die "hermes CLI not found"
+  backend="$("$hermes" config get terminal.backend)" || die "cannot read terminal.backend"
+  # Remote backends resolve paths in their own filesystem. Only the native
+  # gateway's local terminal is subject to host-directory validation.
+  [ "$backend" = local ] || return 0
+  cwd="$("$hermes" config get terminal.cwd)" || die "cannot read terminal.cwd"
+  case "$cwd" in
+    ''|.|auto|cwd|/sandbox/workspace|/sandbox/workspace/)
+      # Hermes resolves placeholder cwd through legacy MESSAGING_CWD. Migrated
+      # profiles can still name OpenClaw's /sandbox/workspace in .env, even
+      # though MAC's native gateway no longer has that filesystem. Pin the
+      # canonical config so inherited legacy environment cannot win again.
+      cwd="$HOME"
+      ;;
+  esac
+  cwd="$(validate_terminal_cwd "$cwd")" || die "local terminal.cwd is not an accessible host directory; set it with hermes config set terminal.cwd"
+  "$hermes" config set terminal.cwd "$cwd" --force
+}
+
+validate_terminal_cwd() {
+  python3 - "$1" <<'PY'
+import os
+import sys
+
+path = os.path.expanduser(sys.argv[1])
+if not os.path.isabs(path):
+    raise SystemExit(1)
+try:
+    os.chdir(path)
+except OSError:
+    raise SystemExit(1)
+print(os.getcwd())
+PY
+}
+
 install_service() {
-  local hermes
+  local hermes previous_pid
   hermes="$(hermes_bin)" || die "hermes CLI not found"
   [ "$DRY_RUN" = 1 ] && { log "dry-run: skipping hermes gateway install"; return 0; }
   log "installing Hermes gateway as a supervised background service"
+  # Drain the old process through Hermes before replacing its definition.
+  # launchd's bootout is asynchronous; upstream's force-install path can
+  # bootstrap immediately after bootout and fail while the old job exits.
+  # Capture the old runtime writer before stop can remove its state file.
+  previous_pid="$(python3 - "$HERMES_HOME/gateway_state.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print(0)
+else:
+    pid = json.loads(path.read_text(encoding="utf-8")).get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        raise SystemExit("Cannot identify the previous Hermes runtime process")
+    print(pid)
+PY
+)" || die "Cannot identify the previous Hermes gateway; refusing service replacement"
+  "$hermes" gateway stop || die "Hermes gateway did not stop; refusing service replacement"
+  # Upstream can report success after its own exit wait times out. Never
+  # interpret that return code as permission to race the surviving process.
+  python3 - "$previous_pid" <<'PY' || die "Hermes gateway is still exiting; refusing service replacement"
+import os
+import sys
+import time
+
+pid = int(sys.argv[1])
+deadline = time.monotonic() + 10
+while pid:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        break
+    if time.monotonic() >= deadline:
+        raise SystemExit(1)
+    time.sleep(0.2)
+PY
   # No --system: both systemd and launchd targets here are user-level
   # services (linger is what keeps a systemd --user unit alive across
   # logout on Linux nodes without root). --force makes this idempotent
@@ -183,6 +261,13 @@ install_service() {
 verify_gateway() {
   local hermes status
   hermes="$(hermes_bin)" || die "hermes CLI not found"
+  local backend cwd
+  backend="$("$hermes" config get terminal.backend)" || die "cannot read terminal.backend"
+  if [ "$backend" = local ]; then
+    cwd="$("$hermes" config get terminal.cwd)" || die "cannot read terminal.cwd"
+    validate_terminal_cwd "$cwd" >/dev/null \
+      || die "local terminal.cwd is not an accessible absolute host directory; run prepare before verifying gateway health"
+  fi
   grep -q '^SLACK_ALLOWED_USERS=' "$HERMES_HOME/.env" 2>/dev/null \
     || die "SLACK_ALLOWED_USERS is not set in $HERMES_HOME/.env -- Hermes defaults" \
            "every platform to dm_policy/group_policy=pairing and silently rejects" \
@@ -193,27 +278,70 @@ verify_gateway() {
            "own startup self-test derives its OpenClaw-required branch from this" \
            "variable and will crash-loop forever demanding an OpenClaw advertisement" \
            "that no longer exists; run ensure_chat_gateway_impl_env (prepare) first"
-  status="$("$hermes" gateway status --deep 2>&1)" || die "hermes gateway status failed:
+  # --deep appends historical log lines, including normal shutdowns from
+  # earlier processes. Only inspect the current service status here.
+  status="$("$hermes" gateway status 2>&1)" || die "hermes gateway status failed:
 $status"
-  printf '%s\n' "$status"
-  # Order matters: "not supervised"/"unsupervised" both contain the substring
-  # "supervised", so the negative checks must run first or a detached-process
-  # gateway would pass the naive positive match below.
-  case "$status" in
-    *[Nn]ot\ supervised*|*[Uu]nsupervised*|*detached\ process*)
-      die "Hermes gateway is not supervised (would not survive a crash/reboot):
-$status" ;;
-  esac
-  case "$status" in
-    *[Uu]nhealthy*|*[Nn]ot\ running*|*[Ss]topped*)
-      die "Hermes gateway is not healthy:
-$status" ;;
-  esac
-  case "$status" in
-    *[Ss]upervised*) ;;
-    *) die "Hermes gateway does not report itself as supervised:
-$status" ;;
-  esac
+  python3 - "$HERMES_HOME" 3<<<"$status" <<'PY_VERIFY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import time
+
+with os.fdopen(3) as stream:
+    status = re.sub(r"\x1b\[[0-9;]*m", "", stream.read())
+# Match upstream's current-state summary, never a substring in journal/log
+# history or the "registered but not supervising" fallback explanation.
+launchd = re.search(r"(?m)^[✓ ]*Gateway is supervised by launchd \(PID ([0-9]+)\)\s*$", status)
+systemd = re.search(r"(?m)^[✓ ]*User gateway service is running\s*$", status)
+main_pid = re.search(r"(?m)^\s*Main PID: ([0-9]+)\b", status) if systemd else launchd
+if main_pid is None:
+    raise SystemExit("Hermes gateway is not healthy and supervised")
+supervisor_pid = int(main_pid.group(1))
+if supervisor_pid <= 1:
+    raise SystemExit("Hermes gateway supervisor has no valid process")
+path = Path(sys.argv[1]) / "gateway_state.json"
+deadline = time.monotonic() + 20
+while True:
+    try:
+        metadata = path.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or metadata.st_mode & 0o022 or metadata.st_size > 1024 * 1024):
+            raise ValueError("runtime status is not an owner-controlled bounded file")
+        state = json.loads(path.read_text(encoding="utf-8"))
+        pid = state.get("pid")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+            raise ValueError("runtime status has no valid process")
+        # Hermes can launch a child behind its supervised entrypoint. Bind the
+        # runtime writer to that current process tree so an old profile's JSON
+        # cannot satisfy readiness for a different live service.
+        process = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "ppid=", "-o", "uid="],
+            capture_output=True, text=True, check=True, timeout=3,
+        )
+        parent, uid = map(int, process.stdout.split())
+        if uid != os.getuid() or (pid != supervisor_pid and parent != supervisor_pid):
+            raise ValueError("runtime status does not belong to the supervised gateway")
+        slack = state.get("platforms", {}).get("slack", {})
+        if state.get("gateway_state") == "running" and slack.get("state") == "connected":
+            if slack.get("writer_pid") != pid:
+                raise ValueError("Slack readiness belongs to a different runtime writer")
+            print("Hermes gateway is supervised; its live runtime reports Slack connected")
+            break
+        if state.get("gateway_state") in {"stopped", "startup_failed", "draining"} or slack.get("state") == "fatal":
+            raise ValueError("gateway runtime is stopped, draining, or failed")
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+        # Do not print runtime payloads or platform error messages: they may
+        # contain credentials or message content.
+        raise SystemExit("Hermes messaging readiness failed: " + type(exc).__name__) from None
+    if time.monotonic() >= deadline:
+        raise SystemExit("Hermes messaging readiness timed out: Slack is not connected")
+    time.sleep(1)
+PY_VERIFY
 }
 
 ensure_chat_gateway_impl_env() {

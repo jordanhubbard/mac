@@ -13,13 +13,12 @@
 # same two tools. Formatting is part of the gate so lint-fix cannot rewrite
 # hundreds of files that lint never mentioned.
 #
-# Ruff is a dev-only tool fetched on demand with `uv run --with ruff`, matching
-# how scripts/dead-code-check.sh runs vulture; it is intentionally NOT a runtime
-# dependency of the shipped wheel.
+# Bootstrap/CI install Ruff from the locked dev extra. Lint must not resync
+# the environment whose test results it accompanies.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ruff() { uv run --with ruff ruff "$@"; }
+ruff() { uv run --no-sync ruff "$@"; }
 
 case "${1:-}" in
     --fix)

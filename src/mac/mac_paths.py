@@ -80,14 +80,11 @@ def plugin_dir() -> Path:
 def gateway_home() -> Path:
     """The gateway / agent-personal home.
 
-    ``HERMES_HOME`` still overrides, for a host that has not been migrated yet.
-    The DEFAULT is now ``$MAC_HOME/openclaw`` -- this is the Phase 2 repoint the
-    previous docstring promised, done without changing a single caller, which is
-    the whole reason this module is the one place allowed to name a home.
-
-    ``~/.hermes`` is not a fallback. The fleet migrated hard to OpenClaw and the
-    directory was evicted from every host on 2026-08-21 (4.9GB across three),
-    so defaulting there would resolve to something that no longer exists.
+    ``HERMES_HOME`` is authoritative. Fleet deployment resolves the installed
+    upstream Hermes service's profile and writes this variable to mac.env.
+    The legacy ``$MAC_HOME/openclaw`` fallback remains for compatibility with
+    callers outside that configured service environment. It is not a migration
+    instruction or evidence that an existing ``~/.hermes`` profile is absent.
     """
     return _env_path("HERMES_HOME") or (mac_home() / "openclaw")
 
