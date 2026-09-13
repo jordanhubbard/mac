@@ -48,10 +48,11 @@ def _extract_signal(text: str, n: int = 5) -> list[str]:
 
 
 def _hot_words(g: SoulGraph, n: int = 8) -> set[str]:
-    """Words already present in the hot splay nodes."""
+    """Words already present in the hot splay nodes — content AND tags."""
     words: set[str] = set()
     for node in g.hot(n):
         words |= set(re.findall(r"[a-z]{3,}", node.content.lower()))
+        words |= {t.lower().replace("-", "") for t in node.tags}
     return words
 
 
