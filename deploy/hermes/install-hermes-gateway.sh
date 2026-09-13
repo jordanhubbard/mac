@@ -141,6 +141,8 @@ configure_gateway() {
   hermes="$(hermes_bin)" || die "hermes CLI not found"
   [ "$DRY_RUN" = 1 ] && { log "dry-run: skipping hermes config set calls"; return 0; }
 
+  configure_terminal_cwd
+
   # Dotted paths ("model.default", not "model") are load-bearing here: Hermes
   # stores the active model as a nested object (model.default/.provider/
   # .base_url/.api_key). `config set model ...` replaces that whole object
@@ -167,6 +169,43 @@ configure_gateway() {
   fi
 }
 
+configure_terminal_cwd() {
+  local hermes backend cwd
+  hermes="$(hermes_bin)" || die "hermes CLI not found"
+  backend="$("$hermes" config get terminal.backend)" || die "cannot read terminal.backend"
+  # Remote backends resolve paths in their own filesystem. Only the native
+  # gateway's local terminal is subject to host-directory validation.
+  [ "$backend" = local ] || return 0
+  cwd="$("$hermes" config get terminal.cwd)" || die "cannot read terminal.cwd"
+  case "$cwd" in
+    ''|.|auto|cwd|/sandbox/workspace|/sandbox/workspace/)
+      # Hermes resolves placeholder cwd through legacy MESSAGING_CWD. Migrated
+      # profiles can still name OpenClaw's /sandbox/workspace in .env, even
+      # though MAC's native gateway no longer has that filesystem. Pin the
+      # canonical config so inherited legacy environment cannot win again.
+      cwd="$HOME"
+      ;;
+  esac
+  cwd="$(validate_terminal_cwd "$cwd")" || die "local terminal.cwd is not an accessible host directory; set it with hermes config set terminal.cwd"
+  "$hermes" config set terminal.cwd "$cwd" --force
+}
+
+validate_terminal_cwd() {
+  python3 - "$1" <<'PY'
+import os
+import sys
+
+path = os.path.expanduser(sys.argv[1])
+if not os.path.isabs(path):
+    raise SystemExit(1)
+try:
+    os.chdir(path)
+except OSError:
+    raise SystemExit(1)
+print(os.getcwd())
+PY
+}
+
 install_service() {
   local hermes
   hermes="$(hermes_bin)" || die "hermes CLI not found"
@@ -183,6 +222,13 @@ install_service() {
 verify_gateway() {
   local hermes status
   hermes="$(hermes_bin)" || die "hermes CLI not found"
+  local backend cwd
+  backend="$("$hermes" config get terminal.backend)" || die "cannot read terminal.backend"
+  if [ "$backend" = local ]; then
+    cwd="$("$hermes" config get terminal.cwd)" || die "cannot read terminal.cwd"
+    validate_terminal_cwd "$cwd" >/dev/null \
+      || die "local terminal.cwd is not an accessible absolute host directory; run prepare before verifying gateway health"
+  fi
   grep -q '^SLACK_ALLOWED_USERS=' "$HERMES_HOME/.env" 2>/dev/null \
     || die "SLACK_ALLOWED_USERS is not set in $HERMES_HOME/.env -- Hermes defaults" \
            "every platform to dm_policy/group_policy=pairing and silently rejects" \
