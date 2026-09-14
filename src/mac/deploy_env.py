@@ -32,21 +32,21 @@ from mac.mesh_bind import (
 
 
 DEFAULT_WORKER_CAPABILITIES = (
-    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 LEGACY_WORKER_CAPABILITIES = (
-    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 
 
 def normalize_worker_capabilities(value: str) -> str:
-    """Upgrade the former fleet default without overriding real customization."""
+    """Retire the old runtime name while preserving useful capabilities."""
     items = [item.strip() for item in str(value or "").split(",") if item.strip()]
-    if not items or set(items) == set(LEGACY_WORKER_CAPABILITIES.split(",")):
+    if not items:
         return DEFAULT_WORKER_CAPABILITIES
-    return ",".join(items)
+    return ",".join(dict.fromkeys("hermes" if item == "openclaw" else item for item in items))
 
 
 PROVIDERS = tuple(ROUTER_PROVIDERS)

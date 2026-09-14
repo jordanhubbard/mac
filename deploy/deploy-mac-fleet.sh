@@ -1019,7 +1019,7 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
-DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+DEFAULT_WORKER_CAPABILITIES = "ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 LEGACY_WORKER_CAPABILITIES = {
     "ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"
 }
@@ -1029,7 +1029,7 @@ def worker_capabilities_field(value: Any) -> str:
     items = [item.strip() for item in text_field(value).split(",") if item.strip()]
     if not items or set(items) == LEGACY_WORKER_CAPABILITIES:
         return DEFAULT_WORKER_CAPABILITIES
-    return ",".join(items)
+    return ",".join(dict.fromkeys("hermes" if item == "openclaw" else item for item in items))
 
 
 def model_field(value: Any) -> str:

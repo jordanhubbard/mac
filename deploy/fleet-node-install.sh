@@ -279,7 +279,7 @@ HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
 WORKER_MODE="${MAC_DEPLOY_WORKER_MODE:-heartbeat}"
-WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 WORKER_ALLOWED_PROJECTS="${MAC_DEPLOY_WORKER_ALLOWED_PROJECTS:-}"
 WORKER_REQUIRED_METADATA="${MAC_DEPLOY_WORKER_REQUIRED_METADATA:-}"
 WORKER_CLAIM_ONLY_CANARY_TASKS="${MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS:-0}"
@@ -12399,7 +12399,7 @@ agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
 mode="${MAC_WORKER_MODE:-heartbeat}"
-capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
+capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,hermes,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 # Hardware capability probes: always append cpu; append gpu/cuda only when a
 # host GPU is present AND the bootstrap proved a nested OpenShell sandbox can
 # actually use it.
