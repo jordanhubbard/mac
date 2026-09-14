@@ -2347,7 +2347,7 @@ def test_subprocess_executor_exports_repository_worktree_env(tmp_path: Path):
     assert completed.metadata["repository_checkout_policy"] == "task_owned_git_worktree"
 
 
-def test_repository_contract_test_prefers_sandbox_verification_artifact(tmp_path: Path):
+def test_repository_contract_test_rejects_unbound_sandbox_verification_artifact(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     client = TestClient(create_app(control_plane=cp))
@@ -2383,10 +2383,9 @@ def test_repository_contract_test_prefers_sandbox_verification_artifact(tmp_path
 
     item = worker._run_repository_contract_test(worktree, "false", task_dir=task_dir)
 
-    assert item["status"] == "pass"
-    assert item["command"] == "make test"
-    assert item["execution_environment"] == "openshell_sandbox"
-    assert item["environment_delta"]["missing_after"] == []
+    assert item["returncode"] != 0
+    assert item["command"] == "false"
+    assert item["status"] == "unavailable"
 
 
 def test_mac_worker_refuses_dirty_repository_source_for_normal_work(tmp_path: Path):
@@ -4336,3 +4335,6 @@ def test_worker_exception_records_diagnostics_and_output_tail(tmp_path: Path):
     evidence = cp.list_evidence(task.id)
     assert evidence, "worker exception must record durable evidence"
     assert blocked.detail.get("evidence_id") == evidence[-1].id
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

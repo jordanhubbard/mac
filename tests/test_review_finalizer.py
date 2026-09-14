@@ -151,21 +151,20 @@ def test_review_verdict_finalizer_does_not_touch_new_files_in_review_checkout(
     monkeypatch.setenv("MAC_WORKER_AGENT_ID", "agent-reviewer")
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
 
-    # Make the heavy independent checks hermetic + passing so the finalizer
-    # reaches its verdict without running real bootstrap/tests.
-    class _Proc:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    monkeypatch.setattr(
-        executor_finalizer, "_run_repository_bootstrap_if_needed", lambda *a, **k: None
-    )
-    monkeypatch.setattr(executor_finalizer, "run_with_stall_watchdog", lambda *a, **k: _Proc())
     monkeypatch.setattr(executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None)
     monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
 
-    task = {"id": "task-review", "owner_agent_id": "agent-reviewer"}
+    task = {
+        "id": "task-review",
+        "owner_agent_id": "agent-reviewer",
+        "metadata": {
+            "execution_contract": {
+                "repository_contract": {
+                    "test": {"command": "test -f shipped.py && test ! -e stray_new.py"}
+                }
+            }
+        },
+    }
     review_context = {"executor_evidence_id": "ev-exec", "review_id": "rv-1"}
 
     review_finalizer.run_deterministic_review_verdict(workspace, task, review_context)
@@ -234,3 +233,6 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
     assert "not present" in str(manifest.get("feedback") or "")
     # The review checkout was not mutated.
     assert _git_review(review_repo, "status", "--porcelain") == ""
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

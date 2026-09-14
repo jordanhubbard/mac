@@ -421,6 +421,7 @@ from mac.executor_prompt import (
     _repository_contract_canonical_branch,
     _repository_contract_canonical_remote,
     _repository_contract_test_command,
+    _repository_contract_bootstrap,
     _repository_bootstrap_timeout,
     _repository_lease_id,
     _repository_prepared_base,
@@ -1478,76 +1479,34 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             progress["head_sha"] = head_sha
         if canonical_sync.get("status") not in {"fresh", "rebased"}:
             phase.mark_failed(str(canonical_sync.get("reason") or canonical_sync.get("status")))
-    # Purge synced build artifacts before the host build. The agent built in the
-    # task SANDBOX (e.g. Linux); those object files / binaries sync back into this
-    # worktree, but this finalizer runs on the EXECUTOR HOST, which may be a
-    # different OS/arch (a macOS host with a Linux sandbox). A stale foreign
-    # bin/nano makes `..._if_needed` skip the rebuild and then the tests run a
-    # binary the host can't execute -> spurious "tests failed". `git clean -Xdf`
-    # removes only gitignored files (obj/, bin/, caches) and keeps the agent's
-    # new untracked SOURCE files, forcing a clean native rebuild.
-    with _FinalizerPhaseContext(
-        task_workspace,
-        task_id,
-        "cleanup",
-        partial_evidence_fn=_partial_evidence,
-    ) as phase:
-        cleanup = _git(["clean", "-Xdf"], worktree_path, timeout=phase.remaining)
-        if cleanup.returncode != 0:
-            phase.mark_failed(clip_process_text(cleanup.stderr or cleanup.stdout))
-    with _FinalizerPhaseContext(
-        task_workspace,
-        task_id,
-        "bootstrap",
-        partial_evidence_fn=_partial_evidence,
-    ) as phase:
-        bootstrap = _run_repository_bootstrap_if_needed(
-            worktree_path, task, timeout=phase.remaining
-        )
-        progress["bootstrap"] = bootstrap
-        if bootstrap is not None and bootstrap.get("returncode") != 0:
-            phase.mark_failed(str(bootstrap.get("error") or bootstrap.get("status")))
-    test_cmd = (_repository_contract_test_command(task) or "scripts/run-contract-tests.sh").strip()
-    tests = None
-    if test_cmd:
-        with _FinalizerPhaseContext(
-            task_workspace,
-            task_id,
-            "contract_tests",
-            partial_evidence_fn=_partial_evidence,
-        ) as phase:
-            # Progress watchdog plus a phase hard ceiling; both terminate the
-            # complete verifier process group.
-            tr = run_with_stall_watchdog(
-                ["bash", "-lc", test_cmd],
-                worktree_path,
-                hard_timeout=phase.remaining,
-            )
-            tail = (tr.stdout or "") + "\n" + (tr.stderr or "")
-            import re as _re
+    # The executor host only handles source and evidence. Bootstrap and tests
+    # run in a fresh Linux OpenShell verifier, including for native Mac agents.
+    from mac.services import verify_unpublished_repository
 
-            passed = failed = total = None
-            m = _re.search(r"(\d+) passed", tail)
-            if m:
-                passed = int(m.group(1))
-            m = _re.search(r"(\d+) failed", tail)
-            if m:
-                failed = int(m.group(1))
-            if passed is not None or failed is not None:
-                total = (passed or 0) + (failed or 0)
-            tests = {
-                "command": test_cmd,
-                "returncode": int(tr.returncode),
-                "passed": passed,
-                "failed": failed,
-                "total": total,
-                "status": "pass" if tr.returncode == 0 else "fail",
-            }
-            progress["tests"] = tests
-            if tr.returncode != 0:
-                phase.mark_failed(clip_process_text(tr.stderr or tr.stdout))
-    bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
-    tests_ok = tests is None or tests.get("returncode") == 0
+    bootstrap = None
+    test_cmd = (_repository_contract_test_command(task) or "").strip()
+    with _FinalizerPhaseContext(
+        task_workspace,
+        task_id,
+        "contract_tests",
+        partial_evidence_fn=_partial_evidence,
+    ) as phase:
+        tests = verify_unpublished_repository(
+            worktree_path,
+            test_cmd,
+            str(_repository_contract_bootstrap(task).get("command") or ""),
+            timeout_seconds=phase.remaining,
+            prepared_base_sha=_repository_prepared_base(task),
+        )
+        progress["tests"] = tests
+        if tests.get("returncode") != 0:
+            phase.mark_failed(
+                clip_process_text(
+                    tests.get("stderr") or tests.get("stdout") or "verification unavailable"
+                )
+            )
+    bootstrap_ok = True  # The combined remote gate includes the bootstrap.
+    tests_ok = tests.get("returncode") == 0 and tests.get("status") == "pass"
     canonical_remote_raw = _repository_publication_remote(task)
     canonical_branch = _repository_contract_canonical_branch(task)
     prepared_base_sha = _repository_prepared_base(task)
@@ -1946,20 +1905,21 @@ def run_deterministic_review_verdict(
         checked_out = _git(["rev-parse", "HEAD"], review_worktree_path)
         checked_out_head = checked_out.stdout.strip() if checked_out.returncode == 0 else ""
         if ck.returncode == 0 and checked_out_head == exec_head:
-            bootstrap = _run_repository_bootstrap_if_needed(review_worktree_path, task)
-            test_cmd = (
-                _repository_contract_test_command(task) or "scripts/run-contract-tests.sh"
-            ).strip()
-            tr = run_with_stall_watchdog(["bash", "-lc", test_cmd], review_worktree_path)
-            bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
+            from mac.services import verify_unpublished_repository
+
+            test_cmd = (_repository_contract_test_command(task) or "").strip()
+            tests = verify_unpublished_repository(
+                review_worktree_path,
+                test_cmd,
+                str(_repository_contract_bootstrap(task).get("command") or ""),
+                allow_untracked=True,
+                prepared_base_sha=_repository_prepared_base(task),
+            )
             integration = _cooperative_integration_check(task, review_worktree_path)
             integration_ok = integration is None or integration.get("status") == "pass"
-            independent_pass = bootstrap_ok and tr.returncode == 0 and integration_ok
-            tests = {
-                "command": test_cmd,
-                "returncode": int(tr.returncode),
-                "status": "pass" if tr.returncode == 0 else "fail",
-            }
+            independent_pass = (
+                tests.get("returncode") == 0 and tests.get("status") == "pass" and integration_ok
+            )
             if not independent_pass:
                 independent_problem = "independent bootstrap or tests failed"
         elif ck.returncode != 0:

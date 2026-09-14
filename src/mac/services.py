@@ -2186,6 +2186,533 @@ from mac.agent_health import (  # noqa: E402
 )
 
 
+def run_repository_contract_test_in_openshell(
+    remote_url: str,
+    branch: str,
+    head_sha: str,
+    test_command: str,
+    bootstrap_command: str = "",
+    *,
+    prepared_report: Optional[Mapping[str, Any]] = None,
+    verifier_identity: Optional[Dict[str, Any]] = None,
+    local_repository: Optional[Path] = None,
+    expected_tree_sha: str = "",
+    timeout_seconds: Optional[float] = None,
+) -> Tuple[int, str]:
+    """Clone the pushed branch and run the contract test in an isolated
+    OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
+
+    Isolation is mandatory: this executes pushed (agent-authored) test code
+    for the control plane, so it must not run on the hub host. Injected
+    via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
+    ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+
+    def bounded_timeout(cap: float) -> float:
+        if deadline is None:
+            return cap
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("repository verification budget exhausted during staging")
+        return min(cap, remaining)
+
+    from . import gitops as _gitops
+
+    # Clean URL + credential in the child ENVIRONMENT. Embedding it in the
+    # URL put the whole token in argv, where `ps` exposed it to every user
+    # on the hub -- observed live on 2026-08-11.
+    if local_repository is not None:
+        if not (
+            _GIT_SHA_RE.fullmatch(head_sha)
+            and _GIT_SHA_RE.fullmatch(expected_tree_sha)
+            and test_command.strip()
+        ):
+            return (
+                1,
+                "pre-push verification unavailable: exact source identity and test command required",
+            )
+        auth_url, auth_env = str(local_repository.resolve()), {}
+    else:
+        auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
+    openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+    image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
+    if not image:
+        return 1, (
+            "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
+            "the deployment-approved immutable OpenShell runtime image"
+        )
+    if not re.fullmatch(r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image):
+        return 1, (
+            "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
+            "the immutable repository-owned OpenShell runtime image"
+        )
+    profile = (os.environ.get("MAC_HUB_VERIFY_PROFILE") or "").strip()
+    if profile not in {"", "default", "bounded-tmpfs"}:
+        return 1, (
+            "hub verifier resource profile unavailable: MAC_HUB_VERIFY_PROFILE "
+            "must be default or bounded-tmpfs"
+        )
+    profile_args: List[str] = []
+    profile_env: List[str] = []
+    profile_preflight = ""
+    profile_ready = "[hub-verifier-profile] bounded-tmpfs ready"
+    if profile == "bounded-tmpfs":
+        # Native Docker-driver storage, confined to this sandbox. A fixed
+        # opt-in profile avoids accepting host mounts or arbitrary CLI args.
+        profile_args = [
+            "--cpu",
+            "12",
+            "--memory",
+            "32Gi",
+            "--driver-config-json",
+            json.dumps(
+                {
+                    "docker": {
+                        "mounts": [
+                            {
+                                "type": "tmpfs",
+                                "target": "/sandbox/test-storage",
+                                "size_bytes": 8 * 1024**3,
+                                "mode": 0o1777,
+                                "options": ["exec"],
+                            }
+                        ]
+                    }
+                }
+            ),
+        ]
+        profile_env = ["TMPDIR=/sandbox/test-storage", "MAC_TEST_JOBS=8"]
+        # Some drivers cannot honor Docker mounts. Prove the requested
+        # storage before any repository bootstrap/test code can execute.
+        profile_preflight = (
+            'if [ "$(uname -s)" != Linux ] || '
+            '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
+            "[ ! -w /sandbox/test-storage ]; then "
+            "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
+            "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
+            "export TMPDIR=/sandbox/test-storage MAC_TEST_JOBS=8; "
+            f"echo '{profile_ready}'; "
+        )
+    policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+    if local_repository is not None and not policy:
+        return 1, "pre-push verification unavailable: MAC_OPENSHELL_POLICY is required"
+    if prepared_report is not None:
+        from .trusted_artifact import nofollow_regular_file_identity
+
+        try:
+            _policy_path, policy_digest = nofollow_regular_file_identity(policy)
+        except (OSError, ValueError):
+            return (
+                1,
+                "hub verification is unavailable: report verifier policy is missing or invalid",
+            )
+        if verifier_identity is not None:
+            verifier_identity.update(
+                runtime_image_ref=image,
+                policy_sha256=policy_digest,
+                execution_environment="openshell_sandbox",
+                platform="linux",
+            )
+    try:
+        # 1200s could not cover even a scoped run once cloning, uploading
+        # and dependency bootstrap are counted: the scoped gate alone takes
+        # ~15 minutes on this repository. A cap the work cannot meet reads
+        # as a gate failure, which is how a timeout came to look like an
+        # OpenShell fault for a day.
+        timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "2400"))
+    except ValueError:
+        timeout = 1200.0
+    if timeout_seconds is not None:
+        timeout = max(1.0, float(timeout_seconds))
+    if _truthy_env("MAC_OPENSHELL_GC"):
+        try:
+            from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
+
+            try:
+                stale_after = float(os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400")
+            except ValueError:
+                stale_after = 86400.0
+            reconcile_stale_sandboxes(
+                openshell_bin=openshell,
+                stale_after_seconds=max(0.0, stale_after),
+                include_legacy=True,
+                apply=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - verification remains guarded
+            logging.getLogger(__name__).warning(
+                "OpenShell sandbox GC failed before hub verification: %s", exc
+            )
+    import uuid as _uuid
+
+    tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
+    # Unique per invocation: the review sweep may re-tick while a verify is
+    # still running, and a head_sha-derived name collides ("already
+    # exists"). The in-flight guard in the caller also prevents overlap,
+    # but a unique name is the belt-and-suspenders.
+    name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
+    try:
+        clone_args = (
+            ["git", "clone", "--no-local", "--no-checkout", "--", auth_url, str(tmp / "repo")]
+            if local_repository is not None
+            else [
+                "git",
+                "clone",
+                "--branch",
+                branch,
+                "--depth",
+                "1",
+                "--single-branch",
+                "--",
+                auth_url,
+                str(tmp / "repo"),
+            ]
+        )
+        clone = subprocess.run(
+            # Shallow single-branch clone keeps the upload into the sandbox
+            # small (a deep clone's history broke the tar-over-ssh upload
+            # with a broken pipe).
+            clone_args,
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout(300),
+            check=False,
+            env={**os.environ, **auth_env} if auth_env else None,
+            stdin=subprocess.DEVNULL,
+        )
+        if clone.returncode != 0:
+            return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
+                (clone.stderr or clone.stdout or "").strip()
+            )[-800:]
+        if local_repository is not None:
+            checkout = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(tmp / "repo"),
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "checkout",
+                    "--detach",
+                    head_sha,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(120),
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+            if checkout.returncode != 0:
+                return 1, "pre-push verification unavailable: cannot stage the unpublished commit"
+        cloned_head = subprocess.run(
+            ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout(30),
+            check=False,
+        )
+        observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
+        if prepared_report is not None and observed_head != head_sha:
+            # The signed worker inspected this exact canonical-remote
+            # commit. A read-only report has no pushed branch of its own;
+            # trunk may advance while it is being written. Fetch only that
+            # prepared commit, leaving pushed code reviews' HEAD gate intact.
+            for args in (
+                ["fetch", "--depth", "1", "origin", head_sha],
+                ["checkout", "--detach", head_sha],
+            ):
+                selected = subprocess.run(
+                    ["git", "-C", str(tmp / "repo"), *args],
+                    capture_output=True,
+                    text=True,
+                    timeout=bounded_timeout(300),
+                    check=False,
+                    env={**os.environ, **auth_env} if auth_env else None,
+                    stdin=subprocess.DEVNULL,
+                )
+                if selected.returncode != 0:
+                    return (
+                        1,
+                        "hub verification is unavailable: could not fetch prepared report commit",
+                    )
+            selected = subprocess.run(
+                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(30),
+                check=False,
+            )
+            observed_head = selected.stdout.strip() if selected.returncode == 0 else ""
+        if observed_head != head_sha:
+            return 1, (
+                "hub verify clone HEAD mismatch: expected %s, observed %s"
+                % (head_sha, observed_head or "<unresolved>")
+            )
+        # Upload ONE tar file and extract inside the sandbox. Uploading the
+        # directory tree loses .git in transit (OpenShell's upload drops
+        # it), which failed every git-at-checkout contract test — and, once
+        # the exit-97 probe landed, every verify outright with
+        # "/sandbox/repo is not a usable git repo after upload". A single
+        # archive survives any upload path verbatim, .git included.
+        tar = subprocess.run(
+            ["tar", "czf", str(tmp / "repo.tgz"), "-C", str(tmp), "repo"],
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout(120),
+            check=False,
+        )
+        if tar.returncode != 0:
+            return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
+                -800:
+            ]
+        subprocess.run(
+            [openshell, "sandbox", "delete", name],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        argv = [openshell, "sandbox", "create", "--no-auto-providers", *profile_args]
+        if policy:
+            argv += ["--policy", policy]
+        argv += [
+            "--name",
+            name,
+            "--label",
+            "mac.owner=mac",
+            "--label",
+            "mac.kind=hubverify",
+            "--label",
+            "mac.pid=%d" % os.getpid(),
+            "--label",
+            "mac.keep=false",
+            "--from",
+            image,
+        ]
+        # OpenShell's supervisor resets PATH on fresh create/exec
+        # commands instead of preserving the image ENV. Pass the
+        # sandbox-owned runtime path explicitly; never inherit the
+        # control-plane host's PATH. The test database belongs inside the
+        # sandbox too: the gateway may run on a separate Linux fleet host,
+        # and libpq cannot use OpenShell's HTTP network proxy.
+        for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
+            argv += ["--env", value]
+        report_preflight = ""
+        if prepared_report is not None:
+            expected_tree = str(prepared_report.get("base_tree") or "")
+            if not _GIT_SHA_RE.fullmatch(head_sha) or not _GIT_SHA_RE.fullmatch(expected_tree):
+                return 1, "hub verification is unavailable: invalid prepared report identity"
+            report_preflight = (
+                'test "$(uname -s)" = Linux && '
+                'test "$(git rev-parse HEAD)" = %s && '
+                'test "$(git rev-parse HEAD^{tree})" = %s || '
+                "{ echo 'hub verification is unavailable: report Linux/source identity mismatch' >&2; exit 96; }; "
+            ) % (head_sha, expected_tree)
+        if local_repository is not None:
+            report_preflight = (
+                'test "$(uname -s)" = Linux && '
+                'test "$(git rev-parse HEAD)" = %s && '
+                'test "$(git rev-parse HEAD^{tree})" = %s || '
+                "{ echo 'pre-push verification unavailable: Linux/source identity mismatch' >&2; exit 96; }; "
+            ) % (head_sha, expected_tree_sha)
+        argv += [
+            "--upload",
+            "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
+            "--",
+            "/bin/bash",
+            "-c",
+            "export PATH=%s; hash -r 2>/dev/null || true; "
+            "%scd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s%s"
+            % (
+                SANDBOX_BASE_PATH,
+                profile_preflight,
+                _HUB_VERIFY_GIT_PREFLIGHT,
+                report_preflight + (("%s && " % bootstrap_command) if bootstrap_command else ""),
+                test_command or "scripts/run-contract-tests.sh",
+            ),
+        ]
+        primary_error = None
+        try:
+            proc = subprocess.run(
+                argv, capture_output=True, text=True, timeout=bounded_timeout(timeout), check=False
+            )
+            if verifier_identity is not None:
+                verifier_identity["execution_attempted"] = True
+            out = (proc.stdout or "") + (proc.stderr or "")
+            if profile == "bounded-tmpfs" and profile_ready not in out:
+                return 1, (
+                    "hub verifier resource profile unavailable: bounded-tmpfs "
+                    "was not established before repository execution\n"
+                    + _hub_review_failure_excerpt(out)
+                )
+            # Head AND tail. A blind tail cannot see the verdict:
+            # run-contract-tests.sh prints the pytest failure first, then
+            # an unconditional whole-repo coverage report (~14KB, one row
+            # per source file), then a coverage summary whose floors both
+            # PASSED, and only then exits with the saved pytest status.
+            # Keeping 2000 trailing bytes therefore kept the coverage
+            # table and OpenShell's generic "ssh exited with status 1" --
+            # so a real rejection was unclassifiable by construction and
+            # retried forever (six tasks, ~6 hours, 2026-08-20).
+            return int(
+                proc.returncode
+            ), out if local_repository is not None else _hub_verify_output_excerpt(out)
+        except Exception as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                subprocess.run(
+                    [openshell, "sandbox", "delete", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+            except Exception as cleanup_error:
+                if primary_error is None:
+                    raise
+                # A cleanup timeout must not replace the test timeout and
+                # its partial output before the caller records evidence.
+                logging.getLogger(__name__).warning(
+                    "Hub verification cleanup also failed: %s",
+                    _hub_verify_exception_detail(cleanup_error),
+                )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def verify_unpublished_repository(
+    worktree: Path,
+    command: str,
+    bootstrap_command: str = "",
+    *,
+    timeout_seconds: Optional[float] = None,
+    allow_untracked: bool = False,
+    prepared_base_sha: str = "",
+) -> JsonDict:
+    """Test a pristine copy of this exact commit on the Linux gateway before push.
+
+    Workspace-written receipts are not authority. The runner stages committed
+    source in a fresh clone, executes through the existing verifier transport,
+    and rejects a source change while verification was in flight. No repository
+    bootstrap or test command is executed by the native host.
+    """
+    import math
+
+    try:
+        budget = float(
+            timeout_seconds
+            if timeout_seconds is not None
+            else os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800")
+        )
+    except ValueError:
+        budget = 1800.0
+    if not math.isfinite(budget) or budget <= 0:
+        budget = 1800.0
+    deadline = time.monotonic() + budget
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("repository verification budget exhausted")
+        return value
+
+    result: JsonDict = {
+        "name": "repository contract test",
+        "command": command,
+        "returncode": 1,
+        "status": "unavailable",
+        "execution_environment": "openshell_verification_pending",
+        "stdout": "",
+        "stderr": "",
+    }
+    if bootstrap_command:
+        result.update(
+            name="repository bootstrap and test gate",
+            command="%s && %s" % (bootstrap_command, command),
+            contract_command=command,
+            bootstrap_command=bootstrap_command,
+        )
+
+    def source_identity() -> Tuple[str, str]:
+        def git(*args: str) -> str:
+            return subprocess.check_output(
+                ["git", "-C", str(worktree), *args],
+                text=True,
+                stderr=subprocess.PIPE,
+                timeout=min(60, remaining()),
+            ).strip()
+
+        if git(
+            "status",
+            "--porcelain",
+            "--untracked-files=no" if allow_untracked else "--untracked-files=all",
+        ):
+            raise ValueError("pre-push verification requires a clean committed worktree")
+        return git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+
+    try:
+        head, tree = source_identity()
+        if (
+            command in {"scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh"}
+            and _GIT_SHA_RE.fullmatch(prepared_base_sha)
+            and (worktree / "test-policy.toml").is_file()
+            and os.access(worktree / "scripts/run-sanity-tests.sh", os.X_OK)
+            and subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(worktree),
+                    "merge-base",
+                    "--is-ancestor",
+                    prepared_base_sha,
+                    head,
+                ],
+                capture_output=True,
+                timeout=min(60, remaining()),
+                check=False,
+            ).returncode
+            == 0
+        ):
+            result["contract_command"] = command
+            command = "scripts/run-sanity-tests.sh --base %s" % prepared_base_sha
+            result["command"] = (bootstrap_command + " && " if bootstrap_command else "") + command
+            result["selected_base_sha"] = prepared_base_sha
+        identity: JsonDict = {}
+        rc, output = run_repository_contract_test_in_openshell(
+            "",
+            "",
+            head,
+            command,
+            bootstrap_command,
+            local_repository=worktree,
+            expected_tree_sha=tree,
+            timeout_seconds=remaining(),
+            verifier_identity=identity,
+        )
+        result.update(returncode=rc, stdout=output)
+        if identity.get("execution_attempted"):
+            result.update(
+                status="pass" if rc == 0 else "fail",
+                execution_environment="openshell_sandbox",
+                executed_head_sha=head,
+                executed_tree_sha=tree,
+            )
+        else:
+            # A missing runtime or staging failure is not a failed test suite.
+            result["returncode"] = 1
+            result["stderr"] = output
+        if source_identity() != (head, tree):
+            result.update(
+                returncode=1,
+                status="stale_source",
+                stderr="source changed during pre-push verification; refusing to push",
+            )
+    except Exception as exc:  # noqa: BLE001 - unavailable verification never permits push.
+        result.update(returncode=1, status="unavailable", stderr=str(exc))
+    return result
+
+
 class ControlPlane:
     """Application service layer for the multi-agent control plane."""
 
@@ -27572,332 +28099,19 @@ class ControlPlane:
         prepared_report: Optional[Mapping[str, Any]] = None,
         verifier_identity: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, str]:
-        """Clone the pushed branch and run the contract test in an isolated
-        OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
-
-        Isolation is mandatory: this executes pushed (agent-authored) test code
-        for the control plane, so it must not run on the hub host. Injected
-        via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
-        ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+        """Independently verify the pushed branch on the Linux gateway."""
         runner = getattr(self, "_hub_verify_runner", None)
         if runner is not None:
             return runner(remote_url, branch, head_sha, test_command)
-        from . import gitops as _gitops
-
-        # Clean URL + credential in the child ENVIRONMENT. Embedding it in the
-        # URL put the whole token in argv, where `ps` exposed it to every user
-        # on the hub -- observed live on 2026-08-11.
-        auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
-        openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
-        image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
-        if not image:
-            return 1, (
-                "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
-                "the deployment-approved immutable OpenShell runtime image"
-            )
-        if not re.fullmatch(
-            r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image
-        ):
-            return 1, (
-                "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
-                "the immutable repository-owned OpenShell runtime image"
-            )
-        profile = (os.environ.get("MAC_HUB_VERIFY_PROFILE") or "").strip()
-        if profile not in {"", "default", "bounded-tmpfs"}:
-            return 1, (
-                "hub verifier resource profile unavailable: MAC_HUB_VERIFY_PROFILE "
-                "must be default or bounded-tmpfs"
-            )
-        profile_args: List[str] = []
-        profile_env: List[str] = []
-        profile_preflight = ""
-        profile_ready = "[hub-verifier-profile] bounded-tmpfs ready"
-        if profile == "bounded-tmpfs":
-            # Native Docker-driver storage, confined to this sandbox. A fixed
-            # opt-in profile avoids accepting host mounts or arbitrary CLI args.
-            profile_args = [
-                "--cpu",
-                "12",
-                "--memory",
-                "32Gi",
-                "--driver-config-json",
-                json.dumps(
-                    {
-                        "docker": {
-                            "mounts": [
-                                {
-                                    "type": "tmpfs",
-                                    "target": "/sandbox/test-storage",
-                                    "size_bytes": 8 * 1024**3,
-                                    "mode": 0o1777,
-                                    "options": ["exec"],
-                                }
-                            ]
-                        }
-                    }
-                ),
-            ]
-            profile_env = ["TMPDIR=/sandbox/test-storage", "MAC_TEST_JOBS=8"]
-            # Some drivers cannot honor Docker mounts. Prove the requested
-            # storage before any repository bootstrap/test code can execute.
-            profile_preflight = (
-                'if [ "$(uname -s)" != Linux ] || '
-                '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
-                "[ ! -w /sandbox/test-storage ]; then "
-                "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
-                "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
-                "export TMPDIR=/sandbox/test-storage MAC_TEST_JOBS=8; "
-                f"echo '{profile_ready}'; "
-            )
-        policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
-        if prepared_report is not None:
-            from .trusted_artifact import nofollow_regular_file_identity
-
-            try:
-                _policy_path, policy_digest = nofollow_regular_file_identity(policy)
-            except (OSError, ValueError):
-                return (
-                    1,
-                    "hub verification is unavailable: report verifier policy is missing or invalid",
-                )
-            if verifier_identity is not None:
-                verifier_identity.update(
-                    runtime_image_ref=image,
-                    policy_sha256=policy_digest,
-                    execution_environment="openshell_sandbox",
-                    platform="linux",
-                )
-        try:
-            # 1200s could not cover even a scoped run once cloning, uploading
-            # and dependency bootstrap are counted: the scoped gate alone takes
-            # ~15 minutes on this repository. A cap the work cannot meet reads
-            # as a gate failure, which is how a timeout came to look like an
-            # OpenShell fault for a day.
-            timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "2400"))
-        except ValueError:
-            timeout = 1200.0
-        if _truthy_env("MAC_OPENSHELL_GC"):
-            try:
-                from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
-
-                try:
-                    stale_after = float(
-                        os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
-                    )
-                except ValueError:
-                    stale_after = 86400.0
-                reconcile_stale_sandboxes(
-                    openshell_bin=openshell,
-                    stale_after_seconds=max(0.0, stale_after),
-                    include_legacy=True,
-                    apply=True,
-                )
-            except Exception as exc:  # noqa: BLE001 - verification remains guarded
-                logging.getLogger(__name__).warning(
-                    "OpenShell sandbox GC failed before hub verification: %s", exc
-                )
-        import uuid as _uuid
-
-        tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
-        # Unique per invocation: the review sweep may re-tick while a verify is
-        # still running, and a head_sha-derived name collides ("already
-        # exists"). The in-flight guard in the caller also prevents overlap,
-        # but a unique name is the belt-and-suspenders.
-        name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
-        try:
-            clone = subprocess.run(
-                # Shallow single-branch clone keeps the upload into the sandbox
-                # small (a deep clone's history broke the tar-over-ssh upload
-                # with a broken pipe).
-                [
-                    "git",
-                    "clone",
-                    "--branch",
-                    branch,
-                    "--depth",
-                    "1",
-                    "--single-branch",
-                    "--",
-                    auth_url,
-                    str(tmp / "repo"),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                check=False,
-                env={**os.environ, **auth_env} if auth_env else None,
-                stdin=subprocess.DEVNULL,
-            )
-            if clone.returncode != 0:
-                return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
-                    (clone.stderr or clone.stdout or "").strip()
-                )[-800:]
-            cloned_head = subprocess.run(
-                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-            observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
-            if prepared_report is not None and observed_head != head_sha:
-                # The signed worker inspected this exact canonical-remote
-                # commit. A read-only report has no pushed branch of its own;
-                # trunk may advance while it is being written. Fetch only that
-                # prepared commit, leaving pushed code reviews' HEAD gate intact.
-                for args in (
-                    ["fetch", "--depth", "1", "origin", head_sha],
-                    ["checkout", "--detach", head_sha],
-                ):
-                    selected = subprocess.run(
-                        ["git", "-C", str(tmp / "repo"), *args],
-                        capture_output=True,
-                        text=True,
-                        timeout=300,
-                        check=False,
-                        env={**os.environ, **auth_env} if auth_env else None,
-                        stdin=subprocess.DEVNULL,
-                    )
-                    if selected.returncode != 0:
-                        return (
-                            1,
-                            "hub verification is unavailable: could not fetch prepared report commit",
-                        )
-                selected = subprocess.run(
-                    ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=False,
-                )
-                observed_head = selected.stdout.strip() if selected.returncode == 0 else ""
-            if observed_head != head_sha:
-                return 1, (
-                    "hub verify clone HEAD mismatch: expected %s, observed %s"
-                    % (head_sha, observed_head or "<unresolved>")
-                )
-            # Upload ONE tar file and extract inside the sandbox. Uploading the
-            # directory tree loses .git in transit (OpenShell's upload drops
-            # it), which failed every git-at-checkout contract test — and, once
-            # the exit-97 probe landed, every verify outright with
-            # "/sandbox/repo is not a usable git repo after upload". A single
-            # archive survives any upload path verbatim, .git included.
-            tar = subprocess.run(
-                ["tar", "czf", str(tmp / "repo.tgz"), "-C", str(tmp), "repo"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-            if tar.returncode != 0:
-                return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
-                    -800:
-                ]
-            subprocess.run(
-                [openshell, "sandbox", "delete", name],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            argv = [openshell, "sandbox", "create", "--no-auto-providers", *profile_args]
-            if policy:
-                argv += ["--policy", policy]
-            argv += [
-                "--name",
-                name,
-                "--label",
-                "mac.owner=mac",
-                "--label",
-                "mac.kind=hubverify",
-                "--label",
-                "mac.pid=%d" % os.getpid(),
-                "--label",
-                "mac.keep=false",
-                "--from",
-                image,
-            ]
-            # OpenShell's supervisor resets PATH on fresh create/exec
-            # commands instead of preserving the image ENV. Pass the
-            # sandbox-owned runtime path explicitly; never inherit the
-            # control-plane host's PATH. The test database belongs inside the
-            # sandbox too: the gateway may run on a separate Linux fleet host,
-            # and libpq cannot use OpenShell's HTTP network proxy.
-            for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
-                argv += ["--env", value]
-            report_preflight = ""
-            if prepared_report is not None:
-                expected_tree = str(prepared_report.get("base_tree") or "")
-                if not _GIT_SHA_RE.fullmatch(head_sha) or not _GIT_SHA_RE.fullmatch(expected_tree):
-                    return 1, "hub verification is unavailable: invalid prepared report identity"
-                report_preflight = (
-                    'test "$(uname -s)" = Linux && '
-                    'test "$(git rev-parse HEAD)" = %s && '
-                    'test "$(git rev-parse HEAD^{tree})" = %s || '
-                    "{ echo 'hub verification is unavailable: report Linux/source identity mismatch' >&2; exit 96; }; "
-                ) % (head_sha, expected_tree)
-            argv += [
-                "--upload",
-                "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
-                "--",
-                "/bin/bash",
-                "-c",
-                "export PATH=%s; hash -r 2>/dev/null || true; "
-                "%scd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s%s"
-                % (
-                    SANDBOX_BASE_PATH,
-                    profile_preflight,
-                    _HUB_VERIFY_GIT_PREFLIGHT,
-                    report_preflight
-                    + (("%s && " % bootstrap_command) if bootstrap_command else ""),
-                    test_command or "scripts/run-contract-tests.sh",
-                ),
-            ]
-            primary_error = None
-            try:
-                proc = subprocess.run(
-                    argv, capture_output=True, text=True, timeout=timeout, check=False
-                )
-                out = (proc.stdout or "") + (proc.stderr or "")
-                if profile == "bounded-tmpfs" and profile_ready not in out:
-                    return 1, (
-                        "hub verifier resource profile unavailable: bounded-tmpfs "
-                        "was not established before repository execution\n"
-                        + _hub_review_failure_excerpt(out)
-                    )
-                # Head AND tail. A blind tail cannot see the verdict:
-                # run-contract-tests.sh prints the pytest failure first, then
-                # an unconditional whole-repo coverage report (~14KB, one row
-                # per source file), then a coverage summary whose floors both
-                # PASSED, and only then exits with the saved pytest status.
-                # Keeping 2000 trailing bytes therefore kept the coverage
-                # table and OpenShell's generic "ssh exited with status 1" --
-                # so a real rejection was unclassifiable by construction and
-                # retried forever (six tasks, ~6 hours, 2026-08-20).
-                return int(proc.returncode), _hub_verify_output_excerpt(out)
-            except Exception as exc:
-                primary_error = exc
-                raise
-            finally:
-                try:
-                    subprocess.run(
-                        [openshell, "sandbox", "delete", name],
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                        check=False,
-                    )
-                except Exception as cleanup_error:
-                    if primary_error is None:
-                        raise
-                    # A cleanup timeout must not replace the test timeout and
-                    # its partial output before the caller records evidence.
-                    logging.getLogger(__name__).warning(
-                        "Hub verification cleanup also failed: %s",
-                        _hub_verify_exception_detail(cleanup_error),
-                    )
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        return run_repository_contract_test_in_openshell(
+            remote_url,
+            branch,
+            head_sha,
+            test_command,
+            bootstrap_command,
+            prepared_report=prepared_report,
+            verifier_identity=verifier_identity,
+        )
 
     def _run_hub_review_verification(
         self, task: Task, review: Review, executor_evidence: Evidence, actor: str

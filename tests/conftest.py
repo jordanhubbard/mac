@@ -311,3 +311,53 @@ def bind_soul(
         persona_id=persona.id,
     )
     return instance.id
+
+
+@pytest.fixture
+def linux_repository_verifier(monkeypatch, tmp_path):
+    """Simulate only gateway transport for finalizer integration tests.
+
+    The real verifier still checks source identity. Contract commands actually
+    run in a fresh clone, inside the Linux test sandbox. The separate transport
+    contract tests exercise production OpenShell argv and unavailable gateways.
+    """
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    from mac import services
+
+    def run(_remote, _branch, head, command, bootstrap="", **kwargs):
+        assert sys.platform == "linux", "repository test execution belongs on Linux"
+        with tempfile.TemporaryDirectory(dir=tmp_path) as directory:
+            target = Path(directory) / "repo"
+            clone = subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--no-local",
+                    "--no-checkout",
+                    str(kwargs["local_repository"]),
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if clone.returncode:
+                return clone.returncode, clone.stderr
+            checkout = subprocess.run(
+                ["git", "-C", str(target), "checkout", "--detach", head],
+                capture_output=True,
+                text=True,
+            )
+            if checkout.returncode:
+                return checkout.returncode, checkout.stderr
+            shell = (("%s && " % bootstrap) if bootstrap else "") + command
+            result = subprocess.run(
+                ["bash", "-lc", shell], cwd=target, capture_output=True, text=True
+            )
+            kwargs["verifier_identity"]["execution_attempted"] = True
+            return result.returncode, result.stdout + result.stderr
+
+    monkeypatch.setattr(services, "run_repository_contract_test_in_openshell", run)
