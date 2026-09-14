@@ -265,7 +265,7 @@ def real_onboarding(module, tmp_path, monkeypatch):
     (source / ".python-version").write_text(module.PYTHON_VERSION + "\n")
     (source / "src/mac").mkdir(parents=True)
     (source / "src/mac/__init__.py").write_text("")
-    (source / "fixture_build.py").write_text('''from pathlib import Path
+    (source / "fixture_build.py").write_text("""from pathlib import Path
 import tomllib
 import zipfile
 
@@ -289,16 +289,19 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         for path, body in entries.items():
             wheel.writestr(path, body)
     return name
-''')
+""")
     offline = {
-        "UV_NO_INDEX": "1",
+        "UV_OFFLINE": "1",
         "UV_FIND_LINKS": str(wheels),
         "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
         "UV_PYTHON_DOWNLOADS": "never",
     }
     subprocess.run(
         [uv, "lock", "--python", sys.executable, "--project", str(source)],
-        env={**os.environ, **offline}, check=True, capture_output=True, text=True,
+        env={**os.environ, **offline},
+        check=True,
+        capture_output=True,
+        text=True,
     )
     # A range-based reinstall can now choose 2.0, while the accepted lock names 1.0.
     dependency("mac-onboard-core", "2.0")
@@ -317,9 +320,13 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         return staged_uv, staged_runtime / "bin/python3.14"
 
     run = module._run
-    monkeypatch.setattr(module, "_run", lambda argv, *, env=None, timeout=900: run(
-        argv, env={**(env if env is not None else os.environ), **offline}, timeout=timeout
-    ))
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda argv, *, env=None, timeout=900: run(
+            argv, env={**(env if env is not None else os.environ), **offline}, timeout=timeout
+        ),
+    )
     monkeypatch.setattr(module, "install_reviewed_toolchain", real_toolchain)
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nexit 0\n")
@@ -330,31 +337,54 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     layout = module.Layout.for_home(tmp_path / "home")
     generation = "onboard:real"
     stage = module.prepare(
-        layout, generation=generation, agent="worker4", source_revision="1" * 40,
-        supervisor="supervisord", archive=archive, reviewed_assets=assets,
+        layout,
+        generation=generation,
+        agent="worker4",
+        source_revision="1" * 40,
+        supervisor="supervisord",
+        archive=archive,
+        reviewed_assets=assets,
         route_identity=_route(module, tmp_path / "route.json"),
     )
-    placeholder = _private_json(module, tmp_path / "placeholder.json", {
-        "schema": module.PLACEHOLDER_SCHEMA, "agent": "worker4", "agent_id": "agent_worker4",
-        "generation": generation, "source_revision": "1" * 40,
-        "route_identity_sha256": stage["route_identity_sha256"], "instance_kind": "fungible",
-        "status": "draining", "health_status": "degraded",
-    })
+    placeholder = _private_json(
+        module,
+        tmp_path / "placeholder.json",
+        {
+            "schema": module.PLACEHOLDER_SCHEMA,
+            "agent": "worker4",
+            "agent_id": "agent_worker4",
+            "generation": generation,
+            "source_revision": "1" * 40,
+            "route_identity_sha256": stage["route_identity_sha256"],
+            "instance_kind": "fungible",
+            "status": "draining",
+            "health_status": "degraded",
+        },
+    )
     return layout, generation, placeholder
 
 
-def test_pristine_install_uses_lock_and_relocated_cli(module, real_onboarding):
+def test_deployment_runtime_includes_postgres_extra(module, real_onboarding):
+    """Both runtime extras stay locked and the installed CLI survives relocation."""
     layout, generation, placeholder = real_onboarding
     lock = (layout.stage(generation) / "source/uv.lock").read_bytes()
     receipt = module.commit(
-        layout, generation=generation, agent="worker4", source_revision="1" * 40,
-        supervisor="supervisord", placeholder=placeholder,
+        layout,
+        generation=generation,
+        agent="worker4",
+        source_revision="1" * 40,
+        supervisor="supervisord",
+        placeholder=placeholder,
     )
     assert receipt["services_started"] is False
     assert not layout.stage(generation).exists()
-    result = subprocess.run([str(layout.mac_bin), "--help"], check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        [str(layout.mac_bin), "--help"], check=True, capture_output=True, text=True
+    )
     assert json.loads(result.stdout) == {
-        "core": "1.0", "postgres": "1.0", "prefix": str(layout.venv),
+        "core": "1.0",
+        "postgres": "1.0",
+        "prefix": str(layout.venv),
     }
     assert (layout.source / "uv.lock").read_bytes() == lock
 
@@ -367,11 +397,17 @@ def test_pristine_install_refuses_invalid_lock_and_compensates(module, real_onbo
         (source / "uv.lock").unlink()
     else:
         project = source / "pyproject.toml"
-        project.write_text(project.read_text().replace("mac-onboard-core>=1", "mac-onboard-core==2.0"))
-    with pytest.raises(module.OnboardingError, match="command failed"):
+        project.write_text(
+            project.read_text().replace("mac-onboard-core>=1", "mac-onboard-core==2.0")
+        )
+    with pytest.raises(module.OnboardingError, match="lock"):
         module.commit(
-            layout, generation=generation, agent="worker4", source_revision="1" * 40,
-            supervisor="supervisord", placeholder=placeholder,
+            layout,
+            generation=generation,
+            agent="worker4",
+            source_revision="1" * 40,
+            supervisor="supervisord",
+            placeholder=placeholder,
         )
     assert not layout.source.exists()
     assert not layout.venv.exists()
@@ -431,7 +467,7 @@ def test_failed_commit_compensates_to_source_and_venv_absent(module, tmp_path, m
             target = Path(args[-1])
             (target / "bin").mkdir(parents=True)
             (target / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
-        if "pip" in args:
+        if "sync" in args:
             raise module.OnboardingError("simulated package failure")
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -557,13 +593,6 @@ def test_node_installer_reports_only_structural_error_context():
     assert "BASH_LINENO[0]" in reporter
     assert '"$BASH_COMMAND"' not in reporter
     assert "env" not in reporter.lower()
-
-
-def test_deployment_runtime_includes_postgres_extra():
-    onboard = HELPER.read_text(encoding="utf-8")
-    # Pristine onboarding has its own bootstrap. The native deployment helper's
-    # actual relay/postgres installation is covered by test_native_runtime_lock.
-    assert "[relay,postgres]" in onboard
 
 
 def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
