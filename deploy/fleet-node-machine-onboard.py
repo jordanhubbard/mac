@@ -711,6 +711,7 @@ def commit(
                 "UV_PYTHON_INSTALL_DIR": str(final_python_root),
                 "UV_MANAGED_PYTHON": "1",
                 "UV_PYTHON_DOWNLOADS": "never",
+                "UV_PROJECT_ENVIRONMENT": str(staged_venv),
             }
             _run(
                 (
@@ -728,12 +729,19 @@ def commit(
             _run(
                 (
                     str(staged_uv),
-                    "pip",
-                    "install",
+                    "sync",
+                    "--locked",
+                    "--no-dev",
+                    "--no-editable",
+                    "--project",
+                    str(staged_source),
                     "--python",
-                    str(staged_venv / "bin" / "python"),
+                    str(final_python),
                     "--no-config",
-                    f"{staged_source}[relay,postgres]",
+                    "--extra",
+                    "relay",
+                    "--extra",
+                    "postgres",
                 ),
                 env=python_env,
             )
