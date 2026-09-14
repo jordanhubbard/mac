@@ -20,7 +20,7 @@ _SECRET_KEY_TERMS = (
     "token",
 )
 _ASSIGNMENT_RE = re.compile(
-    r"(?im)(\b(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*"
+    r"(?im)(\b(?:export[ \t]+)?(?=[A-Za-z_])[A-Za-z0-9_]*"
     r"(?:KEY|PASSWORD|SECRET|TOKEN)[A-Za-z0-9_]*[ \t]*=[ \t]*)"
     r"(?:\"[^\r\n\"]*\"|'[^\r\n']*'|\"[^\r\n\"]*$|'[^\r\n']*$|"
     r"(?:\\[^\r\n]|[^\s;&|\"'])+)"

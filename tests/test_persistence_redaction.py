@@ -216,3 +216,9 @@ def test_embedded_json_and_truncated_private_key_are_redacted():
     secret = credential_fixture("json-and-truncated-key")
     for raw in [f'Failure: {{"token": "{secret}"}}', f"-----BEGIN PRIVATE KEY-----\n{secret}"]:
         assert_secret_absent(secret, redact_for_persistence(raw), path="output")
+
+
+@pytest.mark.parametrize("name", ["TOKEN", "KEY", "PASSWORD", "SECRET", "token", "password"])
+def test_bare_secret_assignment_is_redacted(name):
+    raw = name + "=synthetic-test-credential"
+    assert redact_for_persistence(raw) == name + "=" + REDACTION_MARKER
