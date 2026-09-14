@@ -2209,7 +2209,7 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
 
     drain = main.index("drain_mac_agent_before_deploy\n")
     stop = main.index("stop_existing_services_for_deploy\n", drain)
-    venv = main.index('"$VENV/bin/python" -m pip install -e', stop)
+    venv = main.index('"$PY" -m mac.native_runtime', stop)
     bootstrap = main.index("bootstrap_enabled_openshell\n", venv)
     service_install = main.index('case "$SUPERVISOR_KIND" in', bootstrap)
     runtime_proof = main.index("verify_managed_openshell_runtime\n", service_install)

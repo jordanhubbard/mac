@@ -145,6 +145,7 @@ def locked_project(tmp_path, monkeypatch):
     for name, version, dependencies in [
         ("mac-test-core", "1.0", []),
         ("mac-test-core", "2.0", []),
+        ("mac-test-postgres", "1.0", []),
         ("mac-test-platform", "1.0", []),
         ("mac-test-platform", "2.0", []),
         ("mac-test-unrecorded", "1.0", ["mac-test-core==1.0"]),
@@ -155,7 +156,7 @@ def locked_project(tmp_path, monkeypatch):
     (source / "pyproject.toml").write_text(
         '[project]\nname="mac-native-fixture"\nversion="1.0"\n'
         'requires-python=">=3.14"\ndependencies=[]\n'
-        '[project.optional-dependencies]\nrelay=["mac-test-core==1.0", "mac-test-platform==2.0; sys_platform == \'win32\'"]\npostgres=[]\n'
+        '[project.optional-dependencies]\nrelay=["mac-test-core==1.0", "mac-test-platform==2.0; sys_platform == \'win32\'"]\npostgres=["mac-test-postgres==1.0"]\n'
     )
     (source / ".python-version").write_text(sys.version.split()[0] + "\n")
     for name in ("PIP_FIND_LINKS", "UV_FIND_LINKS"):
@@ -190,7 +191,11 @@ def test_real_locked_install_preserves_recorded_and_unrecorded_tools_on_repeat(l
     before = (source / "uv.lock").read_bytes()
     first = install(source, home / "venv", snapshot, home / "agent-footprint.json", uv)
     second = install(source, home / "venv", snapshot, home / "agent-footprint.json", uv)
-    assert first["core_packages"] == second["core_packages"] == {"mac-test-core": "1.0"}
+    assert (
+        first["core_packages"]
+        == second["core_packages"]
+        == {"mac-test-core": "1.0", "mac-test-postgres": "1.0"}
+    )
     installed = inventory(home / "venv/bin/python")
     assert installed["mac-test-platform"] == "1.0"
     assert (
