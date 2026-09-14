@@ -1754,6 +1754,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#parallel-postgresql-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallel PostgreSQL isolation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-justifies-a-test" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1877,6 +1888,26 @@
 not for test count or aggregate line coverage. Coverage is a diagnostic and a
 safety floor. It is not a product KPI, and an uncovered line is not by itself a
 reason to create a test.</p>
+<h2 id="parallel-postgresql-isolation">Parallel PostgreSQL isolation<a class="headerlink" href="#parallel-postgresql-isolation" title="Permanent link">&para;</a></h2>
+<p>Parallel pytest runs automatically provision one PostgreSQL database per xdist
+worker before test collection. Tests still receive fresh, isolated schemas
+inside their worker database. This avoids serializing unrelated workers on the
+production migration advisory lock; the production lock and migration code are
+unchanged. Serial pytest invocations continue to use the configured test database.</p>
+<p><code>MAC_TEST_PG_URL</code> must point to a test server whose role can create databases.
+The repository's local PostgreSQL helper and CI PostgreSQL service provide that
+role. If a custom role lacks <code>CREATEDB</code>, the parallel run fails with an explicit
+prerequisite error rather than silently falling back to the contended database.
+Connection settings are preserved when selecting the worker database; subprocesses
+inherit the worker's DSN.</p>
+<p>The controller records ownership in database comments and holds an advisory
+lease in the original test database. Workers hold that lease too, so controller
+failure alone does not make their databases eligible for cleanup. Normal teardown
+drops only the databases created by that controller. A later parallel run can
+reap marked leftovers from the same base database and database owner only after
+obtaining an exclusive lease. Unmarked databases are never eligible, and cleanup
+never forces existing clients to disconnect. Failed cleanup retains the database
+and emits a warning for investigation.</p>
 <h2 id="what-justifies-a-test">What justifies a test<a class="headerlink" href="#what-justifies-a-test" title="Permanent link">&para;</a></h2>
 <p>Every durable test must protect at least one of these:</p>
 <ul>
