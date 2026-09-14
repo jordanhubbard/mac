@@ -900,10 +900,18 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
 
 
 _DIAG_SECRET_RE = re.compile(
-    r"(?i)(\b(?:authorization|bearer|token|password|secret|api[_-]?key)\b\s*[:=]?\s*)([^\s,;]+)"
+    r"(?i)(\b(?:authorization|bearer|(?:[a-z0-9]+_)*(?:token|password|secret|api[_-]?key))"
+    r"\b[\"']?\s*[:=]?\s*(?:(?:bearer|basic)\s+)?[\"']?)([^\s,;\"']+)"
 )
-_DIAG_URL_AUTH_RE = re.compile(r"(https?://)([^/@\s]+)@", re.IGNORECASE)
+_DIAG_URL_AUTH_RE = re.compile(r"([a-z][a-z0-9+.-]*://)([^/@\s]+)@", re.IGNORECASE)
 _DIAG_KNOWN_TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9_-]{12,})\b")
+
+
+def _redact_diagnostic_text(text: str) -> str:
+    text = text.replace("\x00", "")
+    text = _DIAG_URL_AUTH_RE.sub(r"\1<redacted>@", text)
+    text = _DIAG_SECRET_RE.sub(r"\1<redacted>", text)
+    return _DIAG_KNOWN_TOKEN_RE.sub("<redacted>", text)
 
 
 def _diagnostic_output_tail(detail: Mapping[str, Any]) -> Tuple[str, str]:
@@ -927,10 +935,7 @@ def _diagnostic_output_tail(detail: Mapping[str, Any]) -> Tuple[str, str]:
             detail.get("output_tail_unavailable_reason")
             or "transition supplied no stdout, stderr, output, log, or tail field"
         )
-    text = "\n".join(values).replace("\x00", "")
-    text = _DIAG_URL_AUTH_RE.sub(r"\1<redacted>@", text)
-    text = _DIAG_SECRET_RE.sub(r"\1<redacted>", text)
-    text = _DIAG_KNOWN_TOKEN_RE.sub("<redacted>", text)
+    text = _redact_diagnostic_text("\n".join(values))
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return "\n".join(lines[-20:])[-4000:], ""
 
@@ -1378,6 +1383,29 @@ def _hub_verify_output_excerpt(
         parts.append(text[start:end])
         previous = end
     return "\n".join(parts)
+
+
+def _hub_verify_exception_detail(exc: Exception) -> JsonDict:
+    """Retain the failure and available output without recording subprocess argv."""
+    detail: JsonDict = {"error_type": type(exc).__name__}
+    if isinstance(exc, subprocess.TimeoutExpired):
+        detail.update(error="verification subprocess timed out", timeout_seconds=exc.timeout)
+    elif isinstance(exc, subprocess.CalledProcessError):
+        detail.update(error="verification subprocess failed", returncode=exc.returncode)
+    else:
+        detail["error"] = _redact_diagnostic_text(str(exc))[:300]
+    output = []
+    for value in (getattr(exc, "stdout", None), getattr(exc, "stderr", None)):
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str) and value:
+            output.append(value)
+    # Redact before excerpting: truncating a credential marker first could
+    # leave its value unrecognizable to the shared redactor.
+    detail["output_excerpt"] = _hub_verify_output_excerpt(
+        _redact_diagnostic_text("\n".join(output))
+    )
+    return detail
 
 
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
@@ -27649,6 +27677,7 @@ class ControlPlane:
                     test_command or "scripts/run-contract-tests.sh",
                 ),
             ]
+            primary_error = None
             try:
                 proc = subprocess.run(
                     argv, capture_output=True, text=True, timeout=timeout, check=False
@@ -27670,14 +27699,27 @@ class ControlPlane:
                 # so a real rejection was unclassifiable by construction and
                 # retried forever (six tasks, ~6 hours, 2026-08-20).
                 return int(proc.returncode), _hub_verify_output_excerpt(out)
+            except Exception as exc:
+                primary_error = exc
+                raise
             finally:
-                subprocess.run(
-                    [openshell, "sandbox", "delete", name],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    check=False,
-                )
+                try:
+                    subprocess.run(
+                        [openshell, "sandbox", "delete", name],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        check=False,
+                    )
+                except Exception as cleanup_error:
+                    if primary_error is None:
+                        raise
+                    # A cleanup timeout must not replace the test timeout and
+                    # its partial output before the caller records evidence.
+                    logging.getLogger(__name__).warning(
+                        "Hub verification cleanup also failed: %s",
+                        _hub_verify_exception_detail(cleanup_error),
+                    )
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -27980,7 +28022,7 @@ class ControlPlane:
                 task.id,
                 "workflow.default_review.hub_verify_error",
                 "warning",
-                {"review_id": review.id, "error": str(exc)[:300]},
+                {"review_id": review.id, **_hub_verify_exception_detail(exc)},
                 actor,
             )
             return None
