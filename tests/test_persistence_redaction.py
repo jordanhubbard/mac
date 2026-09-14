@@ -222,3 +222,17 @@ def test_embedded_json_and_truncated_private_key_are_redacted():
 def test_bare_secret_assignment_is_redacted(name):
     raw = name + "=synthetic-test-credential"
     assert redact_for_persistence(raw) == name + "=" + REDACTION_MARKER
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        r'"first\"remaining-credential"',
+        'first"remaining-credential"',
+        "'first'\\''remaining-credential'",
+    ],
+)
+def test_shell_word_assignment_redacts_complete_value(value):
+    raw = "API_KEY=" + value + " retrying build"
+    expected = "API_KEY=" + REDACTION_MARKER + " retrying build"
+    assert redact_for_persistence(raw) == expected
