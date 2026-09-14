@@ -1851,7 +1851,7 @@ regressions also pass on 3.12.7. The full upstream suite has additional failures
 in this sandbox, including failures reproduced on the older interpreter. Keep
 those results visible: focused success is not a green full-suite result or
 proof of a deployed fleet. The rollout remains separately tracked in
-<code>task_7e957b6682ff463395894b881930fe78</code>.</p>
+<code>task_5974916018ba8e91f37d9de7f446facd</code>.</p>
 <p>The MAC runtime default does not override a different project's declared
 interpreter requirements inside a task sandbox. Project-specific toolchains
 remain isolated from the host service environment.</p>
@@ -1865,7 +1865,12 @@ dependencies, and prevents <code>uv run</code> from changing packages during ver
 The normal full contract test follows it; network policy and review gates stay
 in force. This bridge does not install an OpenShell runtime on a macOS host.</p>
 <p>Native deployment uses that same lock with the <code>relay</code> and <code>postgres</code> extras.
-Onboarding must provision the reviewed uv before services are quiesced. Before
+Pristine-machine onboarding also installs its CLI from the staged source lock,
+refusing a missing or stale lock. It installs the package non-editably into the
+staged environment so the CLI remains usable after source and environment
+publication. The existing onboarding journal compensates failed publication;
+this bootstrap starts no serving services.</p>
+<p>Onboarding must provision the reviewed uv before services are quiesced. Before
 moving the old source and environment, deployment inventories installed
 packages, including unrecorded tools and their direct installation sources,
 and merges the local footprint with the available hub replica. Local records
