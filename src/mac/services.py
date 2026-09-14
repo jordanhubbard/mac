@@ -238,7 +238,12 @@ from mac.memory_tier_probe import (
     probe_collections as _probe_qdrant_collections,
 )
 from mac.observability_service import ObservabilityService
-from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
+from mac.openshell_runtime import (
+    SANDBOX_BASE_PATH,
+    VERIFIER_PROFILE_READY,
+    openshell_required_for_identity,
+    verifier_resource_profile,
+)
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.project_repository_service import ProjectRepositoryService
@@ -2246,53 +2251,10 @@ def run_repository_contract_test_in_openshell(
             "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
             "the immutable repository-owned OpenShell runtime image"
         )
-    profile = (os.environ.get("MAC_HUB_VERIFY_PROFILE") or "").strip()
-    if profile not in {"", "default", "bounded-tmpfs"}:
-        return 1, (
-            "hub verifier resource profile unavailable: MAC_HUB_VERIFY_PROFILE "
-            "must be default or bounded-tmpfs"
-        )
-    profile_args: List[str] = []
-    profile_env: List[str] = []
-    profile_preflight = ""
-    profile_ready = "[hub-verifier-profile] bounded-tmpfs ready"
-    if profile == "bounded-tmpfs":
-        # Native Docker-driver storage, confined to this sandbox. A fixed
-        # opt-in profile avoids accepting host mounts or arbitrary CLI args.
-        profile_args = [
-            "--cpu",
-            "12",
-            "--memory",
-            "32Gi",
-            "--driver-config-json",
-            json.dumps(
-                {
-                    "docker": {
-                        "mounts": [
-                            {
-                                "type": "tmpfs",
-                                "target": "/sandbox/test-storage",
-                                "size_bytes": 8 * 1024**3,
-                                "mode": 0o1777,
-                                "options": ["exec"],
-                            }
-                        ]
-                    }
-                }
-            ),
-        ]
-        profile_env = ["TMPDIR=/sandbox/test-storage", "MAC_TEST_JOBS=8"]
-        # Some drivers cannot honor Docker mounts. Prove the requested
-        # storage before any repository bootstrap/test code can execute.
-        profile_preflight = (
-            'if [ "$(uname -s)" != Linux ] || '
-            '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
-            "[ ! -w /sandbox/test-storage ]; then "
-            "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
-            "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
-            "export TMPDIR=/sandbox/test-storage MAC_TEST_JOBS=8; "
-            f"echo '{profile_ready}'; "
-        )
+    try:
+        profile_args, profile_env, profile_preflight = verifier_resource_profile()
+    except ValueError as exc:
+        return 1, str(exc)
     policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
     if local_repository is not None and not policy:
         return 1, "pre-push verification unavailable: MAC_OPENSHELL_POLICY is required"
@@ -2538,7 +2500,7 @@ def run_repository_contract_test_in_openshell(
             if verifier_identity is not None:
                 verifier_identity["execution_attempted"] = True
             out = (proc.stdout or "") + (proc.stderr or "")
-            if profile == "bounded-tmpfs" and profile_ready not in out:
+            if profile_preflight and VERIFIER_PROFILE_READY not in out:
                 return 1, (
                     "hub verifier resource profile unavailable: bounded-tmpfs "
                     "was not established before repository execution\n"

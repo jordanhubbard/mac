@@ -97,14 +97,15 @@ re-add it. If darwin confinement needs strengthening, strengthen it here — a
 `sandbox-exec` profile or a hardened launchd job — not by filtering data
 elsewhere in the system.
 
-## Independent verifier resources
+## Verifier resources
 
 The hub runs pushed repository code on its configured Linux OpenShell gateway.
 A macOS hub may own the CLI/tunnel connection, but does not host that runtime.
 The same verifier execution path serves independent review and projected-merge
 publication checks.
 
-`MAC_HUB_VERIFY_PROFILE` is an opt-in setting on the hub process. Unset, empty,
+`MAC_HUB_VERIFY_PROFILE` is an opt-in setting on each hub and Linux OpenShell
+worker process. Unset, empty,
 or `default` retains the driver's existing behavior. `bounded-tmpfs` requests
 12 CPUs, 32 GiB memory and an 8 GiB Docker-driver tmpfs at
 `/sandbox/test-storage`, with `TMPDIR` pointing there and `MAC_TEST_JOBS=8`.
@@ -118,8 +119,15 @@ No arbitrary driver JSON, host mounts or shell arguments are accepted through
 this setting. It changes resources, not test selection, coverage, signing or
 the isolation policy.
 
+Worker sandboxes request the same limits at creation. Every fresh verification
+shell reapplies the storage preflight and environment before toolchain setup;
+settings in the agent's shell are not inherited. Separate read-only verifier
+sandboxes use this profile without widening their create-argument allowlist.
+With the profile enabled, explicit worker `--cpu`, `--memory` or
+`--driver-config-json` overrides are rejected instead of passing duplicate flags.
+
 Enable the profile only on a qualified Linux gateway through the supported
-hub configuration/deployment path. It affects future sandboxes; do not restart
+hub/worker configuration and deployment path. It affects future sandboxes; do not restart
 active verifiers to change their storage. Source publication alone does not
 prove activation: inspect the next independent sandbox's limits and mount,
 then observe its required tests and normal publication completing. Keep

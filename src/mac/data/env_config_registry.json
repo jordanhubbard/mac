@@ -6596,12 +6596,12 @@
   },
   {
     "default": "default",
-    "description": "Independent verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Affects future review and projected-merge verifiers, not running sandboxes.",
+    "description": "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected.",
     "family": "hub",
     "name": "MAC_HUB_VERIFY_PROFILE",
     "retired": false,
     "sources": [
-      "src/mac/services.py"
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -9107,7 +9107,8 @@
       "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/deploy_env.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -13699,7 +13700,7 @@
     "sources": [
       "scripts/run-contract-tests.sh",
       "src/mac/hub_load_shed.py",
-      "src/mac/services.py"
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
