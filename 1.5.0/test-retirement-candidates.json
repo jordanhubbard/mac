@@ -1,0 +1,1370 @@
+{
+  "candidates_all": 1874,
+  "clusters": 567,
+  "clusters_all": 1110,
+  "distinct_signatures": 6954,
+  "fixture_cost_seconds_per_test": 0.6,
+  "min_significant_lines": 10,
+  "minutes_saved_if_all_retired": 10.4,
+  "retirement_candidates": 1043,
+  "schema": "mac.test_redundancy.v1",
+  "seconds_saved_if_all_retired": 625.8,
+  "tests_with_coverage": 8828,
+  "top_clusters": [
+    {
+      "candidates": [
+        "tests/test_review_failure_classifier.py::TestEvidenceTypeHint::test_non_review_verdict_evidence_type_does_not_force_semantic",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[authentication]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[authorization]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[credential_error]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[network]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[repository_missing]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_hub_verification_error_reasons[hub_verification_error]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_hub_verification_error_reasons[hub_verification_failed]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_timeout_reasons[review_retraction_cap_hit]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_timeout_reasons[review_verdict_wait_cap_hit]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_unavailability_reasons[reviewer_not_available]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_unavailability_reasons[reviewer_stale]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_unavailability_reasons[reviewer_unavailable]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_transport_error_reasons[clone_failed]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_transport_error_reasons[review_clone_failed]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_transport_error_reasons[transport_error]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[authentication-credential_access]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[authorization-credential_access]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[clone_failed-transport_error]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[hub_verification_error-hub_verification_error]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[network-credential_access]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[review_retraction_cap_hit-reviewer_timeout]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[review_verdict_wait_cap_hit-reviewer_timeout]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[reviewer_not_available-reviewer_unavailable]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[reviewer_stale-reviewer_unavailable]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[transport_error-transport_error]"
+      ],
+      "covered_files": [
+        "src/mac/review_failure_classifier.py"
+      ],
+      "covered_lines": 35,
+      "keep": "tests/test_review_failure_classifier.py::TestEdgeCases::test_reason_case_insensitive",
+      "members": [
+        "tests/test_review_failure_classifier.py::TestEdgeCases::test_reason_case_insensitive",
+        "tests/test_review_failure_classifier.py::TestEvidenceTypeHint::test_non_review_verdict_evidence_type_does_not_force_semantic",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[authentication]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[authorization]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[credential_error]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[network]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_credential_access_reasons[repository_missing]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_hub_verification_error_reasons[hub_verification_error]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_hub_verification_error_reasons[hub_verification_failed]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_timeout_reasons[review_retraction_cap_hit]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_timeout_reasons[review_verdict_wait_cap_hit]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_unavailability_reasons[reviewer_not_available]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_unavailability_reasons[reviewer_stale]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_reviewer_unavailability_reasons[reviewer_unavailable]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_transport_error_reasons[clone_failed]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_transport_error_reasons[review_clone_failed]",
+        "tests/test_review_failure_classifier.py::TestInfrastructureReasons::test_transport_error_reasons[transport_error]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[authentication-credential_access]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[authorization-credential_access]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[clone_failed-transport_error]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[hub_verification_error-hub_verification_error]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[network-credential_access]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[review_retraction_cap_hit-reviewer_timeout]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[review_verdict_wait_cap_hit-reviewer_timeout]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[reviewer_not_available-reviewer_unavailable]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[reviewer_stale-reviewer_unavailable]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_infrastructure_class_mapping[transport_error-transport_error]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 15.6,
+      "size": 27,
+      "test_files": [
+        "tests/test_review_failure_classifier.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[aws_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[github_ghp]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[github_pat]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[gitlab_pat]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[google_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[jwt]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[netrc]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[openssh_private_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[pkcs8_private_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[provider_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[rsa_private_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[slack_token]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[stripe_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[x_access_token_url]",
+        "tests/test_work_plan_admission.py::test_secret_scan_is_identical_at_preview_and_acceptance"
+      ],
+      "covered_files": [
+        "src/mac/work_package_models.py",
+        "src/mac/work_plan_admission.py"
+      ],
+      "covered_lines": 869,
+      "keep": "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[authenticated_url]",
+      "members": [
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[authenticated_url]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[aws_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[github_ghp]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[github_pat]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[gitlab_pat]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[google_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[jwt]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[netrc]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[openssh_private_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[pkcs8_private_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[provider_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[rsa_private_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[slack_token]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[stripe_key]",
+        "tests/test_work_plan_admission.py::test_accept_rejects_raw_secret_material_injected_after_preview[x_access_token_url]",
+        "tests/test_work_plan_admission.py::test_secret_scan_is_identical_at_preview_and_acceptance"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 9.0,
+      "size": 16,
+      "test_files": [
+        "tests/test_work_plan_admission.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[aws_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[github_ghp]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[github_pat]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[gitlab_pat]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[google_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[jwt]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[netrc]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[openssh_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[pkcs8_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[provider_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[rsa_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[slack_token]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[stripe_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[x_access_token_url]"
+      ],
+      "covered_files": [
+        "src/mac/work_plan_admission.py"
+      ],
+      "covered_lines": 62,
+      "keep": "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[authenticated_url]",
+      "members": [
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[authenticated_url]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[aws_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[github_ghp]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[github_pat]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[gitlab_pat]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[google_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[jwt]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[netrc]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[openssh_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[pkcs8_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[provider_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[rsa_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[slack_token]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[stripe_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_in_free_text[x_access_token_url]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 8.4,
+      "size": 15,
+      "test_files": [
+        "tests/test_work_plan_admission.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_do_not_write_code_instruction",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_plan_decomposed_evidence_type",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_planning_mode_header",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_task_file_path",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_topology_reference",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_trigger_reason_scope_estimate",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_fallback_endpoint_without_hub_url",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_returns_string",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_instructs_dependencies_from_topology",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_requires_coverage_claim",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_requires_ordering_rationale",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_requires_two_to_ten_children"
+      ],
+      "covered_files": [
+        "src/mac/executor_scope.py"
+      ],
+      "covered_lines": 63,
+      "keep": "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_children_schema_fields",
+      "members": [
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_children_schema_fields",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_do_not_write_code_instruction",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_plan_decomposed_evidence_type",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_planning_mode_header",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_task_file_path",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_topology_reference",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_contains_trigger_reason_scope_estimate",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_fallback_endpoint_without_hub_url",
+        "tests/test_planning_phase.py::TestBuildPlanningPrompt::test_returns_string",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_instructs_dependencies_from_topology",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_requires_coverage_claim",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_requires_ordering_rationale",
+        "tests/test_planning_phase.py::TestLargeFixtureToChildren::test_prompt_requires_two_to_ten_children"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 7.2,
+      "size": 13,
+      "test_files": [
+        "tests/test_planning_phase.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_backoff_limit_is_zero",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_command_runs_mac_task_runner_binary",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_container_env_has_required_vars",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_executor_timeout_not_set_when_unconfigured",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_image_resolution_default",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_legacy_shared_secret_is_explicitly_compatibility_only",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_pod_security_context_hardened",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_token_pulled_from_named_secret",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_ttl_seconds_after_finished_set",
+        "tests/test_k8s_runner.py::TestOpencodeConfigMapMount::test_build_job_spec_mounts_opencode_configmap_by_default",
+        "tests/test_k8s_runner.py::TestRoleAwareBuildJobSpec::test_no_role_preserves_default_behaviour",
+        "tests/test_k8s_runner.py::TestRoleAwareBuildJobSpec::test_unknown_capability_and_empty_alias_map_falls_through"
+      ],
+      "covered_files": [
+        "src/mac/k8s/runner.py"
+      ],
+      "covered_lines": 171,
+      "keep": "tests/test_k8s_runner.py::TestAttestationKeyJobEnv::test_no_role_does_not_emit_attestation_env",
+      "members": [
+        "tests/test_k8s_runner.py::TestAttestationKeyJobEnv::test_no_role_does_not_emit_attestation_env",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_backoff_limit_is_zero",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_command_runs_mac_task_runner_binary",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_container_env_has_required_vars",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_executor_timeout_not_set_when_unconfigured",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_image_resolution_default",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_legacy_shared_secret_is_explicitly_compatibility_only",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_pod_security_context_hardened",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_token_pulled_from_named_secret",
+        "tests/test_k8s_runner.py::TestBuildJobSpec::test_ttl_seconds_after_finished_set",
+        "tests/test_k8s_runner.py::TestOpencodeConfigMapMount::test_build_job_spec_mounts_opencode_configmap_by_default",
+        "tests/test_k8s_runner.py::TestRoleAwareBuildJobSpec::test_no_role_preserves_default_behaviour",
+        "tests/test_k8s_runner.py::TestRoleAwareBuildJobSpec::test_unknown_capability_and_empty_alias_map_falls_through"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 7.2,
+      "size": 13,
+      "test_files": [
+        "tests/test_k8s_runner.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[github_ghp]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[gitlab_pat]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[google_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[jwt]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[netrc]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[openssh_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[pkcs8_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[provider_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[rsa_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[slack_token]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[stripe_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[x_access_token_url]"
+      ],
+      "covered_files": [
+        "src/mac/work_plan_admission.py"
+      ],
+      "covered_lines": 65,
+      "keep": "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[authenticated_url]",
+      "members": [
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[authenticated_url]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[github_ghp]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[gitlab_pat]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[google_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[jwt]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[netrc]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[openssh_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[pkcs8_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[provider_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[rsa_private_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[slack_token]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[stripe_key]",
+        "tests/test_work_plan_admission.py::test_preview_rejects_raw_secret_material_deeply_nested[x_access_token_url]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 7.2,
+      "size": 13,
+      "test_files": [
+        "tests/test_work_plan_admission.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_skill_auto_repair.py::test_accepts_generic_role_names_in_patch",
+        "tests/test_skill_auto_repair.py::test_accepts_gpu_worker_role_name",
+        "tests/test_skill_auto_repair.py::test_accepts_skills_prefix",
+        "tests/test_skill_auto_repair.py::test_dry_run_does_not_write_file_even_with_repo_root",
+        "tests/test_skill_auto_repair.py::test_evidence_fingerprint_differs_for_different_evidence",
+        "tests/test_skill_auto_repair.py::test_evidence_fingerprint_is_stable_across_calls",
+        "tests/test_skill_auto_repair.py::test_staged_result_carries_audit_trail",
+        "tests/test_skill_auto_repair.py::test_staged_result_carries_evidence_fingerprint",
+        "tests/test_skill_auto_repair.py::test_staged_result_carries_patch_line_count",
+        "tests/test_skill_auto_repair.py::test_staged_result_has_correct_schema",
+        "tests/test_skill_auto_repair.py::test_staged_without_repo_root_does_not_write_file"
+      ],
+      "covered_files": [
+        "src/mac/skill_auto_repair.py"
+      ],
+      "covered_lines": 58,
+      "keep": "tests/test_skill_auto_repair.py::test_accepts_deploy_skills_prefix",
+      "members": [
+        "tests/test_skill_auto_repair.py::test_accepts_deploy_skills_prefix",
+        "tests/test_skill_auto_repair.py::test_accepts_generic_role_names_in_patch",
+        "tests/test_skill_auto_repair.py::test_accepts_gpu_worker_role_name",
+        "tests/test_skill_auto_repair.py::test_accepts_skills_prefix",
+        "tests/test_skill_auto_repair.py::test_dry_run_does_not_write_file_even_with_repo_root",
+        "tests/test_skill_auto_repair.py::test_evidence_fingerprint_differs_for_different_evidence",
+        "tests/test_skill_auto_repair.py::test_evidence_fingerprint_is_stable_across_calls",
+        "tests/test_skill_auto_repair.py::test_staged_result_carries_audit_trail",
+        "tests/test_skill_auto_repair.py::test_staged_result_carries_evidence_fingerprint",
+        "tests/test_skill_auto_repair.py::test_staged_result_carries_patch_line_count",
+        "tests/test_skill_auto_repair.py::test_staged_result_has_correct_schema",
+        "tests/test_skill_auto_repair.py::test_staged_without_repo_root_does_not_write_file"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 6.6,
+      "size": 12,
+      "test_files": [
+        "tests/test_skill_auto_repair.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_batch_drains_multiple_notifications",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_limit_respected",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_notification_marked_delivered_in_store",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_pending_notification_delivered_to_configured_agent",
+        "tests/test_notifier_service.py::TestEventMatching::test_default_event_filter_matches_task_prefix",
+        "tests/test_notifier_service.py::TestFailurePropagation::test_delivery_success_writes_delivered_log",
+        "tests/test_notifier_service.py::TestPayloadStructure::test_message_payload_schema",
+        "tests/test_notifier_service.py::TestPayloadStructure::test_message_type_is_status_update",
+        "tests/test_notifier_service.py::TestStaleClaim::test_stale_delivering_notification_is_reclaimed",
+        "tests/test_notifier_service.py::TestTargetResolution::test_target_with_agent_id_sends_to_that_agent"
+      ],
+      "covered_files": [
+        "src/mac/models.py",
+        "src/mac/notifier_service.py"
+      ],
+      "covered_lines": 173,
+      "keep": "tests/test_notifier_service.py::TestDeliveryPipeline::test_already_delivered_notification_not_re_sent",
+      "members": [
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_already_delivered_notification_not_re_sent",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_batch_drains_multiple_notifications",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_limit_respected",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_notification_marked_delivered_in_store",
+        "tests/test_notifier_service.py::TestDeliveryPipeline::test_pending_notification_delivered_to_configured_agent",
+        "tests/test_notifier_service.py::TestEventMatching::test_default_event_filter_matches_task_prefix",
+        "tests/test_notifier_service.py::TestFailurePropagation::test_delivery_success_writes_delivered_log",
+        "tests/test_notifier_service.py::TestPayloadStructure::test_message_payload_schema",
+        "tests/test_notifier_service.py::TestPayloadStructure::test_message_type_is_status_update",
+        "tests/test_notifier_service.py::TestStaleClaim::test_stale_delivering_notification_is_reclaimed",
+        "tests/test_notifier_service.py::TestTargetResolution::test_target_with_agent_id_sends_to_that_agent"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 6.0,
+      "size": 11,
+      "test_files": [
+        "tests/test_notifier_service.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_blind_protocol_noncompliant_is_semantic",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_reviewer_findings",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_rejection_reasons[changes_requested]",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_rejection_reasons[rejected]",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_rejection_reasons[semantic_rejection]",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_verdict_invalid_is_semantic",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[blind_protocol_noncompliant-blind_protocol_noncompliant]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[changes_requested-semantic_rejection]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[rejected-semantic_rejection]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[semantic_verdict_invalid-semantic_verdict_invalid]"
+      ],
+      "covered_files": [
+        "src/mac/review_failure_classifier.py"
+      ],
+      "covered_lines": 37,
+      "keep": "tests/test_review_failure_classifier.py::TestEdgeCases::test_returns_named_tuple",
+      "members": [
+        "tests/test_review_failure_classifier.py::TestEdgeCases::test_returns_named_tuple",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_blind_protocol_noncompliant_is_semantic",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_reviewer_findings",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_rejection_reasons[changes_requested]",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_rejection_reasons[rejected]",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_rejection_reasons[semantic_rejection]",
+        "tests/test_review_failure_classifier.py::TestSemanticReasons::test_semantic_verdict_invalid_is_semantic",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[blind_protocol_noncompliant-blind_protocol_noncompliant]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[changes_requested-semantic_rejection]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[rejected-semantic_rejection]",
+        "tests/test_review_failure_classifier.py::TestTaxonomyContract::test_semantic_class_mapping[semantic_verdict_invalid-semantic_verdict_invalid]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 6.0,
+      "size": 11,
+      "test_files": [
+        "tests/test_review_failure_classifier.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directive-waivers/w1/revoke]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/activate]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/approve]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/check]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/deactivate]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/waivers]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_previously_reached_the_service_layer"
+      ],
+      "covered_files": [
+        "src/mac/api.py",
+        "src/mac/directive_models.py",
+        "src/mac/directive_service.py"
+      ],
+      "covered_lines": 172,
+      "keep": "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directive-bindings]",
+      "members": [
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directive-bindings]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directive-waivers/w1/revoke]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/activate]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/approve]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/check]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/deactivate]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives/d1/waivers]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_can_no_longer_author_a_directive[POST-/directives]",
+        "tests/api/test_directive_authoring_authz.py::test_a_write_token_previously_reached_the_service_layer"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.8,
+      "size": 9,
+      "test_files": [
+        "tests/api/test_directive_authoring_authz.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[   ]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[reboot]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[restart]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[retry fetch]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_valid_whitelist_member_returned[clear_cache]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_valid_whitelist_member_returned[escalate]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_valid_whitelist_member_returned[retry_fetch]"
+      ],
+      "covered_files": [
+        "src/mac/harness_recovery.py"
+      ],
+      "covered_lines": 15,
+      "keep": "tests/test_harness_reflex.py::TestChooseRemediation::test_llm_response_case_normalised",
+      "members": [
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_llm_response_case_normalised",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[   ]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[reboot]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[restart]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_unrecognised_llm_output_maps_to_escalate[retry fetch]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_valid_whitelist_member_returned[clear_cache]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_valid_whitelist_member_returned[escalate]",
+        "tests/test_harness_reflex.py::TestChooseRemediation::test_valid_whitelist_member_returned[retry_fetch]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.8,
+      "size": 9,
+      "test_files": [
+        "tests/test_harness_reflex.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_relay_observability.py::test_severity_mapping[0-info]",
+        "tests/test_relay_observability.py::test_severity_mapping[1-info]",
+        "tests/test_relay_observability.py::test_severity_mapping[2-info]",
+        "tests/test_relay_observability.py::test_severity_mapping[3-warning]",
+        "tests/test_relay_observability.py::test_severity_mapping[4-error]",
+        "tests/test_relay_observability.py::test_severity_mapping[5-critical]",
+        "tests/test_relay_observability.py::test_severity_mapping[6-critical]",
+        "tests/test_relay_observability.py::test_unknown_class_uses_generic_name"
+      ],
+      "covered_files": [
+        "src/mac/relay_observability.py"
+      ],
+      "covered_lines": 16,
+      "keep": "tests/test_relay_observability.py::test_process_info_stays_info",
+      "members": [
+        "tests/test_relay_observability.py::test_process_info_stays_info",
+        "tests/test_relay_observability.py::test_severity_mapping[0-info]",
+        "tests/test_relay_observability.py::test_severity_mapping[1-info]",
+        "tests/test_relay_observability.py::test_severity_mapping[2-info]",
+        "tests/test_relay_observability.py::test_severity_mapping[3-warning]",
+        "tests/test_relay_observability.py::test_severity_mapping[4-error]",
+        "tests/test_relay_observability.py::test_severity_mapping[5-critical]",
+        "tests/test_relay_observability.py::test_severity_mapping[6-critical]",
+        "tests/test_relay_observability.py::test_unknown_class_uses_generic_name"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.8,
+      "size": 9,
+      "test_files": [
+        "tests/test_relay_observability.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides0]",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides1]",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides2]",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides3]",
+        "tests/test_changeset_adoption.py::test_content_hash_ignores_label_ordering",
+        "tests/test_changeset_adoption.py::test_content_hash_is_deterministic_for_identical_content",
+        "tests/test_changeset_adoption.py::test_labels_are_sorted_in_binding"
+      ],
+      "covered_files": [
+        "src/mac/changeset_adoption.py"
+      ],
+      "covered_lines": 52,
+      "keep": "tests/test_changeset_adoption.py::test_canonical_excludes_volatile_fields",
+      "members": [
+        "tests/test_changeset_adoption.py::test_canonical_excludes_volatile_fields",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides0]",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides1]",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides2]",
+        "tests/test_changeset_adoption.py::test_content_hash_changes_when_bound_content_changes[field_overrides3]",
+        "tests/test_changeset_adoption.py::test_content_hash_ignores_label_ordering",
+        "tests/test_changeset_adoption.py::test_content_hash_is_deterministic_for_identical_content",
+        "tests/test_changeset_adoption.py::test_labels_are_sorted_in_binding"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.2,
+      "size": 8,
+      "test_files": [
+        "tests/test_changeset_adoption.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_children_titles_extracted",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_ordering_rationale_recorded",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_record_type_is_deployment_learning_project",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_schema_is_plan_learning",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_subject_type_and_id",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_task_id_and_title_included",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_wall_clock_ms_recorded"
+      ],
+      "covered_files": [
+        "src/mac/executor_hub_io.py",
+        "src/mac/executor_memory.py"
+      ],
+      "covered_lines": 28,
+      "keep": "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_children_count_matches_manifest",
+      "members": [
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_children_count_matches_manifest",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_children_titles_extracted",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_ordering_rationale_recorded",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_record_type_is_deployment_learning_project",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_schema_is_plan_learning",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_subject_type_and_id",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_task_id_and_title_included",
+        "tests/test_plan_learning_loop.py::TestBuildPlanLearningRecord::test_wall_clock_ms_recorded"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.2,
+      "size": 8,
+      "test_files": [
+        "tests/test_plan_learning_loop.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_fleet_move.py::test_move_does_not_mutate_original_registry",
+        "tests/test_fleet_move.py::test_move_hub_agent_to_other_fleet",
+        "tests/test_fleet_move.py::test_move_inherits_target_hub_url",
+        "tests/test_fleet_move.py::test_move_preserves_other_source_agents",
+        "tests/test_fleet_move.py::test_move_preserves_target_existing_agents",
+        "tests/test_fleet_move.py::test_move_removes_agent_from_source_fleet",
+        "tests/test_fleet_move.py::test_move_returns_agent_entry"
+      ],
+      "covered_files": [
+        "src/mac/fleet_move.py"
+      ],
+      "covered_lines": 26,
+      "keep": "tests/test_fleet_move.py::test_move_adds_agent_to_target_fleet",
+      "members": [
+        "tests/test_fleet_move.py::test_move_adds_agent_to_target_fleet",
+        "tests/test_fleet_move.py::test_move_does_not_mutate_original_registry",
+        "tests/test_fleet_move.py::test_move_hub_agent_to_other_fleet",
+        "tests/test_fleet_move.py::test_move_inherits_target_hub_url",
+        "tests/test_fleet_move.py::test_move_preserves_other_source_agents",
+        "tests/test_fleet_move.py::test_move_preserves_target_existing_agents",
+        "tests/test_fleet_move.py::test_move_removes_agent_from_source_fleet",
+        "tests/test_fleet_move.py::test_move_returns_agent_entry"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.2,
+      "size": 8,
+      "test_files": [
+        "tests/test_fleet_move.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[escalate\\nextra]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[reboot]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[restart]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[retry fetch]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[undefined]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[{}]"
+      ],
+      "covered_files": [
+        "src/mac/harness_recovery_reflex.py"
+      ],
+      "covered_lines": 10,
+      "keep": "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[   ]",
+      "members": [
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[   ]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[escalate\\nextra]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[reboot]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[restart]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[retry fetch]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[undefined]",
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_unrecognised_llm_output_maps_to_escalate[{}]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.2,
+      "size": 8,
+      "test_files": [
+        "tests/test_harness_recovery_reflex.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Implement the backend slice under src/backend and run pytest tests/backend.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Machine learning pipeline design notes and password reset UX copy.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Public certificate bundle -----BEGIN CERTIFICATE----- lives in deploy/.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Rotate the deploy credential via the secret-reference handle, not inline.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Short ids like ghp_short or AKIASHORT are not vendor-shaped secrets.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[The mutation_wip token bucket allows max_tokens of 2 concurrent mutations.]",
+        "tests/test_work_plan_admission.py::test_preview_locks_repository_and_base_without_creating_work"
+      ],
+      "covered_files": [
+        "src/mac/work_package_models.py",
+        "src/mac/work_plan_admission.py"
+      ],
+      "covered_lines": 885,
+      "keep": "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Follow the AGPL-3.0 license header and keep authorization checks intact.]",
+      "members": [
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Follow the AGPL-3.0 license header and keep authorization checks intact.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Implement the backend slice under src/backend and run pytest tests/backend.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Machine learning pipeline design notes and password reset UX copy.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Public certificate bundle -----BEGIN CERTIFICATE----- lives in deploy/.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Rotate the deploy credential via the secret-reference handle, not inline.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[Short ids like ghp_short or AKIASHORT are not vendor-shaped secrets.]",
+        "tests/test_work_plan_admission.py::test_preview_admits_benign_prose_without_false_positive[The mutation_wip token bucket allows max_tokens of 2 concurrent mutations.]",
+        "tests/test_work_plan_admission.py::test_preview_locks_repository_and_base_without_creating_work"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 4.2,
+      "size": 8,
+      "test_files": [
+        "tests/test_work_plan_admission.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides0]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides1]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides2]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides3]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides4]",
+        "tests/test_changeset_adoption.py::test_verify_detects_digest_tampering"
+      ],
+      "covered_files": [
+        "src/mac/changeset_adoption.py"
+      ],
+      "covered_lines": 85,
+      "keep": "tests/test_changeset_adoption.py::test_attest_adoption_produces_verifiable_attestation",
+      "members": [
+        "tests/test_changeset_adoption.py::test_attest_adoption_produces_verifiable_attestation",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides0]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides1]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides2]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides3]",
+        "tests/test_changeset_adoption.py::test_verify_detects_bound_field_tampering[field_overrides4]",
+        "tests/test_changeset_adoption.py::test_verify_detects_digest_tampering"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_changeset_adoption.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_scope_signals_discriminate.py::test_an_empty_task_is_small",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata0]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata1]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata2]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata3]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata4]"
+      ],
+      "covered_files": [
+        "src/mac/executor_hub_io.py",
+        "src/mac/executor_scope.py"
+      ],
+      "covered_lines": 43,
+      "keep": "tests/test_scope_signals_discriminate.py::test_a_richer_toolchain_does_not_make_a_task_larger",
+      "members": [
+        "tests/test_scope_signals_discriminate.py::test_a_richer_toolchain_does_not_make_a_task_larger",
+        "tests/test_scope_signals_discriminate.py::test_an_empty_task_is_small",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata0]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata1]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata2]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata3]",
+        "tests/test_scope_signals_discriminate.py::test_malformed_contract_metadata_does_not_raise[metadata4]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_scope_signals_discriminate.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_no_side_effects_no_scope_estimate_call",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_preserves_content_field",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_rendered_contains_plan_info",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_returns_id_field",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_returns_plan_records",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_returns_rendered_field"
+      ],
+      "covered_files": [
+        "src/mac/executor_memory.py",
+        "src/mac/executor_scope.py"
+      ],
+      "covered_lines": 54,
+      "keep": "tests/test_scope_estimate.py::test_recall_scope_lessons_deduplicates_by_task_id",
+      "members": [
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_deduplicates_by_task_id",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_no_side_effects_no_scope_estimate_call",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_preserves_content_field",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_rendered_contains_plan_info",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_returns_id_field",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_returns_plan_records",
+        "tests/test_scope_estimate.py::test_recall_scope_lessons_returns_rendered_field"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_scope_estimate.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_harness_recovery_reflex.py::TestObservability::test_observe_called_on_successful_recovery",
+        "tests/test_harness_recovery_reflex.py::TestObservability::test_observe_receives_non_empty_result_string",
+        "tests/test_harness_recovery_reflex.py::TestSuccessfulRecoveryDispatch::test_clear_cache_choice_also_dispatched",
+        "tests/test_harness_recovery_reflex.py::TestSuccessfulRecoveryDispatch::test_fetch_failure_triggers_dispatch_and_returns_recovered",
+        "tests/test_harness_recovery_reflex.py::TestSuccessfulRecoveryDispatch::test_recovery_log_updated_after_successful_dispatch",
+        "tests/test_harness_recovery_reflex.py::test_try_recovery_with_dispatcher_still_reports_dispatch"
+      ],
+      "covered_files": [
+        "src/mac/harness_recovery_reflex.py"
+      ],
+      "covered_lines": 24,
+      "keep": "tests/test_harness_recovery_reflex.py::TestObservability::test_observe_called_exactly_once_per_try_recovery_call",
+      "members": [
+        "tests/test_harness_recovery_reflex.py::TestObservability::test_observe_called_exactly_once_per_try_recovery_call",
+        "tests/test_harness_recovery_reflex.py::TestObservability::test_observe_called_on_successful_recovery",
+        "tests/test_harness_recovery_reflex.py::TestObservability::test_observe_receives_non_empty_result_string",
+        "tests/test_harness_recovery_reflex.py::TestSuccessfulRecoveryDispatch::test_clear_cache_choice_also_dispatched",
+        "tests/test_harness_recovery_reflex.py::TestSuccessfulRecoveryDispatch::test_fetch_failure_triggers_dispatch_and_returns_recovered",
+        "tests/test_harness_recovery_reflex.py::TestSuccessfulRecoveryDispatch::test_recovery_log_updated_after_successful_dispatch",
+        "tests/test_harness_recovery_reflex.py::test_try_recovery_with_dispatcher_still_reports_dispatch"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_harness_recovery_reflex.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_hermes_home_audit.py::test_audit_detects_sh_script_in_bin",
+        "tests/test_hermes_home_audit.py::test_audit_nonexecutable_py_still_included",
+        "tests/test_hermes_home_audit.py::test_audit_script_count_in_summary",
+        "tests/test_hermes_home_audit.py::test_audit_script_entry_has_expected_fields",
+        "tests/test_hermes_home_audit.py::test_audit_script_source_field_reflects_scan_dir",
+        "tests/test_hermes_home_audit.py::test_audit_script_source_hooks"
+      ],
+      "covered_files": [
+        "src/mac/hermes_home_audit.py"
+      ],
+      "covered_lines": 84,
+      "keep": "tests/test_hermes_home_audit.py::test_audit_detects_py_script_in_scripts_dir",
+      "members": [
+        "tests/test_hermes_home_audit.py::test_audit_detects_py_script_in_scripts_dir",
+        "tests/test_hermes_home_audit.py::test_audit_detects_sh_script_in_bin",
+        "tests/test_hermes_home_audit.py::test_audit_nonexecutable_py_still_included",
+        "tests/test_hermes_home_audit.py::test_audit_script_count_in_summary",
+        "tests/test_hermes_home_audit.py::test_audit_script_entry_has_expected_fields",
+        "tests/test_hermes_home_audit.py::test_audit_script_source_field_reflects_scan_dir",
+        "tests/test_hermes_home_audit.py::test_audit_script_source_hooks"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_hermes_home_audit.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[answer]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[investigation]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[question]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[report]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[triage]",
+        "tests/test_report_deliverable.py::test_project_report_keeps_operator_result_contract"
+      ],
+      "covered_files": [
+        "src/mac/models.py",
+        "src/mac/project_repository_service.py",
+        "src/mac/sandbox_bom.py",
+        "src/mac/services.py"
+      ],
+      "covered_lines": 335,
+      "keep": "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[analysis]",
+      "members": [
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[analysis]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[answer]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[investigation]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[question]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[report]",
+        "tests/test_report_deliverable.py::test_project_report_alias_stays_operator_result_with_registered_project[triage]",
+        "tests/test_report_deliverable.py::test_project_report_keeps_operator_result_contract"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_report_deliverable.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_notifier_service.py::TestChannelCRUD::test_configure_channel_disabled",
+        "tests/test_notifier_service.py::TestChannelCRUD::test_configure_channel_upserts_by_name",
+        "tests/test_notifier_service.py::TestChannelCRUD::test_get_channel_by_name",
+        "tests/test_notifier_service.py::TestControlPlaneIntegration::test_channel_target_and_metadata_roundtrip",
+        "tests/test_notifier_service.py::TestControlPlaneIntegration::test_empty_event_types_stored_as_empty_list",
+        "tests/test_notifier_service.py::TestControlPlaneIntegration::test_event_types_stored_sorted"
+      ],
+      "covered_files": [
+        "src/mac/notifier_service.py"
+      ],
+      "covered_lines": 36,
+      "keep": "tests/test_notifier_service.py::TestChannelCRUD::test_configure_and_get_channel",
+      "members": [
+        "tests/test_notifier_service.py::TestChannelCRUD::test_configure_and_get_channel",
+        "tests/test_notifier_service.py::TestChannelCRUD::test_configure_channel_disabled",
+        "tests/test_notifier_service.py::TestChannelCRUD::test_configure_channel_upserts_by_name",
+        "tests/test_notifier_service.py::TestChannelCRUD::test_get_channel_by_name",
+        "tests/test_notifier_service.py::TestControlPlaneIntegration::test_channel_target_and_metadata_roundtrip",
+        "tests/test_notifier_service.py::TestControlPlaneIntegration::test_empty_event_types_stored_as_empty_list",
+        "tests/test_notifier_service.py::TestControlPlaneIntegration::test_event_types_stored_sorted"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_notifier_service.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_canary_count_two",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_preserves_node_id_and_host",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_single_node_is_canary",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_strips_version_whitespace",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_two_nodes_default_canary_count",
+        "tests/test_openclaw_fleet_rollout.py::test_rollout_plan_version_is_stored"
+      ],
+      "covered_files": [
+        "src/mac/openclaw_fleet_rollout.py"
+      ],
+      "covered_lines": 14,
+      "keep": "tests/test_openclaw_fleet_rollout.py::test_build_plan_all_steps_start_as_planned",
+      "members": [
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_all_steps_start_as_planned",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_canary_count_two",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_preserves_node_id_and_host",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_single_node_is_canary",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_strips_version_whitespace",
+        "tests/test_openclaw_fleet_rollout.py::test_build_plan_two_nodes_default_canary_count",
+        "tests/test_openclaw_fleet_rollout.py::test_rollout_plan_version_is_stored"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_openclaw_fleet_rollout.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_could_not_resolve_host",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_git_clone_in_error",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_hub_verification_error_in_reason_text",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_permission_denied_error_text",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_reviewer_not_available_in_error",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_semantic_rejection_in_error_blob"
+      ],
+      "covered_files": [
+        "src/mac/review_failure_classifier.py"
+      ],
+      "covered_lines": 16,
+      "keep": "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_authentication_error_text",
+      "members": [
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_authentication_error_text",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_could_not_resolve_host",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_git_clone_in_error",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_hub_verification_error_in_reason_text",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_permission_denied_error_text",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_reviewer_not_available_in_error",
+        "tests/test_review_failure_classifier.py::TestErrorTextFallback::test_semantic_rejection_in_error_blob"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.6,
+      "size": 7,
+      "test_files": [
+        "tests/test_review_failure_classifier.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_empty_narrative_omits_reflection",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_inventory_agent_fields",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_inventory_only_shape",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_minimal_agent",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_summary_format"
+      ],
+      "covered_files": [
+        "src/mac/agentbus_control.py"
+      ],
+      "covered_lines": 32,
+      "keep": "tests/test_agentbus_control.py::test_agent_reflection_payload_emits_persona_instance_id",
+      "members": [
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_emits_persona_instance_id",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_empty_narrative_omits_reflection",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_inventory_agent_fields",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_inventory_only_shape",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_minimal_agent",
+        "tests/test_agentbus_control.py::test_agent_reflection_payload_summary_format"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_agentbus_control.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[api example.com]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[api.example.com/v1]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[api.example.com:443]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[https://api.example.com]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[user:pw@example.com]"
+      ],
+      "covered_files": [
+        "src/mac/cli.py",
+        "src/mac/dispatch.py",
+        "src/mac/models.py",
+        "src/mac/observability_service.py",
+        "src/mac/sandbox_egress.py"
+      ],
+      "covered_lines": 398,
+      "keep": "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[*.example.com]",
+      "members": [
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[*.example.com]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[api example.com]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[api.example.com/v1]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[api.example.com:443]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[https://api.example.com]",
+        "tests/cli/test_task_egress_cli.py::test_a_malformed_host_is_refused_at_the_cli[user:pw@example.com]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/cli/test_task_egress_cli.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/cli/test_cli_memory.py::test_memory_decay_dry_run_by_default",
+        "tests/cli/test_cli_memory.py::test_memory_decay_limit_flag",
+        "tests/cli/test_cli_memory.py::test_memory_decay_protected_prefixes_preserved",
+        "tests/cli/test_cli_memory.py::test_memory_decay_respects_ttl_days_flag",
+        "tests/cli/test_cli_memory.py::test_memory_decay_returns_expected_schema_fields"
+      ],
+      "covered_files": [
+        "src/mac/cli.py",
+        "src/mac/memory_service.py",
+        "src/mac/services.py"
+      ],
+      "covered_lines": 28,
+      "keep": "tests/cli/test_cli_memory.py::test_memory_decay_apply_flag_sets_dry_run_false",
+      "members": [
+        "tests/cli/test_cli_memory.py::test_memory_decay_apply_flag_sets_dry_run_false",
+        "tests/cli/test_cli_memory.py::test_memory_decay_dry_run_by_default",
+        "tests/cli/test_cli_memory.py::test_memory_decay_limit_flag",
+        "tests/cli/test_cli_memory.py::test_memory_decay_protected_prefixes_preserved",
+        "tests/cli/test_cli_memory.py::test_memory_decay_respects_ttl_days_flag",
+        "tests/cli/test_cli_memory.py::test_memory_decay_returns_expected_schema_fields"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/cli/test_cli_memory.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_creates_file_with_correct_content",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_creates_parent_directory",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_overwrites_existing_file",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_respects_encoding",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_sets_mode_0o600"
+      ],
+      "covered_files": [
+        "src/mac/fleet_deploy.py"
+      ],
+      "covered_lines": 14,
+      "keep": "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_atomicity_no_leftover_tempfile",
+      "members": [
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_atomicity_no_leftover_tempfile",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_creates_file_with_correct_content",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_creates_parent_directory",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_overwrites_existing_file",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_respects_encoding",
+        "tests/test_fleet_deploy_edges.py::test_write_owner_only_file_sets_mode_0o600"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_fleet_deploy_edges.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_fleet_move.py::test_execute_live_includes_db_reconcile_note",
+        "tests/test_fleet_move.py::test_execute_live_includes_next_steps_with_redeploy",
+        "tests/test_fleet_move.py::test_execute_live_preserves_source_remaining_agents",
+        "tests/test_fleet_move.py::test_execute_live_writes_registry",
+        "tests/test_fleet_move.py::test_execute_no_redeploy_emits_command_only"
+      ],
+      "covered_files": [
+        "src/mac/fleet_move.py"
+      ],
+      "covered_lines": 71,
+      "keep": "tests/test_fleet_move.py::test_execute_live_creates_backup",
+      "members": [
+        "tests/test_fleet_move.py::test_execute_live_creates_backup",
+        "tests/test_fleet_move.py::test_execute_live_includes_db_reconcile_note",
+        "tests/test_fleet_move.py::test_execute_live_includes_next_steps_with_redeploy",
+        "tests/test_fleet_move.py::test_execute_live_preserves_source_remaining_agents",
+        "tests/test_fleet_move.py::test_execute_live_writes_registry",
+        "tests/test_fleet_move.py::test_execute_no_redeploy_emits_command_only"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_fleet_move.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_llm_response_with_leading_trailing_whitespace",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_returned_value_is_string_not_enum_instance",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_whitelist_member_returned_as_is[clear_cache]",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_whitelist_member_returned_as_is[escalate]",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_whitelist_member_returned_as_is[retry_fetch]"
+      ],
+      "covered_files": [
+        "src/mac/harness_recovery_reflex.py"
+      ],
+      "covered_lines": 10,
+      "keep": "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_whitelist_match_is_case_insensitive_via_lower",
+      "members": [
+        "tests/test_harness_recovery_reflex.py::TestUnrecognisedLLMResponse::test_whitelist_match_is_case_insensitive_via_lower",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_llm_response_with_leading_trailing_whitespace",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_returned_value_is_string_not_enum_instance",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_whitelist_member_returned_as_is[clear_cache]",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_whitelist_member_returned_as_is[escalate]",
+        "tests/test_harness_recovery_reflex.py::TestValidLLMResponse::test_whitelist_member_returned_as_is[retry_fetch]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_harness_recovery_reflex.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[answer]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[investigation]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[question]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[report]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[triage]"
+      ],
+      "covered_files": [
+        "src/mac/models.py",
+        "src/mac/project_repository_service.py",
+        "src/mac/sandbox_bom.py",
+        "src/mac/services.py"
+      ],
+      "covered_lines": 342,
+      "keep": "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[analysis]",
+      "members": [
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[analysis]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[answer]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[investigation]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[question]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[report]",
+        "tests/test_report_deliverable.py::test_project_report_alias_not_upgraded_via_metadata_execution_contract[triage]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_report_deliverable.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_object_selection.py::test_a_record_missing_the_attribute_does_not_crash",
+        "tests/test_object_selection.py::test_equals_selects_a_state",
+        "tests/test_object_selection.py::test_not_equals_excludes_a_state",
+        "tests/test_object_selection.py::test_not_equals_includes_records_that_lack_the_attribute",
+        "tests/test_object_selection.py::test_work_packages_select_on_state"
+      ],
+      "covered_files": [
+        "src/mac/object_selection.py",
+        "src/mac/task_selection.py"
+      ],
+      "covered_lines": 51,
+      "keep": "tests/test_object_selection.py::test_a_comma_list_is_any_of",
+      "members": [
+        "tests/test_object_selection.py::test_a_comma_list_is_any_of",
+        "tests/test_object_selection.py::test_a_record_missing_the_attribute_does_not_crash",
+        "tests/test_object_selection.py::test_equals_selects_a_state",
+        "tests/test_object_selection.py::test_not_equals_excludes_a_state",
+        "tests/test_object_selection.py::test_not_equals_includes_records_that_lack_the_attribute",
+        "tests/test_object_selection.py::test_work_packages_select_on_state"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_object_selection.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order1]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order2]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order3]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order4]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order5]"
+      ],
+      "covered_files": [
+        "src/mac/repository_hygiene.py",
+        "src/mac/services.py",
+        "src/mac/task_dependencies.py",
+        "src/mac/task_flow_analytics.py",
+        "src/mac/task_transition_service.py"
+      ],
+      "covered_lines": 885,
+      "keep": "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order0]",
+      "members": [
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order0]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order1]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order2]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order3]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order4]",
+        "tests/test_planning_phase.py::TestParentGatesOnChildren::test_all_settled_join_is_confluent_across_terminal_event_order[event_order5]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_planning_phase.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_sandbox_rollout.py::test_an_agent_scheduled_for_a_different_image_is_still_queued",
+        "tests/test_sandbox_rollout.py::test_each_rollout_is_a_sync_task_pinned_to_its_agent",
+        "tests/test_sandbox_rollout.py::test_every_agent_gets_its_own_barrier_task",
+        "tests/test_sandbox_rollout.py::test_the_description_tells_the_worker_to_fail_rather_than_fall_back",
+        "tests/test_sandbox_rollout.py::test_the_task_records_the_bom_it_is_installing"
+      ],
+      "covered_files": [
+        "src/mac/sandbox_rollout.py"
+      ],
+      "covered_lines": 46,
+      "keep": "tests/test_sandbox_rollout.py::test_a_busy_agent_is_still_rolled",
+      "members": [
+        "tests/test_sandbox_rollout.py::test_a_busy_agent_is_still_rolled",
+        "tests/test_sandbox_rollout.py::test_an_agent_scheduled_for_a_different_image_is_still_queued",
+        "tests/test_sandbox_rollout.py::test_each_rollout_is_a_sync_task_pinned_to_its_agent",
+        "tests/test_sandbox_rollout.py::test_every_agent_gets_its_own_barrier_task",
+        "tests/test_sandbox_rollout.py::test_the_description_tells_the_worker_to_fail_rather_than_fall_back",
+        "tests/test_sandbox_rollout.py::test_the_task_records_the_bom_it_is_installing"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_sandbox_rollout.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[empty]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[readme]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[skills_prefix_only]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[src_module]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[test_module]"
+      ],
+      "covered_files": [
+        "src/mac/skill_auto_repair.py"
+      ],
+      "covered_lines": 36,
+      "keep": "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[docs_guide]",
+      "members": [
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[docs_guide]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[empty]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[readme]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[skills_prefix_only]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[src_module]",
+        "tests/test_skill_auto_repair.py::test_refuses_path_not_allowlisted[test_module]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_skill_auto_repair.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_work_package_models.py::test_compile_normalizes_materialization_contract",
+        "tests/test_work_package_models.py::test_input_lineage_is_transitive_across_three_hops",
+        "tests/test_work_package_models.py::test_materialization_identity_is_package_scoped",
+        "tests/test_work_package_models.py::test_node_contract_and_input_digests_support_safe_carry_forward",
+        "tests/test_work_package_models.py::test_semantic_change_changes_digest"
+      ],
+      "covered_files": [
+        "src/mac/work_package_models.py"
+      ],
+      "covered_lines": 769,
+      "keep": "tests/test_work_package_models.py::test_compile_is_canonical_and_independent_of_input_order",
+      "members": [
+        "tests/test_work_package_models.py::test_compile_is_canonical_and_independent_of_input_order",
+        "tests/test_work_package_models.py::test_compile_normalizes_materialization_contract",
+        "tests/test_work_package_models.py::test_input_lineage_is_transitive_across_three_hops",
+        "tests/test_work_package_models.py::test_materialization_identity_is_package_scoped",
+        "tests/test_work_package_models.py::test_node_contract_and_input_digests_support_safe_carry_forward",
+        "tests/test_work_package_models.py::test_semantic_change_changes_digest"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_work_package_models.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad:name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad?name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad[name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad^name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad~name]"
+      ],
+      "covered_files": [
+        "src/mac/work_package_models.py"
+      ],
+      "covered_lines": 36,
+      "keep": "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad*name]",
+      "members": [
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad*name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad:name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad?name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad[name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad^name]",
+        "tests/test_work_package_models.py::test_git_refs_are_strictly_validated[refs/heads/bad~name]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_work_package_models.py"
+      ]
+    },
+    {
+      "candidates": [
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload0]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload1]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload2]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload3]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload4]"
+      ],
+      "covered_files": [
+        "src/mac/worker.py"
+      ],
+      "covered_lines": 15,
+      "keep": "tests/test_worker_openshell_policy_sync.py::test_agent_with_no_assignment_keeps_its_policy",
+      "members": [
+        "tests/test_worker_openshell_policy_sync.py::test_agent_with_no_assignment_keeps_its_policy",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload0]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload1]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload2]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload3]",
+        "tests/test_worker_openshell_policy_sync.py::test_malformed_assignment_never_installs[payload4]"
+      ],
+      "same_test_file": true,
+      "seconds_saved_if_retired": 3.0,
+      "size": 6,
+      "test_files": [
+        "tests/test_worker_openshell_policy_sync.py"
+      ]
+    }
+  ]
+}

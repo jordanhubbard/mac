@@ -1,0 +1,2442 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/latest/adr/0023-one-skill-source-many-harness-plugins/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>ADR 0023 - One skill source, thin plugins per coding harness - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#adr-0023-one-skill-source-thin-plugins-per-coding-harness" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ADR 0023 - One skill source, thin plugins per coding harness
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/01-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/02-getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/03-advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/04-ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/05-developer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python-baseline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Baseline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans and Task DAGs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repository-cicd-monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mac-already-knows-the-harnesses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mac already knows the harnesses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-just-add-it-to-claudemd-is-not-the-answer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why "just add it to CLAUDE.md" is not the answer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-portable-plugin-format-now-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A portable plugin format now exists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cli-sessions-are-already-on-the-bus-and-still-go-silent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI sessions are already on the bus, and still go silent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-one-canonical-source-agent-plugins-packaging-per-harness-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. One canonical source, Agent Plugins packaging, per-harness adapters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-rules-that-must-be-obeyed-are-not-the-same-as-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Rules that must be obeyed are not the same as reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-the-installer-targets-the-users-world-never-this-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The installer targets the user's world, never this repository
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-universal-where-possible-honest-where-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Universal where possible, honest where not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-the-plugin-is-versioned-and-reports-what-it-delivered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The plugin is versioned and reports what it delivered
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-skills-come-under-the-same-guards-as-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Skills come under the same guards as docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-one-executable-the-plugin-does-not-install-the-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. One executable; the plugin does not install the CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-the-installer-verb-is-mac-admin-plugin-not-mac-agent-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The installer verb is mac admin plugin, not mac agent install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#9-every-agent-broadcasts-what-it-is-doing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Every agent broadcasts what it is doing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#10-only-the-hub-nudges-a-stalled-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Only the hub nudges a stalled session
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0023-one-skill-source-many-harness-plugins.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="adr-0023-one-skill-source-thin-plugins-per-coding-harness">ADR 0023 - One skill source, thin plugins per coding harness<a class="headerlink" href="#adr-0023-one-skill-source-thin-plugins-per-coding-harness" title="Permanent link">&para;</a></h1>
+<ul>
+<li>Status: <strong>Accepted</strong></li>
+<li>Date: 2026-08-20</li>
+<li>Amended: 2026-08-25 — Agent Plugins 1.0 is the portable package; the
+  human CLI and the agent plugin share one <code>mac</code> executable; every agent
+  broadcasts what it is doing; only the hub nudges a stalled session</li>
+<li>Decision owner: MAC fleet owner</li>
+<li>Related: <a href="../0013-authoritative-hub-allocator/">ADR 0013</a> — the hub is
+  the one authority, so it is the one nudger</li>
+<li>Related: <a href="../0016-agent-initiated-review/">ADR 0016</a> — agents decide
+  what a task needs</li>
+<li>Related: <a href="../0020-a-running-task-is-not-editable/">ADR 0020</a> — a running
+  task is not editable</li>
+<li>Related: <a href="../0022-a-gate-returns-a-named-decision-not-a-boolean/">ADR 0022</a>
+  — a gate returns a named decision</li>
+<li>Related: <a href="../0026-first-class-operations-emit-bus-events/">ADR 0026</a> —
+  the hub emits object lifecycle; this ADR obliges <em>agents</em> to announce
+  the work they are in the middle of</li>
+<li>Related: <a href="../0028-installation-is-a-package-not-a-push/">ADR 0028</a> —
+  humans install <code>mac</code> as a package; the plugin must not become a second
+  installer</li>
+</ul>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p><code>skills/</code> holds five skills — <code>mac-cli</code>, <code>agentbus-context</code>,
+<code>setup-mac-fleet</code>, <code>record-user-directed-work</code>,
+<code>mac-agent-terminal-timeout</code> — written as operational guidance for whoever is
+driving the fleet.</p>
+<p><strong>Nothing delivers them to a coding harness.</strong> They are files in a repository.
+A session reads one if it goes looking, and otherwise does not.</p>
+<p>That is not a hypothetical cost. On 2026-08-20 an operator had to ask, by
+hand, for each of: triaging held tasks against what had actually landed,
+checking whether a task's work was already merged before reopening it, and
+looking for an existing PR before starting a task. All three are already
+written down. <code>skills/mac-cli/SKILL.md</code> says, in the section added that same
+morning:</p>
+<blockquote>
+<p><strong>Check for an existing PR before working a task.</strong>
+<code>gh pr list --search "&lt;task_id&gt;"</code></p>
+</blockquote>
+<p>The session that wrote that paragraph then reopened a task whose work had
+already merged, and an agent immediately began re-implementing a merged
+module. Writing guidance down and delivering it are different problems, and
+only the first is solved.</p>
+<h3 id="mac-already-knows-the-harnesses">mac already knows the harnesses<a class="headerlink" href="#mac-already-knows-the-harnesses" title="Permanent link">&para;</a></h3>
+<p><code>coding_agent.AGENT_PRIORITY</code> routes work to five of them —
+<code>opencode</code>, <code>pi</code>, <code>claude</code>, <code>codex</code>, <code>cursor</code> — and <code>coding_agent.py</code> already
+handles their credential and config locations: <code>~/.claude</code>, <code>~/.codex/auth</code>,
+<code>~/.codex/config</code>, <code>~/.cursor</code>, <code>~/.cursor/mcp</code>, <code>~/.config/opencode</code>.</p>
+<p>So the fleet already knows which harnesses exist and where each keeps its
+configuration. What it does not do is put the fleet's own operating rules
+inside them.</p>
+<h3 id="why-just-add-it-to-claudemd-is-not-the-answer">Why "just add it to CLAUDE.md" is not the answer<a class="headerlink" href="#why-just-add-it-to-claudemd-is-not-the-answer" title="Permanent link">&para;</a></h3>
+<p>CLAUDE.md is one harness's convention, it is repository-scoped, and it is
+already long. The rules that matter here are not repository facts — they are
+<em>fleet</em> facts: claim before you work, triage against branch head first, a task
+id in a PR body is not evidence the work landed. They apply to any harness
+pointed at a mac-managed project, and several apply outside a repository
+entirely.</p>
+<h3 id="a-portable-plugin-format-now-exists">A portable plugin format now exists<a class="headerlink" href="#a-portable-plugin-format-now-exists" title="Permanent link">&para;</a></h3>
+<p>As of 2026-08 the vendor-neutral <strong>Agent Plugins 1.0</strong> package is the
+closest thing to a universal plugin for coding CLIs: a directory with
+<code>plugin.json</code>, optional Agent Skills under <code>skills/*/SKILL.md</code>, and
+optional MCP servers in <code>mcp.json</code>. Cursor and Codex are listed as
+compatible clients. Claude Code keeps its own marketplace/plugin shape
+but already understands skills, MCP, and hooks. OpenCode searches
+Claude-compatible skill locations and <code>.agents/skills</code>, so a standard
+<code>SKILL.md</code> is almost free there.</p>
+<p>The standard does <strong>not</strong> specify installation, package managers, or
+install-time shell. That is intentional. A portable plugin whose
+install step is "run this script as the user" is a malware vector with
+a schema. The CLI the human types, and the plugin the agent loads, must
+therefore be two <em>views of one executable</em>, not a plugin that writes
+binaries onto the machine.</p>
+<p><code>mac admin mcp serve</code> already exists. It is JSON-RPC 2.0 over stdio,
+four ledger tools (<code>mac_task_show</code>, <code>mac_task_list</code>, <code>mac_task_ready</code>,
+<code>mac_task_create</code>), and the same <code>RemoteDispatch</code> seam the CLI uses.
+The plugin must launch <strong>that</strong> server. A second MCP implementation
+inside the plugin is how the ledger and the agent silently disagree
+about one query parameter — the class of defect that produced the MCP
+server in the first place.</p>
+<p>What the plugin still does not do: live in the harnesses, announce
+work, or get a stuck session moving.</p>
+<h3 id="cli-sessions-are-already-on-the-bus-and-still-go-silent">CLI sessions are already on the bus, and still go silent<a class="headerlink" href="#cli-sessions-are-already-on-the-bus-and-still-go-silent" title="Permanent link">&para;</a></h3>
+<p>AgentBus is broadcast as well as addressed. The closed vocabulary in
+<code>src/mac/agentbus_broadcast.py</code> already has <code>task.claimed</code>,
+<code>task.progress</code>, <code>git.worktree_added</code>, <code>git.pushed</code>, <code>git.pr_opened</code>,
+<code>git.merged</code>, <code>git.canonical_advanced</code>. <code>skills/agentbus-context/SKILL.md</code>
+tells a session to read that feed before it starts work. Registered CLI
+sessions — this kind of Cursor or Codex conversation included — are
+agents on that bus.</p>
+<p>They still fail in two directions that this ADR has to name:</p>
+<ol>
+<li><strong>They do not reliably say what they are doing.</strong> ADR 0026 measured
+   an operator session that spent a working hour re-running
+   <code>mac task stats</code> because nothing announced the eleven tasks filed
+   and claimed in that hour. A peer cannot avoid colliding with work
+   it cannot see.</li>
+<li><strong>When they stop because they do not know what to do next, everyone
+   who can see the silence is tempted to help.</strong> Review-tick history
+   already has the shape of that failure: a non-blocking nudge that
+   every replica would send becomes a storm, so the review path capped
+   <em>delivered</em> nudges and put them on one tick. Stall recovery for
+   coding sessions needs the same single sender, or the bus becomes a
+   pile-on.</li>
+</ol>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<h3 id="1-one-canonical-source-agent-plugins-packaging-per-harness-adapters">1. One canonical source, Agent Plugins packaging, per-harness adapters<a class="headerlink" href="#1-one-canonical-source-agent-plugins-packaging-per-harness-adapters" title="Permanent link">&para;</a></h3>
+<p><code>skills/</code> stays the single source of truth. The portable package is
+<strong>Agent Plugins 1.0</strong>: <code>plugin.json</code>, <code>skills/</code> copied from that source,
+<code>mcp.json</code> launching <code>mac admin mcp serve</code> (plugin-relative or
+<code>${PLUGIN_ROOT}</code>, not a second binary). Each harness gets a thin adapter
+that <em>points at</em> that package:</p>
+<table>
+<thead>
+<tr>
+<th>Harness</th>
+<th>Delivery surface</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>claude</td>
+<td>same package, plus the small Claude marketplace/plugin shim Claude actually loads</td>
+</tr>
+<tr>
+<td>codex</td>
+<td>Agent Plugins native</td>
+</tr>
+<tr>
+<td>cursor</td>
+<td>Agent Plugins native; Cursor-only extras (rules, hooks, variables) only when the portable package cannot express them</td>
+</tr>
+<tr>
+<td>opencode</td>
+<td>the same <code>SKILL.md</code> via <code>.agents/skills</code> (and the Claude-compatible locations OpenCode already searches) plus MCP</td>
+</tr>
+<tr>
+<td>pi</td>
+<td>its documented instruction surface</td>
+</tr>
+</tbody>
+</table>
+<p>Adapters render; they do not author. A rule that exists in one harness
+and not another is a bug, and a per-harness edit is how skills silently
+fork.</p>
+<p>Do not maintain three plugins. Claude is a shim around the canonical
+package, not a fork of the skills.</p>
+<h3 id="2-rules-that-must-be-obeyed-are-not-the-same-as-reference">2. Rules that must be obeyed are not the same as reference<a class="headerlink" href="#2-rules-that-must-be-obeyed-are-not-the-same-as-reference" title="Permanent link">&para;</a></h3>
+<p>Two kinds of content live in <code>skills/</code> today and want different treatment.</p>
+<p><em>Reference</em> — how the CLI is shaped, which verbs mean something unexpected —
+is read on demand and can stay documentation. MCP tools and the skill
+text that teaches when to call them are reference until they are not.</p>
+<p><em>Obligations</em> — claim before working, triage against branch head, never
+close on a mention, <strong>broadcast what you are doing</strong>, <strong>do not nudge a
+silent peer</strong> — must be delivered whether or not the session goes
+looking. That is the distinction that failed on 2026-08-20: the
+reference was consulted, the obligation was not, because nothing
+distinguished them.</p>
+<p>Obligations are marked as such in the source and rendered into whatever
+mechanism the harness offers for always-on instruction.</p>
+<h3 id="3-the-installer-targets-the-users-world-never-this-repository">3. The installer targets the user's world, never this repository<a class="headerlink" href="#3-the-installer-targets-the-users-world-never-this-repository" title="Permanent link">&para;</a></h3>
+<p>Propagation is the entire point, so the install target is a first-class
+choice, not an implicit one:</p>
+<ul>
+<li><strong>global</strong> — the user's own harness configuration (<code>~/.claude</code>,
+  <code>~/.config/opencode</code>, <code>~/.codex</code>, <code>~/.cursor</code>), applying to every repository
+  they work in;</li>
+<li><strong>repo-local</strong> — the repository the user is standing in when they install,
+  for rules that should travel with one project;</li>
+<li><strong>and explicitly not this repository.</strong> mac already contains <code>skills/</code>;
+  rendering them back into their own source is a no-op that would make the
+  source and the rendered copy two things that can disagree.</li>
+</ul>
+<p>An earlier draft of this ADR said adapters "render into <code>.claude/</code> or
+<code>.cursor/</code>" without saying whose. That reads as the source repository, which
+is exactly the case that must not happen and the only one with no value.</p>
+<p>The installer asks, or takes an explicit flag. It does not guess: writing into
+a working tree the user did not nominate is the behaviour most likely to make
+someone uninstall it.</p>
+<h3 id="4-universal-where-possible-honest-where-not">4. Universal where possible, honest where not<a class="headerlink" href="#4-universal-where-possible-honest-where-not" title="Permanent link">&para;</a></h3>
+<p>The harnesses genuinely differ, and pretending otherwise produces a lowest
+common denominator that serves none of them. The rule is: one source, one
+package, per-harness adapters that may use harness-specific mechanisms —
+and a test asserting every harness receives every obligation.</p>
+<p>Agent Plugins is deliberately modest (skills + MCP, not every vendor's
+hooks, subagents, and rules). Use it for the portable core. Use a
+harness-specific mechanism when that is how an <em>obligation</em> actually
+reaches the model. Do not invent a fourth packaging format to paper
+over a vendor gap.</p>
+<h3 id="5-the-plugin-is-versioned-and-reports-what-it-delivered">5. The plugin is versioned and reports what it delivered<a class="headerlink" href="#5-the-plugin-is-versioned-and-reports-what-it-delivered" title="Permanent link">&para;</a></h3>
+<p>A harness carrying stale rules is worse than one carrying none, because the
+operator believes the rules are in force. The rendered artifact records the
+source revision, and <code>mac</code> can report which harness on which host has which
+version.</p>
+<p><code>mac admin plugin status</code> is that report. Stale is a named state, not a
+guess from mtime.</p>
+<h3 id="6-skills-come-under-the-same-guards-as-docs">6. Skills come under the same guards as docs<a class="headerlink" href="#6-skills-come-under-the-same-guards-as-docs" title="Permanent link">&para;</a></h3>
+<p>Auditing the five skills on 2026-08-20 found them mechanically clean — every
+<code>src/mac/...</code> path and every <code>MAC_*</code> variable they reference still resolves —
+and structurally unguarded:</p>
+<table>
+<thead>
+<tr>
+<th>skill</th>
+<th>last touched</th>
+<th>commits to <code>src/mac</code> since</th>
+<th>test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mac-agent-terminal-timeout</code></td>
+<td>2026-07-13</td>
+<td>468</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>setup-mac-fleet</code></td>
+<td>2026-07-25</td>
+<td>330</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td><code>record-user-directed-work</code></td>
+<td>2026-08-11</td>
+<td>106</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td><code>agentbus-context</code></td>
+<td>2026-08-19</td>
+<td>5</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>mac-cli</code></td>
+<td>2026-08-19</td>
+<td>3</td>
+<td>partial</td>
+</tr>
+</tbody>
+</table>
+<p><code>skills/</code> is also absent from the documentation inventory, so it sits outside
+the generated-artifact and drift machinery that keeps <code>docs/</code> honest. The only
+guard that reaches it is the operator-identity check.</p>
+<p>Mechanical checks cannot catch the rot that matters: advice still valid in
+syntax and no longer true in fact. Two skills have neither a test nor a reader,
+and <code>setup-mac-fleet</code> — 330 commits behind — is the one that onboards a new
+fleet, so its rot costs the most.</p>
+<p>Publishing them makes this urgent rather than untidy. An unread skill that is
+wrong is a document nobody follows; a <em>published</em> skill that is wrong is an
+instruction every harness obeys. So skills enter the documentation inventory
+and the drift guards as part of this work, not after it.</p>
+<h3 id="7-one-executable-the-plugin-does-not-install-the-cli">7. One executable; the plugin does not install the CLI<a class="headerlink" href="#7-one-executable-the-plugin-does-not-install-the-cli" title="Permanent link">&para;</a></h3>
+<p>Humans get <code>mac</code> from the ordinary package path (wheel / <code>uv tool</code> /
+Homebrew once ADR 0028 has an artifact). Agents get the same executable
+from PATH, or plugin-relative, launched as:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac admin mcp serve</span>
+</code></pre></div>
+<p>The plugin's <code>mcp.json</code> names that command. It does not vendor a second
+<code>mac</code> and it does not run a postinstall that writes one.</p>
+<p>Two installs, one program:</p>
+<ul>
+<li><strong>human</strong> — <code>mac</code> on PATH, for operators and for any hook the harness
+  will exec</li>
+<li><strong>agent</strong> — Agent Plugins (or the Claude shim) pointing at that same
+  binary for MCP and at <code>skills/</code> for obligations</li>
+</ul>
+<p>The installer owns the ugly per-client wiring. It is idempotent, prefers
+a symlink or a pointer at one copy of the plugin over copying it four
+times, and can uninstall what it installed.</p>
+<h3 id="8-the-installer-verb-is-mac-admin-plugin-not-mac-agent-install">8. The installer verb is <code>mac admin plugin</code>, not <code>mac agent install</code><a class="headerlink" href="#8-the-installer-verb-is-mac-admin-plugin-not-mac-agent-install" title="Permanent link">&para;</a></h3>
+<p>The design conversation used <code>mytool agent install</code> because that tool
+had no <code>agent</code> object. mac already does. <code>mac agent</code> is the fleet
+worker: register, list, hold, resume, heartbeat. <code>mac agent install</code>
+would read as "install a fleet agent", which is onboarding, and would
+collide with that object for as long as both exist.</p>
+<p>So the verbs are:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin plugin install</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac admin plugin status</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">mac admin plugin uninstall</span>
+</code></pre></div>
+<p>They detect which of Claude, Codex, Cursor, OpenCode (and Pi, when it
+still has a surface) are present, and they wire those clients to the
+canonical package. They do not install <code>mac</code> itself; ADR 0028 is that
+job.</p>
+<h3 id="9-every-agent-broadcasts-what-it-is-doing">9. Every agent broadcasts what it is doing<a class="headerlink" href="#9-every-agent-broadcasts-what-it-is-doing" title="Permanent link">&para;</a></h3>
+<p>A registered agent — fleet worker or CLI session — announces the work
+it has taken and the git it is doing, on the existing broadcast
+vocabulary, at the natural checkpoints: claim, worktree, push, PR,
+merge, trunk moved, progress that a peer could collide with.</p>
+<p>Silence is how the hub will later decide the session is stuck. A
+working session that never broadcasts therefore <em>looks</em> stuck. Heartbeat
+is liveness, not progress: a held or idle session may heartbeat without
+claiming it is making headway.</p>
+<p>Do not add a firehose "still thinking" event. Broadcasts are already
+rate-limited and coalesced because <code>action_events</code> reached 10.4 million
+rows and wedged the hub. Progress is an announcement, not a cursor blink.</p>
+<p>If a session <em>knows</em> it is blocked on what to do next, it addresses the
+hub. It does not broadcast a plea. A broadcast plea is an invitation
+for every listener to answer, which is the storm §10 exists to prevent.</p>
+<h3 id="10-only-the-hub-nudges-a-stalled-session">10. Only the hub nudges a stalled session<a class="headerlink" href="#10-only-the-hub-nudges-a-stalled-session" title="Permanent link">&para;</a></h3>
+<p>When a registered session has a claimed task, or is otherwise expected
+to be working, and it has gone silent on progress — or it has addressed
+the hub to say it is stuck — <strong>the hub control plane is the only sender
+of a stall nudge.</strong></p>
+<p>The nudge is one addressed AgentBus inbox message to that agent: the
+next concrete step (ready work it can claim, the obligation it is
+missing, the broadcast it did not read). It is not a fleet-wide
+broadcast, and it is not a peer-to-peer "get on with it".</p>
+<p>One nudger, on purpose:</p>
+<ul>
+<li>Peer agents that observe the silence may read it, may rebase, may
+  avoid the same files. They must not address a stall nudge. The
+  existing bus convention already says you do not answer a question
+  until addressed by name; stall recovery is stricter: you do not
+  <em>ask</em> either.</li>
+<li>Replicas of the hub do not each send one. The sender is the
+  designated hub steward — the same single-tick role review already
+  uses — not "any process that can see the bus".</li>
+<li>Waiting on a gate, a human, CI, or a lease is not a stall. Those
+  have their own events. Nudging a session that is legitimately
+  blocked is noise that trains everyone to ignore nudges.</li>
+<li>Cap and cooldown, the same shape as review's delivered-nudge cap.
+  A wedged session that cannot parse the nudge must not be hammered
+  until the cap is a denial-of-service. After the cap, the hub records
+  that the session is stuck and stops; it does not keep shouting.</li>
+</ul>
+<p>How the session <em>hears</em> the nudge is a delivery-channel problem
+(harness hooks injecting inbox text at a turn boundary; not tmux,
+not a prompt that the model start <code>agentbus wait</code>). This ADR names
+who is allowed to send. The hook layer is a companion decision; it
+does not change the single-sender rule.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Implemented 2026-08-25: <code>mac admin plugin install|status|uninstall</code>
+  writes one Agent Plugins package under <code>$MAC_HOME/plugin</code> and wires
+  detected harnesses; <code>ControlPlane.tick</code> is the only stall nudger
+  (<code>mac.session_nudge</code>). Heartbeat is not progress. How a session hears
+  the nudge is <a href="../0032-cli-session-hooks-not-tmux/">ADR 0032</a>.</li>
+<li>Guidance stops depending on a session choosing to read it.</li>
+<li>A new rule is written once and reaches every harness as one plugin
+  plus thin shims, not five authored copies.</li>
+<li>Five more delivery surfaces to keep working, each able to break
+  independently. The versioned-and-reported requirement exists because that
+  breakage is otherwise silent.</li>
+<li>Rendering into a repository's <code>.claude/</code> or <code>.cursor/</code> means the fleet writes
+  files into working trees. That must not collide with a human's own
+  configuration, and the boundary needs stating before this is built.</li>
+<li>Coding agents talk to the ledger through the MCP server the CLI
+  already has, so the plugin cannot drift from <code>mac task</code>.</li>
+<li>The bus becomes the place a session looks to see who is in the same
+  tree, instead of polling <code>mac task stats</code>.</li>
+<li>Stall recovery has a single sender. The cost is that a dead hub
+  cannot nudge; the alternative is a storm, which we have already
+  paid for on the review path.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<p><strong>Keep skills as documentation and rely on operators to read them.</strong> This is
+the status quo, and today is the evidence against it: the guidance existed,
+was current, was written that morning by the same session that then violated
+it.</p>
+<p><strong>Author separately per harness.</strong> Rejected: five copies of a rule is five
+places to update and four places to forget. The skills would drift within
+weeks, and the drift would be invisible until an agent behaved differently on
+one harness.</p>
+<p><strong>One universal format only, no harness-specific mechanisms.</strong> Rejected as
+the wrong kind of purity. If a harness offers always-on instruction, an
+obligation belongs there; refusing to use it to keep the adapters symmetric
+would discard the mechanism that makes obligations work.</p>
+<p><strong>Let the plugin's install step install <code>mac</code>.</strong> Rejected by the Agent
+Plugins spec (it does not standardize install-time scripting) and by
+ADR 0028 (installation is a verified package, not a script that writes
+binaries). The human CLI and the agent plugin share one executable
+installed the ordinary way.</p>
+<p><strong>Name the installer <code>mac agent install</code>.</strong> Rejected: <code>mac agent</code> is
+already the fleet-worker object. The ChatGPT outline used that argv
+because its example tool had no such object. mac does.</p>
+<p><strong>Peer agents nudge a silent peer.</strong> Rejected: that is a nudge storm
+with extra steps. The review path already had to cap delivered nudges
+and put them on one tick for the same reason. Observation stays
+broadcast; recovery stays a single addressed send from the hub.</p>
+<p><strong>Add a high-frequency <code>session.thinking</code> broadcast so the hub never
+mistakes work for stall.</strong> Rejected: volume is how the bus dies
+(<code>action_events</code> 10.4M rows). Progress at checkpoints is enough;
+heartbeat covers liveness; a session that knows it is stuck addresses
+the hub rather than blinking at everyone.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
