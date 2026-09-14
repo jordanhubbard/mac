@@ -13,9 +13,11 @@ fail-closed precheck. They never spawn OpenShell.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -1055,14 +1057,13 @@ def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(monkeypatch,
 
     def execute_postcheck(args, *, timeout):
         del timeout
-        script = args[-1]
+        assert all("\n" not in arg and "\r" not in arg for arg in args)
+        assert args[-5:-2] == ["/opt/mac-venv/bin/python", "-I", "-c"]
+        script = base64.b64decode(args[-1]).decode("utf-8")
         assert script.index("observed_git_control") < script.index("trusted_git status")
         assert "git -C" not in script
         completed = subprocess.run(
-            ["/bin/bash", "-c", script],
-            text=True,
-            capture_output=True,
-            check=False,
+            [sys.executable, *args[-4:]], text=True, capture_output=True, check=False
         )
         return completed.returncode == 0, (completed.stderr or completed.stdout).strip()
 
@@ -1077,6 +1078,82 @@ def test_read_only_postcheck_rejects_core_worktree_clean_tree_spoof(monkeypatch,
     )
 
     assert "Git control metadata changed" in violation
+
+
+def test_read_only_postcheck_transport_accepts_clean_repository(monkeypatch, tmp_path):
+    workspace, repo, task = _exact_read_only_report_workspace(tmp_path)
+    expected_control = te._read_only_git_control_digest(repo)
+    monkeypatch.setattr(te, "_sandbox_path_for_workspace_child", lambda *_args: str(repo))
+
+    def openshell_compatible_step(args, *, timeout):
+        del timeout
+        assert all("\n" not in arg and "\r" not in arg for arg in args)
+        completed = subprocess.run(
+            [sys.executable, *args[-4:]], text=True, capture_output=True, check=False
+        )
+        return completed.returncode == 0, (completed.stderr or completed.stdout).strip()
+
+    monkeypatch.setattr(te, "_sandbox_step", openshell_compatible_step)
+
+    assert (
+        te._sandbox_read_only_repository_violation(
+            "sandbox", workspace.name, workspace, task, expected_control
+        )
+        == ""
+    )
+
+
+@pytest.mark.parametrize("weaken", [None, "decoder", "digest"])
+def test_read_only_transport_ignores_agent_python_modules_and_shell_startup(
+    monkeypatch, tmp_path, weaken
+):
+    workspace, repo, task = _exact_read_only_report_workspace(tmp_path)
+    expected_control = te._read_only_git_control_digest(repo)
+    monkeypatch.setattr(te, "_sandbox_path_for_workspace_child", lambda *_args: str(repo))
+    markers = {}
+    for module in ("base64", "hashlib"):
+        marker = workspace / (module + "-executed")
+        markers[module] = marker
+        (workspace / (module + ".py")).write_text(
+            "open(%r, 'w').write('agent module executed')\n"
+            "raise RuntimeError('agent module executed before Git validation')\n" % str(marker)
+        )
+    shell_marker = workspace / "shell-startup-executed"
+    startup = workspace / "agent-shell-startup.sh"
+    startup.write_text("touch " + shlex.quote(str(shell_marker)) + "\n")
+    hostile_env = {**os.environ, "PYTHONPATH": str(workspace), "BASH_ENV": str(startup)}
+
+    def execute(args, *, timeout):
+        assert timeout > 0
+        assert all("\n" not in arg and "\r" not in arg for arg in args)
+        command = args[args.index("--") + 1 :]
+        assert command[:3] == ["/opt/mac-venv/bin/python", "-I", "-c"]
+        command = [sys.executable, *command[1:]]
+        if weaken == "decoder":
+            command.remove("-I")
+        elif weaken == "digest":
+            script = base64.b64decode(command[-1]).decode()
+            assert '"$python_bin" -I - "$repo"' in script
+            script = script.replace('"$python_bin" -I - "$repo"', '"$python_bin" - "$repo"')
+            command[-1] = base64.b64encode(script.encode()).decode()
+        result = subprocess.run(
+            command, cwd=workspace, env=hostile_env, text=True, capture_output=True, check=False
+        )
+        return result.returncode == 0, (result.stderr or result.stdout).strip()
+
+    monkeypatch.setattr(te, "_sandbox_step", execute)
+    violation = te._sandbox_read_only_repository_violation(
+        "sandbox", workspace.name, workspace, task, expected_control
+    )
+    if weaken is None:
+        assert violation == ""
+        assert not any(marker.exists() for marker in markers.values())
+    else:
+        # Positive controls prove each missing -I can execute a local module
+        # before the trust check; the unchanged production path must do neither.
+        assert violation
+        assert markers["base64" if weaken == "decoder" else "hashlib"].exists()
+    assert not shell_marker.exists()
 
 
 def _stub_successful_read_only_postchecks(monkeypatch):
@@ -1145,6 +1222,35 @@ def test_read_only_openshell_delete_api_failure_overrides_success(monkeypatch, t
     assert "sandbox deletion failed" in result.mac_read_only_lifecycle_failure
     assert result.mac_read_only_repository_violation == (result.mac_read_only_lifecycle_failure)
     assert len(deleted) == 1
+
+
+def test_read_only_transport_failure_is_retained_when_teardown_also_fails(monkeypatch, tmp_path):
+    workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
+    monkeypatch.setattr(te, "_capture_read_only_report_git_control", lambda *_args: "digest")
+    monkeypatch.setattr(
+        te,
+        "_sandbox_read_only_repository_violation",
+        lambda *_args: "OpenShell rejected command argument 2",
+    )
+    monkeypatch.setattr(te, "_sandbox_download", lambda *_args: False)
+    monkeypatch.setattr(te, "_promote_trusted_read_only_verification", lambda *_args: False)
+    monkeypatch.setattr(te, "_sandbox_delete", lambda *_args: False)
+    monkeypatch.setattr(
+        te,
+        "_read_only_report_extra_create_argv",
+        lambda: [
+            "--from",
+            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
+        ],
+    )
+
+    result = te._run_sandboxed(FakeRunner(), _ARGV, workspace, "tid", {"task": task})
+
+    assert result.returncode == 68
+    assert result.mac_read_only_repository_violation == "OpenShell rejected command argument 2"
+    assert "sandbox result harvest failed" in result.mac_read_only_lifecycle_failure
+    assert "OpenShell rejected command argument 2" in result.stderr
+    assert "sandbox result harvest failed" in result.stderr
 
 
 def test_read_only_report_forbids_keep_before_agent_runs(monkeypatch, tmp_path):

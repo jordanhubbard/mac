@@ -124,6 +124,19 @@ def _no_live_coding_harness(monkeypatch):
     monkeypatch.delenv("CLAUDECODE", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_task_repository_identity(monkeypatch):
+    """Fixture repositories never inherit their caller's task checkout identity.
+
+    Workers export MAC_TASK_REPO_* for their real task. Those paths and hashes
+    must not override a test's synthetic repository or make a fixture inspect
+    the live checkout. Tests of environment precedence opt in with monkeypatch.
+    """
+    for name in list(os.environ):
+        if name.startswith("MAC_TASK_REPO_"):
+            monkeypatch.delenv(name, raising=False)
+
+
 # ----------------------------------------------------------------------
 # Live-Postgres fixtures (K8s Phase 3.6).
 #
