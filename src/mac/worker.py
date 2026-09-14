@@ -8291,10 +8291,15 @@ def _worker_allows_empty_repo_change_evidence(task: JsonDict, evidence_type: str
 
 
 def _worker_require_clean_repo_anchor(manifest: JsonDict) -> List[str]:
+    from mac.evidence_validators import repo_files_changed_problem
+
     repo = manifest.get("repo")
     if not isinstance(repo, dict):
         return ["repo evidence requires verification.repo object"]
     problems: List[str] = []
+    files_problem = repo_files_changed_problem(repo.get("files_changed"))
+    if files_problem:
+        problems.append(files_problem)
     head_sha = str(repo.get("head_sha") or "").strip()
     if not GIT_SHA_RE.match(head_sha):
         problems.append("repo.head_sha must be a git SHA")
