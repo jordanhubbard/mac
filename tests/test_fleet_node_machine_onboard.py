@@ -408,17 +408,9 @@ def test_node_installer_reports_only_structural_error_context():
 
 def test_deployment_runtime_includes_postgres_extra():
     onboard = HELPER.read_text(encoding="utf-8")
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-
-    # The `hermes-gateway` extra went away with the vendored Hermes runtime in
-    # #377; asking for it makes `pip install` fail outright. This assertion
-    # pinned the pre-#377 spelling, so it actively required node provisioning to
-    # request a nonexistent extra -- and unlike the Dockerfile, CI never builds
-    # a node, so nothing else would have caught it.
-    expected = "[relay,postgres]"
-    assert expected in onboard
-    assert expected in installer
-    assert "hermes-gateway" not in expected
+    # Pristine onboarding has its own bootstrap. The native deployment helper's
+    # actual relay/postgres installation is covered by test_native_runtime_lock.
+    assert "[relay,postgres]" in onboard
 
 
 def test_node_installer_prefers_phase_zero_managed_python(tmp_path):

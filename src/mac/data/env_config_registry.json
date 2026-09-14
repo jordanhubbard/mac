@@ -11342,6 +11342,7 @@
     "name": "MAC_REVIEWED_UV_VERSION",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/reviewed-tool-assets.sh"
     ],
     "type": "str"

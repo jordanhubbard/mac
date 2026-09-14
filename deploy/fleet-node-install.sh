@@ -681,6 +681,20 @@ python_bin() {
   exit 1
 }
 
+native_uv_bin() {
+  local candidate version
+  for candidate in "$MAC_HOME/lib/uv/versions/$MAC_REVIEWED_UV_VERSION/uv" "$MAC_HOME/bin/uv" uv; do
+    candidate="$(command -v "$candidate" 2>/dev/null)" || continue
+    version="$("$candidate" --version)" || continue
+    case "$version" in
+      "uv $MAC_REVIEWED_UV_VERSION"|"uv $MAC_REVIEWED_UV_VERSION "*)
+        printf '%s\n' "$candidate"; return 0 ;;
+    esac
+  done
+  log "ERROR: uv $MAC_REVIEWED_UV_VERSION is missing; complete node onboarding before phase 2" >&2
+  return 1
+}
+
 hermes_python_bin() {
   # Hermes and MAC share a reviewed interpreter, with separate service venvs.
   # A conflicting override must fail before quiescing any running service.
@@ -699,6 +713,9 @@ PY="$(python_bin)"
 # (mirrors PY) or the remote aborts under `set -u` with "PYTHON_BIN: unbound variable".
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
+case "$NODE_ACTION" in
+  legacy-one-shot|arm-phase2|apply-phase2) NATIVE_UV="$(native_uv_bin)" ;;
+esac
 SUPERVISOR_KIND=""
 export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL MAC_CHAT_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_CLAIM_ONLY_CANARY_TASKS SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED POSTGRES_URL_CONFIGURED POSTGRES_INSTALL POSTGRES_BIND_ADDR_CONFIGURED POSTGRES_PORT_CONFIGURED POSTGRES_IMAGE_CONFIGURED POSTGRES_DB_CONFIGURED POSTGRES_USER_CONFIGURED POSTGRES_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
 
@@ -4144,6 +4161,7 @@ capture_auxiliary_rollback_artifacts() {
   snapshot_bin_directory_for_rollback
   track_auxiliary_rollback_artifact "$ENV_FILE" user
   track_auxiliary_rollback_artifact "$MAC_HOME/fleets.yaml" user
+  track_auxiliary_rollback_artifact "$MAC_HOME/agent-footprint.json" user
   track_auxiliary_rollback_artifact \
     "$MAC_HOME/deployed-source-revision" user
   track_auxiliary_rollback_artifact "$MAC_HOME/deploy-start-barrier" user
@@ -10364,6 +10382,80 @@ reconcile_typed_media_services() {
   resume_typed_media_services
 }
 
+capture_native_runtime() {
+  NATIVE_RUNTIME_SNAPSHOT="$LOG_DIR/native-runtime-packages-${DEPLOY_TS}.json"
+  local inventory_python="$PY"
+  if [ -d "$VENV" ]; then
+    [ -x "$VENV/bin/python" ] || die "cannot inventory the prior native runtime"
+    inventory_python="$VENV/bin/python"
+  fi
+  "$inventory_python" - "$VENV" "$MAC_HOME" "$ENV_FILE" "$NATIVE_RUNTIME_SNAPSHOT" <<'PY'
+import fcntl, importlib.metadata, json, os, re, sys, tempfile, urllib.error, urllib.request
+from pathlib import Path
+venv, home, env_file, output = map(Path, sys.argv[1:])
+with (home / ".install.lock").open("a") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    packages = []
+    if venv.is_dir():
+        for dist in importlib.metadata.distributions():
+            item = {"name": dist.metadata["Name"], "version": dist.version}
+            direct = dist.read_text("direct_url.json")
+            if direct:
+                item["direct_url"] = json.loads(direct)
+            packages.append(item)
+    local_path = home / "agent-footprint.json"
+    local = json.loads(local_path.read_text()) if local_path.exists() else {}
+    env = {}
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.strip() and not line.lstrip().startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                env[key] = value.strip().strip('"').strip("'")
+    hub = (env.get("MAC_HUB_URL") or "").rstrip("/")
+    token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN") or ""
+    name = env.get("MAC_WORKER_AGENT_NAME") or env.get("MAC_AGENT_NAME") or ""
+    remote = {}
+    remote_status = "unconfigured"
+    if hub and token and name:
+        agent_id = "agent_" + (re.sub(r"[^A-Za-z0-9_.-]+", "_", name.lower()).strip("_") or "default")
+        request = urllib.request.Request(hub + "/agents/" + agent_id, headers={"Authorization": "Bearer " + token})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                remote = json.loads(response.read()).get("installed_packages") or {}
+            remote_status = "read"
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                remote_status = "unregistered"
+            elif local_path.exists():
+                remote_status = "unavailable_local_record_retained"
+            else:
+                raise SystemExit("cannot recover native footprint: hub unavailable and no local record")
+        except (OSError, ValueError):
+            if not local_path.exists():
+                raise SystemExit("cannot recover native footprint: hub unavailable and no local record")
+            remote_status = "unavailable_local_record_retained"
+    # Local writes precede hub reports. Preserve hub-only entries but prefer the
+    # latest local request when a delayed report left the replica stale.
+    footprint = {}
+    for manager in ("pip", "npm"):
+        entries = {}
+        for record in (remote, local):
+            for item in record.get(manager, []):
+                name = item.get("name") or item.get("spec")
+                if not name:
+                    raise SystemExit("invalid recorded native package")
+                entries[name] = item
+        footprint[manager] = list(entries.values())
+    fd, temporary = tempfile.mkstemp(dir=output.parent, prefix=output.name + ".")
+    with os.fdopen(fd, "w") as stream:
+        json.dump({"packages": packages, "footprint": footprint, "hub_footprint": remote_status}, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, output)
+print("native runtime inventory captured: %d distributions; hub footprint %s" % (len(packages), remote_status))
+PY
+}
+
 install_agent_footprint() {
   # media-01 Part C3: re-hydrate the agent's self-installed footprint from the
   # hub so a rebuilt agent keeps the pip/npm tools it self-provisioned. Pulls
@@ -10379,6 +10471,8 @@ install_agent_footprint() {
     | while IFS= read -r _ln; do log "agent footprint: $_ln"; done || true
 import json, os, re, shutil, subprocess, sys, urllib.request
 from collections import defaultdict
+from pathlib import Path
+from mac.native_runtime import install_lock, inventory, pip_constraints
 
 env_file, venv, mac_home, log_dir = sys.argv[1:5]
 env = {}
@@ -10411,10 +10505,15 @@ for e in (fp.get("pip") or []):
     if spec:
         groups[e.get("index_url") or ""].append(spec)
 for index_url, specs in groups.items():
-    cmd = [os.path.join(venv, "bin", "python"), "-m", "pip", "install", *specs]
-    if index_url:
-        cmd += ["--index-url", index_url]
-    rc = subprocess.run(cmd, capture_output=True, text=True).returncode
+    python = Path(venv) / "bin" / "python"
+    if any(str(spec).lstrip().startswith("-") for spec in specs):
+        raise RuntimeError("invalid native runtime footprint request")
+    with install_lock(Path(mac_home)):
+        constraints = pip_constraints(str(python), Path(mac_home), inventory(python))
+        cmd = [str(python), "-m", "pip", "install", *constraints, *specs]
+        if index_url:
+            cmd += ["--index-url", index_url]
+        rc = subprocess.run(cmd, capture_output=True, text=True).returncode
     report["pip"].append({"specs": specs, "index_url": index_url, "returncode": rc})
     print("pip install %s -> rc=%d" % (" ".join(specs), rc))
 npm_pkgs = [
@@ -11068,6 +11167,7 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
 else
   log "typed phase 2 is consuming the journal-bound phase-1 quiescence proof"
 fi
+capture_native_runtime
 backup_existing_artifacts
 [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] \
   || die "phase-2 apply reached source replacement without durable rollback intent"
@@ -11180,16 +11280,11 @@ else
   fi
 fi
 
-log "installing mac Python package (with gateway, relay, and PostgreSQL runtime extras)"
-"$PY" -m venv "$VENV"
-"$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
-# ADR 0001 hu-04: install the hermes-gateway extra so the vendored Hermes
-# runtime (src/mac/_hermes) runs in-process from this one venv — no separate
-# hermes-agent venv needed. The gateway service execs mac-hermes-gateway.
-# The relay extra ships nemo-relay so the gateway has the observability seam at
-# deploy time (the worker also reconciles REQUIRED_RUNTIME_PIP at lifecycle
-# start, so a stale node self-upgrades on demand — see mac/worker.py).
-"$VENV/bin/python" -m pip install -e "${SRC_DIR}[relay,postgres]" >/dev/null
+log "installing the locked native MAC runtime and restoring compatible agent tools"
+PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.native_runtime \
+  --source "$SRC_DIR" --venv "$VENV" --snapshot "$NATIVE_RUNTIME_SNAPSHOT" \
+  --footprint "$MAC_HOME/agent-footprint.json" --uv "$NATIVE_UV" \
+  --record "$LOG_DIR/native-runtime-locked-${DEPLOY_TS}.json"
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   mkdir -p "$HOME/.local/bin"
   ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
