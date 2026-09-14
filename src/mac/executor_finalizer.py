@@ -428,9 +428,7 @@ from mac.executor_prompt import (
     _repository_publication_remote,
     _repository_task_branch,
     _review_experiment_assignment,
-    _run_repository_bootstrap_if_needed,
     clip_process_text,
-    run_with_stall_watchdog,
     task_evidence_type,
     task_is_repo_coupled,
 )
