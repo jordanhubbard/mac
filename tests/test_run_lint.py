@@ -7,7 +7,12 @@ hundreds of files.
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
+import subprocess
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-lint.sh"
@@ -38,3 +43,46 @@ def test_lint_fix_applies_the_same_tools():
     )
     assert "ruff check --fix" in branch
     assert "ruff format ." in branch
+
+
+@pytest.mark.parametrize("mode", [[], ["--fix"], ["--format-check"]])
+@pytest.mark.parametrize(
+    "mac_venv,uv_environment,expected",
+    [
+        (None, None, None),
+        ("", "configured env", "configured env"),
+        ("relative env", "ignored env", "relative env"),
+        ("/tmp/custom env", None, "/tmp/custom env"),
+        ("~/custom env", "ignored env", "HOME/custom env"),
+        ("literal-$(do-not-execute)", None, "literal-$(do-not-execute)"),
+    ],
+)
+def test_lint_uses_the_prepared_environment(tmp_path, mode, mac_venv, uv_environment, expected):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    entrypoint = scripts / "run-lint.sh"
+    entrypoint.write_text(SCRIPT.read_text())
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    uv = binaries / "uv"
+    uv.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json,os,sys\n"
+        "print(json.dumps({'environment':os.environ.get('UV_PROJECT_ENVIRONMENT'),"
+        "'arguments':sys.argv[1:]}))\n"
+    )
+    uv.chmod(0o755)
+    env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"], HOME=str(tmp_path))
+    for key, value in [("MAC_VENV", mac_venv), ("UV_PROJECT_ENVIRONMENT", uv_environment)]:
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    result = subprocess.run(
+        ["bash", str(entrypoint), *mode], env=env, capture_output=True, text=True, check=True
+    )
+    calls = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+    assert len(calls) == (1 if mode == ["--format-check"] else 2)
+    selected = expected.replace("HOME/", str(tmp_path) + "/") if expected else expected
+    assert all(call["environment"] == selected for call in calls)
+    assert all(call["arguments"][:3] == ["run", "--no-sync", "ruff"] for call in calls)
