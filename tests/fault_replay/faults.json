@@ -3,7 +3,7 @@
   "faults": [
     {
       "id": "reviewer-starvation-single-node",
-      "description": "A task waited forever when its only eligible reviewer had executed the task.",
+      "description": "A task waited forever when its only eligible reviewer had executed the task. Current policy advances through independent hub verification instead of the retired same-worker fallback.",
       "fixed_by": "4407eb4eea99638b2e333ab2641ed84fe0fdd6bc",
       "probe": "tests/fault_replay/reviewer_starvation_probe.py",
       "expected_fixed_exit": 0,

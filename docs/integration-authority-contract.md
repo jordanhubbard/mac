@@ -40,8 +40,8 @@ leaving dashboard noise behind.
 Operators can inspect the ledger through:
 
 ```console
-mac --db ~/.mac/mac.db integrations findings
-mac --db ~/.mac/mac.db integrations observations
+mac admin integrations findings
+mac admin integrations observations
 ```
 
 The HTTP API exposes the same state at:

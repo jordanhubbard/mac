@@ -12,7 +12,7 @@ require_branch_measurement = true
 # When the gate runs a resolver-selected SUBSET (impact-based selection), the
 # whole-repo floors above are not measurable. Diff-coverage asks whether the
 # lines this change touched were executed, not whether the repo's aggregate
-# percentage is high. The scheduled full run still applies [coverage].
+# percentage is high. The up-front full candidate run still applies [coverage].
 statement_safety_floor = 80.0
 branch_safety_floor = 70.0
 

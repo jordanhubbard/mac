@@ -5,14 +5,14 @@ coding CLI as one captured subprocess â€” `_run_captured(argv, cwd, timeout)` â€
 with no inbound channel, so once a task starts, nothing can reach it. A
 correction arrived after the mistake was finished.
 
-`mac agentbus wait` closes that gap. It is a small addition on top of AgentBus,
+`mac admin agentbus wait` closes that gap. It is a small addition on top of AgentBus,
 not a new transport.
 
 ## The mechanism
 
 Three parts, none of them exotic:
 
-1. **A blocking read of the agent's own inbox.** `mac agentbus wait <agent_id>`
+1. **A blocking read of the agent's own inbox.** `mac admin agentbus wait <agent_id>`
    blocks until someone messages that agent, prints what arrived, and exits.
 2. **The agent runs it as a background task of its own harness.** The agent
    keeps working in the foreground; the harness surfaces the completion between
@@ -65,17 +65,17 @@ correction is the failure the whole mechanism exists to prevent.
 
 ```console
 # One shot: block up to 5 minutes for a message.
-mac agentbus wait agent_1234 --timeout-seconds 300
+mac admin agentbus wait agent_1234 --timeout-seconds 300
 
 # Resume without replaying what was already seen.
-mac agentbus wait agent_1234 --after-cursor "$PREV_CURSOR"
+mac admin agentbus wait agent_1234 --after-cursor "$PREV_CURSOR"
 ```
 
 The intended shape inside a coding agent's harness, where `<background>` is
 whatever that harness calls launching a task it will be notified about:
 
 ```
-<background> mac agentbus wait $MAC_AGENT_ID --after-cursor "$CURSOR"
+<background> mac admin agentbus wait $MAC_AGENT_ID --after-cursor "$CURSOR"
 ... keep working ...
 (harness surfaces the watcher's output between steps)
 ... act on the message, then restart the watcher with the new next_cursor ...
@@ -84,8 +84,8 @@ whatever that harness calls launching a task it will be notified about:
 Sending a correction is the existing bus:
 
 ```console
-mac agentbus open  <sender> <recipient> --stream-id correction-1
-mac agentbus append correction-1 <sender> --payload '{"text":"stop, wrong file"}'
+mac admin agentbus open  <sender> <recipient> --stream-id correction-1
+mac admin agentbus append correction-1 <sender> --payload '{"text":"stop, wrong file"}'
 ```
 
 ## Not every consumer has a background slot
@@ -108,13 +108,13 @@ Two things were wrong at once, and both are fixed:
 
 ```console
 # How much is waiting? Returns at once.
-mac agentbus pending agent_1234
+mac admin agentbus pending agent_1234
 
 # Take it. Also returns at once, whether or not anything was waiting.
-mac agentbus drain agent_1234
+mac admin agentbus drain agent_1234
 
 # Look without consuming.
-mac agentbus drain agent_1234 --peek
+mac admin agentbus drain agent_1234 --peek
 ```
 
 `drain` keeps the consumed position **at the hub**

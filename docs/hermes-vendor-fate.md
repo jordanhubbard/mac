@@ -1,7 +1,8 @@
 # Fate of the vendored Hermes tree
 
 **Verdict: removed.** `src/mac/_hermes` (~444k lines) was deleted in PR #377
-on 2026-08-17. OpenClaw is the live gateway; the in-tree Hermes snapshot was
+on 2026-08-17. OpenClaw was the live gateway at that removal; Hermes is again
+the configured gateway, installed separately. The in-tree Hermes snapshot was
 inactive and larger than mac's own code. This note records the four
 pre-deletion checks and the post-removal inventory so the decision stays
 auditable during the port.

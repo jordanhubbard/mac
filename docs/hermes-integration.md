@@ -348,5 +348,5 @@ records only an operational memory record that the write-back was prepared.
 ## Contract
 
 The adapter must call `mac` APIs. It must not import `ControlPlane` or mutate
-SQLite directly in production gateway code. Tests may use an in-process FastAPI
+the authority database directly in production gateway code. Tests may use an in-process FastAPI
 transport to verify the same API contract without opening a port.

@@ -215,6 +215,7 @@ marked `historical archive` and must not be read as current behaviour.
 | generated reference | [`reference/documentation-inventory.md`](../reference/documentation-inventory.md) | Documentation inventory |
 | generated reference | [`reference/openapi.md`](../reference/openapi.md) | HTTP API reference |
 | generated reference | [`reference/staged-module-integration-audit.md`](../reference/staged-module-integration-audit.md) | Staged-but-unwired `src/mac` module integration audit |
+| supplemental reference | [`releases/v1.5.0-audit.md`](../releases/v1.5.0-audit.md) | v1.5.0 documentation and contribution audit |
 | supplemental reference | [`repository-cicd-monitor.md`](../repository-cicd-monitor.md) | Repository CI/CD lifecycle monitoring |
 | supplemental reference | [`repository-ref-hygiene.md`](../repository-ref-hygiene.md) | Managed Repository Ref Hygiene |
 | supplemental reference | [`repository-runtime-contract.md`](../repository-runtime-contract.md) | Repository Runtime Contract |

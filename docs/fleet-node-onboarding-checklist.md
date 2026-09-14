@@ -313,12 +313,13 @@ fleet nodes.
 - [ ] The router is reachable locally and from every spoke/sandbox.
 - [ ] Shared Qdrant and Firecrawl endpoints are bound to the intended mesh
       address, required, healthy, and reported by startup self-test.
-- [ ] SQLite uses online backup rather than copying a live WAL database, or the
-      configured Postgres HA contract is healthy.
+- [ ] PostgreSQL backups and restore drills pass; any configured PostgreSQL
+      HA contract is healthy. There is no live SQLite authority.
 - [ ] macOS uses launchd for the control plane, worker, gateway, and any required
       reverse tunnel. A GUI login session is not required.
-- [ ] OpenClaw runs inside a Ready OpenShell sandbox, owns chat exclusively,
-      and legacy gateway services are inactive.
+- [ ] The configured gateway owns chat exclusively and competing services are
+      inactive. Hermes uses its upstream native service and preserved profile;
+      an explicitly selected OpenClaw deployment uses its OpenShell runtime.
 - [ ] Channel, public identity, memory continuity, watchdog, crash observer, and
       startup self-test all pass live.
 - [ ] OpenShell policy permits the host bridge alias for hub-local services.
@@ -326,11 +327,11 @@ fleet nodes.
 ### Linux edge chat gateway
 
 - [ ] The strict ProxyJump route through the hub is portable and current.
-- [ ] systemd controls the worker, crash observer, and OpenClaw gateway.
+- [ ] systemd controls the worker, crash observer, and selected gateway.
 - [ ] The hub router, Qdrant, Firecrawl, artifact service, and AgentBus are
       reachable over the mesh; loopback is not copied from the hub config.
-- [ ] OpenClaw is the exclusive channel owner inside OpenShell; legacy gateway
-      services are inactive.
+- [ ] The selected gateway is the exclusive channel owner; competing gateway
+      services are inactive. Verify its actual runtime and profile.
 - [ ] Public identity, channel accounts, memory continuity, resource watchdog,
       and startup self-test pass.
 - [ ] Reported CUDA architecture and memory match the host. Architecture-specific

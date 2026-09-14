@@ -139,8 +139,8 @@ integration point, not one full run per branch and another per review.
 - The review verdict manifest must record the selected test scope, the command
   that ran, and any fallback reason. It should continue to carry the executor's
   required check results because the hub verifies the same commit.
-- Full-suite coverage remains valuable at mainline integration, scheduled
-  audits, and explicit fallback points, not as an unconditional duplicate in
+- Full-suite coverage remains valuable at up-front candidate and mainline integration gates
+  and explicit fallback points, not as an unconditional duplicate in
   every task and review sandbox.
 - The trade-off is that an affected-test review can miss unrelated integration
   regressions. Public/process canaries limit that risk, broad or unmappable

@@ -106,7 +106,7 @@ def test_every_deployment_supervisor_uses_external_crash_observer():
             or ("<string>--supervisor</string><string>%s</string>" % supervisor) in deploy
         )
     assert deploy.count("mac-crash-observer") >= 4
-    assert "CRASH_OBSERVER_PY=\"$(crash_observer_python_bin)\"" in deploy
+    assert 'CRASH_OBSERVER_PY="$(crash_observer_python_bin)"' in deploy
     assert (
         "ExecStart=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor systemd"
         in deploy
@@ -117,8 +117,7 @@ def test_every_deployment_supervisor_uses_external_crash_observer():
     )
     assert (
         "<string>$CRASH_OBSERVER_PY</string>\n"
-        "    <string>$MAC_HOME/bin/mac-crash-observer</string>"
-        in deploy
+        "    <string>$MAC_HOME/bin/mac-crash-observer</string>" in deploy
     )
 
     resolver = deploy.split("crash_observer_python_bin() {", 1)[1].split("\n}", 1)[0]

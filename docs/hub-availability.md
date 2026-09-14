@@ -94,15 +94,14 @@ MAC_PG_BACKUP_SYNC_CMD='rsync -a "$MAC_PG_BACKUP_PATH"* standby:~/.mac/backups/p
 ```
 
 The `PgBackupScheduler` runs this on an interval inside the hub process,
-default-ON **only** when the authority is Postgres, a no-op on the SQLite tier
-and with `MAC_PG_BACKUP_ENABLED=0`. A dump/verify/ship failure is a loud ledger
+enabled by default for the PostgreSQL authority and disabled with
+`MAC_PG_BACKUP_ENABLED=0`. A dump/verify/ship failure is a loud ledger
 observation (`pg.backup.failed`) plus an operator notification. Verify an
 artifact's integrity offline with `mac-pg-backup --verify-manifest <dump>`.
 
 **No SQLite fallback.** A PostgreSQL failure — connection loss, a failed dump,
 a failed restore drill — is surfaced loudly and never downgraded to a SQLite
-backup or authority. The Postgres and SQLite tiers are mutually exclusive: a
-hub declares exactly one durable authority. The immutable 2026-07-28 SQLite
+backup or authority. PostgreSQL is the only supported live authority. The immutable 2026-07-28 SQLite
 cutover archive (`mac admin migrate` archive: mode-`0600`, sha256 manifest, verified
 at creation) is preserved as *recovery evidence* — a frozen snapshot of the
 pre-cutover authority for forensic/legal recovery — and is explicitly **not** a

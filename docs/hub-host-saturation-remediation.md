@@ -1,5 +1,9 @@
 # Hub-Host Saturation Remediation
 
+> Historical incident report. The holds and service observations below describe
+> the incident, not the current fleet. Resolve current state from the agent
+> registry before applying any remediation.
+
 Read-only remediation report for the P3 hub-host congestion incident. It
 documents the current held state of the hub host, recommends relocating the
 container/OpenShell agent workloads off it so it can be resumed without

@@ -57,7 +57,7 @@ fi
 # and, when coverage is on, enforces the CHANGED-LINE floor (diff-coverage)
 # because whole-repo totals are not measurable from a subset. This is the
 # days->hours rollout win; the whole-repo floors are re-enforced by the
-# scheduled full run. Unset => the default full gate below is byte-identical.
+# up-front full candidate run. Unset => the default full gate below is byte-identical.
 _MAC_TEST_SELECT_BASE_REQUESTED="${MAC_TEST_SELECT_BASE:-}"
 # Scheduled full run: after a passing portfolio gate, rebuild the committed
 # test-impact map from the fresh per-test coverage so selection stays fresh.
