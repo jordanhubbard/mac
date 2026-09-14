@@ -914,6 +914,22 @@ def _active_worker_deployment_generation() -> Optional[str]:
     return generation if observed == generation else None
 
 
+def _resources_without_retired_gateway(resources: JsonDict) -> JsonDict:
+    """Withdraw retired advertisements only for a configured current runtime."""
+    implementation = (os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "").strip().lower()
+    if implementation not in {"hermes", "none"}:
+        return resources
+    refreshed = dict(resources)
+    refreshed.pop("openclaw_runtime", None)
+    for key, selector in (("chat_gateway", "implementation"), ("gateway_ownership", "owner")):
+        value = refreshed.get(key)
+        if implementation == "none" or (
+            isinstance(value, Mapping) and value.get(selector) == "openclaw"
+        ):
+            refreshed.pop(key, None)
+    return refreshed
+
+
 def register_worker(
     client: MacApiClient,
     hostname: Optional[str] = None,
@@ -975,7 +991,7 @@ def register_worker(
         resources = {**(resources or {}), "media_routes": _routes}
     # This self-report is recomputed from the process that is about to claim
     # work.  Never trust a similarly named value supplied through --resources.
-    resources = dict(resources or {})
+    resources = _resources_without_retired_gateway(dict(resources or {}))
     resources.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
     report_executor_attestation = _read_only_report_executor_attestation(executor_argv)
     if report_executor_attestation is not None:
@@ -997,6 +1013,10 @@ def register_worker(
     )
     _register_runtime_identity_for_worker(client, name, hermes_instance_id)
     agent_resources = dict(resources or {})
+    if capabilities:
+        from mac.deploy_env import normalize_worker_capabilities
+
+        capabilities = normalize_worker_capabilities(",".join(capabilities)).split(",")
     deployment_generation = _active_worker_deployment_generation()
     if deployment_generation:
         agent_resources["deployment_generation"] = deployment_generation
@@ -6164,6 +6184,7 @@ class MacWorker(
         # chat_gateway, gateway_ownership, and representation.  Only refresh the
         # attestation when we have a real base to refresh.
         if command_resources is not None:
+            command_resources = _resources_without_retired_gateway(command_resources)
             command_resources["dispatch_policy"] = self._dispatch_policy_resource()
             command_resources = self._resources_with_live_report_executor_attestation(
                 command_resources

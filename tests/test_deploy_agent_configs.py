@@ -450,7 +450,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     script = deploy_script_text()
     cfg = load_sample_fleet_config()
     expected = (
-        "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
+        "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
         "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
     )
 
@@ -462,7 +462,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     assert cfg["defaults"]["worker"]["capabilities"] == [
         "ops",
         "python",
-        "openclaw",
+        "hermes",
         "review",
         "api",
         "architecture",
