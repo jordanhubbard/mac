@@ -135,6 +135,18 @@ are either already virtualized or carry host-level controls, or both. That is a
 deliberate trade, not an oversight — but it is a real reduction in enforced
 isolation and is recorded here as one.
 
+Repository contract tests for native reports still run in a fresh Linux
+OpenShell verifier. Before the native agent starts, its approved executor
+captures the checkout's raw Git controls; those controls must match before any
+post-agent Git command runs. The worker replaces workspace-authored test claims
+with an explicit pending-verification item. The existing hub review pipeline
+then fetches the signed report's exact prepared commit from its current canonical
+remote, checks its tree inside Linux, and runs the current contract. A missing,
+failed, or unrelated verdict cannot publish the report. The signed verifier
+receipt records the Linux image and policy separately from the native Mac
+executor's attestation. Linux reports retain their existing fresh verifier and
+host-harvested receipt requirement.
+
 ## Implementation
 
 - `models.py` — the `(platform, isolation_posture)` allowlist is now

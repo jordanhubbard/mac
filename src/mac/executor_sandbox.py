@@ -946,6 +946,11 @@ def _openshell_bin() -> str:
 def _sandbox_name() -> str:
     """A unique name for the kept sandbox so the download + delete steps can
     target it. Overridable via MAC_OPENSHELL_SANDBOX_NAME (debug a single run)."""
+    assigned = env_str("MAC_TASK_OPENSHELL_SANDBOX_NAME")
+    if assigned:
+        if not _re.fullmatch(r"mac-task-[0-9a-f]{8}", assigned):
+            raise RuntimeError("invalid controller-owned task sandbox identity")
+        return assigned
     explicit = env_str("MAC_OPENSHELL_SANDBOX_NAME")
     if explicit:
         return explicit
@@ -4205,6 +4210,26 @@ class _SandboxProgressMonitor:
         }
 
 
+def _capture_read_only_report_git_control(task: Any, workspace: Path) -> str:
+    """Capture raw controls before any agent can change Git command behavior."""
+
+    task_metadata = task.get("metadata") if isinstance(task, dict) else None
+    runtime = task_metadata.get("runtime") if isinstance(task_metadata, dict) else None
+    worktree_raw = (
+        str(runtime.get("repository_worktree") or "").strip() if isinstance(runtime, dict) else ""
+    )
+    if not worktree_raw:
+        raise RuntimeError(
+            "read-only repository report has no task-owned worktree for Git control proof"
+        )
+    try:
+        worktree = Path(worktree_raw).expanduser().resolve(strict=True)
+        worktree.relative_to(workspace.expanduser().resolve(strict=True))
+        return _read_only_git_control_digest(worktree)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("could not capture pre-agent read-only Git controls: %s" % exc) from exc
+
+
 def _run_sandboxed(
     runner: Callable[..., Any], agent_argv: List[str], workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
@@ -4232,24 +4257,7 @@ def _run_sandboxed(
                 "read-only repository reports forbid MAC_OPENSHELL_KEEP; "
                 "successful sandbox deletion is mandatory"
             )
-        runtime = task_metadata.get("runtime") if isinstance(task_metadata, dict) else None
-        worktree_raw = (
-            str(runtime.get("repository_worktree") or "").strip()
-            if isinstance(runtime, dict)
-            else ""
-        )
-        if not worktree_raw:
-            raise RuntimeError(
-                "read-only repository report has no task-owned worktree for Git control proof"
-            )
-        try:
-            worktree = Path(worktree_raw).expanduser().resolve(strict=True)
-            worktree.relative_to(workspace.expanduser().resolve(strict=True))
-            expected_git_control_digest = _read_only_git_control_digest(worktree)
-        except (OSError, ValueError) as exc:
-            raise RuntimeError(
-                "could not capture pre-agent read-only Git controls: %s" % exc
-            ) from exc
+        expected_git_control_digest = _capture_read_only_report_git_control(task, workspace)
         report_extra_create_argv = (
             _read_only_report_extra_create_argv(require_gpu=True)
             if require_gpu
@@ -5761,6 +5769,12 @@ def _invoke_agent(
             "read-only repository reports require per-task OpenShell confinement; "
             "direct, supervisor-only, and host break-glass execution are forbidden"
         )
+    expected_git_control_digest = ""
+    if read_only_repository and approved_macos_host and not wrap:
+        _assert_approved_read_only_report_runtime(runtime_image_ref="")
+        expected_git_control_digest = _capture_read_only_report_git_control(
+            opts.get("task"), workspace
+        )
     confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
     route: Dict[str, str] = {}
     agent_argv = _agent_argv(
@@ -5851,7 +5865,7 @@ def _invoke_agent(
                         _opts_with_route(opts, fallback_route),
                     )
             return result
-        return runner(
+        result = runner(
             _unsandboxed_agent_argv(
                 bundle.argv(),
                 break_glass_authorization=break_glass_authorization,
@@ -5870,6 +5884,9 @@ def _invoke_agent(
                 ),
             },
         )
+        if expected_git_control_digest:
+            setattr(result, "mac_read_only_git_control_digest", expected_git_control_digest)
+        return result
     finally:
         bundle.cleanup()
 

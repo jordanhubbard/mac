@@ -9,7 +9,7 @@ shape and is annotated with the sibling concern that will change it.
 
 Companion document: docs/review-tick-stall-diagnosis.md.
 
-Postgres is not required: every assertion is either source introspection of the
+The merge-gate regression runs against Postgres. Other assertions use source introspection of the
 real functions (`inspect.getsource`) or exercises a DB-free helper
 (`ReconciliationCoordinator` against a fake store, `resolve_hub_agent`,
 `_hub_review_verify_enabled`, the cursor codec via a stub).
@@ -157,15 +157,22 @@ def test_waiting_for_hub_verify_has_no_iteration_ceiling():
         )
 
 
-def test_hub_verifiable_evidence_holds_the_merge_gate():
-    """C2: the merge gate is held only for evidence that is actually
-    hub-verifiable (a pushed repo change); non-verifiable evidence deliberately
-    falls through to the agent-nudge path. This distinguishes C2 from the
-    intended no-evidence behavior."""
-    src = inspect.getsource(ControlPlane.advance_default_review_workflow)
-    assert "hub_verifiable =" in src
-    assert "self._hub_verify_repo_info(task, evidence) is not None" in src
-    assert "if hub_verifiable:" in src
+def test_hub_verifiable_evidence_holds_the_merge_gate(monkeypatch):
+    """A pushed change with pending tests cannot publish without a verifier result."""
+    from tests.test_control_plane import _setup_deferred_hubverify_task
+
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "0")
+    cp = ControlPlane.in_memory()
+
+    def unavailable(*args):
+        raise TimeoutError("verifier unavailable")
+
+    _executor, _reviewer, task, _evidence = _setup_deferred_hubverify_task(cp, unavailable)
+    result = cp.advance_default_review_workflow(task.id)
+    assert result["status"] == "waiting_for_hub_verify"
+    assert cp.get_task(task.id).state != "completed"
+    assert not any(e.metadata.get("hub_verified") for e in cp.list_evidence(task.id))
 
 
 def test_inflight_guard_is_unbounded_per_review():

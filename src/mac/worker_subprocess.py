@@ -257,6 +257,9 @@ class SubprocessExecutor:
         )
 
         env = os.environ.copy()
+        # Controller-owned identity is distinct from the operator's fixed-name
+        # debug override, which read-only reports must continue to reject.
+        env.pop("MAC_TASK_OPENSHELL_SANDBOX_NAME", None)
         task_sandbox_name = ""
         if env.get("MAC_OPENSHELL_SANDBOX", "").strip().lower() in {
             "1",
@@ -267,7 +270,7 @@ class SubprocessExecutor:
             task_sandbox_name = env.get("MAC_OPENSHELL_SANDBOX_NAME", "").strip()
             if not task_sandbox_name:
                 task_sandbox_name = "mac-task-" + uuid.uuid4().hex[:8]
-                env["MAC_OPENSHELL_SANDBOX_NAME"] = task_sandbox_name
+                env["MAC_TASK_OPENSHELL_SANDBOX_NAME"] = task_sandbox_name
         # These are task-scoped inputs, not worker defaults.  A long-lived
         # worker may itself have been launched from an operator shell (or an
         # older service definition) that carried values from a previous task.

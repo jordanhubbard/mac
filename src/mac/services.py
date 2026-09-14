@@ -22960,9 +22960,13 @@ class ControlPlane:
                     # to hub-verify; with the semantic reviewer removed that
                     # path approves from the already-validated executor
                     # evidence instead of nudging an LLM.
-                    hub_verifiable = self._hub_verify_repo_info(task, evidence) is not None
+                    hub_verifiable = self._hub_verify_repo_info(
+                        task, evidence
+                    ) is not None or self._read_only_report_needs_hub_verify(task, evidence)
                     wait_for_hub = hub_verifiable and (
-                        not is_experiment or not _semantic_reviewer_enabled()
+                        self._read_only_report_needs_hub_verify(task, evidence)
+                        or not is_experiment
+                        or not _semantic_reviewer_enabled()
                     )
                     if wait_for_hub:
                         self._record_default_review_observation(
@@ -23000,7 +23004,11 @@ class ControlPlane:
                 # Repo changes are never rubber-stamped. Even when the
                 # verifier cannot resolve a clone target yet, stay pending
                 # rather than approving a pushed branch without a test run.
-                hub_verifiable = repo_info is not None or evidence_type == "repo_change"
+                hub_verifiable = (
+                    repo_info is not None
+                    or evidence_type == "repo_change"
+                    or self._read_only_report_needs_hub_verify(task, evidence)
+                )
                 if hub_verifiable:
                     self._record_default_review_observation(
                         task_id,
@@ -27108,6 +27116,19 @@ class ControlPlane:
                         "verification.signature does not verify against signed_by's attestation key"
                     ],
                 }
+        if self._read_only_report_needs_hub_verify(task, evidence):
+            if (
+                not _hub_review_verify_enabled()
+                or self._hub_verify_repo_info(task, evidence) is None
+            ):
+                return {
+                    "valid": False,
+                    "reason": "report_hub_verification_unavailable",
+                    "evidence_type": evidence_type,
+                    "problems": [
+                        "read-only report lacks a valid pending Linux verification contract"
+                    ],
+                }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
             # Option C — deferred test gate: when hub verify is enabled and the
@@ -27405,6 +27426,21 @@ class ControlPlane:
         )
         return not has_passing
 
+    @staticmethod
+    def _read_only_report_needs_hub_verify(task: Task, evidence: Evidence) -> bool:
+        if not metadata_declares_read_only_report_repository(task.metadata):
+            return False
+        manifest = ensure_json_object(evidence.metadata.get("verification"))
+        tests = manifest.get("tests")
+        return isinstance(tests, list) and any(
+            isinstance(item, dict)
+            and (
+                item.get("status") == "deferred"
+                or item.get("execution_environment") == "hub_verify_pending"
+            )
+            for item in tests
+        )
+
     def _hub_verify_repo_info(
         self, task: Task, executor_evidence: Evidence
     ) -> Optional[Dict[str, Any]]:
@@ -27423,6 +27459,63 @@ class ControlPlane:
         meta = ensure_json_object(executor_evidence.metadata)
         verification = ensure_json_object(meta.get("verification"))
         repo = ensure_json_object(verification.get("repo"))
+        if self._read_only_report_needs_hub_verify(task, executor_evidence):
+            contract = _nested_json_object(
+                task.metadata, "execution_contract", "repository_contract"
+            )
+            access = ensure_json_object(verification.get("repository_access"))
+            remote = str(contract.get("canonical_remote_url") or "").strip()
+            branch = str(
+                contract.get("default_branch") or contract.get("canonical_branch") or ""
+            ).strip()
+            command = str(ensure_json_object(contract.get("test")).get("command") or "").strip()
+            if (
+                verification.get("evidence_type") != "operator_result"
+                or access.get("schema") != "mac.report_repository_access.v1"
+                or access.get("mode") != "read_only"
+                or not remote
+                or _gitops.strip_git_remote_auth(remote) != remote
+                or not branch
+                or not command
+                or access.get("canonical_remote_url") != remote
+                or access.get("canonical_branch") != branch
+                or not _GIT_SHA_RE.fullmatch(str(access.get("base_sha") or ""))
+                or not _GIT_SHA_RE.fullmatch(str(access.get("base_tree") or ""))
+                or verification.get("tests")
+                != [
+                    {
+                        "name": "repository contract test",
+                        "command": command,
+                        "returncode": None,
+                        "status": "deferred",
+                        "execution_environment": "hub_verify_pending",
+                        "stdout": "",
+                        "stderr": "",
+                    }
+                ]
+            ):
+                return None
+            return {
+                "remote_url": remote,
+                "branch": branch,
+                "head_sha": access["base_sha"],
+                "files_changed": [],
+                "test_command": command,
+                "bootstrap_command": str(
+                    ensure_json_object(contract.get("bootstrap")).get("command") or ""
+                ).strip(),
+                "repository_access": {
+                    key: access[key]
+                    for key in (
+                        "schema",
+                        "mode",
+                        "canonical_remote_url",
+                        "canonical_branch",
+                        "base_sha",
+                        "base_tree",
+                    )
+                },
+            }
         # The task contract is the canonical, credential-free source of truth.
         # Executor evidence may contain a display-redacted push URL such as
         # ``https://x-access-token:<redacted>@github.com/...``; cloning that
@@ -27473,6 +27566,9 @@ class ControlPlane:
         head_sha: str,
         test_command: str,
         bootstrap_command: str = "",
+        *,
+        prepared_report: Optional[Mapping[str, Any]] = None,
+        verifier_identity: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, str]:
         """Clone the pushed branch and run the contract test in an isolated
         OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
@@ -27552,6 +27648,23 @@ class ControlPlane:
                 f"echo '{profile_ready}'; "
             )
         policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+        if prepared_report is not None:
+            from .trusted_artifact import nofollow_regular_file_identity
+
+            try:
+                _policy_path, policy_digest = nofollow_regular_file_identity(policy)
+            except (OSError, ValueError):
+                return (
+                    1,
+                    "hub verification is unavailable: report verifier policy is missing or invalid",
+                )
+            if verifier_identity is not None:
+                verifier_identity.update(
+                    runtime_image_ref=image,
+                    policy_sha256=policy_digest,
+                    execution_environment="openshell_sandbox",
+                    platform="linux",
+                )
         try:
             # 1200s could not cover even a scoped run once cloning, uploading
             # and dependency bootstrap are counted: the scoped gate alone takes
@@ -27625,6 +27738,37 @@ class ControlPlane:
                 check=False,
             )
             observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
+            if prepared_report is not None and observed_head != head_sha:
+                # The signed worker inspected this exact canonical-remote
+                # commit. A read-only report has no pushed branch of its own;
+                # trunk may advance while it is being written. Fetch only that
+                # prepared commit, leaving pushed code reviews' HEAD gate intact.
+                for args in (
+                    ["fetch", "--depth", "1", "origin", head_sha],
+                    ["checkout", "--detach", head_sha],
+                ):
+                    selected = subprocess.run(
+                        ["git", "-C", str(tmp / "repo"), *args],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        check=False,
+                        env={**os.environ, **auth_env} if auth_env else None,
+                        stdin=subprocess.DEVNULL,
+                    )
+                    if selected.returncode != 0:
+                        return (
+                            1,
+                            "hub verification is unavailable: could not fetch prepared report commit",
+                        )
+                selected = subprocess.run(
+                    ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                observed_head = selected.stdout.strip() if selected.returncode == 0 else ""
             if observed_head != head_sha:
                 return 1, (
                     "hub verify clone HEAD mismatch: expected %s, observed %s"
@@ -27679,6 +27823,17 @@ class ControlPlane:
             # and libpq cannot use OpenShell's HTTP network proxy.
             for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
                 argv += ["--env", value]
+            report_preflight = ""
+            if prepared_report is not None:
+                expected_tree = str(prepared_report.get("base_tree") or "")
+                if not _GIT_SHA_RE.fullmatch(head_sha) or not _GIT_SHA_RE.fullmatch(expected_tree):
+                    return 1, "hub verification is unavailable: invalid prepared report identity"
+                report_preflight = (
+                    'test "$(uname -s)" = Linux && '
+                    'test "$(git rev-parse HEAD)" = %s && '
+                    'test "$(git rev-parse HEAD^{tree})" = %s || '
+                    "{ echo 'hub verification is unavailable: report Linux/source identity mismatch' >&2; exit 96; }; "
+                ) % (head_sha, expected_tree)
             argv += [
                 "--upload",
                 "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
@@ -27691,7 +27846,8 @@ class ControlPlane:
                     SANDBOX_BASE_PATH,
                     profile_preflight,
                     _HUB_VERIFY_GIT_PREFLIGHT,
-                    ("%s && " % bootstrap_command) if bootstrap_command else "",
+                    report_preflight
+                    + (("%s && " % bootstrap_command) if bootstrap_command else ""),
                     test_command or "scripts/run-contract-tests.sh",
                 ),
             ]
@@ -27763,7 +27919,11 @@ class ControlPlane:
         if current_task.state == TaskState.COMPLETED.value:
             return None
         assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
+        if (
+            assignment.get("schema") == "mac.review_experiment.v1"
+            and _semantic_reviewer_enabled()
+            and not self._read_only_report_needs_hub_verify(task, executor_evidence)
+        ):
             # Opt-in only. The default review no longer has a semantic
             # reviewer, so experiments take the same hub-verify path as
             # every other repository task.
@@ -27924,9 +28084,14 @@ class ControlPlane:
         if manifest_review_id and manifest_review_id != review_id:
             return False
         repo = manifest.get("repo")
-        if not isinstance(repo, dict):
-            return False
-        return str(repo.get("head_sha") or "").strip() == head_sha
+        if isinstance(repo, dict):
+            return str(repo.get("head_sha") or "").strip() == head_sha
+        access = ensure_json_object(manifest.get("repository_access"))
+        return (
+            access.get("schema") == "mac.report_repository_access.v1"
+            and access.get("mode") == "read_only"
+            and access.get("base_sha") == head_sha
+        )
 
     def _existing_hub_review_verification_evidence(
         self,
@@ -28025,8 +28190,21 @@ class ControlPlane:
         # and process-E2E canaries, and itself falls back to the full
         # suite for broad or uncertain changes. This keeps the independent hub
         # environment without unconditionally duplicating mainline coverage.
-        test_command = self._hub_review_test_command(task, info)
-        bootstrap_command = _repository_contract_bootstrap_command_for_task(task)
+        report_access = info.get("repository_access")
+        test_command = (
+            info["test_command"] if report_access else self._hub_review_test_command(task, info)
+        )
+        bootstrap_command = (
+            info["bootstrap_command"]
+            if report_access
+            else _repository_contract_bootstrap_command_for_task(task)
+        )
+        verifier_identity: Dict[str, Any] = {}
+        report_options = (
+            {"prepared_report": report_access, "verifier_identity": verifier_identity}
+            if report_access
+            else {}
+        )
         try:
             returncode, output = self._hub_verify_run_contract_test(
                 info["remote_url"],
@@ -28034,6 +28212,7 @@ class ControlPlane:
                 info["head_sha"],
                 test_command,
                 bootstrap_command,
+                **report_options,
             )
         except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
             self._record_default_review_observation(
@@ -28163,6 +28342,11 @@ class ControlPlane:
             ],
             "signed_by": review.reviewer_agent_id,
         }
+        if report_access:
+            manifest.pop("repo")
+            manifest["repository_access"] = dict(report_access)
+            manifest["verifier_runtime"] = verifier_identity
+            manifest["tests"][0]["execution_environment"] = "openshell_sandbox"
         if verdict == "rejected":
             # Lead with the command and its exit status. The excerpt that
             # follows is thousands of lines of mostly-PASSING output -- a
@@ -28479,6 +28663,28 @@ class ControlPlane:
                     "verdict %s cannot resolve executor verification manifest" % evidence.id
                 )
                 continue
+            if self._read_only_report_needs_hub_verify(reviewed_task, executor_evidence):
+                info = self._hub_verify_repo_info(reviewed_task, executor_evidence)
+                tests = manifest.get("tests")
+                if (
+                    info is None
+                    or evidence.metadata.get("hub_verified") is not True
+                    or manifest.get("verified_by") != "hub_review_verifier_v1"
+                    or manifest.get("repository_access") != info["repository_access"]
+                    or not isinstance(tests, list)
+                    or len(tests) != 1
+                    or not isinstance(tests[0], dict)
+                    or tests[0].get("command") != info["test_command"]
+                    or tests[0].get("execution_environment") != "openshell_sandbox"
+                    or (
+                        manifest.get("verdict") == "approved"
+                        and (tests[0].get("returncode") != 0 or tests[0].get("status") != "pass")
+                    )
+                ):
+                    problems.append(
+                        "verdict %s lacks independent report contract verification" % evidence.id
+                    )
+                    continue
             verdict = str(manifest.get("verdict") or "").strip().lower()
             if verdict not in {"approved", "rejected"}:
                 problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
@@ -28907,7 +29113,11 @@ class ControlPlane:
         if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
             return None
         assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
+        if (
+            assignment.get("schema") == "mac.review_experiment.v1"
+            and _semantic_reviewer_enabled()
+            and not metadata_declares_read_only_report_repository(task.metadata)
+        ):
             return None
         name = (
             os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()
@@ -29015,13 +29225,15 @@ class ControlPlane:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
-        if metadata_declares_read_only_report_repository(
-            task.metadata
-        ) and not agent_has_read_only_report_repository_executor(agent.resources):
-            return "reviewer_report_repository_executor_missing"
         hub_review_verifier = _hub_review_verify_enabled() and self._agent_is_hub_review_verifier(
             agent
         )
+        if (
+            metadata_declares_read_only_report_repository(task.metadata)
+            and not hub_review_verifier
+            and not agent_has_read_only_report_repository_executor(agent.resources)
+        ):
+            return "reviewer_report_repository_executor_missing"
         if not hub_review_verifier and not self._agent_seen_recently(
             agent, self._default_reviewer_stale_after_seconds()
         ):

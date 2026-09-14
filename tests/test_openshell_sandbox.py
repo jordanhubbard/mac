@@ -24,6 +24,11 @@ import pytest
 
 from mac import openshell_sandbox_gc as sandbox_gc
 from mac import task_executor as te
+from mac import worker
+from tests.test_report_repository_routing import (
+    _marker_resources,
+    report_boundary_env as report_boundary_env,
+)
 
 _REAL_MERGE_SANDBOX_DOWNLOAD_TREE = te._merge_sandbox_download_tree
 
@@ -1180,30 +1185,29 @@ def test_read_only_report_and_reviewer_reject_direct_execution(monkeypatch, tmp_
         )
 
 
-def test_controller_approved_macos_host_report_may_run_without_openshell(monkeypatch, tmp_path):
+def test_controller_approved_macos_host_report_may_run_without_openshell(
+    monkeypatch, tmp_path, report_boundary_env
+):
+    executor, _policy = report_boundary_env
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     monkeypatch.setenv("MAC_ALLOW_UNSANDBOXED_YOLO", "1")
     monkeypatch.setattr(te.sys, "platform", "darwin")
-    for name in (
-        "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
-        "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
-        "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH",
-        "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256",
-        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH",
-        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
-        "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
-        "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
-    ):
-        monkeypatch.setenv(name, "approved")
-    monkeypatch.setenv("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM", "darwin")
-    monkeypatch.setenv("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE", "macos_host")
+    attestation = worker._read_only_report_executor_attestation([str(executor)])
+    assert attestation is not None
+    assert worker._apply_read_only_report_executor_approval(
+        _marker_resources(attestation), os.environ
+    )
+    workspace, _repo, task = _exact_read_only_report_workspace(tmp_path)
     runner = FakeRunner()
 
-    te._invoke_agent(
-        runner, "inspect", tmp_path / "task", "tid", {"task": _read_only_report_task()}
-    )
+    result = te._invoke_agent(runner, "inspect", workspace, "tid", {"task": task})
 
     assert runner.calls
+    assert result.mac_read_only_git_control_digest
+    assert (
+        te._read_only_report_repository_violation(task, result.mac_read_only_git_control_digest)
+        == ""
+    )
 
 
 def test_read_only_report_rejects_acp_backend(monkeypatch, tmp_path):
