@@ -7,13 +7,15 @@ execution record; this page explains how to interpret it.
 
 ## What is known now
 
-Rocky, Natasha, and Bullwinkle reported **healthy, idle, and not dispatch-held**
+macOS hub, Linux worker 1, and Linux worker 2 reported **healthy, idle, and not dispatch-held**
 at the snapshot. The user also confirmed all three conversing in Slack.
 Those observations establish availability and conversation, not successful
 coding, independent review, publication, or acceptance of the final runtime.
 No holds were changed during this inspection.
 
-The required recovery cohort is the three named workers. HGX work was withdrawn
+The required recovery cohort is the three fixed workers. The ledger records
+their exact registered identities; these role labels keep the published guide
+applicable to other fleet owners. HGX work was withdrawn
 in the shared ledger and is outside this rollout. A stale enabled HGX registry
 entry must not silently expand the cohort: resolve targets from the current
 `~/.mac/fleets.yaml` and select the three workers explicitly for deployment.
@@ -27,7 +29,7 @@ installing an OpenShell runtime there is not the recovery path.
 
 The last direct interpreter inventory, around 08:00 UTC, still showed drift:
 
-| Runtime | Rocky | Natasha | Bullwinkle |
+| Runtime | macOS hub | Linux worker 1 | Linux worker 2 |
 | --- | --- | --- | --- |
 | MAC Python | 3.14.7 | 3.12.3 | 3.14.4 |
 | Hermes Python | 3.11.14 | 3.11.14 | 3.11.16 |
@@ -107,7 +109,7 @@ The material lessons remain:
   replacing state; retain active memory during the Hermes migration.
 - Historical gateway advertisements reported success after runtime state had
   disappeared. Fresh process and route probes are required.
-- Rocky executed a canary whose signature failed review admission. Execution
+- macOS hub executed a canary whose signature failed review admission. Execution
   success must not be relabeled end-to-end completion.
 
 Preserve normalized PostgreSQL authority, lease fences, transactional event
@@ -125,7 +127,7 @@ bypassing them or replacing the architecture with a new framework.
 | Attestation recovery | `task_99d9fccdb580449a81095b55a17442de` | Reconciled epoch journal, fenced identity probes, old-credential rejection, and the required interruption tests across cutover steps. |
 | Worker readiness | `task_f2758902a67c4a11af432c169a1b3923` | Fresh supervisor, transport, provider route, signing identity, restart, and end-to-end canary evidence for each named worker. |
 | Hermes state preservation | `task_039a06ac2683472193a2755a531d2d31` | Active personas, memories, schedules, compatible recorded and unrecorded tools, and persistence after restart; obsolete services retired. |
-| Read-only reports | `task_bef7068af16860069f61e61801c8d4bd` | Native Rocky and Linux report canaries with trusted Linux verification and normal review/publication where the task contract requires it. |
+| Read-only reports | `task_bef7068af16860069f61e61801c8d4bd` | Native macOS hub and Linux report canaries with trusted Linux verification and normal review/publication where the task contract requires it. |
 | Backlog grooming | `task_348276615bc54552880b7b57d521663d` | Required report acceptance, then the specified Aviation and nanolang grooming settings, preserving active projects. |
 | Hermes retry investigation | `task_5edcc3b58c0d8e53f5e5f828b0cc4144` | Controlled comparison of first-attempt failures across Python versions, separating existing upstream failures without hiding them with more retries. |
 | Migration performance | `task_8e2fbc40ccae4b20ba34d570b7d88b2d` | Bounded lock-contention measurements; elapsed times from different hardware alone are insufficient. |
@@ -143,7 +145,7 @@ files were not stopped or deleted as part of MAC cleanup.
 1. Publish the source repairs through their existing tasks and independent
    review, then obtain matching immutable worker and verifier images.
 2. Reconcile attestation and deploy the supported runtime/configuration to
-   Rocky, Natasha, and Bullwinkle explicitly, preserving their active state.
+   macOS hub, Linux worker 1, and Linux worker 2 explicitly, preserving their active state.
 3. Prove actual versions, routes, identity, and restart persistence. A package
    installation receipt alone does not prove the running interpreter changed.
 4. Run a targeted coding canary on each worker through normal execution,
