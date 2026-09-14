@@ -124,11 +124,13 @@ CONSUMER_DEFAULTS = {
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
     "MAC_HUB_VERIFY_PROFILE": (
-        "Independent verifier resource profile. Unset, empty or `default` preserves "
+        "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "
         "driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB "
         "sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable "
         "Linux tmpfs proof before repository code runs; unsupported profiles fail closed. "
-        "Affects future review and projected-merge verifiers, not running sandboxes."
+        "Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, "
+        "including separate read-only verifiers; existing sandbox resources remain unchanged. "
+        "Conflicting worker create resource overrides are rejected."
     ),
     "MAC_HUB_VERIFY_PG_URL": (
         "Dedicated test Postgres DSN injected into the hub-verify OpenShell "

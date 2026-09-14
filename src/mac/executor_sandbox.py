@@ -103,6 +103,8 @@ from mac.openshell_runtime import (
     SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
+    verifier_resource_profile,
+    verifier_profile_create_args,
 )
 from mac.env_config import (
     env_bool,
@@ -1680,6 +1682,7 @@ def _sandbox_repository_verification_shell(
     return "\n".join(
         [
             *exports,
+            verifier_resource_profile()[2],
             'if [ -n "${VERIFICATION_START_MARKER:-}" ]; then : > "$VERIFICATION_START_MARKER"; fi',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
@@ -2067,6 +2070,7 @@ def _sandbox_read_only_repository_verification_shell(
     return "\n".join(
         [
             *exports,
+            verifier_resource_profile()[2],
             'export MAC_READ_ONLY_AUTHORITATIVE_VERIFIER="1"',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
@@ -2468,7 +2472,9 @@ def _build_sandbox_create_argv(
     policy = _resolve_openshell_policy() if task is None else _resolve_task_openshell_policy(task)
     argv += ["--policy", policy, "--name", name]
     argv += _sandbox_label_argv("task", keep=env_bool("MAC_OPENSHELL_KEEP"))
-    argv += _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
+    argv += verifier_profile_create_args(
+        _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
+    )
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
     argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
@@ -2478,6 +2484,7 @@ def _build_sandbox_create_argv(
             ". ./.mac-openshell-env.sh",
             "set +a",
             "rm -f ./.mac-openshell-env.sh",
+            verifier_resource_profile()[2],
             'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && [ ! -e /sandbox/mac-clone ]; then ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone || true; fi',
             ". ./.mac-sandbox-toolchain.sh",
             "rm -f ./.mac-sandbox-toolchain.sh",
@@ -3676,7 +3683,7 @@ def _sandbox_run_read_only_repository_verification(
             "--name",
             verifier_name,
             *_sandbox_label_argv("read-only-verifier"),
-            *_read_only_verifier_extra_create_argv(),
+            *verifier_profile_create_args(_read_only_verifier_extra_create_argv()),
             "--no-git-ignore",
             "--no-tty",
             "--upload",
