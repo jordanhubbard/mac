@@ -9,6 +9,8 @@ from typing import Iterable, Iterator, Optional
 import pytest
 from mac.services import ControlPlane
 
+pytest_plugins = ["tests.pg_worker_databases"]
+
 
 # Namespaces addressable by MAC_TEST_DISABLE_GROUPS. Each maps a group name to a
 # predicate over the test's file path. Markers ARE the namespaces (the api/cli/ui
