@@ -321,25 +321,35 @@ while True:
         # cannot satisfy readiness for a different live service.
         process = subprocess.run(
             ["ps", "-p", str(pid), "-o", "ppid=", "-o", "uid="],
-            capture_output=True, text=True, check=True, timeout=3,
+            capture_output=True, text=True, timeout=3,
         )
-        parent, uid = map(int, process.stdout.split())
-        if uid != os.getuid() or (pid != supervisor_pid and parent != supervisor_pid):
-            raise ValueError("runtime status does not belong to the supervised gateway")
-        slack = state.get("platforms", {}).get("slack", {})
-        if state.get("gateway_state") == "running" and slack.get("state") == "connected":
-            if slack.get("writer_pid") != pid:
-                raise ValueError("Slack readiness belongs to a different runtime writer")
-            print("Hermes gateway is supervised; its live runtime reports Slack connected")
-            break
-        if state.get("gateway_state") in {"stopped", "startup_failed", "draining"} or slack.get("state") == "fatal":
-            raise ValueError("gateway runtime is stopped, draining, or failed")
+        if process.returncode == 0:
+            parent, uid = map(int, process.stdout.split())
+            current_writer = uid == os.getuid() and (
+                pid == supervisor_pid or parent == supervisor_pid
+            )
+            if current_writer:
+                slack = state.get("platforms", {}).get("slack", {})
+                if state.get("gateway_state") in {"startup_failed", "draining"} or slack.get("state") == "fatal":
+                    raise ValueError("gateway runtime is draining or failed")
+                if (state.get("gateway_state") == "running"
+                        and slack.get("state") == "connected"
+                        and slack.get("writer_pid") == pid):
+                    print("Hermes gateway is supervised; its live runtime reports Slack connected")
+                    break
+        # Upstream retains the previous writer's status during replacement,
+        # then can stamp the new PID before replacing its inherited "stopped"
+        # state. Neither snapshot proves that the current gateway has failed.
+        # Wait for current-writer readiness, never accept an old Slack result.
+    except FileNotFoundError:
+        # The selected profile may not have its first runtime snapshot yet.
+        pass
     except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
         # Do not print runtime payloads or platform error messages: they may
         # contain credentials or message content.
         raise SystemExit("Hermes messaging readiness failed: " + type(exc).__name__) from None
     if time.monotonic() >= deadline:
-        raise SystemExit("Hermes messaging readiness timed out: Slack is not connected")
+        raise SystemExit("Hermes messaging readiness failed: timed out waiting for current gateway and Slack")
     time.sleep(1)
 PY_VERIFY
 }

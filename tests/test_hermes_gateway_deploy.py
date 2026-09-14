@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -68,6 +69,29 @@ raise SystemExit(0)
 """
 
 
+FAKE_PS = """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+# Advance status only after the verifier has read the preceding snapshot.
+# Use the real process lookup, including its failure for an exited old PID.
+sequence_path = Path(os.environ["FAKE_RUNTIME_SEQUENCE"])
+sequence = json.loads(sequence_path.read_text())
+with Path(os.environ["FAKE_HERMES_CALLS"]).open("a") as handle:
+    handle.write(json.dumps(["ps", *sys.argv[1:]]) + "\\n")
+if sequence:
+    runtime_path = Path(os.environ["HERMES_HOME"]) / "gateway_state.json"
+    temporary = runtime_path.with_suffix(".next")
+    temporary.write_text(json.dumps(sequence.pop(0)))
+    temporary.chmod(0o600)
+    temporary.replace(runtime_path)
+    sequence_path.write_text(json.dumps(sequence))
+os.execv(os.environ["FAKE_REAL_PS"], ["ps", *sys.argv[1:]])
+"""
+
+
 def _prepare_bin(tmp_path: Path, calls_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -97,7 +121,9 @@ def _run(
     hermes_home = home / ".hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
     runtime_pid = os.getpid()
-    if subcommand == "prepare" and scenario != "stop_still_running":
+    if (subcommand == "prepare" and scenario != "stop_still_running") or (extra_env or {}).get(
+        "_EXITED_RUNTIME"
+    ):
         # A real exited process models an installed, already stopped service.
         # The stuck-stop case keeps a real live PID while the fake CLI returns
         # success, reproducing upstream's misleading exit code safely.
@@ -110,6 +136,20 @@ def _run(
         "platforms": {"slack": {"state": "connected", "writer_pid": runtime_pid}},
     }
     runtime.update((extra_env or {}).get("_RUNTIME_UPDATE", {}))
+    if "_RUNTIME_SEQUENCE" in (extra_env or {}):
+        fake_ps = bin_dir / "ps"
+        fake_ps.write_text(FAKE_PS, encoding="utf-8")
+        fake_ps.chmod(0o755)
+        snapshots = []
+        for update in extra_env["_RUNTIME_SEQUENCE"]:
+            snapshot = {
+                "pid": os.getpid(),
+                "gateway_state": "running",
+                "platforms": {"slack": {"state": "connected", "writer_pid": os.getpid()}},
+            }
+            snapshot.update(update)
+            snapshots.append(snapshot)
+        (tmp_path / "runtime-sequence.json").write_text(json.dumps(snapshots), encoding="utf-8")
     if not (extra_env or {}).get("_OMIT_RUNTIME"):
         runtime_path = hermes_home / "gateway_state.json"
         runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
@@ -135,12 +175,16 @@ def _run(
         "FAKE_HERMES_SCENARIO": scenario,
         "FAKE_GATEWAY_PID": str(os.getpid()),
         "FAKE_MAC_CALLS": str(mac_calls_path),
+        "FAKE_RUNTIME_SEQUENCE": str(tmp_path / "runtime-sequence.json"),
+        "FAKE_REAL_PS": shutil.which("ps"),
     }
     _test_only_flags = {
         "_OMIT_ALLOWLIST_ENV",
         "_OMIT_GATEWAY_IMPL_ENV",
         "_OMIT_RUNTIME",
         "_RUNTIME_UPDATE",
+        "_RUNTIME_SEQUENCE",
+        "_EXITED_RUNTIME",
     }
     if extra_env:
         env.update({k: v for k, v in extra_env.items() if k not in _test_only_flags})
@@ -171,6 +215,52 @@ def test_verify_ignores_historical_shutdown_logs(tmp_path):
 def test_verify_accepts_systemd_current_summary_despite_old_journal_shutdown(tmp_path):
     result, _calls = _run(tmp_path, "verify", scenario="systemd")
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("old_state", ["stopped", "running", "startup_failed"])
+def test_verify_waits_for_replacement_writer_and_its_ready_snapshot(tmp_path, old_state):
+    result, calls = _run(
+        tmp_path,
+        "verify",
+        extra_env={
+            "_EXITED_RUNTIME": True,
+            "_RUNTIME_UPDATE": {"gateway_state": old_state},
+            "_RUNTIME_SEQUENCE": [
+                {"gateway_state": "stopped"},
+                {"gateway_state": "starting", "platforms": {"slack": {"state": "connecting"}}},
+                {},
+            ],
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "live runtime reports Slack connected" in result.stdout
+    # A connected old writer or the new PID's inherited stopped state cannot
+    # satisfy readiness; the verifier must inspect the fourth snapshot.
+    assert len([call for call in calls if call[0] == "ps"]) == 4
+
+
+def test_verify_never_accepts_connected_status_from_exited_writer(tmp_path):
+    result, calls = _run(
+        tmp_path,
+        "verify",
+        extra_env={"_EXITED_RUNTIME": True, "_RUNTIME_SEQUENCE": []},
+    )
+    assert result.returncode != 0
+    assert "timed out waiting for current gateway and Slack" in result.stderr
+    assert "live runtime reports Slack connected" not in result.stdout
+    assert len([call for call in calls if call[0] == "ps"]) > 1
+
+
+@pytest.mark.parametrize("state", ["startup_failed", "draining"])
+def test_verify_rejects_current_fatal_state_without_waiting_for_later_readiness(tmp_path, state):
+    result, calls = _run(
+        tmp_path,
+        "verify",
+        extra_env={"_RUNTIME_UPDATE": {"gateway_state": state}, "_RUNTIME_SEQUENCE": [{}]},
+    )
+    assert result.returncode != 0
+    assert "messaging readiness failed" in result.stderr
+    assert len([call for call in calls if call[0] == "ps"]) == 1
 
 
 @pytest.mark.parametrize(
