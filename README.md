@@ -168,8 +168,9 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Trust workflow](docs/guide/06-trust-workflow.md) | one request through acceptance, recovery, and measured results |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
-| [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.4.0 deck](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk), each pinned to the commit it describes |
-| [v1.4.0 capabilities (`a787bff1`)](docs/presentation/20260906T051311Z-a787bff1/README.md) | current release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) |
+| [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.5.0 deck](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx), each pinned to the commit it describes |
+| [v1.5.0 capabilities (`c7be3a5a`)](docs/presentation/20260914T203809Z-c7be3a5a/README.md) | current release deck: upfront validation, PostgreSQL test isolation, Hermes readiness and task outcomes — [public PPTX](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx) |
+| [v1.4.0 capabilities (`a787bff1`)](docs/presentation/20260906T051311Z-a787bff1/README.md) | historical release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) |
 
 Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name
