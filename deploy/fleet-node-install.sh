@@ -681,6 +681,21 @@ python_bin() {
   exit 1
 }
 
+crash_observer_python_bin() {
+  local candidate
+  for candidate in \
+    "$MAC_HOME/lib/python"/cpython-"$MAC_REVIEWED_PYTHON_VERSION"-*/bin/python3.14; do
+    [ -x "$candidate" ] || continue
+    if "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+        "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+  log "ERROR: managed standalone Python $MAC_REVIEWED_PYTHON_VERSION is missing for the crash observer"
+  exit 1
+}
+
 native_uv_bin() {
   local candidate version
   for candidate in "$MAC_HOME/lib/uv/versions/$MAC_REVIEWED_UV_VERSION/uv" "$MAC_HOME/bin/uv" uv; do
@@ -708,6 +723,7 @@ hermes_python_bin() {
 }
 
 PY="$(python_bin)"
+CRASH_OBSERVER_PY="$(crash_observer_python_bin)"
 # PYTHON_BIN is referenced by remote-payload helpers (e.g. install_github_review_key);
 # resolve_python_bin only runs in the local driver, so assign it here in the payload
 # (mirrors PY) or the remote aborts under `set -u` with "PYTHON_BIN: unbound variable".
@@ -13100,7 +13116,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$MAC_HOME
 EnvironmentFile=$ENV_FILE
-ExecStart=$MAC_HOME/bin/mac-crash-observer --supervisor systemd -- $MAC_HOME/bin/mac-agent-service
+ExecStart=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor systemd -- $MAC_HOME/bin/mac-agent-service
 Restart=always
 RestartSec=5
 SuccessExitStatus=143 SIGTERM
@@ -13234,7 +13250,7 @@ stderr_logfile=$LOG_DIR/resource-health.log
 environment=HOME="$HOME",MAC_HOME="$MAC_HOME",MAC_RESOURCE_HEALTH_INTERVAL_SECONDS="300"
 
 [program:$AGENT_SUPERVISORD_PROG]
-command=$MAC_HOME/bin/mac-crash-observer --supervisor supervisord -- $MAC_HOME/bin/mac-agent-service
+command=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor supervisord -- $MAC_HOME/bin/mac-agent-service
 directory=$MAC_HOME
 user=$USER
 autostart=$agent_autostart
@@ -13805,6 +13821,7 @@ install_darwin_agent_service() {
   <key>Label</key><string>$MAC_AGENT_LAUNCHD_LABEL</string>
   <key>ProgramArguments</key>
   <array>
+    <string>$CRASH_OBSERVER_PY</string>
     <string>$MAC_HOME/bin/mac-crash-observer</string>
     <string>--supervisor</string><string>launchd</string>
     <string>--</string><string>$MAC_HOME/bin/mac-agent-service</string>
