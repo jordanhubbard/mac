@@ -1696,7 +1696,21 @@ class MacWorker(
             subject_id=task_id,
             detail={"lease_id": lease_id, "agent_id": self.agent_id},
         )
+        # Preparation and host finalization can both wait on Git/OpenShell.
+        # The lease belongs to this whole assignment, not only its executor.
+        renewal_stop = threading.Event()
+        renewal_thread: Optional[threading.Thread] = None
         try:
+            interval = self.lease_renew_interval_seconds
+            if interval is None:
+                interval = max(1.0, min(60.0, float(self.lease_seconds) / 2.0))
+            if self.lease_seconds > 0 and interval > 0:
+                renewal_thread = threading.Thread(
+                    target=self._renew_lease_until_stopped,
+                    args=(lease_id, task_id, renewal_stop, interval),
+                    daemon=True,
+                )
+                renewal_thread.start()
             _post_with_fenced_write_retry(
                 self.client,
                 "/tasks/%s/start?%s"
@@ -1741,6 +1755,10 @@ class MacWorker(
                     task_dir = self._prepare_task_workspace(task, lease)
                 else:
                     raise
+            if not self._assignment_is_current(task_id, lease_id):
+                return self._stale_result(
+                    task_id, lease, "assignment no longer current after workspace preparation"
+                )
             _emit_task_progress(
                 self,
                 task,
@@ -1748,7 +1766,7 @@ class MacWorker(
                 continuation="local",
             )
             started = time.monotonic()
-            execution = self._execute_with_lease_renewal(task, lease, task_dir)
+            execution = self._execute_task(task, lease, task_dir)
             duration_ms = (time.monotonic() - started) * 1000.0
             self._observe_metric(
                 "worker.execution.duration_ms",
@@ -1798,7 +1816,7 @@ class MacWorker(
                 self._append_harness_recovery_log(task_dir, "bootstrap", _b_choice, _b_msg)
                 if _b_recovered:
                     started = time.monotonic()
-                    execution = self._execute_with_lease_renewal(task, lease, task_dir)
+                    execution = self._execute_task(task, lease, task_dir)
             evidence = self._record_execution(
                 task_id,
                 task_dir,
@@ -2100,6 +2118,9 @@ class MacWorker(
                 pass
             raise
         finally:
+            renewal_stop.set()
+            if renewal_thread is not None:
+                renewal_thread.join(timeout=1.0)
             self._clear_active_assignment(task_id, lease_id)
 
     def _assignment_is_current(self, task_id: str, lease_id: str) -> bool:
@@ -2158,24 +2179,12 @@ class MacWorker(
             error=reason,
         )
 
-    def _execute_with_lease_renewal(
+    def _execute_task(
         self,
         task: JsonDict,
         lease: JsonDict,
         task_dir: Path,
     ) -> WorkerExecution:
-        stop = threading.Event()
-        thread: Optional[threading.Thread] = None
-        interval = self.lease_renew_interval_seconds
-        if interval is None:
-            interval = max(1.0, min(60.0, float(self.lease_seconds) / 2.0))
-        if self.lease_seconds > 0 and interval > 0:
-            thread = threading.Thread(
-                target=self._renew_lease_until_stopped,
-                args=(lease["id"], task["id"], stop, interval),
-                daemon=True,
-            )
-            thread.start()
         metadata = task.get("metadata") if isinstance(task, dict) else {}
         runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
         break_glass = (
@@ -2192,21 +2201,16 @@ class MacWorker(
                     "break_glass_authorization_id": break_glass.get("id"),
                 }
             )
-        try:
-            return self._call_executor(
-                task,
-                task_dir,
-                {
-                    "agent_id": self.agent_id,
-                    "task_id": task["id"],
-                    "lease_id": lease["id"],
-                    "metadata": audit_metadata,
-                },
-            )
-        finally:
-            stop.set()
-            if thread is not None:
-                thread.join(timeout=1.0)
+        return self._call_executor(
+            task,
+            task_dir,
+            {
+                "agent_id": self.agent_id,
+                "task_id": task["id"],
+                "lease_id": lease["id"],
+                "metadata": audit_metadata,
+            },
+        )
 
     def _renew_lease_until_stopped(
         self,
@@ -4454,6 +4458,8 @@ class MacWorker(
                 execution,
                 attempt_state=attempt_state,
             )
+            if not self._assignment_is_current(task_id, lease_id):
+                raise RuntimeError("assignment no longer current after finalization")
         metadata = self._execution_metadata(task_dir, execution)
         result_path = task_dir / "worker-result.json"
         _write_host_control_text(
@@ -4871,6 +4877,8 @@ class MacWorker(
             problems.append("repository evidence failed local contract checks; refusing to push")
         elif _worker_verification_item_passed(test_item) is True:
             if publication_target is not None:
+                if not self._assignment_is_current(task_id, lease_id):
+                    raise RuntimeError("assignment no longer current after repository verification")
                 publication = guarded_push(publication_target)
                 display = (
                     publication.target.remote_display

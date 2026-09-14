@@ -2519,6 +2519,137 @@ def test_mac_worker_renews_lease_while_executor_runs(tmp_path: Path):
     assert any(event.event_type == "task.lease_renewed" for event in cp.task_history(task.id))
 
 
+@pytest.mark.parametrize(
+    ("phase", "outcome"),
+    [
+        ("preparation", "success"),
+        ("preparation", "revoked"),
+        ("verification", "success"),
+        ("verification", "failed"),
+        ("verification", "error"),
+        ("verification", "revoked"),
+    ],
+)
+def test_assignment_lease_covers_preparation_and_host_verification(
+    tmp_path: Path, monkeypatch, phase: str, outcome: str
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    initial_remote_refs = _git(repo, "ls-remote", "--heads", "origin")
+    metadata = _repository_task_metadata(repo)
+    if outcome == "failed":
+        metadata["execution_contract"]["repository_contract"]["test"]["command"] = "false"
+    task = cp.create_task(
+        "Preserve assignment during delegated verification",
+        required_capabilities=["python"],
+        metadata=metadata,
+    )
+    client = TestClient(create_app(control_plane=cp))
+    delegate = api_transport(client)
+    blocking = threading.Event()
+    renewed = threading.Event()
+    heartbeated = threading.Event()
+    ticker_finished = threading.Event()
+    renewals: list[str] = []
+    heartbeats: list[str] = []
+    executor_calls: list[str] = []
+
+    def transport(method, path, payload):
+        result = delegate(method, path, payload)
+        if blocking.is_set() and method.upper() == "POST":
+            if path.startswith("/leases/") and path.endswith("/renew"):
+                renewals.append(result["id"])
+                if len(renewals) >= 2:
+                    renewed.set()
+            if path == "/agents/%s/heartbeat" % agent.id and payload.get("status") == "busy":
+                heartbeats.append(payload["status"])
+                if len(heartbeats) >= 2:
+                    heartbeated.set()
+        return result
+
+    def executor(task_payload, _task_dir):
+        executor_calls.append(task_payload["id"])
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        (worktree / "README.md").write_text("finalize this change\n", encoding="utf-8")
+        return WorkerExecution(0, "changed repository without a manifest")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=transport),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        lease_seconds=60,
+        lease_renew_interval_seconds=0.02,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    renewal_loop = worker._renew_lease_until_stopped
+
+    def tracked_renewal(*args):
+        try:
+            return renewal_loop(*args)
+        finally:
+            ticker_finished.set()
+
+    monkeypatch.setattr(worker, "_renew_lease_until_stopped", tracked_renewal)
+
+    def wait_for_liveness():
+        before = cp.get_task(task.id)
+        initial_expiry = cp.get_lease(before.lease_id).expires_at
+        blocking.set()
+        try:
+            assert renewed.wait(3), "lease was not renewed during %s" % phase
+            assert heartbeated.wait(3), "worker did not heartbeat during %s" % phase
+            current = cp.get_task(task.id)
+            assert current.owner_agent_id == agent.id
+            assert current.lease_id == before.lease_id
+            assert set(renewals) == {before.lease_id}
+            assert cp.get_lease(before.lease_id).expires_at > initial_expiry
+            assert cp.get_agent(agent.id).status == "busy"
+            if outcome == "revoked":
+                cp.stop_task(task.id, actor="operator", reason="revoke while blocked")
+            elif outcome == "error":
+                raise OSError("delegated verifier unavailable")
+        finally:
+            blocking.clear()
+
+    if phase == "preparation":
+        prepare = worker._prepare_task_workspace
+
+        def blocked_prepare(*args):
+            task_dir = prepare(*args)
+            wait_for_liveness()
+            return task_dir
+
+        monkeypatch.setattr(worker, "_prepare_task_workspace", blocked_prepare)
+    else:
+        verify = worker._run_repository_contract_test
+
+        def blocked_verify(*args, **kwargs):
+            wait_for_liveness()
+            return verify(*args, **kwargs)
+
+        monkeypatch.setattr(worker, "_run_repository_contract_test", blocked_verify)
+
+    result = worker.run_once()
+
+    assert renewed.is_set() and heartbeated.is_set()
+    assert ticker_finished.wait(0.5), "assignment left its renewal thread running"
+    assert worker._active_assignment is None
+    if outcome == "success":
+        assert result.status == "submitted_for_review"
+        manifest = cp.list_evidence(task.id)[0].metadata["verification"]
+        assert manifest["repo"]["pushed"] is True
+    else:
+        assert result.status == ("stale_result" if outcome == "revoked" else "blocked")
+        assert _git(repo, "ls-remote", "--heads", "origin") == initial_remote_refs
+    if outcome == "revoked":
+        assert cp.get_task(task.id).state == "stopped"
+        assert cp.list_evidence(task.id) == []
+        if phase == "preparation":
+            assert executor_calls == []
+
+
 def test_assignment_is_current_propagates_programming_errors_not_silently_true(tmp_path: Path):
     """mac-h3d: _assignment_is_current's exception net was bare
     ``except Exception`` and silently returned True. Narrowed to

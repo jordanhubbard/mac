@@ -132,6 +132,8 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
         agent_id = "agent-planner"
+        lease_seconds = 0
+        lease_renew_interval_seconds = 0
 
         def __init__(self):
             self.client = Client()
@@ -154,7 +156,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
             (tmp_path / "task.json").write_text(json.dumps({"task": task, "lease": lease}))
             return tmp_path
 
-        def _execute_with_lease_renewal(self, task, lease, task_dir):
+        def _execute_task(self, task, lease, task_dir):
             return worker.WorkerExecution(0, "planned")
 
         def _assignment_is_current(self, task_id, lease_id):
@@ -218,6 +220,8 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
         agent_id = "agent-planner"
+        lease_seconds = 0
+        lease_renew_interval_seconds = 0
 
         def __init__(self):
             self.client = Client()
@@ -241,7 +245,7 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
             )
             return tmp_path
 
-        def _execute_with_lease_renewal(self, task, lease, task_dir):
+        def _execute_task(self, task, lease, task_dir):
             return worker.WorkerExecution(0, "planned")
 
         def _assignment_is_current(self, task_id, lease_id):
