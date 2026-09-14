@@ -262,3 +262,6 @@ def test_finalizer_stages_new_source_but_never_commits_gitignored_artifacts(tmp_
     # The ignored files still exist untracked-and-ignored; git status stays clean
     # because ``git add -A`` respects .gitignore.
     assert _git(work, "status", "--porcelain").stdout == ""
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

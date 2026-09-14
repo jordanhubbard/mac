@@ -329,7 +329,7 @@ def test_hub_verify_uses_the_deployment_approved_runtime_image(tmp_path):
     )
 
     assert hub["MAC_HUB_VERIFY_IMAGE"] == runtime
-    assert "MAC_HUB_VERIFY_IMAGE" not in spoke
+    assert spoke["MAC_HUB_VERIFY_IMAGE"] == runtime
 
 
 def test_spoke_env_removes_stale_local_control_plane_configuration(tmp_path):
@@ -391,6 +391,25 @@ def test_explicit_optional_openshell_disable_scrubs_stale_runtime_env(tmp_path):
 
     assert values["MAC_OPENSHELL_REQUIRED"] == "off"
     assert not (set(deploy_env.OPENSHELL_MANAGED_RUNTIME_KEYS) & set(values))
+
+
+@pytest.mark.parametrize("agent,disabled", [("spoke", False), ("hub", True)])
+def test_verifier_client_is_configured_without_enabling_native_runtime(tmp_path, agent, disabled):
+    image = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+    env = {"MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": image}
+    if disabled:
+        env.update(MAC_DEPLOY_OPENSHELL="0", MAC_DEPLOY_OPENSHELL_REQUIRED="0")
+    values = deploy_env.build_mac_env(
+        {"MAC_OPENSHELL_POLICY": "/managed/review-policy.yaml", "MAC_OPENSHELL_SANDBOX": "1"},
+        _cfg(tmp_path, agent=agent, manager="hub"),
+        environ=env,
+    )
+    assert values["MAC_HUB_VERIFY_IMAGE"] == image
+    assert values["MAC_OPENSHELL_BIN"] == str(tmp_path / ".mac/bin/openshell")
+    assert values["MAC_OPENSHELL_POLICY"] == "/managed/review-policy.yaml"
+    if disabled:
+        assert "MAC_OPENSHELL_SANDBOX" not in values
+        assert "MAC_OPENSHELL_CREATE_ARGS" not in values
 
 
 def test_required_worker_cannot_be_weakened_by_explicit_openshell_disable(tmp_path):

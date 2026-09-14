@@ -1089,14 +1089,22 @@ def build_mac_env(
     else:
         values.pop("MAC_WORKER_DEPLOY_GENERATION", None)
         values.pop("MAC_WORKER_DEPLOY_BARRIER_FILE", None)
+    verifier_policy = values.get("MAC_OPENSHELL_POLICY")
     openshell_explicitly_disabled = _apply_openshell_deploy_config(values, env)
     runtime_image = (env.get("MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE") or "").strip()
-    if cfg.identity.is_hub and runtime_image:
-        # Hub verification executes untrusted repository tests in the same
+    if runtime_image:
+        # Pre-push and hub verification execute repository tests in the same
         # reviewed runtime family as workers. Never retain the pre-publication
         # localhost/mac-hermes:net fallback: OpenShell interprets it as a local
         # registry reference and every review fails before a test starts.
         values["MAC_HUB_VERIFY_IMAGE"] = runtime_image
+        # Native nodes still need the managed CLI and policy to ask a Linux
+        # gateway to verify code. These do not enable a local sandbox runtime.
+        values["MAC_OPENSHELL_BIN"] = str(cfg.paths.mac_home / "bin" / "openshell")
+        values.setdefault(
+            "MAC_OPENSHELL_POLICY",
+            verifier_policy or str(cfg.paths.mac_home / "openshell-policy.yaml"),
+        )
     openshell_active = any(
         (
             _enabled(str(env.get("MAC_DEPLOY_OPENSHELL_ENABLED") or "")),

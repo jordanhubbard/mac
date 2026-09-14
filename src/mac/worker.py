@@ -4585,7 +4585,7 @@ class MacWorker(
                         "%s %s"
                         % (
                             test.get("command"),
-                            "passed" if test.get("returncode") == 0 else "FAILED",
+                            _test_activity_status(test),
                         )
                     )
         if repo.get("pushed") is True:
@@ -4816,7 +4816,7 @@ class MacWorker(
         test_command = _repository_contract_test_command(task)
         hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
         test_item = self._run_repository_contract_test(
-            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify
+            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify, task=task
         )
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
@@ -4869,9 +4869,7 @@ class MacWorker(
         elif prepush_problems:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
-        elif test_item.get("returncode") == 0 or (
-            hub_verify and _is_hub_verify_deferred_item(test_item)
-        ):
+        elif _worker_verification_item_passed(test_item) is True:
             if publication_target is not None:
                 publication = guarded_push(publication_target)
                 display = (
@@ -5108,43 +5106,22 @@ class MacWorker(
         *,
         task_dir: Optional[Path] = None,
         hub_verify: bool = False,
+        task: Optional[JsonDict] = None,
     ) -> JsonDict:
-        sandbox_item = _sandbox_repository_verification_item(
-            task_dir, command, hub_verify=hub_verify
-        )
-        if sandbox_item is not None:
-            return sandbox_item
-        if not command:
-            return {
-                "name": "repository contract test",
-                "command": "",
-                "returncode": 1,
-                "status": "fail",
-                "stderr": "repository contract test.command is missing",
-            }
-        try:
-            # Progress-based watchdog: kills only when the command stops
-            # emitting output (MAC_TEST_STALL_TIMEOUT, default 300s), with
-            # MAC_WORKER_REPOSITORY_TEST_TIMEOUT (1800s) as a hard backstop.
-            # Total-runtime constants kept going stale as legitimate work grew
-            # (venv bootstrap + suite) and killed healthy runs mid-flight.
-            from mac.task_executor import run_with_stall_watchdog
+        # A task-local sandbox receipt may describe the pre-rebase tree or be
+        # written by the coding agent. Run the final committed source through
+        # the existing Linux verifier before this fallback can push it.
+        from mac.executor_prompt import _repository_contract_bootstrap, _repository_prepared_base
+        from mac.services import verify_unpublished_repository
 
-            proc = run_with_stall_watchdog(["bash", "-lc", command], worktree)
-        except Exception as exc:  # noqa: BLE001 - report as verification failure.
-            return {
-                "name": "repository contract test",
-                "command": command,
-                "returncode": 1,
-                "status": "fail",
-                "stderr": str(exc),
-            }
-        return _process_check_item(
-            "repository contract test",
-            proc.returncode,
-            command=command,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+        if task is None:
+            task = _task_payload_from_workspace(task_dir) if task_dir is not None else {}
+        bootstrap = _repository_contract_bootstrap(task)
+        return verify_unpublished_repository(
+            worktree,
+            command,
+            str(bootstrap.get("command") or ""),
+            prepared_base_sha=_repository_prepared_base(task),
         )
 
     def _execution_submission_problems(self, task_dir: Path, evidence: JsonDict) -> List[str]:
@@ -7932,6 +7909,17 @@ def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str
     return authed, _redact_git_remote_auth(authed)
 
 
+def _test_activity_status(test: JsonDict) -> str:
+    status = str(test.get("status") or "").strip().lower()
+    if status in {"deferred", "unavailable", "skipped", "not_run", "stale_source"}:
+        return status.replace("_", " ")
+    if test.get("returncode") is None:
+        return "not run"
+    return (
+        "passed" if test.get("returncode") == 0 and status not in {"fail", "failed"} else "FAILED"
+    )
+
+
 def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
@@ -7948,22 +7936,23 @@ def _repository_finalizer_prepush_problems(
     files_changed = _manifest_list(repo.get("files_changed"))
     if not files_changed and not _worker_allows_empty_repo_change_evidence(task, "repo_change"):
         problems.append("repo evidence requires changed files")
-    # When hub-verify mode is active and the test item is the deferred sentinel,
-    # skip the passing-test gate — the hub finalizer will run the contract test
-    # after the branch is pushed.  All other prepush checks (head_sha, dirty,
-    # files_changed) are still enforced.
-    if hub_verify and _is_hub_verify_deferred_item(test_item):
-        pass  # test gate intentionally skipped in hub-verify deferred mode
-    elif _worker_verification_item_passed(test_item) is not True:
+    if (
+        str(test_item.get("status") or "").lower()
+        in {"deferred", "unavailable", "stale_source", "not_run", "skipped", "fail", "failed"}
+        or _worker_verification_item_passed(test_item) is not True
+    ):
         problems.append("repo code evidence requires at least one passing test/check")
+    if test_item.get("executed_head_sha") and test_item["executed_head_sha"] != head_sha:
+        problems.append("repository tests do not match the commit being pushed")
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
 
 
 def _hub_verify_deferred_test_item(command: str) -> JsonDict:
-    """Return the deferred sentinel emitted when MAC_REVIEW_HUB_VERIFY=1 and no
-    sandbox result is available.  The hub finalizer will run the contract test
-    after the branch is pushed; the worker must not block on it."""
+    """Report pending independent review without claiming a test result.
+
+    This is valid for native read-only reports; it never authorizes a code push.
+    """
     return {
         "name": "repository contract test",
         "command": command,

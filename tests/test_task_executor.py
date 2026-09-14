@@ -2420,8 +2420,9 @@ def test_git_finalizer_clean_preserves_new_source_over_gitignored_artifact(tmp_p
     assert "new_source.py" in manifest["repo"]["files_changed"]
     assert _git(work, "show", "HEAD:new_source.py").stdout == "print('keep me')\n"
     assert (work / "new_source.py").exists()
-    # Gitignored artifact was purged by `git clean -Xdf` and never committed.
-    assert not (work / "build" / "artifact.o").exists()
+    # The host's ignored artifact is preserved; the fresh verifier clone does
+    # not contain it, and it was never committed.
+    assert (work / "build" / "artifact.o").exists()
     assert _git(work, "status", "--porcelain").stdout == ""
     assert _git(
         tmp_path, "ls-remote", str(origin), "refs/heads/task/clean-preserves"
@@ -2533,8 +2534,9 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert (work / ".venv/bin/python").exists()
-    assert manifest["bootstrap"]["status"] == "pass"
+    assert not (work / ".venv/bin/python").exists()
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
     # mac-wjy3: verification.tests must be a LIST of result objects so the strict
     # evidence validator accepts it (a bare dict reads as tests:null/missing).
     assert isinstance(manifest["tests"], list)
@@ -2602,8 +2604,9 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     # non-empty base..head diff (base != head here).
     assert len(manifest["repo"]["base_sha"]) == 40
     assert manifest["repo"]["base_sha"] != manifest["repo"]["head_sha"]
-    assert manifest["bootstrap"]["status"] == "fail"
-    assert manifest["tests"][0]["status"] == "pass"
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
+    assert manifest["tests"][0]["status"] == "fail"
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "bootstrap/tests failed"
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
@@ -3083,9 +3086,10 @@ def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeyp
     )
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert (work / ".venv/bin/python").exists()
+    assert not (work / ".venv/bin/python").exists()
     assert manifest["verdict"] == "approved"
-    assert manifest["bootstrap"]["status"] == "pass"
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
     assert manifest["tests"][0]["returncode"] == 0
 
 
@@ -5710,8 +5714,6 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
     expected = {
         "repository_snapshot",
         "canonical_sync",
-        "cleanup",
-        "bootstrap",
         "contract_tests",
         "publication_preflight",
         "guarded_push",
@@ -5790,3 +5792,6 @@ def test_main_startup_unresolvable_workspace_still_fails_closed(tmp_path, monkey
 
     rc = te.main()
     assert rc == 1
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

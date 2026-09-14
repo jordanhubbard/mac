@@ -901,7 +901,9 @@ def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None)
             "to develop and check the changed behavior. Do NOT run the repository's "
             "full contract/pre-push gate, even when task.json asks for it: after the "
             "coding agent exits, the deterministic host runs the authoritative "
-            "impact-scoped repository gate in this same sandbox. "
+            "impact-scoped repository gate in a fresh Linux OpenShell sandbox. "
+            "Run all repository tests and builds in Linux OpenShell; never run "
+            "them on a native macOS host. "
             "Repeating that gate here wastes the bounded authoring budget and is not "
             "additional evidence."
         ),
