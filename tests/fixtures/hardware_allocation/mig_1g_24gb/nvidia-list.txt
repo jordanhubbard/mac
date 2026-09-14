@@ -1,0 +1,2 @@
+GPU 0: NVIDIA RTX PRO 6000 Blackwell (UUID: GPU-parent)
+  MIG 1g.24gb Device 0: (UUID: MIG-slice-24gb)

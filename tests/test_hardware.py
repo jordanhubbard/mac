@@ -11,6 +11,7 @@ Fixture outputs match real nvidia-smi --query-gpu=index,memory.total,name
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from types import SimpleNamespace
 
 import mac.hardware as hw
@@ -24,6 +25,7 @@ _FIXTURE_GB10 = "0, [N/A], NVIDIA GB10"
 _FIXTURE_RTX_PRO_6000_X2 = (
     "0, 98304, NVIDIA RTX PRO 6000 Blackwell\n1, 98304, NVIDIA RTX PRO 6000 Blackwell"
 )
+_ALLOCATION_FIXTURES = Path(__file__).parent / "fixtures" / "hardware_allocation"
 
 
 @pytest.fixture(autouse=True)
@@ -1000,3 +1002,140 @@ def test_effective_allocation_never_raises_on_probe_failure(monkeypatch, tmp_pat
     assert "effective_allocation" in info
     assert "host_inventory" in info
     assert info["effective_allocation"]["cpu"]["source"] == "unknown"
+
+
+def _fixture_snapshot(monkeypatch, fixture_name, *, cpus=192, memory_mb=725000):
+    _linux_host(monkeypatch, cpus=cpus, memory_mb=memory_mb)
+    monkeypatch.setattr(hw, "_cpu_model", lambda: "Fixture Host CPU")
+    monkeypatch.setattr(
+        hw.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=1024 * 1024 * 1024, free=512 * 1024 * 1024),
+    )
+    root = _ALLOCATION_FIXTURES / fixture_name
+    query = root / "nvidia-query.csv"
+    listing = root / "nvidia-list.txt"
+    return hw.detect_hardware(
+        cgroup_root=root,
+        workspace=root,
+        nvidia_query=query.read_text() if query.exists() else "",
+        nvidia_list=listing.read_text() if listing.exists() else "",
+    )
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "cpus", "memory_mb", "expected_cpu", "cpu_source", "expected_memory"),
+    [
+        ("bare_metal", 16, 32768, 16, "host_equals_allocation", 32768),
+        ("cgroup_v2_cpu_quota", 192, 725000, 4, "cgroup_v2_cpu_max", None),
+        ("cpuset", 192, 725000, 8, "cpuset", None),
+        ("memory_limit", 192, 725000, 192, "host_equals_allocation", 65536),
+    ],
+)
+def test_hardware_allocation_fixture_corpus_preserves_host_inventory(
+    monkeypatch,
+    fixture_name,
+    cpus,
+    memory_mb,
+    expected_cpu,
+    cpu_source,
+    expected_memory,
+):
+    info = _fixture_snapshot(monkeypatch, fixture_name, cpus=cpus, memory_mb=memory_mb)
+
+    cpu = info["effective_allocation"]["cpu"]
+    memory = info["effective_allocation"]["memory_mb"]
+    assert (cpu["value"], cpu["known"], cpu["source"]) == (expected_cpu, True, cpu_source)
+    if expected_memory is None:
+        assert (memory["value"], memory["known"], memory["source"]) == (None, False, "unknown")
+    else:
+        expected_source = (
+            "host_equals_allocation" if fixture_name == "bare_metal" else "cgroup_v2_memory_max"
+        )
+        assert (memory["value"], memory["known"], memory["source"]) == (
+            expected_memory,
+            True,
+            expected_source,
+        )
+    assert info["host_inventory"] == {
+        "schema": hw.HOST_INVENTORY_SCHEMA,
+        "cpu_count": cpus,
+        "memory_mb": memory_mb,
+        "gpus": [],
+        "cpu_model": "Fixture Host CPU",
+        "disk_total_mb": 1024,
+        "disk_available_mb": 512,
+    }
+
+
+def test_cpuset_fixture_includes_noncontiguous_detect_hardware_variant(monkeypatch):
+    root = _ALLOCATION_FIXTURES / "cpuset"
+    noncontiguous = (root / "cpuset.noncontiguous").read_text().strip()
+    original_read = hw._read_text
+    monkeypatch.setattr(
+        hw,
+        "_read_text",
+        lambda path: noncontiguous
+        if Path(path).name == "cpuset.cpus.effective"
+        else original_read(path),
+    )
+
+    info = _fixture_snapshot(monkeypatch, "cpuset")
+
+    assert info["effective_allocation"]["cpu"]["value"] == 7
+    assert info["effective_allocation"]["cpu"]["source"] == "cpuset"
+    assert info["host_inventory"]["cpu_count"] == 192
+
+
+def test_mig_1g_24gb_fixture_preserves_parent_with_cuda_visibility_variant(monkeypatch):
+    info = _fixture_snapshot(monkeypatch, "mig_1g_24gb")
+
+    allocation = info["effective_allocation"]
+    assert (allocation["cpu"]["value"], allocation["memory_mb"]["value"]) == (4, 65536)
+    assert allocation["accelerators"]["source"] == "nvidia_mig"
+    assert allocation["accelerators"]["value"] == 1
+    assert allocation["accelerators"]["devices"][0]["vram_mb"] == 24 * 1024
+    assert info["host_inventory"]["gpus"][0]["name"] == "NVIDIA RTX PRO 6000 Blackwell"
+    assert info["host_inventory"]["gpus"][0]["vram_mb"] == 98304
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-slice-24gb")
+    filtered = _fixture_snapshot(monkeypatch, "mig_1g_24gb")
+    assert filtered["effective_allocation"]["accelerators"]["source"] == "cuda_visible_devices"
+    assert filtered["effective_allocation"]["accelerators"]["devices"][0]["uuid"] == (
+        "MIG-slice-24gb"
+    )
+    assert filtered["host_inventory"]["gpus"] == info["host_inventory"]["gpus"]
+
+
+def test_unknown_unlimited_fixture_missing_tree_and_non_linux_never_fall_back(monkeypatch):
+    unlimited = _fixture_snapshot(monkeypatch, "unknown_unlimited")
+    missing = _fixture_snapshot(monkeypatch, "absent")
+    monkeypatch.setattr(hw.platform, "system", lambda: "Darwin")
+    non_linux = hw.detect_hardware(
+        cgroup_root=_ALLOCATION_FIXTURES / "bare_metal",
+        nvidia_query="",
+        nvidia_list="",
+    )
+
+    for info in (unlimited, missing, non_linux):
+        for dimension in ("cpu", "memory_mb"):
+            assert info["effective_allocation"][dimension]["known"] is False
+            assert info["effective_allocation"][dimension]["value"] is None
+            assert info["effective_allocation"][dimension]["source"] == "unknown"
+        assert info["host_inventory"]["cpu_count"] == 192
+        assert info["host_inventory"]["memory_mb"] == 725000
+
+
+def test_hgx_gke_worker_advertises_sandbox_allocation_not_large_host(monkeypatch):
+    info = _fixture_snapshot(monkeypatch, "mig_1g_24gb")
+
+    allocation = info["effective_allocation"]
+    assert allocation["cpu"]["value"] == 4
+    assert allocation["cpu"]["detail"]["cpuset_count"] == 8
+    assert allocation["memory_mb"]["value"] == 64 * 1024
+    assert allocation["accelerators"]["value"] == 1
+    assert allocation["accelerators"]["devices"][0]["vram_mb"] == 24 * 1024
+    assert info["host_inventory"]["cpu_count"] == 192
+    assert info["host_inventory"]["memory_mb"] == 725000
+    assert info["host_inventory"]["gpus"][0]["name"] == "NVIDIA RTX PRO 6000 Blackwell"
+    assert info["host_inventory"]["gpus"][0]["vram_mb"] == 96 * 1024
