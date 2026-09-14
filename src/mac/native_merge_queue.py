@@ -71,6 +71,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from mac.models import (
     JsonDict,
+    TaskState,
     ensure_json_object,
     json_dumps,
     json_loads,
@@ -1013,6 +1014,22 @@ class NativeMergeQueue:
             abandoned_after_seconds=self._abandoned_after,
             driver_task_id=driver_task_id,
         )
+        # An explicit stop is authoritative even while an old publication
+        # lease is live or a stale-projection reset has refreshed updated_at.
+        # Consult the owning task here so entries left by older hubs recover
+        # too; unknown owners and explicitly restarted tasks keep the normal
+        # lease/age rules. Evict the observed entry, never a replacement found
+        # later by task id.
+        front = next((entry for entry in entries if entry.live), None)
+        if front is not None:
+            owner = self._store.query_one("SELECT state FROM tasks WHERE id = ?", (front.task_id,))
+            if owner is not None and owner["state"] == TaskState.STOPPED.value:
+                plan = FrontRecovery(
+                    action=FRONT_RECOVERY_EVICT,
+                    entry_id=front.id,
+                    task_id=front.task_id,
+                    reason="owning task is stopped; explicit restart may readmit it",
+                )
         outcome: JsonDict = dict(plan.to_dict())
         outcome["abandoned_after_seconds"] = self._abandoned_after
         if plan.action == FRONT_RECOVERY_EVICT:
