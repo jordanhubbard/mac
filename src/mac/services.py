@@ -26624,6 +26624,13 @@ class ControlPlane:
         declared_egress = self._project_declared_egress(task.project)
         if declared_egress:
             metadata["egress_contract"] = declared_egress
+        # Publication is resolved by the hub from task/project/fleet policy at
+        # assignment time. Native executors cannot safely reconstruct project
+        # policy from the task's durable metadata, and must not interpret a
+        # model-written preliminary manifest as an opt-out.
+        runtime = ensure_json_object(metadata.get("runtime"))
+        runtime["publication_target"] = self._default_publication_target(task)
+        metadata["runtime"] = runtime
         payload["metadata"] = metadata
         authorization = self._claimed_break_glass_authorization(task.id, lease.agent_id, lease.id)
         if authorization is None:
