@@ -9,8 +9,12 @@ against criteria written after it.
 
 from __future__ import annotations
 
-import pytest
+import json
 
+import pytest
+from fastapi.testclient import TestClient
+
+from mac.api import create_app
 from mac.models import (
     ACTIVE_TASK_STATES,
     AuthorizationError,
@@ -203,6 +207,93 @@ def test_starting_a_task_that_is_not_stopped_is_refused(tmp_path):
     task = cp.create_task(title="t", description="d")
     with pytest.raises(TransitionError):
         cp.start_stopped_task(task.id, actor="op")
+
+
+def _attach_publication_routing(cp, task):
+    # Simulate persisted controller-owned routing, never caller-supplied input.
+    route = {"schema": "mac.managed_single_task.route.v1", "activation": "legacy_compatibility"}
+    metadata = {**task.metadata, "managed_fast_lane": route, "operator_note": "retain me"}
+    cp.store.execute("UPDATE tasks SET metadata = ? WHERE id = ?", (json.dumps(metadata), task.id))
+    return route
+
+
+@pytest.mark.parametrize("running", [False, True], ids=["claimed", "running"])
+@pytest.mark.parametrize("field", ["description", "dependencies"])
+def test_api_scope_edit_preserves_publication_routing_and_requeues(tmp_path, running, field):
+    cp = _cp(tmp_path)
+    blocker = cp.create_task("unmet prerequisite")
+    task = cp.create_task("editable task", description="original")
+    agent = cp.register_agent(cp.register_machine("h").id, "w")
+    _, lease = cp.claim_task(task.id, agent.id)
+    if running:
+        cp.start_task(task.id, agent.id, lease_id=lease.id)
+    before = cp.get_task(task.id)
+    route = _attach_publication_routing(cp, before)
+    value = "revised criteria" if field == "description" else [blocker.id]
+    client = TestClient(create_app(control_plane=cp, auth_tokens={"operator": ["admin"]}))
+
+    response = client.put(
+        f"/tasks/{task.id}",
+        json={field: value, "actor": "operator"},
+        headers={"Authorization": "Bearer operator"},
+    )
+
+    assert response.status_code == 200, response.text
+    after = cp.get_task(task.id)
+    assert getattr(after, field) == value
+    assert after.state == ("open" if field == "description" else "waiting")
+    assert response.json()["state"] == after.state
+    assert after.metadata["managed_fast_lane"] == route
+    assert after.metadata["operator_note"] == "retain me"
+    assert after.metadata["restart_count"] == 1
+    assert after.attempt_count == before.attempt_count
+    assert after.owner_agent_id is None and after.lease_id is None
+    assert cp.get_lease(lease.id).status == LeaseStatus.RELEASED.value
+    assert cp.get_agent(agent.id).current_task_id is None
+    states = [event.to_state for event in cp.task_history(task.id)]
+    assert "stopped" in states and states.index("stopped") < len(states) - 1
+    with pytest.raises(AuthorizationError):
+        cp.start_task(task.id, agent.id, lease_id=lease.id)
+
+
+def test_explicit_stopped_restart_preserves_publication_routing(tmp_path):
+    cp = _cp(tmp_path)
+    task, _agent = _running_task(cp)
+    route = _attach_publication_routing(cp, task)
+    cp.stop_task(task.id, actor="operator")
+
+    after = cp.start_stopped_task(task.id, actor="operator")
+
+    assert after.state == "open"
+    assert after.metadata["managed_fast_lane"] == route
+    assert after.metadata["operator_note"] == "retain me"
+    assert after.metadata["restart_count"] == 1
+
+
+@pytest.mark.parametrize("supply_internal_flag", [False, True])
+@pytest.mark.parametrize("forged", [False, True], ids=["echoed-route", "forged-route"])
+def test_api_still_rejects_caller_publication_routing(tmp_path, supply_internal_flag, forged):
+    cp = _cp(tmp_path)
+    task, agent = _running_task(cp)
+    route = _attach_publication_routing(cp, task)
+    before = cp.get_task(task.id)
+    supplied_route = {**route, "activation": "forged"} if forged else route
+    body = {"metadata": {"managed_fast_lane": supplied_route}, "actor": "operator"}
+    if supply_internal_flag:
+        body["_preserve_control_plane_publication_metadata"] = True
+    client = TestClient(create_app(control_plane=cp, auth_tokens={"operator": ["admin"]}))
+
+    response = client.put(
+        f"/tasks/{task.id}", json=body, headers={"Authorization": "Bearer operator"}
+    )
+
+    assert response.status_code == 400, response.text
+    assert "publication route metadata is control-plane-owned" in response.text
+    after = cp.get_task(task.id)
+    assert after.metadata == before.metadata
+    assert after.state == "running" and after.owner_agent_id == agent.id
+    assert after.lease_id == before.lease_id
+    assert cp.get_lease(before.lease_id).status == LeaseStatus.ACTIVE.value
 
 
 # --- the atomic update ------------------------------------------------------

@@ -11426,6 +11426,7 @@ class ControlPlane:
             task_id,
             metadata={**metadata, "restart_count": restarts},
             actor=actor,
+            _preserve_control_plane_publication_metadata=True,
         )
         return self._transition_task_internal(
             task_id, target, actor, detail, drain_outbox=drain_outbox
