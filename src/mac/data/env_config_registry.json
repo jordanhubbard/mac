@@ -14656,7 +14656,8 @@
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/read_only_report_verifier.py"
+      "src/mac/read_only_report_verifier.py",
+      "src/mac/services.py"
     ],
     "type": "int"
   },
