@@ -5693,9 +5693,11 @@ class ControlPlane:
                     raise ValidationError(
                         "metadata.origin.%s contradicts the current registered repository" % key
                     )
+            # Repository identity is canonical; the producer still owns its
+            # origin type, which drives grooming cadence and generator yield.
+            origin.setdefault("type", "direct_task")
             origin.update(
                 {
-                    "type": "direct_task",
                     "repository_id": repo.id,
                     "repository_name": repo.name,
                     "repository_path": repo.path,
