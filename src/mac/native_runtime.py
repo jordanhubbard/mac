@@ -66,6 +66,7 @@ def pip_constraints(python: str, home: Path, installed: dict[str, str]) -> list[
         record = json.loads((venv / MANIFEST).read_text())
         valid = (
             record["schema"] == SCHEMA
+            and record["python_version"] == (home / "src/mac/.python-version").read_text().strip()
             and isinstance(record["core_packages"], dict)
             and bool(record["core_packages"])
             and record["source_hashes"] == source_hashes(home / "src" / "mac")
@@ -155,6 +156,18 @@ def install(source: Path, venv: Path, snapshot: Path, footprint: Path, uv: str) 
     for key in ("UV_NO_SYNC", "UV_FROZEN"):
         env.pop(key, None)
     with install_lock(home):
+        # A local update can arrive after the deployment snapshot. Retain it,
+        # together with hub-only requests captured before source replacement.
+        if footprint.exists():
+            local = json.loads(footprint.read_text())
+            merged = {**recorded, **local}
+            for manager in ("pip", "npm"):
+                entries = {}
+                for record in (recorded, local):
+                    for entry in record.get(manager, []):
+                        entries[entry.get("name") or entry["spec"]] = entry
+                merged[manager] = list(entries.values())
+            recorded = merged
         # A fresh deployment has a new venv; --inexact also makes repeat setup
         # preserve unrelated packages rather than silently removing them.
         _run([sys.executable, "-m", "venv", str(venv)])
@@ -278,6 +291,9 @@ print(json.dumps(names))
             raise RuntimeError("native runtime source changed during installation")
         installed = inventory(python)
         pip_constraints(str(python), home, installed)
+        # Subsequent worker reports must retain requests recovered from the hub.
+        # The deployer snapshots this file in its existing rollback journal.
+        write_private(footprint, json.dumps(recorded, indent=2))
         return {
             **manifest,
             "installed_packages": installed,

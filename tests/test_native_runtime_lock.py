@@ -40,6 +40,7 @@ def native_worker(tmp_path, monkeypatch):
     venv = home / "venv"
     source = home / "src" / "mac"
     source.mkdir(parents=True)
+    (source / ".python-version").write_text(sys.version.split()[0] + "\n")
     wheelhouse = tmp_path / "wheels"
     wheelhouse.mkdir()
     wheel(wheelhouse, "mac-test-core", "1.0")
@@ -103,13 +104,17 @@ def test_native_install_retains_compatible_tool_and_records_it(native_worker):
     assert worker.ensure_pip(["mac-test-compatible==1.0"])["skipped"] == "already satisfied"
 
 
-@pytest.mark.parametrize("damage", ["source", "constraints", "core", "python", "empty_core"])
+@pytest.mark.parametrize(
+    "damage", ["source", "constraints", "core", "python", "python_baseline", "empty_core"]
+)
 def test_native_fast_path_rejects_drift(native_worker, damage):
     worker, home, _ = native_worker
     manifest_path = home / "venv" / "mac-runtime-lock.json"
     manifest = json.loads(manifest_path.read_text())
     if damage == "source":
         (home / "src/mac/uv.lock").write_text("changed\n")
+    elif damage == "python_baseline":
+        (home / "src/mac/.python-version").write_text("0.0.0\n")
     elif damage == "constraints":
         (home / "venv/mac-runtime-constraints.txt").write_text("mac-test-core==2.0\n")
     else:
@@ -188,6 +193,10 @@ def test_real_locked_install_preserves_recorded_and_unrecorded_tools_on_repeat(l
     assert first["core_packages"] == second["core_packages"] == {"mac-test-core": "1.0"}
     installed = inventory(home / "venv/bin/python")
     assert installed["mac-test-platform"] == "1.0"
+    assert (
+        json.loads((home / "agent-footprint.json").read_text())["pip"][0]["name"]
+        == "mac-test-recorded"
+    )
     assert {
         name: installed[name]
         for name in ("mac-test-core", "mac-test-unrecorded", "mac-test-recorded")

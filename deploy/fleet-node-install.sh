@@ -4161,6 +4161,7 @@ capture_auxiliary_rollback_artifacts() {
   snapshot_bin_directory_for_rollback
   track_auxiliary_rollback_artifact "$ENV_FILE" user
   track_auxiliary_rollback_artifact "$MAC_HOME/fleets.yaml" user
+  track_auxiliary_rollback_artifact "$MAC_HOME/agent-footprint.json" user
   track_auxiliary_rollback_artifact \
     "$MAC_HOME/deployed-source-revision" user
   track_auxiliary_rollback_artifact "$MAC_HOME/deploy-start-barrier" user
