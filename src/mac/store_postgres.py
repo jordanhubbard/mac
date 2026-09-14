@@ -38,7 +38,7 @@ def _redact_dsn(dsn: str) -> str:
     """Redact any password from a Postgres DSN for safe reporting.
 
     Handles the two common shapes: a ``postgres://user:pass@host/db`` URL and a
-    keyword ``password=...`` DSN. Anything else is returned unchanged. Only the
+    keyword ``password=...`` DSN, including URL query credentials. Only the
     password is removed; host, port, and database stay so operators can still
     identify the target cluster in a ``mac admin diagnostics`` report.
     """
@@ -46,17 +46,23 @@ def _redact_dsn(dsn: str) -> str:
         return dsn
     if "://" in dsn:
         try:
-            from urllib.parse import urlsplit, urlunsplit
+            from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
             parts = urlsplit(dsn)
+            query = urlencode(
+                [
+                    (key, value)
+                    for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                    if key.lower() not in {"password", "sslpassword"}
+                ]
+            )
+            netloc = parts.netloc
             if parts.password is not None:
-                userinfo = parts.username or ""
-                host = parts.hostname or ""
-                if parts.port is not None:
-                    host = "%s:%d" % (host, parts.port)
-                netloc = ("%s:***@%s" % (userinfo, host)) if userinfo else ("***@%s" % host)
-                return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
-            return dsn
+                # Preserve encoded usernames, IPv6 brackets and multi-host
+                # authorities instead of reconstructing them from hostname.
+                userinfo, host = netloc.rsplit("@", 1)
+                netloc = userinfo.split(":", 1)[0] + ":***@" + host
+            return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
         except Exception:
             return "postgres://<redacted>"
     return re.sub(r"(password=)([^\s]+)", r"\1***", dsn)

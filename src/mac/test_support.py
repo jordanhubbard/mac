@@ -8,8 +8,9 @@ rejected, surfacing as a 500 on a production endpoint. Tests that agree with
 each other but not with production are worse than no tests, because they
 license the deploy.
 
-This module gives each test its own PostgreSQL *schema* inside one shared
-database. A schema is cheap (measured ~0.24s to create and apply the full DDL,
+This module gives each test its own PostgreSQL *schema*. Parallel pytest
+workers each receive a separate database from tests.pg_worker_databases; serial
+runs use the configured test database. A schema is cheap (measured ~0.24s to create and apply the full DDL,
 against ~0.15s for a fresh in-memory SQLite), it isolates completely, and it
 keeps the connection pool warm across tests, which a database-per-test would
 not.
