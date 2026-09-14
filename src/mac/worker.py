@@ -7149,9 +7149,7 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
     ]
     try:
         wip_manifest = json.loads(
-            _read_bounded_evidence_file(
-                task_dir / "repository-wip.json", _MAX_EVIDENCE_INPUT_BYTES
-            )
+            _read_bounded_evidence_file(task_dir / "repository-wip.json", _MAX_EVIDENCE_INPUT_BYTES)
         )
     except Exception:
         wip_manifest = {}
