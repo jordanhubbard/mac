@@ -22667,6 +22667,14 @@ class ControlPlane:
             }
 
         review = self._default_review_for_task(task_id)
+        if (
+            review is not None
+            and review.status == ReviewStatus.APPROVED.value
+            and task.state == TaskState.NEEDS_REVIEW.value
+        ):
+            # A recovered submission needs its own verdict. Preserve the old
+            # approval as history and use normal selection for a fresh review.
+            review = None
         if review is not None and review.status == ReviewStatus.PENDING.value:
             reviewer_issue = self._default_reviewer_unavailable_reason_for_id(
                 task,
@@ -22879,6 +22887,15 @@ class ControlPlane:
                 assignment_detail,
                 actor,
             )
+        elif (
+            review.status == ReviewStatus.PENDING.value
+            and task.state == TaskState.NEEDS_REVIEW.value
+        ):
+            # A recovered attempt can retain its older pending review. Reuse
+            # the transactional request path so reviewer evidence is authorized
+            # before verification starts, without assigning a second review.
+            review = self.request_review(task_id, review.reviewer_agent_id, actor=actor)
+            task = self.get_task(task_id)
 
         if review.status == ReviewStatus.PENDING.value:
             # mac-jqb: the workflow no longer self-approves. It requires
