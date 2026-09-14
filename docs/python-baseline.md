@@ -87,3 +87,22 @@ prepares development and documentation dependencies, removes temporary build
 dependencies, and prevents `uv run` from changing packages during verification.
 The normal full contract test follows it; network policy and review gates stay
 in force. This bridge does not install an OpenShell runtime on a macOS host.
+
+Native deployment uses that same lock with the `relay` and `postgres` extras.
+Onboarding must provision the reviewed uv before services are quiesced. Before
+moving the old source and environment, deployment inventories installed
+packages, including unrecorded tools and their direct installation sources,
+and merges the local footprint with the available hub replica. Local records
+take precedence because workers write them before reporting to the hub. If the
+hub is unavailable, an existing local record remains usable; a configured hub
+failure with no local record stops the deployment instead of assuming no tools
+were recorded.
+
+The replacement environment carries `mac-runtime-lock.json` and
+`mac-runtime-constraints.txt`. These bind core package versions to the source
+lock and are restored with the environment by the existing generation rollback.
+Tool restoration and later worker self-installs use those constraints. A missing
+or changed receipt, changed core, or conflicting tool requirement fails closed;
+redeploy the accepted locked runtime to repair drift. Compatible tools remain
+supported. The inventory and resolver diagnostics can contain private package
+URLs and are written to owner-private files; do not attach them to public logs.

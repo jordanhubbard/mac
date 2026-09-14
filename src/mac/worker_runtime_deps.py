@@ -50,7 +50,9 @@ class RuntimeDepsMixin:
 
     def _agent_venv_python(self) -> str:
         py = self._mac_home() / "venv" / "bin" / "python"
-        return str(py) if py.exists() else sys.executable
+        # A broken managed environment must fail validation, not redirect a
+        # self-install into whichever interpreter happens to run the caller.
+        return str(py) if py.exists() or py.parent.parent.exists() else sys.executable
 
     def _footprint_path(self) -> Path:
         return self._mac_home() / "agent-footprint.json"
@@ -107,7 +109,7 @@ class RuntimeDepsMixin:
                 check=False,
             ).stdout
             return {
-                str(p.get("name", "")).lower().replace("_", "-"): str(p.get("version", ""))
+                re.sub(r"[-_.]+", "-", str(p.get("name", "")).lower()): str(p.get("version", ""))
                 for p in json.loads(out or "[]")
             }
         except Exception:
@@ -313,27 +315,26 @@ class RuntimeDepsMixin:
         if not specs:
             return {"ok": True, "skipped": "no specs"}
         py = self._agent_venv_python()
-        installed = self._pip_installed(py)
-        # Version-aware probe: install/upgrade only the (name, version) tuples
-        # that are missing OR present at an unsatisfying version. pip moves a
-        # present-but-wrong version to satisfy the constraint (no --upgrade, so
-        # we don't churn transitive deps).
-        pending = [s for s in specs if not self._pip_spec_satisfied(s, installed)]
-        if not pending:
-            # The footprint update is a read-modify-write against a file shared
-            # by every agent on the host, so it belongs inside the install lock
-            # on the fast path exactly as much as on the install path.
-            self._update_footprint_serialized("pip", specs, index_url=index_url)
-            return {"ok": True, "skipped": "already satisfied", "specs": specs}
-        argv = [py, "-m", "pip", "install", *pending]
-        if index_url:
-            argv += ["--index-url", index_url]
         lock = self._install_lock()
         footprint: Optional[JsonDict] = None
         try:
-            result = self._run_install(argv, manager="pip", reason=reason, specs=pending)
+            from mac.native_runtime import pip_constraints
+
+            # Read and validate under the same lock as mutation, including the
+            # already-satisfied path. A stale core must never be blessed merely
+            # because the requested (incorrect) version is already present.
+            installed = self._pip_installed(py)
+            constraints = pip_constraints(py, self._mac_home(), installed)
+            pending = [s for s in specs if not self._pip_spec_satisfied(s, installed)]
+            if pending:
+                argv = [py, "-m", "pip", "install", *constraints, *pending]
+                if index_url:
+                    argv += ["--index-url", index_url]
+                result = self._run_install(argv, manager="pip", reason=reason, specs=pending)
+            else:
+                result = {"ok": True, "skipped": "already satisfied", "specs": specs}
             if result.get("ok"):
-                footprint = self._update_footprint("pip", pending, index_url=index_url)
+                footprint = self._update_footprint("pip", specs, index_url=index_url)
         finally:
             lock.close()
         if isinstance(footprint, dict):
