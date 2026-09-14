@@ -13376,6 +13376,18 @@
   },
   {
     "default": null,
+    "description": "Task Execution setting: task openshell sandbox name.",
+    "family": "task-execution",
+    "name": "MAC_TASK_OPENSHELL_SANDBOX_NAME",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Repository setting: task repo access mode.",
     "family": "task-repository",
     "name": "MAC_TASK_REPO_ACCESS_MODE",

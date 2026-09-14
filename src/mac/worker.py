@@ -7925,6 +7925,18 @@ def _trusted_read_only_report_test_item(
     command = _repository_contract_test_command(task)
     if not command:
         return None, ["read-only repository report current contract lacks test.command"]
+    if (
+        sys.platform == "darwin"
+        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM") == "darwin"
+        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE")
+        == REPORT_REPOSITORY_MACOS_HOST_POSTURE
+    ):
+        # A native agent can write files in its workspace. None of those files
+        # can attest to a Linux test run. The signed host projection requests
+        # independent hub verification, which gates report publication.
+        if not _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY")):
+            return None, ["native read-only repository reports require Linux hub verification"]
+        return _hub_verify_deferred_test_item(command), []
     item = _sandbox_repository_verification_item(
         task_dir,
         command,

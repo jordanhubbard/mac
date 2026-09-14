@@ -1130,6 +1130,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_ID` | str | consumer-defined | task-execution | Task Execution setting: task id. |
 | `MAC_TASK_MAX_ITERATIONS` | str | consumer-defined | task-execution | Task Execution setting: task max iterations. |
 | `MAC_TASK_MODEL` | str | consumer-defined | task-execution | Task Execution setting: task model. |
+| `MAC_TASK_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | task-execution | Task Execution setting: task openshell sandbox name. |
 | `MAC_TASK_REPO_ACCESS_MODE` | str | consumer-defined | task-repository | Task Repository setting: task repo access mode. |
 | `MAC_TASK_REPO_ACCESS_SCHEMA` | str | consumer-defined | task-repository | Task Repository setting: task repo access schema. |
 | `MAC_TASK_REPO_BASE_SHA` | str | consumer-defined | task-repository | Task Repository setting: task repo base sha. |
