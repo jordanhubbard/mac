@@ -9494,6 +9494,7 @@ restart_remote_mac_agent_under_epoch() {
   case "$activation_mode" in
     activate) manager_action=start ;;
     restart) manager_action=restart ;;
+    stop) manager_action=stop ;;
     *) echo "ERROR: ${agent}: unsupported epoch activation mode ${activation_mode}" >&2; return 1 ;;
   esac
   deployment_id="$(deployment_id_for_agent "$agent")"
@@ -9516,7 +9517,14 @@ restart_remote_mac_agent_under_epoch() {
       # until this exact post-manifest handoff. A system-domain kickstart can
       # neither find nor bootstrap it. Reuse the reviewed bounded lifecycle to
       # prove the old job absent and bootstrap the replacement in gui/<uid>.
-      command="lifecycle=\"\$HOME/.mac/logs/launchd-lifecycle-${TS}.sh\"; label=$(shell_quote "com.${fleet_name}.agent"); domain=\"gui/\$(id -u)\"; plist=\"\$HOME/Library/LaunchAgents/\${label}.plist\"; [ -f \"\$lifecycle\" ] && [ ! -L \"\$lifecycle\" ] || { echo \"bounded launchd lifecycle contract is unavailable: \$lifecycle\" >&2; exit 1; }; [ -f \"\$plist\" ] && [ ! -L \"\$plist\" ] || { echo \"launchd agent plist missing or unsafe: \$plist\" >&2; exit 1; }; . \"\$lifecycle\"; mac_launchd_stop_job_if_present \"\$domain/\$label\" \"\$label\" user; mac_launchd_bootstrap_job \"\$domain\" \"\$plist\" \"\$domain/\$label\" \"\$label\" user"
+      command="lifecycle=\"\$HOME/.mac/logs/launchd-lifecycle-${TS}.sh\"; label=$(shell_quote "com.${fleet_name}.agent"); domain=\"gui/\$(id -u)\"; plist=\"\$HOME/Library/LaunchAgents/\${label}.plist\"; [ -f \"\$lifecycle\" ] && [ ! -L \"\$lifecycle\" ] || { echo \"bounded launchd lifecycle contract is unavailable: \$lifecycle\" >&2; exit 1; };"
+      if [ "$manager_action" != stop ]; then
+        command+=" [ -f \"\$plist\" ] && [ ! -L \"\$plist\" ] || { echo \"launchd agent plist missing or unsafe: \$plist\" >&2; exit 1; };"
+      fi
+      command+=" . \"\$lifecycle\"; mac_launchd_stop_job_if_present \"\$domain/\$label\" \"\$label\" user;"
+      if [ "$manager_action" != stop ]; then
+        command+=" mac_launchd_bootstrap_job \"\$domain\" \"\$plist\" \"\$domain/\$label\" \"\$label\" user"
+      fi
       ;;
     supervisord)
       command="if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent"); else sudo -n supervisorctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent"); fi"
@@ -12121,10 +12129,23 @@ reconcile_bound_worker_attestation_key() (
   set -euo pipefail
   umask 077
   local agent="$1" hub_agent="$2" supervisor="$3" fleet_name="$4"
+  local worker_lifecycle="${5:-restart}"
   local deployment_id agent_id
-  deployment_id="$(deployment_id_for_agent "$agent")"
-  agent_id="$(stable_worker_agent_id "$agent")"
-  assert_remote_deployment_lock "$agent" "$deployment_id"
+  deployment_id="$(deployment_id_for_agent "$agent")" || return 1
+  agent_id="$(stable_worker_agent_id "$agent")" || return 1
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
+
+  case "$worker_lifecycle" in
+    restart) ;;
+    keep_stopped)
+      # An aborted epoch has discarded its pending worker credential. A
+      # process barrier fences task execution, not startup registration, so
+      # restarting here would loop on authentication failures. Preserve the
+      # failed successor and prove its installed key with the worker stopped.
+      restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name" stop || return 1
+      ;;
+    *) echo "ERROR: invalid attestation recovery worker lifecycle" >&2; return 1 ;;
+  esac
 
   local probe="$TMPDIR_LOCAL/attestation-probe-${agent_id}.json"
   local second_probe="$TMPDIR_LOCAL/attestation-probe-${agent_id}-second.json"
@@ -12136,9 +12157,7 @@ reconcile_bound_worker_attestation_key() (
   # not relay through /tmp: obtain an absolute path below a dedicated private
   # directory on the hub so this also works when the controller and hub have
   # different home directories.
-  local hub_relay_dir hub_manifest
-  local worker_manifest="/tmp/mac-attestation-recovery-worker-${agent_id}-${TS}.json"
-  local worker_receipt="/tmp/mac-attestation-recovery-${agent_id}-${TS}-receipt.json"
+  local hub_relay_dir hub_manifest worker_relay_dir worker_directory_cmd
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
   local worker_ssh_parts=() worker_ssh_args=() worker_ssh_target
   local item last_index
@@ -12152,12 +12171,22 @@ reconcile_bound_worker_attestation_key() (
   worker_ssh_args=("${worker_ssh_parts[@]:0:$last_index}")
   hub_relay_dir="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    'set -e; umask 077; mkdir -p "$HOME/.mac/attestation-recovery"; chmod 0700 "$HOME/.mac/attestation-recovery"; printf "%s" "$HOME/.mac/attestation-recovery"')"
+    'set -e; umask 077; mkdir -p "$HOME/.mac/attestation-recovery"; chmod 0700 "$HOME/.mac/attestation-recovery"; printf "%s" "$HOME/.mac/attestation-recovery"')" || return 1
   [ -n "$hub_relay_dir" ] || {
     echo "ERROR: ${agent}: hub attestation relay directory was not created" >&2
     return 1
   }
   hub_manifest="${hub_relay_dir}/mac-attestation-recovery-hub-${agent_id}-${TS}.json"
+  worker_directory_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
+    'set -e; umask 077; mkdir -p "$HOME/.mac/attestation-recovery"; chmod 0700 "$HOME/.mac/attestation-recovery"; printf "%s" "$HOME/.mac/attestation-recovery"')" || return 1
+  worker_relay_dir="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$worker_directory_cmd")" || return 1
+  [ -n "$worker_relay_dir" ] || {
+    echo "ERROR: ${agent}: worker attestation relay directory was not created" >&2
+    return 1
+  }
+  local worker_manifest="${worker_relay_dir}/mac-attestation-recovery-worker-${agent_id}-${TS}.json"
+  local worker_receipt="${worker_relay_dir}/mac-attestation-recovery-${agent_id}-${TS}-receipt.json"
 
   cleanup_attestation_relay() {
     rm -f "$probe" "$second_probe" "$manifest"
@@ -12182,9 +12211,9 @@ reconcile_bound_worker_attestation_key() (
   probe_cmd+=" --agent-id $(shell_quote "$agent_id")"
   probe_cmd+=" --deployment-id $(shell_quote "$deployment_id")"
   probe_cmd+=' --env-file "$HOME/.mac/mac.env"'
-  fenced_probe_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$probe_cmd")"
+  fenced_probe_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$probe_cmd")" || return 1
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_probe_cmd" > "$probe"
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_probe_cmd" > "$probe" || return 1
   chmod 0600 "$probe"
   probe_state="$("$PYTHON_BIN" - "$probe" "$agent_id" "$deployment_id" <<'PY'
 import json
@@ -12285,7 +12314,7 @@ print(
 )
 PY
 REMOTE_ATTESTATION_RECOVERY
-)"
+)" || return 1
   if [ "$(printf '%s' "$recovery_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("status") or "")')" = valid ]; then
     echo "==> ${agent}: existing attestation key proved valid; no rotation"
     return 0
@@ -12297,9 +12326,9 @@ REMOTE_ATTESTATION_RECOVERY
 
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "cat $(shell_quote "$hub_manifest")" > "$manifest"
+    "cat $(shell_quote "$hub_manifest")" > "$manifest" || return 1
   chmod 0600 "$manifest"
-  fenced_remote_upload "$agent" "$deployment_id" "$manifest" "$worker_manifest"
+  fenced_remote_upload "$agent" "$deployment_id" "$manifest" "$worker_manifest" || return 1
   local install_cmd fenced_install_cmd
   install_cmd='set -e; umask 077; chmod 0600'
   install_cmd+=" $(shell_quote "$worker_manifest")"
@@ -12309,18 +12338,21 @@ REMOTE_ATTESTATION_RECOVERY
   install_cmd+=" --agent-id $(shell_quote "$agent_id")"
   install_cmd+=" --deployment-id $(shell_quote "$deployment_id")"
   install_cmd+=" --receipt-out $(shell_quote "$worker_receipt")"
-  assert_remote_deployment_lock "$agent" "$deployment_id"
-  fenced_install_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$install_cmd")"
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
+  fenced_install_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$install_cmd")" || return 1
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_install_cmd" >/dev/null
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_install_cmd" >/dev/null || return 1
 
-  # The process inherited the old key. Restart behind the same durable hold,
-  # then build a fresh target-owned proof from the atomically installed env.
-  restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name"
-  assert_remote_deployment_lock "$agent" "$deployment_id"
-  fenced_probe_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$probe_cmd")"
+  # Ordinary deployment must replace a process that inherited the old key.
+  # Retained failure recovery leaves it stopped until a successor deployment
+  # installs an accepted worker credential. Both paths prove the installed key.
+  if [ "$worker_lifecycle" = restart ]; then
+    restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name" restart || return 1
+  fi
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
+  fenced_probe_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$probe_cmd")" || return 1
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_probe_cmd" > "$second_probe"
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_probe_cmd" > "$second_probe" || return 1
   chmod 0600 "$second_probe"
   probe_b64="$("$PYTHON_BIN" - "$second_probe" <<'PY'
 import base64
@@ -12330,7 +12362,7 @@ PY
 )"
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "MAC_DEPLOY_ATTESTATION_PROBE_B64=$(shell_quote "$probe_b64") MAC_DEPLOY_ATTESTATION_MANIFEST=$(shell_quote "$hub_manifest") bash -s" <<'REMOTE_ATTESTATION_SECOND_PROOF'
+    "MAC_DEPLOY_ATTESTATION_PROBE_B64=$(shell_quote "$probe_b64") MAC_DEPLOY_ATTESTATION_MANIFEST=$(shell_quote "$hub_manifest") bash -s" <<'REMOTE_ATTESTATION_SECOND_PROOF' || return 1
 set -euo pipefail
 set -a
 . "$HOME/.mac/mac.env"
@@ -14291,7 +14323,7 @@ PY
       return 1
     fi
     if ! reconcile_bound_worker_attestation_key \
-      "$agent" "$hub_agent" "$supervisor" "$fleet_name"; then
+      "$agent" "$hub_agent" "$supervisor" "$fleet_name" keep_stopped; then
       release_remote_deployment_lock "$agent" "$reconcile_deployment_id" >/dev/null 2>&1 || true
       return 1
     fi
