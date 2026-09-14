@@ -1563,3 +1563,31 @@ def test_generated_rollback_compensates_a_failed_directory_swap_and_prior_swaps(
     assert not list(tmp_path.glob("source.rollback-stage.*"))
     assert not list(tmp_path.glob("venv.rollback-stage.*"))
     assert [event["action"] for event in _events(paths["log"])] == ["quiesce"]
+
+
+def test_generated_rollback_restores_native_lock_with_its_source_and_environment(
+    tmp_path: Path,
+) -> None:
+    rollback, paths = _generate_rollback(tmp_path, control_active=True)
+    prior_lock = b"prior locked dependencies\n"
+    prior_constraints = b"service-core==1.0\n"
+    prior_record = json.dumps(
+        {
+            "schema": "mac.native_runtime.v1",
+            "source_hashes": {"uv.lock": hashlib.sha256(prior_lock).hexdigest()},
+            "constraints_sha256": hashlib.sha256(prior_constraints).hexdigest(),
+        }
+    ).encode()
+    (paths["source_backup"] / "uv.lock").write_bytes(prior_lock)
+    (paths["venv_backup"] / "mac-runtime-constraints.txt").write_bytes(prior_constraints)
+    (paths["venv_backup"] / "mac-runtime-lock.json").write_bytes(prior_record)
+    (paths["source"] / "uv.lock").write_text("failed successor lock\n")
+    (paths["venv"] / "mac-runtime-lock.json").write_text("failed successor receipt\n")
+    result = subprocess.run(
+        ["/bin/bash", str(rollback)], env=_rollback_env(paths), text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert (paths["source"] / "uv.lock").read_bytes() == prior_lock
+    assert (paths["venv"] / "mac-runtime-constraints.txt").read_bytes() == prior_constraints
+    assert (paths["venv"] / "mac-runtime-lock.json").read_bytes() == prior_record
+    assert json.loads(paths["completion_receipt"].read_text())["status"] == "restored"
