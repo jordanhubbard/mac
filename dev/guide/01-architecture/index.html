@@ -2129,8 +2129,9 @@ because authority differs:</p>
   routes (<code>/agentbus/human-directive</code>) <em>refuse</em> agent tokens entirely, so
   operator speech is distinguishable from agent speech by construction.</li>
 <li><strong>Hub</strong> — schedules dispatch, runs the review sweep, publishes, prunes. It
-  observes runaway conditions but, today, cannot act on them (see
-  <a href="../03-advanced/#what-the-hub-cannot-do-yet">Advanced Concepts</a>).</li>
+  performs recovery within its authenticated task and lease authority; the
+  <a href="../03-advanced/#recovery-and-delivery-limits">recovery and delivery limits</a>
+  describe what remains outside that control.</li>
 <li><strong>Worker agent</strong> (<code>mac-agent</code>) — registers, heartbeats, claims one task at a
   time under a lease, executes it, submits evidence.</li>
 <li><strong>Coding agent</strong> — the CLI (Claude Code, Codex, Cursor) the worker spawns
@@ -2233,7 +2234,7 @@ not) and <code>git.canonical_advanced</code>.</p>
 traffic and attaches it to the task the coding agent receives, so the agent
 starts knowing whether its work already landed and whether the trunk moved
 under it. What is still missing is documented in
-<a href="../03-advanced/#agentbus-consumption-is-partial">Advanced Concepts</a>.</p>
+<a href="../03-advanced/#recovery-and-delivery-limits">recovery and delivery limits</a>.</p>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../02-getting-started/">Getting Started</a> — stand up a fleet and run a task</li>
