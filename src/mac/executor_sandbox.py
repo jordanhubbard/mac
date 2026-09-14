@@ -48,6 +48,7 @@ the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
 from __future__ import annotations
 
 import atexit
+import base64
 import contextlib
 import ctypes
 import hashlib
@@ -3916,7 +3917,7 @@ def _sandbox_read_only_repository_violation(
             '[ -x "$python_bin" ] || python_bin="$(PATH=%s command -v python3 || PATH=%s command -v python || true)"'
             % (shlex.quote(_SANDBOX_BASE_PATH), shlex.quote(_SANDBOX_BASE_PATH)),
             '[ -n "$python_bin" ] || fail "trusted Python is unavailable for Git control validation"',
-            'observed_git_control="$("$python_bin" - "$repo" <<\'PY\'',
+            'observed_git_control="$("$python_bin" -I - "$repo" <<\'PY\'',
             digest_program,
             "PY",
             ')" || fail "could not digest read-only repository Git controls"',
@@ -3937,6 +3938,17 @@ def _sandbox_read_only_repository_violation(
             'test -z "$remotes" || fail "read-only repository retained a publication remote"',
         ]
     )
+    encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    # OpenShell rejects newline/CR-bearing command arguments. Decode through
+    # the immutable image interpreter, never an agent-writable script. Both
+    # Python processes must ignore cwd/user imports before the raw Git digest;
+    # the child shell must not source an agent-controlled BASH_ENV either.
+    decoder = (
+        "import base64,subprocess,sys;"
+        "sys.exit(subprocess.run(['/bin/bash','--noprofile','--norc'],"
+        "input=base64.b64decode(sys.argv[1]),"
+        "env={'PATH':%r,'HOME':'/tmp/mac-read-only-postcheck'}).returncode)" % _SANDBOX_BASE_PATH
+    )
     ok, message = _sandbox_step(
         [
             "exec",
@@ -3948,9 +3960,11 @@ def _sandbox_read_only_repository_violation(
             "120",
             "--no-tty",
             "--",
-            "/bin/bash",
+            "/opt/mac-venv/bin/python",
+            "-I",
             "-c",
-            script,
+            decoder,
+            encoded_script,
         ],
         timeout=150.0,
     )
@@ -4614,7 +4628,8 @@ def _run_sandboxed(
                     "\n".join(part for part in (prior_stderr, detail) if part),
                 )
                 setattr(result, "mac_read_only_lifecycle_failure", detail)
-                setattr(result, "mac_read_only_repository_violation", detail)
+                if not getattr(result, "mac_read_only_repository_violation", ""):
+                    setattr(result, "mac_read_only_repository_violation", detail)
         for path in runtime_files:
             path.unlink(missing_ok=True)
         (workspace / ".mac-sandbox-repository-verify.sh").unlink(missing_ok=True)
