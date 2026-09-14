@@ -2077,14 +2077,13 @@ dump and proves it is restorable:</p>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  mac-pg-backup --dsn &quot;$MAC_DATABASE_URL&quot; --out ~/.mac/backups</span>
 </code></pre></div>
 <p>The <code>PgBackupScheduler</code> runs this on an interval inside the hub process,
-default-ON <strong>only</strong> when the authority is Postgres, a no-op on the SQLite tier
-and with <code>MAC_PG_BACKUP_ENABLED=0</code>. A dump/verify/ship failure is a loud ledger
+enabled by default for the PostgreSQL authority and disabled with
+<code>MAC_PG_BACKUP_ENABLED=0</code>. A dump/verify/ship failure is a loud ledger
 observation (<code>pg.backup.failed</code>) plus an operator notification. Verify an
 artifact's integrity offline with <code>mac-pg-backup --verify-manifest &lt;dump&gt;</code>.</p>
 <p><strong>No SQLite fallback.</strong> A PostgreSQL failure — connection loss, a failed dump,
 a failed restore drill — is surfaced loudly and never downgraded to a SQLite
-backup or authority. The Postgres and SQLite tiers are mutually exclusive: a
-hub declares exactly one durable authority. The immutable 2026-07-28 SQLite
+backup or authority. PostgreSQL is the only supported live authority. The immutable 2026-07-28 SQLite
 cutover archive (<code>mac admin migrate</code> archive: mode-<code>0600</code>, sha256 manifest, verified
 at creation) is preserved as <em>recovery evidence</em> — a frozen snapshot of the
 pre-cutover authority for forensic/legal recovery — and is explicitly <strong>not</strong> a

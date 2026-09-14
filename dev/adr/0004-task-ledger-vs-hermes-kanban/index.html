@@ -1754,6 +1754,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#current-storage-authority-2026-09-14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current storage authority — 2026-09-14
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tldr-verdict" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1854,6 +1865,11 @@
   (<code>kanban.db</code>) should relate to the MAC hub task ledger (<code>mac.db</code>, the
   <code>mac task</code> system) — and concludes by reversing the Phase-1 adoption.</li>
 </ul>
+<h2 id="current-storage-authority-2026-09-14">Current storage authority — 2026-09-14<a class="headerlink" href="#current-storage-authority-2026-09-14" title="Permanent link">&para;</a></h2>
+<p>The single-ledger decision remains in force. Its original SQLite storage detail
+is historical: <code>src/mac/store.py</code> now accepts only PostgreSQL DSNs, and ordinary
+startup verifies the explicit ordered migration ledger. Hermes state databases
+remain separate from the MAC task authority.</p>
 <h2 id="tldr-verdict">TL;DR verdict<a class="headerlink" href="#tldr-verdict" title="Permanent link">&para;</a></h2>
 <p><strong>There must be exactly one task database — the MAC task ledger (<code>mac.db</code>).</strong>
 We evaluated making Hermes' kanban read from that ledger (a pluggable task

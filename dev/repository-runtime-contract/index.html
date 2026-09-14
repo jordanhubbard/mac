@@ -1943,7 +1943,7 @@ package manager, Linux distribution, macOS setup, or WSL2 image.</p>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">  </span><span class="nt">creates</span><span class="p">:</span>
 <a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.venv/bin/python</span>
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="nt">test</span><span class="p">:</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">  </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PATH=.venv/bin:$PATH .venv/bin/python -m pytest</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">  </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scripts/run-contract-tests.sh</span>
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="nt">evidence</span><span class="p">:</span>
 <a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">  </span><span class="nt">required</span><span class="p">:</span>
 <a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">repo.head_sha</span>
@@ -2014,9 +2014,11 @@ checkout directly.</p>
 <p>mac declares its own contract in <code>.mac/project.yaml</code>. Its bootstrap command is:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">python3 scripts/bootstrap-project.py</span>
 </code></pre></div>
-<p>That script first verifies <code>python3</code>, <code>git</code>, and <code>gh</code>, then creates
-<code>.venv</code> and installs the dev extra so a fresh macOS, Linux, or WSL2 agent can run:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">PATH=.venv/bin:$PATH .venv/bin/python -m pytest</span>
+<p>That script verifies the declared tools and reviewed Python baseline, then
+creates <code>.venv</code> from the committed lock with the development extra. MAC code
+execution and pre-push verification run in an approved Linux OpenShell sandbox;
+macOS remains a control-client and native-service platform. The canonical gate is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">scripts/run-contract-tests.sh</span>
 </code></pre></div>
 
 

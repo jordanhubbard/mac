@@ -1939,6 +1939,15 @@
 
 
 <h1 id="home-directory-consolidation-analysis-plan">Home-Directory Consolidation: Analysis &amp; Plan<a class="headerlink" href="#home-directory-consolidation-analysis-plan" title="Permanent link">&para;</a></h1>
+<div class="admonition warning">
+<p class="admonition-title">Historical consolidation proposal</p>
+<p>The topology and line-number observations below describe the earlier
+migration plan. They are not current deployment instructions. Current
+deployment preserves the upstream Hermes service's configured profile;
+do not move its home merely to satisfy this proposal. PostgreSQL is the
+live ledger authority. See <a href="../investigations/hermes-deployment-readiness/">Hermes deployment readiness</a>
+and <a href="../production-deployment/">production deployment</a>.</p>
+</div>
 <p>Status: <strong>plan</strong> (approved target = single authoritative root under <code>$HOME</code>).
 Scope: first-party MAC only (<code>src/mac/</code>, <code>deploy/</code>, <code>scripts/</code>, <code>Makefile</code>).
 The former in-tree Hermes snapshot is gone (PR #377); do not exclude a path

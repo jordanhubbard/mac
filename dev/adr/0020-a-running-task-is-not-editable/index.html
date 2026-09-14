@@ -1754,15 +1754,26 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
+  <a href="#implementation-note-2026-09-14" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Context
+        Implementation note — 2026-09-14
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Context">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Historical context">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1913,13 +1924,19 @@
 
 <h1 id="adr-0020-a-running-task-is-not-editable-stop-it-first">ADR 0020 - A running task is not editable; stop it first<a class="headerlink" href="#adr-0020-a-running-task-is-not-editable-stop-it-first" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: <strong>Proposed</strong></li>
+<li>Status: <strong>Partially implemented</strong> (stop/start lifecycle and guarded scope edits)</li>
 <li>Date: 2026-08-20</li>
 <li>Decision owner: MAC fleet owner</li>
 <li>Related: ADR 0013 (one authoritative hub allocator), ADR 0016 (agents decide
   what a task needs), ADR 0019 (privilege is an ACL on a resource tree)</li>
 </ul>
-<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<h2 id="implementation-note-2026-09-14">Implementation note — 2026-09-14<a class="headerlink" href="#implementation-note-2026-09-14" title="Permanent link">&para;</a></h2>
+<p>The current task lifecycle guards scope changes while execution is active and
+provides stop/start recovery. Metadata-only and priority updates have separate
+rules; the behavior is pinned by <code>tests/test_task_stop_start.py</code>. The original
+unconditional-edit observation below is historical context, not the current
+contract. This note records implementation, not completion of every proposal.</p>
+<h2 id="historical-context">Historical context<a class="headerlink" href="#historical-context" title="Permanent link">&para;</a></h2>
 <p><code>mac task update</code> edits a task in place regardless of its state. Applied to a
 RUNNING task this produces a split brain: the ledger holds one description and
 the executor is working from another, read at claim time. Nothing reconciles

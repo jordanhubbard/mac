@@ -1825,8 +1825,10 @@
 <h1 id="crash-diagnosis-and-autonomous-repair">Crash diagnosis and autonomous repair<a class="headerlink" href="#crash-diagnosis-and-autonomous-repair" title="Permanent link">&para;</a></h1>
 <p>MAC fleet agents run beneath a supervisor-independent crash observer. The
 observer is copied to <code>~/.mac/bin/mac-crash-observer</code> and deliberately uses the
-host Python standard library instead of the MAC virtual environment. A broken
-MAC installation therefore cannot disable its own crash reporter.</p>
+managed standalone Python 3.14.7 standard library instead of the MAC virtual
+environment. Native installation refuses an absent or mismatched managed
+interpreter. A broken MAC package environment therefore cannot disable its own
+crash reporter; the observer does not depend on the system Python selection.</p>
 <p>The native service manager remains responsible for restart:</p>
 <ul>
 <li>systemd uses <code>Restart=always</code> and launches the observer with

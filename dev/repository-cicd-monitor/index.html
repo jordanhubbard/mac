@@ -1923,7 +1923,10 @@
 <p>MAC treats CI/CD as a continuation of repository work. Publication still
 completes when reviewed work is integrated and remotely verified; CI health is
 checked afterward and can create linked maintenance work without rewriting the
-historical publication result or turning CI into a delivery gate.</p>
+historical publication result. This describes the generic post-publication
+monitor, not MAC's release gate: MAC candidate CI runs the full suite up front,
+and its image qualification and documentation publication wait for their
+required checks. See <a href="../testing-strategy/">testing strategy</a>.</p>
 <h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
 <p>A read-only audit of the authenticated GitHub notification feed on 2026-07-24
 found 1,336 accumulated threads. Of those, 1,304 (97.6%) were CI activity and
@@ -1964,8 +1967,8 @@ through 2026-07-24; 989 concerned a repository's main/default branch.</p>
 </tr>
 </tbody>
 </table>
-<p>This is not merely old inbox noise. There were 19 new CI notifications in the
-last 24 hours. Representative failures included MAC's
+<p>In that historical audit window, there were 19 new CI notifications in the
+preceding 24 hours. Representative failures included MAC's
 <a href="https://github.com/jordanhubbard/mac/actions/runs/30078995918">impact-selected coverage gate</a>,
 NanoLang's
 <a href="https://github.com/jordanhubbard/nanolang/actions/runs/30057187324">backend matrix</a>,

@@ -2530,10 +2530,10 @@
 <h1 id="production-deployment">Production Deployment<a class="headerlink" href="#production-deployment" title="Permanent link">&para;</a></h1>
 <p>Three supported topologies:</p>
 <ol>
-<li><strong>Single host, systemd</strong> — one machine, one SQLite database, one FastAPI
+<li><strong>Single host, systemd</strong> — one machine, one PostgreSQL database, one FastAPI
    process. Suitable for dev fleets, personal Hermes runtimes, and pilot
    deployments. See <code>deploy/systemd/</code>.</li>
-<li><strong>Containerized, single-instance</strong> — image at <code>Dockerfile</code>. Same SQLite
+<li><strong>Containerized, single-instance</strong> — image at <code>Dockerfile</code>. Same PostgreSQL
    topology, but lifecycle is managed by Docker Engine/Moby or k8s as a
    single-replica deployment. See the container section below.</li>
 <li><strong>Kubernetes, multi-replica, Postgres-backed</strong> — stateless <code>mac-api</code>
@@ -2545,15 +2545,14 @@
    <a href="https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md"><code>deploy/k8s/README.md</code></a> and
    <a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/archive/field-notes/k8s-native-rewrite-plan.md</code></a>.</li>
 </ol>
-<p><code>mac</code> is not designed for horizontal scale-out on SQLite. SQLite WAL handles
-concurrent reads well and serializes writes through filesystem locks — so
-<code>uvicorn --workers &gt; 1</code> against the same SQLite DB <em>works</em>, but every write
-call contends on the same lock. For multi-host, multi-replica, or
-write-heavy fleets, use topology (3) (Postgres) instead.</p>
-<p>The backend selection is runtime: set <code>MAC_DATABASE_URL</code> to a
-<code>postgresql://...</code> DSN for <code>PostgresStore</code>, or set <code>MAC_DB</code> to an explicit
-SQLite path. There is no implicit home-directory database. Both backends ship
-in the same wheel/image; pick one at deploy time.</p>
+<p>PostgreSQL is the only supported control-plane authority in every topology.
+Set <code>MAC_DATABASE_URL</code> to an explicit PostgreSQL DSN. The legacy <code>MAC_DB</code>
+variable accepts a PostgreSQL DSN too; a SQLite path is rejected. There is no
+implicit home-directory database or client-side replica.</p>
+<p>Ordinary service startup verifies the ordered schema-migration ledger and
+performs no DDL. Bootstrap and upgrades run <code>mac-schema-migrate</code> explicitly
+before starting the candidate service; see the
+<a href="../adr/0021-schema-changes-need-versioned-migrations/">versioned schema decision</a>.</p>
 <p>Only a hub or stateless API replica is a control-plane server. Fleet spokes are
 clients: their generated environment has <code>MAC_CONTROL_PLANE_ROLE=client</code>, no
 <code>MAC_DB</code> or <code>MAC_DATABASE_URL</code>, and their worker/gateway processes use
@@ -2584,7 +2583,7 @@ database variable is reintroduced.</p>
 <tr>
 <td><code>MAC_DATABASE_URL</code></td>
 <td>conditional</td>
-<td>Postgres DSN (<code>postgresql://...</code> or <code>postgres://...</code>). Required unless <code>MAC_DB</code> is set. When set, <code>mac-api</code> uses <code>PostgresStore</code> and ignores <code>MAC_DB</code>. The Postgres schema is auto-applied on startup (idempotent).</td>
+<td>PostgreSQL DSN (<code>postgresql://...</code> or <code>postgres://...</code>). Preferred authority setting; overrides <code>MAC_DB</code>. Startup verifies the migration ledger; deploy applies migrations explicitly.</td>
 </tr>
 <tr>
 <td><code>MAC_PG_POOL_SIZE</code></td>
@@ -2594,7 +2593,7 @@ database variable is reintroduced.</p>
 <tr>
 <td><code>MAC_DB</code></td>
 <td>conditional</td>
-<td>Explicit SQLite control-plane path. Required unless <code>MAC_DATABASE_URL</code> is set. No client-side <code>~/.mac/mac.db</code> is created implicitly.</td>
+<td>Legacy name for an explicit PostgreSQL DSN. SQLite paths are rejected; no private client ledger is created.</td>
 </tr>
 <tr>
 <td><code>MAC_API_TOKEN</code></td>
@@ -2610,11 +2609,6 @@ database variable is reintroduced.</p>
 <td><code>HERMES_HOME</code></td>
 <td>no</td>
 <td>Hermes state directory checked at startup. Default <code>~/.hermes</code>.</td>
-</tr>
-<tr>
-<td><code>ACC_DIR</code></td>
-<td>no</td>
-<td>Legacy ACC data directory checked for migration/state references. Default <code>~/.acc</code>.</td>
 </tr>
 <tr>
 <td><code>MAC_HERMES_AGENT_DIR</code></td>
@@ -3140,18 +3134,12 @@ the value in <code>~/.mac/fleets.yaml</code>, a fleet spec, task metadata, or so
 control. A vault record by itself does not populate a worker environment;
 deploy or the Kubernetes runner Secret must inject the corresponding
 environment key.</p>
-<p>It ships this repository to each host, installs <code>mac</code> into <code>~/.mac/venv</code>,
-redeploys upstream <code>NousResearch/hermes-agent</code> into <code>~/.mac/hermes-agent</code>,
-applies the minimal multi-Slack Hermes patch, preinstalls configured Hermes
-messaging dependencies before service start, applies the Hermes gateway
-model/runtime shim, runs the ACC SQLite migration
-dry-run and import from <code>~/.acc/data/fleet.db</code> or <code>~/.acc/data/acc.db</code>, and
-starts a local <code>mac</code> service. Linux hosts get <code>mac.service</code>; macOS hosts get
-<code>com.mac.control-plane</code>. The same deployment also starts a mac-managed Hermes
-gateway from the upstream checkout: <code>mac-hermes-gateway.service</code> on Linux and
-<code>com.mac.hermes-gateway</code> on macOS. It also installs a persistent <code>mac-agent</code>
-registration service: <code>mac-agent.service</code> on Linux and <code>com.mac.agent</code> on
-macOS.</p>
+<p>Deployment installs a reviewed MAC source bundle and locked service environment
+on each selected host. The configured gateway implementation determines the
+separate conversational runtime. Hermes retains its existing upstream service
+and active profile; MAC does not replace it with an assumed OpenClaw home.
+Systemd, launchd and supervisord adapters manage native services. Deprecated
+ACC and CCC databases are not part of the current deployment authority.</p>
 <p>When the local Git remote is available, fleet deploy installs <code>~/.mac/src/mac</code>
 as a branch-tracking Git worktree and sets <code>MAC_SELF_UPDATE_REPO</code> to that path.
 That lets the AgentBus repo-update control message pull future changes and
@@ -3438,7 +3426,7 @@ determined — so an operator can see that an answer is six weeks old rather tha
 trusting it silently. The existing GitHub ingest poller refreshes it on its
 normal pass, behind <code>MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS</code>, and reports the
 outcome in its run report under <code>merge_queue_capability</code>. To force a refresh
-now, run the poller: <code>mac fleet github-ingest run</code> (<code>POST /github-ingest/run</code>).
+now, run the poller: <code>mac admin fleet github-ingest run</code> (<code>POST /github-ingest/run</code>).
 A missing or expired answer is re-resolved at publication time. <strong>Unknown is
 never permission to do an unserialized squash</strong> — it routes to mac's queue,
 which serializes correctly regardless of what the forge does.</p>
@@ -3523,7 +3511,7 @@ recent successful <code>review_clone</code>, then agents with no recent matching
 An agent whose newest matching record is an authentication or authorization
 failure is ineligible during the configured cooldown. A newer success restores
 eligibility immediately; cooldown expiry returns the agent to unknown status.
-This lookup reads SQLite directly, so routing changes immediately and does not
+This lookup reads the authoritative PostgreSQL ledger directly, so routing changes immediately and does not
 wait for Qdrant vector backfill.</p>
 <p>Review Jobs receive optional Git-host keys from the runner's configured Secret
 (default <code>mac-api-config</code>): <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, <code>GITEA_TOKEN</code>, and
@@ -3685,7 +3673,7 @@ as result streams instead of being forced. Result streams use topic
 <code>mac.repo.update.result.v1</code> and content type
 <code>application/vnd.mac.repo-update-result+json</code>.</p>
 <p>To broadcast a source update from the hub:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="go">mac --db ~/.mac/mac.db agentbus repo-update agent_&lt;hub&gt; --all-agents</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="go">mac admin agentbus repo-update agent_&lt;hub&gt; --all-agents</span>
 </code></pre></div>
 <h2 id="roles-workflows-and-provisioning">Roles, Workflows, and Provisioning<a class="headerlink" href="#roles-workflows-and-provisioning" title="Permanent link">&para;</a></h2>
 <p>Production mac includes an API-level organization model for coordinated work:</p>
@@ -3731,12 +3719,17 @@ service containers; investigate any container presented as a task sandbox.</p>
 PVC mounted at <code>/var/lib/mac</code>. Use a <code>ConfigMap</code> for non-secret env and a
 <code>Secret</code> for <code>MAC_SECRET_KEY</code> / <code>MAC_API_TOKEN</code>.</p>
 <h2 id="backups">Backups<a class="headerlink" href="#backups" title="Permanent link">&para;</a></h2>
-<p><code>mac.db</code> is a SQLite WAL database. Snapshot with SQLite's online backup:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="go">sqlite3 /var/lib/mac/mac.db &quot;.backup &#39;/backups/mac-$(date +%Y%m%dT%H%M%SZ).db&#39;&quot;</span>
+<p>Use PostgreSQL backup tooling against the configured authority. Keep credentials
+in a protected PostgreSQL service/password file or the process environment.
+A custom-format dump supports a deliberate restore into a separate target:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="go">pg_dump --format=custom --file=/backups/mac.dump</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="go">pg_restore --list /backups/mac.dump</span>
 </code></pre></div>
-<p>WAL means a plain <code>cp</code> is unsafe (you'll miss the WAL file or copy
-inconsistent state). The <code>.backup</code> command coordinates with the running
-process. Restore is a file copy while the service is stopped.</p>
+<p>Set the connection environment for the intended database first. A dump listing
+is an inventory check, not a restore drill. Verify a restore into an isolated
+database, including the ordered migration ledger and application reads, before
+relying on a backup. Copying a data directory from a running server is not a
+supported application backup procedure.</p>
 <h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>GET /health</code> is the liveness/readiness signal. Returns <code>{"status":"ok"}</code>.</li>
@@ -3744,8 +3737,8 @@ process. Restore is a file copy while the service is stopped.</p>
   existence/size/mtime metadata, warning strings, and Slack activation status.</li>
 <li><code>GET /events</code> is the unified audit stream — point a log shipper (vector,
   promtail, fluent-bit) at it with <code>since=</code> advancing every poll, or scrape
-  the SQLite tables directly.</li>
-<li><code>mac --db /var/lib/mac/mac.db events list --since &lt;iso&gt;</code> is the operator's
+  the PostgreSQL tables through an authorized read connection.</li>
+<li><code>mac admin events list --since &lt;iso&gt;</code> is the operator's
   one-shot "what just happened" query.</li>
 <li><code>POST /observability/metrics</code> and <code>POST /observability/logs</code> ingest
   layer/source/name/level observations from workers, Hermes adapters, deploy
@@ -3767,16 +3760,15 @@ URL-addressable filters, the summary endpoint, and an NDJSON subscription to
 visualize the live stream, unified events, command audit, and the operator
 notification outbox.</p>
 <h2 id="upgrade-procedure">Upgrade procedure<a class="headerlink" href="#upgrade-procedure" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Stop the service.</li>
-<li>Snapshot <code>mac.db</code> (the <code>.backup</code> command above).</li>
-<li>Install the new wheel / pull the new image.</li>
-<li>Start the service. The schema migrator (<code>store._migrate</code>) is additive only
-   — new columns get <code>_ensure_column</code>'d; old data survives.</li>
-<li>Verify <code>GET /health</code> and a recent <code>GET /events</code> query.</li>
-</ol>
-<p>If a migration fails, restore the snapshot and pin the prior version. The
-project does not yet support downgrades through schema deletes.</p>
+<p>Use the <a href="../synchronized-fleet-cutover/">synchronized cutover runbook</a> and its
+<a href="../fleet-cutover-transaction-protocol/">typed transaction protocol</a>. Preserve
+an independently restorable PostgreSQL backup and the prior diagnostic
+artifacts. Deploy applies the ordered schema migrations before candidate
+services start; startup verifies rather than silently changing schema.</p>
+<p>Keep failed candidates and their affected workers held for diagnosis, then
+repair forward. Restoring an older source or database is an explicit
+break-glass operation, not an automatic response to a failed check. A release
+artifact alone does not authorize bypassing the cohort's fault-matrix gates.</p>
 <h2 id="kubernetes-k8s-native-topology">Kubernetes (K8s-native topology)<a class="headerlink" href="#kubernetes-k8s-native-topology" title="Permanent link">&para;</a></h2>
 <p>For multi-replica <code>mac-api</code>, deploy the manifests under <code>deploy/k8s/</code>.
 The Postgres cluster itself is <strong>not</strong> managed from this repo — bring
@@ -3800,13 +3792,10 @@ per kustomize tree from your platform-config repo if you sync with ArgoCD.</p>
 <a id="__codelineno-33-14" name="__codelineno-33-14" href="#__codelineno-33-14"></a><span class="go">kubectl apply -k deploy/k8s/mac-runner</span>
 </code></pre></div>
 <p>The full apply order and ExternalSecret wiring are documented in
-<a href="https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md"><code>deploy/k8s/README.md</code></a>. The persistence layer
-is portable across SQLite and Postgres because every <code>mac-api</code> SQL
-string is in SQLite dialect; the <code>PostgresStore</code> translates placeholders
-and provides a <code>json_extract</code> SQL function shim so the ~50 service
-modules need no per-backend branching. See
-<a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/archive/field-notes/k8s-native-rewrite-plan.md</code></a> for the
-Phase 3-5 roadmap.</p>
+<a href="https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md"><code>deploy/k8s/README.md</code></a>. The persistence layer uses PostgreSQL in every supported topology. The
+legacy SQL compatibility helpers do not constitute a second supported engine.
+The archived Kubernetes rewrite plan records migration history, not current
+backend selection.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes">Deploy aborts: "Qdrant did not become ready at :6333" (high-core nodes)<a class="headerlink" href="#deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes" title="Permanent link">&para;</a></h3>
 <p>On a node where the container's CPU cgroup quota is small but the host exposes
@@ -3950,8 +3939,8 @@ ordinary task-flow queries have both met the deployment's latency budget.</p>
 <li>Dynamic model selection is opt-in and does not override the explicit router
   defaults installed by fleet deployment. Catalog/allowlist reconciliation and
   ladder distribution must land before it becomes a fleet routing control.</li>
-<li>SQLite topology is single-writer. Use the Kubernetes + Postgres
-  topology for multi-replica deployments.</li>
+<li>Every topology requires PostgreSQL. Multi-replica deployments share one
+  schema authority and must coordinate migrations before service startup.</li>
 <li>No built-in TLS. Put a reverse proxy in front.</li>
 <li><code>MAC_SECRET_KEY</code> rotation is manual.</li>
 <li>Operational success-first routing is currently enforced for repository access

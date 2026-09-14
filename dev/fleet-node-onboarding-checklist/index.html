@@ -2472,12 +2472,13 @@ fleet nodes.</p>
 <li>[ ] The router is reachable locally and from every spoke/sandbox.</li>
 <li>[ ] Shared Qdrant and Firecrawl endpoints are bound to the intended mesh
       address, required, healthy, and reported by startup self-test.</li>
-<li>[ ] SQLite uses online backup rather than copying a live WAL database, or the
-      configured Postgres HA contract is healthy.</li>
+<li>[ ] PostgreSQL backups and restore drills pass; any configured PostgreSQL
+      HA contract is healthy. There is no live SQLite authority.</li>
 <li>[ ] macOS uses launchd for the control plane, worker, gateway, and any required
       reverse tunnel. A GUI login session is not required.</li>
-<li>[ ] OpenClaw runs inside a Ready OpenShell sandbox, owns chat exclusively,
-      and legacy gateway services are inactive.</li>
+<li>[ ] The configured gateway owns chat exclusively and competing services are
+      inactive. Hermes uses its upstream native service and preserved profile;
+      an explicitly selected OpenClaw deployment uses its OpenShell runtime.</li>
 <li>[ ] Channel, public identity, memory continuity, watchdog, crash observer, and
       startup self-test all pass live.</li>
 <li>[ ] OpenShell policy permits the host bridge alias for hub-local services.</li>
@@ -2485,11 +2486,11 @@ fleet nodes.</p>
 <h3 id="linux-edge-chat-gateway">Linux edge chat gateway<a class="headerlink" href="#linux-edge-chat-gateway" title="Permanent link">&para;</a></h3>
 <ul>
 <li>[ ] The strict ProxyJump route through the hub is portable and current.</li>
-<li>[ ] systemd controls the worker, crash observer, and OpenClaw gateway.</li>
+<li>[ ] systemd controls the worker, crash observer, and selected gateway.</li>
 <li>[ ] The hub router, Qdrant, Firecrawl, artifact service, and AgentBus are
       reachable over the mesh; loopback is not copied from the hub config.</li>
-<li>[ ] OpenClaw is the exclusive channel owner inside OpenShell; legacy gateway
-      services are inactive.</li>
+<li>[ ] The selected gateway is the exclusive channel owner; competing gateway
+      services are inactive. Verify its actual runtime and profile.</li>
 <li>[ ] Public identity, channel accounts, memory continuity, resource watchdog,
       and startup self-test pass.</li>
 <li>[ ] Reported CUDA architecture and memory match the host. Architecture-specific

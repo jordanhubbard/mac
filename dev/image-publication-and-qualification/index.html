@@ -1796,6 +1796,11 @@ the MAC or OpenShell runtime image. Instead, CI computes a canonical digest of
 the files and reviewed build arguments that can affect that image, resolves the
 corresponding content tag, and reuses its exact OCI digest only after anonymous
 label, platform, runtime, and GitHub provenance verification.</p>
+<p>Candidate validation runs up front on pull requests and pushes. The documentation
+boundary builds and executes its own ARM64 candidate from the checked-out tree;
+that local test image is not a published runtime identity. Deployable image
+publication and the OpenShell tested marker wait for full candidate validation
+and container contracts. There is no nightly testing schedule.</p>
 <p>The owner-private <code>mac.image_publication_identity.v1</code> artifact binds:</p>
 <ul>
 <li>the requested controller revision and the revision that originally built the

@@ -1847,6 +1847,10 @@ loop. A report refuses to recommend an arm until every arm has enough terminal
 tasks, completed reviews, validated outcomes, and protocol-compliant passes.
 Even then it emits a policy <em>candidate</em>, never an automatic production policy
 change. Statistical confidence and operator promotion remain separate gates.</p>
+<p>The default review path uses independent hub verification. Semantic model
+review is disabled by default and requires the explicit
+<code>MAC_REVIEW_SEMANTIC_REVIEWER</code> opt-in. The experimental model-review controls
+below do not enable that path by themselves; see <code>src/mac/services.py</code>.</p>
 <h2 id="what-is-measured">What is measured<a class="headerlink" href="#what-is-measured" title="Permanent link">&para;</a></h2>
 <p>Each <code>mac.review_experiment.v1</code> assignment records the experiment, arm,
 propensity, policy version, stratum, hypothesis, and assignment time. Weighted

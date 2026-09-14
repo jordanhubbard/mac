@@ -2150,7 +2150,7 @@ and tone of the active agent.</p>
 records only an operational memory record that the write-back was prepared.</p>
 <h2 id="contract">Contract<a class="headerlink" href="#contract" title="Permanent link">&para;</a></h2>
 <p>The adapter must call <code>mac</code> APIs. It must not import <code>ControlPlane</code> or mutate
-SQLite directly in production gateway code. Tests may use an in-process FastAPI
+the authority database directly in production gateway code. Tests may use an in-process FastAPI
 transport to verify the same API contract without opening a port.</p>
 
 

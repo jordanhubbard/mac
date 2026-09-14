@@ -2398,11 +2398,12 @@
 
 
 <h1 id="running-hermes-under-the-openshell-sandbox">Running Hermes under the OpenShell sandbox<a class="headerlink" href="#running-hermes-under-the-openshell-sandbox" title="Permanent link">&para;</a></h1>
-<p>This describes MAC's OpenShell runtime path: one per-agent OpenShell supervisor
-launches Hermes gateway/session work and autonomous executor children as
-confined descendants of an <a href="https://github.com/NVIDIA/OpenShell">OpenShell</a>
-sandbox. OpenShell is the <strong>sole guardrail authority</strong>, letting the agent run
-full <code>--yolo</code> safely.</p>
+<p>This describes the confined Linux execution path. Code tasks and their
+independent verification run inside policy-governed OpenShell sandboxes.
+Conversational gateway services are a separate deployment concern: the selected
+Hermes service can run natively with its preserved profile. The macOS hub runs
+native control and service clients and delegates repository verification to
+Linux; installing OpenShell on macOS is not the supported recovery path.</p>
 <h2 id="why">Why<a class="headerlink" href="#why" title="Permanent link">&para;</a></h2>
 <p>The executor already launches Hermes with <code>--yolo</code> (Hermes' own approval prompts
 bypassed — see <code>_hermes_argv</code> in <code>src/mac/task_executor.py</code>). On its own that is

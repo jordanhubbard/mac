@@ -1771,9 +1771,10 @@
 
 
 <h1 id="c26-certifier-phase-profile-example">c26 certifier phase-profile example<a class="headerlink" href="#c26-certifier-phase-profile-example" title="Permanent link">&para;</a></h1>
-<p>This is a reusable design fixture for c26 onboarding. It is deliberately not a
+<p>The c26 project was retired on 2026-09-14. This remains a reusable design
+fixture for testing certifier profiles, not an active onboarding plan. It is deliberately not a
 deployed c26 repository contract and does not authorize managed c26 work by
-itself. c26 may adopt it only after a c26-owned certifier harness has been built,
+itself. An active project may adapt it only after its own certifier harness has been built,
 published by CI as an immutable image digest, and proved to emit this exact
 full-only receipt.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">phase_profile</span><span class="p">:</span>
@@ -1802,8 +1803,8 @@ checksum and changes the certification job digest. An emitted selection mode,
 phase mode, or reason that differs by even one character fails closed.</p>
 <p>The executable test fixture is
 <code>tests/certifier_phase_profile_fixtures.py::c26_phase_profile</code>; keep it and this
-example byte-for-byte semantically aligned until c26 owns and publishes its
-actual contract.</p>
+example semantically aligned while the fixture remains in the test suite.
+The retired project has no pending contract-publication requirement.</p>
 
 
 
