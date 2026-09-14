@@ -1,8 +1,9 @@
 # c26 certifier phase-profile example
 
-This is a reusable design fixture for c26 onboarding. It is deliberately not a
+The c26 project was retired on 2026-09-14. This remains a reusable design
+fixture for testing certifier profiles, not an active onboarding plan. It is deliberately not a
 deployed c26 repository contract and does not authorize managed c26 work by
-itself. c26 may adopt it only after a c26-owned certifier harness has been built,
+itself. An active project may adapt it only after its own certifier harness has been built,
 published by CI as an immutable image digest, and proved to emit this exact
 full-only receipt.
 
@@ -35,5 +36,5 @@ phase mode, or reason that differs by even one character fails closed.
 
 The executable test fixture is
 `tests/certifier_phase_profile_fixtures.py::c26_phase_profile`; keep it and this
-example byte-for-byte semantically aligned until c26 owns and publishes its
-actual contract.
+example semantically aligned while the fixture remains in the test suite.
+The retired project has no pending contract-publication requirement.

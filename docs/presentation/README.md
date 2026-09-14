@@ -26,7 +26,7 @@ Together they cannot collide.
 |---|---|
 | `README.md` | What the deck covers, its slide list, where it is published, and how to rebuild it |
 | `AUDIT.md` | Every factual claim traced to a file, commit or generated reference |
-| `build_deck.py` | Deterministic builder for the `.pptx` |
+| `build_deck.py` or `build_deck.mjs` | Deterministic builder for the `.pptx` |
 | `images/*.svg` | Diagram sources, hand-authored |
 
 `AUDIT.md` is the part that matters. A capabilities deck ages badly precisely because nobody can
@@ -54,6 +54,7 @@ need to know, the failure message names it when it fires.
 
 | Directory | Commit | Deck | Subject |
 |---|---|---|---|
+| [`20260914T203809Z-c7be3a5a`](20260914T203809Z-c7be3a5a/README.md) | `c7be3a5a` | [Public PPTX](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx) · [Slides (account-restricted)](https://docs.google.com/presentation/d/1i9PUkXG1iPDeU1AmDqxUM439zwdtXqbDkTQikGIRyNA/edit?usp=drivesdk) | v1.5.0 — upfront validation, PostgreSQL test isolation, Hermes readiness and auditable task outcomes |
 | [`20260906T051311Z-a787bff1`](20260906T051311Z-a787bff1/README.md) | `a787bff1` | [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) | v1.4.0 — OpenClaw chat-gateway reliability hardening, the filesystem root cause that forced a cutover, and the fleet's chat gateway moving back to Hermes |
 | [`20260904T212515Z-c7a3fee1`](20260904T212515Z-c7a3fee1/README.md) | `c7a3fee1` | [Google Slides](https://docs.google.com/presentation/d/11mrPpsYR-wzRTLYsCiKF3wWcniGP811D6s0zYgPIoV4/edit?usp=drivesdk) | v1.3.5 — OpenShell/OpenClaw onboarding root-cause fixes and fleet dispatch/attestation reliability fixes |
 | [`20260902T131314Z-a168e9d0`](20260902T131314Z-a168e9d0/README.md) | `a168e9d0` | [Google Slides](https://docs.google.com/presentation/d/16ZYljibDJ1toiyuBpKmxaiqSjsZ7j69bPDIuGB2tDH4/edit?usp=drivesdk) | v1.3.5 release candidate — artifact publication, deploy resilience, fleet visibility, the contract-test allowance, and the transactional release workflow |

@@ -8,6 +8,13 @@
   (`kanban.db`) should relate to the MAC hub task ledger (`mac.db`, the
   `mac task` system) — and concludes by reversing the Phase-1 adoption.
 
+## Current storage authority — 2026-09-14
+
+The single-ledger decision remains in force. Its original SQLite storage detail
+is historical: `src/mac/store.py` now accepts only PostgreSQL DSNs, and ordinary
+startup verifies the explicit ordered migration ledger. Hermes state databases
+remain separate from the MAC task authority.
+
 ## TL;DR verdict
 
 **There must be exactly one task database — the MAC task ledger (`mac.db`).**

@@ -1,5 +1,14 @@
 # Home-Directory Consolidation: Analysis & Plan
 
+!!! warning "Historical consolidation proposal"
+    The topology and line-number observations below describe the earlier
+    migration plan. They are not current deployment instructions. Current
+    deployment preserves the upstream Hermes service's configured profile;
+    do not move its home merely to satisfy this proposal. PostgreSQL is the
+    live ledger authority. See [Hermes deployment readiness](investigations/hermes-deployment-readiness.md)
+    and [production deployment](production-deployment.md).
+
+
 Status: **plan** (approved target = single authoritative root under `$HOME`).
 Scope: first-party MAC only (`src/mac/`, `deploy/`, `scripts/`, `Makefile`).
 The former in-tree Hermes snapshot is gone (PR #377); do not exclude a path

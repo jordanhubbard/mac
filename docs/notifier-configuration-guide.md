@@ -143,8 +143,8 @@ webhook URL delivered through a `hermes` channel type.
    new webhook for the target channel. Copy the webhook URL.
 2. Store the URL as a MAC secret:
    ```console
-   mac secrets set discord-webhook-url "<url>" \
-     --scopes '{"agents": ["<hub-agent-id>"]}'
+   mac admin secret set discord-webhook-url --from-file /path/to/webhook-url \
+     --created-by <human-id> --scopes '{"agents": ["<hub-agent-id>"]}'
    ```
 3. Configure a `hermes` notifier channel that targets the hub agent; the hub
    agent's system prompt or a cron skill is responsible for forwarding

@@ -1,10 +1,11 @@
 # Running Hermes under the OpenShell sandbox
 
-This describes MAC's OpenShell runtime path: one per-agent OpenShell supervisor
-launches Hermes gateway/session work and autonomous executor children as
-confined descendants of an [OpenShell](https://github.com/NVIDIA/OpenShell)
-sandbox. OpenShell is the **sole guardrail authority**, letting the agent run
-full `--yolo` safely.
+This describes the confined Linux execution path. Code tasks and their
+independent verification run inside policy-governed OpenShell sandboxes.
+Conversational gateway services are a separate deployment concern: the selected
+Hermes service can run natively with its preserved profile. The macOS hub runs
+native control and service clients and delegates repository verification to
+Linux; installing OpenShell on macOS is not the supported recovery path.
 
 ## Why
 

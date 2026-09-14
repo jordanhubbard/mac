@@ -50,7 +50,7 @@ By default, the app presents secure `~/.mac/clients/*.yaml` profiles first,
 with the active profile selected, then legacy entries from
 `~/.mac/fleets.yaml`. Profile tokens are read only by Electron main from their
 mode-`0600` credential references. Legacy fleet SSH routes are obtained from
-`mac fleet ssh-spec`, so Electron does not maintain a second interpretation of
+`mac admin fleet ssh-spec`, so Electron does not maintain a second interpretation of
 ports, jumps, identities, or host-key policy. Use
 `MAC_CLIENT_PROFILES_DIR=/path/to/clients` or
 `MAC_DESKTOP_FLEETS_CONFIG=/path/to/fleets.yaml` to override those stores.
@@ -90,13 +90,11 @@ interoperability, and streamed operations. API requests from the workbench are
 proxied to the selected fleet. API credentials and SSH commands remain in
 Electron main; the renderer only sees the `window.macDashboard` bridge.
 
-The dashboard's URL field is a testing fallback. Normal fleet connections
-should be selected from the target dropdown.
-
-The packaged IDE also exposes `Fleet hub` and `Bearer token` controls in the
-top bar. Token values from `~/.mac/.env` stay in Electron main; the renderer
-only receives token-source labels such as `Hub token (HUB)` or `Manual
-bearer token`.
+The current Workbench connection dialog accepts a hub URL and, outside
+managed-auth mode, a bearer token. Its top bar displays status and agent count.
+The preload bridge exposes target and service methods, but the Workbench HTTP
+client does not yet consume them. See [the connection contract](../docs/dashboard-connection.md)
+for the implemented boundary; a fleet-target dropdown is not currently exposed.
 
 ## Profile Shape
 
