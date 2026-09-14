@@ -208,6 +208,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`presentations/agentfabric-overview/prompts/image-prompts.md`](../presentations/agentfabric-overview/prompts/image-prompts.md) | Image prompts — intentionally empty |
 | supplemental reference | [`presentations/agentfabric-overview/qa-ledger.md`](../presentations/agentfabric-overview/qa-ledger.md) | QA ledger — AgentFabric overview |
 | supplemental reference | [`presentations/agentfabric-overview/source-notes.md`](../presentations/agentfabric-overview/source-notes.md) | Source notes — AgentFabric overview |
+| supplemental reference | [`problems.md`](../problems.md) | Fleet recovery: evidence and remaining acceptance |
 | runbook | [`production-deployment.md`](../production-deployment.md) | Production Deployment |
 | supplemental reference | [`python-baseline.md`](../python-baseline.md) | Python baseline |
 | generated reference | [`reference/cli.md`](../reference/cli.md) | Command-line reference |

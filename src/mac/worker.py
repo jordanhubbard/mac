@@ -103,6 +103,7 @@ from mac.repository_contract import (
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.persistence_redaction import redact_for_persistence
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -162,6 +163,9 @@ from mac.worker_runtime_deps import (
 )
 
 logger = logging.getLogger("mac.worker")
+
+# Input safety is independent of whether durable artifact uploads are enabled.
+_MAX_EVIDENCE_INPUT_BYTES = 50 * 1024 * 1024
 Executor = Callable[[JsonDict, Path], "WorkerExecution"]
 CommandAuditSink = Callable[[JsonDict], None]
 StatusUpdateSink = Callable[[JsonDict], JsonDict]
@@ -431,6 +435,16 @@ class WorkerExecution:
     @property
     def succeeded(self) -> bool:
         return self.returncode == 0
+
+
+def _redact_worker_execution(execution: WorkerExecution) -> WorkerExecution:
+    return WorkerExecution(
+        returncode=execution.returncode,
+        summary=redact_for_persistence(execution.summary),
+        stdout=redact_for_persistence(execution.stdout),
+        stderr=redact_for_persistence(execution.stderr),
+        metadata=redact_for_persistence(execution.metadata),
+    )
 
 
 @dataclass
@@ -1965,7 +1979,8 @@ class MacWorker(
             )
         except subprocess.TimeoutExpired as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             stdout = _coerce_process_output(exc.stdout)
             stderr = _coerce_process_output(exc.stderr)
             process_tree_terminated = bool(getattr(exc, "process_tree_terminated", False))
@@ -1981,6 +1996,7 @@ class MacWorker(
                     "sandbox_cleanup": sandbox_cleanup,
                 },
             )
+            execution = _redact_worker_execution(execution)
             evidence = (
                 self._record_execution(
                     task_id,
@@ -2020,7 +2036,8 @@ class MacWorker(
             )
         except Exception as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             # A bare ``worker_exception`` transition used to carry only
             # ``error=str(exc)`` -- none of the keys ``_diagnostic_output_tail``
             # scans (stdout/stderr/output/*_tail), so the hub recorded an empty
@@ -2030,20 +2047,21 @@ class MacWorker(
             # it (plus the exception type and evidence id) on the transition so
             # the failure is diagnosable from the task history alone.
             exc_type = type(exc).__name__
-            tb_text = traceback.format_exc()
+            error_text = str(redact_for_persistence(str(exc)))
+            tb_text = str(redact_for_persistence(traceback.format_exc()))
             self._observe_log(
                 "worker.execution.exception",
                 level="error",
                 subject_type="task",
                 subject_id=task_id,
-                detail={"error": str(exc), "exception_type": exc_type},
+                detail={"error": error_text, "exception_type": exc_type},
             )
             evidence: Optional[JsonDict] = None
             if task_dir is not None:
                 try:
                     exc_execution = WorkerExecution(
                         1,
-                        "worker raised %s: %s" % (exc_type, exc),
+                        "worker raised %s: %s" % (exc_type, error_text),
                         stdout="",
                         stderr=tb_text,
                         metadata={
@@ -2071,7 +2089,7 @@ class MacWorker(
                             # Same: an unexpected worker exception is not
                             # self-evidently operator-actionable.
                             "manual_repair_required": False,
-                            "error": str(exc),
+                            "error": error_text,
                             "exception_type": exc_type,
                             "output_tail": tb_text,
                             "evidence_id": evidence.get("id") if evidence else None,
@@ -2827,6 +2845,7 @@ class MacWorker(
                 error=None if execution.succeeded else execution.summary,
             )
         except Exception as exc:
+            error_text = str(redact_for_persistence(str(exc)))
             if isinstance(exc, RepositoryAccessError):
                 # The repository-access learning is written before the
                 # exception is raised. Re-run reviewer selection immediately
@@ -2846,11 +2865,11 @@ class MacWorker(
                     "message_id": message.get("id"),
                     "review_id": review_id,
                     "executor_evidence_id": executor_evidence_id,
-                    "error": str(exc),
+                    "error": error_text,
                     "failure_class": getattr(exc, "failure_class", ""),
                 },
             )
-            return WorkerRunResult(status="review_verdict_failed", error=str(exc))
+            return WorkerRunResult(status="review_verdict_failed", error=error_text)
 
     def _advance_review_workflow_after_verdict(self, task_id: str) -> None:
         try:
@@ -4424,6 +4443,8 @@ class MacWorker(
         lease_id: str,
         attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
+        self._redact_verification_manifest(task_dir)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         if execution.succeeded:
@@ -5328,6 +5349,8 @@ class MacWorker(
         executor_evidence_id: str,
         message_id: str,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
+        self._redact_verification_manifest(task_dir)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         result_path = task_dir / "review-result.json"
@@ -5387,7 +5410,7 @@ class MacWorker(
         return (execution.summary or "").strip()
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
-        metadata = dict(execution.metadata)
+        metadata = redact_for_persistence(dict(execution.metadata))
         # The external activation probe is optional diagnostic evidence only.
         # It consumes activations supplied by an instrumented runtime; it cannot
         # inspect hosted-model internals. Its adapter catches model/checkpoint/
@@ -5415,7 +5438,10 @@ class MacWorker(
             ensure_json_object(task_payload.get("metadata")).get("review_context"),
             dict,
         )
-        manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
+        persisted_manifest = self._load_verification_manifest(task_dir)
+        manifest = metadata.get("verification") or persisted_manifest
+        if persisted_manifest.get("status") == "invalid":
+            manifest = persisted_manifest
         manifest = ensure_json_object(manifest)
         if trusted_read_only_context:
             # Read-only report provenance is not a publishable repo anchor.
@@ -5453,7 +5479,10 @@ class MacWorker(
                 serialized_context,
                 task=task_payload,
             )
-        metadata["verification"] = self._sign_verification_manifest(manifest)
+        metadata = redact_for_persistence(metadata)
+        metadata["verification"] = self._sign_verification_manifest(
+            redact_for_persistence(manifest)
+        )
         metadata.setdefault(
             "workspace_outputs",
             {
@@ -5520,34 +5549,55 @@ class MacWorker(
         )
         return False
 
-    def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
+    def _redact_verification_manifest(self, task_dir: Path) -> JsonDict:
         manifest_path = task_dir / "mac-evidence.json"
-        if not manifest_path.exists():
+        try:
+            raw = _read_bounded_evidence_file(manifest_path, _MAX_EVIDENCE_INPUT_BYTES)
+        except FileNotFoundError:
             return {
                 "schema": "mac.worker_evidence.v1",
                 "status": "missing",
                 "problems": ["mac-evidence.json was not produced by the executor"],
             }
+        except OSError:
+            raw = b""
         try:
-            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 - malformed evidence should be captured, not crash reporting
+            loaded = json.loads(raw)
+            if not isinstance(loaded, dict):
+                raise ValueError("not an object")
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            loaded = {
+                "schema": "mac.worker_evidence.v1",
+                "status": "invalid",
+                "problems": [
+                    "mac-evidence.json must be a bounded regular file containing a JSON object"
+                ],
+            }
+        try:
+            redacted = redact_for_persistence(loaded)
+        except RecursionError:
+            redacted = {
+                "schema": "mac.worker_evidence.v1",
+                "status": "invalid",
+                "problems": ["mac-evidence.json exceeds supported nesting depth"],
+            }
+        content = json.dumps(redacted, indent=2, sort_keys=True)
+        try:
+            _write_host_control_text(manifest_path, content, task_dir)
+        except OSError:
             return {
                 "schema": "mac.worker_evidence.v1",
                 "status": "invalid",
-                "problems": ["could not parse mac-evidence.json: %s" % exc],
-                "uri": manifest_path.resolve().as_uri(),
+                "problems": ["could not replace unsafe mac-evidence.json"],
             }
-        if not isinstance(loaded, dict):
-            return {
-                "schema": "mac.worker_evidence.v1",
-                "status": "invalid",
-                "problems": ["mac-evidence.json must contain a JSON object"],
-                "uri": manifest_path.resolve().as_uri(),
-            }
-        loaded.setdefault("schema", "mac.worker_evidence.v1")
-        loaded.setdefault("uri", manifest_path.resolve().as_uri())
-        loaded.setdefault("sha256", _sha256_file(manifest_path))
-        return loaded
+        redacted.setdefault("schema", "mac.worker_evidence.v1")
+        # Hash the bytes actually persisted, without trusting an executor-supplied digest.
+        redacted["uri"] = manifest_path.absolute().as_uri()
+        redacted["sha256"] = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
+        return redacted
+
+    def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
+        return self._redact_verification_manifest(task_dir)
 
     def _call_executor(
         self,
@@ -5559,10 +5609,12 @@ class MacWorker(
             prior_context = self.executor.audit_context
             self.executor.audit_context = audit_context
             try:
-                return self.executor(task, task_dir)
+                execution = self.executor(task, task_dir)
             finally:
                 self.executor.audit_context = prior_context
-        return self.executor(task, task_dir)
+        else:
+            execution = self.executor(task, task_dir)
+        return _redact_worker_execution(execution)
 
     def _record_command_audit(self, record: JsonDict) -> None:
         payload = {
@@ -6959,24 +7011,36 @@ def _write_host_control_text(path: Path, content: str, workspace: Path) -> None:
         path.parent.resolve().relative_to(workspace_resolved)
     except (OSError, ValueError):
         raise OSError("host control output is outside task workspace") from None
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        info = None
-    if info is not None and not stat.S_ISREG(info.st_mode):
-        path.unlink()
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags, 0o600)
-    try:
-        opened = os.fstat(fd)
-        if not stat.S_ISREG(opened.st_mode):
-            raise OSError("host control output is not a regular file")
-        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
-            handle.write(content)
-            handle.flush()
-    finally:
-        os.close(fd)
+    # A fresh inode avoids truncating a hard-linked executor output. os.replace
+    # also replaces symlink/FIFO leaves without opening or following them.
+    atomic_write_text(path, content)
+
+
+def _read_bounded_evidence_file(path: Path, limit: int) -> bytes:
+    """Read one stable regular file; never follow links or block on a FIFO."""
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > limit:
+        raise OSError("unsafe or oversized evidence file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as handle:
+        opened = os.fstat(handle.fileno())
+
+        def identity(info):
+            return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or identity(opened) != identity(before)
+        ):
+            raise OSError("evidence file changed before read")
+        raw = handle.read(limit + 1)
+        if len(raw) > limit or identity(os.fstat(handle.fileno())) != identity(opened):
+            raise OSError("evidence file changed during read")
+        if identity(path.lstat()) != identity(opened):
+            raise OSError("evidence file was replaced during read")
+    return raw
 
 
 def _capture_evidence_artifact(
@@ -7002,29 +7066,60 @@ def _capture_evidence_artifact(
     source_size = source_info.st_size
     source_digest = hashlib.sha256()
     captured = bytearray()
-    try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(path, flags)
-        opened = os.fstat(fd)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_dev != source_info.st_dev
-            or opened.st_ino != source_info.st_ino
-        ):
-            os.close(fd)
+    redacted = False
+    source_hash_available = True
+    if path.suffix in {".json", ".txt"} and artifact_type != "media":
+        try:
+            raw = _read_bounded_evidence_file(path, _MAX_EVIDENCE_INPUT_BYTES)
+        except OSError:
+            raw = b""
+            source_hash_available = False
+            content = b"Evidence omitted: unsafe, changing, or oversized text file."
+        else:
+            source_digest.update(raw)
+            try:
+                value = json.loads(raw) if path.suffix == ".json" else raw.decode("utf-8")
+                cleaned = redact_for_persistence(value)
+                # Preserve byte identity for already sanitized signed artifacts.
+                content = (
+                    raw
+                    if cleaned == value
+                    else (
+                        json.dumps(cleaned, indent=2, sort_keys=True).encode()
+                        if path.suffix == ".json"
+                        else cleaned.encode()
+                    )
+                )
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                content = b"Evidence omitted: malformed text or JSON artifact."
+        redacted = content != raw
+        sanitized_size = len(content)
+        content = content[:max_bytes]
+        truncated = sanitized_size > len(content)
+    else:
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            fd = os.open(path, flags)
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_dev != source_info.st_dev
+                or opened.st_ino != source_info.st_ino
+            ):
+                os.close(fd)
+                return None
+            with os.fdopen(fd, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    source_digest.update(chunk)
+                    if len(captured) < max_bytes:
+                        remaining = max_bytes - len(captured)
+                        captured.extend(chunk[:remaining])
+        except OSError:
             return None
-        with os.fdopen(fd, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                source_digest.update(chunk)
-                if len(captured) < max_bytes:
-                    remaining = max_bytes - len(captured)
-                    captured.extend(chunk[:remaining])
-    except OSError:
-        return None
-    content = bytes(captured)
+        content = bytes(captured)
+        truncated = source_size > len(content)
     content_digest = "sha256:%s" % hashlib.sha256(content).hexdigest()
-    source_sha256 = "sha256:%s" % source_digest.hexdigest()
-    truncated = source_size > len(content)
+    source_sha256 = "sha256:%s" % source_digest.hexdigest() if source_hash_available else None
     return {
         "name": name,
         "artifact_type": artifact_type,
@@ -7039,6 +7134,7 @@ def _capture_evidence_artifact(
             "schema": "mac.evidence_artifact_capture.v1",
             "source_size_bytes": source_size,
             "source_sha256": source_sha256,
+            "redacted": redacted,
             "captured_size_bytes": len(content),
             "capture_limit_bytes": max_bytes,
         },
@@ -7075,7 +7171,11 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         ),
     ]
     try:
-        wip_manifest = json.loads((task_dir / "repository-wip.json").read_text(encoding="utf-8"))
+        wip_manifest = json.loads(
+            _read_bounded_evidence_file(
+                task_dir / "repository-wip.json", _MAX_EVIDENCE_INPUT_BYTES
+            )
+        )
     except Exception:
         wip_manifest = {}
     if isinstance(wip_manifest, dict):
