@@ -1770,10 +1770,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#independent-verifier-resources" class="md-nav__link">
+  <a href="#verifier-resources" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Independent verifier resources
+        Verifier resources
       
     </span>
   </a>
@@ -2123,10 +2123,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#independent-verifier-resources" class="md-nav__link">
+  <a href="#verifier-resources" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Independent verifier resources
+        Verifier resources
       
     </span>
   </a>
@@ -2517,12 +2517,13 @@ nothing on either platform while making the real boundary harder to see. Do not
 re-add it. If darwin confinement needs strengthening, strengthen it here — a
 <code>sandbox-exec</code> profile or a hardened launchd job — not by filtering data
 elsewhere in the system.</p>
-<h2 id="independent-verifier-resources">Independent verifier resources<a class="headerlink" href="#independent-verifier-resources" title="Permanent link">&para;</a></h2>
+<h2 id="verifier-resources">Verifier resources<a class="headerlink" href="#verifier-resources" title="Permanent link">&para;</a></h2>
 <p>The hub runs pushed repository code on its configured Linux OpenShell gateway.
 A macOS hub may own the CLI/tunnel connection, but does not host that runtime.
 The same verifier execution path serves independent review and projected-merge
 publication checks.</p>
-<p><code>MAC_HUB_VERIFY_PROFILE</code> is an opt-in setting on the hub process. Unset, empty,
+<p><code>MAC_HUB_VERIFY_PROFILE</code> is an opt-in setting on each hub and Linux OpenShell
+worker process. Unset, empty,
 or <code>default</code> retains the driver's existing behavior. <code>bounded-tmpfs</code> requests
 12 CPUs, 32 GiB memory and an 8 GiB Docker-driver tmpfs at
 <code>/sandbox/test-storage</code>, with <code>TMPDIR</code> pointing there and <code>MAC_TEST_JOBS=8</code>.
@@ -2534,8 +2535,14 @@ unknown profile or unsupported backend cannot produce a passing verification.
 No arbitrary driver JSON, host mounts or shell arguments are accepted through
 this setting. It changes resources, not test selection, coverage, signing or
 the isolation policy.</p>
+<p>Worker sandboxes request the same limits at creation. Every fresh verification
+shell reapplies the storage preflight and environment before toolchain setup;
+settings in the agent's shell are not inherited. Separate read-only verifier
+sandboxes use this profile without widening their create-argument allowlist.
+With the profile enabled, explicit worker <code>--cpu</code>, <code>--memory</code> or
+<code>--driver-config-json</code> overrides are rejected instead of passing duplicate flags.</p>
 <p>Enable the profile only on a qualified Linux gateway through the supported
-hub configuration/deployment path. It affects future sandboxes; do not restart
+hub/worker configuration and deployment path. It affects future sandboxes; do not restart
 active verifiers to change their storage. Source publication alone does not
 prove activation: inspect the next independent sandbox's limits and mount,
 then observe its required tests and normal publication completing. Keep
