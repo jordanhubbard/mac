@@ -378,6 +378,18 @@ def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     )
 
 
+def test_typed_phase2_refreshes_existing_deployment_owned_runtime_context():
+    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    branch = script.split(
+        'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  if control_plane_enabled; then', 1
+    )[1].split("\nsummarize_report() {", 1)[0]
+    legacy, typed = branch.split("\nelse\n", 1)
+    assert "register_hermes_runtime_identity" in legacy
+    assert "register_hermes_runtime_identity" not in typed
+    assert "write_hermes_runtime_context" in typed
+    assert 'if [ ! -f "$(mac_gateway_home)/mac-runtime-context.json" ]' not in typed
+
+
 def test_fleet_deploy_exports_python_bin_to_remote():
     # PYTHON_BIN is used in the remote-executed deploy (e.g. install_github_review_key),
     # so it must be in the `export` list shipped to the remote env — like PY — or the

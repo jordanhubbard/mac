@@ -73,6 +73,8 @@ def _repository_contract(workspace_path: Path) -> Dict[str, Any]:
         "exists": contract_path.exists(),
         "schema": None,
         "project": "",
+        "platforms": [],
+        "platforms_declared": False,
         "required_commands": [],
         "bootstrap_command": "",
         "test_command": "scripts/run-contract-tests.sh",
@@ -92,10 +94,17 @@ def _repository_contract(workspace_path: Path) -> Dict[str, Any]:
     bootstrap = data.get("bootstrap") if isinstance(data.get("bootstrap"), dict) else {}
     test = data.get("test") if isinstance(data.get("test"), dict) else {}
     evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+    platforms = data.get("platforms")
     contract.update(
         {
             "schema": data.get("schema"),
             "project": data.get("project") or "",
+            "platforms": sorted(
+                str(item).strip().lower() for item in platforms if str(item).strip()
+            )
+            if isinstance(platforms, list)
+            else [],
+            "platforms_declared": isinstance(platforms, list),
             "required_commands": sorted(
                 str(item)
                 for item in (toolchain.get("required_commands") or [])
@@ -186,11 +195,20 @@ def _session_capability_contract(
         },
         {
             "name": "quality_gate",
-            "kind": "command",
+            "kind": "repository_verification",
             "required": True,
             "command": test_command,
             "cwd": str(workspace_path),
-            "purpose": "Run the repository contract test gate before completion.",
+            "execution": {
+                "owner": "deterministic_host",
+                "mode": "exact_commit_repository_verification",
+                "platform": "linux",
+                "environment": "openshell_sandbox",
+                "host_execution": False,
+                "bootstrap_command": str(repository_contract.get("bootstrap_command") or ""),
+                "required_commands_scope": "verification_environment",
+            },
+            "purpose": "Verify the exact committed source through the authoritative Linux OpenShell repository gate; do not run the full gate on the native host.",
         },
         {
             "name": "hermes_oneshot_executor",
@@ -256,7 +274,6 @@ def _session_capability_contract(
             "mac-hermes agent-identity %s" % agent_id,
             "mac-agent --loop --executor %s" % (mac_home / "bin" / "mac-task-executor"),
             "git status --short --branch",
-            test_command,
             "git add <files>",
             'git commit -m "<message>"',
             "git pull --rebase",
@@ -281,6 +298,7 @@ def _session_capability_contract(
             "Record command audit phases for shell work that changes or verifies task state.",
             "Use mac-hermes web-search/web-scrape/web-crawl when current external information is required.",
             "Use mac-task-executor through mac-agent loop mode for production coding-agent task execution.",
+            "The deterministic host owns the full repository bootstrap/test gate in Linux OpenShell; never run that full gate on native macOS.",
             "Own the full code lifecycle for repository work: write the change, "
             "run the contract checks, commit/push the task branch, obtain "
             "cross-review, and publish the approved change to the repository "
@@ -441,7 +459,7 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
             },
             "projects": {
                 "authority": "mac",
-                "source_of_truth": "MAC project summaries, ProjectItem rows, and registered Beads repositories",
+                "source_of_truth": "MAC project summaries, ProjectItem rows, and registered project repository contracts",
                 "identity_fields": ["project", "task_count", "frontier_tasks", "repository_count"],
                 "api_paths": [
                     "/persona-instances/%s/work-context" % hermes_instance_id,
@@ -476,7 +494,7 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                     "/ui?view=agents&project={project}",
                     "/ui?view=map&project={project}",
                 ],
-                "runtime_rule": "Treat project frontier, Beads bridge state, and cross-project dependencies as MAC state.",
+                "runtime_rule": "Treat project frontier, registered repository state, and cross-project dependencies as MAC state.",
             },
             "agents": {
                 "authority": "mac",
