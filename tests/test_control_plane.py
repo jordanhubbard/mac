@@ -14044,19 +14044,21 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
         "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
     )
     assert rc == 0
-    create = next(a for a in captured if "create" in a and "--upload" in a)
+    create = next(a for a in captured if "create" in a)
     separator = create.index("--")
-    assert create[separator + 1 : separator + 3] == ["/bin/bash", "-c"]
-    inner = create[create.index("-c") + 1]
+    assert create[separator + 1 :] == ["/bin/true"]
+    bootstrap = next(a for a in captured if "exec" in a and "tar xzf repo.tgz" in a[-1])
+    inner = bootstrap[-1]
     from mac.openshell_runtime import SANDBOX_BASE_PATH
 
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "PATH=%s" % SANDBOX_BASE_PATH in env_values
-    assert inner.startswith("export PATH=%s; hash -r" % SANDBOX_BASE_PATH)
+    assert "export PATH=%s; hash -r" % SANDBOX_BASE_PATH in inner
     # The repo travels as ONE tar file (OpenShell directory upload drops .git)
     # and is extracted inside the sandbox before anything else.
-    upload = create[create.index("--upload") + 1]
-    assert upload.endswith("repo.tgz:/sandbox")
+    upload = next(a for a in captured if "upload" in a)
+    assert upload[-1] == "/sandbox"
+    assert upload[-2].endswith("repo.tgz")
     assert "cd /sandbox && tar xzf repo.tgz && " in inner
     # Whitelist reaches every git subprocess the suite spawns (env form, not
     # --global), and it precedes the test command.
@@ -14097,7 +14099,7 @@ def test_hub_verify_sandbox_provisions_its_own_postgres(cp, monkeypatch):
         "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
     )
     assert rc == 0
-    create = next(a for a in captured if "create" in a and "--upload" in a)
+    create = next(a for a in captured if "create" in a)
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "MAC_TEST_PG_LOCAL=1" in env_values
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)
