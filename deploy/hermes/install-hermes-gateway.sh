@@ -5,7 +5,7 @@
 # that was tried once and abandoned) and does not support a normal `pip
 # install` -- its own setup.py refuses to build a wheel or sdist ("Hermes is
 # distributed via the shell installer, Docker image, or Nix"). This script
-# drives upstream's own shell installer and its own CLI (`hermes config set`,
+# prepares a reviewed external checkout and drives its CLI (`hermes config set`,
 # `hermes gateway install`, `hermes claw migrate`) rather than reimplementing
 # any of that logic in-tree. It is the host-level sibling of
 # deploy/openclaw/install-openclaw-gateway.sh -- same prepare/verify/finalize/
@@ -13,7 +13,6 @@
 # process (no OpenShell sandbox), so there is no container lifecycle here.
 set -euo pipefail
 
-HERMES_INSTALL_URL="${MAC_HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}"
 FLEET_NAME="${MAC_HERMES_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
@@ -35,30 +34,23 @@ log() { printf '[install-hermes-gateway] %s\n' "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
 
 hermes_bin() {
-  command -v hermes 2>/dev/null && return 0
   [ -x "$HOME/.local/bin/hermes" ] && { printf '%s\n' "$HOME/.local/bin/hermes"; return 0; }
+  command -v hermes 2>/dev/null && return 0
   return 1
 }
 
 hermes_runtime_dir() {
-  local hermes resolved
+  local hermes
   hermes="$(hermes_bin)" || return 1
-  resolved="$(python3 - "$hermes" <<'PY'
-from pathlib import Path
-import re
-import sys
+  "$MAC_HOME/venv/bin/python" -m mac.hermes_release resolve --launcher "$hermes"
+}
 
-launcher = Path(sys.argv[1]).resolve()
-text = launcher.read_text(encoding="utf-8", errors="ignore")
-matches = re.findall(r"(/[^\s\"']+)/hermes(?:\s|[\"']|$)", text)
-if matches:
-    print(matches[-1])
-elif (launcher.parent / "agent" / "prompt_builder.py").is_file():
-    print(launcher.parent)
-PY
-)"
-  [ -n "$resolved" ] && [ -f "$resolved/agent/prompt_builder.py" ] || return 1
-  printf '%s\n' "$resolved"
+release_command() {
+  "$MAC_HOME/venv/bin/python" -m mac.hermes_release "$@" \
+    --launcher "$HOME/.local/bin/hermes" \
+    --home "$HERMES_HOME" --markdown "$RUNTIME_CONTEXT_MARKDOWN" \
+    --manifest "$SCRIPT_DIR/python314-source.json" \
+    --manifest "$SCRIPT_DIR/runtime-context-source.json"
 }
 
 hermes_python_bin() {
@@ -152,18 +144,6 @@ with tempfile.TemporaryDirectory(prefix="mac-hermes-prompt-qualification-") as r
         )
 print("staged Hermes prompt preserved project, MAC runtime, and persona context")
 PY
-}
-
-install_hermes() {
-  if hermes_bin >/dev/null 2>&1; then
-    log "hermes CLI already installed ($(hermes_bin))"
-    return 0
-  fi
-  log "installing Hermes via upstream's shell installer ($HERMES_INSTALL_URL)"
-  [ "$DRY_RUN" = 1 ] && { log "dry-run: skipping installer"; return 0; }
-  curl -fsSL "$HERMES_INSTALL_URL" | bash \
-    || die "Hermes shell installer failed"
-  hermes_bin >/dev/null 2>&1 || die "hermes CLI not found on PATH or in ~/.local/bin after install"
 }
 
 # Resolve a Slack channel *name* (e.g. "rockyandfriends") to the channel ID
@@ -375,6 +355,7 @@ PY
 }
 
 verify_gateway() {
+  release_command verify || die "Hermes selected release or service identity failed verification"
   local hermes status
   hermes="$(hermes_bin)" || die "hermes CLI not found"
   local backend cwd
@@ -510,7 +491,15 @@ PY
 }
 
 prepare() {
-  install_hermes
+  [ "$DRY_RUN" = 1 ] && { log "dry-run: skipping Hermes preparation and activation"; return 0; }
+  # Qualification completes before profile writes, service stop or selection.
+  # The caller's existing deployment transaction owns rollback of the launcher
+  # and service definition. Failed candidates remain available for diagnosis.
+  local candidate
+  candidate="$(release_command prepare --root "$MAC_HOME/hermes-runtimes" "$@")" \
+    || die "Hermes candidate qualification failed; active runtime was not changed"
+  release_command activate --runtime "$candidate" \
+    || die "Hermes runtime activation failed"
   ensure_user_allowlist
   ensure_home_channel_env
   ensure_chat_gateway_impl_env
@@ -533,7 +522,7 @@ withdraw() {
 }
 
 case "${1:-prepare}" in
-  prepare)  prepare ;;
+  prepare)  prepare "${@:2}" ;;
   verify)   verify ;;
   finalize) finalize ;;
   withdraw) withdraw ;;

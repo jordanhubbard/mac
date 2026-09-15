@@ -3381,7 +3381,8 @@ def service_summary():
 
 stage, output_path = sys.argv[1], Path(sys.argv[2])
 mac_home = Path(os.environ["MAC_HOME"])
-hermes_dir = Path(os.environ["HERMES_DIR"])
+hermes_dir = Path(os.environ.get("MAC_HERMES_AGENT_DIR") or os.environ["HERMES_DIR"])
+hermes_qualification = hermes_dir.parent / "qualification.json"
 acc_candidates = [
     Path.home() / ".acc" / "data" / "fleet.db",
     Path.home() / ".acc" / "data" / "acc.db",
@@ -3580,6 +3581,11 @@ manifest = {
         "mac_source": file_ref(os.environ["SRC_DIR"]),
         "mac_database": file_ref(mac_home / "mac.db"),
         "hermes_agent": file_ref(hermes_dir),
+        "hermes_release": {
+            "qualification": file_ref(hermes_qualification),
+            "sha256": hashlib.sha256(hermes_qualification.read_bytes()).hexdigest()
+                if hermes_qualification.is_file() else None,
+        },
         "hermes_state": file_ref(Path.home() / ".hermes"),
         "hermes_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (mac_home / "openclaw" / "mac-runtime-context.json")),
         "hermes_runtime_markdown": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or (mac_home / "openclaw" / "mac-runtime-context.md")),
@@ -4181,6 +4187,12 @@ capture_auxiliary_rollback_artifacts() {
   track_auxiliary_rollback_artifact \
     "$MAC_HOME/deployed-source-revision" user
   track_auxiliary_rollback_artifact "$MAC_HOME/deploy-start-barrier" user
+  # Hermes's own CLI writes user-level service definitions. Capture those
+  # actual identities together with the runtime-selecting launcher, rather
+  # than relying on the retired com.mac.hermes/mac-hermes service names.
+  track_auxiliary_rollback_artifact "$HOME/.local/bin/hermes" user
+  track_auxiliary_rollback_artifact "$HOME/.config/systemd/user/hermes-gateway.service" user
+  track_auxiliary_rollback_artifact "$HOME/Library/LaunchAgents/ai.hermes.gateway.plist" user
   local gateway_home
   gateway_home="$(mac_gateway_home)"
   if [ "$gateway_home" != "$MAC_HOME/openclaw" ]; then
@@ -11578,7 +11590,6 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
     retire_spoke_local_control_plane_database
   fi
   write_hermes_runtime_context
-  verify_hermes_prompt_bridge
 else
   log "typed phase 2 retained hub database and runtime identity authorities; refreshing deployment-owned Hermes context"
   write_hermes_runtime_context
@@ -12086,7 +12097,14 @@ prepare_hermes_gateway() {
   MAC_HERMES_GATEWAY_MODEL="${HERMES_GATEWAY_MODEL:-}" \
   MAC_HERMES_GATEWAY_PROVIDER="${HERMES_GATEWAY_PROVIDER:-}" \
   MAC_HERMES_GATEWAY_BASE_URL="${HERMES_GATEWAY_BASE_URL:-}" \
-    "$installer" prepare
+    "$installer" prepare --uv "$NATIVE_UV"
+  # Keep the generation's manifest and startup evidence on the same runtime
+  # selected by the CLI; the child's mac.env update cannot update this shell.
+  MAC_HERMES_AGENT_DIR="$("$VENV/bin/python" -m mac.hermes_release resolve \
+    --launcher "$HOME/.local/bin/hermes")" || die "cannot resolve selected Hermes release"
+  MAC_HERMES_PYTHON="$MAC_HERMES_AGENT_DIR/.venv/bin/python"
+  export MAC_HERMES_AGENT_DIR MAC_HERMES_PYTHON
+  verify_hermes_prompt_bridge
 }
 
 verify_hermes_gateway() {

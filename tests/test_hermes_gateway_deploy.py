@@ -204,7 +204,20 @@ def _run(
     (mac_home / "venv" / "bin").mkdir(parents=True, exist_ok=True)
     mac_python = mac_home / "venv" / "bin" / "python"
     if not mac_python.exists():
-        mac_python.symlink_to(sys.executable)
+        # Model candidate preparation separately from service orchestration.
+        # Real Git/patch/environment selection is covered by test_hermes_release.
+        mac_python.write_text(
+            f"#!{sys.executable}\n"
+            "import json,os,sys\nfrom pathlib import Path\n"
+            "if sys.argv[1:3] == ['-m','mac.hermes_release'] and sys.argv[3] != 'resolve':\n"
+            "    action=sys.argv[3]\n"
+            "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['release',action])+'\\n')\n"
+            "    if os.environ.get('FAKE_HERMES_SCENARIO') == 'qualification_failed': sys.exit(1)\n"
+            f"    if action == 'prepare': print({str(bin_dir)!r})\n"
+            "    sys.exit(0)\n"
+            f"os.execv({sys.executable!r}, [{sys.executable!r},*sys.argv[1:]])\n"
+        )
+        mac_python.chmod(0o755)
     if not (extra_env or {}).get("_OMIT_GATEWAY_IMPL_ENV"):
         (mac_home / "mac.env").write_text("MAC_CHAT_GATEWAY_IMPL=hermes\n", encoding="utf-8")
     env = {
@@ -584,13 +597,17 @@ def test_home_channel_env_rerun_replaces_rather_than_duplicates(tmp_path):
     assert "SLACK_HOME_CHANNEL_NAME=stalechannel" not in env_lines
 
 
-def test_prepare_skips_install_when_hermes_already_on_path(tmp_path):
+def test_prepare_qualifies_installed_runtime_before_configuring_or_restarting(tmp_path):
     result, calls = _run(tmp_path, "prepare")
     assert result.returncode == 0, result.stderr
-    # No shell-installer invocation is observable through the fake hermes
-    # binary's own call log (it's already "installed"); prepare should reach
-    # gateway install regardless.
+    assert calls[:2] == [["release", "prepare"], ["release", "activate"]]
     assert ["gateway", "install", "--force", "--start-now", "--start-on-login"] in calls
+
+
+def test_qualification_failure_does_not_configure_or_stop_existing_gateway(tmp_path):
+    result, calls = _run(tmp_path, "prepare", scenario="qualification_failed")
+    assert result.returncode != 0
+    assert calls == [["release", "prepare"]]
 
 
 def test_prepare_stops_gateway_before_replacing_service(tmp_path):

@@ -482,7 +482,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_GATEWAY_REQUEST_TIMEOUT_SECONDS` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway request timeout seconds. |
 | `MAC_HERMES_GATEWAY_STALE_TIMEOUT_SECONDS` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway stale timeout seconds. |
 | `MAC_HERMES_HOME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes home. |
-| `MAC_HERMES_INSTALL_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes install url. |
 | `MAC_HERMES_INSTANCE_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes instance id. |
 | `MAC_HERMES_LOG_SUMMARY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes log summary. |
 | `MAC_HERMES_MESSAGE_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes message bin. |
