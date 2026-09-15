@@ -1832,10 +1832,12 @@ Python 3.14.7 when preparing the environment; upstream's default remains 3.11.</
 using <code>git apply --check</code> before <code>git apply</code>. Install from the patched lock with
 <code>uv sync --locked --python 3.14.7</code> and the required extras. Do not ignore
 <code>Requires-Python</code>, resolve new dependency versions, or patch a serving checkout.
-The patch is compatibility material for the rollout; the gateway installer does
-not apply it automatically. A fleet migration still needs a prepared replacement
-environment, preserved profiles and gateway configuration, running-process
-identity checks, and coding canaries before releasing holds.</p>
+The gateway installer prepares a separate qualified release with both reviewed
+patches and the locked Slack/MCP extras before selecting its launcher. The
+existing fleet transaction captures that launcher and the upstream service
+definition for rollback. A migration still requires preserved profiles and
+gateway configuration, running-process identity checks, and coding canaries
+before releasing holds.</p>
 <p>The patch also repairs three upstream test observations without changing their
 assertions: preserve the non-secret <code>TMPDIR</code> through the canonical runner's
 credential-stripping environment; trace the actual pooled database reader; and
