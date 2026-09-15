@@ -2458,6 +2458,12 @@ def run_repository_contract_test_in_openshell(
         # and libpq cannot use OpenShell's HTTP network proxy.
         for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
             argv += ["--env", value]
+        # `sandbox create` defaults to opening an interactive shell when no
+        # command is supplied. In a non-interactive verifier that leaves the
+        # CLI attached forever even though the sandbox has reached Ready.
+        # Run a bounded no-op initial command so create returns while the
+        # persistent sandbox remains available for upload and exec phases.
+        argv += ["--no-tty", "--", "/bin/true"]
         report_preflight = ""
         if prepared_report is not None:
             expected_tree = str(prepared_report.get("base_tree") or "")
@@ -2476,35 +2482,102 @@ def run_repository_contract_test_in_openshell(
                 'test "$(git rev-parse HEAD^{tree})" = %s || '
                 "{ echo 'pre-push verification unavailable: Linux/source identity mismatch' >&2; exit 96; }; "
             ) % (head_sha, expected_tree_sha)
-        argv += [
-            "--upload",
-            "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
-            "--",
-            "/bin/bash",
-            "-c",
-            "export PATH=%s; hash -r 2>/dev/null || true; "
-            "%scd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s%s"
-            % (
-                SANDBOX_BASE_PATH,
-                profile_preflight,
-                _HUB_VERIFY_GIT_PREFLIGHT,
-                report_preflight + (("%s && " % bootstrap_command) if bootstrap_command else ""),
-                test_command or "scripts/run-contract-tests.sh",
-            ),
-        ]
         primary_error = None
         try:
-            proc = subprocess.run(
+            create = subprocess.run(
                 argv, capture_output=True, text=True, timeout=bounded_timeout(timeout), check=False
             )
             if verifier_identity is not None:
-                verifier_identity["execution_attempted"] = True
-            out = (proc.stdout or "") + (proc.stderr or "")
-            if profile_preflight and VERIFIER_PROFILE_READY not in out:
+                verifier_identity["create_returncode"] = int(create.returncode)
+            output = (create.stdout or "") + (create.stderr or "")
+            if create.returncode != 0:
+                return int(create.returncode), output
+
+            upload = subprocess.run(
+                [
+                    openshell,
+                    "sandbox",
+                    "upload",
+                    name,
+                    str(tmp / "repo.tgz"),
+                    "/sandbox",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(timeout),
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+            if verifier_identity is not None:
+                verifier_identity["upload_returncode"] = int(upload.returncode)
+            output += (upload.stdout or "") + (upload.stderr or "")
+            if upload.returncode != 0:
+                return int(upload.returncode), output
+
+            identity_preflight = (
+                "export PATH=%s; hash -r 2>/dev/null || true; "
+                "%scd /sandbox/repo && %s%s"
+                % (
+                    SANDBOX_BASE_PATH,
+                    profile_preflight,
+                    _HUB_VERIFY_GIT_PREFLIGHT,
+                    report_preflight,
+                )
+            )
+
+            def sandbox_exec(command: str, *, initialize: bool) -> subprocess.CompletedProcess[str]:
+                shell_command = (
+                    "cd /sandbox && tar xzf repo.tgz && " if initialize else ""
+                ) + identity_preflight + command
+                return subprocess.run(
+                    [
+                        openshell,
+                        "sandbox",
+                        "exec",
+                        "--name",
+                        name,
+                        "--workdir",
+                        "/sandbox",
+                        "--no-tty",
+                        "--timeout",
+                        str(max(1, int(bounded_timeout(timeout)))),
+                        "--",
+                        "/bin/bash",
+                        "-c",
+                        shell_command,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=bounded_timeout(timeout),
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                )
+
+            if bootstrap_command:
+                if verifier_identity is not None:
+                    verifier_identity["execution_attempted"] = True
+                bootstrap = sandbox_exec(bootstrap_command, initialize=True)
+                if verifier_identity is not None:
+                    verifier_identity["bootstrap_returncode"] = int(bootstrap.returncode)
+                output += (bootstrap.stdout or "") + (bootstrap.stderr or "")
+                if bootstrap.returncode != 0:
+                    return int(bootstrap.returncode), output
+
+            proc = sandbox_exec(
+                test_command or "scripts/run-contract-tests.sh",
+                initialize=not bootstrap_command,
+            )
+            if verifier_identity is not None:
+                verifier_identity.update(
+                    execution_attempted=True,
+                    test_returncode=int(proc.returncode),
+                )
+            output += (proc.stdout or "") + (proc.stderr or "")
+            if profile_preflight and VERIFIER_PROFILE_READY not in output:
                 return 1, (
                     "hub verifier resource profile unavailable: bounded-tmpfs "
                     "was not established before repository execution\n"
-                    + _hub_review_failure_excerpt(out)
+                    + _hub_review_failure_excerpt(output)
                 )
             # Head AND tail. A blind tail cannot see the verdict:
             # run-contract-tests.sh prints the pytest failure first, then
@@ -2517,7 +2590,7 @@ def run_repository_contract_test_in_openshell(
             # retried forever (six tasks, ~6 hours, 2026-08-20).
             return int(
                 proc.returncode
-            ), out if local_repository is not None else _hub_verify_output_excerpt(out)
+            ), output if local_repository is not None else _hub_verify_output_excerpt(output)
         except Exception as exc:
             primary_error = exc
             raise
@@ -2653,6 +2726,16 @@ def verify_unpublished_repository(
             verifier_identity=identity,
         )
         result.update(returncode=rc, stdout=output)
+        result.update(
+            (key, identity[key])
+            for key in (
+                "create_returncode",
+                "upload_returncode",
+                "bootstrap_returncode",
+                "test_returncode",
+            )
+            if key in identity
+        )
         if identity.get("execution_attempted"):
             result.update(
                 status="pass" if rc == 0 else "fail",
