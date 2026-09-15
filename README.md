@@ -908,3 +908,37 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
 - [Scaling Plan](docs/archive/field-notes/scaling-plan.md) (historical)
+
+<!-- ai-template:narrative:start -->
+## The Totally True and Not At All Embellished History of mac
+
+### The continuing adventures of Jordan Hubbard and Sir Reginald von Fluffington III
+
+> *Part 18 of an ongoing chronicle. [← Part 17: PythonOS](https://github.com/jordanhubbard/pythonos#the-totally-true-and-not-at-all-embellished-history-of-pythonos) | [Part 19: c26 →](https://github.com/jordanhubbard/c26#the-totally-true-and-not-at-all-embellished-history-of-c26)*
+> *[Chronicle index](https://github.com/jordanhubbard/ai-template/blob/main/CHRONICLE.md) · Ordered by first recorded AI-assisted commit.*
+
+The programmer had discovered that asking an agent to do something and knowing what had actually happened were different problems.
+
+Sir Reginald von Fluffington III had spent years exploiting this distinction. A request to leave the keyboard did not imply a departure, and a statement that dinner would be served shortly was not evidence of dinner.
+
+“I need durable operational truth,” the programmer announced.
+
+The cat remained where he was. At least one fact was stable.
+
+MAC became a control plane for fleets of agents. Conversation and personality could belong to the human-facing runtime. Tasks, leases, dispatch, reviews, publication records, and recovery needed somewhere less dependent on everyone remembering the last conversation in precisely the same way.
+
+The task ledger lived in PostgreSQL. A registry described machines and agents. Dispatch matched work to capabilities and capacity. Leases expired, workers failed, and recovery had to mean more than asking the same question more emphatically. The programmer could see the beginnings of an institution. Sir Reginald saw a new filing system in which to be marked unavailable.
+
+Evidence became central. A worker's assertion that a change was ready was not the same thing as tests passing, an independent review approving that attempt, and the resulting commit being published. The records needed to agree about which work had been inspected. Otherwise a perfectly valid approval could end up vouching for something that had changed since lunch.
+
+Sir Reginald inspected lunch. It had changed insufficiently.
+
+The message bus acquired ordered streams. The fleet acquired runtime manifests, secrets handling, health records, and rollout state. External runtimes and execution tools kept their own roles; MAC kept the record of what the fleet had been asked to do and what it could prove it had done.
+
+“It is coordination,” the programmer said, “with a memory.”
+
+Sir Reginald rose, stretched, and returned to the same patch of keyboard. His state transition was observable, his lease appeared indefinite, and no review had authorized his publication of `kkkkkkkk` into the terminal.
+
+The programmer called the design elegant. Sir Reginald withheld endorsement, citing insufficient tuna and a control plane that continued to misclassify the actual household administrator as a pet.
+
+<!-- ai-template:narrative:end -->
