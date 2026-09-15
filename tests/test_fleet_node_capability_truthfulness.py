@@ -242,15 +242,28 @@ def test_the_drain_clear_sends_the_measured_health(tmp_path):
     ],
 )
 def test_typed_phase_two_repairs_absent_gateway_state(writer, filename):
-    """A recreated fungible node must be able to get these files back.
+    """Typed phase two restores each gateway file under its ownership rule.
 
-    Both writers ran only on the legacy-one-shot path, so a typed phase-2
-    deploy could never restore them: three of five GKE workers were still
-    missing both on 2026-08-05. Phase 2 must keep refusing to MUTATE an
-    existing file while still repairing an absent one. Both writers must use
-    the selected active profile rather than hardcoding a different home.
+    Durable memory topology is repaired only when absent. Generated runtime
+    context is deployment-owned and must refresh so existing agents receive
+    new prompt instructions; its prior value is rollback-tracked first.
     """
     text = _script()
+    if writer == "write_hermes_runtime_context":
+        typed = text.split(
+            'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  if control_plane_enabled; then',
+            1,
+        )[1]
+        typed = typed.split("\nsummarize_report() {", 1)[0].split("\nelse\n", 1)[1]
+        assert writer in typed
+        assert '! -f "$(mac_gateway_home)/%s"' % filename not in typed
+        assert (
+            'track_auxiliary_rollback_artifact "$gateway_home/%s" user' % filename
+            in text
+        )
+        assert "$HOME/.hermes/%s" % filename not in text
+        return
+
     guarded = re.search(
         r'if \[ ! -f "\$\(mac_gateway_home\)/%s" \]; then\n(?:.*\n)*?\s*%s\n'
         % (re.escape(filename), re.escape(writer)),
