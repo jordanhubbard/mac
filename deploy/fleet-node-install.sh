@@ -1804,7 +1804,7 @@ PY
 retire_darwin_openshell_sandboxes() {
   local docker_bin="$1" kind="" name="" removed=0
   # Mirrors the managed-name contract in src/mac/openshell_sandbox_gc.py.
-  for kind in task hubverify codingcap runtime-smoke security-probe; do
+  for kind in task hubverify cc codingcap runtime-smoke security-probe; do
     while IFS= read -r name; do
       [ -n "$name" ] || continue
       "$docker_bin" rm -f "$name" >/dev/null 2>&1 \
@@ -7446,7 +7446,7 @@ def stable_sandbox_absence(expected, deadline, return_on_presence):
 # There is no age threshold and no legacy (unlabeled) acceptance on this path.
 
 managed_task_sandbox_name = re.compile(
-    r"mac-(?:task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+\Z"
+    r"mac-(?:task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+\Z"
 )
 managed_task_sandbox_kinds = frozenset(
     {"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"}

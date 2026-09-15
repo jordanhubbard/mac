@@ -94,9 +94,14 @@ holds, and absence of active work. It then promotes the staged identity bundle,
 transitions every dispatch hold, withdraws service claims, and writes the exact
 epoch marker. Once that marker exists, node rollback is forbidden.
 
-Abort discards only epoch-owned pending state and restores or retains the exact
-snapshotted holds. It never revokes an unrelated principal, key, approval, or
-operator hold.
+Abort discards only epoch-owned pending state and restores prior safety holds.
+Previously unheld workers retain their exact epoch hold, including its timestamp.
+The hub abort transaction precedes node compensation; restoring dispatch
+eligibility there would allow a restarted worker to claim work during recovery.
+This applies to both rollback and retention. Abort is not a readiness proof.
+A successor deployment must explicitly adopt the retained hold, or the operator
+must verify recovery before releasing it. Later operator holds remain untouched.
+Abort never revokes an unrelated principal, key, approval, or operator hold.
 
 Status is read-only and returns `absent`, `open`, `proved`, `committed`,
 `aborted`, or `mismatch` for the supplied exact identity digest. Transport

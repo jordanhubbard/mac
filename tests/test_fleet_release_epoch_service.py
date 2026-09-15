@@ -910,9 +910,76 @@ def test_abort_accepts_prior_operator_hold_already_restored_exactly(
     assert states == {old.record["id"]: "active", pending.record["id"]: "revoked"}
 
 
+@pytest.mark.parametrize("allocator_v2", [False, True])
+def test_aborted_epoch_fences_real_claims_across_worker_restart(tmp_path: Path, allocator_v2):
+    cp = _plane(tmp_path / "mac.db", names=("alpha", "beta"))
+    items = []
+    for name in ("alpha", "beta"):
+        agent_id = "agent_" + name
+        _bootstrap_active(cp, agent_id, tmp_path)
+        items.append(
+            _prepare_item(
+                _issue(cp, agent_id),
+                generation="interrupted-deployment",
+                baseline_seen=cp.get_agent(agent_id).last_seen_at,
+                candidate_key=None,
+            )
+        )
+    opened = cp.fleet_release_epochs.open_epoch("epoch-interrupted", items)
+    task = cp.create_task(
+        "Unrelated work arriving during compensation", required_capabilities=["python"]
+    )
+    aborted = cp.fleet_release_epochs.abort(
+        "epoch-interrupted", opened["identity_sha256"], reason="phase-one quiescence rejected"
+    )
+    for participant in opened["agents"]:
+        agent_id = participant["agent_id"]
+        for restarted in (False, True):
+            if restarted:
+                # A supervisor can restore its process before compensation
+                # finishes. Exercise the real registration and heartbeat paths.
+                before = cp.get_agent(agent_id)
+                cp.register_agent(
+                    before.machine_id, before.name, before.capabilities, agent_id=agent_id
+                )
+                cp.heartbeat_agent(agent_id, status="idle", health_status="healthy")
+            with pytest.raises(ValidationError, match="agent_dispatch_held"):
+                cp.claim_task(task.id, agent_id, authoritative_allocator_v2=allocator_v2)
+            current = cp.get_agent(agent_id)
+            assert current.dispatch_hold is True
+            assert current.dispatch_hold_reason == participant["epoch_hold_reason"]
+            assert current.dispatch_hold_at == participant["epoch_hold_at"]
+            unchanged = cp.get_task(task.id)
+            assert unchanged.state == "open"
+            assert unchanged.lease_id is None
+            assert unchanged.owner_agent_id is None
+            assert unchanged.attempt_count == 0
+    assert (
+        cp.fleet_release_epochs.abort(
+            "epoch-interrupted", opened["identity_sha256"], reason="phase-one quiescence rejected"
+        )
+        == aborted
+    )
+    # Positive control: it was the retained fence, not an unrelated eligibility
+    # failure, that prevented assignment. An explicit exact-owner release works.
+    participant = opened["agents"][0]
+    released, _ = cp.release_agent_dispatch_hold(
+        participant["agent_id"], participant["epoch_hold_reason"]
+    )
+    assert released is True
+    claimed, lease = cp.claim_task(
+        task.id, participant["agent_id"], authoritative_allocator_v2=allocator_v2
+    )
+    assert claimed.lease_id == lease.id
+    assert claimed.owner_agent_id == participant["agent_id"]
+    assert claimed.attempt_count == 1
+
+
 def test_abort_accepts_prior_unheld_snapshot_already_restored_exactly(
     tmp_path: Path,
 ) -> None:
+    # Accept the legacy snapshot as recoverable, but reestablish its fence:
+    # an unheld snapshot does not prove that node compensation has finished.
     cp = _plane(tmp_path / "mac.db")
     old = _bootstrap_active(cp, "agent_alpha", tmp_path)
     pending = _issue(cp, "agent_alpha")
@@ -942,9 +1009,9 @@ def test_abort_accepts_prior_unheld_snapshot_already_restored_exactly(
 
     assert aborted["status"] == "aborted"
     restored = cp.get_agent("agent_alpha")
-    assert restored.dispatch_hold is False
-    assert restored.dispatch_hold_reason is None
-    assert restored.dispatch_hold_at is None
+    assert restored.dispatch_hold is True
+    assert restored.dispatch_hold_reason == opened["agents"][0]["epoch_hold_reason"]
+    assert restored.dispatch_hold_at == opened["agents"][0]["epoch_hold_at"]
     states = {
         item["id"]: item["state"]
         for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
@@ -1021,7 +1088,8 @@ def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) 
     assert aborted["status"] == "aborted"
     assert aborted["abort_disposition"] == "discard_installed"
     alpha = cp.get_agent("agent_alpha")
-    assert alpha.dispatch_hold is False
+    assert alpha.dispatch_hold is True
+    assert alpha.dispatch_hold_reason == opened["agents"][0]["epoch_hold_reason"]
     beta = cp.get_agent("agent_beta")
     assert beta.dispatch_hold is True
     assert beta.dispatch_hold_reason == "operator superseded epoch"

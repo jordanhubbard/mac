@@ -224,3 +224,39 @@ def test_every_managed_prefix_is_recognized(classifier, name):
         _sandbox(name, mac_kind=name.split("-", 1)[1].rsplit("-", 1)[0], mac_pid=DEAD_PID)
     )
     assert record["reap"] is True, "%s is no longer recognized as managed" % name
+
+
+@pytest.mark.parametrize("creator_state", ["absent", "present", "unknown"])
+@pytest.mark.parametrize("protection", ["none", "keep", "foreign", "missing_kind"])
+def test_real_capability_probe_identity_through_both_reapers(
+    monkeypatch, creator_state, protection
+):
+    from mac.executor_sandbox import _coding_agent_probe_sandbox_name, _sandbox_label_argv
+    from mac.openshell_sandbox_gc import classify_orphan_task_sandbox
+
+    # Use the producer's real name AND labels, not fixtures that independently
+    # invent the same obsolete prefix as both consumers.
+    # Only the kernel observation is injected, so this contract test also runs
+    # on macOS, where the Linux-only OpenShell producer is not deployed.
+    monkeypatch.setattr(
+        "mac.openshell_sandbox_gc._process_identity", lambda _pid: ("present", "test-boot:42")
+    )
+    argv = _sandbox_label_argv("codingcap")
+    labels = dict(value.split("=", 1) for value in argv[1::2])
+    if protection == "keep":
+        labels["mac.keep"] = "true"
+    elif protection == "foreign":
+        labels["mac.owner"] = "someone-else"
+    elif protection == "missing_kind":
+        labels.pop("mac.kind")
+    sandbox = {"name": _coding_agent_probe_sandbox_name(), "labels": labels, "phase": "Ready"}
+    identity = labels["mac.boot.id"] + ":" + labels["mac.pid.start"]
+
+    def creator(_pid):
+        return creator_state, identity if creator_state == "present" else ""
+
+    installer = _load_classifier()
+    installer["sandbox_process_identity"] = creator
+    expected = creator_state == "absent" and protection == "none"
+    assert classify_orphan_task_sandbox(sandbox, process_identity=creator)["reap"] is expected
+    assert installer["classify_orphan_task_sandbox"](sandbox)["reap"] is expected
