@@ -12097,7 +12097,7 @@ prepare_hermes_gateway() {
   MAC_HERMES_GATEWAY_MODEL="${HERMES_GATEWAY_MODEL:-}" \
   MAC_HERMES_GATEWAY_PROVIDER="${HERMES_GATEWAY_PROVIDER:-}" \
   MAC_HERMES_GATEWAY_BASE_URL="${HERMES_GATEWAY_BASE_URL:-}" \
-    "$installer" prepare
+    "$installer" prepare --uv "$NATIVE_UV"
   # Keep the generation's manifest and startup evidence on the same runtime
   # selected by the CLI; the child's mac.env update cannot update this shell.
   MAC_HERMES_AGENT_DIR="$("$VENV/bin/python" -m mac.hermes_release resolve \

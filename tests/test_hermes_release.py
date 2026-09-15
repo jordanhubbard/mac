@@ -267,7 +267,7 @@ def test_node_prepare_refreshes_parent_runtime_after_child_activation(fixture):
     source = home / "mac-source"
     installer = source / "deploy/hermes/install-hermes-gateway.sh"
     installer.parent.mkdir(parents=True)
-    installer.write_text("#!/bin/sh\nexit 0\n")
+    installer.write_text('#!/bin/sh\n[ "$2" = --uv ] && [ "$3" = "$EXPECTED_UV" ]\n')
     installer.chmod(0o755)
     venv = home / "mac-venv"
     (venv / "bin").mkdir(parents=True)
@@ -280,6 +280,8 @@ def test_node_prepare_refreshes_parent_runtime_after_child_activation(fixture):
         SRC_DIR=str(source),
         VENV=str(venv),
         FLEET_NAME="fixture",
+        NATIVE_UV="/reviewed toolchain/uv",
+        EXPECTED_UV="/reviewed toolchain/uv",
         MAC_HERMES_AGENT_DIR="/stale/runtime",
         MAC_HERMES_PYTHON="/stale/python",
         PYTHONPATH=str(root / "src"),

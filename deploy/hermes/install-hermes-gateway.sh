@@ -496,7 +496,7 @@ prepare() {
   # The caller's existing deployment transaction owns rollback of the launcher
   # and service definition. Failed candidates remain available for diagnosis.
   local candidate
-  candidate="$(release_command prepare --root "$MAC_HOME/hermes-runtimes")" \
+  candidate="$(release_command prepare --root "$MAC_HOME/hermes-runtimes" "$@")" \
     || die "Hermes candidate qualification failed; active runtime was not changed"
   release_command activate --runtime "$candidate" \
     || die "Hermes runtime activation failed"
@@ -522,7 +522,7 @@ withdraw() {
 }
 
 case "${1:-prepare}" in
-  prepare)  prepare ;;
+  prepare)  prepare "${@:2}" ;;
   verify)   verify ;;
   finalize) finalize ;;
   withdraw) withdraw ;;
