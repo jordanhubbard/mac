@@ -25,7 +25,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     env_lines = [
         "log() { printf '%s\\n' \"$*\" >&2; }",
-        "die() { log \"ERROR: $*\"; return 1; }",
+        'die() { log "ERROR: $*"; return 1; }',
     ]
     if agent_dir is not None:
         env_lines.append(f"MAC_HERMES_AGENT_DIR={agent_dir!r}")

@@ -257,10 +257,7 @@ def test_typed_phase_two_repairs_absent_gateway_state(writer, filename):
         typed = typed.split("\nsummarize_report() {", 1)[0].split("\nelse\n", 1)[1]
         assert writer in typed
         assert '! -f "$(mac_gateway_home)/%s"' % filename not in typed
-        assert (
-            'track_auxiliary_rollback_artifact "$gateway_home/%s" user' % filename
-            in text
-        )
+        assert 'track_auxiliary_rollback_artifact "$gateway_home/%s" user' % filename in text
         assert "$HOME/.hermes/%s" % filename not in text
         return
 

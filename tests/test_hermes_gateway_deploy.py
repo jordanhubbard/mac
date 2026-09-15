@@ -91,7 +91,7 @@ if sequence:
 os.execv(os.environ["FAKE_REAL_PS"], ["ps", *sys.argv[1:]])
 """
 
-FAKE_PROMPT_BUILDER = '''from pathlib import Path
+FAKE_PROMPT_BUILDER = """from pathlib import Path
 import os
 
 def _load_external_runtime_context():
@@ -108,7 +108,7 @@ def build_context_files_prompt(cwd=None):
     if (home / "SOUL.md").is_file():
         sections.append((home / "SOUL.md").read_text())
     return "\\n".join(sections)
-'''
+"""
 
 
 def _prepare_bin(tmp_path: Path, calls_path: Path) -> Path:
@@ -126,7 +126,7 @@ def _prepare_bin(tmp_path: Path, calls_path: Path) -> Path:
     runtime_python.parent.mkdir(parents=True, exist_ok=True)
     runtime_python.write_text(
         "#!/bin/sh\n"
-        "case \"$2\" in\n"
+        'case "$2" in\n'
         "  *platform.python_version*) exit 0 ;;\n"
         "  *os.path.realpath*) printf '%s\\n' \"$0\"; exit 0 ;;\n"
         "esac\n"
