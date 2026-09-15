@@ -51,10 +51,12 @@ Apply this patch only to a separate checkout of the manifest's upstream commit,
 using `git apply --check` before `git apply`. Install from the patched lock with
 `uv sync --locked --python 3.14.7` and the required extras. Do not ignore
 `Requires-Python`, resolve new dependency versions, or patch a serving checkout.
-The patch is compatibility material for the rollout; the gateway installer does
-not apply it automatically. A fleet migration still needs a prepared replacement
-environment, preserved profiles and gateway configuration, running-process
-identity checks, and coding canaries before releasing holds.
+The gateway installer prepares a separate qualified release with both reviewed
+patches and the locked Slack/MCP extras before selecting its launcher. The
+existing fleet transaction captures that launcher and the upstream service
+definition for rollback. A migration still requires preserved profiles and
+gateway configuration, running-process identity checks, and coding canaries
+before releasing holds.
 
 The patch also repairs three upstream test observations without changing their
 assertions: preserve the non-secret `TMPDIR` through the canonical runner's

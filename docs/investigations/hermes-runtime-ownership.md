@@ -1,6 +1,6 @@
 # Hermes deployment ownership investigation
 
-Status: implementation pending. Task: `task_163c2fde94c445e7b98fac05797ffe14`.
+Status: candidate implementation under verification; not deployed. Task: `task_163c2fde94c445e7b98fac05797ffe14`.
 
 ## Evidence and corrections
 
@@ -18,7 +18,7 @@ runtime selection, readiness, and rollback boundaries:
 | #844 | Reviewed prompt patch, patch-set validation, constructed-prompt checks | `prepare` never called `qualify-stage`; qualification did not select or activate a runtime |
 | #847 | Split Linux verifier creation, upload, bootstrap and execution | This change did not own Hermes activation |
 
-The failed Rocky deployment at 2026-09-15 14:49 UTC reported
+The failed hub deployment at 2026-09-15 14:49 UTC reported
 `active Hermes prompt omitted MAC runtime context` after restarting launchd.
 That message proves the constructed-prompt assertion failed. It does **not**
 identify the underlying cause as missing source, missing configuration,
@@ -32,7 +32,7 @@ characters of the runtime markdown, and the installer finalizer confirmed
 current-writer Slack connectivity. This does not reproduce the earlier failure:
 the source file had changed at 15:20 UTC, context/configuration changed around
 15:28 UTC, and deployment `20260915T152214Z` completed afterward. The agent
-snapshot showed Rocky, Natasha and Bull healthy, idle, and unheld. Attribution
+snapshot showed the hub and both Linux workers healthy, idle, and unheld. Attribution
 of that intervening repair has not been established.
 
 No runtime manager or fleet mutation should be justified by treating these
@@ -111,3 +111,25 @@ the exact external runtime it has qualified for its deployment requirements.
 
 The deployed fleet is currently recovered, but this reproducibility work is
 still open. This investigation is not completion evidence for the fix.
+
+## Candidate verification
+
+The interactive Codex session is implementing this task in its isolated worktree;
+keep the task held against automated dispatch. Its registered participant is
+`agent_codex_trust_implementation`. Manual claim was rejected because the
+participant is dispatch-held; this note records the owner without making an
+interactive session eligible for automatic assignment.
+
+The new release preparation path has passed fresh preparation against the actual
+pinned upstream repository inside Linux OpenShell: reviewed patches applied,
+locked Slack/MCP dependencies installed, the actual prompt builder preserved MAC
+and persona context, the CLI executed, and a repeat preparation reused the same
+qualified release. Earlier focused lifecycle checks passed 99 tests.
+
+The full contract gate remains outstanding. Its preflight found a stale generated
+documentation inventory and fleet-specific names in this investigation; both
+were corrected. Review also caught a misplaced parent-runtime refresh in the
+uncommitted candidate. It is now in the Hermes preparation function with a
+behavioral regression test covering the parent/child process boundary.
+
+These are candidate checks, not fleet rollout or end-to-end canary evidence.

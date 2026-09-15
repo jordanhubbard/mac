@@ -5703,17 +5703,6 @@
   },
   {
     "default": null,
-    "description": "Hermes Runtime setting: hermes install url.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_INSTALL_URL",
-    "retired": false,
-    "sources": [
-      "deploy/hermes/install-hermes-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hermes Runtime setting: hermes instance id.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_INSTANCE_ID",
@@ -5810,6 +5799,7 @@
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
+      "src/mac/hermes_release.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],

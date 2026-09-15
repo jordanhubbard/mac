@@ -307,10 +307,9 @@ generic schema/defaults sample only. The registry may use a top-level
 may be keyed by name or expressed as a list. See docs/fleet-registry-schema.md.
 
 Each host gets:
-  - ~/.mac/src/mac from this repository (includes the vendored Hermes runtime
-    at src/mac/_hermes — pinned + patched; no upstream clone, no separate venv)
-  - ~/.mac/venv with mac + the hermes-gateway extra installed
-  - preinstalled configured Hermes messaging dependencies
+  - ~/.mac/src/mac and a locked MAC environment at ~/.mac/venv
+  - a qualified external Hermes release at ~/.mac/hermes-runtimes when selected
+  - reviewed Hermes patches and locked Slack/MCP dependencies in its own venv
   - enforced Hermes secret redaction
   - a host-local mac service, with the configured hub exposed
   - a mac-agent service that registers against the configured hub

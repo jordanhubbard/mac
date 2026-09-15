@@ -24,6 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from mac.agent_provider import resolve_agent_provider
 from mac.env_config import resolve_hub_agent
 from mac.hermes_runtime import RUNTIME_CONTEXT_SCHEMA
+from mac.hermes_release import resolve_runtime
 from mac.memory_config import QDRANT_URL_ENV_NAMES
 
 
@@ -227,6 +228,16 @@ def _runtime_prompt_bridge_report(
     *,
     required: bool,
 ) -> Dict[str, Any]:
+    # The canonical CLI is the runtime selection point. Environment paths are
+    # retained only for external/legacy installations without that launcher.
+    selected_launcher = Path.home() / ".local/bin/hermes"
+    selection_error = False
+    if selected_launcher.exists():
+        try:
+            agent_dir = resolve_runtime(selected_launcher)
+        except (OSError, ValueError):
+            agent_dir = None
+            selection_error = True
     path = agent_dir / "agent" / "prompt_builder.py" if agent_dir is not None else Path("")
     report: Dict[str, Any] = {
         "required": required,
@@ -238,7 +249,9 @@ def _runtime_prompt_bridge_report(
     if agent_dir is None:
         if required:
             report["warning"] = (
-                "Hermes MAC runtime prompt bridge cannot be verified without MAC_HERMES_AGENT_DIR"
+                "Hermes selected launcher does not resolve to a runtime"
+                if selection_error
+                else "Hermes MAC runtime prompt bridge cannot be verified without MAC_HERMES_AGENT_DIR"
             )
         return report
     if not path.is_file():
@@ -247,7 +260,11 @@ def _runtime_prompt_bridge_report(
                 "Hermes MAC task/project runtime prompt bridge is missing from %s" % path
             )
         return report
-    interpreter = str(os.environ.get("MAC_HERMES_PYTHON") or "").strip()
+    interpreter = (
+        str(agent_dir / ".venv/bin/python")
+        if selected_launcher.exists()
+        else str(os.environ.get("MAC_HERMES_PYTHON") or "").strip()
+    )
     markdown = str(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or "").strip()
     hermes_home = str(os.environ.get("HERMES_HOME") or "").strip()
     workspace = str(os.environ.get("MAC_HERMES_WORKSPACE") or hermes_home).strip()

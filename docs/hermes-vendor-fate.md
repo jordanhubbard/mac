@@ -67,9 +67,34 @@ Requalify the patch when changing the upstream revision, and retire it once a
 qualified upstream release supplies the fixes. It does not restore the snapshot,
 an in-process import, an overlay, a re-vendor job, or a container `.pth` injection.
 The architecture tests retain those prohibitions and check external patch/manifest
-integrity instead of forbidding every file with a `.patch` suffix. The gateway
-installer does not apply the compatibility patch automatically; rollout and live
-canary evidence remain separate from this source artifact.
+integrity instead of forbidding every file with a `.patch` suffix.
+
+## Qualified external releases
+
+The gateway installer prepares an external release from the reviewed revision,
+applies both manifests, and installs the locked `slack` and `mcp` extras using
+the reviewed Python and uv versions. The profile's runtime context and persona
+must appear in the candidate's constructed prompt before selection.
+
+The regular `~/.local/bin/hermes` launcher is the runtime selection point.
+Deployment replaces it atomically after qualification and uses upstream's CLI
+to install the service. Verification checks the release's recorded source and
+package versions, the launcher, and the service's interpreter/profile before
+accepting live messaging readiness. Startup health resolves that same launcher
+instead of trusting a stale `MAC_HERMES_AGENT_DIR` override. Repeated deployment
+reuses a valid qualified release without synchronizing the serving environment.
+
+Releases live under `~/.mac/hermes-runtimes/`, separate from profile data.
+The existing fleet transaction snapshots the launcher and actual upstream
+service definitions before activation. Its hold and recovery policy controls
+failures after selection; no second deployment controller is added. Failed
+candidates are retained for diagnosis. Required integrations belong in the
+reviewed release recipe; arbitrary untracked source modifications and incidental
+packages from old runtimes are not automatically copied. Live canary evidence
+remains required before releasing dependent work.
+
+The [ownership investigation](investigations/hermes-runtime-ownership.md)
+records the evidence, corrected diagnosis, and remaining rollout proof.
 
 ## Update (2026-09-05): Hermes reactivated on the hub, still not vendored
 
