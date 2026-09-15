@@ -2349,7 +2349,15 @@ def test_deployment_preserves_operator_holds_and_clears_only_its_own():
     assert '"/agents/%s/dispatch-hold/acquire" % agent_id' in hub_gate
     # Managed nodes never let an ordinary worker restart clear a later operator
     # hold; all deployment release is explicit, hub-side, and reason-bound.
-    assert 'set_remote_mac_startup_hold_policy "$agent" 0' in deploy
+    prepare = deploy.split("prepare_remote_mac_agent_deployment() {", 1)[1].split(
+        "\n}\n\n", 1
+    )[0]
+    recovery = (
+        deploy.split("retain_remote_generation_for_forward_repair() {", 1)[1]
+        .split("\n}\n\n", 1)[0]
+    )
+    assert 'set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"' in prepare
+    assert 'set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"' in recovery
 
 
 def test_failed_typed_transaction_aborts_exact_epoch_before_node_retention():

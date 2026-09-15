@@ -7790,8 +7790,10 @@ PY"
 
 set_remote_mac_startup_hold_policy() {
   local agent="$1" value="$2" ssh_parts=() ssh_args=() ssh_target last_index item
-  local deployment_id fence_exec
-  deployment_id="$(deployment_id_for_agent "$agent")"
+  local deployment_id="${3:-}" fence_exec
+  if [ -z "$deployment_id" ]; then
+    deployment_id="$(deployment_id_for_agent "$agent")"
+  fi
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
@@ -8326,7 +8328,7 @@ prepare_remote_mac_agent_deployment() {
   # This precedes every other target mutation. If the transaction rolls back
   # and restarts an older worker, that restored process cannot clear the hub
   # barrier before the outer controller performs an exact-generation restart.
-  set_remote_mac_startup_hold_policy "$agent" 0
+  set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"
   write_remote_deployment_hold_state \
     "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" \
     "$adoption_reason" "$require_owned_after_prepare"
@@ -14019,7 +14021,7 @@ retain_remote_generation_for_forward_repair() {
   # repair hold before touching the node-local controller lock.
   hub_agent_restart_gate rehold "$agent_id" "$generation" "" "$hold_reason" \
     0 0 0 >/dev/null
-  set_remote_mac_startup_hold_policy "$agent" 0
+  set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"
 
   code='import datetime as dt
 import json
