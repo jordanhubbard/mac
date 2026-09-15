@@ -200,15 +200,12 @@ def test_stale_deploy_hold_waits_out_the_grace_period(cp):
     assert ("stale_deploy_hold:%s" % agent.id) not in fingerprints
 
 
-def test_stale_deploy_hold_is_remediated_directly_without_filing_a_task(cp, monkeypatch):
-    # The whole point: releasing a stale hold must not depend on the
-    # task-execution pipeline (a coding agent, an OpenShell sandbox,
-    # attestation-signed evidence, PR review) -- that pipeline can itself be
-    # broken by the very hold being released (task_7d83fbce, 2026-09-03:
-    # agent_rocky's own fix attempt failed because ITS attestation key was
-    # one of the things left broken by an earlier interrupted deploy).
+@pytest.mark.parametrize("claim_method", ["claim_task", "claim_task_v2"])
+def test_stale_deploy_hold_escalates_without_reopening_admission(cp, monkeypatch, claim_method):
+    # Recovery cannot depend on the task pipeline being repaired, and hold
+    # age cannot authorize new work before the deployment owner proves ready.
     agent = _register_agent(cp, name="abandoned-by-deploy")
-    cp.set_agent_dispatch_hold(
+    held = cp.set_agent_dispatch_hold(
         agent.id, "mac admin fleet roll-forward repair retained after 20260901T151713Z"
     )
     import mac.self_healing as sh
@@ -216,19 +213,45 @@ def test_stale_deploy_hold_is_remediated_directly_without_filing_a_task(cp, monk
 
     real_now = sh._utcnow()
     monkeypatch.setattr(sh, "_utcnow", lambda: real_now + timedelta(hours=2))
-    report = _sentinel(cp).run_once()
+    sentinel = _sentinel(cp)
+    report = sentinel.run_once()
 
-    assert report["remediated_count"] == 1
+    assert report["remediated_count"] == 0
     finding = next(
         f for f in report["findings"] if f["fingerprint"] == "stale_deploy_hold:%s" % agent.id
     )
-    assert finding["action"] == "remediated"
-    assert cp.get_agent(agent.id).dispatch_hold is False
+    assert finding["action"] == "escalated"
+    after = cp.get_agent(agent.id)
+    assert after.dispatch_hold is True
+    assert after.dispatch_hold_reason == held.dispatch_hold_reason
+    assert after.dispatch_hold_at == held.dispatch_hold_at
     assert _self_heal_tasks(cp, "stale_deploy_hold:%s" % agent.id) == []
-    assert any(
+    task = cp.create_task("Must remain fenced", required_capabilities=["ops"])
+    from mac.models import ValidationError
+
+    with pytest.raises(ValidationError, match="agent_dispatch_held"):
+        getattr(cp, claim_method)(task.id, agent.id)
+    assert cp.get_task(task.id).attempt_count == 0
+    second = sentinel.run_once()
+    assert (
+        next(f for f in second["findings"] if f["fingerprint"] == finding["fingerprint"])["action"]
+        == "escalated_previously"
+    )
+    notifications = [
+        n
+        for n in cp.list_notifications()
+        if n.event_type == "self_heal.escalated" and n.subject_id == agent.id
+    ]
+    assert len(notifications) == 1
+    assert not any(
         n.event_type == "self_heal.remediated" and n.subject_id == agent.id
         for n in cp.list_notifications()
     )
+    # Positive control: the preserved hold was the reason admission failed.
+    released, _ = cp.release_agent_dispatch_hold(agent.id, held.dispatch_hold_reason)
+    assert released is True
+    getattr(cp, claim_method)(task.id, agent.id)
+    assert cp.get_task(task.id).owner_agent_id == agent.id
 
 
 def test_stuck_draining_finding_waits_out_a_real_deploys_drain_window(cp, monkeypatch):

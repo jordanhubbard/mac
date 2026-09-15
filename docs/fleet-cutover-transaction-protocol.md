@@ -101,6 +101,9 @@ eligibility there would allow a restarted worker to claim work during recovery.
 This applies to both rollback and retention. Abort is not a readiness proof.
 A successor deployment must explicitly adopt the retained hold, or the operator
 must verify recovery before releasing it. Later operator holds remain untouched.
+The self-healing sentinel reports an aged recovery hold without clearing it or
+dispatching a repair task through the affected pipeline. Elapsed time is not a
+readiness proof; the deployment journal continues to own physical recovery.
 Abort never revokes an unrelated principal, key, approval, or operator hold.
 
 Status is read-only and returns `absent`, `open`, `proved`, `committed`,
