@@ -114,8 +114,10 @@ qualify_staged_runtime() {
   [ -z "$active" ] || [ "$(cd "$stage" && pwd -P)" != "$(cd "$active" && pwd -P)" ] \
     || die "refusing to patch the active serving Hermes runtime"
   [ -x "$mac_python" ] || die "MAC deployment Python is unavailable: $mac_python"
-  "$mac_python" -m mac.hermes_patch "$stage" "$SCRIPT_DIR/runtime-context-source.json" \
-    || die "staged Hermes runtime-context patch qualification failed"
+  "$mac_python" -m mac.hermes_patch "$stage" \
+    "$SCRIPT_DIR/python314-source.json" \
+    "$SCRIPT_DIR/runtime-context-source.json" \
+    || die "staged Hermes reviewed patch qualification failed"
   [ -x "$stage/.venv/bin/python" ] \
     || die "staged Hermes runtime has no managed interpreter"
   MAC_HERMES_AGENT_DIR="$stage" \

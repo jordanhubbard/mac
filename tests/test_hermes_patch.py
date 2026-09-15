@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from mac.hermes_patch import apply_reviewed_patch
+from mac.hermes_patch import apply_reviewed_patch, apply_reviewed_patches
 
 
 def _staged_patch(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -57,6 +57,45 @@ def test_apply_reviewed_patch_is_hash_qualified_and_idempotent(tmp_path: Path) -
     stage, _source, manifest = _staged_patch(tmp_path)
     assert apply_reviewed_patch(stage, manifest) == "patched"
     assert apply_reviewed_patch(stage, manifest) == "already_patched"
+
+
+def test_disjoint_reviewed_patches_compose_and_are_idempotent(tmp_path: Path) -> None:
+    stage, _source, first_manifest = _staged_patch(tmp_path)
+    other = stage / "other.py"
+    second_patch = tmp_path / "other.patch"
+    second_patch.write_text(
+        "diff --git a/other.py b/other.py\n--- a/other.py\n+++ b/other.py\n"
+        "@@ -1 +1 @@\n-ORIGINAL = True\n+ORIGINAL = False\n",
+        encoding="utf-8",
+    )
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    first = json.loads(first_manifest.read_text(encoding="utf-8"))
+    second_manifest = tmp_path / "other.json"
+    second_manifest.write_text(
+        json.dumps(
+            {
+                "upstream_commit": first["upstream_commit"],
+                "patch": second_patch.name,
+                "patch_sha256": digest(second_patch.read_bytes()),
+                "files": {
+                    "other.py": {
+                        "original_sha256": digest(b"ORIGINAL = True\n"),
+                        "patched_sha256": digest(b"ORIGINAL = False\n"),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert apply_reviewed_patches(stage, [first_manifest, second_manifest]) == [
+        "patched",
+        "patched",
+    ]
+    assert apply_reviewed_patches(stage, [first_manifest, second_manifest]) == [
+        "already_patched",
+        "already_patched",
+    ]
 
 
 @pytest.mark.parametrize("already_patched", [False, True])
