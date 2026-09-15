@@ -55,7 +55,9 @@ def classifier():
     # the real function is os.kill(pid, 0), which makes every assertion depend
     # on scheduling and on pids the OS may reuse. The classifier's OWN logic is
     # what is under test here, not whether a forked child had exited yet.
-    ns["sandbox_pid_is_alive"] = lambda pid: str(pid) != DEAD_PID
+    ns["sandbox_process_identity"] = lambda pid: (
+        ("absent", "") if str(pid) == DEAD_PID else ("present", "test-boot:1")
+    )
     assert "classify_orphan_task_sandbox" in ns, (
         "the installer no longer defines classify_orphan_task_sandbox; this "
         "test must be repointed rather than deleted -- it is the guard against "
@@ -145,6 +147,25 @@ def test_a_live_pid_is_never_reaped(classifier):
     record = classifier["classify_orphan_task_sandbox"](
         _sandbox("mac-task-live-fixture", mac_pid="777777")
     )
+    assert record["reap"] is False
+
+
+def test_a_reused_pid_is_reaped_when_identity_differs(classifier):
+    sandbox = _sandbox("mac-task-reused-fixture", mac_pid="777777")
+    sandbox["labels"].update({"mac.boot.id": "old-boot", "mac.pid.start": "2"})
+    record = classifier["classify_orphan_task_sandbox"](sandbox)
+    assert record["reap"] is True
+
+
+def test_permission_denied_process_identity_fails_closed(classifier):
+    original = classifier["sandbox_process_identity"]
+    classifier["sandbox_process_identity"] = lambda _pid: ("unknown", "")
+    try:
+        record = classifier["classify_orphan_task_sandbox"](
+            _sandbox("mac-task-denied-fixture", mac_pid="777777")
+        )
+    finally:
+        classifier["sandbox_process_identity"] = original
     assert record["reap"] is False
 
 
