@@ -14064,7 +14064,7 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     # --global), and it precedes the test command.
     assert "GIT_CONFIG_KEY_0=safe.directory" in inner
     assert "GIT_CONFIG_VALUE_0='*'" in inner
-    assert inner.index("safe.directory") < inner.index("cd /sandbox/repo")
+    assert inner.index("safe.directory") < inner.index("rev-parse --is-inside-work-tree")
     # Lost-.git uploads still fail fast with a distinguishable message.
     assert "rev-parse --is-inside-work-tree" in inner
     assert "not a usable git repo after upload" in inner

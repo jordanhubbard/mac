@@ -25,6 +25,8 @@ def _invoke(monkeypatch, *, output="passed", returncode=0):
             return subprocess.CompletedProcess(argv, 0, HEAD + "\n", "")
         if argv[0] in {"git", "tar"} or "delete" in argv or "create" in argv or "upload" in argv:
             return subprocess.CompletedProcess(argv, 0, "", "")
+        if "exec" in argv and "bootstrap-repository" in argv[-1]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, returncode, output, "")
 
     monkeypatch.setattr(services.subprocess, "run", run)
