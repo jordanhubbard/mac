@@ -23,7 +23,9 @@ def _invoke(monkeypatch, *, output="passed", returncode=0):
         calls.append(list(argv))
         if argv[0] == "git" and "rev-parse" in argv:
             return subprocess.CompletedProcess(argv, 0, HEAD + "\n", "")
-        if argv[0] in {"git", "tar"} or "delete" in argv:
+        if argv[0] in {"git", "tar"} or "delete" in argv or "create" in argv or "upload" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if "exec" in argv and "bootstrap-repository" in argv[-1]:
             return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, returncode, output, "")
 
@@ -49,6 +51,15 @@ def _create(calls):
     return next(argv for argv in calls if "create" in argv)
 
 
+def _exec(calls, *, initialize=False):
+    marker = "tar xzf repo.tgz"
+    return next(
+        argv
+        for argv in calls
+        if "exec" in argv and ((marker in argv[-1]) is initialize)
+    )
+
+
 @pytest.mark.parametrize("profile", [None, "", "default"])
 def test_default_verifier_profile_preserves_driver_behavior(monkeypatch, profile):
     if profile is None:
@@ -60,7 +71,7 @@ def test_default_verifier_profile_preserves_driver_behavior(monkeypatch, profile
     argv = _create(calls)
     assert not {"--cpu", "--memory", "--driver-config-json"}.intersection(argv)
     assert not any(value.startswith(("TMPDIR=", "MAC_TEST_JOBS=")) for value in argv)
-    assert READY not in argv[-1]
+    assert READY not in _exec(calls, initialize=True)[-1]
 
 
 def test_bounded_profile_requests_native_limits_and_local_test_storage(monkeypatch):
@@ -89,9 +100,11 @@ def test_bounded_profile_requests_native_limits_and_local_test_storage(monkeypat
     assert "MAC_TEST_JOBS=8" in env
     assert "MAC_TEST_PG_LOCAL=1" in env
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env)
-    command = argv[-1]
-    assert command.index(READY) < command.index("bootstrap-repository")
-    assert command.index("bootstrap-repository") < command.index("run-repository-tests")
+    bootstrap = _exec(calls, initialize=True)[-1]
+    test = _exec(calls, initialize=False)[-1]
+    assert bootstrap.index(READY) < bootstrap.index("bootstrap-repository")
+    assert calls.index(_exec(calls, initialize=True)) < calls.index(_exec(calls, initialize=False))
+    assert "run-repository-tests" in test
 
 
 @pytest.mark.parametrize("profile", ["ram", "bounded-tmpfs; echo injected"])
@@ -131,9 +144,11 @@ def test_storage_preflight_gates_repository_execution(
     monkeypatch.setattr(services, "SANDBOX_BASE_PATH", str(tmp_path) + ":/usr/bin:/bin")
     monkeypatch.setenv("MAC_HUB_VERIFY_PROFILE", "bounded-tmpfs")
     _, calls = _invoke(monkeypatch, output=READY)
-    command = _create(calls)[-1]
+    command = _exec(calls, initialize=True)[-1]
     assert READY in command
-    preflight = command.split("cd /sandbox &&", 1)[0]
+    preflight = "export PATH=" + command.split("export PATH=", 1)[1].split(
+        "cd /sandbox/repo", 1
+    )[0]
     # Replace only the mount operand, not the same prefix inside the fake
     # command directory on Linux sandboxes (whose pytest TMPDIR is this mount).
     preflight = preflight.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")

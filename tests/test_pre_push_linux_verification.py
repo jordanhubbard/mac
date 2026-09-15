@@ -90,7 +90,11 @@ def test_pre_push_uses_pristine_exact_commit_without_pushing(monkeypatch, commit
         calls.append(argv)
         if argv[0] == "test-openshell":
             if "create" in argv:
-                upload = argv[argv.index("--upload") + 1].removesuffix(":/sandbox")
+                assert "--upload" not in argv
+                assert argv[-3:] == ["--no-tty", "--", "/bin/true"]
+                return subprocess.CompletedProcess(argv, 0, "sandbox created\n", "")
+            if "upload" in argv:
+                upload = argv[-2]
                 import tarfile
 
                 with tarfile.open(upload) as archive:
@@ -100,8 +104,13 @@ def test_pre_push_uses_pristine_exact_commit_without_pushing(monkeypatch, commit
                 assert _git(received, "rev-parse", "HEAD^{tree}") == tree
                 assert (received / "feature.txt").read_text() == "unpublished source\n"
                 assert not (received / "ignored-build").exists()
+                assert argv[-1] == "/sandbox"
+                return subprocess.CompletedProcess(argv, 0, "repository uploaded\n", "")
+            if "exec" in argv:
                 assert "$(uname -s)" in argv[-1] and head in argv[-1] and tree in argv[-1]
-                assert "bootstrap-project && test-project" in argv[-1]
+                if "bootstrap-project" in argv[-1]:
+                    return subprocess.CompletedProcess(argv, 0, "bootstrap passed\n", "")
+                assert "test-project" in argv[-1]
                 return subprocess.CompletedProcess(argv, 0, "repository tests passed\n", "")
             return subprocess.CompletedProcess(argv, 0, "", "")
         # No repository test or bootstrap is ever spawned on the host.
@@ -115,9 +124,67 @@ def test_pre_push_uses_pristine_exact_commit_without_pushing(monkeypatch, commit
     assert result["returncode"] == 0 and result["status"] == "pass"
     assert result["executed_head_sha"] == head and result["executed_tree_sha"] == tree
     assert result["execution_environment"] == "openshell_sandbox"
+    assert result["create_returncode"] == 0
+    assert result["upload_returncode"] == 0
+    assert result["bootstrap_returncode"] == 0
+    assert result["test_returncode"] == 0
     assert not any("push" in argv for argv in calls)
+    assert ["create" in argv for argv in calls if argv[0] == "test-openshell"].count(True) == 1
+    assert ["upload" in argv for argv in calls if argv[0] == "test-openshell"].count(True) == 1
+    exec_calls = [argv for argv in calls if argv[0] == "test-openshell" and "exec" in argv]
+    assert len(exec_calls) == 2
+    assert "bootstrap-project" in exec_calls[0][-1]
+    assert "test-project" in exec_calls[1][-1]
     assert any("delete" in argv for argv in calls)
     assert (committed_repo / "ignored-build/foreign.o").exists()
+
+
+@pytest.mark.parametrize("failed_phase", ["upload", "bootstrap", "test"])
+def test_pre_push_deletes_sandbox_after_exec_failure(
+    monkeypatch, committed_repo, tmp_path, failed_phase
+):
+    calls = []
+    monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(tmp_path / "policy.yaml"))
+    monkeypatch.setenv(
+        "MAC_HUB_VERIFY_IMAGE", "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+    )
+    monkeypatch.setenv("MAC_OPENSHELL_BIN", "test-openshell")
+    monkeypatch.delenv("MAC_OPENSHELL_GC", raising=False)
+    monkeypatch.delenv("MAC_HUB_VERIFY_PROFILE", raising=False)
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if "create" in argv or "delete" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if "upload" in argv:
+            return subprocess.CompletedProcess(argv, 9 if failed_phase == "upload" else 0, "upload", "")
+        phase = "bootstrap" if "bootstrap-project" in argv[-1] else "test"
+        return subprocess.CompletedProcess(argv, 9 if phase == failed_phase else 0, phase, "")
+
+    original_run = subprocess.run
+
+    def dispatch(argv, **kwargs):
+        if argv[0] == "test-openshell":
+            return run(argv, **kwargs)
+        return original_run(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", dispatch)
+    result = services.verify_unpublished_repository(
+        committed_repo, "test-project", "bootstrap-project"
+    )
+    assert result["returncode"] == (1 if failed_phase == "upload" else 9)
+    assert result["status"] == ("unavailable" if failed_phase == "upload" else "fail")
+    assert result["create_returncode"] == 0
+    assert result.get("upload_returncode") == (9 if failed_phase == "upload" else 0)
+    assert result.get("bootstrap_returncode") == (
+        None if failed_phase == "upload" else (9 if failed_phase == "bootstrap" else 0)
+    )
+    assert result.get("test_returncode") == (9 if failed_phase == "test" else None)
+    assert any("delete" in argv for argv in calls)
+    exec_calls = [argv for argv in calls if "exec" in argv]
+    assert len(exec_calls) == (
+        0 if failed_phase == "upload" else (1 if failed_phase == "bootstrap" else 2)
+    )
 
 
 @pytest.mark.parametrize("change", ["dirty", "new_commit"])

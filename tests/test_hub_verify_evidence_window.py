@@ -160,17 +160,17 @@ def test_hub_verify_runs_bootstrap_before_test_command(monkeypatch):
     ``.venv/bin/pytest: No such file or directory`` (exit 127) because the
     sandbox never ran bootstrap.command -- permanently stranding every task
     that used a venv-relative test command."""
-    captured_argv = {}
+    captured_argv = []
 
     def run(argv, **kwargs):
         done = lambda rc, out="", err="": subprocess.CompletedProcess(argv, rc, out, err)
         if argv[0] == "git" and "rev-parse" in argv:
             return done(0, HEAD_SHA + "\n")
-        if argv[0] in ("git", "tar", "bash"):
+        if argv[0] in ("git", "tar", "bash") or "create" in argv or "upload" in argv:
             return done(0)
         if "delete" in argv:
             return done(0)
-        captured_argv["argv"] = argv
+        captured_argv.append(argv)
         return done(0, "all passed")
 
     monkeypatch.setattr(services.subprocess, "run", run)
@@ -189,13 +189,10 @@ def test_hub_verify_runs_bootstrap_before_test_command(monkeypatch):
         'python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"',
     )
 
-    shell_command = captured_argv["argv"][-1]
-    bootstrap_index = shell_command.index("python3 -m venv .venv")
-    test_index = shell_command.index(".venv/bin/pytest -q")
-    assert bootstrap_index < test_index, (
-        "bootstrap.command must run before test.command so the sandbox's "
-        "toolchain exists when the test runs"
-    )
+    bootstrap = next(argv[-1] for argv in captured_argv if "python3 -m venv .venv" in argv[-1])
+    test = next(argv[-1] for argv in captured_argv if ".venv/bin/pytest -q" in argv[-1])
+    assert "tar xzf repo.tgz" in bootstrap
+    assert "tar xzf repo.tgz" not in test
 
 
 def test_hub_verify_refuses_the_obsolete_local_hermes_image(monkeypatch):
