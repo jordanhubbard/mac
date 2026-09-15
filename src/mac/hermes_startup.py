@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -231,6 +232,7 @@ def _runtime_prompt_bridge_report(
         "required": required,
         "file": _file_ref(path, "hermes_prompt_builder", False) if agent_dir is not None else None,
         "present": False,
+        "constructed_prompt_verified": False,
         "warning": "",
     }
     if agent_dir is None:
@@ -239,15 +241,54 @@ def _runtime_prompt_bridge_report(
                 "Hermes MAC runtime prompt bridge cannot be verified without MAC_HERMES_AGENT_DIR"
             )
         return report
-    text = _read_small_text(path, limit=1_000_000)
-    report["present"] = (
-        "_load_mac_runtime_context" in text
-        and "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN" in text
-        and "mac-runtime-context.md" in text
+    if not path.is_file():
+        if required:
+            report["warning"] = (
+                "Hermes MAC task/project runtime prompt bridge is missing from %s" % path
+            )
+        return report
+    interpreter = str(os.environ.get("MAC_HERMES_PYTHON") or "").strip()
+    markdown = str(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN") or "").strip()
+    hermes_home = str(os.environ.get("HERMES_HOME") or "").strip()
+    workspace = str(os.environ.get("MAC_HERMES_WORKSPACE") or hermes_home).strip()
+    if not interpreter or not markdown or not hermes_home:
+        if required:
+            report["warning"] = "Hermes constructed prompt verification is missing runtime inputs"
+        return report
+    probe = """import json,os,platform,sys\nfrom pathlib import Path\nruntime=Path(os.environ['MAC_HERMES_AGENT_DIR']).resolve();sys.path.insert(0,str(runtime))\nfrom agent import prompt_builder\nmarkdown=Path(os.environ['MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN']).read_text(encoding='utf-8').strip()\nhome=Path(os.environ['HERMES_HOME']);soul=home/'SOUL.md'\nprompt=prompt_builder.build_context_files_prompt(cwd=os.environ['MAC_HERMES_WORKSPACE'],home_override=home)\nprint(json.dumps({'python':platform.python_version(),'module_under_runtime':runtime in Path(prompt_builder.__file__).resolve().parents,'runtime_present':bool(markdown and markdown in prompt),'soul_present':not soul.is_file() or soul.read_text(encoding='utf-8').strip() in prompt}))\n"""
+    env = dict(os.environ)
+    env.update(
+        {
+            "MAC_HERMES_AGENT_DIR": str(agent_dir),
+            "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": markdown,
+            "MAC_HERMES_WORKSPACE": workspace,
+            "HERMES_HOME": hermes_home,
+        }
     )
+    try:
+        proc = subprocess.run(
+            [interpreter, "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            env=env,
+        )
+        observed = json.loads(proc.stdout) if proc.returncode == 0 else {}
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+        observed = {}
+    report["interpreter"] = _file_ref(Path(interpreter), "hermes_python", False)
+    report["python_version"] = observed.get("python")
+    report["constructed_prompt_verified"] = bool(
+        observed.get("python") == "3.14.7"
+        and observed.get("module_under_runtime")
+        and observed.get("runtime_present")
+        and observed.get("soul_present")
+    )
+    report["present"] = report["constructed_prompt_verified"]
     if required and not report["present"]:
         report["warning"] = (
-            "Hermes MAC task/project runtime prompt bridge is missing from %s" % path
+            "Hermes active Python 3.14.7 runtime did not construct a prompt containing MAC and persona context"
         )
     return report
 
@@ -338,8 +379,10 @@ def _session_capability_availability(
     toolchain = [
         {
             "command": command,
-            "resolved": shutil.which(command),
-            "available": bool(shutil.which(command)),
+            "scope": "linux_openshell_repository_verification",
+            "resolved": None,
+            "available": None,
+            "status": "delegated",
         }
         for command in required_commands
     ]
@@ -422,6 +465,93 @@ def _session_capability_availability(
             checks["web_search_environment_configured"] = any(
                 bool(os.environ.get(env_name)) for env_name in env_names
             )
+        repository_verification = None
+        if name == "quality_gate":
+            execution = item.get("execution") if isinstance(item.get("execution"), dict) else {}
+            platforms = project_contract.get("platforms")
+            platforms = platforms if isinstance(platforms, list) else []
+            declared = bool(project_contract.get("platforms_declared"))
+            host_platform = (
+                "darwin"
+                if sys.platform == "darwin"
+                else "linux"
+                if sys.platform.startswith("linux")
+                else ""
+            )
+            supported = None
+            status = "unknown_repository_platforms"
+            if declared and host_platform:
+                if host_platform not in platforms:
+                    supported = False
+                    status = "unsupported_host_platform"
+                elif execution.get("platform") not in platforms:
+                    supported = False
+                    status = "unsupported_verification_platform"
+                else:
+                    supported = True
+                    status = "supported"
+            elif declared:
+                status = "unknown_host_platform"
+            openshell_name = os.environ.get("MAC_OPENSHELL_BIN") or "openshell"
+            openshell = (
+                openshell_name
+                if Path(openshell_name).is_absolute()
+                else shutil.which(openshell_name)
+            )
+            policy_text = os.environ.get("MAC_OPENSHELL_POLICY") or ""
+            policy = Path(policy_text).expanduser() if policy_text else None
+            image = os.environ.get("MAC_HUB_VERIFY_IMAGE") or ""
+            gateway_endpoint = str(os.environ.get("MAC_OPENSHELL_GATEWAY_ENDPOINT") or "").strip()
+            route_command = (
+                [str(openshell), "sandbox", "list", "--limit", "1", "--output", "json"]
+                if openshell
+                else []
+            )
+            if gateway_endpoint:
+                route_command[3:3] = ["--gateway-endpoint", gateway_endpoint]
+            route_reachable = False
+            if route_command:
+                try:
+                    route_probe = subprocess.run(
+                        route_command,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                    inventory = (
+                        json.loads(route_probe.stdout) if route_probe.returncode == 0 else None
+                    )
+                    route_reachable = isinstance(inventory, list)
+                except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+                    route_reachable = False
+            route_checks = {
+                "host_platform_declared": bool(host_platform and host_platform in platforms),
+                "verification_platform_declared": bool(execution.get("platform") in platforms),
+                "test_command_present": bool(item.get("command")),
+                "openshell_client_available": bool(
+                    openshell and Path(openshell).is_file() and os.access(openshell, os.X_OK)
+                ),
+                "immutable_verifier_image_configured": bool(
+                    re.search(r"@sha256:[0-9a-f]{64}$", image)
+                ),
+                "verification_policy_available": bool(policy and policy.is_file()),
+                "host_execution_disabled": execution.get("host_execution") is False,
+                "authenticated_gateway_inventory_succeeded": route_reachable,
+            }
+            if supported is True:
+                status = "supported" if all(route_checks.values()) else "unavailable"
+            repository_verification = {
+                "supported": supported,
+                "status": status,
+                "host_platform": host_platform or None,
+                "repository_platforms": platforms,
+                "execution_platform": execution.get("platform"),
+                "execution_environment": execution.get("environment"),
+                "host_execution": execution.get("host_execution"),
+                "checks": route_checks,
+            }
+            checks["repository_verification_available"] = status == "supported"
         ready = all(checks.values()) if checks else True
         row = {
             "name": name,
@@ -435,6 +565,7 @@ def _session_capability_availability(
                 for env_name in (item.get("environment") or [])
                 if str(env_name).strip()
             ],
+            "repository_verification": repository_verification,
         }
         rows.append(row)
         if item.get("required") and not ready:
@@ -447,9 +578,6 @@ def _session_capability_availability(
         and contract_ref["exists"]
         and project_contract.get("schema") == "mac.repository_contract.v1"
     )
-    missing.extend(
-        "project_toolchain:%s" % item["command"] for item in toolchain if not item["available"]
-    )
     if not workspace_ready:
         missing.append("workspace")
     if not contract_ready:
@@ -461,6 +589,14 @@ def _session_capability_availability(
         "project_contract": contract_ref,
         "toolchain": toolchain,
         "capabilities": rows,
+        "repository_verification": next(
+            (
+                row["repository_verification"]
+                for row in rows
+                if row.get("repository_verification") is not None
+            ),
+            {"supported": None, "status": "unknown"},
+        ),
     }
 
 
@@ -527,6 +663,7 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
         "session_capability_names": [],
         "session_capabilities": [],
         "session_capability_availability": {"ready": True, "missing": []},
+        "repository_verification": {"supported": None, "status": "unknown"},
         "markdown_contract": _runtime_markdown_contract(markdown_path),
         "warning": "",
         "error": "",
@@ -593,6 +730,7 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
             "environment": item.get("environment")
             if isinstance(item.get("environment"), list)
             else [],
+            "execution": item.get("execution") if isinstance(item.get("execution"), dict) else {},
         }
         for item in raw_capabilities
         if isinstance(item, dict) and item.get("name")
@@ -661,6 +799,10 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
                         "exists": workspace.get("project_contract", {}).get("exists"),
                         "schema": workspace.get("project_contract", {}).get("schema"),
                         "project": workspace.get("project_contract", {}).get("project"),
+                        "platforms": workspace.get("project_contract", {}).get("platforms") or [],
+                        "platforms_declared": bool(
+                            workspace.get("project_contract", {}).get("platforms_declared")
+                        ),
                         "required_commands": workspace.get("project_contract", {}).get(
                             "required_commands"
                         )
@@ -768,6 +910,7 @@ def _runtime_context_summary(hermes_home: Path) -> Dict[str, Any]:
         workspace=summary["workspace"],
     )
     summary["session_capability_availability"] = availability
+    summary["repository_verification"] = availability["repository_verification"]
     if not availability["ready"]:
         summary["ready"] = not required
         summary["status"] = "session_capability_unavailable"
@@ -1382,13 +1525,8 @@ def build_hermes_startup_report() -> Dict[str, Any]:
     firecrawl = _firecrawl_web_search_report()
     tokenhub = _tokenhub_report()
     task_project_runtime = _runtime_context_summary(hermes_home)
-    # ADR 0001 hu-04 verified the mac-runtime-context prompt bridge by reading
-    # prompt_builder.py out of the vendored Hermes tree. That tree was removed
-    # on 2026-08-17 (measured inactive fleet-wide; every static worker runs
-    # OpenClaw), so an explicit MAC_HERMES_AGENT_DIR is now the only way to
-    # point the check at a runtime. Absent one the bridge is reported inert
-    # rather than "required and missing", which would hold `ready` false
-    # forever on every node.
+    # The source pointer must identify the active external Hermes runtime. A
+    # required context without that evidence is unknown, never silently inert.
     agent_dir_env = str(os.environ.get("MAC_HERMES_AGENT_DIR") or "").strip()
     if agent_dir_env:
         task_project_runtime["prompt_bridge"] = _runtime_prompt_bridge_report(
@@ -1396,12 +1534,10 @@ def build_hermes_startup_report() -> Dict[str, Any]:
             required=bool(task_project_runtime["required"]),
         )
     else:
-        task_project_runtime["prompt_bridge"] = {
-            "required": False,
-            "file": None,
-            "present": False,
-            "warning": "",
-        }
+        task_project_runtime["prompt_bridge"] = _runtime_prompt_bridge_report(
+            None,
+            required=bool(task_project_runtime["required"]),
+        )
     if task_project_runtime["prompt_bridge"]["warning"]:
         task_project_runtime["ready"] = False
 

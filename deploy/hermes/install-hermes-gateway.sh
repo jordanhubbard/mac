@@ -19,6 +19,8 @@ MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 export HERMES_HOME
 DRY_RUN="${MAC_HERMES_DRY_RUN:-0}"
+RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$HERMES_HOME/mac-runtime-context.md}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Fleet-config-supplied gateway policy (docs/fleet-registry-schema.md's
 # `hermes:` block: slack_home_channel_name, gateway_model, gateway_provider,
@@ -36,6 +38,120 @@ hermes_bin() {
   command -v hermes 2>/dev/null && return 0
   [ -x "$HOME/.local/bin/hermes" ] && { printf '%s\n' "$HOME/.local/bin/hermes"; return 0; }
   return 1
+}
+
+hermes_runtime_dir() {
+  local hermes resolved
+  hermes="$(hermes_bin)" || return 1
+  resolved="$(python3 - "$hermes" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+launcher = Path(sys.argv[1]).resolve()
+text = launcher.read_text(encoding="utf-8", errors="ignore")
+matches = re.findall(r"(/[^\s\"']+)/hermes(?:\s|[\"']|$)", text)
+if matches:
+    print(matches[-1])
+elif (launcher.parent / "agent" / "prompt_builder.py").is_file():
+    print(launcher.parent)
+PY
+)"
+  [ -n "$resolved" ] && [ -f "$resolved/agent/prompt_builder.py" ] || return 1
+  printf '%s\n' "$resolved"
+}
+
+hermes_python_bin() {
+  local runtime_dir candidate
+  runtime_dir="$(hermes_runtime_dir)" || return 1
+  candidate="$runtime_dir/.venv/bin/python"
+  [ -x "$candidate" ] || return 1
+  "$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' 3.14.7 \
+    || return 1
+  # Keep the venv launcher path: resolving its symlink can select the base
+  # interpreter and lose the active runtime's installed dependencies.
+  printf '%s\n' "$candidate"
+}
+
+verify_runtime_context_bridge() {
+  local runtime_dir hermes_python
+  runtime_dir="$(hermes_runtime_dir)" \
+    || die "cannot resolve active Hermes runtime from $(hermes_bin)"
+  hermes_python="$(hermes_python_bin)" \
+    || die "active Hermes runtime does not have its managed Python 3.14.7 interpreter"
+  [ -s "$RUNTIME_CONTEXT_MARKDOWN" ] \
+    || die "MAC runtime context is missing or empty: $RUNTIME_CONTEXT_MARKDOWN"
+  MAC_HERMES_AGENT_DIR="$runtime_dir" \
+  MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="$RUNTIME_CONTEXT_MARKDOWN" \
+  PYTHONPATH="$runtime_dir${PYTHONPATH:+:$PYTHONPATH}" \
+  "$hermes_python" - <<'PY'
+import os
+from pathlib import Path
+
+from agent import prompt_builder
+
+runtime_dir = Path(os.environ["MAC_HERMES_AGENT_DIR"]).resolve()
+if runtime_dir not in Path(prompt_builder.__file__).resolve().parents:
+    raise SystemExit("prompt builder did not load from active Hermes runtime")
+
+runtime = Path(os.environ["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"])
+runtime_text = runtime.read_text(encoding="utf-8").strip()
+prompt = prompt_builder.build_context_files_prompt(cwd=os.environ["HERMES_HOME"])
+if not runtime_text or runtime_text not in prompt:
+    raise SystemExit("active Hermes prompt omitted MAC runtime context")
+soul = Path(os.environ["HERMES_HOME"]) / "SOUL.md"
+if soul.is_file() and soul.read_text(encoding="utf-8").strip() not in prompt:
+    raise SystemExit("active Hermes prompt omitted existing SOUL.md")
+print("Hermes active runtime prompt includes MAC context and existing persona context")
+PY
+}
+
+qualify_staged_runtime() {
+  local stage="${1:-}" active="" mac_python="$MAC_HOME/venv/bin/python"
+  [ -n "$stage" ] && [ -d "$stage" ] && git -C "$stage" rev-parse --git-dir >/dev/null 2>&1 \
+    || die "qualify-stage requires a separate staged Hermes git checkout"
+  active="$(hermes_runtime_dir 2>/dev/null || true)"
+  [ -z "$active" ] || [ "$(cd "$stage" && pwd -P)" != "$(cd "$active" && pwd -P)" ] \
+    || die "refusing to patch the active serving Hermes runtime"
+  [ -x "$mac_python" ] || die "MAC deployment Python is unavailable: $mac_python"
+  "$mac_python" -m mac.hermes_patch "$stage" \
+    "$SCRIPT_DIR/python314-source.json" \
+    "$SCRIPT_DIR/runtime-context-source.json" \
+    || die "staged Hermes reviewed patch qualification failed"
+  [ -x "$stage/.venv/bin/python" ] \
+    || die "staged Hermes runtime has no managed interpreter"
+  MAC_HERMES_AGENT_DIR="$stage" \
+  MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="$RUNTIME_CONTEXT_MARKDOWN" \
+  PYTHONPATH="$stage${PYTHONPATH:+:$PYTHONPATH}" \
+  "$stage/.venv/bin/python" - <<'PY'
+import os
+import tempfile
+from pathlib import Path
+from agent import prompt_builder
+
+runtime = Path(os.environ["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"]).read_text(
+    encoding="utf-8"
+).strip()
+with tempfile.TemporaryDirectory(prefix="mac-hermes-prompt-qualification-") as root:
+    root_path = Path(root)
+    workspace = root_path / "workspace"
+    home = root_path / "home"
+    workspace.mkdir()
+    home.mkdir()
+    project = "MAC qualification project instructions"
+    soul = "MAC qualification persona context"
+    (workspace / "AGENTS.md").write_text(project, encoding="utf-8")
+    (home / "SOUL.md").write_text(soul, encoding="utf-8")
+    prompt = prompt_builder.build_context_files_prompt(
+        cwd=str(workspace), home_override=home
+    )
+    missing = [item for item in (project, runtime, soul) if not item or item not in prompt]
+    if missing:
+        raise SystemExit(
+            "staged Hermes prompt omitted project, MAC runtime, or persona context"
+        )
+print("staged Hermes prompt preserved project, MAC runtime, and persona context")
+PY
 }
 
 install_hermes() {
@@ -278,6 +394,7 @@ verify_gateway() {
            "own startup self-test derives its OpenClaw-required branch from this" \
            "variable and will crash-loop forever demanding an OpenClaw advertisement" \
            "that no longer exists; run ensure_chat_gateway_impl_env (prepare) first"
+  verify_runtime_context_bridge
   # --deep appends historical log lines, including normal shutdowns from
   # earlier processes. Only inspect the current service status here.
   status="$("$hermes" gateway status 2>&1)" || die "hermes gateway status failed:
@@ -369,10 +486,27 @@ ensure_chat_gateway_impl_env() {
   local env_file="$MAC_HOME/mac.env"
   mkdir -p "$MAC_HOME"
   touch "$env_file"
-  if grep -q '^MAC_CHAT_GATEWAY_IMPL=' "$env_file" 2>/dev/null; then
-    sed -i.bak '/^MAC_CHAT_GATEWAY_IMPL=/d' "$env_file" && rm -f "$env_file.bak"
-  fi
-  printf 'MAC_CHAT_GATEWAY_IMPL=hermes\n' >> "$env_file"
+  local runtime_dir hermes_python mac_python
+  runtime_dir="$(hermes_runtime_dir)" || die "cannot resolve active Hermes runtime from $(hermes_bin)"
+  hermes_python="$(hermes_python_bin)" \
+    || die "active Hermes runtime does not have its managed Python 3.14.7 interpreter"
+  mac_python="$MAC_HOME/venv/bin/python"
+  [ -x "$mac_python" ] || die "MAC deployment Python is unavailable: $mac_python"
+  "$mac_python" - "$env_file" "$runtime_dir" "$hermes_python" <<'PY'
+import sys
+from pathlib import Path
+
+from mac.deploy_env import update_env_file
+
+update_env_file(
+    Path(sys.argv[1]),
+    {
+        "MAC_CHAT_GATEWAY_IMPL": "hermes",
+        "MAC_HERMES_AGENT_DIR": sys.argv[2],
+        "MAC_HERMES_PYTHON": sys.argv[3],
+    },
+)
+PY
 }
 
 prepare() {
@@ -403,5 +537,6 @@ case "${1:-prepare}" in
   verify)   verify ;;
   finalize) finalize ;;
   withdraw) withdraw ;;
-  *) die "usage: $0 [prepare|verify|finalize|withdraw]" ;;
+  qualify-stage) qualify_staged_runtime "${2:-}" ;;
+  *) die "usage: $0 [prepare|verify|finalize|withdraw|qualify-stage <checkout>]" ;;
 esac

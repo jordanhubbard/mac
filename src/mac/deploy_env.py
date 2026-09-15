@@ -22,6 +22,7 @@ import sys
 import urllib.parse
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Optional, Sequence
 
+from mac.atomic_file import atomic_write_text
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
 from mac.mesh_bind import (
     MeshBindError,
@@ -312,8 +313,16 @@ def render_env(values: Mapping[str, str]) -> str:
 
 
 def write_env_file(path: Path, values: Mapping[str, str]) -> None:
-    path.write_text(render_env(values), encoding="utf-8")
-    path.chmod(0o600)
+    atomic_write_text(path, render_env(values), mode=0o600)
+
+
+def update_env_file(path: Path, updates: Mapping[str, str]) -> Dict[str, str]:
+    """Atomically merge deployment-owned values without losing concurrent writes."""
+    with env_file_lock(path):
+        values = read_env_file(path)
+        values.update({key: str(value) for key, value in updates.items()})
+        write_env_file(path, values)
+    return values
 
 
 def stable_id(prefix: str, value: str) -> str:
@@ -1210,8 +1219,9 @@ def write_mac_env_file(
     *,
     environ: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
-    values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
-    write_env_file(cfg.paths.env_file, values)
+    with env_file_lock(cfg.paths.env_file):
+        values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
+        write_env_file(cfg.paths.env_file, values)
     return values
 
 

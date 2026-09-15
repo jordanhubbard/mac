@@ -56,6 +56,12 @@ the repair and test-harness corrections against one upstream commit;
 file's original and patched hashes. It preserves the locked dependency versions.
 Apply it to a separate external staging checkout, never a serving checkout.
 
+`deploy/hermes/runtime-context.patch` is the independently pinned prompt
+integration for the same upstream revision. It extends Hermes's supported
+context-file builder so the deployment-owned MAC runtime markdown is additive
+to workspace instructions and `SOUL.md`; it does not replace either one or
+change `terminal.cwd` discovery.
+
 This accepts a limited patch-maintenance obligation for the requested migration.
 Requalify the patch when changing the upstream revision, and retire it once a
 qualified upstream release supplies the fixes. It does not restore the snapshot,

@@ -5521,6 +5521,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -5773,8 +5774,10 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -5800,6 +5803,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-fleet-context-service.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
@@ -5909,7 +5913,8 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
-      "src/mac/hermes_runtime.py"
+      "src/mac/hermes_runtime.py",
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -6546,6 +6551,7 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
+      "src/mac/hermes_startup.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -9058,6 +9064,7 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/hermes_startup.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/services.py",
       "src/mac/worker.py"
@@ -9177,7 +9184,8 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -9282,6 +9290,7 @@
       "src/mac/acp/permission.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/hermes_startup.py",
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_service.py",
       "src/mac/openshell_supervisor.py",

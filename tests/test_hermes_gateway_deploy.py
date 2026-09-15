@@ -91,13 +91,49 @@ if sequence:
 os.execv(os.environ["FAKE_REAL_PS"], ["ps", *sys.argv[1:]])
 """
 
+FAKE_PROMPT_BUILDER = """from pathlib import Path
+import os
+
+def _load_external_runtime_context():
+    path = Path(os.environ["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"])
+    return path.read_text() if path.is_file() else ""
+
+def build_context_files_prompt(cwd=None):
+    sections = []
+    workspace = Path(cwd or os.getcwd())
+    if (workspace / "AGENTS.md").is_file():
+        sections.append((workspace / "AGENTS.md").read_text())
+    sections.append(_load_external_runtime_context())
+    home = Path(os.environ["HERMES_HOME"])
+    if (home / "SOUL.md").is_file():
+        sections.append((home / "SOUL.md").read_text())
+    return "\\n".join(sections)
+"""
+
 
 def _prepare_bin(tmp_path: Path, calls_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake_hermes = bin_dir / "hermes"
-    fake_hermes.write_text(FAKE_HERMES, encoding="utf-8")
+    fake_hermes.write_text(
+        FAKE_HERMES + f"\n# runtime entrypoint: {bin_dir / 'hermes'}\n", encoding="utf-8"
+    )
     fake_hermes.chmod(0o755)
+    (bin_dir / "agent").mkdir(exist_ok=True)
+    (bin_dir / "agent" / "__init__.py").write_text("", encoding="utf-8")
+    (bin_dir / "agent" / "prompt_builder.py").write_text(FAKE_PROMPT_BUILDER, encoding="utf-8")
+    runtime_python = bin_dir / ".venv" / "bin" / "python"
+    runtime_python.parent.mkdir(parents=True, exist_ok=True)
+    runtime_python.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        "  *platform.python_version*) exit 0 ;;\n"
+        "  *os.path.realpath*) printf '%s\\n' \"$0\"; exit 0 ;;\n"
+        "esac\n"
+        f'exec "{sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
     fake_mac = bin_dir / "mac"
     fake_mac.write_text(FAKE_MAC, encoding="utf-8")
     fake_mac.chmod(0o755)
@@ -120,6 +156,10 @@ def _run(
     (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
     hermes_home = home / ".hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "SOUL.md").write_text("existing persona context", encoding="utf-8")
+    (hermes_home / "mac-runtime-context.md").write_text(
+        "MAC Task and Project Runtime", encoding="utf-8"
+    )
     runtime_pid = os.getpid()
     if (subcommand == "prepare" and scenario != "stop_still_running") or (extra_env or {}).get(
         "_EXITED_RUNTIME"
@@ -161,6 +201,10 @@ def _run(
         (hermes_home / ".env").write_text("SLACK_ALLOWED_USERS=*\n", encoding="utf-8")
     mac_home = home / ".mac"
     mac_home.mkdir(parents=True, exist_ok=True)
+    (mac_home / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+    mac_python = mac_home / "venv" / "bin" / "python"
+    if not mac_python.exists():
+        mac_python.symlink_to(sys.executable)
     if not (extra_env or {}).get("_OMIT_GATEWAY_IMPL_ENV"):
         (mac_home / "mac.env").write_text("MAC_CHAT_GATEWAY_IMPL=hermes\n", encoding="utf-8")
     env = {
@@ -177,6 +221,7 @@ def _run(
         "FAKE_MAC_CALLS": str(mac_calls_path),
         "FAKE_RUNTIME_SEQUENCE": str(tmp_path / "runtime-sequence.json"),
         "FAKE_REAL_PS": shutil.which("ps"),
+        "PYTHONPATH": str(ROOT / "src"),
     }
     _test_only_flags = {
         "_OMIT_ALLOWLIST_ENV",
@@ -205,6 +250,26 @@ def test_verify_passes_when_gateway_is_supervised(tmp_path):
     result, calls = _run(tmp_path, "verify", scenario="healthy")
     assert result.returncode == 0, result.stderr
     assert ["gateway", "status"] in calls
+
+
+def test_prepare_preserves_unrelated_mac_env_and_records_runtime_identity(tmp_path):
+    mac_env = tmp_path / "home" / ".mac" / "mac.env"
+    mac_env.parent.mkdir(parents=True, exist_ok=True)
+    mac_env.write_text("UNRELATED_SETTING=retained\n", encoding="utf-8")
+    result, _calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={"_EXITED_RUNTIME": True, "_OMIT_GATEWAY_IMPL_ENV": True},
+    )
+    assert result.returncode == 0, result.stderr
+    from mac.deploy_env import read_env_file
+
+    values = read_env_file(mac_env)
+    assert values["UNRELATED_SETTING"] == "retained"
+    assert values["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
+    assert values["MAC_HERMES_AGENT_DIR"].endswith("/bin")
+    assert values["MAC_HERMES_PYTHON"].endswith("/python")
+    assert mac_env.stat().st_mode & 0o777 == 0o600
 
 
 def test_verify_ignores_historical_shutdown_logs(tmp_path):
@@ -355,7 +420,9 @@ def test_prepare_writes_the_chat_gateway_impl_env_var(tmp_path):
     env_file = mac_home / "mac.env"
     result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
     assert result.returncode == 0, result.stderr
-    assert env_file.read_text(encoding="utf-8").strip() == "MAC_CHAT_GATEWAY_IMPL=hermes"
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    assert "MAC_CHAT_GATEWAY_IMPL=hermes" in lines
+    assert f"MAC_HERMES_AGENT_DIR={tmp_path / 'bin'}" in lines
 
 
 def test_prepare_corrects_a_stale_openclaw_gateway_impl_value(tmp_path):
@@ -366,8 +433,12 @@ def test_prepare_corrects_a_stale_openclaw_gateway_impl_value(tmp_path):
     env_file.write_text("MAC_CHAT_GATEWAY_IMPL=openclaw\n", encoding="utf-8")
     result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
     assert result.returncode == 0, result.stderr
-    lines = [line for line in env_file.read_text(encoding="utf-8").splitlines() if line]
-    assert lines == ["MAC_CHAT_GATEWAY_IMPL=hermes"]
+    from mac.deploy_env import read_env_file
+
+    values = read_env_file(env_file)
+    assert values["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
+    assert values["MAC_HERMES_AGENT_DIR"] == str(tmp_path / "bin")
+    assert values["MAC_HERMES_PYTHON"].endswith("/.venv/bin/python")
 
 
 def test_withdraw_stops_the_gateway_without_uninstalling(tmp_path):

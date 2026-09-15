@@ -235,7 +235,9 @@ gate_human_interface_switch() {
   for mac_python in "$HOME/.mac/venv/bin/python" "$(command -v python3 2>/dev/null)"; do
     [ -n "$mac_python" ] && [ -x "$mac_python" ] || continue
     "$mac_python" - "$target" <<'PY' || return 1
+import os
 import sys
+from pathlib import Path
 try:
     from mac.human_interface_profile import assert_switch_ported
 except Exception:
@@ -2445,27 +2447,25 @@ write_hermes_runtime_context() {
 }
 
 verify_hermes_prompt_bridge() {
-  # The vendored Hermes agent runtime this bridge imports (agent.prompt_builder)
-  # was removed on 2026-08-17 -- every static worker runs OpenClaw now, not
-  # Hermes-the-agent. src/mac/hermes_startup.py's own startup-health check
-  # already accounts for this: absent an explicit MAC_HERMES_AGENT_DIR
-  # pointing at a real checkout, it reports the bridge inert rather than
-  # required-and-missing. This deploy-time check predates that and still
-  # hard-fails every deploy trying to import a module that no longer
-  # exists on any current node; match the established behavior instead.
-  local agent_dir="${MAC_HERMES_AGENT_DIR:-$HERMES_DIR}"
+  local agent_dir="${MAC_HERMES_AGENT_DIR:-}" hermes_python="${MAC_HERMES_PYTHON:-}"
   if [ -z "$agent_dir" ] || [ ! -f "$agent_dir/agent/prompt_builder.py" ]; then
-    log "Hermes prompt bridge is inert: no vendored Hermes agent runtime at MAC_HERMES_AGENT_DIR (removed 2026-08-17; OpenClaw is the runtime now)"
-    return 0
+    die "active Hermes runtime source is unavailable at MAC_HERMES_AGENT_DIR"
+    return 1
+  fi
+  if [ -z "$hermes_python" ] || [ ! -x "$hermes_python" ]; then
+    die "active Hermes managed interpreter is unavailable at MAC_HERMES_PYTHON"
+    return 1
   fi
   log "verifying Hermes prompt bridge sees MAC runtime context"
   HERMES_HOME="$(mac_gateway_home)" \
   MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$(mac_gateway_home)/mac-runtime-context.md}" \
   PYTHONPATH="$agent_dir:${PYTHONPATH:-}" \
-  "$VENV/bin/python" - "$SRC_DIR" <<'PY'
+  "$hermes_python" - "$SRC_DIR" <<'PY'
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 from agent import prompt_builder
 
@@ -2494,14 +2494,13 @@ required = [
     "mac task ready",
     "git push",
 ]
-runtime_context = prompt_builder._load_mac_runtime_context()
-missing = [item for item in required if item not in runtime_context]
-if missing:
-    raise SystemExit("Hermes MAC runtime prompt bridge did not load: %s" % ", ".join(missing))
-prompt = prompt_builder.build_context_files_prompt(cwd=workspace, skip_soul=True)
+prompt = prompt_builder.build_context_files_prompt(cwd=workspace)
 missing = [item for item in required if item not in prompt]
 if missing:
     raise SystemExit("Hermes MAC runtime prompt is missing: %s" % ", ".join(missing))
+soul = Path(os.environ["HERMES_HOME"]) / "SOUL.md"
+if soul.is_file() and soul.read_text(encoding="utf-8").strip() not in prompt:
+    raise SystemExit("Hermes MAC runtime prompt omitted the existing persona context")
 print("Hermes prompt bridge verified for %s" % workspace)
 PY
 }
@@ -3612,8 +3611,9 @@ manifest = {
         ),
         "task_project_runtime_context": file_ref(os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_FILE") or (mac_home / "openclaw" / "mac-runtime-context.json")),
         "task_project_runtime_prompt_bridge_present": (
-            "_load_mac_runtime_context" in hermes_prompt_builder_text
+            "_load_external_runtime_context" in hermes_prompt_builder_text
             and "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN" in hermes_prompt_builder_text
+            and "sections.append(_load_external_runtime_context" in hermes_prompt_builder_text
         ),
         "messaging_deps_report": file_ref(Path(os.environ["LOG_DIR"]) / "hermes-messaging-deps.json"),
         "web_deps_report": file_ref(Path(os.environ["LOG_DIR"]) / "hermes-web-deps.json"),
@@ -4181,6 +4181,13 @@ capture_auxiliary_rollback_artifacts() {
   track_auxiliary_rollback_artifact \
     "$MAC_HOME/deployed-source-revision" user
   track_auxiliary_rollback_artifact "$MAC_HOME/deploy-start-barrier" user
+  local gateway_home
+  gateway_home="$(mac_gateway_home)"
+  if [ "$gateway_home" != "$MAC_HOME/openclaw" ]; then
+    track_auxiliary_rollback_artifact "$gateway_home/mac-runtime-context.json" user
+    track_auxiliary_rollback_artifact "$gateway_home/mac-runtime-context.md" user
+    track_auxiliary_rollback_artifact "$gateway_home/.env" user
+  fi
   case "$SUPERVISOR_KIND" in
     systemd)
       local system_unit
@@ -11552,16 +11559,8 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
   write_hermes_runtime_context
   verify_hermes_prompt_bridge
 else
-  log "typed phase 2 retained hub database, runtime identity, and Hermes context authorities"
-  # "Retained" presumes something is there to retain. A recreated fungible node
-  # has no gateway mac-runtime-context.json and this writer only ran on the
-  # legacy-one-shot path, so the file could never come back. Repair absence
-  # only; an existing context stays exactly as the receipts describe it.
-  # Live files belong under $MAC_HOME/openclaw; never recreate ~/.hermes.
-  if [ ! -f "$(mac_gateway_home)/mac-runtime-context.json" ]; then
-    log "repairing absent gateway runtime context (typed phase 2 retains an existing one, but cannot retain a missing one)"
-    write_hermes_runtime_context
-  fi
+  log "typed phase 2 retained hub database and runtime identity authorities; refreshing deployment-owned Hermes context"
+  write_hermes_runtime_context
 fi
 
 summarize_report() {
