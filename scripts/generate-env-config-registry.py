@@ -126,7 +126,9 @@ CURATED_DESCRIPTIONS = {
     "MAC_HUB_VERIFY_PROFILE": (
         "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "
         "driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB "
-        "sandbox-local Docker tmpfs and 8 MAC pytest workers. Requires a writable "
+        "sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. "
+        "Repository fixture scratch uses a separate sandbox-local directory so fixture "
+        "copies cannot fill the database mount. Requires a writable "
         "Linux tmpfs proof before repository code runs; unsupported profiles fail closed. "
         "Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, "
         "including separate read-only verifiers; existing sandbox resources remain unchanged. "

@@ -62,7 +62,13 @@ def verifier_resource_profile() -> tuple[list[str], list[str], str]:
             }
         ),
     ]
-    environment = ["TMPDIR=/sandbox/test-storage", "MAC_TEST_JOBS=8"]
+    # Large repository fixtures must not consume the database's bounded mount.
+    # Both paths stay sandbox-local; PostgreSQL keeps its normal durability.
+    environment = [
+        "TMPDIR=/sandbox/test-scratch",
+        "MAC_TEST_PG_DATADIR=/sandbox/test-storage/mac-test-pgdata",
+        "MAC_TEST_JOBS=8",
+    ]
     preflight = (
         'if [ "$(uname -s)" != Linux ] || '
         '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
@@ -70,6 +76,9 @@ def verifier_resource_profile() -> tuple[list[str], list[str], str]:
         "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
         "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
         "export " + " ".join(shlex.quote(value) for value in environment) + "; "
+        'if ! mkdir -p "$TMPDIR" || [ ! -w "$TMPDIR" ]; then '
+        "echo 'hub verifier resource profile unavailable: fixture scratch is not writable' "
+        ">&2; exit 96; fi; "
         f"echo '{VERIFIER_PROFILE_READY}'; "
     )
     return args, environment, preflight

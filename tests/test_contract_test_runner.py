@@ -625,18 +625,22 @@ def test_contract_runner_local_postgres_overrides_only_when_requested(tmp_path, 
         helper,
         "#!/bin/sh\n"
         'test -z "${MAC_TEST_PG_URL:-}" || exit 31\n'
+        'test "$MAC_TEST_PG_DATADIR" = "$EXPECTED_PG_DATADIR" || exit 32\n'
         'echo provisioned > "$DB_PROBE.helper"\n'
         "echo export MAC_TEST_PG_URL=postgresql://sandbox@127.0.0.1/mac_test\n",
     )
     _write_exec(
         repo / ".venv" / "bin" / "python",
         "#!/bin/sh\n"
+        'test -z "${MAC_TEST_PG_DATADIR:-}" || exit 33\n'
         'printf "%s" "${MAC_TEST_PG_URL:-}" > "$DB_PROBE"\n' + _GOOD_PY_BODY.split("\n", 1)[1],
     )
     env.update(
         DB_PROBE=str(probe),
         MAC_TEST_PG_LOCAL=local,
         MAC_TEST_PG_URL="postgresql://external.invalid/test",
+        MAC_TEST_PG_DATADIR=str(tmp_path / "bounded-pg"),
+        EXPECTED_PG_DATADIR=str(tmp_path / "bounded-pg"),
     )
     result = subprocess.run(
         [str(repo / "scripts" / "run-contract-tests.sh")],

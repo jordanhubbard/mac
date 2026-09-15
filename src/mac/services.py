@@ -2527,8 +2527,10 @@ def run_repository_contract_test_in_openshell(
 
             def sandbox_exec(command: str, *, initialize: bool) -> subprocess.CompletedProcess[str]:
                 shell_command = (
-                    "cd /sandbox && tar xzf repo.tgz && " if initialize else ""
-                ) + identity_preflight + command
+                    ("cd /sandbox && tar xzf repo.tgz && " if initialize else "")
+                    + identity_preflight
+                    + command
+                )
                 return subprocess.run(
                     [
                         openshell,

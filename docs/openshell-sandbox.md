@@ -108,8 +108,10 @@ publication checks.
 worker process. Unset, empty,
 or `default` retains the driver's existing behavior. `bounded-tmpfs` requests
 12 CPUs, 32 GiB memory and an 8 GiB Docker-driver tmpfs at
-`/sandbox/test-storage`, with `TMPDIR` pointing there and `MAC_TEST_JOBS=8`.
-The tmpfs uses mode 1777 and permits executable test fixtures; it does not
+`/sandbox/test-storage`, with `MAC_TEST_PG_DATADIR` pointing to its
+`mac-test-pgdata` subdirectory and `MAC_TEST_JOBS=8`. Repository fixture scratch
+uses `TMPDIR=/sandbox/test-scratch` on the sandbox filesystem, so large fixture
+copies cannot fill PostgreSQL's mount. The tmpfs uses mode 1777 and does not
 expose a host directory. PostgreSQL keeps its normal durability settings.
 
 Before extracting or bootstrapping the repository, the sandbox proves that it

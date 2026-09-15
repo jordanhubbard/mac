@@ -327,7 +327,9 @@ def test_hub_fetches_prepared_report_base_without_weakening_pushed_head(
         assert rc == 0, output
         assert identity["platform"] == "linux"
         assert identity["policy_sha256"].startswith("sha256:")
-        command = next(argv[-1] for argv in calls if "exec" in argv and "tar xzf repo.tgz" in argv[-1])
+        command = next(
+            argv[-1] for argv in calls if "exec" in argv and "tar xzf repo.tgz" in argv[-1]
+        )
         assert "uname -s" in command and "git rev-parse HEAD^{tree}" in command
         assert command.index("git rev-parse HEAD^{tree}") < command.index("run-current-tests")
     else:
