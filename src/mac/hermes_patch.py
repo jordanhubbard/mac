@@ -61,6 +61,7 @@ def apply_reviewed_patches(stage: Path, manifest_paths: Sequence[Path]) -> list[
     if not changed <= allowed_files or untracked:
         raise RuntimeError("staged Hermes checkout has unrelated source modifications")
     results: list[str] = []
+    pending: list[tuple[dict[str, Any], Path]] = []
     for _manifest_path, manifest, patch in reviewed:
         files = manifest["files"]
         digests = {name: _digest(stage / name) for name in files}
@@ -69,11 +70,16 @@ def apply_reviewed_patches(stage: Path, manifest_paths: Sequence[Path]) -> list[
             continue
         if not all(digests[name] == spec["original_sha256"] for name, spec in files.items()):
             raise RuntimeError("staged Hermes patch inputs do not match reviewed source")
-        subprocess.run(["git", "-C", str(stage), "apply", "--check", str(patch)], check=True)
-        subprocess.run(["git", "-C", str(stage), "apply", str(patch)], check=True)
+        pending.append((manifest, patch))
+        results.append("patched")
+    if pending:
+        patches = [str(patch) for _manifest, patch in pending]
+        subprocess.run(["git", "-C", str(stage), "apply", "--check", *patches], check=True)
+        subprocess.run(["git", "-C", str(stage), "apply", *patches], check=True)
+    for manifest, _patch in pending:
+        files = manifest["files"]
         if any(_digest(stage / name) != spec["patched_sha256"] for name, spec in files.items()):
             raise RuntimeError("staged Hermes patch output does not match reviewed result")
-        results.append("patched")
     return results
 
 

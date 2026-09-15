@@ -98,6 +98,40 @@ def test_disjoint_reviewed_patches_compose_and_are_idempotent(tmp_path: Path) ->
     ]
 
 
+def test_composition_rejects_bad_later_input_before_mutating_first_patch(tmp_path: Path) -> None:
+    stage, source, first_manifest = _staged_patch(tmp_path)
+    first = json.loads(first_manifest.read_text(encoding="utf-8"))
+    second_patch = tmp_path / "other.patch"
+    second_patch.write_text(
+        "diff --git a/other.py b/other.py\n--- a/other.py\n+++ b/other.py\n"
+        "@@ -1 +1 @@\n-ORIGINAL = True\n+ORIGINAL = False\n",
+        encoding="utf-8",
+    )
+    digest = lambda value: hashlib.sha256(value).hexdigest()
+    second_manifest = tmp_path / "other.json"
+    second_manifest.write_text(
+        json.dumps(
+            {
+                "upstream_commit": first["upstream_commit"],
+                "patch": second_patch.name,
+                "patch_sha256": digest(second_patch.read_bytes()),
+                "files": {
+                    "other.py": {
+                        "original_sha256": digest(b"ORIGINAL = True\n"),
+                        "patched_sha256": digest(b"ORIGINAL = False\n"),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (stage / "other.py").write_text("UNEXPECTED = True\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="inputs do not match"):
+        apply_reviewed_patches(stage, [first_manifest, second_manifest])
+    assert source.read_text(encoding="utf-8") == "old\n"
+
+
 @pytest.mark.parametrize("already_patched", [False, True])
 @pytest.mark.parametrize("change", ["unstaged", "staged", "untracked"])
 def test_unrelated_source_is_rejected_before_patch_or_idempotent_acceptance(
