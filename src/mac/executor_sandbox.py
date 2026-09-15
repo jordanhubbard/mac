@@ -1035,13 +1035,24 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
         and (env_str("MAC_TASK_REPO_ACCESS_MODE") or "").strip().lower()
         != REPORT_REPOSITORY_READ_ONLY_MODE
     )
+    from .openshell_sandbox_gc import _process_identity
+
+    pid = os.getpid()
+    state, identity = _process_identity(pid)
+    if state != "present" or ":" not in identity:
+        raise RuntimeError("cannot establish OpenShell creator process identity")
+    boot_id, pid_start = identity.split(":", 1)
     return [
         "--label",
         "mac.owner=mac",
         "--label",
         "mac.kind=%s" % kind,
         "--label",
-        "mac.pid=%d" % os.getpid(),
+        "mac.pid=%d" % pid,
+        "--label",
+        "mac.pid.start=%s" % pid_start,
+        "--label",
+        "mac.boot.id=%s" % boot_id,
         "--label",
         "mac.keep=%s" % ("true" if keep or repository_wip_guard else "false"),
     ] + _sandbox_identity_labels()

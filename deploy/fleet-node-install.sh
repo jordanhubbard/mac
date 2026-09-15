@@ -7436,16 +7436,30 @@ falsey_keep_values = frozenset({"0", "false", "no", "off"})
 truthy_keep_values = frozenset({"1", "true", "yes", "on"})
 
 
-def sandbox_pid_is_alive(pid):
+def sandbox_process_identity(pid):
     if pid <= 0:
-        return False
+        return "absent", ""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return False
+        return "absent", ""
     except PermissionError:
-        return True
-    return True
+        return "unknown", ""
+    try:
+        with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as handle:
+            boot_id = handle.read().strip()
+        with open("/proc/%d/stat" % pid, encoding="ascii") as handle:
+            stat = handle.read()
+        start_time = stat[stat.rfind(")") + 2 :].split()[19]
+    except (OSError, IndexError):
+        return "unknown", ""
+    if not boot_id or not start_time:
+        return "unknown", ""
+    return "present", "%s:%s" % (boot_id, start_time)
+
+
+def sandbox_pid_is_alive(pid):
+    return sandbox_process_identity(pid)[0] == "present"
 
 
 def classify_orphan_task_sandbox(sandbox):
@@ -7464,6 +7478,8 @@ def classify_orphan_task_sandbox(sandbox):
     keep_raw = labels.get("mac.keep")
     keep = str(keep_raw if keep_raw is not None else "").strip().lower()
     pid_raw = str(labels.get("mac.pid") or "").strip()
+    pid_start = str(labels.get("mac.pid.start") or "").strip()
+    boot_id = str(labels.get("mac.boot.id") or "").strip()
 
     record = {
         "name": name,
@@ -7488,8 +7504,13 @@ def classify_orphan_task_sandbox(sandbox):
         return record
     if pid <= 0:
         return record
-    if sandbox_pid_is_alive(pid):
+    state, identity = sandbox_process_identity(pid)
+    if state == "unknown":
         return record
+    if state == "present":
+        recorded_identity = "%s:%s" % (boot_id, pid_start) if boot_id and pid_start else ""
+        if not recorded_identity or identity == recorded_identity:
+            return record
 
     if keep in falsey_keep_values:
         record["reap"] = True
