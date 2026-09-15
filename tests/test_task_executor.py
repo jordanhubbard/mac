@@ -2317,6 +2317,97 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
+@pytest.mark.parametrize("test_command,expected_pushed", [("true", True), ("false", False)])
+def test_git_finalizer_uses_resolved_runtime_target_despite_unpushed_preliminary_evidence(
+    tmp_path, monkeypatch, test_command, expected_pushed
+):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/resolved-target")
+    (work / "README.md").write_text("hello\nnative change\n", encoding="utf-8")
+    _git(work, "add", "README.md")
+    _git(work, "commit", "-m", "native change")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "repo_change",
+                "repo": {"pushed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _prepare_finalizer_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-resolved-target",
+        "metadata": {
+            "runtime": {"publication_target": "git://main"},
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
+                    "test": {"command": test_command},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is expected_pushed
+    assert manifest["tests"][0]["status"] == ("pass" if expected_pushed else "fail")
+    remote_ref = _git(
+        tmp_path, "ls-remote", str(origin), "refs/heads/task/resolved-target"
+    ).stdout.strip()
+    assert bool(remote_ref) is expected_pushed
+
+
+@pytest.mark.parametrize("resolved_target", [None, "", "report://operator"])
+def test_git_finalizer_preserves_resolved_absent_publication_intent(
+    tmp_path, monkeypatch, resolved_target
+):
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    preliminary = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {"pushed": False},
+    }
+    evidence_path = ws / "mac-evidence.json"
+    evidence_path.write_text(json.dumps(preliminary), encoding="utf-8")
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+
+    te.run_deterministic_git_finalizer(
+        ws,
+        {
+            "id": "t-no-target",
+            "metadata": {
+                "publication_target": "git://main",
+                "runtime": {"publication_target": resolved_target},
+            },
+        },
+    )
+
+    assert json.loads(evidence_path.read_text(encoding="utf-8")) == preliminary
+
+
 @pytest.mark.parametrize("prestage", [False, True], ids=["untracked", "staged-new"])
 def test_git_finalizer_commits_and_pushes_new_source_files(tmp_path, monkeypatch, prestage):
     origin = tmp_path / "origin.git"

@@ -6229,6 +6229,65 @@ def test_legacy_read_only_report_contract_is_a_repair_observation_not_dispatch_g
     assert assignment["task"]["id"] == loaded.id
 
 
+def test_assignment_projects_effective_publication_target_from_project(cp):
+    cp.create_project("native-project", metadata={"publication_target": "git://main"})
+    worker = register_agent(cp, "native-worker", ["ops"])
+    task = cp.create_task(
+        "Native repository task",
+        project="native-project",
+        required_capabilities=["ops"],
+        metadata={"execution_contract": {"type": "repository"}},
+    )
+
+    assignment = cp.claim_task_v2(task.id, worker.id)
+
+    assert assignment["task"]["metadata"]["runtime"]["publication_target"] == "git://main"
+    assert "publication_target" not in cp.get_task(task.id).metadata
+
+
+def test_assignment_preserves_absent_publication_intent(cp, monkeypatch):
+    monkeypatch.delenv("MAC_DEFAULT_PUBLICATION_TARGET", raising=False)
+    worker = register_agent(cp, "unpublished-worker", ["ops"])
+    task = cp.create_task("Unpublished task", required_capabilities=["ops"])
+
+    assignment = cp.claim_task_v2(task.id, worker.id)
+
+    assert assignment["task"]["metadata"]["runtime"]["publication_target"] is None
+
+
+@pytest.mark.parametrize(
+    "task_target,project_target,expected",
+    [
+        ("git://task-branch", "git://project-branch", "git://task-branch"),
+        (None, "git://project-branch", "git://project-branch"),
+        (None, None, "git://fleet-branch"),
+        ("report://operator", "git://project-branch", "report://operator"),
+    ],
+)
+def test_assignment_publication_target_uses_authoritative_precedence(
+    cp, monkeypatch, task_target, project_target, expected
+):
+    monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://fleet-branch")
+    cp.create_project("publication-project", metadata={"publication_target": project_target})
+    worker = register_agent(cp, "publication-worker", ["ops"])
+    metadata = {
+        "origin": {"repository_url": "https://github.com/example/project.git"},
+        "runtime": {"publication_target": "git://untrusted-stale-target", "other": "retained"},
+    }
+    if task_target is not None:
+        metadata["publication_target"] = task_target
+    task = cp.create_task("Repository task", project="publication-project", metadata=metadata)
+
+    assignment = cp.claim_task_v2(task.id, worker.id)
+
+    runtime = assignment["task"]["metadata"]["runtime"]
+    assert runtime["publication_target"] == expected
+    assert runtime["other"] == "retained"
+    assert cp.get_task(task.id).metadata["runtime"]["publication_target"] == (
+        "git://untrusted-stale-target"
+    )
+
+
 def test_release_preserves_control_plane_publication_routing_metadata(cp):
     """`release_task` removes only `no_dispatch`, preserving controller-owned
     routing metadata byte-for-byte.

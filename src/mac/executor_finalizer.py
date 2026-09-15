@@ -1365,8 +1365,17 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     """mac-jfns: deterministic repo_change evidence from REAL git state for
     tasks declaring publication_target=git://main."""
     metadata = task.get("metadata") or {}
-    publication_target = str(metadata.get("publication_target") or "").strip()
-    if not publication_target.startswith("git://"):
+    runtime = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
+    # The hub projects the effective task/project/fleet intent into the trusted
+    # assignment context. Fall back to the durable task key for older payloads.
+    publication_target = (
+        runtime.get("publication_target")
+        if "publication_target" in runtime
+        else metadata.get("publication_target")
+    )
+    if not isinstance(publication_target, str) or not publication_target.strip().startswith(
+        "git://"
+    ):
         return
     worktree = env_str("MAC_TASK_REPO_WORKTREE")
     if not worktree:
