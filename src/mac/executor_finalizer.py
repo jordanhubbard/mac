@@ -2079,7 +2079,10 @@ def write_fallback_evidence_manifest(
         "status": "complete",
         "evidence_type": "operator_result",
         "summary": summary,
-        "result": result_text[-20000:],
+        "operator_result": {
+            "summary": summary,
+            "result": result_text[-20000:],
+        },
         "task": {"id": task.get("id"), "title": task.get("title"), "project": task.get("project")},
     }
     recovery_log = _load_harness_recovery_log(task_workspace)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from mac import executor_finalizer as finalizer
+from mac.evidence_validators import validate_evidence_type
 from mac import executor_prompt as prompt
 from mac import task_executor as te
 
@@ -74,7 +75,15 @@ def test_finalizer_status_split_distinguishes_new_files() -> None:
 
 
 def test_fallback_manifest_remains_unverified_operator_result(tmp_path) -> None:
-    result = type("Result", (), {"stdout": "done", "stderr": "", "returncode": 0})()
+    result = type(
+        "Result",
+        (),
+        {
+            "stdout": "Compared both canary reports and confirmed successful execution.",
+            "stderr": "",
+            "returncode": 0,
+        },
+    )()
     finalizer.write_fallback_evidence_manifest(
         tmp_path,
         {"id": "task_test", "title": "Test", "project": "mac"},
@@ -84,3 +93,36 @@ def test_fallback_manifest_remains_unverified_operator_result(tmp_path) -> None:
     manifest = json.loads((tmp_path / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["evidence_type"] == "operator_result"
     assert manifest["status"] == "complete"
+    assert manifest["operator_result"] == {
+        "summary": "Compared both canary reports and confirmed successful execution.",
+        "result": "Compared both canary reports and confirmed successful execution.",
+    }
+    assert (
+        validate_evidence_type(
+            "operator_result",
+            manifest,
+            passed_check_count=lambda _manifest: 0,
+        )
+        == []
+    )
+
+
+def test_fallback_operator_result_validation_remains_fail_closed(tmp_path) -> None:
+    result = type("Result", (), {"stdout": "hello hello hello", "stderr": "", "returncode": 0})()
+    finalizer.write_fallback_evidence_manifest(
+        tmp_path,
+        {"id": "task_test", "title": "Test", "project": "mac"},
+        result,
+        None,
+    )
+    manifest = json.loads((tmp_path / "mac-evidence.json").read_text(encoding="utf-8"))
+
+    assert validate_evidence_type(
+        "operator_result",
+        manifest,
+        passed_check_count=lambda _manifest: 0,
+    ) == [
+        "operator_result evidence is not substantive (degenerate or placeholder text); "
+        "provide a real summary/result describing the completed work, or structured "
+        "findings/artifacts"
+    ]
