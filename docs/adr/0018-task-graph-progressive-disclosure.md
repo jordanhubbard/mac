@@ -4,7 +4,8 @@
 - Date: 2026-08-19
 - Decision owner: MAC fleet owner
 - Related: ADR 0013 (one authoritative hub allocator), ADR 0016 (agents decide
-  what a task needs), `docs/task-dependency-semantics.md` (dependency failure
+  what a task needs), ADR 0034 (project-scoped Mission Control canvas as an
+  *additional* view), `docs/task-dependency-semantics.md` (dependency failure
   semantics and required invariants)
 
 ## Context
@@ -134,6 +135,10 @@ TypeScript would drift.
 third. A visual canvas may later prove necessary for wide fan-out; if so it is
 a separate ADR with its own justification, and it will be an additional view,
 not a replacement for the table.
+
+[ADR 0034](0034-project-mission-control.md) is that additional view: a
+project-scoped, capped SVG DAG in the same console, still with no extra
+dependency. The table spine stays.
 
 ## Consequences
 
