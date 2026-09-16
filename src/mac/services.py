@@ -21335,6 +21335,8 @@ class ControlPlane:
 
         from . import gitops as _gitops
 
+        admitted_task_updated_at = task.updated_at
+
         branch = str(source_branch or "").strip()
         remote_head_ref = "refs/heads/%s" % branch
         observed = git_step(
@@ -21689,17 +21691,41 @@ class ControlPlane:
             }
         )
         try:
-            merge = pre_merged or _gitops.request_pull_request_merge(
-                api_url,
-                pr.number,
-                sha=head_sha,
-                branch=canonical_branch,
-                method="squash",
-                commit_title="%s (#%d)" % (title, pr.number),
-                commit_message=body,
-                queue_enabled=queue_enabled,
-            )
+            if pre_merged is not None:
+                merge = pre_merged
+            else:
+                # This is the final task-authority fence before the forge
+                # mutation. The no-op update locks the task row on PostgreSQL;
+                # SQLite's write transaction provides the equivalent ordering.
+                # Consequently a completed stop wins before this request, or
+                # waits until a request already accepted by the forge returns.
+                # Revoking a lease cannot cancel that already-accepted request.
+                with self.store.transaction() as conn:
+                    authority = conn.execute(
+                        "UPDATE tasks SET updated_at = updated_at "
+                        "WHERE id = ? AND state = ? AND updated_at = ?",
+                        (task.id, TaskState.REVIEWING.value, admitted_task_updated_at),
+                    )
+                    if authority.rowcount != 1:
+                        revoked = ValidationError(
+                            "git publication authority changed before forge mutation; "
+                            "a fresh review publication attempt is required"
+                        )
+                        revoked.publication_failure_kind = "publication_authority_revoked"
+                        raise revoked
+                    merge = _gitops.request_pull_request_merge(
+                        api_url,
+                        pr.number,
+                        sha=head_sha,
+                        branch=canonical_branch,
+                        method="squash",
+                        commit_title="%s (#%d)" % (title, pr.number),
+                        commit_message=body,
+                        queue_enabled=queue_enabled,
+                    )
         except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "publication_failure_kind", "") == "publication_authority_revoked":
+                raise
             detail = _gitops._scrub_secret(str(exc))
             failure = ValidationError(
                 "git publication could not merge pull request %s: %s"

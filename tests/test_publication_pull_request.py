@@ -13,6 +13,7 @@ performs an actual squash merge so the assertions are about real git history.
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -312,6 +313,54 @@ def test_publication_opens_and_squash_merges_a_pull_request(cp, tmp_path, monkey
     assert proofs[0]["contains_reviewed_head"] is False
     assert proofs[0]["canonical_tip_sha"] == final
     assert proofs[0]["reviewed_head_sha"] == task_head
+
+
+@pytest.mark.parametrize("queue_enabled", [False, True])
+def test_stopping_an_admitted_publisher_fences_the_forge_mutation(
+    cp, tmp_path, monkeypatch, queue_enabled
+):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge", queue=queue_enabled)
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    admitted = threading.Event()
+    resume = threading.Event()
+    original_verdicts = forge.required_check_verdicts
+
+    def pause_after_admission(*args, **kwargs):
+        admitted.set()
+        assert resume.wait(timeout=5)
+        return original_verdicts(*args, **kwargs)
+
+    monkeypatch.setattr(gitops, "required_check_verdicts", pause_after_admission)
+    outcome = {}
+
+    def publish():
+        try:
+            cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+        except Exception as exc:  # noqa: BLE001 - asserted below
+            outcome["error"] = exc
+
+    publisher = threading.Thread(target=publish)
+    publisher.start()
+    assert admitted.wait(timeout=5)
+    cp.stop_task(task.id, actor="operator", reason="publication hold")
+    resume.set()
+    publisher.join(timeout=10)
+
+    assert not publisher.is_alive()
+    assert getattr(outcome.get("error"), "publication_failure_kind", "") == (
+        "publication_authority_revoked"
+    )
+    assert forge.merges == []
+    assert forge.enqueued == []
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
+    assert cp.get_task(task.id).state == TaskState.STOPPED.value
+    assert cp.get_evidence(evidence.id).id == evidence.id
+
+    restarted = cp.start_stopped_task(task.id, actor="operator")
+    assert restarted.state == TaskState.OPEN.value
+    assert cp.get_evidence(evidence.id).id == evidence.id
 
 
 def test_publication_defers_while_the_pull_request_checks_are_pending(cp, tmp_path, monkeypatch):
