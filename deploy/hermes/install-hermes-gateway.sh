@@ -50,7 +50,8 @@ release_command() {
     --launcher "$HOME/.local/bin/hermes" \
     --home "$HERMES_HOME" --markdown "$RUNTIME_CONTEXT_MARKDOWN" \
     --manifest "$SCRIPT_DIR/python314-source.json" \
-    --manifest "$SCRIPT_DIR/runtime-context-source.json"
+    --manifest "$SCRIPT_DIR/runtime-context-source.json" \
+    --manifest "$SCRIPT_DIR/cron-routing-source.json"
 }
 
 hermes_python_bin() {
@@ -109,6 +110,7 @@ qualify_staged_runtime() {
   "$mac_python" -m mac.hermes_patch "$stage" \
     "$SCRIPT_DIR/python314-source.json" \
     "$SCRIPT_DIR/runtime-context-source.json" \
+    "$SCRIPT_DIR/cron-routing-source.json" \
     || die "staged Hermes reviewed patch qualification failed"
   [ -x "$stage/.venv/bin/python" ] \
     || die "staged Hermes runtime has no managed interpreter"

@@ -62,6 +62,14 @@ context-file builder so the deployment-owned MAC runtime markdown is additive
 to workspace instructions and `SOUL.md`; it does not replace either one or
 change `terminal.cwd` discovery.
 
+`deploy/hermes/cron-routing.patch` makes an explicit Slack channel destination
+post at the channel root. A job's creation thread remains provenance and no
+longer changes that explicit destination. `deliver=origin` retains origin routing,
+and an explicit `slack:channel:thread` destination retains its requested thread.
+The `attach_to_session` setting controls transcript mirroring independently.
+Existing channel-only jobs acquire this behavior when the qualified runtime is
+deployed; jobs that need a thread must name it or use `deliver=origin`.
+
 This accepts a limited patch-maintenance obligation for the requested migration.
 Requalify the patch when changing the upstream revision, and retire it once a
 qualified upstream release supplies the fixes. It does not restore the snapshot,
@@ -72,7 +80,7 @@ integrity instead of forbidding every file with a `.patch` suffix.
 ## Qualified external releases
 
 The gateway installer prepares an external release from the reviewed revision,
-applies both manifests, and installs the locked `slack` and `mcp` extras using
+applies the reviewed manifests, and installs the locked `slack` and `mcp` extras using
 the reviewed Python and uv versions. Hermes itself is installed in editable
 mode, as supported by upstream, so service modules resolve from the selected
 environment even when the working directory is the profile. Qualification runs

@@ -1,0 +1,20 @@
+{
+  "upstream_repository": "https://github.com/NousResearch/hermes-agent",
+  "upstream_commit": "9dd6634c5635321cf38840cc30e9b51226689128",
+  "patch": "cron-routing.patch",
+  "patch_sha256": "9a3fe38d1cfe23e4dba407acd51fcea04c55b613369594c22e619fe42d8ee687",
+  "files": {
+    "cron/scheduler_delivery.py": {
+      "original_sha256": "ad9806e0c508282e88640a28eadbd8a617044b77730fa3ba2813c9ab852acdb8",
+      "patched_sha256": "2d85133cb7cc6ccfdc8ada7a683dbf6687130489c22e2680566118b4f90c09ff"
+    },
+    "tests/cron/test_scheduler.py": {
+      "original_sha256": "7396588f9868e7018105688f5b71254dce3b3424ba66cc3b5ebb1c3a048803a4",
+      "patched_sha256": "98fbb611ab8ab773b28d6f2beecee4176730335fe67aa0373c38013f640a9465"
+    },
+    "tests/cron/test_cron_relay_delivery_guards.py": {
+      "original_sha256": "f2c4afd54651dbc11d5d5f9803c1ede880d07b3848ae47dce1a48d8088322b2f",
+      "patched_sha256": "8aca2ef70cbbb0024977c4f4c3b8d764e73a93d9c31a3ba1316201e3f31f4c5e"
+    }
+  }
+}

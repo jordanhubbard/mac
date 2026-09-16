@@ -475,6 +475,7 @@ def sandbox_cgroup_candidates(
     *,
     current_pid: Optional[int] = None,
     proc_root: Path = Path("/proc"),
+    trusted_processes: Optional[Mapping[int, str]] = None,
 ) -> list[int]:
     """Return every same-identity cgroup peer except trusted control ancestors."""
 
@@ -495,6 +496,9 @@ def sandbox_cgroup_candidates(
         other = int(entry.name)
         if other in protected:
             continue
+        if trusted_processes and other in trusted_processes:
+            if _proc_start_time(other, proc_root) == trusted_processes[other]:
+                continue
         details = _proc_uid_and_parent(other, proc_root)
         if details is None or details[0] != uid:
             continue
@@ -508,6 +512,37 @@ def sandbox_cgroup_candidates(
         if same_sandbox:
             candidates.append(other)
     return sorted(set(candidates))
+
+
+def _proc_start_time(pid: int, proc_root: Path = Path("/proc")) -> Optional[str]:
+    """Identify a process lifetime, without trusting its mutable name or argv."""
+    try:
+        # comm may contain spaces and parentheses; the fields after its final
+        # closing parenthesis start at field 3 (state). starttime is field 22.
+        fields = (proc_root / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
+        value = fields[19]
+        return value if value.isdigit() else None
+    except (OSError, IndexError, UnicodeError):
+        return None
+
+
+def snapshot_sandbox_control_processes() -> dict[int, str]:
+    """Capture runtime peers in a FRESH verifier before repository execution.
+
+    OpenShell's keepalive is a sibling of the verifier, not its ancestor.
+    This snapshot is valid only in the separately provisioned verifier; taking
+    it in the agent sandbox, or after bootstrap, would trust attacker processes.
+    PID plus start time prevents a later process from inheriting an exemption.
+    """
+    result: dict[int, str] = {}
+    for pid in sandbox_cgroup_candidates():
+        start = _proc_start_time(pid)
+        if start is None:
+            if Path("/proc", str(pid)).exists():
+                raise VerificationError("could not identify trusted sandbox process %d" % pid)
+            continue
+        result[pid] = start
+    return result
 
 
 def quiesce_sandbox_cgroup(
@@ -628,7 +663,12 @@ def _remove_nofollow(path: Path, root: Path) -> None:
     current = root
     for part in relative.parts[:-1]:
         current = current / part
-        info = current.lstat()
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            # git clean -fdX may already have removed the ignored parent of
+            # a declared output such as .venv/bin/python.
+            return
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise VerificationError("declared output path traverses a non-directory")
     target = root / relative
@@ -814,6 +854,11 @@ def revalidate_and_write(control: Mapping[str, Any]) -> int:
 
 
 def orchestrate() -> int:
+    trusted_processes = snapshot_sandbox_control_processes()
+
+    def untrusted_processes() -> list[int]:
+        return sandbox_cgroup_candidates(trusted_processes=trusted_processes)
+
     workspace = Path(os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()).resolve(strict=True)
     worktree = Path(os.environ.get("MAC_TASK_REPO_WORKTREE") or str(workspace)).resolve(strict=True)
     worktree.relative_to(workspace)
@@ -870,7 +915,7 @@ def orchestrate() -> int:
                     "status": "skipped",
                     "reason": "declared bootstrap outputs already exist",
                 }
-            quiesce_sandbox_cgroup()
+            quiesce_sandbox_cgroup(candidate_provider=untrusted_processes)
         if bootstrap is not None and int(bootstrap.get("returncode") or 0) != 0:
             test = {
                 "command": command,
@@ -889,7 +934,7 @@ def orchestrate() -> int:
             }
         else:
             test = _run_bounded(command, worktree, timeout)
-        quiesce_sandbox_cgroup()
+        quiesce_sandbox_cgroup(candidate_provider=untrusted_processes)
         problems.extend(monitor.drain())
     finally:
         monitor.close()

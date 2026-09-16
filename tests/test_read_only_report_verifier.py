@@ -205,6 +205,21 @@ def test_atomic_result_replaces_symlink_without_following_it(tmp_path: Path) -> 
     assert outside.read_text() == "untouched\n"
 
 
+def test_cleanup_handles_declared_files_beneath_an_ignored_directory(tmp_path: Path) -> None:
+    _workspace, repo, _identity = _repository(tmp_path)
+    (repo / ".gitignore").write_text(".venv/\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "Ignore disposable environment")
+    outputs = [".venv/bin/python", ".venv/bin/pytest", ".venv/bin/mypy"]
+    for relative in outputs:
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("disposable")
+    verifier.clean_allowed_outputs(repo, outputs)
+    assert not (repo / ".venv").exists()
+    assert _git(repo, "status", "--porcelain") == ""
+
+
 def test_cgroup_selection_ignores_sessions_and_process_groups(
     tmp_path: Path,
 ) -> None:
@@ -225,6 +240,48 @@ def test_cgroup_selection_ignores_sessions_and_process_groups(
     process(200, 1)  # double-forked/reparented peer, no ancestry relationship
     process(300, 1, "/other")
     assert verifier.sandbox_cgroup_candidates(current_pid=100, proc_root=proc) == [200]
+
+
+def test_cgroup_preserves_only_original_runtime_process_lifetime(tmp_path: Path) -> None:
+    proc = tmp_path / "proc"
+
+    def process(pid: int, parent: int, start: str) -> None:
+        root = proc / str(pid)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "status").write_text("Uid:\t%d\nPPid:\t%d\n" % (os.getuid(), parent))
+        (root / "cgroup").write_text("0::/sandbox\n")
+        # Deliberately identical process names, including a closing parenthesis.
+        (root / "stat").write_text("%d (sleep ) peer) S %s %s\n" % (pid, "0 " * 18, start))
+
+    process(1, 0, "1")
+    process(100, 1, "10")  # verifier
+    process(34, 1, "2")  # runtime keepalive sibling
+    process(200, 1, "20")  # repository double-fork, same name as keepalive
+    trusted = {34: "2"}
+    assert verifier.sandbox_cgroup_candidates(
+        current_pid=100, proc_root=proc, trusted_processes=trusted
+    ) == [200]
+    process(34, 1, "30")  # a recycled PID must never inherit runtime trust
+    assert verifier.sandbox_cgroup_candidates(
+        current_pid=100, proc_root=proc, trusted_processes=trusted
+    ) == [34, 200]
+    (proc / "34/stat").write_text("malformed")
+    assert verifier.sandbox_cgroup_candidates(
+        current_pid=100, proc_root=proc, trusted_processes=trusted
+    ) == [34, 200]
+
+
+def test_control_snapshot_rejects_unidentifiable_live_peer(monkeypatch) -> None:
+    monkeypatch.setattr(verifier, "sandbox_cgroup_candidates", lambda: [os.getpid()])
+    monkeypatch.setattr(verifier, "_proc_start_time", lambda _pid: None)
+    with pytest.raises(verifier.VerificationError, match="identify trusted sandbox process"):
+        verifier.snapshot_sandbox_control_processes()
+
+
+def test_control_snapshot_records_lifetime_and_skips_exited_peer(monkeypatch) -> None:
+    monkeypatch.setattr(verifier, "sandbox_cgroup_candidates", lambda: [10, 999999999])
+    monkeypatch.setattr(verifier, "_proc_start_time", lambda pid: "42" if pid == 10 else None)
+    assert verifier.snapshot_sandbox_control_processes() == {10: "42"}
 
 
 def test_clip_and_trusted_git_fail_closed(monkeypatch, tmp_path: Path) -> None:
@@ -644,11 +701,12 @@ def _orchestrator_fixture(
             self.closed = True
 
     monkeypatch.setattr(verifier, "ProtectedInputMonitor", Monitor)
+    monkeypatch.setattr(verifier, "snapshot_sandbox_control_processes", lambda: {34: "2"})
     quiescence_calls: list[str] = []
     monkeypatch.setattr(
         verifier,
         "quiesce_sandbox_cgroup",
-        lambda: quiescence_calls.append("quiesced"),
+        lambda **_kwargs: quiescence_calls.append("quiesced"),
     )
     controls: list[dict] = []
 
@@ -658,6 +716,38 @@ def _orchestrator_fixture(
 
     monkeypatch.setattr(verifier.subprocess, "run", fresh_control)
     return workspace, worktree, expected, controls, quiescence_calls
+
+
+def test_runtime_trust_is_captured_once_before_any_repository_command(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _orchestrator_fixture(monkeypatch, tmp_path)
+    monkeypatch.setenv("MAC_REPO_BOOTSTRAP_COMMAND", "bootstrap")
+    monkeypatch.setenv("MAC_REPO_TEST_COMMAND", "tests")
+    seen = []
+
+    def capture():
+        seen.append("capture runtime")
+        return {34: "2"}
+
+    def run(command, *_args):
+        seen.append(command)
+        return {"command": command, "returncode": 0, "status": "pass"}
+
+    def candidates(*, trusted_processes):
+        assert trusted_processes == {34: "2"}
+        return []
+
+    def quiesce(*, candidate_provider):
+        assert candidate_provider() == []
+        seen.append("quiesce")
+
+    monkeypatch.setattr(verifier, "snapshot_sandbox_control_processes", capture)
+    monkeypatch.setattr(verifier, "_run_bounded", run)
+    monkeypatch.setattr(verifier, "sandbox_cgroup_candidates", candidates)
+    monkeypatch.setattr(verifier, "quiesce_sandbox_cgroup", quiesce)
+    assert verifier.orchestrate() == 0
+    assert seen == ["capture runtime", "bootstrap", "quiesce", "tests", "quiesce"]
 
 
 def test_orchestrate_fails_bootstrap_missing_outputs_and_preserves_evidence(

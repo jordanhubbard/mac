@@ -192,6 +192,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
 | runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
 | supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
+| supplemental reference | [`investigations/read-only-verifier-process-ownership.md`](../investigations/read-only-verifier-process-ownership.md) | Read-only verifier process ownership |
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
 | supplemental reference | [`memory-tier-schema.md`](../memory-tier-schema.md) | MAC vector memory tier — schema, collections, model, TTLs |
 | supplemental reference | [`memory-tier-verification.md`](../memory-tier-verification.md) | Memory tier — end-to-end verification |
