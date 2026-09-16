@@ -209,6 +209,9 @@ def _run(
         mac_python.write_text(
             f"#!{sys.executable}\n"
             "import json,os,sys\nfrom pathlib import Path\n"
+            "if sys.argv[1:3] == ['-m','mac.hermes_chat_config']:\n"
+            "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['chat-config-sync',*sys.argv[3:]])+'\\n')\n"
+            "    sys.exit(0)\n"
             "if sys.argv[1:3] == ['-m','mac.hermes_release'] and sys.argv[3] != 'resolve':\n"
             "    action=sys.argv[3]\n"
             "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['release',action])+'\\n')\n"
@@ -602,6 +605,25 @@ def test_prepare_qualifies_installed_runtime_before_configuring_or_restarting(tm
     assert result.returncode == 0, result.stderr
     assert calls[:2] == [["release", "prepare"], ["release", "activate"]]
     assert ["gateway", "install", "--force", "--start-now", "--start-on-login"] in calls
+
+
+def test_prepare_syncs_chat_provider_before_gateway_configuration_and_restart(tmp_path):
+    result, calls = _run(tmp_path, "prepare")
+    assert result.returncode == 0, result.stderr
+    sync_call = [
+        "chat-config-sync",
+        "--hermes-home",
+        str(tmp_path / "home" / ".hermes"),
+        "--mac-env",
+        str(tmp_path / "home" / ".mac" / "mac.env"),
+    ]
+    assert sync_call in calls
+    assert calls.index(sync_call) < calls.index(
+        ["config", "set", "slack.require_mention", "true", "--force"]
+    )
+    assert calls.index(sync_call) < calls.index(
+        ["gateway", "install", "--force", "--start-now", "--start-on-login"]
+    )
 
 
 def test_qualification_failure_does_not_configure_or_stop_existing_gateway(tmp_path):

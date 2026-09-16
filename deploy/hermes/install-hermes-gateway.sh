@@ -99,6 +99,14 @@ print("Hermes active runtime prompt includes MAC context and existing persona co
 PY
 }
 
+sync_chat_config() {
+  local mac_python="$MAC_HOME/venv/bin/python"
+  [ -x "$mac_python" ] || die "MAC deployment Python is unavailable: $mac_python"
+  "$mac_python" -m mac.hermes_chat_config \
+    --hermes-home "$HERMES_HOME" --mac-env "$MAC_HOME/mac.env" \
+    || die "Hermes chat provider config could not be synchronized"
+}
+
 qualify_staged_runtime() {
   local stage="${1:-}" active="" mac_python="$MAC_HOME/venv/bin/python"
   [ -n "$stage" ] && [ -d "$stage" ] && git -C "$stage" rev-parse --git-dir >/dev/null 2>&1 \
@@ -505,6 +513,10 @@ prepare() {
   ensure_user_allowlist
   ensure_home_channel_env
   ensure_chat_gateway_impl_env
+  # The standalone Hermes installer is also used for fleet cutovers. Mirror
+  # the deploy-authoritative router endpoint and bearer into Hermes before its
+  # CLI reads or starts the gateway; readiness alone does not exercise turns.
+  sync_chat_config
   configure_gateway
   install_service
 }
