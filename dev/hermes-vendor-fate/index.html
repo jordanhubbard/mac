@@ -1965,8 +1965,13 @@ integrity instead of forbidding every file with a <code>.patch</code> suffix.</p
 <h2 id="qualified-external-releases">Qualified external releases<a class="headerlink" href="#qualified-external-releases" title="Permanent link">&para;</a></h2>
 <p>The gateway installer prepares an external release from the reviewed revision,
 applies both manifests, and installs the locked <code>slack</code> and <code>mcp</code> extras using
-the reviewed Python and uv versions. The profile's runtime context and persona
-must appear in the candidate's constructed prompt before selection.</p>
+the reviewed Python and uv versions. Hermes itself is installed in editable
+mode, as supported by upstream, so service modules resolve from the selected
+environment even when the working directory is the profile. Qualification runs
+the actual service stderr wrapper and CLI child with <code>--help</code> from that directory,
+without adding the source directory to <code>PYTHONPATH</code> or <code>sys.path</code>. The profile's
+runtime context and persona must appear in the candidate's constructed prompt
+before selection.</p>
 <p>The regular <code>~/.local/bin/hermes</code> launcher is the runtime selection point.
 Deployment replaces it atomically after qualification and uses upstream's CLI
 to install the service. Verification checks the release's recorded source and
