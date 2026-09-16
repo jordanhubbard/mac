@@ -1,0 +1,200 @@
+--- a/cron/scheduler_delivery.py
++++ b/cron/scheduler_delivery.py
+@@ -598,16 +598,9 @@
+         if resolution_error:
+             logger.warning("Invalid cron delivery target '%s': %s", deliver_value, resolution_error)
+             return None
+-        if (
+-            thread_id is None
+-            and platform_key == "slack"
+-            and origin
+-            and str(origin.get("platform") or "").lower() == platform_key
+-            and str(origin.get("chat_id")) == str(chat_id)
+-            and origin.get("thread_id")
+-            and not _origin_thread_is_stale(origin)
+-        ):
+-            thread_id = origin.get("thread_id")
++        # An explicit destination owns its routing. A channel without a thread
++        # means the channel root, even when the job was created in a thread.
++        # Keep origin as provenance; deliver=origin handles inherited routing.
+         return {
+             "platform": platform_name,
+             "chat_id": chat_id,
+@@ -1475,7 +1468,10 @@
+ 
+     origin = _resolve_origin(job) or {}
+     origin_thread = origin.get("thread_id")
+-    if origin_thread and not thread_id:
++    explicit_slack_target = (
++        platform_name.lower() == "slack" and target.get("_resolved_from") == "explicit"
++    )
++    if origin_thread and not thread_id and not explicit_slack_target:
+         logger.warning(
+             "Job '%s': origin has thread_id=%s but delivery target lost it (deliver=%s, target=%s)",
+             job["id"], origin_thread, job.get("deliver", "local"), target)
+@@ -1537,6 +1533,9 @@
+             "Job '%s': cron_continuable_surface=in_channel not supported on %s, using thread",
+             job.get("id", "?"), platform_name)
+         in_channel_surface = False
++    # Continuation preferences cannot flatten an explicitly addressed thread.
++    if explicit_slack_target and thread_id:
++        in_channel_surface = False
+     if in_channel_surface and inchannel_continuable and live_adapter_ready:
+         # Force flat (D2): an inherited thread_id would never match the flat seed (None). Gated
+         # on `inchannel_continuable` (SAME gate as the seed) AND `live_adapter_ready` (fallback
+@@ -1549,6 +1548,7 @@
+     opened_thread_id: Optional[str] = None
+     if (
+         mirror_this_target
++        and not explicit_slack_target
+         and not in_channel_surface
+         and runtime_adapter is not None
+         and loop is not None
+--- a/tests/cron/test_scheduler.py
++++ b/tests/cron/test_scheduler.py
+@@ -179,6 +179,26 @@
+ 
+ 
+ class TestResolveDeliveryTarget:
++    @pytest.mark.parametrize("attach_to_session", [False, True])
++    @pytest.mark.parametrize("channel", ["C0B3KEP3SD6", "C0OTHER"])
++    def test_explicit_slack_channel_does_not_inherit_origin_thread(
++        self, monkeypatch, attach_to_session, channel
++    ):
++        monkeypatch.setenv("SLACK_HOME_CHANNEL", "C0HOME")
++        origin = {
++            "platform": "slack", "chat_id": "C0B3KEP3SD6",
++            "thread_id": "1778485067.844139",
++        }
++        job = {
++            "deliver": "slack:" + channel,
++            "origin": dict(origin), "attach_to_session": attach_to_session,
++        }
++        assert _resolve_delivery_target(job) == {
++            "platform": "slack", "chat_id": channel, "thread_id": None,
++            "_resolved_from": "explicit",
++        }
++        assert job["origin"] == origin
++
+     def test_origin_delivery_preserves_thread_id(self):
+         job = {
+             "deliver": "origin",
+@@ -780,12 +800,24 @@
+         assert os.getenv("HERMES_CRON_AUTO_DELIVER_THREAD_ID") is None
+         fake_db.close.assert_called_once()
+ 
+-    def test_run_job_preserves_slack_origin_thread_for_same_explicit_channel(self, tmp_path, monkeypatch):
++    @pytest.mark.parametrize("attach_to_session", [False, True])
++    @pytest.mark.parametrize(
++        "deliver,expected_thread",
++        [
++            ("slack:C0B3KEP3SD6", None),
++            ("slack:C0B3KEP3SD6:1778486000.000001", "1778486000.000001"),
++            ("origin", "1778485067.844139"),
++        ],
++    )
++    def test_run_job_obeys_explicit_slack_destination(
++        self, tmp_path, monkeypatch, attach_to_session, deliver, expected_thread
++    ):
+         job = {
+             "id": "slack-thread-job",
+             "name": "slack-thread",
+             "prompt": "hello",
+-            "deliver": "slack:C0B3KEP3SD6",
++            "deliver": deliver,
++            "attach_to_session": attach_to_session,
+             "origin": {
+                 "platform": "slack",
+                 "chat_id": "C0B3KEP3SD6",
+@@ -833,8 +865,9 @@
+         assert seen == {
+             "platform": "slack",
+             "chat_id": "C0B3KEP3SD6",
+-            "thread_id": "1778485067.844139",
+-        }
++            "thread_id": expected_thread,
++        }
++        assert job["origin"]["thread_id"] == "1778485067.844139"
+         assert os.getenv("HERMES_CRON_AUTO_DELIVER_PLATFORM") is None
+         assert os.getenv("HERMES_CRON_AUTO_DELIVER_CHAT_ID") is None
+         assert os.getenv("HERMES_CRON_AUTO_DELIVER_THREAD_ID") is None
+@@ -2371,7 +2404,7 @@
+         return mock_cfg
+ 
+     def _run_inchannel_delivery(self, extra, adapter, *, mirror_ok=True, origin=None,
+-                                attach_to_session=True):
++                                attach_to_session=True, deliver="origin"):
+         """Drive _deliver_result down the live-adapter path for a Slack
+         channel-origin job with the given ``extra`` config. Returns the
+         _open_continuable_cron_thread mock and the mirror_to_session mock."""
+@@ -2395,7 +2428,7 @@
+         job = {
+             "id": "brief-job",
+             "name": "Daily Brief",
+-            "deliver": "origin",
++            "deliver": deliver,
+             # Channel origin: no thread_id (flat channel message scheduled it).
+             # Carries the scheduling user's id — the in_channel seed must key
+             # the flat channel session to THIS user (see build_session_key).
+@@ -2437,6 +2470,38 @@
+             adapter._session_store = MagicMock()
+         return adapter
+ 
++    @pytest.mark.parametrize("attach_to_session", [False, True])
++    @pytest.mark.parametrize("surface", ["thread", "in_channel"])
++    @pytest.mark.parametrize("thread_id", [None, "1787188000.000100"])
++    def test_explicit_slack_destination_survives_delivery_preferences(
++        self, attach_to_session, surface, thread_id
++    ):
++        captured = {}
++
++        class SpyRouter:
++            def __init__(self, *args, **kwargs):
++                pass
++
++            async def _deliver_to_platform(self, target, text, metadata):
++                captured["target"] = target
++                return {"success": True, "message_id": "msg_1"}
++
++        origin = {
++            "platform": "slack", "chat_id": "C0B3KEP3SD6", "user_id": "U_HUMAN",
++            "thread_id": "1787188000.000100",
++        }
++        deliver = "slack:C0B3KEP3SD6" + (":" + thread_id if thread_id else "")
++        adapter = self._slack_adapter()
++        with patch("gateway.delivery.DeliveryRouter", SpyRouter):
++            opened, _ = self._run_inchannel_delivery(
++                {"cron_continuable_surface": surface}, adapter,
++                origin=origin, attach_to_session=attach_to_session, deliver=deliver,
++            )
++        assert captured["target"].chat_id == "C0B3KEP3SD6"
++        assert captured["target"].thread_id == thread_id
++        opened.assert_not_called()
++        assert origin["thread_id"] == "1787188000.000100"
++
+     def test_in_channel_skips_thread_open(self):
+         """G2: in_channel mode must NOT open a handoff thread."""
+         adapter = self._slack_adapter(supports_inchannel=True)
+--- a/tests/cron/test_cron_relay_delivery_guards.py
++++ b/tests/cron/test_cron_relay_delivery_guards.py
+@@ -83,8 +83,8 @@
+         target = _resolve_single_delivery_target(job, "slack:D0BJTDCSR7C")
+         assert target["thread_id"] is None
+ 
+-    def test_explicit_target_reattach_kept_for_non_home_chat(self, monkeypatch):
+-        """Origin-affinity re-attach is preserved for genuine non-home threads."""
++    def test_explicit_target_never_reattaches_non_home_origin_thread(self, monkeypatch):
++        """Explicit channels remain top-level even with genuine non-home origins."""
+         _slack_home(monkeypatch, chat_id="D_OTHER_HOME")
+         monkeypatch.setattr(
+             "tools.send_message_tool.prepare_send_message_platforms", lambda: None)
+@@ -94,7 +94,8 @@
+         job = {"origin": {"platform": "slack", "chat_id": "C0AGENERAL",
+                           "thread_id": "1755040000.000100"}}
+         target = _resolve_single_delivery_target(job, "slack:C0AGENERAL")
+-        assert target["thread_id"] == "1755040000.000100"
++        assert target["thread_id"] is None
++        assert job["origin"]["thread_id"] == "1755040000.000100"
+ 
+ 
+ def _gateway_config(connected_values):
