@@ -4671,7 +4671,10 @@ def test_retain_forward_recovery_reconciles_attestation_authority_after_release(
     assert "reconcile_bound_worker_attestation_key" not in retain_forward_case
 
     release_lock = recovery.index('release_remote_deployment_lock "$agent" "$deployment_id"')
-    reconcile_guard = recovery.index('if [ "$action" = retain_forward ]; then', release_lock)
+    reconcile_guard = recovery.index(
+        'if [ "$action" = retain_forward ] && [ "$reconcile_retained_worker" = 1 ]; then',
+        release_lock,
+    )
     reconcile_acquire = recovery.index(
         'acquire_remote_deployment_lock "$agent" "$reconcile_deployment_id" 0', reconcile_guard
     )
