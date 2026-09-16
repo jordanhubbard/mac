@@ -9,9 +9,19 @@ label, platform, runtime, and GitHub provenance verification.
 
 Candidate validation runs up front on pull requests and pushes. The documentation
 boundary builds and executes its own ARM64 candidate from the checked-out tree;
-that local test image is not a published runtime identity. Deployable image
-publication and the OpenShell tested marker wait for full candidate validation
-and container contracts. There is no nightly testing schedule.
+that local test image is not a published runtime identity. MAC deployment and
+trusted-certifier image publication wait for full candidate validation and
+container contracts. OpenShell runtime publication depends only on image-scope
+qualification; its published digest alone does not establish that the correctness
+gates passed.
+
+The separate OpenShell tested-marker job waits for runtime publication, dead-code,
+mainline, compatibility, PostgreSQL, full candidate validation, and container
+contracts. It tags the exact published digest as `tested-<frozen-inputs-sha>`.
+By default, fleet deployment requires that tag to resolve to the requested image
+digest. The explicit `MAC_DEPLOY_ALLOW_UNTESTED_IMAGE=1` override emits a warning
+and bypasses that check; it is not test qualification. There is no nightly testing
+schedule.
 
 The owner-private `mac.image_publication_identity.v1` artifact binds:
 
