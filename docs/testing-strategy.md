@@ -5,6 +5,30 @@ not for test count or aggregate line coverage. Coverage is a diagnostic and a
 safety floor. It is not a product KPI, and an uncovered line is not by itself a
 reason to create a test.
 
+## Parallel PostgreSQL isolation
+
+Parallel pytest runs automatically provision one PostgreSQL database per xdist
+worker before test collection. Tests still receive fresh, isolated schemas
+inside their worker database. This avoids serializing unrelated workers on the
+production migration advisory lock; the production lock and migration code are
+unchanged. Serial pytest invocations continue to use the configured test database.
+
+`MAC_TEST_PG_URL` must point to a test server whose role can create databases.
+The repository's local PostgreSQL helper and CI PostgreSQL service provide that
+role. If a custom role lacks `CREATEDB`, the parallel run fails with an explicit
+prerequisite error rather than silently falling back to the contended database.
+Connection settings are preserved when selecting the worker database; subprocesses
+inherit the worker's DSN.
+
+The controller records ownership in database comments and holds an advisory
+lease in the original test database. Workers hold that lease too, so controller
+failure alone does not make their databases eligible for cleanup. Normal teardown
+drops only the databases created by that controller. A later parallel run can
+reap marked leftovers from the same base database and database owner only after
+obtaining an exclusive lease. Unmarked databases are never eligible, and cleanup
+never forces existing clients to disconnect. Failed cleanup retains the database
+and emits a warning for investigation.
+
 ## What justifies a test
 
 Every durable test must protect at least one of these:
@@ -69,26 +93,28 @@ only for distinct edge behavior, fault localization, or a faster required
 signal. A black-box health check does not replace a focused semantic assertion;
 a black-box workflow that detects the same injected fault can.
 
-## Pipeline tiers
+## Up-front validation
 
-The tiers avoid running the same test twice in one job:
+CI has no nightly test schedule. Every pull request and main push runs the
+complete primary-Python contract suite with statement, branch, and subprocess
+coverage, historical-fault replay, and container contracts. The affected-test
+sanity slice remains a fast diagnostic; it does not replace full candidate
+validation. Compatibility checks use the pinned fleet Python baseline.
 
-1. **Sanity / pull request** runs deterministic public-contract canaries, true
-   process E2E seams, and directly changed tests. If test selection is
-   unavailable or untrustworthy, it falls back to the full contract gate.
-2. **Mainline publication** runs the full statement, branch, and subprocess
-   coverage gate once on the primary Python version.
-3. **Compatibility** runs import, CLI/API contract, and process-E2E smoke on
-   the secondary Python version. The full secondary-version matrix runs on the
-   schedule below rather than duplicating every pull-request test.
-4. **Nightly / explicit audit** runs the complete version matrix, live optional
-   backends when configured, container contracts, portfolio analysis, and
-   historical-fault replay.
+The documentation workflow runs its executable book on Linux and macOS,
+generated-reference and strict-HTML checks, live Kubernetes validation, and a
+locally built ARM64 candidate image on pull requests and pushes. Building that
+candidate directly avoids depending on a concurrent image publication.
 
-The full suite remains the fail-closed fallback for changes to test selection,
-coverage configuration, dependency/bootstrap/runtime files, shared test
-infrastructure, or any change for which affected-test selection is empty or
-uncertain.
+Deployable image publication and the OpenShell runtime's tested marker depend
+on the full candidate and container gates. Documentation publication depends
+on its live boundaries as well as the book and HTML gates. Portfolio analysis
+runs on main pushes or explicit dispatch; it has no timer. Explicit workflow
+dispatch remains available to revalidate a candidate.
+
+The full suite remains the fail-closed fallback for affected-test selection
+that is unavailable, empty, or uncertain. Up-front validation preserves the
+coverage floors and does not turn formerly deferred checks into skips.
 
 ## Coverage policy
 

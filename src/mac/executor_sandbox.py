@@ -48,6 +48,7 @@ the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
 from __future__ import annotations
 
 import atexit
+import base64
 import contextlib
 import ctypes
 import hashlib
@@ -103,6 +104,8 @@ from mac.openshell_runtime import (
     SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
+    verifier_resource_profile,
+    verifier_profile_create_args,
 )
 from mac.env_config import (
     env_bool,
@@ -946,6 +949,11 @@ def _openshell_bin() -> str:
 def _sandbox_name() -> str:
     """A unique name for the kept sandbox so the download + delete steps can
     target it. Overridable via MAC_OPENSHELL_SANDBOX_NAME (debug a single run)."""
+    assigned = env_str("MAC_TASK_OPENSHELL_SANDBOX_NAME")
+    if assigned:
+        if not _re.fullmatch(r"mac-task-[0-9a-f]{8}", assigned):
+            raise RuntimeError("invalid controller-owned task sandbox identity")
+        return assigned
     explicit = env_str("MAC_OPENSHELL_SANDBOX_NAME")
     if explicit:
         return explicit
@@ -1027,13 +1035,24 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
         and (env_str("MAC_TASK_REPO_ACCESS_MODE") or "").strip().lower()
         != REPORT_REPOSITORY_READ_ONLY_MODE
     )
+    from .openshell_sandbox_gc import _process_identity
+
+    pid = os.getpid()
+    state, identity = _process_identity(pid)
+    if state != "present" or ":" not in identity:
+        raise RuntimeError("cannot establish OpenShell creator process identity")
+    boot_id, pid_start = identity.split(":", 1)
     return [
         "--label",
         "mac.owner=mac",
         "--label",
         "mac.kind=%s" % kind,
         "--label",
-        "mac.pid=%d" % os.getpid(),
+        "mac.pid=%d" % pid,
+        "--label",
+        "mac.pid.start=%s" % pid_start,
+        "--label",
+        "mac.boot.id=%s" % boot_id,
         "--label",
         "mac.keep=%s" % ("true" if keep or repository_wip_guard else "false"),
     ] + _sandbox_identity_labels()
@@ -1675,6 +1694,7 @@ def _sandbox_repository_verification_shell(
     return "\n".join(
         [
             *exports,
+            verifier_resource_profile()[2],
             'if [ -n "${VERIFICATION_START_MARKER:-}" ]; then : > "$VERIFICATION_START_MARKER"; fi',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
@@ -2062,6 +2082,7 @@ def _sandbox_read_only_repository_verification_shell(
     return "\n".join(
         [
             *exports,
+            verifier_resource_profile()[2],
             'export MAC_READ_ONLY_AUTHORITATIVE_VERIFIER="1"',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
@@ -2463,7 +2484,9 @@ def _build_sandbox_create_argv(
     policy = _resolve_openshell_policy() if task is None else _resolve_task_openshell_policy(task)
     argv += ["--policy", policy, "--name", name]
     argv += _sandbox_label_argv("task", keep=env_bool("MAC_OPENSHELL_KEEP"))
-    argv += _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
+    argv += verifier_profile_create_args(
+        _openshell_extra_create_argv() if extra_create_argv is None else list(extra_create_argv)
+    )
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
     argv += _sandbox_credential_upload_argv()
     inner = "\n".join(
@@ -2473,6 +2496,7 @@ def _build_sandbox_create_argv(
             ". ./.mac-openshell-env.sh",
             "set +a",
             "rm -f ./.mac-openshell-env.sh",
+            verifier_resource_profile()[2],
             'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && [ ! -e /sandbox/mac-clone ]; then ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone || true; fi',
             ". ./.mac-sandbox-toolchain.sh",
             "rm -f ./.mac-sandbox-toolchain.sh",
@@ -3671,7 +3695,7 @@ def _sandbox_run_read_only_repository_verification(
             "--name",
             verifier_name,
             *_sandbox_label_argv("read-only-verifier"),
-            *_read_only_verifier_extra_create_argv(),
+            *verifier_profile_create_args(_read_only_verifier_extra_create_argv()),
             "--no-git-ignore",
             "--no-tty",
             "--upload",
@@ -3911,7 +3935,7 @@ def _sandbox_read_only_repository_violation(
             '[ -x "$python_bin" ] || python_bin="$(PATH=%s command -v python3 || PATH=%s command -v python || true)"'
             % (shlex.quote(_SANDBOX_BASE_PATH), shlex.quote(_SANDBOX_BASE_PATH)),
             '[ -n "$python_bin" ] || fail "trusted Python is unavailable for Git control validation"',
-            'observed_git_control="$("$python_bin" - "$repo" <<\'PY\'',
+            'observed_git_control="$("$python_bin" -I - "$repo" <<\'PY\'',
             digest_program,
             "PY",
             ')" || fail "could not digest read-only repository Git controls"',
@@ -3932,6 +3956,17 @@ def _sandbox_read_only_repository_violation(
             'test -z "$remotes" || fail "read-only repository retained a publication remote"',
         ]
     )
+    encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    # OpenShell rejects newline/CR-bearing command arguments. Decode through
+    # the immutable image interpreter, never an agent-writable script. Both
+    # Python processes must ignore cwd/user imports before the raw Git digest;
+    # the child shell must not source an agent-controlled BASH_ENV either.
+    decoder = (
+        "import base64,subprocess,sys;"
+        "sys.exit(subprocess.run(['/bin/bash','--noprofile','--norc'],"
+        "input=base64.b64decode(sys.argv[1]),"
+        "env={'PATH':%r,'HOME':'/tmp/mac-read-only-postcheck'}).returncode)" % _SANDBOX_BASE_PATH
+    )
     ok, message = _sandbox_step(
         [
             "exec",
@@ -3943,9 +3978,11 @@ def _sandbox_read_only_repository_violation(
             "120",
             "--no-tty",
             "--",
-            "/bin/bash",
+            "/opt/mac-venv/bin/python",
+            "-I",
             "-c",
-            script,
+            decoder,
+            encoded_script,
         ],
         timeout=150.0,
     )
@@ -4205,6 +4242,26 @@ class _SandboxProgressMonitor:
         }
 
 
+def _capture_read_only_report_git_control(task: Any, workspace: Path) -> str:
+    """Capture raw controls before any agent can change Git command behavior."""
+
+    task_metadata = task.get("metadata") if isinstance(task, dict) else None
+    runtime = task_metadata.get("runtime") if isinstance(task_metadata, dict) else None
+    worktree_raw = (
+        str(runtime.get("repository_worktree") or "").strip() if isinstance(runtime, dict) else ""
+    )
+    if not worktree_raw:
+        raise RuntimeError(
+            "read-only repository report has no task-owned worktree for Git control proof"
+        )
+    try:
+        worktree = Path(worktree_raw).expanduser().resolve(strict=True)
+        worktree.relative_to(workspace.expanduser().resolve(strict=True))
+        return _read_only_git_control_digest(worktree)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("could not capture pre-agent read-only Git controls: %s" % exc) from exc
+
+
 def _run_sandboxed(
     runner: Callable[..., Any], agent_argv: List[str], workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
@@ -4232,24 +4289,7 @@ def _run_sandboxed(
                 "read-only repository reports forbid MAC_OPENSHELL_KEEP; "
                 "successful sandbox deletion is mandatory"
             )
-        runtime = task_metadata.get("runtime") if isinstance(task_metadata, dict) else None
-        worktree_raw = (
-            str(runtime.get("repository_worktree") or "").strip()
-            if isinstance(runtime, dict)
-            else ""
-        )
-        if not worktree_raw:
-            raise RuntimeError(
-                "read-only repository report has no task-owned worktree for Git control proof"
-            )
-        try:
-            worktree = Path(worktree_raw).expanduser().resolve(strict=True)
-            worktree.relative_to(workspace.expanduser().resolve(strict=True))
-            expected_git_control_digest = _read_only_git_control_digest(worktree)
-        except (OSError, ValueError) as exc:
-            raise RuntimeError(
-                "could not capture pre-agent read-only Git controls: %s" % exc
-            ) from exc
+        expected_git_control_digest = _capture_read_only_report_git_control(task, workspace)
         report_extra_create_argv = (
             _read_only_report_extra_create_argv(require_gpu=True)
             if require_gpu
@@ -4606,7 +4646,8 @@ def _run_sandboxed(
                     "\n".join(part for part in (prior_stderr, detail) if part),
                 )
                 setattr(result, "mac_read_only_lifecycle_failure", detail)
-                setattr(result, "mac_read_only_repository_violation", detail)
+                if not getattr(result, "mac_read_only_repository_violation", ""):
+                    setattr(result, "mac_read_only_repository_violation", detail)
         for path in runtime_files:
             path.unlink(missing_ok=True)
         (workspace / ".mac-sandbox-repository-verify.sh").unlink(missing_ok=True)
@@ -5761,6 +5802,12 @@ def _invoke_agent(
             "read-only repository reports require per-task OpenShell confinement; "
             "direct, supervisor-only, and host break-glass execution are forbidden"
         )
+    expected_git_control_digest = ""
+    if read_only_repository and approved_macos_host and not wrap:
+        _assert_approved_read_only_report_runtime(runtime_image_ref="")
+        expected_git_control_digest = _capture_read_only_report_git_control(
+            opts.get("task"), workspace
+        )
     confined = (wrap or _openshell_required_for_local_agent()) and break_glass_authorization is None
     route: Dict[str, str] = {}
     agent_argv = _agent_argv(
@@ -5851,7 +5898,7 @@ def _invoke_agent(
                         _opts_with_route(opts, fallback_route),
                     )
             return result
-        return runner(
+        result = runner(
             _unsandboxed_agent_argv(
                 bundle.argv(),
                 break_glass_authorization=break_glass_authorization,
@@ -5870,6 +5917,9 @@ def _invoke_agent(
                 ),
             },
         )
+        if expected_git_control_digest:
+            setattr(result, "mac_read_only_git_control_digest", expected_git_control_digest)
+        return result
     finally:
         bundle.cleanup()
 

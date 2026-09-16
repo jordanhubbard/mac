@@ -307,11 +307,22 @@ def test_postgres_fleet_release_open_is_unique_and_transactional(
     )
     alpha_pending = issue(alpha.id)
     beta_pending = issue(beta.id)
+    retained_alpha = first_cp.get_agent(alpha.id)
+    assert retained_alpha.dispatch_hold is True
+    assert retained_alpha.dispatch_hold_reason == winner["agents"][0]["epoch_hold_reason"]
+    # Adopt alpha's exact retained fence so beta is still the failing second
+    # participant. An early rejection at alpha would not test atomic rollback.
+    alpha_request = {
+        **participant(alpha, alpha_pending),
+        "expected_dispatch_hold": True,
+        "expected_hold_reason": retained_alpha.dispatch_hold_reason,
+        "expected_hold_at": retained_alpha.dispatch_hold_at,
+    }
     first_cp.set_agent_dispatch_hold(beta.id, "unexpected concurrent hold")
     with pytest.raises(ValidationError, match="lost expected prior hold"):
         first_cp.fleet_release_epochs.open_epoch(
             "postgres-open-atomic-failure",
-            [participant(alpha, alpha_pending), participant(beta, beta_pending)],
+            [alpha_request, participant(beta, beta_pending)],
         )
     assert (
         postgres_store.query_one(
@@ -320,7 +331,10 @@ def test_postgres_fleet_release_open_is_unique_and_transactional(
         )
         is None
     )
-    assert first_cp.get_agent(alpha.id).dispatch_hold is False
+    after_failure = first_cp.get_agent(alpha.id)
+    assert after_failure.dispatch_hold is True
+    assert after_failure.dispatch_hold_reason == retained_alpha.dispatch_hold_reason
+    assert after_failure.dispatch_hold_at == retained_alpha.dispatch_hold_at
     assert (
         postgres_store.query_one(
             "SELECT COUNT(*) AS count FROM fleet_release_epoch_agents "

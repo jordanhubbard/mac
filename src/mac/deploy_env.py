@@ -14,6 +14,7 @@ import argparse
 import fcntl
 import ipaddress
 import os
+import plistlib
 import re
 import secrets
 import shlex
@@ -21,6 +22,7 @@ import sys
 import urllib.parse
 from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Optional, Sequence
 
+from mac.atomic_file import atomic_write_text
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
 from mac.mesh_bind import (
     MeshBindError,
@@ -31,21 +33,21 @@ from mac.mesh_bind import (
 
 
 DEFAULT_WORKER_CAPABILITIES = (
-    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 LEGACY_WORKER_CAPABILITIES = (
-    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 
 
 def normalize_worker_capabilities(value: str) -> str:
-    """Upgrade the former fleet default without overriding real customization."""
+    """Retire the old runtime name while preserving useful capabilities."""
     items = [item.strip() for item in str(value or "").split(",") if item.strip()]
-    if not items or set(items) == set(LEGACY_WORKER_CAPABILITIES.split(",")):
+    if not items:
         return DEFAULT_WORKER_CAPABILITIES
-    return ",".join(items)
+    return ",".join(dict.fromkeys("hermes" if item == "openclaw" else item for item in items))
 
 
 PROVIDERS = tuple(ROUTER_PROVIDERS)
@@ -311,8 +313,16 @@ def render_env(values: Mapping[str, str]) -> str:
 
 
 def write_env_file(path: Path, values: Mapping[str, str]) -> None:
-    path.write_text(render_env(values), encoding="utf-8")
-    path.chmod(0o600)
+    atomic_write_text(path, render_env(values), mode=0o600)
+
+
+def update_env_file(path: Path, updates: Mapping[str, str]) -> Dict[str, str]:
+    """Atomically merge deployment-owned values without losing concurrent writes."""
+    with env_file_lock(path):
+        values = read_env_file(path)
+        values.update({key: str(value) for key, value in updates.items()})
+        write_env_file(path, values)
+    return values
 
 
 def stable_id(prefix: str, value: str) -> str:
@@ -387,7 +397,44 @@ def _apply_openshell_deploy_config(
     return True
 
 
-def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
+def _gateway_home(
+    cfg: DeployEnvConfig, existing: Mapping[str, str], env: Mapping[str, str]
+) -> Path:
+    """Preserve the upstream service's profile instead of migrating credentials.
+
+    mac.env may contain a stale deploy-generated HERMES_HOME. The installed
+    service definition is the authority for the profile it actually runs.
+    A conflicting new override needs an explicit service migration first.
+    """
+    service_home = ""
+    plist = cfg.paths.home / "Library/LaunchAgents/ai.hermes.gateway.plist"
+    unit = cfg.paths.home / ".config/systemd/user/hermes-gateway.service"
+    if plist.exists():
+        with plist.open("rb") as stream:
+            definition = plistlib.load(stream)
+        service_home = definition.get("EnvironmentVariables", {}).get("HERMES_HOME", "")
+        if not service_home:
+            raise ValueError("Installed Hermes launchd service has no HERMES_HOME")
+    elif unit.exists():
+        for line in unit.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("Environment="):
+                for assignment in shlex.split(line.strip().split("=", 1)[1]):
+                    if assignment.startswith("HERMES_HOME="):
+                        service_home = assignment.split("=", 1)[1]
+        if not service_home:
+            raise ValueError("Installed Hermes systemd service has no HERMES_HOME")
+    requested = str(env.get("HERMES_HOME") or "").strip()
+    previous = str(existing.get("HERMES_HOME") or "").strip()
+    if service_home and requested and requested != previous:
+        if Path(requested) != Path(service_home):
+            raise ValueError("HERMES_HOME conflicts with the installed Hermes service profile")
+    selected = service_home or requested or previous or str(cfg.paths.home / ".hermes")
+    if not isinstance(selected, str) or not Path(selected).is_absolute():
+        raise ValueError("Hermes service profile must be an absolute path")
+    return Path(selected)
+
+
+def _path_values(cfg: DeployEnvConfig, gateway_home: Path) -> Dict[str, str]:
     paths = cfg.paths
     hub_url = _mac_hub_url(cfg)
     values = {
@@ -398,7 +445,7 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_URL": hub_url,
         "MAC_SUPERVISOR_KIND": cfg.control.supervisor_kind,
         "MAC_NETWORK_PROVIDER": cfg.control.network_provider,
-        "HERMES_HOME": str(paths.mac_home / "openclaw"),
+        "HERMES_HOME": str(gateway_home),
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REDACT_SECRETS": "true",
         "ACC_DIR": str(paths.home / ".acc"),
@@ -409,17 +456,13 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM": "1",
         "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
         "MAC_HERMES_STARTUP_CHECK": "1",
-        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(
-            paths.mac_home / "openclaw" / "mac-runtime-context.json"
-        ),
-        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(
-            paths.mac_home / "openclaw" / "mac-runtime-context.md"
-        ),
+        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(gateway_home / "mac-runtime-context.json"),
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(gateway_home / "mac-runtime-context.md"),
         "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
         "MAC_HERMES_WORKSPACE": str(paths.mac_home / "src" / "mac"),
         "MAC_PROJECT_CONTRACT_FILE": str(paths.mac_home / "src" / "mac" / ".mac" / "project.yaml"),
         "MAC_SELF_UPDATE_REPO": str(paths.mac_home / "src" / "mac"),
-        "MAC_MEMORY_TOPOLOGY_FILE": str(paths.mac_home / "openclaw" / "mac-memory-topology.json"),
+        "MAC_MEMORY_TOPOLOGY_FILE": str(gateway_home / "mac-memory-topology.json"),
     }
     if cfg.identity.is_hub:
         values.update(
@@ -927,7 +970,7 @@ def build_mac_env(
             ),
         )
     _ensure_secret_values(values)
-    values.update(_path_values(cfg))
+    values.update(_path_values(cfg, _gateway_home(cfg, existing, env)))
     finder = lookup or lookup_tailscale_ipv4
     tailscale_ip = finder(environ=env)
     if not tailscale_ip:
@@ -1055,14 +1098,22 @@ def build_mac_env(
     else:
         values.pop("MAC_WORKER_DEPLOY_GENERATION", None)
         values.pop("MAC_WORKER_DEPLOY_BARRIER_FILE", None)
+    verifier_policy = values.get("MAC_OPENSHELL_POLICY")
     openshell_explicitly_disabled = _apply_openshell_deploy_config(values, env)
     runtime_image = (env.get("MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE") or "").strip()
-    if cfg.identity.is_hub and runtime_image:
-        # Hub verification executes untrusted repository tests in the same
+    if runtime_image:
+        # Pre-push and hub verification execute repository tests in the same
         # reviewed runtime family as workers. Never retain the pre-publication
         # localhost/mac-hermes:net fallback: OpenShell interprets it as a local
         # registry reference and every review fails before a test starts.
         values["MAC_HUB_VERIFY_IMAGE"] = runtime_image
+        # Native nodes still need the managed CLI and policy to ask a Linux
+        # gateway to verify code. These do not enable a local sandbox runtime.
+        values["MAC_OPENSHELL_BIN"] = str(cfg.paths.mac_home / "bin" / "openshell")
+        values.setdefault(
+            "MAC_OPENSHELL_POLICY",
+            verifier_policy or str(cfg.paths.mac_home / "openshell-policy.yaml"),
+        )
     openshell_active = any(
         (
             _enabled(str(env.get("MAC_DEPLOY_OPENSHELL_ENABLED") or "")),
@@ -1168,8 +1219,9 @@ def write_mac_env_file(
     *,
     environ: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
-    values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
-    write_env_file(cfg.paths.env_file, values)
+    with env_file_lock(cfg.paths.env_file):
+        values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
+        write_env_file(cfg.paths.env_file, values)
     return values
 
 

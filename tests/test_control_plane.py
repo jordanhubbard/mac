@@ -6229,6 +6229,65 @@ def test_legacy_read_only_report_contract_is_a_repair_observation_not_dispatch_g
     assert assignment["task"]["id"] == loaded.id
 
 
+def test_assignment_projects_effective_publication_target_from_project(cp):
+    cp.create_project("native-project", metadata={"publication_target": "git://main"})
+    worker = register_agent(cp, "native-worker", ["ops"])
+    task = cp.create_task(
+        "Native repository task",
+        project="native-project",
+        required_capabilities=["ops"],
+        metadata={"execution_contract": {"type": "repository"}},
+    )
+
+    assignment = cp.claim_task_v2(task.id, worker.id)
+
+    assert assignment["task"]["metadata"]["runtime"]["publication_target"] == "git://main"
+    assert "publication_target" not in cp.get_task(task.id).metadata
+
+
+def test_assignment_preserves_absent_publication_intent(cp, monkeypatch):
+    monkeypatch.delenv("MAC_DEFAULT_PUBLICATION_TARGET", raising=False)
+    worker = register_agent(cp, "unpublished-worker", ["ops"])
+    task = cp.create_task("Unpublished task", required_capabilities=["ops"])
+
+    assignment = cp.claim_task_v2(task.id, worker.id)
+
+    assert assignment["task"]["metadata"]["runtime"]["publication_target"] is None
+
+
+@pytest.mark.parametrize(
+    "task_target,project_target,expected",
+    [
+        ("git://task-branch", "git://project-branch", "git://task-branch"),
+        (None, "git://project-branch", "git://project-branch"),
+        (None, None, "git://fleet-branch"),
+        ("report://operator", "git://project-branch", "report://operator"),
+    ],
+)
+def test_assignment_publication_target_uses_authoritative_precedence(
+    cp, monkeypatch, task_target, project_target, expected
+):
+    monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://fleet-branch")
+    cp.create_project("publication-project", metadata={"publication_target": project_target})
+    worker = register_agent(cp, "publication-worker", ["ops"])
+    metadata = {
+        "origin": {"repository_url": "https://github.com/example/project.git"},
+        "runtime": {"publication_target": "git://untrusted-stale-target", "other": "retained"},
+    }
+    if task_target is not None:
+        metadata["publication_target"] = task_target
+    task = cp.create_task("Repository task", project="publication-project", metadata=metadata)
+
+    assignment = cp.claim_task_v2(task.id, worker.id)
+
+    runtime = assignment["task"]["metadata"]["runtime"]
+    assert runtime["publication_target"] == expected
+    assert runtime["other"] == "retained"
+    assert cp.get_task(task.id).metadata["runtime"]["publication_target"] == (
+        "git://untrusted-stale-target"
+    )
+
+
 def test_release_preserves_control_plane_publication_routing_metadata(cp):
     """`release_task` removes only `no_dispatch`, preserving controller-owned
     routing metadata byte-for-byte.
@@ -7734,7 +7793,8 @@ def test_degraded_startup_self_test_survives_liveness_heartbeat_until_passed(cp)
 
     passed = dict(report)
     passed["status"] = "passed"
-    passed["hermes_failure_class"] = ""
+    # Retired gateway-specific fields must not override a fresh worker verdict.
+    passed["openclaw_failure_class"] = "provider_unavailable"
     recovered = cp.heartbeat_agent(
         worker.id,
         health_status=HealthStatus.HEALTHY.value,
@@ -13636,6 +13696,43 @@ def test_hub_verify_uses_sanity_scope_and_fails_closed_for_unsafe_paths(cp):
     assert cp._hub_review_test_command(task, unsafe) == "scripts/run-contract-tests.sh"
 
 
+def test_judgement_preserves_inflight_hub_verification_past_task_age_threshold(cp, monkeypatch):
+    from datetime import datetime, timezone
+
+    from mac.judgement import JudgementConfig, JudgementProcess
+
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    reports = []
+    calls = []
+
+    def verify(*args):
+        calls.append(args)
+        review = cp.list_reviews(task.id)[0]
+        assert review.id in cp._hub_verify_inflight
+        stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (stale, task.id))
+        process = JudgementProcess(
+            cp,
+            JudgementConfig(enabled=True),
+            pr_lister=lambda _root: {"open": [], "merged": []},
+        )
+        reports.append(process.run_once())
+        assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+        assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
+        return 0, "all passed"
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, verify)
+    cp.advance_default_review_workflow(task.id)
+    cp.advance_default_review_workflow(task.id)
+
+    assert len(calls) == 1
+    assert len(reports) == 1
+    assert reports[0]["check_errors"] == []
+    assert reports[0]["actions"] == []
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert cp.list_reviews(task.id)[0].status == ReviewStatus.APPROVED.value
+
+
 def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     seen = []
@@ -13778,6 +13875,64 @@ def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
     assert calls == []
 
 
+@pytest.mark.parametrize("retract_after_tick", [False, True])
+def test_hub_review_survives_virtual_nap_tick_without_accepting_stale_verdict(
+    cp, monkeypatch, retract_after_tick
+):
+    from mac.nap_ticker import NapTicker, NapTickerConfig
+
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    calls = []
+    draining_sweeps = []
+
+    def sweep_during_nap(agent_id, **kwargs):
+        draining_sweeps.append(cp.get_agent(agent_id).status)
+        cp.advance_default_review_workflow(task.id)
+        return {"groups": 0, "records_considered": 0}
+
+    monkeypatch.setattr(cp, "consolidate_nap", sweep_during_nap)
+
+    def verify(*args):
+        calls.append(args)
+        assert len(calls) == 1, "a scheduler cycle launched a duplicate verifier"
+        review = cp.list_reviews(task.id)[0]
+        virtual = cp.get_agent(review.reviewer_agent_id)
+        assert cp._agent_is_virtual(virtual.id)
+        cp.configure_nap(virtual.id, offset_minutes=0, enabled=False)
+        cp.store.execute("UPDATE nap_schedules SET enabled = 1 WHERE agent_id = ?", (virtual.id,))
+        report = NapTicker(cp, NapTickerConfig(enabled=True)).run_once()
+        assert report["napped_count"] == 0
+        assert cp.get_agent(virtual.id).status == virtual.status
+        # Re-enter the review sweep while its external test runner is active.
+        # The pending review and in-flight guard must prevent a second run.
+        cp.advance_default_review_workflow(task.id)
+        assert len(cp.list_reviews(task.id)) == 1
+        assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
+        assert len(calls) == 1
+        if retract_after_tick:
+            cp._retract_default_review(review, "test", "explicit cancellation during verification")
+        return 0, "all passed"
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, verify)
+    for agent in (worker, reviewer):
+        cp.configure_nap(agent.id, enabled=False)
+    cp.advance_default_review_workflow(task.id)
+
+    assert len(calls) == 1
+    assert draining_sweeps == []
+    verdicts = [item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")]
+    if retract_after_tick:
+        assert cp.get_task(task.id).state != TaskState.COMPLETED.value
+        assert verdicts == []
+        assert cp.list_reviews(task.id)[0].status == ReviewStatus.RETRACTED.value
+    else:
+        cp.advance_default_review_workflow(task.id)
+        assert len(calls) == 1
+        assert len(cp.list_reviews(task.id)) == 1
+        assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+        assert len(verdicts) == 1
+
+
 def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     calls = []
@@ -13889,25 +14044,27 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
         "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
     )
     assert rc == 0
-    create = next(a for a in captured if "create" in a and "--upload" in a)
+    create = next(a for a in captured if "create" in a)
     separator = create.index("--")
-    assert create[separator + 1 : separator + 3] == ["/bin/bash", "-c"]
-    inner = create[create.index("-c") + 1]
+    assert create[separator + 1 :] == ["/bin/true"]
+    bootstrap = next(a for a in captured if "exec" in a and "tar xzf repo.tgz" in a[-1])
+    inner = bootstrap[-1]
     from mac.openshell_runtime import SANDBOX_BASE_PATH
 
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "PATH=%s" % SANDBOX_BASE_PATH in env_values
-    assert inner.startswith("export PATH=%s; hash -r" % SANDBOX_BASE_PATH)
+    assert "export PATH=%s; hash -r" % SANDBOX_BASE_PATH in inner
     # The repo travels as ONE tar file (OpenShell directory upload drops .git)
     # and is extracted inside the sandbox before anything else.
-    upload = create[create.index("--upload") + 1]
-    assert upload.endswith("repo.tgz:/sandbox")
+    upload = next(a for a in captured if "upload" in a)
+    assert upload[-1] == "/sandbox"
+    assert upload[-2].endswith("repo.tgz")
     assert "cd /sandbox && tar xzf repo.tgz && " in inner
     # Whitelist reaches every git subprocess the suite spawns (env form, not
     # --global), and it precedes the test command.
     assert "GIT_CONFIG_KEY_0=safe.directory" in inner
     assert "GIT_CONFIG_VALUE_0='*'" in inner
-    assert inner.index("safe.directory") < inner.index("cd /sandbox/repo")
+    assert inner.index("safe.directory") < inner.index("rev-parse --is-inside-work-tree")
     # Lost-.git uploads still fail fast with a distinguishable message.
     assert "rev-parse --is-inside-work-tree" in inner
     assert "not a usable git repo after upload" in inner
@@ -13942,7 +14099,7 @@ def test_hub_verify_sandbox_provisions_its_own_postgres(cp, monkeypatch):
         "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
     )
     assert rc == 0
-    create = next(a for a in captured if "create" in a and "--upload" in a)
+    create = next(a for a in captured if "create" in a)
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "MAC_TEST_PG_LOCAL=1" in env_values
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)

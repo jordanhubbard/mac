@@ -132,6 +132,8 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
         agent_id = "agent-planner"
+        lease_seconds = 0
+        lease_renew_interval_seconds = 0
 
         def __init__(self):
             self.client = Client()
@@ -154,7 +156,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
             (tmp_path / "task.json").write_text(json.dumps({"task": task, "lease": lease}))
             return tmp_path
 
-        def _execute_with_lease_renewal(self, task, lease, task_dir):
+        def _execute_task(self, task, lease, task_dir):
             return worker.WorkerExecution(0, "planned")
 
         def _assignment_is_current(self, task_id, lease_id):
@@ -218,6 +220,8 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
         agent_id = "agent-planner"
+        lease_seconds = 0
+        lease_renew_interval_seconds = 0
 
         def __init__(self):
             self.client = Client()
@@ -241,7 +245,7 @@ def test_plan_policy_rejection_reports_verification_failure_not_environment(
             )
             return tmp_path
 
-        def _execute_with_lease_renewal(self, task, lease, task_dir):
+        def _execute_task(self, task, lease, task_dir):
             return worker.WorkerExecution(0, "planned")
 
         def _assignment_is_current(self, task_id, lease_id):
@@ -548,11 +552,8 @@ def _valid_repo(sha: str = "a" * 40) -> dict:
     }
 
 
-def test_finalizer_prepush_no_problems_when_hub_verify_and_deferred_item() -> None:
-    """When MAC_REVIEW_HUB_VERIFY=1 and the test item is the deferred sentinel,
-    _repository_finalizer_prepush_problems must return NO test-failure problems.
-    The hub finalizer will run the contract test after the branch is pushed; the
-    worker must not block on a missing local test result."""
+def test_finalizer_prepush_blocks_deferred_code_even_with_hub_review() -> None:
+    """Independent review does not replace the passing pre-push code gate."""
     deferred_item = worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh")
     assert worker._is_hub_verify_deferred_item(deferred_item)
 
@@ -563,10 +564,7 @@ def test_finalizer_prepush_no_problems_when_hub_verify_and_deferred_item() -> No
         hub_verify=True,
     )
     test_gate_problems = [p for p in problems if "passing test" in p]
-    assert not test_gate_problems, (
-        "hub-verify deferred mode must skip the passing-test gate; "
-        "got unexpected problems: %s" % test_gate_problems
-    )
+    assert test_gate_problems
 
 
 def test_finalizer_prepush_blocks_when_hub_verify_off_and_no_sandbox_result(tmp_path) -> None:

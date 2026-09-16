@@ -2317,6 +2317,97 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
+@pytest.mark.parametrize("test_command,expected_pushed", [("true", True), ("false", False)])
+def test_git_finalizer_uses_resolved_runtime_target_despite_unpushed_preliminary_evidence(
+    tmp_path, monkeypatch, test_command, expected_pushed
+):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/resolved-target")
+    (work / "README.md").write_text("hello\nnative change\n", encoding="utf-8")
+    _git(work, "add", "README.md")
+    _git(work, "commit", "-m", "native change")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "repo_change",
+                "repo": {"pushed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _prepare_finalizer_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-resolved-target",
+        "metadata": {
+            "runtime": {"publication_target": "git://main"},
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
+                    "test": {"command": test_command},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is expected_pushed
+    assert manifest["tests"][0]["status"] == ("pass" if expected_pushed else "fail")
+    remote_ref = _git(
+        tmp_path, "ls-remote", str(origin), "refs/heads/task/resolved-target"
+    ).stdout.strip()
+    assert bool(remote_ref) is expected_pushed
+
+
+@pytest.mark.parametrize("resolved_target", [None, "", "report://operator"])
+def test_git_finalizer_preserves_resolved_absent_publication_intent(
+    tmp_path, monkeypatch, resolved_target
+):
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    preliminary = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {"pushed": False},
+    }
+    evidence_path = ws / "mac-evidence.json"
+    evidence_path.write_text(json.dumps(preliminary), encoding="utf-8")
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+
+    te.run_deterministic_git_finalizer(
+        ws,
+        {
+            "id": "t-no-target",
+            "metadata": {
+                "publication_target": "git://main",
+                "runtime": {"publication_target": resolved_target},
+            },
+        },
+    )
+
+    assert json.loads(evidence_path.read_text(encoding="utf-8")) == preliminary
+
+
 @pytest.mark.parametrize("prestage", [False, True], ids=["untracked", "staged-new"])
 def test_git_finalizer_commits_and_pushes_new_source_files(tmp_path, monkeypatch, prestage):
     origin = tmp_path / "origin.git"
@@ -2420,8 +2511,9 @@ def test_git_finalizer_clean_preserves_new_source_over_gitignored_artifact(tmp_p
     assert "new_source.py" in manifest["repo"]["files_changed"]
     assert _git(work, "show", "HEAD:new_source.py").stdout == "print('keep me')\n"
     assert (work / "new_source.py").exists()
-    # Gitignored artifact was purged by `git clean -Xdf` and never committed.
-    assert not (work / "build" / "artifact.o").exists()
+    # The host's ignored artifact is preserved; the fresh verifier clone does
+    # not contain it, and it was never committed.
+    assert (work / "build" / "artifact.o").exists()
     assert _git(work, "status", "--porcelain").stdout == ""
     assert _git(
         tmp_path, "ls-remote", str(origin), "refs/heads/task/clean-preserves"
@@ -2533,8 +2625,9 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert (work / ".venv/bin/python").exists()
-    assert manifest["bootstrap"]["status"] == "pass"
+    assert not (work / ".venv/bin/python").exists()
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
     # mac-wjy3: verification.tests must be a LIST of result objects so the strict
     # evidence validator accepts it (a bare dict reads as tests:null/missing).
     assert isinstance(manifest["tests"], list)
@@ -2602,8 +2695,9 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     # non-empty base..head diff (base != head here).
     assert len(manifest["repo"]["base_sha"]) == 40
     assert manifest["repo"]["base_sha"] != manifest["repo"]["head_sha"]
-    assert manifest["bootstrap"]["status"] == "fail"
-    assert manifest["tests"][0]["status"] == "pass"
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
+    assert manifest["tests"][0]["status"] == "fail"
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "bootstrap/tests failed"
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
@@ -3083,9 +3177,10 @@ def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeyp
     )
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert (work / ".venv/bin/python").exists()
+    assert not (work / ".venv/bin/python").exists()
     assert manifest["verdict"] == "approved"
-    assert manifest["bootstrap"]["status"] == "pass"
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
     assert manifest["tests"][0]["returncode"] == 0
 
 
@@ -5710,8 +5805,6 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
     expected = {
         "repository_snapshot",
         "canonical_sync",
-        "cleanup",
-        "bootstrap",
         "contract_tests",
         "publication_preflight",
         "guarded_push",
@@ -5790,3 +5883,6 @@ def test_main_startup_unresolvable_workspace_still_fails_closed(tmp_path, monkey
 
     rc = te.main()
     assert rc == 1
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

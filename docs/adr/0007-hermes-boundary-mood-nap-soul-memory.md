@@ -123,6 +123,14 @@ consolidation logic to any Hermes internals.
 `MEMORY.md` or any `HERMES_HOME` path. Its dream artifacts are readable
 by Hermes via the hub `/v1/memory/dreams/recall` API (pull, not push).
 
+Worker nap scheduling excludes identities marked `resources.virtual`, such
+as the hub reviewer and operator. They have no worker process to drain.
+Registration and heartbeat do not create their nap schedules; heartbeat
+disables legacy schedules while preserving their rows and audit history.
+The due-agent query and direct nap entry also reject these identities, so
+an old schedule cannot interrupt an in-flight hub review before heartbeat
+repairs it. Review cancellation and stale-verdict checks still apply.
+
 ---
 
 ### Module 3: `soul_snapshot.py` — **Partially stays in mac; hub-state capture requires formal interface contract**

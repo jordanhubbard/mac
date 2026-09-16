@@ -15,6 +15,11 @@ tasks, completed reviews, validated outcomes, and protocol-compliant passes.
 Even then it emits a policy *candidate*, never an automatic production policy
 change. Statistical confidence and operator promotion remain separate gates.
 
+The default review path uses independent hub verification. Semantic model
+review is disabled by default and requires the explicit
+`MAC_REVIEW_SEMANTIC_REVIEWER` opt-in. The experimental model-review controls
+below do not enable that path by themselves; see `src/mac/services.py`.
+
 ## What is measured
 
 Each `mac.review_experiment.v1` assignment records the experiment, arm,

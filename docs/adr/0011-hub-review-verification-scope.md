@@ -18,23 +18,27 @@ explicit sanity contract is `scripts/run-sanity-tests.sh`. It selects changed,
 public-contract, and process-E2E tests and falls back to
 `scripts/run-contract-tests.sh` whenever the scope is broad or uncertain.
 
-The sandbox writes `mac-sandbox-verification.json` with the command, return code,
-stdout/stderr, environment delta, and worktree path. During finalization,
-`src/mac/worker.py` reads that file through `_sandbox_repository_verification_item`
-and records it as the `repository contract test` with
-`execution_environment=openshell_sandbox`.
+After committing and reconciling the canonical base, the deterministic finalizer
+tests a fresh clone of the exact unpublished commit through the configured Linux
+OpenShell gateway. The worker's recovery finalizer uses the same transport.
+Repository bootstrap and tests never fall back to the native host. A workspace
+`mac-sandbox-verification.json` file cannot authorize a push: it may describe an
+older tree or have been written by the coding agent.
 
-If no sandbox verification file exists, the worker finalizer runs the contract
-test itself from the task worktree. In both cases the pre-push gate uses
+The result records the executed commit/tree, actual command and output. A known
+ancestor base plus the repository's executable sanity script and test policy
+selects the affected gate; uncertain selection retains the full contract.
+Staging consumes the configured worker test budget. The pre-push gate uses
 `_repository_finalizer_prepush_problems` to require:
 
 - a clean repository snapshot with `dirty=false`;
 - a valid `head_sha`;
+- a passing result for that commit and an unchanged source identity afterward;
 - a non-empty `files_changed` list for normal repository work;
 - at least one passing test/check;
 - all required checks passing for source/build/dependency/runtime changes.
 
-Only after those local checks pass does the finalizer publish the task branch.
+Only after those checks pass does the finalizer publish the task branch.
 This means Option A is the proportional publication gate for the task-owned
 branch. Full statement/branch/subprocess coverage is the mainline integration
 gate rather than a per-task repetition.
@@ -59,6 +63,13 @@ contract-verification feedback.
 
 Option C is therefore an independent, proportional review gate on the
 already-pushed branch.
+
+`MAC_REVIEW_HUB_VERIFY=1` does not exempt code from pre-push verification.
+Native read-only reports keep their separate exact-base review contract and can
+truthfully report tests as deferred. Deferred, unavailable and unrun tests are
+neither passing tests nor a failed test suite. Native nodes retain a verifier
+CLI and policy when a deployment supplies the approved runtime image; this does
+not enable a macOS OpenShell runtime.
 
 ## Problem
 
@@ -128,8 +139,8 @@ integration point, not one full run per branch and another per review.
 - The review verdict manifest must record the selected test scope, the command
   that ran, and any fallback reason. It should continue to carry the executor's
   required check results because the hub verifies the same commit.
-- Full-suite coverage remains valuable at mainline integration, scheduled
-  audits, and explicit fallback points, not as an unconditional duplicate in
+- Full-suite coverage remains valuable at up-front candidate and mainline integration gates
+  and explicit fallback points, not as an unconditional duplicate in
   every task and review sandbox.
 - The trade-off is that an affected-test review can miss unrelated integration
   regressions. Public/process canaries limit that risk, broad or unmappable

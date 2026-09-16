@@ -188,6 +188,10 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`in-flight-agent-messages.md`](../in-flight-agent-messages.md) | Reaching an agent that is already working |
 | landing page | [`index.md`](../index.md) | MAC: trustworthy work across an agent fleet |
 | supplemental reference | [`integration-authority-contract.md`](../integration-authority-contract.md) | Integration Authority Contract |
+| supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
+| runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
+| supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
+| supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
 | supplemental reference | [`memory-tier-schema.md`](../memory-tier-schema.md) | MAC vector memory tier — schema, collections, model, TTLs |
 | supplemental reference | [`memory-tier-verification.md`](../memory-tier-verification.md) | Memory tier — end-to-end verification |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
@@ -205,11 +209,14 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`presentations/agentfabric-overview/prompts/image-prompts.md`](../presentations/agentfabric-overview/prompts/image-prompts.md) | Image prompts — intentionally empty |
 | supplemental reference | [`presentations/agentfabric-overview/qa-ledger.md`](../presentations/agentfabric-overview/qa-ledger.md) | QA ledger — AgentFabric overview |
 | supplemental reference | [`presentations/agentfabric-overview/source-notes.md`](../presentations/agentfabric-overview/source-notes.md) | Source notes — AgentFabric overview |
+| supplemental reference | [`problems.md`](../problems.md) | Fleet recovery: evidence and remaining acceptance |
 | runbook | [`production-deployment.md`](../production-deployment.md) | Production Deployment |
+| supplemental reference | [`python-baseline.md`](../python-baseline.md) | Python baseline |
 | generated reference | [`reference/cli.md`](../reference/cli.md) | Command-line reference |
 | generated reference | [`reference/documentation-inventory.md`](../reference/documentation-inventory.md) | Documentation inventory |
 | generated reference | [`reference/openapi.md`](../reference/openapi.md) | HTTP API reference |
 | generated reference | [`reference/staged-module-integration-audit.md`](../reference/staged-module-integration-audit.md) | Staged-but-unwired `src/mac` module integration audit |
+| supplemental reference | [`releases/v1.5.0-audit.md`](../releases/v1.5.0-audit.md) | v1.5.0 documentation and contribution audit |
 | supplemental reference | [`repository-cicd-monitor.md`](../repository-cicd-monitor.md) | Repository CI/CD lifecycle monitoring |
 | supplemental reference | [`repository-ref-hygiene.md`](../repository-ref-hygiene.md) | Managed Repository Ref Hygiene |
 | supplemental reference | [`repository-runtime-contract.md`](../repository-runtime-contract.md) | Repository Runtime Contract |

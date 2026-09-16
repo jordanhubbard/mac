@@ -33,12 +33,12 @@ AGENT = "rocky"
 FLEET = "mac"
 IDENTITIES = {
     "systemd": {
-        "hermes": "mac-hermes-gateway.service",
+        "hermes": "hermes-gateway.service",
         "openclaw": "mac-openclaw-gateway.service",
         "nemoclaw": "mac-nemoclaw-gateway.service",
     },
     "launchd": {
-        "hermes": "com.mac.hermes-gateway",
+        "hermes": "ai.hermes.gateway",
         "openclaw": "com.mac.openclaw-gateway",
         "nemoclaw": "com.mac.nemoclaw-gateway",
     },
@@ -191,6 +191,10 @@ if config.get("mode") == "invalid-utf8":
     os.write(1, b"\\xff")
     raise SystemExit(0)
 
+scope = "system"
+if manager == "systemctl" and args[:1] == ["--user"]:
+    scope = "user"
+    args = args[1:]
 if manager == "systemctl":
     if len(args) < 2 or args[0] not in {{"show", "is-enabled"}}:
         raise SystemExit(64)
@@ -217,13 +221,23 @@ counts = config.setdefault("counts", {{}})
 counter_key = "%s:%s:%s" % (
     manager,
     os.environ.get("FAKE_SUPERVISOR_MANAGER", "user"),
-    identity,
+    args[1] if manager == "launchctl" else scope + ":" + identity,
 )
 index = int(counts.get(counter_key, 0))
 if manager != "systemctl" or args[0] == "show":
     counts[counter_key] = index + 1
 config_path.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
 sequence = config.get("states", {{}}).get(identity)
+if manager == "launchctl":
+    scoped_identity = args[1].split("/", 1)[0] + ":" + identity
+    sequence = config.get("states", {{}}).get(scoped_identity, sequence)
+    if args[1].startswith("user/") and scoped_identity not in config.get("states", {{}}):
+        sequence = [{{"state": "absent"}}]
+if manager == "systemctl":
+    scoped_identity = scope + ":" + identity
+    sequence = config.get("states", {{}}).get(scoped_identity, sequence)
+    if scope == "system" and identity == "hermes-gateway.service" and scoped_identity not in config.get("states", {{}}):
+        sequence = [{{"state": "absent"}}]
 if not isinstance(sequence, list) or not sequence:
     print("fake manager has no state for " + identity, file=sys.stderr)
     raise SystemExit(65)
@@ -307,6 +321,10 @@ def _state(
         else:
             entry = {"state": "absent", "pid": 0, "restarts": 0}
         states[identity] = [entry]
+    if manager == "systemd":
+        states["mac-hermes-gateway.service"] = [{"state": "absent"}]
+    if manager == "launchd":
+        states["com.mac.hermes-gateway"] = [{"state": "absent"}]
     if selected_sequence is not None:
         assert selected != "none"
         states[IDENTITIES[manager][selected]] = selected_sequence
@@ -340,7 +358,14 @@ def _run_probe(
     output = tmp_path / "logs" / "gateway-readiness.json"
     names: list[str] = []
     for identity_manager in ("systemd", "launchd", "supervisord"):
-        names.extend(IDENTITIES[identity_manager].values())
+        names.extend(
+            "com.mac.hermes-gateway"
+            if identity_manager == "launchd" and owner == "hermes"
+            else "mac-hermes-gateway.service"
+            if identity_manager == "systemd" and owner == "hermes"
+            else identity
+            for owner, identity in IDENTITIES[identity_manager].items()
+        )
     args = [
         sys.executable,
         "-c",
@@ -384,6 +409,7 @@ def _run_probe(
         ("systemd", "openclaw"),
         ("systemd", "nemoclaw"),
         ("systemd", "none"),
+        ("launchd", "hermes"),
         ("launchd", "openclaw"),
         ("supervisord", "nemoclaw"),
     ],
@@ -428,10 +454,112 @@ def test_launchd_probe_accepts_current_macos_two_line_absent_state(
     )
 
     assert completed.returncode == 0, completed.stderr
+
     receipt = json.loads(output.read_text(encoding="utf-8"))
     assert receipt["state"]["openclaw"]["state"] == "running"
     assert receipt["state"]["hermes"]["state"] == "absent"
     assert receipt["state"]["nemoclaw"]["state"] == "absent"
+
+
+def _outer_gateway_sample(
+    tmp_path: Path, implementation: str, manager: str = "launchd"
+) -> dict[str, Any]:
+    import re
+    from types import SimpleNamespace
+
+    def fail(message):
+        raise ValueError(message)
+
+    def run_bounded(argv, env):
+        result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=10)
+        return result.returncode, result.stdout + result.stderr
+
+    namespace = {
+        "os": os,
+        "re": re,
+        "fleet": FLEET,
+        "fail": fail,
+        "shutil": SimpleNamespace(which=lambda name: str(tmp_path / "bin" / name)),
+        "run_bounded": run_bounded,
+        "clean_env": {**os.environ, "FAKE_GATEWAY_CONFIG": str(tmp_path / "supervisor-state.json")},
+        "gateway_summary": {
+            "supervisor": manager,
+            "implementation": implementation,
+            "identities": IDENTITIES[manager],
+        },
+    }
+    exec(_outer_launchd_absence_python(), namespace)
+    exec(
+        _between(_fleet_text(), "def live_gateway_sample():", "\n\nprefixes = [runtime_prefix"),
+        namespace,
+    )
+    return namespace["live_gateway_sample"]()
+
+
+@pytest.mark.parametrize("domain", ["gui", "user"])
+def test_hermes_readiness_binds_actual_launchd_domain_through_outer_attestation(tmp_path, domain):
+    states = _state("launchd", "none")
+    states[domain + ":ai.hermes.gateway"] = [{"state": "running", "pid": 401}]
+    completed, output = _run_probe(tmp_path, "launchd", "hermes", states)
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(output.read_text())
+    assert receipt["state"]["hermes"]["domain"] == f"{domain}/{os.getuid()}"
+    assert _outer_gateway_sample(tmp_path, "hermes") == receipt["state"]
+
+
+@pytest.mark.parametrize("conflict", ["user:ai.hermes.gateway", "com.mac.hermes-gateway"])
+def test_both_readiness_checks_reject_duplicate_or_legacy_hermes_owner(tmp_path, conflict):
+    states = _state("launchd", "hermes")
+    states[conflict] = [{"state": "running", "pid": 999}]
+    completed, output = _run_probe(tmp_path, "launchd", "hermes", states)
+    assert completed.returncode != 0
+    assert not output.exists()
+    with pytest.raises(ValueError, match="multiple launchd|legacy Hermes"):
+        _outer_gateway_sample(tmp_path, "hermes")
+
+
+def test_both_readiness_checks_reject_absent_hermes(tmp_path):
+    completed, output = _run_probe(tmp_path, "launchd", "hermes", _state("launchd", "none"))
+    assert completed.returncode != 0
+    assert not output.exists()
+    with pytest.raises(ValueError, match="selected gateway is not running"):
+        _outer_gateway_sample(tmp_path, "hermes")
+
+
+def test_gateway_readiness_rejects_launchd_domain_change_between_samples(tmp_path):
+    states = _state("launchd", "none")
+    states["gui:ai.hermes.gateway"] = [{"state": "running", "pid": 401}, {"state": "absent"}]
+    states["user:ai.hermes.gateway"] = [{"state": "absent"}, {"state": "running", "pid": 401}]
+    completed, output = _run_probe(tmp_path, "launchd", "hermes", states)
+    assert completed.returncode != 0
+    assert "changed launchd domain" in completed.stderr
+    assert not output.exists()
+
+
+def test_systemd_readiness_binds_upstream_user_service_through_outer_attestation(tmp_path):
+    completed, output = _run_probe(tmp_path, "systemd", "hermes", _state("systemd", "hermes"))
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(output.read_text())
+    assert receipt["identities"]["hermes"] == "hermes-gateway.service"
+    assert _outer_gateway_sample(tmp_path, "hermes", "systemd") == receipt["state"]
+
+
+@pytest.mark.parametrize(
+    "conflict",
+    [
+        "system:hermes-gateway.service",
+        "system:mac-hermes-gateway.service",
+        "user:mac-hermes-gateway.service",
+    ],
+)
+def test_both_systemd_readiness_checks_reject_competing_hermes_service(tmp_path, conflict):
+    states = _state("systemd", "hermes")
+    states[conflict] = [{"state": "running", "pid": 999}]
+    completed, output = _run_probe(tmp_path, "systemd", "hermes", states)
+    assert completed.returncode != 0
+    assert not output.exists()
+    with pytest.raises(ValueError, match="legacy or system Hermes"):
+        _outer_gateway_sample(tmp_path, "hermes", "systemd")
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd", "supervisord"])
@@ -629,15 +757,9 @@ def test_selected_systemd_gateway_must_be_enabled(tmp_path: Path) -> None:
     assert not output.exists()
 
 
-def test_selected_hermes_gateway_bypasses_the_identity_keyed_sample(
+def test_selected_hermes_gateway_requires_a_live_service(
     tmp_path: Path,
 ) -> None:
-    # Hermes supervises itself under a unit name `hermes gateway install`
-    # chooses, not the HERMES_SERVICE_NAME/HERMES_LAUNCHD_LABEL identity this
-    # script assigns the other implementations, so its readiness is proven
-    # out of band (by `hermes gateway status --deep` in
-    # finalize_hermes_gateway()) rather than by this identity-keyed sample.
-    # Even a "disabled"/never-restarted-looking hermes entry must still pass.
     states = _state(
         "systemd",
         "hermes",
@@ -647,9 +769,8 @@ def test_selected_hermes_gateway_bypasses_the_identity_keyed_sample(
         ],
     )
     completed, output = _run_probe(tmp_path, "systemd", "hermes", states)
-    assert completed.returncode == 0, completed.stderr
-    receipt = json.loads(output.read_text(encoding="utf-8"))
-    assert receipt["implementation"] == "hermes"
+    assert completed.returncode != 0
+    assert not output.exists()
 
 
 def test_selected_systemd_gateway_allows_inactive_disabled_competitors(

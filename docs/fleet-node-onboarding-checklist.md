@@ -111,8 +111,8 @@ network first; do not deploy to a guessed host.
 - [ ] `MAC_WORKER_WORKSPACE_GC_ENABLED` is not disabled accidentally, and a
       `worker.workspace_gc.disk_low` warning is treated as a dispatch blocker.
 - [ ] A pinned Python meeting the repository requirement is available. Fresh
-      hosts use the deployer's checksum-reviewed `uv 0.8.22` native asset to
-      provision exact Python `3.12.11` instead of inheriting an old base-image
+      hosts use the deployer's checksum-reviewed `uv 0.12.12` native asset to
+      provision exact Python `3.14.7` instead of inheriting an old base-image
       Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
       x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.
 - [ ] `git`, `gh`, and the selected coding CLIs are present in the
@@ -313,12 +313,13 @@ fleet nodes.
 - [ ] The router is reachable locally and from every spoke/sandbox.
 - [ ] Shared Qdrant and Firecrawl endpoints are bound to the intended mesh
       address, required, healthy, and reported by startup self-test.
-- [ ] SQLite uses online backup rather than copying a live WAL database, or the
-      configured Postgres HA contract is healthy.
+- [ ] PostgreSQL backups and restore drills pass; any configured PostgreSQL
+      HA contract is healthy. There is no live SQLite authority.
 - [ ] macOS uses launchd for the control plane, worker, gateway, and any required
       reverse tunnel. A GUI login session is not required.
-- [ ] OpenClaw runs inside a Ready OpenShell sandbox, owns chat exclusively,
-      and legacy gateway services are inactive.
+- [ ] The configured gateway owns chat exclusively and competing services are
+      inactive. Hermes uses its upstream native service and preserved profile;
+      an explicitly selected OpenClaw deployment uses its OpenShell runtime.
 - [ ] Channel, public identity, memory continuity, watchdog, crash observer, and
       startup self-test all pass live.
 - [ ] OpenShell policy permits the host bridge alias for hub-local services.
@@ -326,11 +327,11 @@ fleet nodes.
 ### Linux edge chat gateway
 
 - [ ] The strict ProxyJump route through the hub is portable and current.
-- [ ] systemd controls the worker, crash observer, and OpenClaw gateway.
+- [ ] systemd controls the worker, crash observer, and selected gateway.
 - [ ] The hub router, Qdrant, Firecrawl, artifact service, and AgentBus are
       reachable over the mesh; loopback is not copied from the hub config.
-- [ ] OpenClaw is the exclusive channel owner inside OpenShell; legacy gateway
-      services are inactive.
+- [ ] The selected gateway is the exclusive channel owner; competing gateway
+      services are inactive. Verify its actual runtime and profile.
 - [ ] Public identity, channel accounts, memory continuity, resource watchdog,
       and startup self-test pass.
 - [ ] Reported CUDA architecture and memory match the host. Architecture-specific

@@ -10,8 +10,9 @@ The hub protocol has an explicit pre-mutation boundary:
   attestation keys, generation, and report-executor proof without promotion.
 * ``commit`` promotes all authority surfaces, transitions all epoch holds, and
   writes the exact marker in one database transaction.
-* ``abort`` restores every exact prior hold and service-claim snapshot while
-  deleting only epoch-owned encrypted staging.
+* ``abort`` restores prior safety holds and service-claim snapshots while
+  deleting only epoch-owned encrypted staging. Previously unheld workers keep
+  their epoch hold: aborting authority changes is not proof of node readiness.
 """
 
 from __future__ import annotations
@@ -1897,11 +1898,22 @@ class FleetReleaseEpochService:
                         ),
                     )
                 else:
+                    # Node compensation happens AFTER this transaction. Restoring
+                    # an unheld snapshot here lets a restarted worker claim work
+                    # while its runtime is still being recovered. Keep the exact
+                    # epoch fence until a verified release or successor deploy
+                    # explicitly adopts it. Also repair a legacy controller that
+                    # already restored the prior unheld snapshot.
                     conn.execute(
-                        "UPDATE agents SET dispatch_hold = 0, "
-                        "dispatch_hold_reason = NULL, dispatch_hold_at = NULL, "
+                        "UPDATE agents SET dispatch_hold = 1, "
+                        "dispatch_hold_reason = ?, dispatch_hold_at = ?, "
                         "updated_at = ? WHERE id = ?",
-                        (now, agent_id),
+                        (
+                            participant["epoch_hold_reason"],
+                            participant["epoch_hold_at"],
+                            now,
+                            agent_id,
+                        ),
                     )
                 self.control_plane._record_agent_lifecycle_event(
                     conn,

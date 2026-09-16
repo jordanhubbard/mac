@@ -482,7 +482,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_GATEWAY_REQUEST_TIMEOUT_SECONDS` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway request timeout seconds. |
 | `MAC_HERMES_GATEWAY_STALE_TIMEOUT_SECONDS` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway stale timeout seconds. |
 | `MAC_HERMES_HOME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes home. |
-| `MAC_HERMES_INSTALL_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes install url. |
 | `MAC_HERMES_INSTANCE_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes instance id. |
 | `MAC_HERMES_LOG_SUMMARY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes log summary. |
 | `MAC_HERMES_MESSAGE_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes message bin. |
@@ -554,6 +553,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_VERIFY_PG_HOST` | str | consumer-defined | hub | Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.openshell.internal` (OpenShell's host-bridge alias). Does not select the live hub Postgres. |
 | `MAC_HUB_VERIFY_PG_PORT` | int | consumer-defined | hub | Port passed to `scripts/start-test-postgres.sh` when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432. |
 | `MAC_HUB_VERIFY_PG_URL` | str | consumer-defined | hub | Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way. |
+| `MAC_HUB_VERIFY_PROFILE` | str | default | hub | Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
 | `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |
@@ -750,7 +750,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SLACK_APP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack app token. |
 | `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
 | `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
-| `MAC_OPENCLAW_STARTUP_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw startup ok. |
 | `MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw subprocess timeout seconds. |
 | `MAC_OPENCLAW_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw supervisor. |
 | `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |
@@ -1130,6 +1129,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_ID` | str | consumer-defined | task-execution | Task Execution setting: task id. |
 | `MAC_TASK_MAX_ITERATIONS` | str | consumer-defined | task-execution | Task Execution setting: task max iterations. |
 | `MAC_TASK_MODEL` | str | consumer-defined | task-execution | Task Execution setting: task model. |
+| `MAC_TASK_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | task-execution | Task Execution setting: task openshell sandbox name. |
 | `MAC_TASK_REPO_ACCESS_MODE` | str | consumer-defined | task-repository | Task Repository setting: task repo access mode. |
 | `MAC_TASK_REPO_ACCESS_SCHEMA` | str | consumer-defined | task-repository | Task Repository setting: task repo access schema. |
 | `MAC_TASK_REPO_BASE_SHA` | str | consumer-defined | task-repository | Task Repository setting: task repo base sha. |

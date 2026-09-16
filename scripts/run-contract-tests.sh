@@ -57,7 +57,7 @@ fi
 # and, when coverage is on, enforces the CHANGED-LINE floor (diff-coverage)
 # because whole-repo totals are not measurable from a subset. This is the
 # days->hours rollout win; the whole-repo floors are re-enforced by the
-# scheduled full run. Unset => the default full gate below is byte-identical.
+# up-front full candidate run. Unset => the default full gate below is byte-identical.
 _MAC_TEST_SELECT_BASE_REQUESTED="${MAC_TEST_SELECT_BASE:-}"
 # Scheduled full run: after a passing portfolio gate, rebuild the committed
 # test-impact map from the fresh per-test coverage so selection stays fresh.
@@ -81,6 +81,7 @@ _MAC_CONTRACT_RUNTIME_VENV_REQUESTED="${MAC_CONTRACT_RUNTIME_VENV:-}"
 # sweep silently removes it and every test fails with "MAC_TEST_PG_URL is
 # unset", pointing at the CI provisioning step rather than at this line.
 _MAC_TEST_PG_URL_REQUESTED="${MAC_TEST_PG_URL:-}"
+_MAC_TEST_PG_DATADIR_REQUESTED="${MAC_TEST_PG_DATADIR:-}"
 # A remote OpenShell gateway cannot reach the hub's loopback database through
 # its HTTP proxy. Provision PostgreSQL inside that sandbox instead. Explicit
 # local mode takes precedence over an inherited test DSN; normal callers keep
@@ -127,7 +128,7 @@ else
     # the helper finds a running server, or a container engine, or starts a
     # server from installed binaries, and says so on stderr when it cannot.
     _pg_helper="$(dirname "$0")/start-test-postgres.sh"
-    if [ -x "$_pg_helper" ] && _pg_dsn=$("$_pg_helper"); then
+    if [ -x "$_pg_helper" ] && _pg_dsn=$(MAC_TEST_PG_DATADIR="$_MAC_TEST_PG_DATADIR_REQUESTED" "$_pg_helper"); then
         eval "$_pg_dsn"
     fi
 fi
@@ -296,15 +297,23 @@ if [ -n "$_MAC_CONTRACT_RUNTIME_VENV_REQUESTED" ]; then
 else
     _MAC_CONTRACT_RUNTIME_PYTHON="/opt/mac-venv/bin/python"
 fi
-if [ -x ".venv/bin/python" ]; then
-    PY=".venv/bin/python"
-elif [ -x "$_MAC_CONTRACT_RUNTIME_PYTHON" ]; then
-    PY="$_MAC_CONTRACT_RUNTIME_PYTHON"
-else
-    PY="$(command -v python3 || command -v python || true)"
-fi
-if [ -z "${PY}" ]; then
-    echo "run-contract-tests.sh: no python interpreter found (.venv, $_MAC_CONTRACT_RUNTIME_PYTHON, or PATH)" >&2
+_MAC_PYTHON_VERSION="$(cat .python-version)"
+_py_has_reviewed_version() {
+    "$1" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' \
+        "$_MAC_PYTHON_VERSION" >/dev/null 2>&1
+}
+_find_reviewed_python() {
+    for candidate in .venv/bin/python "$_MAC_CONTRACT_RUNTIME_PYTHON" python3.14 python3 python; do
+        if _py_has_reviewed_version "$candidate"; then
+            command -v "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+PY="$(_find_reviewed_python || true)"
+if [ -z "$PY" ]; then
+    echo "run-contract-tests.sh: Python $_MAC_PYTHON_VERSION is required; run uv python install and bootstrap-project.py with that interpreter" >&2
     exit 1
 fi
 
@@ -317,7 +326,8 @@ fi
 # cheaply; when the interpreter can't run the suite and the repo ships its
 # bootstrap, build the hermetic .venv the execution contract already promises.
 _py_can_run_suite() {
-    "$1" -m coverage --version >/dev/null 2>&1 \
+    _py_has_reviewed_version "$1" \
+        && "$1" -m coverage --version >/dev/null 2>&1 \
         && "$1" -m pytest --version >/dev/null 2>&1 \
         && "$1" -c "import cryptography, fastapi, yaml" >/dev/null 2>&1
 }
@@ -334,11 +344,7 @@ if ! _py_can_run_suite "$PY"; then
         # $PY may have resolved to the .venv interpreter just removed; fall back
         # to the runtime venv or a PATH python so bootstrap has a real builder.
         if [ ! -x "$PY" ]; then
-            if [ -x "$_MAC_CONTRACT_RUNTIME_PYTHON" ]; then
-                PY="$_MAC_CONTRACT_RUNTIME_PYTHON"
-            else
-                PY="$(command -v python3 || command -v python || true)"
-            fi
+            PY="$(_find_reviewed_python || true)"
         fi
     fi
     if [ ! -x ".venv/bin/python" ] && [ -n "$PY" ] && [ -x "$PY" ] \

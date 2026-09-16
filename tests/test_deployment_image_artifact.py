@@ -9,8 +9,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Images whose ``git-<sha>`` tag is a consumed contract rather than a
-#: convenience. The nightly documentation boundary pulls the MAC one; the
-#: worker resolves the OpenShell one back to a digest in
+#: convenience. Deployment consumes the MAC image; the worker resolves
+#: the OpenShell one back to a digest in
 #: ``_published_runtime_image_ref``. Both must exist for EVERY commit on main,
 #: including the ones where CI reuses an already-published digest.
 PER_COMMIT_TAGGED_IMAGES = {
@@ -43,7 +43,7 @@ def test_deployment_image_uses_immutable_bases_and_frozen_lock() -> None:
     assert len(from_lines) == 3
     assert all("@sha256:" in line for line in from_lines)
     assert all(re.search(r"@sha256:[0-9a-f]{64}(?: AS \w+)?$", line) for line in from_lines)
-    assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
+    assert "COPY .python-version pyproject.toml uv.lock README.md ./" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     # `hermes-gateway` was dropped from pyproject with the vendored Hermes
     # runtime in #377. This assertion outlived it and pinned the broken state:
@@ -185,22 +185,30 @@ def test_plan_build_args_match_the_reviewed_identity_contract() -> None:
     )
 
 
-def test_mainline_uses_fail_closed_impact_selection_between_nightly_full_runs() -> None:
+def test_candidate_validation_runs_full_suite_before_image_qualification() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     mainline = _workflow_job(workflow, "mainline")
-    nightly = _workflow_job(workflow, "nightly")
+    upfront = _workflow_job(workflow, "upfront-validation")
 
     assert "fetch-depth: 0" in mainline
     assert "MAC_TEST_SELECT_BASE: ${{ github.event.before }}" in mainline
     assert "scripts/run-contract-tests.sh" in mainline
-    assert "MAC_TEST_SELECT_BASE" not in nightly
-    assert "scripts/run-contract-tests.sh" in nightly
+    assert "MAC_TEST_SELECT_BASE" not in upfront
+    assert "scripts/run-contract-tests.sh" in upfront
+    assert "scripts/fault-replay.py" in upfront
+    assert "    if:" not in upfront
+    assert "  schedule:" not in workflow
+    for job in ("certifier-image", "openshell-runtime-tested"):
+        assert "upfront-validation" in _workflow_job(workflow, job)
+        assert "container-contract" in _workflow_job(workflow, job)
 
 
 def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
-    postgres = workflow.split("\n  postgres-contract:\n", 1)[1].split("\n  nightly:\n", 1)[0]
+    postgres = workflow.split("\n  postgres-contract:\n", 1)[1].split(
+        "\n  upfront-validation:\n", 1
+    )[0]
     assert (
         "docker.io/library/postgres@sha256:"
         "33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20"
@@ -216,7 +224,7 @@ def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None
     assert "postgres-contract" in tested
     assert (
         workflow.count(
-            "needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]"
+            "needs: [dead-code, mainline, compatibility, postgres-contract, upfront-validation, container-contract, publication-scope]"
         )
         == 2
     )
@@ -284,8 +292,7 @@ def test_the_per_commit_image_tag_survives_image_reuse() -> None:
     without one.
 
     Nothing on the producing side noticed, because nothing on the producing
-    side reads the tag. The consumer did: the nightly "Nightly live
-    documentation boundaries" job runs
+    side reads the tag. The former scheduled documentation job ran
     ``docker run ghcr.io/jordanhubbard/mac:git-$GITHUB_SHA`` against the tip of
     main and exited 125 on a manifest that was never pushed (run 32334374935,
     commit d623f3d7, whose "Publish multi-platform MAC deployment image" step
@@ -348,21 +355,17 @@ def test_the_per_commit_image_tag_survives_image_reuse() -> None:
         assert "printf '%s' \"$IMAGE_DIGEST\" | grep -Eq '^sha256:[0-9a-f]{64}$'" in run
 
 
-def test_every_per_commit_tag_the_nightly_pulls_has_a_producer() -> None:
-    """The nightly's image reference must name an image CI actually tags.
-
-    This is the link the outage was missing. docs.yml consumes a per-commit
-    tag; ci.yml produces it; nothing tied the two together, so the producer
-    could stop publishing on a path without any gate objecting.
-    """
+def test_docs_test_the_candidate_image_without_a_publication_race() -> None:
     docs = (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
-
-    consumed = set(re.findall(r"(ghcr\.io/[\w.\-/]+):git-\$\{GITHUB_SHA\}", docs))
-    unproduced = consumed - set(PER_COMMIT_TAGGED_IMAGES.values())
-    assert not unproduced, (
-        "docs.yml pulls a per-commit tag for %s, which ci.yml is not asserted "
-        "to publish on both the built and reused paths" % sorted(unproduced)
-    )
+    boundary = _workflow_job(docs, "live-boundaries")
+    assert "  schedule:" not in docs
+    assert "    if:" not in boundary
+    assert "context: ." in boundary
+    assert "platforms: linux/arm64" in boundary
+    assert "load: true" in boundary and "push: false" in boundary
+    assert '"mac-docs-candidate:${GITHUB_SHA}" --help' in boundary
+    assert "ghcr.io/jordanhubbard/mac:git-" not in boundary
+    assert "live-boundaries" in _workflow_job(docs, "publish")
 
 
 def test_all_publishers_pin_qemu_before_buildx() -> None:

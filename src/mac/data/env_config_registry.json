@@ -479,7 +479,6 @@
     "name": "MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "int"
@@ -5522,6 +5521,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -5703,17 +5703,6 @@
   },
   {
     "default": null,
-    "description": "Hermes Runtime setting: hermes install url.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_INSTALL_URL",
-    "retired": false,
-    "sources": [
-      "deploy/hermes/install-hermes-gateway.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hermes Runtime setting: hermes instance id.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_INSTANCE_ID",
@@ -5774,8 +5763,10 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -5801,12 +5792,14 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-fleet-context-service.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
+      "src/mac/hermes_release.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
     ],
@@ -5910,7 +5903,8 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
-      "src/mac/hermes_runtime.py"
+      "src/mac/hermes_runtime.py",
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -6182,6 +6176,7 @@
       "deploy/hermes/install-hermes-gateway.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-macos-services.sh",
       "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
@@ -6546,6 +6541,7 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
+      "src/mac/hermes_startup.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -6591,6 +6587,17 @@
     "retired": false,
     "sources": [
       "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": "default",
+    "description": "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_PROFILE",
+    "retired": false,
+    "sources": [
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -7979,6 +7986,7 @@
     "name": "MAC_NAP_TICK_ENABLED",
     "retired": false,
     "sources": [
+      "deploy/install-macos-services.sh",
       "src/mac/nap_ticker.py",
       "src/mac/self_healing.py"
     ],
@@ -8211,7 +8219,6 @@
     "name": "MAC_OPENCLAW_AGENT_BIN",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/openclaw/run-script-cron-job.py",
       "src/mac/acp/backend.py",
       "src/mac/worker_directable.py",
@@ -8878,17 +8885,6 @@
   },
   {
     "default": null,
-    "description": "Openclaw Runtime setting: openclaw startup ok.",
-    "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_STARTUP_OK",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Openclaw Runtime setting: openclaw subprocess timeout seconds.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
@@ -9058,6 +9054,7 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/hermes_startup.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/services.py",
       "src/mac/worker.py"
@@ -9107,7 +9104,8 @@
       "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/deploy_env.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -9176,7 +9174,8 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -9281,6 +9280,7 @@
       "src/mac/acp/permission.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/hermes_startup.py",
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_service.py",
       "src/mac/openshell_supervisor.py",
@@ -11328,8 +11328,10 @@
     "name": "MAC_REVIEWED_PYTHON_VERSION",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
-      "deploy/reviewed-tool-assets.sh"
+      "deploy/reviewed-tool-assets.sh",
+      "scripts/bootstrap-verifier-python.sh"
     ],
     "type": "str"
   },
@@ -11340,6 +11342,7 @@
     "name": "MAC_REVIEWED_UV_VERSION",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/reviewed-tool-assets.sh"
     ],
     "type": "str"
@@ -13373,6 +13376,18 @@
   },
   {
     "default": null,
+    "description": "Task Execution setting: task openshell sandbox name.",
+    "family": "task-execution",
+    "name": "MAC_TASK_OPENSHELL_SANDBOX_NAME",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Repository setting: task repo access mode.",
     "family": "task-repository",
     "name": "MAC_TASK_REPO_ACCESS_MODE",
@@ -13683,7 +13698,8 @@
     "retired": false,
     "sources": [
       "scripts/run-contract-tests.sh",
-      "src/mac/hub_load_shed.py"
+      "src/mac/hub_load_shed.py",
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -13706,7 +13722,9 @@
     "name": "MAC_TEST_PG_DATADIR",
     "retired": false,
     "sources": [
+      "scripts/run-contract-tests.sh",
       "scripts/start-test-postgres.sh",
+      "src/mac/openshell_runtime.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -14069,7 +14087,8 @@
     "name": "MAC_VENV",
     "retired": false,
     "sources": [
-      "scripts/bootstrap-project.py"
+      "scripts/bootstrap-project.py",
+      "scripts/run-lint.sh"
     ],
     "type": "str"
   },
@@ -14639,7 +14658,8 @@
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/read_only_report_verifier.py"
+      "src/mac/read_only_report_verifier.py",
+      "src/mac/services.py"
     ],
     "type": "int"
   },

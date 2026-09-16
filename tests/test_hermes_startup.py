@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,11 +36,16 @@ def _clear_startup_env(monkeypatch) -> None:
         "MAC_HERMES_GATEWAY_MODEL",
         "MAC_HERMES_GATEWAY_PROVIDER",
         "MAC_HERMES_LOG_SUMMARY",
+        "MAC_HERMES_PYTHON",
         "MAC_HERMES_RUNTIME_CONTEXT_FILE",
         "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN",
         "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED",
         "MAC_HERMES_WORKSPACE",
         "MAC_HERMES_INSTANCE_ID",
+        "MAC_HUB_VERIFY_IMAGE",
+        "MAC_OPENSHELL_BIN",
+        "MAC_OPENSHELL_GATEWAY_ENDPOINT",
+        "MAC_OPENSHELL_POLICY",
         "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM",
         "MAC_HERMES_STARTUP_CHECK",
         "MAC_HERMES_SLACK_HOME_CHANNEL_NAME",
@@ -105,6 +111,11 @@ def _prepare_direct_session_tools(monkeypatch, mac_home, workspace) -> None:
     for name in ("mac-task-executor",):
         _executable(mac_home / "bin" / name)
     _executable(workspace / "scripts" / "run-contract-tests.sh")
+    _executable(mac_home / "bin" / "openshell", "#!/bin/sh\nprintf '[]\\n'\n")
+    _write(mac_home / "openshell-policy.yaml", "version: 1\n")
+    monkeypatch.setenv("MAC_OPENSHELL_BIN", str(mac_home / "bin" / "openshell"))
+    monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(mac_home / "openshell-policy.yaml"))
+    monkeypatch.setenv("MAC_HUB_VERIFY_IMAGE", "example.invalid/mac@sha256:" + "a" * 64)
     monkeypatch.setenv(
         "PATH",
         "%s:%s:%s"
@@ -578,12 +589,16 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     _write(hermes_home / "SOUL.md", "soul")
     _write(hermes_home / "MEMORY.md", "memory")
     _write(hermes_home / "state.db", "state")
+    _write(workspace / "AGENTS.md", "existing project instructions")
     _write(
         workspace / ".mac" / "project.yaml",
         "\n".join(
             [
                 "schema: mac.repository_contract.v1",
                 "project: repo-beads-mac",
+                "platforms:",
+                "  - darwin",
+                "  - linux",
                 "toolchain:",
                 "  required_commands:",
                 "    - python3",
@@ -610,10 +625,19 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     _write(markdown_path, render_runtime_markdown(context))
     _write(
         agent_dir / "agent" / "prompt_builder.py",
-        "_load_mac_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\nmac-runtime-context.md\n",
+        "from pathlib import Path\n"
+        "import os\n"
+        "def _load_external_runtime_context():\n"
+        "    return Path(os.environ['MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN']).read_text()\n"
+        "def build_context_files_prompt(cwd=None, home_override=None):\n"
+        "    sections = [Path(cwd, 'AGENTS.md').read_text(), _load_external_runtime_context()]\n"
+        "    sections.append(Path(home_override, 'SOUL.md').read_text())\n"
+        "    return '\\n'.join(sections)\n",
     )
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
+    monkeypatch.setenv("MAC_HERMES_PYTHON", sys.executable)
+    monkeypatch.setenv("MAC_HERMES_WORKSPACE", str(workspace))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_FILE", str(context_path))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", str(markdown_path))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_REQUIRED", "1")
@@ -679,6 +703,9 @@ def test_required_task_project_runtime_context_reports_mac_authority(monkeypatch
     availability = report["task_project_runtime"]["session_capability_availability"]
     assert availability["ready"] is True
     assert availability["missing"] == []
+    assert availability["repository_verification"]["status"] == "supported"
+    assert availability["repository_verification"]["host_execution"] is False
+    assert all(availability["repository_verification"]["checks"].values())
     rows_by_name = {item["name"]: item for item in availability["capabilities"]}
     assert rows_by_name["shell_execution"]["checks"]["shell_probe_succeeded"] is True
     assert rows_by_name["workspace_file_access"]["checks"]["workspace_write_probe"] is True
@@ -727,6 +754,9 @@ def test_required_task_project_runtime_context_blocks_when_session_tools_missing
             [
                 "schema: mac.repository_contract.v1",
                 "project: repo-beads-mac",
+                "platforms:",
+                "  - darwin",
+                "  - linux",
                 "toolchain:",
                 "  required_commands:",
                 "    - python3",
@@ -751,7 +781,8 @@ def test_required_task_project_runtime_context_blocks_when_session_tools_missing
     _write(markdown_path, render_runtime_markdown(context))
     _write(
         agent_dir / "agent" / "prompt_builder.py",
-        "_load_mac_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\nmac-runtime-context.md\n",
+        "_load_external_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\n"
+        "sections.append(_load_external_runtime_context\n",
     )
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
@@ -767,6 +798,105 @@ def test_required_task_project_runtime_context_blocks_when_session_tools_missing
     missing = report["task_project_runtime"]["session_capability_availability"]["missing"]
     assert "mac_cli" in missing
     assert "quality_gate" in missing
+
+
+def test_repository_verification_route_preserves_unknown_and_unsupported_states(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    contract = workspace / "project.yaml"
+    contract.write_text("schema: mac.repository_contract.v1\n", encoding="utf-8")
+    capability = {
+        "name": "quality_gate",
+        "required": True,
+        "command": "scripts/run-contract-tests.sh",
+        "execution": {
+            "platform": "linux",
+            "environment": "openshell_sandbox",
+            "host_execution": False,
+        },
+    }
+
+    unknown = startup._session_capability_availability(
+        [capability],
+        workspace={
+            "path": str(workspace),
+            "project_contract": {
+                "path": str(contract),
+                "schema": "mac.repository_contract.v1",
+                "platforms": [],
+                "platforms_declared": False,
+                "required_commands": [],
+            },
+        },
+    )
+    assert unknown["repository_verification"]["supported"] is None
+    assert unknown["repository_verification"]["status"] == "unknown_repository_platforms"
+    assert "quality_gate" in unknown["missing"]
+
+    unsupported = startup._session_capability_availability(
+        [capability],
+        workspace={
+            "path": str(workspace),
+            "project_contract": {
+                "path": str(contract),
+                "schema": "mac.repository_contract.v1",
+                "platforms": ["linux"],
+                "platforms_declared": True,
+                "required_commands": [],
+            },
+        },
+    )
+    if startup.sys.platform == "darwin":
+        assert unsupported["repository_verification"]["supported"] is False
+        assert unsupported["repository_verification"]["status"] == "unsupported_host_platform"
+        assert "quality_gate" in unsupported["missing"]
+
+
+def test_repository_verification_requires_authenticated_gateway_inventory(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    contract = workspace / "project.yaml"
+    contract.write_text("schema: mac.repository_contract.v1\n", encoding="utf-8")
+    openshell = tmp_path / "openshell"
+    _executable(openshell, "#!/bin/sh\nexit 1\n")
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("version: 1\n", encoding="utf-8")
+    monkeypatch.setenv("MAC_OPENSHELL_BIN", str(openshell))
+    monkeypatch.setenv("MAC_OPENSHELL_POLICY", str(policy))
+    monkeypatch.setenv("MAC_HUB_VERIFY_IMAGE", "example.invalid/mac@sha256:" + "a" * 64)
+    monkeypatch.setenv("MAC_OPENSHELL_GATEWAY_ENDPOINT", "http://127.0.0.1:17674")
+    capability = {
+        "name": "quality_gate",
+        "required": True,
+        "command": "scripts/run-contract-tests.sh",
+        "execution": {
+            "platform": "linux",
+            "environment": "openshell_sandbox",
+            "host_execution": False,
+        },
+    }
+    host_platform = "darwin" if startup.sys.platform == "darwin" else "linux"
+
+    availability = startup._session_capability_availability(
+        [capability],
+        workspace={
+            "path": str(workspace),
+            "project_contract": {
+                "path": str(contract),
+                "schema": "mac.repository_contract.v1",
+                "platforms": [host_platform, "linux"],
+                "platforms_declared": True,
+                "required_commands": [],
+            },
+        },
+    )
+
+    verification = availability["repository_verification"]
+    assert verification["status"] == "unavailable"
+    assert verification["checks"]["authenticated_gateway_inventory_succeeded"] is False
+    assert "quality_gate" in availability["missing"]
 
 
 def test_required_task_project_runtime_context_blocks_when_markdown_contract_missing(
@@ -815,7 +945,8 @@ def test_required_task_project_runtime_context_blocks_when_markdown_contract_mis
     _write(markdown_path, "MAC Task and Project Runtime\n")
     _write(
         agent_dir / "agent" / "prompt_builder.py",
-        "_load_mac_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\nmac-runtime-context.md\n",
+        "_load_external_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\n"
+        "sections.append(_load_external_runtime_context\n",
     )
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
@@ -882,7 +1013,8 @@ def test_required_task_project_runtime_context_blocks_when_object_model_missing(
     _write(markdown_path, "runtime")
     _write(
         agent_dir / "agent" / "prompt_builder.py",
-        "_load_mac_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\nmac-runtime-context.md\n",
+        "_load_external_runtime_context\nMAC_HERMES_RUNTIME_CONTEXT_MARKDOWN\n"
+        "sections.append(_load_external_runtime_context\n",
     )
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
@@ -932,6 +1064,8 @@ def test_required_task_project_runtime_context_blocks_when_prompt_bridge_missing
     # exercise the "missing" path.
     _write(agent_dir / "agent" / "prompt_builder.py", "def build_context_files_prompt(): pass\n")
     monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
+    monkeypatch.setenv("MAC_HERMES_PYTHON", sys.executable)
+    monkeypatch.setenv("MAC_HERMES_WORKSPACE", str(hermes_home))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_FILE", str(context_path))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", str(markdown_path))
@@ -942,7 +1076,9 @@ def test_required_task_project_runtime_context_blocks_when_prompt_bridge_missing
     assert report["ready"] is False
     assert report["task_project_runtime"]["prompt_bridge"]["present"] is False
     assert report["checks"]["task_project_runtime_prompt_bridge_active"] is False
-    assert "runtime prompt bridge is missing" in " ".join(report["warnings"])
+    assert "did not construct a prompt containing MAC and persona context" in " ".join(
+        report["warnings"]
+    )
 
 
 def test_qdrant_degraded_override_does_not_allow_startup(monkeypatch, tmp_path):
@@ -1191,7 +1327,15 @@ def test_session_capability_probes_record_failures(tmp_path, monkeypatch):
     )
     assert report["ready"] is False
     assert "project_contract" in report["missing"]
-    assert "project_toolchain:missing-command" in report["missing"]
+    assert report["toolchain"] == [
+        {
+            "command": "missing-command",
+            "scope": "linux_openshell_repository_verification",
+            "resolved": None,
+            "available": None,
+            "status": "delegated",
+        }
+    ]
     assert {"shell_execution", "workspace_file_access", "mac_api", "web_search"} <= set(
         report["missing"]
     )

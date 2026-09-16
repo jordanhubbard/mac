@@ -59,7 +59,7 @@ defaults:
     capabilities:
       - ops
       - python
-      - openclaw
+      - hermes
       - review
       - api
       - architecture

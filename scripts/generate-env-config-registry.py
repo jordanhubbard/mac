@@ -110,6 +110,7 @@ INT_SUFFIXES = (
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 CONSUMER_DEFAULTS = {
+    "MAC_HUB_VERIFY_PROFILE": "default",
     # The contract runner deliberately bounds its default. Operators may still
     # request ``auto`` or another explicit worker count for a qualified host.
     "MAC_TEST_JOBS": "2",
@@ -122,6 +123,17 @@ CONSUMER_DEFAULTS = {
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_HUB_VERIFY_PROFILE": (
+        "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "
+        "driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB "
+        "sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. "
+        "Repository fixture scratch uses a separate sandbox-local directory so fixture "
+        "copies cannot fill the database mount. Requires a writable "
+        "Linux tmpfs proof before repository code runs; unsupported profiles fail closed. "
+        "Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, "
+        "including separate read-only verifiers; existing sandbox resources remain unchanged. "
+        "Conflicting worker create resource overrides are rejected."
+    ),
     "MAC_HUB_VERIFY_PG_URL": (
         "Dedicated test Postgres DSN injected into the hub-verify OpenShell "
         "sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host "

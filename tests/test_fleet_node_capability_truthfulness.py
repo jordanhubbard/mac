@@ -230,7 +230,7 @@ def test_the_drain_clear_sends_the_measured_health(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Typed phase 2 must repair absent gateway state under OpenClaw home
+# Typed phase 2 must repair absent state under the selected gateway home
 # --------------------------------------------------------------------------
 
 
@@ -242,15 +242,25 @@ def test_the_drain_clear_sends_the_measured_health(tmp_path):
     ],
 )
 def test_typed_phase_two_repairs_absent_gateway_state(writer, filename):
-    """A recreated fungible node must be able to get these files back.
+    """Typed phase two restores each gateway file under its ownership rule.
 
-    Both writers ran only on the legacy-one-shot path, so a typed phase-2
-    deploy could never restore them: three of five GKE workers were still
-    missing both on 2026-08-05. Phase 2 must keep refusing to MUTATE an
-    existing file while still repairing an absent one. After Hermes retirement
-    the live files belong under $MAC_HOME/openclaw, not ~/.hermes.
+    Durable memory topology is repaired only when absent. Generated runtime
+    context is deployment-owned and must refresh so existing agents receive
+    new prompt instructions; its prior value is rollback-tracked first.
     """
     text = _script()
+    if writer == "write_hermes_runtime_context":
+        typed = text.split(
+            'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  if control_plane_enabled; then',
+            1,
+        )[1]
+        typed = typed.split("\nsummarize_report() {", 1)[0].split("\nelse\n", 1)[1]
+        assert writer in typed
+        assert '! -f "$(mac_gateway_home)/%s"' % filename not in typed
+        assert 'track_auxiliary_rollback_artifact "$gateway_home/%s" user' % filename in text
+        assert "$HOME/.hermes/%s" % filename not in text
+        return
+
     guarded = re.search(
         r'if \[ ! -f "\$\(mac_gateway_home\)/%s" \]; then\n(?:.*\n)*?\s*%s\n'
         % (re.escape(filename), re.escape(writer)),
@@ -262,23 +272,5 @@ def test_typed_phase_two_repairs_absent_gateway_state(writer, filename):
     )
     # The repair must be conditional: an existing file is still left alone.
     assert '! -f "$(mac_gateway_home)/%s"' % filename in text
-    # Recreating ~/.hermes is the opposite of retiring Hermes.
+    # An explicit or installed profile may live somewhere other than ~/.hermes.
     assert "$HOME/.hermes/%s" % filename not in text
-
-
-def test_installer_defaults_gateway_home_to_openclaw_not_hermes():
-    """Deploy must not recreate a vacated ~/.hermes tree.
-
-    Python already resolves gateway_home() to $MAC_HOME/openclaw. The installer
-    and mac.env rewrite were still pinning ~/.hermes, which is how the last
-    fleet deploy put that directory back after GC.
-    """
-    text = _script()
-    assert "mac_gateway_home()" in text
-    assert "${HERMES_HOME:-$HOME/.hermes}" not in text
-    assert "$HOME/.hermes/mac-memory-topology.json" not in text
-    assert "$HOME/.hermes/mac-runtime-context.json" not in text
-    assert 'local skills_dir="$HOME/.hermes/skills"' not in text
-    assert 'local skills_dir="$MAC_HOME/openclaw/workspace/skills"' in text
-    # Continuity may still READ a leftover tree; it must not mkdir one.
-    assert '[ ! -d "$HOME/.hermes" ]' in text

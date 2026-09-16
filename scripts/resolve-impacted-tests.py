@@ -73,6 +73,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "deploy/fleet-node-machine-onboard.py": ("tests/test_fleet_node_machine_onboard.py",),
     "deploy/fleet-node-phase1-quiesce.sh": ("tests/test_fleet_node_phase1_quiesce.py",),
     "deploy/fleet-node-install.sh": (
+        "tests/test_native_runtime_lock.py",
         # Guards that this script stays the WRITER of the startup self-test and
         # never becomes another reader of the dispatch-readiness rule; it scans
         # every deploy/scripts shell file for inline copies.
@@ -97,14 +98,13 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_supervisord_lifecycle.py",
         "tests/test_fleet_skills.py",
         "tests/test_gateway_probe_blast_radius.py",
-        "tests/test_gateway_serving_openclaw_agent_probe_soft.py",
-        "tests/test_gateway_serving_worker_selftest_soft_agent_probe.py",
         "tests/test_gatewayless_worker_selftest_crash.py",
         "tests/test_generated_artifact_guards_always_run.py",
         "tests/test_github_review_key_install.py",
         "tests/test_git_toolchain_floor.py",
         "tests/test_hermes_gateway_deploy.py",
         "tests/test_hermes_prompt_bridge_inert.py",
+        "tests/test_hermes_release.py",
         "tests/test_hub_does_not_log_on_the_event_loop.py",
         "tests/test_hub_upgrade_supervisor.py",
         "tests/test_human_interface_switch_gate.py",

@@ -1,7 +1,8 @@
 # Fate of the vendored Hermes tree
 
 **Verdict: removed.** `src/mac/_hermes` (~444k lines) was deleted in PR #377
-on 2026-08-17. OpenClaw is the live gateway; the in-tree Hermes snapshot was
+on 2026-08-17. OpenClaw was the live gateway at that removal; Hermes is again
+the configured gateway, installed separately. The in-tree Hermes snapshot was
 inactive and larger than mac's own code. This note records the four
 pre-deletion checks and the post-removal inventory so the decision stays
 auditable during the port.
@@ -45,6 +46,55 @@ Measured against prepared tip `7f2850f76361d676405cacd0491fd017f6f5f5c3`
 ADR 0001 is amended to **Superseded (vendoring premise ended 2026-08-17)**.
 Hermes can be fetched and patched on demand if needed again; git history
 retains the snapshot.
+
+## Update (2026-09-13): bounded external compatibility patch
+
+The shared Python 3.14.7 baseline exposes an incompatibility in the externally
+installed Hermes daemon thread pool. `deploy/hermes/python314.patch` records
+the repair and test-harness corrections against one upstream commit;
+`python314-source.json` pins that commit, the patch checksum, and every affected
+file's original and patched hashes. It preserves the locked dependency versions.
+Apply it to a separate external staging checkout, never a serving checkout.
+
+`deploy/hermes/runtime-context.patch` is the independently pinned prompt
+integration for the same upstream revision. It extends Hermes's supported
+context-file builder so the deployment-owned MAC runtime markdown is additive
+to workspace instructions and `SOUL.md`; it does not replace either one or
+change `terminal.cwd` discovery.
+
+This accepts a limited patch-maintenance obligation for the requested migration.
+Requalify the patch when changing the upstream revision, and retire it once a
+qualified upstream release supplies the fixes. It does not restore the snapshot,
+an in-process import, an overlay, a re-vendor job, or a container `.pth` injection.
+The architecture tests retain those prohibitions and check external patch/manifest
+integrity instead of forbidding every file with a `.patch` suffix.
+
+## Qualified external releases
+
+The gateway installer prepares an external release from the reviewed revision,
+applies both manifests, and installs the locked `slack` and `mcp` extras using
+the reviewed Python and uv versions. The profile's runtime context and persona
+must appear in the candidate's constructed prompt before selection.
+
+The regular `~/.local/bin/hermes` launcher is the runtime selection point.
+Deployment replaces it atomically after qualification and uses upstream's CLI
+to install the service. Verification checks the release's recorded source and
+package versions, the launcher, and the service's interpreter/profile before
+accepting live messaging readiness. Startup health resolves that same launcher
+instead of trusting a stale `MAC_HERMES_AGENT_DIR` override. Repeated deployment
+reuses a valid qualified release without synchronizing the serving environment.
+
+Releases live under `~/.mac/hermes-runtimes/`, separate from profile data.
+The existing fleet transaction snapshots the launcher and actual upstream
+service definitions before activation. Its hold and recovery policy controls
+failures after selection; no second deployment controller is added. Failed
+candidates are retained for diagnosis. Required integrations belong in the
+reviewed release recipe; arbitrary untracked source modifications and incidental
+packages from old runtimes are not automatically copied. Live canary evidence
+remains required before releasing dependent work.
+
+The [ownership investigation](investigations/hermes-runtime-ownership.md)
+records the evidence, corrected diagnosis, and remaining rollout proof.
 
 ## Update (2026-09-05): Hermes reactivated on the hub, still not vendored
 

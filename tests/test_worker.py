@@ -1385,7 +1385,10 @@ def test_subprocess_executor_explicit_cancel_is_audited(tmp_path: Path):
     assert cancelled[0]["metadata"]["cancel_reason"] == "ledger task cancelled"
 
 
-def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_path: Path):
+@pytest.mark.parametrize("stop_task", [False, True], ids=["cancel", "stop"])
+def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(
+    tmp_path: Path, stop_task: bool
+):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     task = cp.create_task("cancel running executor", required_capabilities=["python"])
@@ -1410,12 +1413,15 @@ def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_pa
         time.sleep(0.01)
     assert executor.has_active_process()
 
-    cp._transition_task_internal(
-        task.id,
-        TaskState.CANCELLED.value,
-        "operator",
-        {"reason": "test cancellation"},
-    )
+    if stop_task:
+        cp.stop_task(task.id, actor="operator", reason="test stop")
+    else:
+        cp._transition_task_internal(
+            task.id,
+            TaskState.CANCELLED.value,
+            "operator",
+            {"reason": "test cancellation"},
+        )
     thread.join(timeout=5.0)
 
     assert not thread.is_alive()
@@ -2341,7 +2347,7 @@ def test_subprocess_executor_exports_repository_worktree_env(tmp_path: Path):
     assert completed.metadata["repository_checkout_policy"] == "task_owned_git_worktree"
 
 
-def test_repository_contract_test_prefers_sandbox_verification_artifact(tmp_path: Path):
+def test_repository_contract_test_rejects_unbound_sandbox_verification_artifact(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     client = TestClient(create_app(control_plane=cp))
@@ -2377,10 +2383,9 @@ def test_repository_contract_test_prefers_sandbox_verification_artifact(tmp_path
 
     item = worker._run_repository_contract_test(worktree, "false", task_dir=task_dir)
 
-    assert item["status"] == "pass"
-    assert item["command"] == "make test"
-    assert item["execution_environment"] == "openshell_sandbox"
-    assert item["environment_delta"]["missing_after"] == []
+    assert item["returncode"] != 0
+    assert item["command"] == "false"
+    assert item["status"] == "unavailable"
 
 
 def test_mac_worker_refuses_dirty_repository_source_for_normal_work(tmp_path: Path):
@@ -2430,7 +2435,7 @@ def test_source_remediation_task_can_target_dirty_registered_checkout(tmp_path: 
     client = TestClient(create_app(control_plane=cp))
 
     def executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
-        assert "runtime" not in task_payload["metadata"]
+        assert task_payload["metadata"]["runtime"] == {"publication_target": None}
         assert not any(task_dir.glob("repo-*"))
         _write_worker_manifest(task_dir)
         return WorkerExecution(0, "source repair inspected", stdout="ok\n")
@@ -2512,6 +2517,137 @@ def test_mac_worker_renews_lease_while_executor_runs(tmp_path: Path):
 
     assert result.status == "submitted_for_review"
     assert any(event.event_type == "task.lease_renewed" for event in cp.task_history(task.id))
+
+
+@pytest.mark.parametrize(
+    ("phase", "outcome"),
+    [
+        ("preparation", "success"),
+        ("preparation", "revoked"),
+        ("verification", "success"),
+        ("verification", "failed"),
+        ("verification", "error"),
+        ("verification", "revoked"),
+    ],
+)
+def test_assignment_lease_covers_preparation_and_host_verification(
+    tmp_path: Path, monkeypatch, phase: str, outcome: str
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    _seed, repo = _git_fixture(tmp_path)
+    initial_remote_refs = _git(repo, "ls-remote", "--heads", "origin")
+    metadata = _repository_task_metadata(repo)
+    if outcome == "failed":
+        metadata["execution_contract"]["repository_contract"]["test"]["command"] = "false"
+    task = cp.create_task(
+        "Preserve assignment during delegated verification",
+        required_capabilities=["python"],
+        metadata=metadata,
+    )
+    client = TestClient(create_app(control_plane=cp))
+    delegate = api_transport(client)
+    blocking = threading.Event()
+    renewed = threading.Event()
+    heartbeated = threading.Event()
+    ticker_finished = threading.Event()
+    renewals: list[str] = []
+    heartbeats: list[str] = []
+    executor_calls: list[str] = []
+
+    def transport(method, path, payload):
+        result = delegate(method, path, payload)
+        if blocking.is_set() and method.upper() == "POST":
+            if path.startswith("/leases/") and path.endswith("/renew"):
+                renewals.append(result["id"])
+                if len(renewals) >= 2:
+                    renewed.set()
+            if path == "/agents/%s/heartbeat" % agent.id and payload.get("status") == "busy":
+                heartbeats.append(payload["status"])
+                if len(heartbeats) >= 2:
+                    heartbeated.set()
+        return result
+
+    def executor(task_payload, _task_dir):
+        executor_calls.append(task_payload["id"])
+        worktree = Path(task_payload["metadata"]["runtime"]["repository_worktree"])
+        (worktree / "README.md").write_text("finalize this change\n", encoding="utf-8")
+        return WorkerExecution(0, "changed repository without a manifest")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=transport),
+        agent.id,
+        tmp_path / "workspaces",
+        executor,
+        lease_seconds=60,
+        lease_renew_interval_seconds=0.02,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+    renewal_loop = worker._renew_lease_until_stopped
+
+    def tracked_renewal(*args):
+        try:
+            return renewal_loop(*args)
+        finally:
+            ticker_finished.set()
+
+    monkeypatch.setattr(worker, "_renew_lease_until_stopped", tracked_renewal)
+
+    def wait_for_liveness():
+        before = cp.get_task(task.id)
+        initial_expiry = cp.get_lease(before.lease_id).expires_at
+        blocking.set()
+        try:
+            assert renewed.wait(3), "lease was not renewed during %s" % phase
+            assert heartbeated.wait(3), "worker did not heartbeat during %s" % phase
+            current = cp.get_task(task.id)
+            assert current.owner_agent_id == agent.id
+            assert current.lease_id == before.lease_id
+            assert set(renewals) == {before.lease_id}
+            assert cp.get_lease(before.lease_id).expires_at > initial_expiry
+            assert cp.get_agent(agent.id).status == "busy"
+            if outcome == "revoked":
+                cp.stop_task(task.id, actor="operator", reason="revoke while blocked")
+            elif outcome == "error":
+                raise OSError("delegated verifier unavailable")
+        finally:
+            blocking.clear()
+
+    if phase == "preparation":
+        prepare = worker._prepare_task_workspace
+
+        def blocked_prepare(*args):
+            task_dir = prepare(*args)
+            wait_for_liveness()
+            return task_dir
+
+        monkeypatch.setattr(worker, "_prepare_task_workspace", blocked_prepare)
+    else:
+        verify = worker._run_repository_contract_test
+
+        def blocked_verify(*args, **kwargs):
+            wait_for_liveness()
+            return verify(*args, **kwargs)
+
+        monkeypatch.setattr(worker, "_run_repository_contract_test", blocked_verify)
+
+    result = worker.run_once()
+
+    assert renewed.is_set() and heartbeated.is_set()
+    assert ticker_finished.wait(0.5), "assignment left its renewal thread running"
+    assert worker._active_assignment is None
+    if outcome == "success":
+        assert result.status == "submitted_for_review"
+        manifest = cp.list_evidence(task.id)[0].metadata["verification"]
+        assert manifest["repo"]["pushed"] is True
+    else:
+        assert result.status == ("stale_result" if outcome == "revoked" else "blocked")
+        assert _git(repo, "ls-remote", "--heads", "origin") == initial_remote_refs
+    if outcome == "revoked":
+        assert cp.get_task(task.id).state == "stopped"
+        assert cp.list_evidence(task.id) == []
+        if phase == "preparation":
+            assert executor_calls == []
 
 
 def test_assignment_is_current_propagates_programming_errors_not_silently_true(tmp_path: Path):
@@ -4330,3 +4466,6 @@ def test_worker_exception_records_diagnostics_and_output_tail(tmp_path: Path):
     evidence = cp.list_evidence(task.id)
     assert evidence, "worker exception must record durable evidence"
     assert blocked.detail.get("evidence_id") == evidence[-1].id
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

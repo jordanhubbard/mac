@@ -1,5 +1,14 @@
 # The human interface: support both, activate one
 
+!!! note "Current implementation boundary"
+    The selector still supports one configured gateway per agent. The dated
+    analysis below contains historical vendor pins and maintenance claims;
+    the in-tree Hermes vendor and its reproduction job have since been
+    removed. Current Hermes uses a separately prepared upstream environment
+    and preserved profile. See [the Python baseline](python-baseline.md) and
+    [Hermes deployment readiness](investigations/hermes-deployment-readiness.md).
+
+
 Status: design note, 2026-08-04. Describes a model the deploy already mostly
 implements, and what remains to make it explicit.
 

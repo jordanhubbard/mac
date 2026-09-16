@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -27,13 +28,29 @@ with Path(os.environ["FAKE_HERMES_CALLS"]).open("a", encoding="utf-8") as handle
 
 scenario = os.environ.get("FAKE_HERMES_SCENARIO", "healthy")
 
+if args[:2] == ["gateway", "stop"] and scenario == "stop_failed":
+    raise SystemExit(1)
+
+if args[:2] == ["config", "get"]:
+    if args[2] == "terminal.backend":
+        print(os.environ.get("FAKE_TERMINAL_BACKEND", "local"))
+    elif args[2] == "terminal.cwd":
+        print(os.environ.get("FAKE_TERMINAL_CWD", os.environ["HOME"]))
+    raise SystemExit(0)
+
 if args[:2] == ["gateway", "status"]:
     if scenario == "unsupervised":
         print("Gateway is running as a detached process (not supervised).")
     elif scenario == "unhealthy":
         print("Gateway is supervised by launchd, but reports Unhealthy.")
+    elif scenario == "systemd":
+        print("Main PID: " + os.environ["FAKE_GATEWAY_PID"] + " (hermes)")
+        print("Old journal entry: Gateway stopped")
+        print("✓ User gateway service is running")
     else:
-        print("Gateway is supervised by launchd and Running.")
+        print("✓ Gateway is supervised by launchd (PID " + os.environ["FAKE_GATEWAY_PID"] + ")")
+    if "--deep" in args and scenario == "historical_shutdown":
+        print("Recent logs: Gateway stopped. Unhealthy on previous startup.")
     raise SystemExit(0)
 
 raise SystemExit(0)
@@ -52,12 +69,71 @@ raise SystemExit(0)
 """
 
 
+FAKE_PS = """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+# Advance status only after the verifier has read the preceding snapshot.
+# Use the real process lookup, including its failure for an exited old PID.
+sequence_path = Path(os.environ["FAKE_RUNTIME_SEQUENCE"])
+sequence = json.loads(sequence_path.read_text())
+with Path(os.environ["FAKE_HERMES_CALLS"]).open("a") as handle:
+    handle.write(json.dumps(["ps", *sys.argv[1:]]) + "\\n")
+if sequence:
+    runtime_path = Path(os.environ["HERMES_HOME"]) / "gateway_state.json"
+    temporary = runtime_path.with_suffix(".next")
+    temporary.write_text(json.dumps(sequence.pop(0)))
+    temporary.chmod(0o600)
+    temporary.replace(runtime_path)
+    sequence_path.write_text(json.dumps(sequence))
+os.execv(os.environ["FAKE_REAL_PS"], ["ps", *sys.argv[1:]])
+"""
+
+FAKE_PROMPT_BUILDER = """from pathlib import Path
+import os
+
+def _load_external_runtime_context():
+    path = Path(os.environ["MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"])
+    return path.read_text() if path.is_file() else ""
+
+def build_context_files_prompt(cwd=None):
+    sections = []
+    workspace = Path(cwd or os.getcwd())
+    if (workspace / "AGENTS.md").is_file():
+        sections.append((workspace / "AGENTS.md").read_text())
+    sections.append(_load_external_runtime_context())
+    home = Path(os.environ["HERMES_HOME"])
+    if (home / "SOUL.md").is_file():
+        sections.append((home / "SOUL.md").read_text())
+    return "\\n".join(sections)
+"""
+
+
 def _prepare_bin(tmp_path: Path, calls_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake_hermes = bin_dir / "hermes"
-    fake_hermes.write_text(FAKE_HERMES, encoding="utf-8")
+    fake_hermes.write_text(
+        FAKE_HERMES + f"\n# runtime entrypoint: {bin_dir / 'hermes'}\n", encoding="utf-8"
+    )
     fake_hermes.chmod(0o755)
+    (bin_dir / "agent").mkdir(exist_ok=True)
+    (bin_dir / "agent" / "__init__.py").write_text("", encoding="utf-8")
+    (bin_dir / "agent" / "prompt_builder.py").write_text(FAKE_PROMPT_BUILDER, encoding="utf-8")
+    runtime_python = bin_dir / ".venv" / "bin" / "python"
+    runtime_python.parent.mkdir(parents=True, exist_ok=True)
+    runtime_python.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        "  *platform.python_version*) exit 0 ;;\n"
+        "  *os.path.realpath*) printf '%s\\n' \"$0\"; exit 0 ;;\n"
+        "esac\n"
+        f'exec "{sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
     fake_mac = bin_dir / "mac"
     fake_mac.write_text(FAKE_MAC, encoding="utf-8")
     fake_mac.chmod(0o755)
@@ -80,6 +156,44 @@ def _run(
     (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
     hermes_home = home / ".hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "SOUL.md").write_text("existing persona context", encoding="utf-8")
+    (hermes_home / "mac-runtime-context.md").write_text(
+        "MAC Task and Project Runtime", encoding="utf-8"
+    )
+    runtime_pid = os.getpid()
+    if (subcommand == "prepare" and scenario != "stop_still_running") or (extra_env or {}).get(
+        "_EXITED_RUNTIME"
+    ):
+        # A real exited process models an installed, already stopped service.
+        # The stuck-stop case keeps a real live PID while the fake CLI returns
+        # success, reproducing upstream's misleading exit code safely.
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait(timeout=10)
+        runtime_pid = exited.pid
+    runtime = {
+        "pid": runtime_pid,
+        "gateway_state": "running",
+        "platforms": {"slack": {"state": "connected", "writer_pid": runtime_pid}},
+    }
+    runtime.update((extra_env or {}).get("_RUNTIME_UPDATE", {}))
+    if "_RUNTIME_SEQUENCE" in (extra_env or {}):
+        fake_ps = bin_dir / "ps"
+        fake_ps.write_text(FAKE_PS, encoding="utf-8")
+        fake_ps.chmod(0o755)
+        snapshots = []
+        for update in extra_env["_RUNTIME_SEQUENCE"]:
+            snapshot = {
+                "pid": os.getpid(),
+                "gateway_state": "running",
+                "platforms": {"slack": {"state": "connected", "writer_pid": os.getpid()}},
+            }
+            snapshot.update(update)
+            snapshots.append(snapshot)
+        (tmp_path / "runtime-sequence.json").write_text(json.dumps(snapshots), encoding="utf-8")
+    if not (extra_env or {}).get("_OMIT_RUNTIME"):
+        runtime_path = hermes_home / "gateway_state.json"
+        runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+        runtime_path.chmod(0o600)
     # Every scenario except the one that explicitly tests its absence
     # represents a fleet node where prepare (and therefore
     # ensure_user_allowlist) already ran.
@@ -87,6 +201,23 @@ def _run(
         (hermes_home / ".env").write_text("SLACK_ALLOWED_USERS=*\n", encoding="utf-8")
     mac_home = home / ".mac"
     mac_home.mkdir(parents=True, exist_ok=True)
+    (mac_home / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+    mac_python = mac_home / "venv" / "bin" / "python"
+    if not mac_python.exists():
+        # Model candidate preparation separately from service orchestration.
+        # Real Git/patch/environment selection is covered by test_hermes_release.
+        mac_python.write_text(
+            f"#!{sys.executable}\n"
+            "import json,os,sys\nfrom pathlib import Path\n"
+            "if sys.argv[1:3] == ['-m','mac.hermes_release'] and sys.argv[3] != 'resolve':\n"
+            "    action=sys.argv[3]\n"
+            "    with Path(os.environ['FAKE_HERMES_CALLS']).open('a') as f: f.write(json.dumps(['release',action])+'\\n')\n"
+            "    if os.environ.get('FAKE_HERMES_SCENARIO') == 'qualification_failed': sys.exit(1)\n"
+            f"    if action == 'prepare': print({str(bin_dir)!r})\n"
+            "    sys.exit(0)\n"
+            f"os.execv({sys.executable!r}, [{sys.executable!r},*sys.argv[1:]])\n"
+        )
+        mac_python.chmod(0o755)
     if not (extra_env or {}).get("_OMIT_GATEWAY_IMPL_ENV"):
         (mac_home / "mac.env").write_text("MAC_CHAT_GATEWAY_IMPL=hermes\n", encoding="utf-8")
     env = {
@@ -99,9 +230,20 @@ def _run(
         "MAC_HERMES_OPENCLAW_SOURCE": str(home / "no-openclaw-here"),
         "FAKE_HERMES_CALLS": str(calls_path),
         "FAKE_HERMES_SCENARIO": scenario,
+        "FAKE_GATEWAY_PID": str(os.getpid()),
         "FAKE_MAC_CALLS": str(mac_calls_path),
+        "FAKE_RUNTIME_SEQUENCE": str(tmp_path / "runtime-sequence.json"),
+        "FAKE_REAL_PS": shutil.which("ps"),
+        "PYTHONPATH": str(ROOT / "src"),
     }
-    _test_only_flags = {"_OMIT_ALLOWLIST_ENV", "_OMIT_GATEWAY_IMPL_ENV"}
+    _test_only_flags = {
+        "_OMIT_ALLOWLIST_ENV",
+        "_OMIT_GATEWAY_IMPL_ENV",
+        "_OMIT_RUNTIME",
+        "_RUNTIME_UPDATE",
+        "_RUNTIME_SEQUENCE",
+        "_EXITED_RUNTIME",
+    }
     if extra_env:
         env.update({k: v for k, v in extra_env.items() if k not in _test_only_flags})
     result = subprocess.run(
@@ -120,7 +262,105 @@ def _run(
 def test_verify_passes_when_gateway_is_supervised(tmp_path):
     result, calls = _run(tmp_path, "verify", scenario="healthy")
     assert result.returncode == 0, result.stderr
-    assert ["gateway", "status", "--deep"] in calls
+    assert ["gateway", "status"] in calls
+
+
+def test_prepare_preserves_unrelated_mac_env_and_records_runtime_identity(tmp_path):
+    mac_env = tmp_path / "home" / ".mac" / "mac.env"
+    mac_env.parent.mkdir(parents=True, exist_ok=True)
+    mac_env.write_text("UNRELATED_SETTING=retained\n", encoding="utf-8")
+    result, _calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={"_EXITED_RUNTIME": True, "_OMIT_GATEWAY_IMPL_ENV": True},
+    )
+    assert result.returncode == 0, result.stderr
+    from mac.deploy_env import read_env_file
+
+    values = read_env_file(mac_env)
+    assert values["UNRELATED_SETTING"] == "retained"
+    assert values["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
+    assert values["MAC_HERMES_AGENT_DIR"].endswith("/bin")
+    assert values["MAC_HERMES_PYTHON"].endswith("/python")
+    assert mac_env.stat().st_mode & 0o777 == 0o600
+
+
+def test_verify_ignores_historical_shutdown_logs(tmp_path):
+    result, _calls = _run(tmp_path, "verify", scenario="historical_shutdown")
+    assert result.returncode == 0, result.stderr
+
+
+def test_verify_accepts_systemd_current_summary_despite_old_journal_shutdown(tmp_path):
+    result, _calls = _run(tmp_path, "verify", scenario="systemd")
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("old_state", ["stopped", "running", "startup_failed"])
+def test_verify_waits_for_replacement_writer_and_its_ready_snapshot(tmp_path, old_state):
+    result, calls = _run(
+        tmp_path,
+        "verify",
+        extra_env={
+            "_EXITED_RUNTIME": True,
+            "_RUNTIME_UPDATE": {"gateway_state": old_state},
+            "_RUNTIME_SEQUENCE": [
+                {"gateway_state": "stopped"},
+                {"gateway_state": "starting", "platforms": {"slack": {"state": "connecting"}}},
+                {},
+            ],
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert "live runtime reports Slack connected" in result.stdout
+    # A connected old writer or the new PID's inherited stopped state cannot
+    # satisfy readiness; the verifier must inspect the fourth snapshot.
+    assert len([call for call in calls if call[0] == "ps"]) == 4
+
+
+def test_verify_never_accepts_connected_status_from_exited_writer(tmp_path):
+    result, calls = _run(
+        tmp_path,
+        "verify",
+        extra_env={"_EXITED_RUNTIME": True, "_RUNTIME_SEQUENCE": []},
+    )
+    assert result.returncode != 0
+    assert "timed out waiting for current gateway and Slack" in result.stderr
+    assert "live runtime reports Slack connected" not in result.stdout
+    assert len([call for call in calls if call[0] == "ps"]) > 1
+
+
+@pytest.mark.parametrize("state", ["startup_failed", "draining"])
+def test_verify_rejects_current_fatal_state_without_waiting_for_later_readiness(tmp_path, state):
+    result, calls = _run(
+        tmp_path,
+        "verify",
+        extra_env={"_RUNTIME_UPDATE": {"gateway_state": state}, "_RUNTIME_SEQUENCE": [{}]},
+    )
+    assert result.returncode != 0
+    assert "messaging readiness failed" in result.stderr
+    assert len([call for call in calls if call[0] == "ps"]) == 1
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"pid": 1},
+        {"gateway_state": "stopped"},
+        {"platforms": {"slack": {"state": "fatal", "error_message": "private-message"}}},
+        {"platforms": {"slack": {"state": "connected", "writer_pid": 1}}},
+    ],
+)
+def test_supervision_does_not_override_invalid_messaging_runtime(tmp_path, update):
+    result, _calls = _run(tmp_path, "verify", extra_env={"_RUNTIME_UPDATE": update})
+    assert result.returncode != 0
+    assert "messaging readiness failed" in result.stderr
+    assert "private-message" not in result.stderr + result.stdout
+
+
+def test_verify_requires_runtime_status_from_selected_profile(tmp_path):
+    result, _calls = _run(tmp_path, "verify", extra_env={"_OMIT_RUNTIME": True})
+    assert result.returncode != 0
+    assert "messaging readiness failed" in result.stderr
 
 
 def test_verify_fails_when_gateway_is_unsupervised(tmp_path):
@@ -193,7 +433,9 @@ def test_prepare_writes_the_chat_gateway_impl_env_var(tmp_path):
     env_file = mac_home / "mac.env"
     result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
     assert result.returncode == 0, result.stderr
-    assert env_file.read_text(encoding="utf-8").strip() == "MAC_CHAT_GATEWAY_IMPL=hermes"
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    assert "MAC_CHAT_GATEWAY_IMPL=hermes" in lines
+    assert f"MAC_HERMES_AGENT_DIR={tmp_path / 'bin'}" in lines
 
 
 def test_prepare_corrects_a_stale_openclaw_gateway_impl_value(tmp_path):
@@ -204,8 +446,12 @@ def test_prepare_corrects_a_stale_openclaw_gateway_impl_value(tmp_path):
     env_file.write_text("MAC_CHAT_GATEWAY_IMPL=openclaw\n", encoding="utf-8")
     result, _calls = _run(tmp_path, "prepare", extra_env={"_OMIT_GATEWAY_IMPL_ENV": "1"})
     assert result.returncode == 0, result.stderr
-    lines = [line for line in env_file.read_text(encoding="utf-8").splitlines() if line]
-    assert lines == ["MAC_CHAT_GATEWAY_IMPL=hermes"]
+    from mac.deploy_env import read_env_file
+
+    values = read_env_file(env_file)
+    assert values["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
+    assert values["MAC_HERMES_AGENT_DIR"] == str(tmp_path / "bin")
+    assert values["MAC_HERMES_PYTHON"].endswith("/.venv/bin/python")
 
 
 def test_withdraw_stops_the_gateway_without_uninstalling(tmp_path):
@@ -351,13 +597,39 @@ def test_home_channel_env_rerun_replaces_rather_than_duplicates(tmp_path):
     assert "SLACK_HOME_CHANNEL_NAME=stalechannel" not in env_lines
 
 
-def test_prepare_skips_install_when_hermes_already_on_path(tmp_path):
+def test_prepare_qualifies_installed_runtime_before_configuring_or_restarting(tmp_path):
     result, calls = _run(tmp_path, "prepare")
     assert result.returncode == 0, result.stderr
-    # No shell-installer invocation is observable through the fake hermes
-    # binary's own call log (it's already "installed"); prepare should reach
-    # gateway install regardless.
+    assert calls[:2] == [["release", "prepare"], ["release", "activate"]]
     assert ["gateway", "install", "--force", "--start-now", "--start-on-login"] in calls
+
+
+def test_qualification_failure_does_not_configure_or_stop_existing_gateway(tmp_path):
+    result, calls = _run(tmp_path, "prepare", scenario="qualification_failed")
+    assert result.returncode != 0
+    assert calls == [["release", "prepare"]]
+
+
+def test_prepare_stops_gateway_before_replacing_service(tmp_path):
+    result, calls = _run(tmp_path, "prepare")
+    assert result.returncode == 0, result.stderr
+    assert calls.index(["gateway", "stop"]) < next(
+        index for index, call in enumerate(calls) if call[:2] == ["gateway", "install"]
+    )
+
+
+def test_prepare_does_not_replace_service_after_stop_failure(tmp_path):
+    result, calls = _run(tmp_path, "prepare", scenario="stop_failed")
+    assert result.returncode != 0
+    assert "refusing service replacement" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
+
+
+def test_prepare_waits_for_actual_exit_even_when_stop_reports_success(tmp_path):
+    result, calls = _run(tmp_path, "prepare", scenario="stop_still_running")
+    assert result.returncode != 0
+    assert "still exiting; refusing service replacement" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
 
 
 def test_prepare_does_not_port_a_retired_openclaw_profile(tmp_path):
@@ -393,7 +665,7 @@ def test_prepare_skips_claw_migrate_when_no_openclaw_home(tmp_path):
 def test_finalize_runs_verify(tmp_path):
     result, calls = _run(tmp_path, "finalize", scenario="healthy")
     assert result.returncode == 0, result.stderr
-    assert ["gateway", "status", "--deep"] in calls
+    assert ["gateway", "status"] in calls
 
 
 def test_finalize_fails_when_gateway_unhealthy(tmp_path):
@@ -405,3 +677,57 @@ def test_unknown_subcommand_fails_closed(tmp_path):
     result, _calls = _run(tmp_path, "bogus")
     assert result.returncode != 0
     assert "usage" in result.stderr.lower()
+
+
+@pytest.mark.parametrize(
+    "cwd", [".", "auto", "cwd", "", "/sandbox/workspace", "/sandbox/workspace/"]
+)
+def test_prepare_pins_local_terminal_directory_despite_legacy_environment(tmp_path, cwd):
+    result, calls = _run(
+        tmp_path,
+        "prepare",
+        extra_env={
+            "FAKE_TERMINAL_CWD": cwd,
+            "MESSAGING_CWD": "/sandbox/workspace",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    home = str((tmp_path / "home").resolve())
+    expected = ["config", "set", "terminal.cwd", home, "--force"]
+    assert expected in calls
+    assert calls.index(expected) < next(
+        i for i, call in enumerate(calls) if call[:2] == ["gateway", "install"]
+    )
+
+
+def test_prepare_preserves_explicit_host_terminal_directory(tmp_path):
+    directory = tmp_path / "custom project"
+    directory.mkdir()
+    result, calls = _run(tmp_path, "prepare", extra_env={"FAKE_TERMINAL_CWD": str(directory)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ["config", "set", "terminal.cwd", str(directory.resolve()), "--force"] in calls
+
+
+@pytest.mark.parametrize("command", ["prepare", "verify"])
+def test_local_terminal_missing_custom_directory_blocks_gateway_health(tmp_path, command):
+    result, calls = _run(
+        tmp_path, command, extra_env={"FAKE_TERMINAL_CWD": str(tmp_path / "absent")}
+    )
+    assert result.returncode != 0
+    assert "terminal.cwd" in result.stderr
+    assert not any(call[:2] == ["gateway", "install"] for call in calls)
+
+
+@pytest.mark.parametrize("backend", ["docker", "ssh"])
+def test_remote_terminal_directory_is_not_rewritten_or_host_validated(tmp_path, backend):
+    for command in ("prepare", "verify"):
+        result, calls = _run(
+            tmp_path,
+            command,
+            extra_env={
+                "FAKE_TERMINAL_BACKEND": backend,
+                "FAKE_TERMINAL_CWD": "/sandbox/workspace",
+            },
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call[:3] == ["config", "set", "terminal.cwd"] for call in calls)

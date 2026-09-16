@@ -168,8 +168,9 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Trust workflow](docs/guide/06-trust-workflow.md) | one request through acceptance, recovery, and measured results |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
-| [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.4.0 deck](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk), each pinned to the commit it describes |
-| [v1.4.0 capabilities (`a787bff1`)](docs/presentation/20260906T051311Z-a787bff1/README.md) | current release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) |
+| [Presentations](docs/presentation/README.md) | capabilities decks, including the [v1.5.0 deck](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx), each pinned to the commit it describes |
+| [v1.5.0 capabilities (`c7be3a5a`)](docs/presentation/20260914T203809Z-c7be3a5a/README.md) | current release deck: upfront validation, PostgreSQL test isolation, Hermes readiness and task outcomes — [public PPTX](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx) |
+| [v1.4.0 capabilities (`a787bff1`)](docs/presentation/20260906T051311Z-a787bff1/README.md) | historical release deck: OpenClaw chat-gateway hardening, its filesystem root cause, and the cutover back to Hermes — [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) |
 
 Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name
@@ -240,8 +241,10 @@ make distclean     # also remove .venv and node_modules
 ```
 
 Use `make install-cli` or `make install-gui` when only one surface is needed.
-Installation requires Python 3.11+, Git, GitHub CLI (`gh`), and npm; build and
-test targets also require `uv`. Fleet configuration/deployment is intentionally
+Installation requires Python 3.14.7 (pinned in `.python-version`), `uv`, Git,
+GitHub CLI (`gh`), and npm. `uv python install` provisions the reviewed Python
+version. See [the Python baseline](docs/python-baseline.md) for environment
+updates. Fleet configuration/deployment is intentionally
 separate under `make setup` and `make deploy`.
 
 For local control-plane/API development after installation:
@@ -905,3 +908,37 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
 - [Scaling Plan](docs/archive/field-notes/scaling-plan.md) (historical)
+
+<!-- ai-template:narrative:start -->
+## The Totally True and Not At All Embellished History of mac
+
+### The continuing adventures of Jordan Hubbard and Sir Reginald von Fluffington III
+
+> *Part 18 of an ongoing chronicle. [← Part 17: PythonOS](https://github.com/jordanhubbard/pythonos#the-totally-true-and-not-at-all-embellished-history-of-pythonos) | [Part 19: c26 →](https://github.com/jordanhubbard/c26#the-totally-true-and-not-at-all-embellished-history-of-c26)*
+> *[Chronicle index](https://github.com/jordanhubbard/ai-template/blob/main/CHRONICLE.md) · Ordered by first recorded AI-assisted commit.*
+
+The programmer had discovered that asking an agent to do something and knowing what had actually happened were different problems.
+
+Sir Reginald von Fluffington III had spent years exploiting this distinction. A request to leave the keyboard did not imply a departure, and a statement that dinner would be served shortly was not evidence of dinner.
+
+“I need durable operational truth,” the programmer announced.
+
+The cat remained where he was. At least one fact was stable.
+
+MAC became a control plane for fleets of agents. Conversation and personality could belong to the human-facing runtime. Tasks, leases, dispatch, reviews, publication records, and recovery needed somewhere less dependent on everyone remembering the last conversation in precisely the same way.
+
+The task ledger lived in PostgreSQL. A registry described machines and agents. Dispatch matched work to capabilities and capacity. Leases expired, workers failed, and recovery had to mean more than asking the same question more emphatically. The programmer could see the beginnings of an institution. Sir Reginald saw a new filing system in which to be marked unavailable.
+
+Evidence became central. A worker's assertion that a change was ready was not the same thing as tests passing, an independent review approving that attempt, and the resulting commit being published. The records needed to agree about which work had been inspected. Otherwise a perfectly valid approval could end up vouching for something that had changed since lunch.
+
+Sir Reginald inspected lunch. It had changed insufficiently.
+
+The message bus acquired ordered streams. The fleet acquired runtime manifests, secrets handling, health records, and rollout state. External runtimes and execution tools kept their own roles; MAC kept the record of what the fleet had been asked to do and what it could prove it had done.
+
+“It is coordination,” the programmer said, “with a memory.”
+
+Sir Reginald rose, stretched, and returned to the same patch of keyboard. His state transition was observable, his lease appeared indefinite, and no review had authorized his publication of `kkkkkkkk` into the terminal.
+
+The programmer called the design elegant. Sir Reginald withheld endorsement, citing insufficient tuna and a control plane that continued to misclassify the actual household administrator as a pet.
+
+<!-- ai-template:narrative:end -->

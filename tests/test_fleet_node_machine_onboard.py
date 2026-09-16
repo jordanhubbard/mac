@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
+import os
+import shutil
 import stat
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -63,7 +67,7 @@ def _route(module, path: Path) -> Path:
 
 def _fake_toolchain(module, stage: Path):
     uv = stage / "tools" / "uv"
-    python = stage / "python" / "cpython-3.12.11-test" / "bin" / "python3.12"
+    python = stage / "python" / "cpython-3.14.7-test" / "bin" / "python3.14"
     for executable in (uv, python):
         executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -173,8 +177,8 @@ def test_prepare_is_generation_scoped_and_does_not_publish(module, tmp_path, mon
     stage = layout.stage("onboard:test")
     assert receipt["status"] == "prepared"
     assert receipt["versions"] == {
-        "uv": "0.8.22",
-        "python": "3.12.11",
+        "uv": "0.12.12",
+        "python": "3.14.7",
     }
     assert (stage / "source" / "pyproject.toml").is_file()
     assert stat.S_IMODE((stage / "stage.json").stat().st_mode) == 0o600
@@ -226,6 +230,191 @@ def _prepared(module, tmp_path: Path, monkeypatch):
     return layout, placeholder
 
 
+@pytest.fixture
+def real_onboarding(module, tmp_path, monkeypatch):
+    """Use real uv, managed Python, wheels and console scripts without a registry."""
+    uv = shutil.which("uv")
+    assert uv is not None
+    assert sys.version.split()[0] == module.PYTHON_VERSION
+    source = tmp_path / "fixture-source"
+    source.mkdir()
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+
+    def dependency(name, version):
+        stem = name.replace("-", "_")
+        info = f"{stem}-{version}.dist-info"
+        entries = {
+            f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+            f"{info}/WHEEL": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        }
+        entries[f"{info}/RECORD"] = "".join(f"{key},,\n" for key in entries)
+        with zipfile.ZipFile(wheels / f"{stem}-{version}-py3-none-any.whl", "w") as archive:
+            for name, body in entries.items():
+                archive.writestr(name, body)
+
+    dependency("mac-onboard-core", "1.0")
+    dependency("mac-onboard-postgres", "1.0")
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="mac"\nversion="0.0.0"\nrequires-python=">=3.14,<3.15"\n'
+        '[project.scripts]\nmac="onboard_fixture:main"\n'
+        '[project.optional-dependencies]\nrelay=["mac-onboard-core>=1"]\n'
+        'postgres=["mac-onboard-postgres==1.0"]\n'
+        '[build-system]\nrequires=[]\nbuild-backend="fixture_build"\nbackend-path=["."]\n'
+    )
+    (source / ".python-version").write_text(module.PYTHON_VERSION + "\n")
+    (source / "src/mac").mkdir(parents=True)
+    (source / "src/mac/__init__.py").write_text("")
+    (source / "fixture_build.py").write_text("""from pathlib import Path
+import tomllib
+import zipfile
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    project = tomllib.loads((Path(__file__).parent / "pyproject.toml").read_text())["project"]
+    info = "mac-0.0.0.dist-info"
+    metadata = "Metadata-Version: 2.1\\nName: mac\\nVersion: 0.0.0\\nRequires-Python: >=3.14,<3.15\\n"
+    for extra, requirements in project["optional-dependencies"].items():
+        metadata += f"Provides-Extra: {extra}\\n"
+        for requirement in requirements:
+            metadata += f"Requires-Dist: {requirement}; extra == '{extra}'\\n"
+    entries = {
+        info + "/METADATA": metadata,
+        info + "/WHEEL": "Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
+        info + "/entry_points.txt": "[console_scripts]\\nmac = onboard_fixture:main\\n",
+        "onboard_fixture.py": "import json,sys\\nfrom importlib.metadata import version\\ndef main():\\n print(json.dumps({'core':version('mac-onboard-core'),'postgres':version('mac-onboard-postgres'),'prefix':sys.prefix}))\\n",
+    }
+    entries[info + "/RECORD"] = "".join(f"{key},,\\n" for key in entries)
+    name = "mac-0.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(Path(wheel_directory) / name, "w") as wheel:
+        for path, body in entries.items():
+            wheel.writestr(path, body)
+    return name
+""")
+    offline = {
+        "UV_OFFLINE": "1",
+        "UV_FIND_LINKS": str(wheels),
+        "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
+        "UV_PYTHON_DOWNLOADS": "never",
+    }
+    subprocess.run(
+        [uv, "lock", "--python", sys.executable, "--project", str(source)],
+        env={**os.environ, **offline},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # A range-based reinstall can now choose 2.0, while the accepted lock names 1.0.
+    dependency("mac-onboard-core", "2.0")
+    archive = tmp_path / "source.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        for entry in source.iterdir():
+            bundle.add(entry, arcname=entry.name)
+
+    def real_toolchain(stage, _assets, _cache):
+        staged_uv = stage / "tools/uv"
+        staged_uv.parent.mkdir(parents=True)
+        shutil.copy2(uv, staged_uv)
+        runtime = Path(sys.base_prefix)
+        staged_runtime = stage / "python" / runtime.name
+        shutil.copytree(runtime, staged_runtime, symlinks=True)
+        return staged_uv, staged_runtime / "bin/python3.14"
+
+    run = module._run
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda argv, *, env=None, timeout=900: run(
+            argv, env={**(env if env is not None else os.environ), **offline}, timeout=timeout
+        ),
+    )
+    monkeypatch.setattr(module, "install_reviewed_toolchain", real_toolchain)
+    gh = tmp_path / "gh"
+    gh.write_text("#!/bin/sh\nexit 0\n")
+    gh.chmod(0o755)
+    monkeypatch.setattr(module, "_trusted_gh", lambda: gh)
+    assets = tmp_path / "reviewed-assets.sh"
+    assets.write_text("# toolchain supplied by the real managed-runtime fixture\n")
+    layout = module.Layout.for_home(tmp_path / "home")
+    generation = "onboard:real"
+    stage = module.prepare(
+        layout,
+        generation=generation,
+        agent="worker4",
+        source_revision="1" * 40,
+        supervisor="supervisord",
+        archive=archive,
+        reviewed_assets=assets,
+        route_identity=_route(module, tmp_path / "route.json"),
+    )
+    placeholder = _private_json(
+        module,
+        tmp_path / "placeholder.json",
+        {
+            "schema": module.PLACEHOLDER_SCHEMA,
+            "agent": "worker4",
+            "agent_id": "agent_worker4",
+            "generation": generation,
+            "source_revision": "1" * 40,
+            "route_identity_sha256": stage["route_identity_sha256"],
+            "instance_kind": "fungible",
+            "status": "draining",
+            "health_status": "degraded",
+        },
+    )
+    return layout, generation, placeholder
+
+
+def test_deployment_runtime_includes_postgres_extra(module, real_onboarding):
+    """Both runtime extras stay locked and the installed CLI survives relocation."""
+    layout, generation, placeholder = real_onboarding
+    lock = (layout.stage(generation) / "source/uv.lock").read_bytes()
+    receipt = module.commit(
+        layout,
+        generation=generation,
+        agent="worker4",
+        source_revision="1" * 40,
+        supervisor="supervisord",
+        placeholder=placeholder,
+    )
+    assert receipt["services_started"] is False
+    assert not layout.stage(generation).exists()
+    result = subprocess.run(
+        [str(layout.mac_bin), "--help"], check=True, capture_output=True, text=True
+    )
+    assert json.loads(result.stdout) == {
+        "core": "1.0",
+        "postgres": "1.0",
+        "prefix": str(layout.venv),
+    }
+    assert (layout.source / "uv.lock").read_bytes() == lock
+
+
+@pytest.mark.parametrize("damage", ["missing_lock", "stale_lock"])
+def test_pristine_install_refuses_invalid_lock_and_compensates(module, real_onboarding, damage):
+    layout, generation, placeholder = real_onboarding
+    source = layout.stage(generation) / "source"
+    if damage == "missing_lock":
+        (source / "uv.lock").unlink()
+    else:
+        project = source / "pyproject.toml"
+        project.write_text(
+            project.read_text().replace("mac-onboard-core>=1", "mac-onboard-core==2.0")
+        )
+    with pytest.raises(module.OnboardingError, match="lock"):
+        module.commit(
+            layout,
+            generation=generation,
+            agent="worker4",
+            source_revision="1" * 40,
+            supervisor="supervisord",
+            placeholder=placeholder,
+        )
+    assert not layout.source.exists()
+    assert not layout.venv.exists()
+    assert not (layout.mac_home / "lib/python").exists()
+    assert not layout.receipt.exists()
+
+
 def test_commit_publishes_complete_baseline_and_owner_private_receipt(
     module, tmp_path, monkeypatch
 ):
@@ -244,7 +433,7 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
                 executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 executable.chmod(0o755)
         if args[0].endswith("/python") and "-c" in args:
-            return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
+            return subprocess.CompletedProcess(args, 0, "3.14.7\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -278,7 +467,7 @@ def test_failed_commit_compensates_to_source_and_venv_absent(module, tmp_path, m
             target = Path(args[-1])
             (target / "bin").mkdir(parents=True)
             (target / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
-        if "pip" in args:
+        if "sync" in args:
             raise module.OnboardingError("simulated package failure")
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -326,7 +515,7 @@ def test_aborted_cohort_journal_is_preserved_while_precohort_receipt_commits(
                 executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 executable.chmod(0o755)
         if args[0].endswith("/python") and "-c" in args:
-            return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
+            return subprocess.CompletedProcess(args, 0, "3.14.7\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -406,21 +595,6 @@ def test_node_installer_reports_only_structural_error_context():
     assert "env" not in reporter.lower()
 
 
-def test_deployment_runtime_includes_postgres_extra():
-    onboard = HELPER.read_text(encoding="utf-8")
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
-
-    # The `hermes-gateway` extra went away with the vendored Hermes runtime in
-    # #377; asking for it makes `pip install` fail outright. This assertion
-    # pinned the pre-#377 spelling, so it actively required node provisioning to
-    # request a nonexistent extra -- and unlike the Dockerfile, CI never builds
-    # a node, so nothing else would have caught it.
-    expected = "[relay,postgres]"
-    assert expected in onboard
-    assert expected in installer
-    assert "hermes-gateway" not in expected
-
-
 def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
     text = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     function = (
@@ -429,7 +603,7 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
         + "\n}"
     )
     mac_home = tmp_path / ".mac"
-    managed = mac_home / "lib" / "python" / "cpython-3.12.11-test" / "bin" / "python3.12"
+    managed = mac_home / "lib" / "python" / "cpython-3.14.7-test" / "bin" / "python3.14"
     managed.parent.mkdir(parents=True)
     managed.symlink_to(Path(sys.executable))
     system_bin = tmp_path / "system-bin"
@@ -448,7 +622,7 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
                 'VENV="$MAC_HOME/venv"\n'
                 'PATH="$2:/usr/bin:/bin"\n'
                 "MAC_PYTHON=\n"
-                "MAC_REVIEWED_PYTHON_VERSION=3.12.11\n"
+                "MAC_REVIEWED_PYTHON_VERSION=3.14.7\n"
                 "log() { :; }\n"
                 f"{function}\n"
                 "python_bin\n"

@@ -83,11 +83,11 @@ Variable bindings resolve in this order:
 Use JSON values so type validation is unambiguous:
 
 ```console
-mac admin directive binding set repository repo_c26 build.primary_target \
+mac admin directive binding set repository repo_example build.primary_target \
   --value '"//kernel:all"' --actor operator
 mac admin directive binding set fleet fleet build.primary_target \
   --value '"//:all"' --actor operator
-mac admin directive binding list --target-type repository --target-id repo_c26
+mac admin directive binding list --target-type repository --target-id repo_example
 ```
 
 Only `{fact: ...}`, `{var: ...}`, and `{template: ...}` values inside macro
@@ -108,7 +108,7 @@ mac admin directive approve build.bazel-first --version 1 \
 mac admin directive activate build.bazel-first --version 1 \
   --digest SHA256 --actor operator
 mac admin directive impact build.bazel-first
-mac admin directive effective --repository-id repo_c26
+mac admin directive effective --repository-id repo_example
 ```
 
 `check` evaluates every enabled registered repository, resolves bindings,

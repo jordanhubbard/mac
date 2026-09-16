@@ -280,6 +280,7 @@ def _generate_rollback(
     *,
     control_active: bool,
     config_existed: bool = True,
+    extra_artifacts: Mapping[Path, bytes] | None = None,
 ) -> tuple[Path, dict[str, Path]]:
     successor_generation = "successor-generation-rocky-001"
     prior_generation = "prior-generation-rocky-000"
@@ -428,6 +429,18 @@ def _generate_rollback(
         "ROLLBACK_INTENT": str(rollback_intent),
         "ROLLBACK_COMPLETION_RECEIPT": str(completion_receipt),
     }
+    extra_declarations = ""
+    for index, (path, prior_bytes) in enumerate((extra_artifacts or {}).items(), start=3):
+        backup = backup_root / f"extra-{index}"
+        backup.write_bytes(prior_bytes)
+        backup.chmod(path.stat().st_mode & 0o777)
+        extra_declarations += (
+            f"ROLLBACK_AUX_ARTIFACT_PATHS[{index}]={shlex.quote(str(path))}\n"
+            f"ROLLBACK_AUX_ARTIFACT_BACKUPS[{index}]={shlex.quote(str(backup))}\n"
+            f"ROLLBACK_AUX_ARTIFACT_EXISTED[{index}]=1\n"
+            f"ROLLBACK_AUX_ARTIFACT_MODES[{index}]=user\n"
+            f"ROLLBACK_AUX_ARTIFACT_COUNT={index + 1}\n"
+        )
     generator = tmp_path / "generate-rollback.sh"
     generator.write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
@@ -445,6 +458,7 @@ def _generate_rollback(
         + f"ROLLBACK_AUX_ARTIFACT_BACKUPS[2]={shlex.quote(str(config_backup))}\n"
         + f"ROLLBACK_AUX_ARTIFACT_EXISTED[2]={int(config_existed)}\n"
         + "ROLLBACK_AUX_ARTIFACT_MODES[2]=system\n"
+        + extra_declarations
         + f". {shlex.quote(str(lifecycle))}\n"
         + "\ncontrol_plane_enabled() { "
         + ("return 0" if control_active else "return 1")
@@ -1563,3 +1577,65 @@ def test_generated_rollback_compensates_a_failed_directory_swap_and_prior_swaps(
     assert not list(tmp_path.glob("source.rollback-stage.*"))
     assert not list(tmp_path.glob("venv.rollback-stage.*"))
     assert [event["action"] for event in _events(paths["log"])] == ["quiesce"]
+
+
+def test_generated_rollback_restores_native_lock_with_its_source_and_environment(
+    tmp_path: Path,
+) -> None:
+    rollback, paths = _generate_rollback(tmp_path, control_active=True)
+    prior_lock = b"prior locked dependencies\n"
+    prior_constraints = b"service-core==1.0\n"
+    prior_record = json.dumps(
+        {
+            "schema": "mac.native_runtime.v1",
+            "source_hashes": {"uv.lock": hashlib.sha256(prior_lock).hexdigest()},
+            "constraints_sha256": hashlib.sha256(prior_constraints).hexdigest(),
+        }
+    ).encode()
+    (paths["source_backup"] / "uv.lock").write_bytes(prior_lock)
+    (paths["venv_backup"] / "mac-runtime-constraints.txt").write_bytes(prior_constraints)
+    (paths["venv_backup"] / "mac-runtime-lock.json").write_bytes(prior_record)
+    (paths["source"] / "uv.lock").write_text("failed successor lock\n")
+    (paths["venv"] / "mac-runtime-lock.json").write_text("failed successor receipt\n")
+    result = subprocess.run(
+        ["/bin/bash", str(rollback)], env=_rollback_env(paths), text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert (paths["source"] / "uv.lock").read_bytes() == prior_lock
+    assert (paths["venv"] / "mac-runtime-constraints.txt").read_bytes() == prior_constraints
+    assert (paths["venv"] / "mac-runtime-lock.json").read_bytes() == prior_record
+    assert json.loads(paths["completion_receipt"].read_text())["status"] == "restored"
+
+
+@pytest.mark.parametrize("restore_fails", [False, True])
+def test_generated_rollback_keeps_hermes_launcher_and_service_in_one_generation(
+    tmp_path: Path, restore_fails: bool
+) -> None:
+    home = tmp_path / "user-home"
+    relatives = (
+        ".local/bin/hermes",
+        ".config/systemd/user/hermes-gateway.service",
+        "Library/LaunchAgents/ai.hermes.gateway.plist",
+    )
+    previous = {}
+    current = {}
+    for relative in relatives:
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        previous[path] = f"prior-runtime: {relative}\n".encode()
+        current[path] = f"successor-runtime: {relative}\n".encode()
+        path.write_bytes(current[path])
+        path.chmod(0o755 if relative.endswith("/hermes") else 0o600)
+    persona = home / ".hermes/SOUL.md"
+    persona.parent.mkdir()
+    persona.write_text("Current persona and conversation state stay intact")
+    rollback, paths = _generate_rollback(tmp_path, control_active=True, extra_artifacts=previous)
+    env = _rollback_env(paths)
+    if restore_fails:
+        env["ROLLBACK_TEST_FAIL_RESTORE"] = "1"
+    result = subprocess.run(["bash", str(rollback)], env=env, text=True, capture_output=True)
+    assert (result.returncode != 0) == restore_fails, result.stderr
+    for path, expected in (current if restore_fails else previous).items():
+        assert path.read_bytes() == expected
+    assert os.access(home / ".local/bin/hermes", os.X_OK)
+    assert persona.read_text() == "Current persona and conversation state stay intact"

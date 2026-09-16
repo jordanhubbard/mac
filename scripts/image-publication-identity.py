@@ -40,6 +40,7 @@ IMAGE_SPECS = {
         "repository": "ghcr.io/jordanhubbard/mac",
         "files": (
             ".dockerignore",
+            ".python-version",
             "Dockerfile",
             "pyproject.toml",
             "uv.lock",
@@ -53,6 +54,7 @@ IMAGE_SPECS = {
         "repository": "ghcr.io/jordanhubbard/mac-openshell-runtime",
         "files": (
             ".dockerignore",
+            ".python-version",
             "pyproject.toml",
             "uv.lock",
             "README.md",

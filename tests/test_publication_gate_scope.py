@@ -51,7 +51,7 @@ def test_the_timeout_can_cover_the_work_it_gates():
     """A cap the work cannot meet is not a gate, it is an outage that reports
     itself as a gate failure. The scoped run alone takes ~15 minutes before
     clone, upload and dependency bootstrap."""
-    source = inspect.getsource(services.ControlPlane._hub_verify_run_contract_test)
+    source = inspect.getsource(services.run_repository_contract_test_in_openshell)
 
     assert '"2400"' in source, (
         "MAC_HUB_VERIFY_TIMEOUT's default must cover a scoped gate plus its setup; 1200s did not"

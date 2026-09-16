@@ -26,7 +26,7 @@ bootstrap:
   creates:
     - .venv/bin/python
 test:
-  command: PATH=.venv/bin:$PATH .venv/bin/python -m pytest
+  command: scripts/run-contract-tests.sh
 evidence:
   required:
     - repo.head_sha
@@ -110,9 +110,11 @@ mac declares its own contract in `.mac/project.yaml`. Its bootstrap command is:
 python3 scripts/bootstrap-project.py
 ```
 
-That script first verifies `python3`, `git`, and `gh`, then creates
-`.venv` and installs the dev extra so a fresh macOS, Linux, or WSL2 agent can run:
+That script verifies the declared tools and reviewed Python baseline, then
+creates `.venv` from the committed lock with the development extra. MAC code
+execution and pre-push verification run in an approved Linux OpenShell sandbox;
+macOS remains a control-client and native-service platform. The canonical gate is:
 
 ```console
-PATH=.venv/bin:$PATH .venv/bin/python -m pytest
+scripts/run-contract-tests.sh
 ```

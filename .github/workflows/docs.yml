@@ -6,8 +6,6 @@ on:
   push:
     branches: [main]
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
-  schedule:
-    - cron: "41 4 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +15,6 @@ concurrency:
 jobs:
   executable-book:
     name: Executable book (${{ matrix.os }})
-    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,10 +26,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --extra postgres --python 3.11
+        run: uv sync --locked --extra docs --extra postgres
       - name: Start test PostgreSQL
         shell: bash
         run: |
@@ -71,7 +70,6 @@ jobs:
 
   strict-html:
     name: Generated reference and strict HTML
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
@@ -80,10 +78,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --extra postgres --python 3.11
+        run: uv sync --locked --extra docs --extra postgres
       - name: Start test PostgreSQL
         # generate-docs-reference builds the OpenAPI reference from a live app,
         # which needs a control plane, which is now always PostgreSQL.
@@ -108,8 +108,7 @@ jobs:
           if-no-files-found: error
 
   live-boundaries:
-    name: Nightly live documentation boundaries
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Candidate live documentation boundaries
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -132,10 +131,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install test and documentation dependencies
-        run: uv sync --extra dev --extra docs --python 3.11
+        run: uv sync --locked --extra dev --extra docs
       - name: Exercise the PostgreSQL contract used by the deployment chapter
         run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
       - name: Validate Kubernetes manifests
@@ -159,18 +160,31 @@ jobs:
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
           platforms: arm64
-      - name: Execute the immutable main image on ARM64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build the candidate image for ARM64
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: mac-docs-candidate:${{ github.sha }}
+          cache-from: type=gha,scope=mac-docs-arm64
+          cache-to: type=gha,mode=max,scope=mac-docs-arm64
+      - name: Execute the candidate image on ARM64
         run: >-
-          docker run --rm --platform linux/arm64
+          docker run --rm --network none --platform linux/arm64
           --entrypoint /opt/mac-venv/bin/mac
-          "ghcr.io/jordanhubbard/mac:git-${GITHUB_SHA}" --help
+          "mac-docs-candidate:${GITHUB_SHA}" --help
 
   publish:
     name: Publish versioned documentation
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    needs: [executable-book, strict-html]
+    needs: [executable-book, strict-html, live-boundaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -182,10 +196,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --python 3.11
+        run: uv sync --locked --extra docs
       - name: Configure publication identity
         run: |
           git config user.name github-actions[bot]
