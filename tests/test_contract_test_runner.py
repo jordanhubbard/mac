@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-contract-tests.sh"
@@ -28,13 +29,14 @@ def _run_with_fake_python(
     checkpoint_plan_status: int = 10,
     triage_pytest_status: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    (tmp_path / ".python-version").write_text((ROOT / ".python-version").read_text())
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log_path = tmp_path / "python.log"
     fake_python = bin_dir / "python3"
     fake_python.write_text(
         """#!/bin/sh
-printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\tSKIPFILE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "${MAC_TEST_CHECKPOINT_SKIP_FILE-<unset>}" "$*" >> "$FAKE_PY_LOG"
+printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\tSKIPFILE=%s\tSERIAL=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "${MAC_TEST_CHECKPOINT_SKIP_FILE-<unset>}" "${MAC_TEST_SERIAL_SLICE-<unset>}" "$*" >> "$FAKE_PY_LOG"
 case "$*" in
     *os.cpu_count*)
         # The runner computes its headroom-aware default worker count with a
@@ -192,7 +194,11 @@ def test_contract_runner_defaults_to_headroom_workers_and_protects_serial_phase(
     # saturating every core; the serial phase stays unparallelised.
     assert "-n 6 --dist loadscope" in pytest_calls[0]
     assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
-    assert "-n " not in pytest_calls[1]
+    assert "SERIAL=<unset>" in pytest_calls[0]
+    assert "-n 0" in pytest_calls[1]
+    assert "-p serial_slice_plugin" in pytest_calls[1]
+    assert "--dist" not in pytest_calls[1]
+    assert "SERIAL=1" in pytest_calls[1]
     assert "-m process_e2e or postgres or container_contract or docker_e2e" in pytest_calls[1]
     assert all(line.startswith("PYTEST_ADDOPTS=<unset>\t") for line in pytest_calls)
 
@@ -221,7 +227,9 @@ def test_contract_runner_fast_mode_skips_coverage_and_policy(tmp_path):
     assert len(pytest_calls) == 2
     assert "-n 6 --dist loadscope" in pytest_calls[0]
     assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
-    assert "-n " not in pytest_calls[1]
+    assert "-n 0" in pytest_calls[1]
+    assert "-p serial_slice_plugin" in pytest_calls[1]
+    assert "--dist" not in pytest_calls[1]
     assert "-m process_e2e or postgres or container_contract or docker_e2e" in pytest_calls[1]
     # No coverage pipeline runs at all.
     assert not any("-m coverage combine" in line for line in calls)
@@ -527,6 +535,7 @@ def _stage_interpreter_repo(
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     (repo / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
+    (repo / ".python-version").write_text((ROOT / ".python-version").read_text())
     (repo / "scripts" / "run-contract-tests.sh").write_text(
         RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -607,6 +616,54 @@ def _stage_interpreter_repo(
     return repo, env
 
 
+@pytest.mark.parametrize("local", ["0", "1", "invalid"])
+def test_contract_runner_local_postgres_overrides_only_when_requested(tmp_path, local):
+    repo, env = _stage_interpreter_repo(tmp_path, broken_venv=False, provide_builder=True)
+    probe = tmp_path / "database-probe"
+    helper = repo / "scripts" / "start-test-postgres.sh"
+    _write_exec(
+        helper,
+        "#!/bin/sh\n"
+        'test -z "${MAC_TEST_PG_URL:-}" || exit 31\n'
+        'test "$MAC_TEST_PG_DATADIR" = "$EXPECTED_PG_DATADIR" || exit 32\n'
+        'echo provisioned > "$DB_PROBE.helper"\n'
+        "echo export MAC_TEST_PG_URL=postgresql://sandbox@127.0.0.1/mac_test\n",
+    )
+    _write_exec(
+        repo / ".venv" / "bin" / "python",
+        "#!/bin/sh\n"
+        'test -z "${MAC_TEST_PG_DATADIR:-}" || exit 33\n'
+        'printf "%s" "${MAC_TEST_PG_URL:-}" > "$DB_PROBE"\n' + _GOOD_PY_BODY.split("\n", 1)[1],
+    )
+    env.update(
+        DB_PROBE=str(probe),
+        MAC_TEST_PG_LOCAL=local,
+        MAC_TEST_PG_URL="postgresql://external.invalid/test",
+        MAC_TEST_PG_DATADIR=str(tmp_path / "bounded-pg"),
+        EXPECTED_PG_DATADIR=str(tmp_path / "bounded-pg"),
+    )
+    result = subprocess.run(
+        [str(repo / "scripts" / "run-contract-tests.sh")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if local == "invalid":
+        assert result.returncode == 2
+        assert "MAC_TEST_PG_LOCAL must be 0 or 1" in result.stderr
+        assert not probe.exists()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert probe.read_text() == (
+            "postgresql://sandbox@127.0.0.1/mac_test"
+            if local == "1"
+            else "postgresql://external.invalid/test"
+        )
+    assert Path(str(probe) + ".helper").exists() == (local == "1")
+
+
 def test_contract_runner_rebuilds_a_broken_preexisting_venv(tmp_path):
     """A pre-existing .venv/bin/python that cannot run the suite must be
     discarded and re-bootstrapped, not treated as a fatal dead end. Before the
@@ -651,6 +708,7 @@ def test_contract_runner_reports_when_no_interpreter_can_run_the_suite(tmp_path)
 
 
 def test_contract_runner_scrubs_provider_credentials_from_route_detection(tmp_path):
+    (tmp_path / ".python-version").write_text((ROOT / ".python-version").read_text())
     """The hermetic sweep must clear the non-MAC_-prefixed coding-agent
     provider credentials that ``coding_agent`` route detection fingerprints.
 
@@ -875,3 +933,167 @@ def test_contract_runner_nested_invocation_never_checkpoints(tmp_path):
     assert completed.returncode == 0
     assert _checkpoint_calls(calls, "plan") == []
     assert _checkpoint_calls(calls, "record") == []
+
+
+# --- Environment-prerequisite git-toolchain resolution (merge-gate floor) ---
+#
+# The merge-gate suite and the production merge queue call
+# `git merge-tree --write-tree`, which only exists in git >= 2.38. On a host
+# whose only git is older (2.34.1 is stock Ubuntu-22.04 / the GKE pod image) the
+# runner must NOT warn-and-run — it must resolve a modern git from an explicit
+# override (MAC_CONTRACT_GIT) or a task-local toolchain bin dir
+# (MAC_TOOLCHAIN_BIN) and, failing that, fail fast with a distinct, actionable
+# status BEFORE paying for the whole suite. These tests stage a FAKE git on
+# PATH the same way the module stages a fake python3 — never a real downgrade.
+
+
+def _fake_git_body(version: str) -> str:
+    """A git stub that reports ``version`` for ``git version`` and otherwise
+    behaves as a no-op success. It never shells out to a real git, so it cannot
+    perform a real downgrade of the host toolchain."""
+    return (
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f"  version|--version) printf 'git version {version}\\n' ; exit 0 ;;\n"
+        "esac\n"
+        # config/init calls the runner makes on the hermetic HOME must succeed.
+        "exit 0\n"
+    )
+
+
+def _stage_git_runner(
+    tmp_path: Path,
+    *,
+    path_git_version: str | None,
+    override_git_version: str | None = None,
+    toolchain_git_version: str | None = None,
+    use_toolchain_env: bool = False,
+) -> tuple[Path, dict[str, str], Path]:
+    """Stage a throwaway repo running the REAL runner with a fake git on PATH
+    (and, optionally, an override/toolchain git) plus a fake python3 so the gate
+    can proceed past interpreter resolution when git resolves. Returns the repo,
+    the env, and the python-call log path."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
+    (repo / ".python-version").write_text((ROOT / ".python-version").read_text())
+    (repo / "scripts" / "run-contract-tests.sh").write_text(
+        RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (repo / "scripts" / "run-contract-tests.sh").chmod(0o755)
+
+    path_bin = tmp_path / "pathbin"
+    path_bin.mkdir()
+    log_path = tmp_path / "python.log"
+    # A python3 that both passes _py_can_run_suite and runs the gate to green,
+    # and logs its pytest phases so we can assert the suite actually ran.
+    _write_exec(
+        path_bin / "python3",
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$FAKE_PY_LOG"\n' + _GOOD_PY_BODY.split("\n", 1)[1],
+    )
+    if path_git_version is not None:
+        _write_exec(path_bin / "git", _fake_git_body(path_git_version))
+
+    env = {
+        "PATH": f"{path_bin}:/usr/bin:/bin",
+        "HOME": str(tmp_path / "home"),
+        "MAC_CONTRACT_RUNTIME_VENV": str(tmp_path / "nonexistent-runtime-venv"),
+        "FAKE_PY_LOG": str(log_path),
+    }
+    (tmp_path / "home").mkdir()
+
+    if override_git_version is not None:
+        override_git = tmp_path / "override" / "git"
+        _write_exec(override_git, _fake_git_body(override_git_version))
+        env["MAC_CONTRACT_GIT"] = str(override_git)
+    if toolchain_git_version is not None:
+        toolchain_bin = tmp_path / "toolchain"
+        _write_exec(toolchain_bin / "git", _fake_git_body(toolchain_git_version))
+        if use_toolchain_env:
+            env["MAC_TOOLCHAIN_BIN"] = str(toolchain_bin)
+
+    for marker in (
+        "PYTEST_CURRENT_TEST",
+        "PYTEST_XDIST_WORKER",
+        "PYTEST_XDIST_WORKER_COUNT",
+        "PYTEST_XDIST_TESTRUNUID",
+    ):
+        env.pop(marker, None)
+    return repo, env, log_path
+
+
+def _run_git_runner(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(repo / "scripts" / "run-contract-tests.sh")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_contract_runner_resolves_override_git_over_older_path_git(tmp_path):
+    """MAC_CONTRACT_GIT (a modern git) must win over an older PATH git: the gate
+    resolves it, does NOT fail fast, and runs the suite. The old PATH git alone
+    would have failed the merge-gate floor."""
+    repo, env, log_path = _stage_git_runner(
+        tmp_path, path_git_version="2.34.1", override_git_version="2.42.0"
+    )
+    completed = _run_git_runner(repo, env)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "FATAL: git" not in completed.stderr
+    calls = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+    assert any("-m pytest" in c or "-m coverage run -m pytest" in c for c in calls), (
+        "the suite must run once a modern git is resolved: " + completed.stderr
+    )
+
+
+def test_contract_runner_resolves_toolchain_bin_git_over_older_path_git(tmp_path):
+    """MAC_TOOLCHAIN_BIN/git (a modern git captured before the MAC_* sweep) must
+    be preferred over an older PATH git and let the gate proceed."""
+    repo, env, log_path = _stage_git_runner(
+        tmp_path,
+        path_git_version="2.34.1",
+        toolchain_git_version="2.39.5",
+        use_toolchain_env=True,
+    )
+    completed = _run_git_runner(repo, env)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "FATAL: git" not in completed.stderr
+    calls = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+    assert any("-m pytest" in c or "-m coverage run -m pytest" in c for c in calls)
+
+
+def test_contract_runner_fails_fast_when_only_old_git_present(tmp_path):
+    """With only git 2.34.1 on PATH and no override, the gate must exit non-zero
+    with a distinct status and a single first-line diagnostic naming the found
+    version, the required version, and the override — BEFORE any pytest phase."""
+    repo, env, log_path = _stage_git_runner(tmp_path, path_git_version="2.34.1")
+    completed = _run_git_runner(repo, env)
+
+    assert completed.returncode == 3, completed.stdout + completed.stderr
+    first_line = completed.stderr.splitlines()[0]
+    assert "FATAL" in first_line
+    assert "2.34.1" in first_line
+    assert "2.38" in first_line
+    assert "MAC_CONTRACT_GIT" in first_line
+    # The full suite must NOT have started: no python pytest phase was logged.
+    calls = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+    assert not any("-m pytest" in c for c in calls), (
+        "fail-fast must abort before the suite runs: " + "\n".join(calls)
+    )
+
+
+def test_contract_runner_modern_path_git_runs_without_fail_fast(tmp_path):
+    """A host that already ships git >= 2.38 keeps the unchanged fast path: the
+    gate proceeds to the suite and emits no git-prerequisite diagnostic."""
+    repo, env, log_path = _stage_git_runner(tmp_path, path_git_version="2.39.5")
+    completed = _run_git_runner(repo, env)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "FATAL: git" not in completed.stderr
+    calls = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+    assert any("-m pytest" in c or "-m coverage run -m pytest" in c for c in calls)

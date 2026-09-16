@@ -55,7 +55,9 @@ def classifier():
     # the real function is os.kill(pid, 0), which makes every assertion depend
     # on scheduling and on pids the OS may reuse. The classifier's OWN logic is
     # what is under test here, not whether a forked child had exited yet.
-    ns["sandbox_pid_is_alive"] = lambda pid: str(pid) != DEAD_PID
+    ns["sandbox_process_identity"] = lambda pid: (
+        ("absent", "") if str(pid) == DEAD_PID else ("present", "test-boot:1")
+    )
     assert "classify_orphan_task_sandbox" in ns, (
         "the installer no longer defines classify_orphan_task_sandbox; this "
         "test must be repointed rather than deleted -- it is the guard against "
@@ -148,6 +150,25 @@ def test_a_live_pid_is_never_reaped(classifier):
     assert record["reap"] is False
 
 
+def test_a_reused_pid_is_reaped_when_identity_differs(classifier):
+    sandbox = _sandbox("mac-task-reused-fixture", mac_pid="777777")
+    sandbox["labels"].update({"mac.boot.id": "old-boot", "mac.pid.start": "2"})
+    record = classifier["classify_orphan_task_sandbox"](sandbox)
+    assert record["reap"] is True
+
+
+def test_permission_denied_process_identity_fails_closed(classifier):
+    original = classifier["sandbox_process_identity"]
+    classifier["sandbox_process_identity"] = lambda _pid: ("unknown", "")
+    try:
+        record = classifier["classify_orphan_task_sandbox"](
+            _sandbox("mac-task-denied-fixture", mac_pid="777777")
+        )
+    finally:
+        classifier["sandbox_process_identity"] = original
+    assert record["reap"] is False
+
+
 @pytest.mark.parametrize("pid", ["", "not-a-number", "-1", "0"])
 def test_an_unusable_pid_is_never_reaped(classifier, pid):
     """Without a usable pid there is no death to prove, so do nothing."""
@@ -203,3 +224,39 @@ def test_every_managed_prefix_is_recognized(classifier, name):
         _sandbox(name, mac_kind=name.split("-", 1)[1].rsplit("-", 1)[0], mac_pid=DEAD_PID)
     )
     assert record["reap"] is True, "%s is no longer recognized as managed" % name
+
+
+@pytest.mark.parametrize("creator_state", ["absent", "present", "unknown"])
+@pytest.mark.parametrize("protection", ["none", "keep", "foreign", "missing_kind"])
+def test_real_capability_probe_identity_through_both_reapers(
+    monkeypatch, creator_state, protection
+):
+    from mac.executor_sandbox import _coding_agent_probe_sandbox_name, _sandbox_label_argv
+    from mac.openshell_sandbox_gc import classify_orphan_task_sandbox
+
+    # Use the producer's real name AND labels, not fixtures that independently
+    # invent the same obsolete prefix as both consumers.
+    # Only the kernel observation is injected, so this contract test also runs
+    # on macOS, where the Linux-only OpenShell producer is not deployed.
+    monkeypatch.setattr(
+        "mac.openshell_sandbox_gc._process_identity", lambda _pid: ("present", "test-boot:42")
+    )
+    argv = _sandbox_label_argv("codingcap")
+    labels = dict(value.split("=", 1) for value in argv[1::2])
+    if protection == "keep":
+        labels["mac.keep"] = "true"
+    elif protection == "foreign":
+        labels["mac.owner"] = "someone-else"
+    elif protection == "missing_kind":
+        labels.pop("mac.kind")
+    sandbox = {"name": _coding_agent_probe_sandbox_name(), "labels": labels, "phase": "Ready"}
+    identity = labels["mac.boot.id"] + ":" + labels["mac.pid.start"]
+
+    def creator(_pid):
+        return creator_state, identity if creator_state == "present" else ""
+
+    installer = _load_classifier()
+    installer["sandbox_process_identity"] = creator
+    expected = creator_state == "absent" and protection == "none"
+    assert classify_orphan_task_sandbox(sandbox, process_identity=creator)["reap"] is expected
+    assert installer["classify_orphan_task_sandbox"](sandbox)["reap"] is expected

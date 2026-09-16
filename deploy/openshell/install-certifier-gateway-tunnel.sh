@@ -189,10 +189,13 @@ mac_launchd_transaction_replace "$tmp_plist" "$plist"
 mac_launchd_bootstrap_job "$domain" "$plist" "$domain/$LABEL" "$LABEL"
 
 endpoint="http://127.0.0.1:$LOCAL_PORT"
+# OpenShell 0.0.72 `status` can exit zero after reporting Disconnected or
+# an HTTP error. A bounded read-only RPC proves this endpoint can serve the
+# control API and propagates connection failures, even with no sandboxes.
 if OPENSHELL_GATEWAY_ENDPOINT="$endpoint" mac_retry_bounded \
   "${MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS:-20}" \
   "${MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS:-5}" 1 \
-  "$OPENSH_BIN" status >/dev/null 2>&1; then
+  "$OPENSH_BIN" sandbox list --limit 1 --names >/dev/null 2>&1; then
   launchd_state="$(mac_launchd_job_state "$domain/$LABEL" "$LABEL")"
   if [ "$launchd_state" != active ]; then
     echo "ERROR: certifier OpenShell endpoint is healthy but launchd job is absent: $LABEL" >&2

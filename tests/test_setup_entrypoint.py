@@ -71,13 +71,18 @@ def test_setup_py_builds_deploy_args_from_plan():
     ]
 
 
-def test_setup_py_deploy_env_loads_generated_env_file(tmp_path):
+def test_setup_py_deploy_env_loads_generated_env_file(tmp_path, monkeypatch):
     setup = _load_setup_module()
     env_file = tmp_path / ".env"
-    env_file.write_text("MAC_API_TOKEN=from-file\n", encoding="utf-8")
+    env_file.write_text(
+        "MAC_API_TOKEN=from-file\nMAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS=20\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS", "300")
 
     values = setup.deploy_env(env_file)
 
     assert values["MAC_API_TOKEN"] == "from-file"
+    assert values["MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS"] == "300"
     assert values["PYTHON"] == sys.executable
     assert values.get("PATH") == os.environ.get("PATH")

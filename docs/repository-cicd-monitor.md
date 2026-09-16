@@ -3,7 +3,10 @@
 MAC treats CI/CD as a continuation of repository work. Publication still
 completes when reviewed work is integrated and remotely verified; CI health is
 checked afterward and can create linked maintenance work without rewriting the
-historical publication result or turning CI into a delivery gate.
+historical publication result. This describes the generic post-publication
+monitor, not MAC's release gate: MAC candidate CI runs the full suite up front,
+and its image qualification and documentation publication wait for their
+required checks. See [testing strategy](testing-strategy.md).
 
 ## Why this exists
 
@@ -23,8 +26,8 @@ The largest backlogs were:
 | `NVIDIA-dev/oss-tracker` | 24 |
 | `jordanhubbard/Aviation` | 13 |
 
-This is not merely old inbox noise. There were 19 new CI notifications in the
-last 24 hours. Representative failures included MAC's
+In that historical audit window, there were 19 new CI notifications in the
+preceding 24 hours. Representative failures included MAC's
 [impact-selected coverage gate](https://github.com/jordanhubbard/mac/actions/runs/30078995918),
 NanoLang's
 [backend matrix](https://github.com/jordanhubbard/nanolang/actions/runs/30057187324),

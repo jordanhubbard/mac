@@ -48,9 +48,9 @@ def text_output():
     about the human layout, so opt back into text explicitly."""
     from mac import cli
 
-    cli._set_output_json(False)
-    yield
-    cli._set_output_json(True)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(cli, "_stdout_is_interactive", lambda: True)
+        yield
 
 
 def _run(*args):

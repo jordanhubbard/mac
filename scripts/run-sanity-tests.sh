@@ -14,6 +14,25 @@ if [ -z "${PY:-}" ]; then
     exit 2
 fi
 
+# Provision a test database before anything collects tests. The impact-map
+# check below runs `pytest --collect-only`, whose collection imports tests
+# calling test_dsn(); with no MAC_TEST_PG_URL they raise
+# TestPostgresUnavailable, collection returns zero node ids, and the check
+# fails before the exec below ever reaches run-contract-tests.sh, where
+# provisioning used to live only. Seen 2026-08-30: a task sandbox failed the
+# repository gate 0.5s in with "returned no node ids" regardless of its code.
+# The DSN survives the handoff: run-contract-tests.sh re-captures
+# MAC_TEST_PG_URL before its hermetic MAC_* sweep, so this also covers the
+# suite. Same helper contract as run-contract-tests.sh: an already-set DSN
+# wins, the helper finds a running server, a container engine, or installed
+# binaries, and says so on stderr when it cannot.
+if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+    _pg_helper="$(dirname "$0")/start-test-postgres.sh"
+    if [ -x "$_pg_helper" ] && _pg_dsn=$("$_pg_helper"); then
+        eval "$_pg_dsn"
+    fi
+fi
+
 # Selection consults the committed impact map. A stale interned node id is a
 # pytest usage error (exit 4), not a test failure, so regeneration is a
 # prerequisite of this script -- the same shape as test-schema-migrations

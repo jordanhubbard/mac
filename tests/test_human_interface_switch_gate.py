@@ -257,18 +257,10 @@ def test_the_cli_exposes_port_and_check():
     assert {"port", "check"} <= names
 
 
-def test_the_installer_gates_a_switch():
-    """The deploy path is the consumer that was missing.
-
-    Asserted on the script text: reaching the gate for real needs a node
-    install, and the property worth protecting is that the call site exists at
-    all -- that is precisely what was absent.
-    """
+def test_the_installer_does_not_gate_hermes_on_a_retired_openclaw_port():
+    """A clean Hermes reset must not require a deprecated runtime profile."""
     root = Path(__file__).resolve().parents[1]
     installer = (root / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
 
-    assert "gate_human_interface_switch" in installer
-    assert "assert_switch_ported" in installer
-    # Only a CHANGE is gated; re-deploying the installed interface must not
-    # demand a fresh port, or every routine deploy fails.
-    assert '[ "$installed" != "$target" ] || return 0' in installer
+    assert 'if ! gate_human_interface_switch "$MAC_CHAT_GATEWAY_IMPL"; then' not in installer
+    assert "refusing to switch the human interface without porting" not in installer

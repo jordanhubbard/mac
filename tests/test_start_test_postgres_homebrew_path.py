@@ -11,4 +11,7 @@ def test_helper_discovers_homebrew_postgres_without_relying_on_path():
     no pg_isready even though Homebrew postgresql@17 was listening."""
     source = SCRIPT.read_text(encoding="utf-8")
     assert "/opt/homebrew/opt/postgresql@17/bin" in source
-    assert 'PATH="$brew_bin:${PATH:-}"' in source
+    # Homebrew must be discoverable even under launchd's sparse PATH, but it
+    # must not override a caller-selected docker/podman executable.
+    assert 'PATH="${PATH:+${PATH}:}$brew_bin"' in source
+    assert 'PATH="$brew_bin:${PATH:-}"' not in source

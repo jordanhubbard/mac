@@ -319,6 +319,16 @@ class _FakeHub:
                 if self.path.startswith("/agents/"):
                     self._respond({"id": "agent_fake", "dispatch_hold": False})
                     return
+                if self.path == "/tasks/task_fake":
+                    self._respond(
+                        {
+                            "id": "task_fake",
+                            "state": "running",
+                            "owner_agent_id": "agent_fake",
+                            "lease_id": "lease_fake",
+                        }
+                    )
+                    return
                 self._respond({})
 
             def do_POST(self) -> None:  # noqa: N802

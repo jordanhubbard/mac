@@ -169,3 +169,23 @@ def test_hold_then_resume_round_trip(tmp_path):
     assert resumed["dispatch_hold"] is False
     assert resumed.get("dispatch_hold_reason") is None
     assert resumed.get("dispatch_hold_at") is None
+
+
+def test_remote_agent_list_health_uses_response_timestamps(monkeypatch, capsys):
+    from mac import cli
+    from mac.dispatch import RemoteDispatch
+
+    class Client:
+        def request(self, method, path, **kwargs):
+            assert (method, path) == ("GET", "/agents")
+            return [
+                {"id": "old", "dispatch_hold": True},
+                {"id": "pending", "last_control_stream_published_at": "2026-01-01T00:00:00+00:00"},
+            ]
+
+    monkeypatch.setattr(cli, "_plane", lambda args: RemoteDispatch(Client()))
+    assert cli.main(["--json", "agent", "list", "--health"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["dispatch_hold"] is True
+    assert rows[0]["unconsumed_control_stream_age_seconds"] is None
+    assert rows[1]["unconsumed_control_stream_age_seconds"] > 0

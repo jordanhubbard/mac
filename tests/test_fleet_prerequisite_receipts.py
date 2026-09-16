@@ -104,6 +104,36 @@ def test_path_verifier_seals_only_secret_free_digests(tmp_path: Path) -> None:
     assert "#!/bin/sh" not in encoded
 
 
+def test_tool_version_verifier_enforces_minimum_without_sealing_output(tmp_path: Path) -> None:
+    tool = tmp_path / "git"
+    tool.write_text("#!/bin/sh\nprintf 'git version 2.38.1 secret-output\\n'\n", encoding="utf-8")
+    tool.chmod(0o700)
+    contract = {
+        "schema": receipts.CONTRACT_SCHEMA,
+        "participant": "machine-onboarding",
+        "agent_id": AGENT,
+        "node_identity_sha256": IDENTITY,
+        "checks": [
+            {
+                "name": "git-cli",
+                "kind": "tool-version",
+                "path": str(tool),
+                "minimum_version": "2.38",
+            }
+        ],
+    }
+
+    receipt = receipts.verify_contract(contract, now=1000.0)
+
+    assert receipt["status"] == "ready"
+    assert receipt["checks"][0]["kind"] == "tool-version"
+    assert "secret-output" not in json.dumps(receipt)
+
+    contract["checks"][0]["minimum_version"] = "2.39"
+    with pytest.raises(receipts.PrerequisiteError, match="below minimum"):
+        receipts.verify_contract(contract, now=1000.0)
+
+
 @pytest.mark.parametrize("change", ["mode", "digest", "symlink"])
 def test_path_verifier_rejects_drift_and_indirection(tmp_path: Path, change: str) -> None:
     tool = tmp_path / "tool"

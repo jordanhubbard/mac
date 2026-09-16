@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mac.judgement import (
+    Finding,
     HOLD_REASON_PREFIX,
     JUDGEMENT_SCHEMA,
     JudgementConfig,
@@ -158,7 +159,105 @@ def test_stuck_reviewing_holds_the_semantic_reviewer(cp):
     assert str(getattr(held, "dispatch_hold_reason", "")).startswith(HOLD_REASON_PREFIX)
 
 
-def test_excessive_reviewing_stops_the_fleet_and_can_redeploy(cp):
+@pytest.mark.parametrize("count", [1, 25])
+def test_healthy_review_queue_preserves_reviews_and_running_work(cp, count):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    worker = _register_agent(cp, "worker")
+    reviews = [_park_in_review(cp, "healthy review %d" % index, reviewer) for index in range(count)]
+    running = cp.create_task("unrelated running work", project="mac")
+    cp.claim_task(running.id, worker.id)
+    cp.start_task(running.id, worker.id)
+    process = _process(cp)
+
+    for _ in range(2):
+        report = process.run_once()
+        assert report["check_errors"] == []
+        assert report["actions"] == []
+        assert cp.get_task(running.id).state == TaskState.RUNNING.value
+        assert cp.get_agent(worker.id).dispatch_hold is False
+        assert all(cp.get_task(task.id).state == TaskState.REVIEWING.value for task in reviews)
+
+
+def test_stale_review_queue_targets_stalls_before_fleet_intervention(cp):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    worker = _register_agent(cp, "worker")
+    stalled = [_park_in_review(cp, "stale review %d" % index, reviewer) for index in range(3)]
+    healthy = _park_in_review(cp, "fresh review", reviewer)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    for task in stalled:
+        cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (stale, task.id))
+    running = cp.create_task("unrelated running work", project="mac")
+    cp.claim_task(running.id, worker.id)
+    cp.start_task(running.id, worker.id)
+    process = _process(cp, excessive_reviewing_count=2)
+
+    report = process.run_once()
+    assert report["check_errors"] == []
+    assert {
+        action["task_id"] for action in report["actions"] if action["action"] == "task_stopped"
+    } == {task.id for task in stalled}
+    assert all(cp.get_task(task.id).state == TaskState.STOPPED.value for task in stalled)
+    assert cp.get_task(healthy.id).state == TaskState.REVIEWING.value
+    assert cp.get_task(running.id).state == TaskState.RUNNING.value
+    assert cp.get_agent(worker.id).dispatch_hold is False
+    assert not any(
+        action["action"] in {"fleet_stopped", "fleet_held"} for action in report["actions"]
+    )
+    assert process.run_once()["actions"] == []
+
+
+@pytest.mark.parametrize("recovery_succeeds", [False, True])
+@pytest.mark.parametrize("stalled_count", [3, 25])
+def test_persistent_stale_review_queue_holds_new_dispatch_without_cancelling_work(
+    cp, monkeypatch, recovery_succeeds, stalled_count
+):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    worker = _register_agent(cp, "worker")
+    stalled = [
+        _park_in_review(cp, "stalled review %d" % index, reviewer) for index in range(stalled_count)
+    ]
+    stalled_ids = {task.id for task in stalled}
+    healthy = _park_in_review(cp, "fresh review", reviewer)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    for task in stalled:
+        cp.store.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (stale, task.id))
+    running = cp.create_task("unrelated running work", project="mac")
+    cp.claim_task(running.id, worker.id)
+    cp.start_task(running.id, worker.id)
+    original_stop = cp.stop_task
+    recovery = {"fails": True}
+
+    def stop(task_id, **kwargs):
+        if task_id in stalled_ids and recovery["fails"]:
+            raise RuntimeError("synthetic targeted recovery failure")
+        return original_stop(task_id, **kwargs)
+
+    monkeypatch.setattr(cp, "stop_task", stop)
+    process = _process(cp, excessive_reviewing_count=2 if stalled_count == 3 else 20)
+    first = process.run_once()
+    assert first["check_errors"] == []
+    assert any(action["action"] == "error" for action in first["actions"])
+    assert cp.get_agent(worker.id).dispatch_hold is False
+    recovery["fails"] = not recovery_succeeds
+    second = process.run_once()
+    assert second["check_errors"] == []
+    assert sum(action["action"] != "skipped" for action in second["actions"]) <= second["budget"]
+    holds = [action for action in second["actions"] if action["action"] == "fleet_held"]
+    assert bool(holds) is (not recovery_succeeds)
+    assert cp.get_agent(worker.id).dispatch_hold is (not recovery_succeeds)
+    assert cp.get_task(running.id).state == TaskState.RUNNING.value
+    assert cp.get_task(healthy.id).state == TaskState.REVIEWING.value
+    if holds:
+        assert holds[0]["stopped_tasks"] == []
+        assert holds[0]["held_agents"] == [worker.id]
+    else:
+        # With a large queue, the bounded next cycle finishes individual
+        # recovery after the aggregate has dropped below its threshold.
+        process.run_once()
+        assert all(cp.get_task(task.id).state == TaskState.STOPPED.value for task in stalled)
+
+
+def test_multiple_semantic_review_assignments_still_stop_and_redeploy_the_fleet(cp):
     worker = _register_agent(cp, "worker")
     reviewer = _register_agent(cp, "reviewer")
     for index in range(3):
@@ -173,15 +272,15 @@ def test_excessive_reviewing_stops_the_fleet_and_can_redeploy(cp):
     process = _process(
         cp,
         redeploy_runner=runner,
-        excessive_reviewing_count=2,
-        excessive_reviewing_fraction=0.01,
         repo_root="/tmp/mac-judgement",
         redeploy_command="/bin/true",
     )
     report = process.run_once()
     kinds = [finding["kind"] for finding in report["findings"]]
-    assert "excessive_reviewing_population" in kinds
+    assert "semantic_reviewer_still_assigned" in kinds
+    assert "excessive_reviewing_population" not in kinds
     assert any(action["action"] == "fleet_stopped" for action in report["actions"])
+    assert len(redeploys) == 1
 
 
 def test_redeploy_is_bounded_per_day(cp):
@@ -231,6 +330,139 @@ def test_cycle_budget_caps_interventions(cp):
     assert skipped
 
 
+def test_terminal_and_already_stopped_findings_do_not_consume_action_budget(cp):
+    failed = cp.create_task("failed historical row", project="mac")
+    stopped = cp.create_task("already parked", project="mac")
+    live = cp.create_task("live intervention", project="mac")
+    with cp.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("failed", failed.id))
+    cp.stop_task(stopped.id, actor="test", reason="fixture")
+    findings = [
+        Finding(
+            kind="old_failure",
+            task_id=failed.id,
+            summary="terminal",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="already_parked",
+            task_id=stopped.id,
+            summary="stopped",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="live_problem",
+            task_id=live.id,
+            summary="actionable",
+            recommended_action="stop_task",
+        ),
+    ]
+
+    actions = _process(cp, max_actions_per_cycle=1)._act_on_findings(
+        findings, actor="test", run_id="budget"
+    )
+
+    assert [action["action"] for action in actions] == [
+        "skipped",
+        "already_stopped",
+        "task_stopped",
+    ]
+    assert cp.get_task(live.id).state == TaskState.STOPPED.value
+
+
+def test_merged_reconciliation_precedes_and_does_not_consume_intervention_budget(cp):
+    first = cp.create_task("first intervention", project="mac")
+    second = cp.create_task("second intervention", project="mac")
+    merged = cp.create_task("already merged", project="mac")
+    findings = [
+        Finding(
+            kind="ordinary_first",
+            task_id=first.id,
+            summary="first",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="ordinary_second",
+            task_id=second.id,
+            summary="second",
+            recommended_action="stop_task",
+        ),
+        Finding(
+            kind="merged_task_not_reconciled",
+            task_id=merged.id,
+            summary="merged",
+            detail={
+                "pr_number": 777,
+                "url": "https://example.test/777",
+                "base_ref_name": "main",
+                "head_sha": "a" * 40,
+                "merge_sha": "b" * 40,
+            },
+            recommended_action="reconcile_merged_task",
+        ),
+    ]
+
+    actions = _process(cp, max_actions_per_cycle=1)._act_on_findings(
+        findings, actor="test", run_id="merged-first"
+    )
+
+    assert [action["action"] for action in actions] == [
+        "task_reconciled",
+        "task_stopped",
+        "skipped",
+    ]
+    assert actions[-1]["reason"] == "cycle_budget"
+    assert cp.get_task(merged.id).state == TaskState.COMPLETED.value
+    assert cp.get_task(first.id).state == TaskState.STOPPED.value
+    assert cp.get_task(second.id).state == TaskState.OPEN.value
+
+
+def test_merged_pull_request_reconciles_the_named_repository_task(cp):
+    head_sha = "a" * 40
+    merge_sha = "b" * 40
+    task = cp.create_task(
+        "merged out of band",
+        project="mac",
+        metadata={
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {"canonical_branch": "main"},
+            }
+        },
+    )
+
+    def lister(_root):
+        return {
+            "open": [],
+            "merged": [
+                {
+                    "number": 776,
+                    "title": "land repair (%s)" % task.id,
+                    "body": "",
+                    "headRefName": "codex/repair",
+                    "baseRefName": "main",
+                    "headRefOid": head_sha,
+                    "mergeCommit": {"oid": merge_sha},
+                    "mergedAt": "2026-09-07T23:03:55Z",
+                    "url": "https://example.test/776",
+                    "mergeable": "UNKNOWN",
+                }
+            ],
+        }
+
+    report = _process(cp, pr_lister=lister).run_once()
+
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    assert any(action["action"] == "task_reconciled" for action in report["actions"])
+    proofs = [
+        evidence.metadata["verification"]["canonical_integration"]
+        for evidence in cp.list_evidence(task.id)
+        if evidence.metadata.get("verification", {}).get("canonical_integration")
+    ]
+    assert proofs[-1]["canonical_tip_sha"] == merge_sha
+    assert proofs[-1]["reviewed_head_sha"] == head_sha
+
+
 def test_orphaned_pull_request_is_closed(cp):
     task = cp.create_task("already done", project="mac")
     with cp.store.transaction() as conn:
@@ -266,7 +498,7 @@ def test_orphaned_pull_request_is_closed(cp):
     assert "orphaned_pull_request" in closed[0][1]
 
 
-def test_unlanded_pull_request_stops_review_but_does_not_close(cp):
+def test_open_pull_request_preserves_semantic_review_intervention(cp):
     reviewer = _register_agent(cp, "bullwinkle")
     task = _park_in_review(cp, "good work never landed", reviewer)
     closed = []
@@ -292,9 +524,33 @@ def test_unlanded_pull_request_stops_review_but_does_not_close(cp):
 
     report = _process(cp, pr_lister=lister, pr_closer=closer).run_once()
     kinds = [finding["kind"] for finding in report["findings"]]
-    assert "unlanded_pull_request" in kinds
+    assert "unlanded_pull_request" not in kinds
+    assert "semantic_reviewer_still_assigned" in kinds
     assert closed == []
     assert cp.get_task(task.id).state == TaskState.STOPPED.value
+
+
+@pytest.mark.parametrize("state", ["needs_review", "reviewing", "blocked", "failed"])
+def test_open_pull_request_does_not_stop_pending_hub_review(cp, state):
+    reviewer = _register_agent(cp, "hub-reviewer", resources={"virtual": True})
+    task = _park_in_review(cp, "independent verification", reviewer)
+    # Keep the separate population guard out of this per-PR regression.
+    cp.create_task("queued work", project="mac")
+    with cp.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", (state, task.id))
+
+    report = _process(
+        cp,
+        excessive_reviewing_fraction=1.0,
+        pr_lister=lambda _root: {
+            "open": [{"number": 803, "title": task.id}],
+            "merged": [],
+        },
+    ).run_once()
+    kinds = [finding["kind"] for finding in report["findings"]]
+    assert "excessive_reviewing_population" not in kinds
+    assert ("unlanded_pull_request" in kinds) == (state in {"blocked", "failed"})
+    assert cp.get_task(task.id).state == ("stopped" if state == "blocked" else state)
 
 
 def test_duplicate_open_prs_close_the_older_copy(cp):

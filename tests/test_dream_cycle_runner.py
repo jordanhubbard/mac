@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENCLAW_DIR = ROOT / "deploy" / "openclaw"
@@ -97,8 +100,7 @@ def test_kslug_process_note_is_not_a_transcript() -> None:
 def test_choose_reply_prefers_kslug_transcript_over_preamble() -> None:
     transcript = (
         ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
-        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. "
-        + ("Item from the wire. " * 40)
+        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. " + ("Item from the wire. " * 40)
     )
     payload = {
         "text": "The KSLUG skill and SPEC aren't accessible in this sandbox.",
@@ -151,8 +153,7 @@ def test_kslug_prompt_includes_host_runner_contract(tmp_path: Path) -> None:
     captured = {}
     transcript = (
         ":tv: _KSLUG NIGHTLY NEWS_ :tv:\n"
-        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. "
-        + ("Local wire copy. " * 40)
+        "_DAN GREEN:_ Good evening, Santa Cruz. I'm Dan Green. " + ("Local wire copy. " * 40)
     )
     job = {
         "name": "kslug-nightly-news",
@@ -171,8 +172,7 @@ def test_kslug_prompt_includes_host_runner_contract(tmp_path: Path) -> None:
         home_channel_target="channel:C0HOME",
         script_runner=lambda *_args: ("wire", ""),
         agent_runner=lambda _bin, prompt, **_kwargs: (
-            captured.update(prompt=prompt)
-            or json.dumps({"text": transcript})
+            captured.update(prompt=prompt) or json.dumps({"text": transcript})
         ),
         deliver_runner=lambda *_args, **_kwargs: None,
     )
@@ -216,52 +216,27 @@ def test_delivery_policy_allows_dm_and_home_channel_only() -> None:
     ) == (("slack", "C0LOCALNEWS"), "")
 
 
-def test_message_args_targets_channel_with_account_and_text() -> None:
+def test_message_args_targets_channel_with_text() -> None:
     args = runner.message_args(
-        "/bin/openclaw-message", "slack", "C0123ABC", "hello", account="acct1"
+        "/usr/local/bin/hermes", "slack", "C0123ABC", "hello", account="acct1"
     )
-    assert args[0] == "/bin/openclaw-message"
-    assert "--channel" in args and "slack" in args
-    assert "--account" in args and "acct1" in args
-    assert "channel:C0123ABC" in args
+    assert args[0] == "/usr/local/bin/hermes"
+    assert "send" in args
+    assert "--to" in args and "slack:C0123ABC" in args
     assert "hello" in args
 
 
-def test_no_argument_ever_carries_a_newline_across_the_sandbox_boundary() -> None:
-    """The defect that stopped every script job on the fleet.
-
-    ``openclaw-message`` execs ``openshell sandbox exec ... -- openclaw message``,
-    and OpenShell refuses any argv token containing a newline:
-    "command argument 12 contains newline or carriage return characters".
-    Script-job output is prose, so it is always multi-line. Three jobs on the hub
-    ran hourly and failed 220 times each on exactly this -- and the runner then
-    reported each failure through the same channel, so the error report failed
-    identically and nothing was ever notified.
-    """
+def test_the_multi_line_body_travels_intact_as_a_plain_argv_token() -> None:
+    """``hermes`` runs natively on the host (installed by the Hermes shell
+    installer, not sandboxed), so there is no argv-newline boundary to work
+    around the way the prior OpenClaw wrapper required -- the body passes
+    straight through, unescaped."""
     body = "first line\nsecond line\r\nthird line"
-    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
+    args = runner.message_args("/usr/local/bin/hermes", "slack", "C0123ABC", body, account="a")
 
-    assert not any("\n" in part or "\r" in part for part in args), (
-        "an argv token still carries a literal newline, so the sandbox will refuse it"
-    )
-
-
-def test_the_multi_line_body_survives_the_escaping() -> None:
-    """Escaping that loses the body would trade a loud failure for a quiet one."""
-    import json as _json
-
-    body = "first line\nsecond line\nthird line"
-    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
-    presentation = args[args.index("--presentation") + 1]
-
-    assert _json.loads(presentation)["text"] == body
-
-
-def test_the_summary_line_is_never_empty() -> None:
-    """The CLI rejects a missing message, so whitespace-only output must not
-    fail for a second, unrelated reason."""
-    assert runner.summary_line("   \n\n  ") == "(no summary)"
-    assert runner.summary_line("\n\nreal first line\nsecond") == "real first line"
+    assert body in args
+    assert "--presentation" not in args
+    assert "--message" not in args
 
 
 # --------------------------------------------------------------------------- #
@@ -586,47 +561,96 @@ def test_runner_and_installer_are_syntactically_valid() -> None:
     subprocess.run(["bash", "-n", str(INSTALLER)], check=True, timeout=30)
 
 
-def test_a_multi_line_prompt_is_staged_in_the_sandbox_not_passed_as_argv(
-    tmp_path, monkeypatch
-) -> None:
-    """The other half of the newline defect.
+# --------------------------------------------------------------------------- #
+# Sandbox CLI mutex (task_2e7e9e31fda34902a288324792b4baeb)                    #
+#                                                                              #
+# dream-cycle and dream-synthesis are independent launchd jobs that share an   #
+# hourly StartCalendarInterval; concurrent openclaw CLI invocations raced to   #
+# open the sandbox's shared plugin-state SQLite DB and corrupted it            #
+# ("database disk image is malformed"). Schedule staggering (apply-cron-      #
+# plan.mjs) reduces contention but any future collision -- a new job, a       #
+# manual run, clock drift -- reintroduces the race, so run_locked() is the    #
+# durable guarantee: it serializes every subprocess call into the sandbox CLI  #
+# regardless of why two of them landed at once.                                #
+# --------------------------------------------------------------------------- #
+def test_run_locked_serializes_concurrent_callers(tmp_path, monkeypatch) -> None:
+    import threading
+    import time as _time
 
-    openclaw-agent is the same sandbox wrapper as openclaw-message, so a
-    multi-line prompt is refused identically -- and the refusal was returned AS
-    the agent's reply. Once delivery was fixed, the fleet published that error
-    to Slack hourly: a 138-character "dream report" that was the sandbox
-    complaining about newlines.
-    """
-    wrapper = tmp_path / "openclaw-agent"
-    wrapper.write_text(
-        'OPEN_SHELL=/bin/openshell\nSANDBOX=mac-openclaw-test\nexec "$OPEN_SHELL" sandbox exec\n',
-        encoding="utf-8",
-    )
-    seen = {}
-
-    import subprocess as _sp
+    lock_path = tmp_path / "sandbox-cli.lock"
+    intervals = []
+    intervals_guard = threading.Lock()
 
     def fake_run(args, **kwargs):
-        seen["args"] = args
-        seen["input"] = kwargs.get("input")
-        return _sp.CompletedProcess(args, 0, "", "")
+        start = _time.monotonic()
+        _time.sleep(0.05)
+        end = _time.monotonic()
+        with intervals_guard:
+            intervals.append((start, end))
+        return runner.subprocess.CompletedProcess(args, 0, "", "")
 
+    real_subprocess_run = runner.subprocess.run
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    try:
+        threads = [
+            threading.Thread(
+                target=runner.run_locked, args=(["noop"],), kwargs={"lock_path": lock_path}
+            )
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    finally:
+        monkeypatch.setattr(runner.subprocess, "run", real_subprocess_run)
 
-    path = runner.stage_prompt_in_sandbox(str(wrapper), "one\ntwo", session_id="s1")
+    assert len(intervals) == 4, "every caller must eventually acquire the lock and run"
+    ordered = sorted(intervals)
+    for (_, prev_end), (next_start, _) in zip(ordered, ordered[1:]):
+        assert next_start >= prev_end, (
+            "two sandbox CLI invocations overlapped -- the mutex did not serialize them"
+        )
 
-    assert path.startswith("/sandbox/prompts/")
-    assert seen["input"] == "one\ntwo", "the body must travel on stdin, which is not argv"
-    assert not any("\n" in str(part) for part in seen["args"]), (
-        "an argv token still carries a newline, so the sandbox will refuse it"
-    )
+
+def test_run_locked_times_out_rather_than_hanging_forever(tmp_path, monkeypatch) -> None:
+    import fcntl
+
+    lock_path = tmp_path / "sandbox-cli.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(TimeoutError):
+            runner.run_locked(["noop"], lock_path=lock_path, lock_timeout=0.2)
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        os.close(holder)
 
 
-def test_staging_falls_back_rather_than_losing_the_run(tmp_path) -> None:
-    """A path that is not a sandbox wrapper must degrade to the argv form, not
-    raise: a non-sandboxed deployment still has to work."""
-    plain = tmp_path / "not-a-wrapper"
-    plain.write_text('#!/bin/sh\nexec openclaw agent "$@"\n', encoding="utf-8")
+def test_default_agent_runner_serializes_through_the_sandbox_cli_lock(monkeypatch) -> None:
+    calls = []
 
-    assert runner.stage_prompt_in_sandbox(str(plain), "one\ntwo") == ""
-    assert runner.sandbox_wrapper_settings(str(plain)) == ("", "")
+    def fake_run_locked(argv, **kwargs):
+        calls.append(argv)
+        return runner.subprocess.CompletedProcess(argv, 0, '{"text": "ok"}', "")
+
+    monkeypatch.setattr(runner, "run_locked", fake_run_locked)
+    output = runner.default_agent_runner("/bin/openclaw-agent", "hello")
+
+    assert calls, "default_agent_runner must route through run_locked, not raw subprocess.run"
+    assert output == '{"text": "ok"}'
+
+
+def test_default_deliver_runner_serializes_through_the_sandbox_cli_lock(monkeypatch) -> None:
+    calls = []
+
+    def fake_run_locked(argv, **kwargs):
+        calls.append(argv)
+        return runner.subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(runner, "run_locked", fake_run_locked)
+    runner.default_deliver_runner("/bin/openclaw-message", ("slack", "C123"), "hello there")
+
+    assert calls, "default_deliver_runner must route through run_locked, not raw subprocess.run"
+    assert calls[0][0] == "/bin/openclaw-message"

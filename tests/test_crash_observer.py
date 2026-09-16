@@ -106,6 +106,24 @@ def test_every_deployment_supervisor_uses_external_crash_observer():
             or ("<string>--supervisor</string><string>%s</string>" % supervisor) in deploy
         )
     assert deploy.count("mac-crash-observer") >= 4
+    assert 'CRASH_OBSERVER_PY="$(crash_observer_python_bin)"' in deploy
+    assert (
+        "ExecStart=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor systemd"
+        in deploy
+    )
+    assert (
+        "command=$CRASH_OBSERVER_PY $MAC_HOME/bin/mac-crash-observer --supervisor supervisord"
+        in deploy
+    )
+    assert (
+        "<string>$CRASH_OBSERVER_PY</string>\n"
+        "    <string>$MAC_HOME/bin/mac-crash-observer</string>" in deploy
+    )
+
+    resolver = deploy.split("crash_observer_python_bin() {", 1)[1].split("\n}", 1)[0]
+    assert '"$MAC_HOME/lib/python"/cpython-' in resolver
+    assert '"$VENV/bin/python"' not in resolver
+    assert "python3.14 python3 python" not in resolver
 
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "PYTHONFAULTHANDLER=1" in dockerfile

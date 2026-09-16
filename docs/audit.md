@@ -30,10 +30,13 @@ are structural, and they are the ones worth acting on.
 
 ### Scale at a glance
 
+The `_hermes/` row is a **2026-07-24 measurement**. That tree was deleted in
+PR #377 (`3ebde2dd`). It is not present in current checkouts.
+
 | Category | Files | Lines of code | Notes |
 |---|---:|---:|---|
 | First-party MAC code (`src/mac/`, excl. `_hermes/`) | ~200 modules + 5 sub-packages | **~185,000** | The code this repository owns and must maintain. |
-| Vendored runtime (`src/mac/_hermes/`) | — | **~443,000** | Pinned snapshot of `NousResearch/hermes-agent`; excluded from coverage. |
+| Vendored runtime (`src/mac/_hermes/`, **removed**) | — | **~443,000** | Historical: pinned snapshot of `NousResearch/hermes-agent`. |
 | Tests (`tests/`) | 445 | **~200,600** | 6,883 test functions → 8,555 collected nodes. |
 | **Total tracked (excl. `.venv`/`dist`/caches)** | **~1,329** | — | The 10,826 raw `.py` count is inflated by `.venv` and `__pycache__`. |
 
@@ -50,7 +53,7 @@ surface.**
 | Duplication | Moderate — naming collisions, two HTTP-route paths, ledger sprawl | Medium |
 | God-class | `services.py` = one 26,433-line `ControlPlane` (719 methods) | **High** |
 | Test debt | 37 `_edges` coverage-companion modules; only 25% of files parametrized | **High** |
-| Vendored surface | ~443K LOC pinned; most of it dormant but correctly quarantined | Low (by design) |
+| Vendored surface | Historical ~443K LOC; tree removed in PR #377 | Low (closed) |
 
 > **Verification note (added after the initial pass).** Every dead-code candidate below was
 > checked against the full reference graph *and git history* before any action. The result
@@ -120,13 +123,24 @@ handler.
 
 ---
 
-## 4. Vendored runtime — `src/mac/_hermes/`
+## 4. Vendored runtime — removed after this audit
 
-`src/mac/_hermes/` is a **vendored, integrity-pinned snapshot** of
+!!! warning "The in-tree Hermes snapshot is gone"
+    This section is a 2026-07-24 measurement of a tree that was **deleted** in
+    PR #377 (`3ebde2dd`, 2026-08-17). It is not a current inventory. See
+    [the vendor-fate record](hermes-vendor-fate.md). First-party modules named
+    `hermes_*` remain; they are clean-room MAC code, not that snapshot.
+
+The figures below described the then-vendored snapshot of
+`https://github.com/NousResearch/hermes-agent.git`. They are retained as
+evidence of why the tree was removed (it was larger than first-party MAC).
+
+### Historical measurement (2026-07-24)
+
+`src/mac/_hermes/` was a **vendored, integrity-pinned snapshot** of
 `https://github.com/NousResearch/hermes-agent.git` (commit `b1a25404…`, vendored
-`2026-05-31`), per `src/mac/_hermes/SNAPSHOT_PIN` and ADR 0001
-(`docs/adr/0001-unify-hermes-runtime-into-mac.md`). It is ~443K LOC — **more than twice the
-size of all first-party code** — and is deliberately quarantined:
+`2026-05-31`), per ADR 0001. It was ~443K LOC — **more than twice the
+size of all first-party code** — and was deliberately quarantined:
 
 - **Excluded from coverage** (`pyproject.toml:130-132`: "do not count vendored Hermes
   internals against this repository's threshold").

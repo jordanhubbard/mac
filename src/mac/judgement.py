@@ -51,8 +51,12 @@ DEFAULT_TOO_MANY_GATES = 3
 _ACTIVE_REVIEW_STATES = frozenset({"needs_review", "reviewing"})
 _IN_FLIGHT_STATES = frozenset({"claimed", "running", "needs_review", "reviewing"})
 _ORPHAN_PR_STATES = frozenset({"completed", "cancelled"})
-_UNLANDED_PR_STATES = frozenset({"failed", "blocked", "reviewing", "needs_review", "waiting"})
-_TASK_ID_RE = re.compile(r"task_[0-9a-f]{8,}")
+# Pending review normally has an open PR. Age, repeated rejection and semantic
+# reviewer checks own review intervention; PR existence is not a failure signal.
+_UNLANDED_PR_STATES = frozenset({"failed", "blocked", "waiting"})
+_TASK_ID_RE = re.compile(r"\btask_[0-9a-f]{8,32}\b")
+_FULL_TASK_ID_RE = re.compile(r"task_[0-9a-f]{32}$")
+_GIT_SHA_RE = re.compile(r"[0-9a-fA-F]{40}$")
 _NONTERMINAL_STATES = frozenset(
     {
         "open",
@@ -82,6 +86,33 @@ def _parse_ts(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _pr_task_ids(pr: Mapping[str, Any]) -> set[str]:
+    """Resolve one owning identity; supporting references confer no authority."""
+
+    ids = _task_ids_from_text(
+        " ".join([str(pr.get("title") or ""), str(pr.get("headRefName") or "")])
+    )
+    body = str(pr.get("body") or "")
+    for line in body.splitlines():
+        declaration = re.match(r"^\s*task(?:\s+id)?\s*:\s*(.*)", line, flags=re.IGNORECASE)
+        if declaration:
+            # A following sentence may identify an investigation or dependency.
+            # Multiple ids in the ownership field itself remain ambiguous.
+            field = re.split(r"[.;]", declaration.group(1), maxsplit=1)[0]
+            owners = _task_ids_from_text(field)
+            if not owners:
+                return set()
+            ids |= owners
+    if _FULL_TASK_ID_RE.fullmatch(body.strip()):
+        ids.add(body.strip())
+    if not ids:
+        return set()
+    longest = max(ids, key=len)
+    # A title's short id and the body's full id may name the same owner.
+    # Conflicting declarations must not close a PR or complete either task.
+    return {longest} if all(longest.startswith(ident) for ident in ids) else set()
 
 
 @dataclass(frozen=True)
@@ -468,6 +499,15 @@ class JudgementProcess:
                 for review in reviews
                 if str(getattr(review, "status", "") or "").lower() == "pending"
             ]
+            inflight = getattr(self.control_plane, "_hub_verify_inflight", ())
+            if any(
+                getattr(review, "id", "") in inflight
+                and self._agent_is_virtual(str(getattr(review, "reviewer_agent_id", "") or ""))
+                for review in pending
+            ):
+                # The bounded verifier owns this review's deadline. Task age
+                # alone must not cancel an external test run still in flight.
+                continue
             reviewer_id = ""
             if pending:
                 reviewer_id = str(getattr(pending[-1], "reviewer_agent_id", "") or "")
@@ -515,7 +555,7 @@ class JudgementProcess:
         return findings
 
     def _check_excessive_reviewing_population(self) -> List[Finding]:
-        tasks = self._all_known_tasks()
+        tasks = self._lifecycle_tasks()
         live = [
             task for task in tasks if str(getattr(task, "state", "") or "") in _NONTERMINAL_STATES
         ]
@@ -525,25 +565,44 @@ class JudgementProcess:
         if not live:
             return []
         fraction = len(reviewing) / float(len(live))
+        with self._state_lock:
+            previous = self._last_report or {}
+            previously_stalled = {
+                str(finding.get("task_id") or "")
+                for finding in previous.get("findings", [])
+                if finding.get("kind") == "stuck_reviewing"
+            }
+        stalled = {
+            finding.task_id
+            for finding in self._check_stuck_reviewing()
+            if finding.task_id in previously_stalled
+        }
+        persistent = [task for task in reviewing if task.id in stalled]
+        stalled_fraction = len(persistent) / float(len(live))
+        # First let targeted recovery address stale reviews. A small queue's
+        # percentage is unstable, and fresh or actively verified work is not
+        # evidence of a pile-up, even when it fills the review queue.
         if (
-            len(reviewing) < self.config.excessive_reviewing_count
-            and fraction < self.config.excessive_reviewing_fraction
+            len(persistent) < self.config.excessive_reviewing_count
+            or stalled_fraction < self.config.excessive_reviewing_fraction
         ):
             return []
         return [
             Finding(
                 kind="excessive_reviewing_population",
                 summary=(
-                    "%d of %d live tasks are in review (%.0f%%)"
-                    % (len(reviewing), len(live), fraction * 100.0)
+                    "%d of %d live tasks remained stalled in review across judgement cycles (%.0f%%)"
+                    % (len(persistent), len(live), stalled_fraction * 100.0)
                 ),
                 detail={
                     "reviewing_count": len(reviewing),
                     "live_count": len(live),
                     "fraction": fraction,
-                    "task_ids": [task.id for task in reviewing[:50]],
+                    "stalled_count": len(persistent),
+                    "stalled_fraction": stalled_fraction,
+                    "task_ids": [task.id for task in persistent[:50]],
                 },
-                recommended_action="fleet_stop",
+                recommended_action="fleet_hold",
             )
         ]
 
@@ -593,47 +652,67 @@ class JudgementProcess:
             return []
         open_prs = [pr for pr in (listing.get("open") or []) if isinstance(pr, Mapping)]
         merged_prs = [pr for pr in (listing.get("merged") or []) if isinstance(pr, Mapping)]
-        if not open_prs:
-            return []
         merged_task_ids = set()
         for pr in merged_prs:
-            merged_task_ids |= _task_ids_from_text(
-                " ".join(
-                    [
-                        str(pr.get("title") or ""),
-                        str(pr.get("body") or ""),
-                        str(pr.get("headRefName") or ""),
-                    ]
-                )
-            )
+            for raw_id in _pr_task_ids(pr):
+                task = self._resolve_task(raw_id)
+                if task is not None:
+                    merged_task_ids.add(str(task.id))
         findings: List[Finding] = []
+        for pr in merged_prs:
+            ids = _pr_task_ids(pr)
+            for raw_id in ids:
+                # Automatic completion is materially stronger than the
+                # operator-facing prefix resolver. Require the PR to carry the
+                # full durable id so incidental short references cannot close
+                # unrelated work.
+                if not _FULL_TASK_ID_RE.fullmatch(raw_id):
+                    continue
+                task = self._resolve_task(raw_id)
+                task_id = str(getattr(task, "id", "") or "")
+                state = str(getattr(task, "state", "") or "").lower()
+                if task_id != raw_id or state == "completed":
+                    continue
+                merge_commit = pr.get("mergeCommit")
+                merge_sha = (
+                    str(merge_commit.get("oid") or "")
+                    if isinstance(merge_commit, Mapping)
+                    else str(merge_commit or "")
+                )
+                findings.append(
+                    Finding(
+                        kind="merged_task_not_reconciled",
+                        task_id=task_id,
+                        summary=(
+                            "PR #%d merged but %s is still %s"
+                            % (int(pr.get("number") or 0), task_id, state or "unknown")
+                        ),
+                        detail={
+                            "pr_number": int(pr.get("number") or 0),
+                            "url": str(pr.get("url") or ""),
+                            "task_state": state,
+                            "base_ref_name": str(pr.get("baseRefName") or "main"),
+                            "head_sha": str(pr.get("headRefOid") or ""),
+                            "merge_sha": merge_sha,
+                            "merged_at": str(pr.get("mergedAt") or ""),
+                        },
+                        recommended_action="reconcile_merged_task",
+                    )
+                )
         by_task: Dict[str, List[Mapping[str, Any]]] = {}
         for pr in open_prs:
-            ids = _task_ids_from_text(
-                " ".join(
-                    [
-                        str(pr.get("title") or ""),
-                        str(pr.get("body") or ""),
-                        str(pr.get("headRefName") or ""),
-                    ]
-                )
-            )
+            ids = _pr_task_ids(pr)
             number = int(pr.get("number") or 0)
             if number <= 0:
                 continue
             for raw_id in ids:
                 task = self._resolve_task(raw_id)
-                task_id = str(getattr(task, "id", "") or raw_id)
+                if task is None:
+                    continue
+                task_id = str(task.id)
                 by_task.setdefault(task_id, []).append(pr)
                 state = str(getattr(task, "state", "") or "").lower()
-                already_merged = bool(
-                    raw_id in merged_task_ids
-                    or task_id in merged_task_ids
-                    or any(
-                        raw_id.startswith(merged) or merged.startswith(raw_id)
-                        for merged in merged_task_ids
-                    )
-                )
+                already_merged = task_id in merged_task_ids
                 if already_merged or state in _ORPHAN_PR_STATES:
                     findings.append(
                         Finding(
@@ -669,11 +748,7 @@ class JudgementProcess:
                                 "task_state": state,
                                 "mergeable": pr.get("mergeable"),
                             },
-                            recommended_action=(
-                                "stop_task"
-                                if state in (_ACTIVE_REVIEW_STATES | {"blocked"})
-                                else ""
-                            ),
+                            recommended_action="stop_task" if state == "blocked" else "",
                         )
                     )
         for task_id, prs in by_task.items():
@@ -710,9 +785,42 @@ class JudgementProcess:
     ) -> List[Dict[str, Any]]:
         actions: List[Dict[str, Any]] = []
         budget = self.config.max_actions_per_cycle
+        interventions_used = 0
         fleet_stopped = False
-        for finding in findings:
-            if len(actions) >= budget:
+
+        def append_result(result: Dict[str, Any]) -> None:
+            nonlocal interventions_used
+            actions.append(result)
+            if result.get("action") not in {
+                "skipped",
+                "already_stopped",
+                "already_held",
+                "already_completed",
+            }:
+                interventions_used += 1
+
+        reconciliation_findings = [
+            finding for finding in findings if finding.recommended_action == "reconcile_merged_task"
+        ]
+        intervention_findings = [
+            finding for finding in findings if finding.recommended_action != "reconcile_merged_task"
+        ]
+        hold_pending = any(
+            finding.recommended_action == "fleet_hold" for finding in intervention_findings
+        )
+
+        # Trusted forge reconciliation repairs durable ledger state; it must
+        # run before, and outside, the bounded intervention budget.
+        for finding in reconciliation_findings:
+            actions.append(self._reconcile_merged_task(actor=actor, finding=finding))
+
+        for finding in intervention_findings:
+            recommended = finding.recommended_action
+            # A persistent queue can itself exceed the cycle budget. Reserve
+            # one action for backpressure so failed individual recoveries
+            # cannot starve the fleet hold indefinitely.
+            available = budget - int(hold_pending and recommended != "fleet_hold")
+            if interventions_used >= available:
                 actions.append(
                     {
                         "action": "skipped",
@@ -722,31 +830,152 @@ class JudgementProcess:
                     }
                 )
                 continue
-            recommended = finding.recommended_action
+            if recommended == "fleet_hold":
+                hold_pending = False
             if recommended == "close_pr":
-                actions.append(self._close_pull_request(actor=actor, finding=finding))
+                append_result(self._close_pull_request(actor=actor, finding=finding))
                 continue
-            if recommended == "fleet_stop":
+            if recommended in {"fleet_stop", "fleet_hold"}:
                 if fleet_stopped:
                     continue
-                actions.append(self._fleet_stop(actor=actor, run_id=run_id, finding=finding))
+                if recommended == "fleet_hold":
+                    # Earlier actions in this cycle may have cleared the
+                    # queue. Recheck before applying fleet-wide backpressure.
+                    try:
+                        remaining = self._check_excessive_reviewing_population()
+                    except Exception as exc:  # noqa: BLE001
+                        append_result(
+                            {
+                                "action": "error",
+                                "finding_kind": finding.kind,
+                                "error": str(exc)[:200],
+                            }
+                        )
+                        continue
+                    if not remaining:
+                        actions.append(
+                            {
+                                "action": "skipped",
+                                "reason": "review_queue_recovered",
+                                "finding_kind": finding.kind,
+                            }
+                        )
+                        continue
+                    finding = remaining[0]
+                append_result(
+                    self._fleet_stop(
+                        actor=actor,
+                        run_id=run_id,
+                        finding=finding,
+                        stop_inflight=recommended == "fleet_stop",
+                    )
+                )
                 fleet_stopped = True
                 continue
             if recommended == "hold_agent" and finding.agent_id:
-                actions.append(self._hold_agent(finding.agent_id, actor=actor, finding=finding))
+                append_result(self._hold_agent(finding.agent_id, actor=actor, finding=finding))
                 continue
-            if finding.task_id:
-                actions.append(self._stop_task(finding.task_id, actor=actor, finding=finding))
+            if recommended == "stop_task" and finding.task_id:
+                append_result(self._stop_task(finding.task_id, actor=actor, finding=finding))
                 if (
                     finding.kind == "semantic_reviewer_still_assigned"
                     and not fleet_stopped
                     and self._semantic_assignment_count(findings) >= 3
                 ):
-                    actions.append(self._fleet_stop(actor=actor, run_id=run_id, finding=finding))
-                    actions.append(self._redeploy(actor=actor, run_id=run_id, finding=finding))
-                    actions.append(self._fleet_start(actor=actor, run_id=run_id, finding=finding))
+                    append_result(self._fleet_stop(actor=actor, run_id=run_id, finding=finding))
+                    append_result(self._redeploy(actor=actor, run_id=run_id, finding=finding))
+                    append_result(self._fleet_start(actor=actor, run_id=run_id, finding=finding))
                     fleet_stopped = True
+                continue
+            actions.append(
+                {
+                    "action": "skipped",
+                    "reason": "no_recommended_action",
+                    "finding_kind": finding.kind,
+                    "task_id": finding.task_id,
+                }
+            )
         return actions
+
+    def _reconcile_merged_task(self, *, actor: str, finding: Finding) -> Dict[str, Any]:
+        detail = finding.detail or {}
+        task_id = str(finding.task_id or "")
+        try:
+            task = self.control_plane.get_task(task_id)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "action": "skipped",
+                "reason": "task_missing",
+                "task_id": task_id,
+                "finding_kind": finding.kind,
+                "error": str(exc)[:200],
+            }
+        if str(getattr(task, "state", "") or "") == "completed":
+            return {
+                "action": "already_completed",
+                "task_id": task_id,
+                "finding_kind": finding.kind,
+            }
+        head_sha = str(detail.get("head_sha") or "")
+        merge_sha = str(detail.get("merge_sha") or "")
+        if not (_GIT_SHA_RE.fullmatch(head_sha) and _GIT_SHA_RE.fullmatch(merge_sha)):
+            return {
+                "action": "skipped",
+                "reason": "merged_pr_sha_missing",
+                "task_id": task_id,
+                "finding_kind": finding.kind,
+            }
+        branch = str(detail.get("base_ref_name") or "main").strip()
+        number = int(detail.get("pr_number") or 0)
+        verification = {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "repo": {"head_sha": head_sha, "pushed": True},
+            "canonical_integration": {
+                "schema": "mac.canonical_integration.v1",
+                "status": "pass",
+                "canonical_ref": "refs/heads/%s" % branch,
+                "canonical_tip_sha": merge_sha,
+                "reviewed_head_sha": head_sha,
+                "contains_reviewed_head": head_sha == merge_sha,
+                "remote_verified": True,
+                "publication_mode": "forge_reconciliation",
+                "forge_merged": True,
+                "pull_request_url": str(detail.get("url") or ""),
+                "pull_request_number": number,
+            },
+        }
+        try:
+            self.control_plane.add_evidence(
+                task_id,
+                "test",
+                "ledger://merged-pull-request/%d/%s" % (number, merge_sha),
+                "Forge reports PR #%d merged at %s" % (number, merge_sha),
+                actor,
+                metadata={"verification": verification},
+                _trusted_internal=True,
+            )
+            completed = self.control_plane.force_complete_task(
+                task_id,
+                actor,
+                reason="reconciled from merged PR #%d" % number,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "action": "error",
+                "task_id": task_id,
+                "finding_kind": finding.kind,
+                "error": str(exc)[:200],
+            }
+        return {
+            "action": "task_reconciled",
+            "task_id": task_id,
+            "finding_kind": finding.kind,
+            "state": getattr(completed, "state", "completed"),
+            "pr_number": number,
+            "merge_sha": merge_sha,
+        }
 
     def _close_pull_request(self, *, actor: str, finding: Finding) -> Dict[str, Any]:
         number = int((finding.detail or {}).get("pr_number") or 0)
@@ -794,10 +1023,19 @@ class JudgementProcess:
         reason = "%s%s" % (HOLD_REASON_PREFIX, finding.kind)
         try:
             task = self.control_plane.get_task(task_id)
-            if str(getattr(task, "state", "") or "") == "stopped":
+            state = str(getattr(task, "state", "") or "")
+            if state == "stopped":
                 return {
                     "action": "already_stopped",
                     "task_id": task_id,
+                    "finding_kind": finding.kind,
+                }
+            if state not in _NONTERMINAL_STATES:
+                return {
+                    "action": "skipped",
+                    "reason": "terminal_task",
+                    "task_id": task_id,
+                    "task_state": state,
                     "finding_kind": finding.kind,
                 }
             self.control_plane.stop_task(task_id, actor=actor, reason=reason)
@@ -830,6 +1068,13 @@ class JudgementProcess:
                     "agent_id": agent_id,
                     "finding_kind": finding.kind,
                 }
+            agent = self.control_plane.get_agent(agent_id)
+            if bool(getattr(agent, "dispatch_hold", False)):
+                return {
+                    "action": "already_held",
+                    "agent_id": agent_id,
+                    "finding_kind": finding.kind,
+                }
             self.control_plane.set_agent_dispatch_hold(agent_id, reason)
         except Exception as exc:  # noqa: BLE001
             return {
@@ -850,11 +1095,18 @@ class JudgementProcess:
             "reason": reason,
         }
 
-    def _fleet_stop(self, *, actor: str, run_id: str, finding: Finding) -> Dict[str, Any]:
+    def _fleet_stop(
+        self, *, actor: str, run_id: str, finding: Finding, stop_inflight: bool = True
+    ) -> Dict[str, Any]:
         held: List[str] = []
         stopped: List[str] = []
         paused: List[str] = []
-        reason = "%sfleet_stop:%s" % (HOLD_REASON_PREFIX, run_id)
+        action = "fleet_stopped" if stop_inflight else "fleet_held"
+        reason = "%s%s:%s" % (
+            HOLD_REASON_PREFIX,
+            "fleet_stop" if stop_inflight else "fleet_hold",
+            run_id,
+        )
         for agent in self.control_plane.list_agents():
             if self._agent_is_virtual(agent.id):
                 continue
@@ -865,7 +1117,7 @@ class JudgementProcess:
                 held.append(agent.id)
             except Exception:  # noqa: BLE001
                 continue
-        for task in self._lifecycle_tasks():
+        for task in self._lifecycle_tasks() if stop_inflight else []:
             if str(getattr(task, "state", "") or "") not in _IN_FLIGHT_STATES:
                 continue
             try:
@@ -880,8 +1132,8 @@ class JudgementProcess:
             except Exception:  # noqa: BLE001
                 continue
         self._observe(
-            "judgement.fleet_stopped",
-            "error",
+            "judgement.fleet_stopped" if stop_inflight else "judgement.fleet_held",
+            "error" if stop_inflight else "warning",
             {
                 "run_id": run_id,
                 "kind": finding.kind,
@@ -891,7 +1143,7 @@ class JudgementProcess:
             },
         )
         return {
-            "action": "fleet_stopped",
+            "action": action,
             "finding_kind": finding.kind,
             "held_agents": held,
             "stopped_tasks": stopped,
@@ -1028,21 +1280,16 @@ class JudgementProcess:
         raw = str(task_id or "").strip()
         if not raw:
             return None
-        getter = getattr(self.control_plane, "get_task", None)
-        if callable(getter):
-            for candidate in (raw, raw[:13] if len(raw) > 13 else ""):
-                if not candidate:
-                    continue
-                try:
-                    return getter(candidate)
-                except Exception:  # noqa: BLE001
-                    continue
-        prefix = raw if len(raw) <= 13 else raw[:13]
-        for task in self._all_known_tasks():
-            ident = str(getattr(task, "id", "") or "")
-            if ident == raw or ident.startswith(prefix) or raw.startswith(ident):
-                return task
-        return None
+        if _FULL_TASK_ID_RE.fullmatch(raw):
+            try:
+                task = self.control_plane.get_task(raw)
+            except Exception:  # noqa: BLE001 - missing identity is not authority
+                return None
+            return task if str(getattr(task, "id", "")) == raw else None
+        matches = [
+            task for task in self._all_known_tasks() if str(getattr(task, "id", "")).startswith(raw)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _semantic_assignment_count(self, findings: Sequence[Finding]) -> int:
         return sum(1 for finding in findings if finding.kind == "semantic_reviewer_still_assigned")
@@ -1123,7 +1370,7 @@ def _default_pr_lister(repo_root: str) -> Dict[str, Any]:
                 "--limit",
                 str(limit),
                 "--json",
-                "number,title,body,headRefName,url,mergeable",
+                "number,title,body,headRefName,baseRefName,headRefOid,mergeCommit,mergedAt,url,mergeable",
             ],
             cwd=repo_root,
             check=False,

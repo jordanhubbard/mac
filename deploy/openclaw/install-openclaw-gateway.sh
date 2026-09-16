@@ -25,6 +25,14 @@ WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway"
 STOP_WRAPPER_PATH="$MAC_HOME/bin/openclaw-gateway-stop"
 MESSAGE_WRAPPER_PATH="$MAC_HOME/bin/openclaw-message"
 AGENT_WRAPPER_PATH="$MAC_HOME/bin/openclaw-agent"
+# Host script cron jobs (schedule_launchd_script_job / schedule_systemd_script_job)
+# run against whichever chat-gateway CLI is actually live on this host. Since
+# the 2026-09-05 Hermes cutover that CLI is ``hermes`` itself (installed
+# natively by the Hermes shell installer under ~/.local/bin, not one of the
+# OpenClaw sandbox wrappers above) -- resolve it the same way
+# ``run-script-cron-job.py``'s own ``_default_hermes_bin()`` does, so both
+# stay in sync.
+HERMES_CLI_PATH="$(command -v hermes 2>/dev/null || echo "$HOME/.local/bin/hermes")"
 CURIOSITY_WRAPPER_PATH="$MAC_HOME/bin/curiosity"
 VERIFICATION_RECORD_PATH="$OPENCLAW_HOST_DIR/verification-pending.json"
 ADVERTISEMENT_PATH="$OPENCLAW_HOST_DIR/service-advertisement.json"
@@ -458,7 +466,15 @@ supervisord_program_state() {
   local reported_pid=""
   output="$(run_supervisord_system_scope status "$program" 2>&1)" \
     || rc=$?
-  if [ "$rc" -eq 1 ] && [ "$output" = "$program: ERROR (no such process)" ]; then
+  # supervisorctl's exit code for "no such process" is not itself part of the
+  # documented contract and has been observed as both 1 and 4 across
+  # supervisord builds/versions; the one stable signal is the exact message.
+  # Matching on rc==1 alone made this branch never fire on a node whose
+  # supervisorctl reports the identical message with rc=4, so
+  # "could not inspect supervisord program ... (exit 4): ... ERROR (no such
+  # process)" was misclassified as a real inspection failure instead of the
+  # legitimate "this program was never configured" case it actually is.
+  if [ "$rc" -ne 0 ] && [ "$output" = "$program: ERROR (no such process)" ]; then
     printf '%s\n' not_installed
     return 0
   fi
@@ -1129,11 +1145,17 @@ if "telegram" in configured:
         },
     }
 
+# loopback, not lan/tailnet. The gateway runs in OpenShell's private netns
+# (host loopback is a different namespace; Tailscale lives on the supervisor).
+# Slack/Telegram are outbound; controlUi is off; advertised access is
+# sandbox_exec. bind=lan lets OpenShell publish 18789 onto every host NIC.
+# bind=tailnet looks for utun/tailscale0 inside the sandbox and fails closed
+# or is a no-op. Health/CLI already talk to ws://127.0.0.1:18789 in-sandbox.
 config = {
     "gateway": {
         "mode": "local",
         "port": int(os.environ.get("MAC_OPENCLAW_GATEWAY_PORT", "18789")),
-        "bind": "lan",
+        "bind": "loopback",
         "auth": {
             "mode": "token",
             "token": secret_ref("OPENCLAW_GATEWAY_TOKEN"),
@@ -1733,6 +1755,31 @@ for index, job in enumerate(jobs):
         break
 else:
     jobs.append(managed)
+# task_2e7e9e31: jobs sharing an identical cron expression fire the local
+# openclaw CLI at the same instant, and concurrent invocations race to open
+# the same host-persisted plugin-state SQLite database -- observed as
+# intermittent "database disk image is malformed" corruption on rocky
+# (dream-cycle and dream-synthesis were both migrated from Hermes with the
+# unstaggered "0 * * * *" expression). Stagger same-schedule jobs a few
+# minutes apart so they never fire simultaneously; only simple fixed-minute
+# schedules are adjusted, and the first job in each group keeps its original
+# minute so existing external expectations (e.g. dashboards) are undisturbed.
+by_cron = {}
+for index, job in enumerate(jobs):
+    cron = str(job.get("cron") or "").strip()
+    if cron:
+        by_cron.setdefault(cron, []).append(index)
+for cron, indices in by_cron.items():
+    if len(indices) < 2:
+        continue
+    fields = cron.split()
+    if len(fields) != 5 or not fields[0].isdigit():
+        continue
+    base_minute = int(fields[0])
+    for offset, index in enumerate(indices[1:], start=1):
+        staggered = list(fields)
+        staggered[0] = str((base_minute + offset * 5) % 60)
+        jobs[index]["cron"] = " ".join(staggered)
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(plan, handle, indent=2, sort_keys=True)
     handle.write("\n")
@@ -2218,8 +2265,13 @@ PY
 # gateway went down for ~6 minutes and needed a human to run
 # 'openshell sandbox delete' by hand.
 #
-# Reclaim any leftover sandbox here, salvaging its contents first so the delta
-# since the last good checkpoint is archived rather than discarded.
+# Reclaim any leftover sandbox here. Workspace files are ordinary files and can
+# be salvaged best-effort. State is deliberately NOT live-copied: OpenClaw's
+# SQLite authority spans the database and WAL while gateway/message/agent
+# processes may still be alive, and two such reclaimed trees on Rocky failed
+# quick_check with invalid page references. The stop wrapper is the only path
+# allowed to replace host state because it proves writer quiescence and validates
+# every SQLite database before promotion.
 reclaim_stale_sandbox() {
   if ! bounded 30 "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1; then
     return 0
@@ -2229,14 +2281,12 @@ reclaim_stale_sandbox() {
   salvage="\$HOST_ROOT/archive/reclaimed-\$(date -u +%Y%m%dT%H%M%SZ)-\$\$"
   mkdir -p "\$salvage"
   if bounded 120 "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
-       /sandbox/workspace "\$salvage/workspace" >/dev/null 2>&1 \
-    && bounded 120 "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
-       /sandbox/state "\$salvage/state" >/dev/null 2>&1; then
+       /sandbox/workspace "\$salvage/workspace" >/dev/null 2>&1; then
     chmod -R go-rwx "\$salvage" 2>/dev/null || true
-    echo "openclaw-gateway: salvaged un-checkpointed contents to \$salvage" >&2
+    echo "openclaw-gateway: salvaged un-checkpointed workspace to \$salvage; retained last validated host state" >&2
   else
     rm -rf "\$salvage"
-    echo "openclaw-gateway: could not salvage sandbox contents; deleting anyway to restore service" >&2
+    echo "openclaw-gateway: could not salvage sandbox workspace; deleting anyway to restore service" >&2
   fi
   if ! bounded 120 "\$OPEN_SHELL" sandbox delete "\$SANDBOX" >/dev/null 2>&1; then
     echo "openclaw-gateway: sandbox delete failed for \$SANDBOX" >&2
@@ -2527,8 +2577,8 @@ schedule_launchd_script_job() {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>MAC_OPENCLAW_AGENT_BIN</key><string>${AGENT_WRAPPER_PATH}</string>
-    <key>MAC_OPENCLAW_MESSAGE_BIN</key><string>${MESSAGE_WRAPPER_PATH}</string>
+    <key>MAC_HERMES_AGENT_BIN</key><string>${HERMES_CLI_PATH}</string>
+    <key>MAC_HERMES_MESSAGE_BIN</key><string>${HERMES_CLI_PATH}</string>
     <key>MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR</key><string>${scripts_dir}</string>
     <key>MAC_OPENCLAW_SLACK_ACCOUNT_ID</key><string>${MAC_OPENCLAW_SLACK_ACCOUNT_ID}</string>
     <key>MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR</key><string>${output_dir}</string>
@@ -2571,8 +2621,8 @@ Description=MAC OpenClaw host two-stage cron job (${name})
 
 [Service]
 Type=oneshot
-Environment=MAC_OPENCLAW_AGENT_BIN=${AGENT_WRAPPER_PATH}
-Environment=MAC_OPENCLAW_MESSAGE_BIN=${MESSAGE_WRAPPER_PATH}
+Environment=MAC_HERMES_AGENT_BIN=${HERMES_CLI_PATH}
+Environment=MAC_HERMES_MESSAGE_BIN=${HERMES_CLI_PATH}
 Environment=MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR=${scripts_dir}
 Environment=MAC_OPENCLAW_SLACK_ACCOUNT_ID=${MAC_OPENCLAW_SLACK_ACCOUNT_ID}
 Environment=MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR=${output_dir}

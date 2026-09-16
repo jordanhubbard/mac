@@ -1,18 +1,10 @@
-"""End-to-end tests crossing the full FastAPI + ControlPlane + on-disk
-SQLite stack.
+"""API integration tests crossing FastAPI, ControlPlane and PostgreSQL.
 
-The rest of the suite tests one layer at a time:
-``test_control_plane.py`` exercises ``ControlPlane`` directly with
-``:memory:``; ``test_api.py`` tests the HTTP layer in isolation;
-``test_worker.py`` stops at ``submitted_for_review`` without crossing
-the review + publish path. None of them use a file-backed SQLite or
-walk a task through the full lifecycle via HTTP.
-
-These tests close that gap. They use ``create_app(db_path=...)``
-against a real ``tmp_path`` SQLite file so WAL/busy_timeout/threading
-behaves like production, and they drive the FastAPI app through
-``TestClient`` so every request crosses Pydantic, the auth middleware,
-and the full domain service composition.
+These exercise HTTP serialization, authentication, signed evidence, lifecycle,
+acceptance and publication records against an isolated PostgreSQL schema.
+The executor and forge results are fixtures: these are not a live coding-model,
+OpenShell, or deployment canary. Real worker subprocess boundaries are covered
+by test_worker_process_e2e.py; the operator workflow documents the live proof.
 """
 
 from __future__ import annotations
@@ -200,6 +192,26 @@ def test_e2e_full_task_lifecycle_via_http_and_disk(tmp_path: Path, semantic_revi
     assert final["reviews"][0]["reviewer_agent_id"] == reviewer["id"]
     assert final["reviews"][0]["status"] == "approved"
     assert final["publications"][0]["status"] == "published"
+
+    # Publication is a durable result, not implicit request acceptance or
+    # deployment. The operator verifies this exact result through HTTP.
+    outcome = client.get("/tasks/%s/outcome" % task["id"]).json()
+    assert outcome["tests"]["status"] == "reported_pass"
+    assert outcome["publication"]["status"] == "published"
+    assert outcome["acceptance"]["status"] == "unknown"
+    assert outcome["deployment"]["status"] == "unknown"
+    accepted = client.post(
+        "/tasks/%s/acceptance" % task["id"],
+        json={
+            "evidence_id": executor_evidence_id,
+            "reason": "Observed the expected fixture result",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["acceptance"]["status"] == "accepted"
+    cohort = client.get("/tasks/outcomes").json()
+    assert cohort["accepted_completed_count"] == 1
+    assert cohort["tasks"][0]["known_cost_usd"] is None
 
     # History shows every transition.
     history_events = {h["event_type"] for h in final["history"]}

@@ -53,15 +53,15 @@ def test_client_enroll_renew_list_and_revoke_cli(tmp_path):
     assert revoked["revoked_at"]
 
 
-def test_client_enroll_requires_json_before_minting(tmp_path, capsys):
+def test_client_enroll_uses_safe_json_when_stdout_is_redirected(tmp_path, capsys):
     registry = tmp_path / "principals.json"
-    cli._set_output_json(False)
 
     rc = main(["admin", "client", "enroll", "lost-token", "--registry", str(registry)])
 
-    assert rc == 1
-    assert "one-time credential" in capsys.readouterr().err
-    assert not registry.exists()
+    assert rc == 0
+    manifest = json.loads(capsys.readouterr().out)
+    assert manifest["credential"]["token"].startswith("mac_client_")
+    assert registry.exists()
 
 
 def test_client_profile_cli_and_fleet_ssh_spec(tmp_path, monkeypatch):

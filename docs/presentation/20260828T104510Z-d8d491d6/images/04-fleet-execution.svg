@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="900" viewBox="0 0 1520 900" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <rect width="1520" height="900" fill="#FFFFFF"/>
+
+  <text x="40" y="46" font-size="30" font-weight="700" fill="#1B2530">A heterogeneous fleet, honestly modelled</text>
+  <text x="40" y="76" font-size="16.5" fill="#5A6B7A">mac does not pretend every machine is the same server class. Node classes differ by supervisor, isolation model and hardware, and the ADRs say which is which.</text>
+
+  <rect x="580" y="104" width="360" height="60" rx="9" fill="#2F3A45"/>
+  <text x="760" y="130" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">hub</text>
+  <text x="760" y="150" font-size="12" fill="#B7C4D0" text-anchor="middle">ledger · capability registry · capacity · dispatch</text>
+
+  <path d="M700 164 L 270 214" stroke="#5A6B7A" stroke-width="1.5"/>
+  <path d="M760 164 L 760 214" stroke="#5A6B7A" stroke-width="1.5"/>
+  <path d="M820 164 L 1250 214" stroke="#5A6B7A" stroke-width="1.5"/>
+
+  <!-- macOS -->
+  <rect x="40" y="216" width="460" height="212" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M40 226 a10 10 0 0 1 10 -10 h440 a10 10 0 0 1 10 10 v40 h-460 z" fill="#2E6F9E"/>
+  <text x="62" y="252" font-size="16" font-weight="700" fill="#FFFFFF">macOS node</text>
+  <text x="478" y="252" font-size="12.5" fill="#BBD7EA" text-anchor="end">ADR 0015 · Accepted</text>
+  <text x="62" y="290" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">Host install under launchd.</tspan> Not a container.</text>
+  <text x="62" y="314" font-size="13.5" fill="#2F3A45">The earlier attempt ran the Linux-ELF OpenShell</text>
+  <text x="62" y="333" font-size="13.5" fill="#2F3A45">gateway inside a Linux container on Docker; that</text>
+  <text x="62" y="352" font-size="13.5" fill="#2F3A45">amendment was superseded.</text>
+  <text x="62" y="382" font-size="13" fill="#5A6B7A">Native toolchains, Apple silicon, and Xcode-bound</text>
+  <text x="62" y="400" font-size="13" fill="#5A6B7A">work are reachable because the agent is a host</text>
+  <text x="62" y="418" font-size="13" fill="#5A6B7A">process rather than a guest.</text>
+
+  <!-- Linux -->
+  <rect x="530" y="216" width="460" height="212" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M530 226 a10 10 0 0 1 10 -10 h440 a10 10 0 0 1 10 10 v40 h-460 z" fill="#2E6F9E"/>
+  <text x="552" y="252" font-size="16" font-weight="700" fill="#FFFFFF">Linux node</text>
+  <text x="968" y="252" font-size="12.5" fill="#BBD7EA" text-anchor="end">ADR 0008 / 0012</text>
+  <text x="552" y="290" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">Native steward under systemd</tspan>, with task</text>
+  <text x="552" y="309" font-size="13.5" fill="#2F3A45">execution in containers. The containerized half of</text>
+  <text x="552" y="328" font-size="13.5" fill="#2F3A45">ADR 0012 now applies to Linux only.</text>
+  <text x="552" y="358" font-size="13.5" fill="#2F3A45">OpenShell owns isolation — process trees,</text>
+  <text x="552" y="377" font-size="13.5" fill="#2F3A45">filesystem and network policy, sandbox lifecycle,</text>
+  <text x="552" y="396" font-size="13.5" fill="#2F3A45">and normalized action events.</text>
+  <text x="552" y="420" font-size="13" fill="#5A6B7A">Docker Engine / Moby is the only container runtime.</text>
+
+  <!-- K8s -->
+  <rect x="1020" y="216" width="460" height="212" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M1020 226 a10 10 0 0 1 10 -10 h440 a10 10 0 0 1 10 10 v40 h-460 z" fill="#2E6F9E"/>
+  <text x="1042" y="252" font-size="16" font-weight="700" fill="#FFFFFF">Kubernetes / HGX</text>
+  <text x="1458" y="252" font-size="12.5" fill="#BBD7EA" text-anchor="end">elastic capacity</text>
+  <text x="1042" y="290" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">Pods under supervisord.</tspan> The runner carries</text>
+  <text x="1042" y="309" font-size="13.5" fill="#2F3A45">independent build and review paths, wrapped by</text>
+  <text x="1042" y="328" font-size="13.5" fill="#2F3A45">mac-owned test, evidence and publication gates.</text>
+  <text x="1042" y="358" font-size="13.5" fill="#2F3A45">HGX capacity is elastic: the fleet asks for more</text>
+  <text x="1042" y="377" font-size="13.5" fill="#2F3A45">workers when saturated rather than queueing behind</text>
+  <text x="1042" y="396" font-size="13.5" fill="#2F3A45">a fixed pool.</text>
+  <text x="1042" y="420" font-size="13" fill="#5A6B7A">GPU facts are part of the capability registry.</text>
+
+  <!-- EXECUTION -->
+  <rect x="40" y="452" width="900" height="238" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="64" y="484" font-size="17" font-weight="700" fill="#1B2530">What actually runs the work</text>
+  <text x="64" y="508" font-size="13.5" fill="#2F3A45">Five coding-agent routes, each with its own identity, discovered where it is</text>
+  <text x="64" y="527" font-size="13.5" fill="#2F3A45">installed. The sandbox derives its available agents from the router rather than</text>
+  <text x="64" y="546" font-size="13.5" fill="#2F3A45">hardcoding a list, so adding a route does not fork the image definition.</text>
+
+  <rect x="64" y="562" width="150" height="40" rx="6" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="139" y="588" font-size="14" font-weight="700" fill="#1B4E73" text-anchor="middle">claude</text>
+  <rect x="228" y="562" width="150" height="40" rx="6" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="303" y="588" font-size="14" font-weight="700" fill="#1B4E73" text-anchor="middle">codex</text>
+  <rect x="392" y="562" width="150" height="40" rx="6" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="467" y="588" font-size="14" font-weight="700" fill="#1B4E73" text-anchor="middle">cursor</text>
+  <rect x="556" y="562" width="150" height="40" rx="6" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="631" y="588" font-size="14" font-weight="700" fill="#1B4E73" text-anchor="middle">opencode</text>
+  <rect x="720" y="562" width="150" height="40" rx="6" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="795" y="588" font-size="14" font-weight="700" fill="#1B4E73" text-anchor="middle">pi</text>
+
+  <text x="64" y="632" font-size="13" fill="#2F3A45">A preflight sentinel proves the sandbox can actually launch the chosen agent before work is dispatched into it, and the</text>
+  <text x="64" y="651" font-size="13" fill="#2F3A45">MCP config the sandbox writes is asserted by test to launch mac's own ledger server — so the socket is never wired to nothing.</text>
+  <text x="64" y="675" font-size="13" fill="#5A6B7A">Sandbox policy changes are announced on the bus and acted on between tasks, not mid-flight.</text>
+
+  <!-- IMAGES -->
+  <rect x="964" y="452" width="516" height="238" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="988" y="484" font-size="17" font-weight="700" fill="#1B2530">Images and rollout</text>
+  <text x="988" y="510" font-size="13.5" fill="#2F3A45">Runtime manifests are reproducible, with stable</text>
+  <text x="988" y="529" font-size="13.5" fill="#2F3A45">digests and secret-value checks.</text>
+  <text x="988" y="556" font-size="13.5" fill="#2F3A45">Images are qualified before use and carry a</text>
+  <text x="988" y="575" font-size="13.5" fill="#2F3A45"><tspan font-family="Menlo, Consolas, monospace" font-size="12.5">tested-&lt;inputs-sha&gt;</tspan> tag, so "which image was this</text>
+  <text x="988" y="594" font-size="13.5" fill="#2F3A45">proven against" is answerable from the tag alone.</text>
+  <text x="988" y="621" font-size="13.5" fill="#2F3A45">A synchronized cutover protocol moves the fleet</text>
+  <text x="988" y="640" font-size="13.5" fill="#2F3A45">between qualified versions as a transaction.</text>
+  <text x="988" y="668" font-size="13" fill="#265536" font-weight="700">A rollout can require a passing eval_run before promote.</text>
+
+  <!-- IDENTITY -->
+  <rect x="40" y="712" width="1440" height="156" rx="10" fill="#2F3A45"/>
+  <text x="64" y="744" font-size="17" font-weight="700" fill="#FFFFFF">Identity, secrets and blast radius</text>
+  <text x="64" y="772" font-size="13.5" fill="#DCE5EC"><tspan font-weight="700">Secrets are handles, not values.</tspan> Tenant-scoped secret handles carry audit records, and API and CLI output is redacted. Runtime manifests check that no</text>
+  <text x="64" y="792" font-size="13.5" fill="#DCE5EC">secret value was baked in. Review clones may inject HTTPS credentials into an individual git command, but never leave them in the checkout's origin URL or any evidence artifact.</text>
+  <text x="64" y="820" font-size="13.5" fill="#DCE5EC"><tspan font-weight="700">Scoped bearer tokens</tspan> separate read, write, agent, dispatch, secret and admin authority. <tspan font-weight="700">Egress policy</tspan> is declared per project and per task rather than assumed.</text>
+  <text x="64" y="848" font-size="13" fill="#8FA5B8">Tenants, users, Personas and platform bindings are modelled as records, which is what lets one hub serve more than one owner without sharing credentials.</text>
+</svg>

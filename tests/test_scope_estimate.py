@@ -443,7 +443,6 @@ def test_run_executor_calls_scope_estimate_on_attempt_1(monkeypatch, tmp_path):
     te._run_executor(
         runner=_fake_runner,
         task=task,
-        task_file=tmp_path / "task.json",
         task_workspace=tmp_path,
         task_id="task_test123",
         review_context=None,
@@ -475,7 +474,6 @@ def test_run_executor_skips_scope_estimate_for_reviews(monkeypatch, tmp_path):
     te._run_executor(
         runner=_fake_runner,
         task=task,
-        task_file=tmp_path / "task.json",
         task_workspace=tmp_path,
         task_id="task_test123",
         review_context={"task_id": "task_original"},

@@ -120,7 +120,7 @@ def test_render_reconcile_section_empty_without_snapshot():
     assert render_reconcile_section({"id": "t1", "title": "x"}) == ""
 
 
-def test_render_and_prompt_include_reconcile_facts_when_snapshot_attached(tmp_path):
+def test_render_and_prompt_include_reconcile_facts_when_snapshot_attached():
     task = {
         "id": "task_a0d06a48",
         "title": "stop `scripts/release.sh` from pushing main",
@@ -159,15 +159,14 @@ def test_render_and_prompt_include_reconcile_facts_when_snapshot_attached(tmp_pa
     assert "needs_restatement" in section
     assert "scripts/release.sh" in section
     assert "Do not treat these as already_published" in section
-    prompt = build_task_prompt(task, tmp_path / "task.json")
+    prompt = build_task_prompt(task)
     assert "Canonical HEAD reconcile" in prompt
     assert "repository tasks use evidence_type=repo_change" in prompt
 
 
-def test_non_repo_prompt_omits_reconcile_when_no_snapshot(tmp_path):
+def test_non_repo_prompt_omits_reconcile_when_no_snapshot():
     prompt = build_task_prompt(
         {"id": "t1", "title": "answer a question", "metadata": {}},
-        tmp_path / "task.json",
     )
     assert "Canonical HEAD reconcile" not in prompt
 
@@ -192,6 +191,26 @@ def test_host_still_valid_does_not_override_already_satisfied():
     assert host_still_valid_reconcile({"metadata": {}}, existing)["decision"] == "already_satisfied"
     task = {"metadata": {"runtime": {"canonical_reconcile": {"head_sha": "deadbeefcafebabe"}}}}
     assert expected_head_sha_from_task(task) == "deadbeefcafebabe"
+
+
+def test_host_still_valid_corrects_agent_head_to_prepared_snapshot():
+    from mac.canonical_reconcile import host_still_valid_reconcile
+
+    task = {"metadata": {"runtime": {"canonical_reconcile": {"head_sha": "a" * 40}}}}
+    stamped = host_still_valid_reconcile(
+        task,
+        {
+            "decision": "still_valid",
+            "head_sha": "b" * 40,
+            "reason": "agent inspected its sandbox checkout",
+        },
+    )
+
+    assert stamped == {
+        "decision": "still_valid",
+        "head_sha": "a" * 40,
+        "reason": "agent inspected its sandbox checkout",
+    }
 
 
 def test_snapshot_lists_recent_commits_on_implicated_paths(tmp_path):
@@ -252,7 +271,6 @@ def test_finalizer_no_change_already_satisfied_does_not_open_a_pr(tmp_path, monk
                 "schema": "mac.worker_evidence.v1",
                 "status": "complete",
                 "evidence_type": "no_change",
-                "reason": "HEAD already uses gh pr create",
                 "canonical_reconcile": {
                     "decision": "already_satisfied",
                     "head_sha": head,
@@ -291,6 +309,24 @@ def test_finalizer_no_change_already_satisfied_does_not_open_a_pr(tmp_path, monk
     assert manifest["canonical_reconcile"]["decision"] == "already_satisfied"
     names = {item["name"]: item["status"] for item in manifest["checks"]}
     assert names["canonical_head_matches_prepared_base"] == "pass"
+
+    from mac.evidence_validators import validate_evidence_type
+    from mac.worker import (
+        _worker_passed_verification_check_count,
+        _worker_verification_contract_problems,
+    )
+
+    assert manifest["canonical_reconcile"]["reason"] == "HEAD already uses gh pr create"
+    assert _worker_verification_contract_problems(manifest, "no_change") == []
+    assert (
+        validate_evidence_type(
+            "no_change",
+            manifest,
+            passed_check_count=_worker_passed_verification_check_count,
+            expected_reconcile_head_sha=head,
+        )
+        == []
+    )
 
 
 def test_finalizer_rejects_no_change_when_the_tree_is_dirty(tmp_path, monkeypatch):

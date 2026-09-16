@@ -193,6 +193,25 @@ def test_obtainable_attestation_passes_cleanly(tmp_path, monkeypatch):
     }
 
 
+def test_host_loop_worker_serializes_obtainable_attestation(tmp_path, monkeypatch):
+    # A Darwin host executor is intentionally unsandboxed (ADR 0015), but its
+    # executable, interpreter, wrapper, and source tree are still digest-bound.
+    # Its startup proof must carry that attestation so controller approval can
+    # project the exact identity into read-only report subprocesses.
+    attestation = {"schema": "mac.report_repository_executor_attestation.v1"}
+    exit_code, report = _run_openshell_loop_worker_self_test(
+        tmp_path,
+        monkeypatch,
+        attestation=attestation,
+        extra_env={"MAC_OPENSHELL_SANDBOX": "0", "MAC_OPENSHELL_REQUIRED": "0"},
+    )
+
+    assert exit_code == 0, report["blocking_problems"]
+    assert report["status"] == "passed"
+    assert report["checks"]["report_repository_executor_attestation"] is True
+    assert report["report_repository_executor_attestation"] == attestation
+
+
 def test_invalid_openshell_create_args_still_blocks_startup(tmp_path, monkeypatch):
     # Fail-closed control: an invalid MAC_OPENSHELL_CREATE_ARGS is a genuine
     # misconfiguration that must remain blocking even though the (patched)

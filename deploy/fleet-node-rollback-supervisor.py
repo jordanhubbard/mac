@@ -615,6 +615,7 @@ class SystemdSupervisor(BaseSupervisor):
                 "expected": _state_word(logical),
                 "observed": _state_word(logical),
                 "stable_observations": self.stable_observations,
+                **({"pid": first[logical].pid} if logical in active_names else {}),
             }
             for logical, identity in self.names.items()
         }
@@ -744,6 +745,7 @@ class SupervisordSupervisor(BaseSupervisor):
                 "expected": ("running" if logical in active_names else "inactive"),
                 "observed": ("running" if logical in active_names else "inactive"),
                 "stable_observations": self.stable_observations,
+                **({"pid": first[logical].pid} if logical in active_names else {}),
             }
             for logical, identity in self.names.items()
         }
@@ -996,6 +998,7 @@ class LaunchdSupervisor(BaseSupervisor):
                 "expected": "running" if active else "absent",
                 "observed": "running" if active else "absent",
                 "stable_observations": self.stable_observations,
+                **({"pid": first[(domain, identity)].pid} if active else {}),
             }
         return observations
 
@@ -1012,6 +1015,77 @@ def wait_port_closed(port: int, deadline: Deadline, poll_seconds: float) -> None
         if result != 0:
             return
         deadline.pause(poll_seconds, "waiting for the control-plane port to close")
+
+
+def listener_processes(hosts: Sequence[str], port: int) -> Dict[int, List[str]]:
+    """Return exact TCP listener owners for the configured addresses."""
+    try:
+        import psutil
+    except ImportError as exc:
+        raise ProtocolError("psutil is unavailable for listener ownership inspection") from exc
+    expected = set(hosts)
+    owners: Dict[int, List[str]] = {}
+    # A global psutil.net_connections() requires elevated privileges on macOS,
+    # including in the local regression harness.  Per-process inspection still
+    # identifies same-user orphan workers while inaccessible foreign owners are
+    # handled safely below by the independent socket probe.
+    for process in psutil.process_iter():
+        try:
+            connections = process.net_connections(kind="tcp")
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError):
+            continue
+        for connection in connections:
+            if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+                continue
+            address, bound_port = connection.laddr[:2]
+            address = str(address).strip("[]")
+            if bound_port != port or address not in expected:
+                continue
+            owners.setdefault(process.pid, []).append(address)
+    return owners
+
+
+def terminate_orphaned_hub_listeners(
+    hosts: Sequence[str], port: int, deadline: Deadline, poll_seconds: float
+) -> None:
+    """Remove only an unambiguously identified legacy ``mac.hub_serve`` owner."""
+    owners = listener_processes(hosts, port)
+    if not owners:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.settimeout(0.25)
+            listening = sock.connect_ex((hosts[0], port)) == 0
+        finally:
+            sock.close()
+        if listening:
+            raise ProtocolError("control-plane listener has no inspectable process owner")
+        return
+    if len(owners) != 1:
+        raise ProtocolError("control-plane listeners have ambiguous process ownership")
+    pid = next(iter(owners))
+    try:
+        import psutil
+
+        process = psutil.Process(pid)
+        created = process.create_time()
+        command = process.cmdline()
+    except (psutil.AccessDenied, psutil.NoSuchProcess, OSError) as exc:
+        raise ProtocolError("control-plane listener owner could not be inspected") from exc
+    if not any(part == "mac.hub_serve" or part.endswith("/mac.hub_serve.py") for part in command):
+        raise ProtocolError(
+            "control-plane listener is not owned by the supervised service or mac.hub_serve"
+        )
+    try:
+        process.terminate()
+    except (psutil.AccessDenied, psutil.NoSuchProcess) as exc:
+        raise ProtocolError("orphaned mac.hub_serve listener could not be terminated") from exc
+    while listener_processes(hosts, port):
+        try:
+            if psutil.Process(pid).create_time() != created:
+                raise ProtocolError("control-plane listener pid was reused during orphan cleanup")
+        except psutil.NoSuchProcess:
+            pass
+        deadline.pause(poll_seconds, "waiting for orphaned mac.hub_serve listener to exit")
 
 
 def wait_http_healthy(
@@ -1181,6 +1255,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="worker service state in the prior generation; required for restore",
     )
     parser.add_argument("--control-plane-port", required=True, type=int)
+    parser.add_argument("--control-plane-host", action="append", default=[])
     parser.add_argument("--health-path", default="/health")
     parser.add_argument("--receipt", required=True)
     parser.add_argument("--deadline-seconds", type=float, default=90.0)
@@ -1216,6 +1291,18 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> ServiceNames:
     if not 1 <= args.control_plane_port <= 65535:
         raise ProtocolError("control-plane port is out of range")
+    if not args.control_plane_host:
+        args.control_plane_host = ["127.0.0.1"]
+    normalized_hosts = []
+    for raw_host in args.control_plane_host:
+        host = raw_host.strip().strip("[]")
+        try:
+            socket.inet_pton(socket.AF_INET6 if ":" in host else socket.AF_INET, host)
+        except OSError as exc:
+            raise ProtocolError("control-plane host must be a numeric IP address") from exc
+        if host not in normalized_hosts:
+            normalized_hosts.append(host)
+    args.control_plane_host = normalized_hosts
     if not HEALTH_PATH_RE.fullmatch(args.health_path):
         raise ProtocolError("health path must be a query-free absolute HTTP path")
     if args.poll_seconds <= 0:
@@ -1298,6 +1385,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         supervisor = build_supervisor(args, names, runner, deadline)
         if args.action == "quiesce":
             services = supervisor.quiesce()
+            terminate_orphaned_hub_listeners(
+                args.control_plane_host,
+                args.control_plane_port,
+                deadline,
+                args.poll_seconds,
+            )
             wait_port_closed(args.control_plane_port, deadline, args.poll_seconds)
             health = "closed"
         else:
@@ -1339,7 +1432,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "observed_at": utc_now(),
             "duration_ms": deadline.elapsed_ms(),
             "control_plane": {
-                "host": "127.0.0.1",
+                "hosts": args.control_plane_host,
                 "port": args.control_plane_port,
                 "health_path": args.health_path,
                 "mode": args.control_plane_mode,

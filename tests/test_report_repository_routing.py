@@ -701,14 +701,20 @@ def test_retargeted_python_symlink_cannot_change_approved_invocation(
     assert worker._apply_read_only_report_executor_approval(
         _marker_resources(attestation), os.environ
     )
-    # Approval stamps the resolved no-follow file, so retargeting the original
-    # launcher cannot influence what the generated wrapper will execute.
-    launcher.unlink()
-    launcher.symlink_to(alternate_python)
-    assert os.environ["MAC_TASK_EXECUTOR_PYTHON"] == str(original_python)
+    # Preserve the configured launcher so Python can retain its venv context,
+    # while approval still identifies its resolved no-follow target.
+    assert os.environ["MAC_TASK_EXECUTOR_PYTHON"] == str(launcher)
     worker_subprocess._assert_approved_read_only_report_host_executor(
         [str(executor)], dict(os.environ)
     )
+
+    # Retargeting the original launcher must be caught before spawn.
+    launcher.unlink()
+    launcher.symlink_to(alternate_python)
+    with pytest.raises(RuntimeError, match="differ from hub approval"):
+        worker_subprocess._assert_approved_read_only_report_host_executor(
+            [str(executor)], dict(os.environ)
+        )
 
 
 def test_deployed_report_wrapper_execs_only_approved_absolute_artifacts():
@@ -720,7 +726,26 @@ def test_deployed_report_wrapper_execs_only_approved_absolute_artifacts():
     assert '. "$HOME/.mac/mac.env"' not in block
     assert 'exec "$MAC_TASK_EXECUTOR_PYTHON" "$MAC_TASK_EXECUTOR_SCRIPT"' in block
     assert 'exec "$HOME/.mac/venv/bin/python"' not in block
-    assert 'install -m 0755 "$resolved_python" "${report_python}.new"' in installer
+    assert "mac-report-python" not in installer
+
+
+def test_stale_configured_report_python_falls_back_to_running_interpreter(
+    report_boundary_env, tmp_path, monkeypatch
+):
+    executor, _policy = report_boundary_env
+    stale_python = tmp_path / "removed-python-launcher"
+    stale_python.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+    stale_python.chmod(0o755)
+    monkeypatch.setenv("MAC_TASK_EXECUTOR_PYTHON", str(stale_python))
+
+    attestation = worker._read_only_report_executor_attestation([str(executor)])
+
+    assert attestation is not None
+    assert attestation["python_path"] == str(Path(sys.executable).resolve())
+    assert worker._apply_read_only_report_executor_approval(
+        _marker_resources(attestation), os.environ
+    )
+    assert os.environ["MAC_TASK_EXECUTOR_PYTHON"] == str(Path(sys.executable).resolve())
 
 
 def test_model_sandbox_never_receives_fleet_hub_credentials(report_boundary_env, monkeypatch):

@@ -1200,6 +1200,94 @@ def test_an_entry_marked_tested_with_no_trees_still_cannot_land():
     assert (ok, why) == (False, "entry carries no tested trees")
 
 
+def test_evict_exhausted_clears_a_tested_entry_that_can_never_get_a_pr(queue):
+    """A slot that wins, tests clean, but can never open a PR must not wedge.
+
+    Reproduces a live incident: a task's branch had no commits against main
+    (another entry already landed the same change first), so every
+    publication attempt failed with GitHub 422 "No commits between main and
+    <branch>" and pull_request_number stayed 0 forever. claim_slot() only
+    increments attempts -- it does not judge them -- so the entry sat at the
+    front of the queue burning every publish cycle for the entries behind it,
+    because evict_exhausted() (the reaper built for exactly this) was never
+    called from anywhere in production.
+    """
+
+    front = _claim(queue, "task_no_diff", "A" * 40)
+    assert front.admitted is True
+    queue.record_tested(
+        front.entry.id,
+        owner="hub-a",
+        base_sha="A" * 40,
+        base_tree="tree-a",
+        merge_tree="tree-a",
+    )
+    behind = _admit(queue, "task_alive", "B" * 40)
+
+    evicted = queue.evict_exhausted(REPO, BRANCH)
+    assert evicted == [front.entry.id]
+
+    live = queue.live_entries(REPO, BRANCH)
+    assert [entry.task_id for entry in live] == ["task_alive"]
+    assert live[0].id == behind.id
+
+
+def test_evict_for_task_clears_a_never_attempted_head_of_line_entry(queue):
+    """A task cancelled before it ever wins a slot must not wedge the queue.
+
+    ``stalled_entries``/``evict_exhausted`` both require ``attempts >= 1``, so
+    an entry admitted but never claimed (attempts == 0) is invisible to them.
+    Its owning task, once cancelled, never calls ``claim_slot`` again, so
+    nothing else will ever move it out of the way of the entries behind it.
+    """
+
+    front = _admit(queue, "task_dead", "A" * 40)
+    behind = _admit(queue, "task_alive", "B" * 40)
+    assert front.attempts == 0
+    assert front.state == STATE_QUEUED
+
+    result = queue.evict_for_task("task_dead", reason="owning task was cancelled")
+    assert result is not None
+    assert result["changed"] is True
+
+    live = queue.live_entries(REPO, BRANCH)
+    assert [entry.task_id for entry in live] == ["task_alive"]
+    assert live[0].id == behind.id
+
+    plan = _claim(queue, "task_alive", "B" * 40)
+    assert plan.admitted is True
+
+
+def test_evict_for_task_is_a_noop_when_the_task_has_no_live_entry(queue):
+    assert queue.evict_for_task("task_never_queued", reason="owning task was cancelled") is None
+
+
+def test_cancelling_a_task_evicts_its_never_attempted_merge_queue_entry(cp):
+    """Wiring test: ControlPlane.close_task(..., CANCELLED) must reach the queue.
+
+    Reproduces the live incident directly: a conflict-integration task admits
+    an entry to the front of the queue, is superseded and cancelled before it
+    ever wins a slot (attempts stays 0), and -- without this hook -- that dead
+    entry blocks every entry behind it forever.
+    """
+
+    front = cp.create_task("front task", project="widgets")
+    behind = cp.create_task("behind task", project="widgets")
+    queue = cp._native_merge_queue()
+    queue.admit(repository=REPO, branch=BRANCH, task_id=front.id, head_sha="A" * 40)
+    queue.admit(repository=REPO, branch=BRANCH, task_id=behind.id, head_sha="B" * 40)
+
+    cp.close_task(
+        front.id,
+        TaskState.CANCELLED.value,
+        "test-actor",
+        {"reason": "superseded in test"},
+    )
+
+    live = queue.live_entries(REPO, BRANCH)
+    assert [entry.task_id for entry in live] == [behind.id]
+
+
 def test_two_workers_cannot_hold_the_same_slot(queue):
     """The exclusivity guarantee: a CAS loser is told to wait, not let through."""
 

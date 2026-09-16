@@ -25,6 +25,7 @@ from mac.allocator import (
     evaluate_pair,
     evaluate_task,
     normalize_execution_mode,
+    relax_retry_exclusions,
 )
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.models import (
@@ -356,11 +357,8 @@ class DispatchService:
             )
         if break_glass is not None:
             target_agent_id = break_glass.agent_id
-        excluded_agent_ids: set[str] = set()
-        for key in ("excluded_agent_ids", "retry_excluded_agent_ids"):
-            values = metadata.get(key)
-            if isinstance(values, list):
-                excluded_agent_ids.update(str(value) for value in values if str(value))
+        explicit_excluded = metadata.get("excluded_agent_ids")
+        retry_excluded = metadata.get("retry_excluded_agent_ids")
         return AllocationTask(
             id=task.id,
             priority=task.priority,
@@ -390,7 +388,16 @@ class DispatchService:
                     | self.control_plane._prior_attempt_agent_ids(task)
                 )
             ),
-            excluded_agent_ids=frozenset(excluded_agent_ids),
+            excluded_agent_ids=frozenset(
+                str(value) for value in explicit_excluded or () if str(value)
+            )
+            if isinstance(explicit_excluded, list)
+            else frozenset(),
+            retry_excluded_agent_ids=frozenset(
+                str(value) for value in retry_excluded or () if str(value)
+            )
+            if isinstance(retry_excluded, list)
+            else frozenset(),
             required_capabilities=frozenset(task.required_capabilities or []),
             required_resources=required_resources,
             required_hardware=required_hardware,
@@ -622,6 +629,8 @@ class DispatchService:
             task_id.id if isinstance(task_id, Task) else str(task_id)
         )
         candidate_agents = list(agents) if agents is not None else self.control_plane.list_agents()
+        if sync_states is None:
+            sync_states = self._sync_barrier_states()
         agent_ids_by_name: Dict[str, List[str]] = {}
         for agent in candidate_agents:
             agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
@@ -636,9 +645,12 @@ class DispatchService:
         candidates = []
         agent_snapshots = []
         for agent in candidate_agents:
-            agent_snapshot = self._v2_snapshot_agent(agent, sync_states)
-            agent_snapshots.append(agent_snapshot)
-            pair = evaluate_pair(task_snapshot, agent_snapshot)
+            agent_snapshots.append(self._v2_snapshot_agent(agent, sync_states))
+        effective_snapshot, relaxed_agent_ids = relax_retry_exclusions(
+            task_snapshot, agent_snapshots
+        )
+        for agent, agent_snapshot in zip(candidate_agents, agent_snapshots):
+            pair = evaluate_pair(effective_snapshot, agent_snapshot)
             candidates.append(
                 {
                     "agent_id": agent.id,
@@ -656,7 +668,9 @@ class DispatchService:
             )
         )
         eligible_count = sum(1 for item in candidates if item["eligible"])
-        requirement_eligibility = classify_requirement_eligibility(task_snapshot, agent_snapshots)
+        requirement_eligibility = classify_requirement_eligibility(
+            effective_snapshot, agent_snapshots
+        )
         task_reasons = [self._v2_dispatch_reason(code) for code in task_evaluation.task_rejections]
         if task_reasons:
             unclaimed = list(task_reasons)
@@ -678,6 +692,8 @@ class DispatchService:
             "task_ready": task_evaluation.allowed,
             "dispatchable": bool(eligible_count),
             "eligible_agent_count": eligible_count,
+            "retry_exclusion_relaxed": bool(relaxed_agent_ids),
+            "retry_exclusion_relaxed_agent_ids": list(relaxed_agent_ids),
             "candidate_count": len(candidates),
             "candidate_limit": limit_value,
             "candidate_truncated": len(candidates) > limit_value,
@@ -706,6 +722,51 @@ class DispatchService:
                 },
             )
         return result
+
+    def _claim_targeted_task_for_agent(
+        self,
+        agent: Any,
+        *,
+        lease_seconds: int,
+    ) -> Optional[JsonDict]:
+        """Claim an explicit agent-id target without rebuilding a global round."""
+
+        rows = self.control_plane.store.query_all(
+            "SELECT * FROM tasks WHERE state = ? "
+            "AND json_extract(metadata, '$.target_agent_id') = ? "
+            "ORDER BY priority DESC, created_at, id LIMIT 100",
+            (TaskState.OPEN.value, agent.id),
+        )
+        if not rows:
+            return None
+        projects = {record.name: record for record in self.control_plane.list_project_records()}
+        agent_snapshot = self._v2_snapshot_agent(
+            agent,
+            self._sync_barrier_states(),
+        )
+        for row in rows:
+            task = self.control_plane._task_from_row(row)
+            task_snapshot = self._v2_snapshot_task(
+                task,
+                projects=projects,
+                agent_ids_by_name={agent.name: [agent.id]},
+            )
+            task_snapshot, relaxed_agent_ids = relax_retry_exclusions(
+                task_snapshot, [agent_snapshot]
+            )
+            if not evaluate_pair(task_snapshot, agent_snapshot).allowed:
+                continue
+            try:
+                claimed = self.control_plane.claim_task_v2(
+                    task.id,
+                    agent.id,
+                    lease_seconds=lease_seconds,
+                    allow_retry_exclusion_reuse=agent.id in relaxed_agent_ids,
+                )
+            except (AuthorizationError, TransitionError, ValidationError):
+                continue
+            return dict(claimed) if isinstance(claimed, Mapping) else claimed
+        return None
 
     def _allocation_v2_inputs(
         self,
@@ -833,6 +894,7 @@ class DispatchService:
                     proposal.task_id,
                     proposal.agent_id,
                     lease_seconds=lease_seconds,
+                    allow_retry_exclusion_reuse=proposal.retry_exclusion_relaxed,
                 )
             except TransitionError as exc:
                 return ClaimCommit.rejected("%s:%s" % (exc.__class__.__name__, str(exc)))
@@ -1102,6 +1164,12 @@ class DispatchService:
             assignment = self.control_plane._active_assignment_for_agent(agent)
             if assignment is not None:
                 return assignment
+            targeted = self._claim_targeted_task_for_agent(
+                agent,
+                lease_seconds=lease_seconds,
+            )
+            if targeted is not None:
+                return targeted
 
         if dry_run:
             result, _tasks_by_id, _agents_by_id = self._allocate_v2_round(

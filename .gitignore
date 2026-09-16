@@ -90,3 +90,10 @@ mac-evidence.json
 # See docs/presentation/README.md.
 docs/presentation/*/images/*.png
 docs/presentation/*/*.pptx
+
+# Generated AgentFabric presentation members. The authoring package under
+# docs/presentations/ keeps only text; the .pptx/.docx and all QA output are
+# reproducible from it via regenerate.sh.
+docs/presentations/*/*.pptx
+docs/presentations/*/*.docx
+/_build/

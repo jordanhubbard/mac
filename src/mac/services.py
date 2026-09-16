@@ -188,6 +188,7 @@ from mac.models import (
     WorkflowDraft,
 )
 from mac.repository_hygiene import (
+    AUTO_CLEANUP_DISPOSITIONS,
     repository_ref_lifecycle_for_transition,
 )
 from mac.env_config import resolve_hub_agent
@@ -237,7 +238,12 @@ from mac.memory_tier_probe import (
     probe_collections as _probe_qdrant_collections,
 )
 from mac.observability_service import ObservabilityService
-from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
+from mac.openshell_runtime import (
+    SANDBOX_BASE_PATH,
+    VERIFIER_PROFILE_READY,
+    openshell_required_for_identity,
+    verifier_resource_profile,
+)
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.project_repository_service import ProjectRepositoryService
@@ -439,6 +445,23 @@ def _repository_contract_test_command_for_task(task: "Task") -> str:
         ("execution_contract", "repository_contract", "test"),
         ("origin", "repository_contract", "test"),
         ("repository_contract", "test"),
+    ):
+        node = _nested_json_object(metadata, *path)
+        command = str(node.get("command") or "").strip()
+        if command:
+            return command
+    return ""
+
+
+def _repository_contract_bootstrap_command_for_task(task: "Task") -> str:
+    """The repository contract's bootstrap command for a task, or "" if none
+    is declared. Mirrors ``_repository_contract_test_command_for_task``."""
+    metadata = ensure_json_object(task.metadata)
+    for path in (
+        ("execution_contract", "bootstrap"),
+        ("execution_contract", "repository_contract", "bootstrap"),
+        ("origin", "repository_contract", "bootstrap"),
+        ("repository_contract", "bootstrap"),
     ):
         node = _nested_json_object(metadata, *path)
         command = str(node.get("command") or "").strip()
@@ -882,10 +905,18 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
 
 
 _DIAG_SECRET_RE = re.compile(
-    r"(?i)(\b(?:authorization|bearer|token|password|secret|api[_-]?key)\b\s*[:=]?\s*)([^\s,;]+)"
+    r"(?i)(\b(?:authorization|bearer|(?:[a-z0-9]+_)*(?:token|password|secret|api[_-]?key))"
+    r"\b[\"']?\s*[:=]?\s*(?:(?:bearer|basic)\s+)?[\"']?)([^\s,;\"']+)"
 )
-_DIAG_URL_AUTH_RE = re.compile(r"(https?://)([^/@\s]+)@", re.IGNORECASE)
+_DIAG_URL_AUTH_RE = re.compile(r"([a-z][a-z0-9+.-]*://)([^/@\s]+)@", re.IGNORECASE)
 _DIAG_KNOWN_TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9_-]{12,})\b")
+
+
+def _redact_diagnostic_text(text: str) -> str:
+    text = text.replace("\x00", "")
+    text = _DIAG_URL_AUTH_RE.sub(r"\1<redacted>@", text)
+    text = _DIAG_SECRET_RE.sub(r"\1<redacted>", text)
+    return _DIAG_KNOWN_TOKEN_RE.sub("<redacted>", text)
 
 
 def _diagnostic_output_tail(detail: Mapping[str, Any]) -> Tuple[str, str]:
@@ -909,10 +940,7 @@ def _diagnostic_output_tail(detail: Mapping[str, Any]) -> Tuple[str, str]:
             detail.get("output_tail_unavailable_reason")
             or "transition supplied no stdout, stderr, output, log, or tail field"
         )
-    text = "\n".join(values).replace("\x00", "")
-    text = _DIAG_URL_AUTH_RE.sub(r"\1<redacted>@", text)
-    text = _DIAG_SECRET_RE.sub(r"\1<redacted>", text)
-    text = _DIAG_KNOWN_TOKEN_RE.sub("<redacted>", text)
+    text = _redact_diagnostic_text("\n".join(values))
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     return "\n".join(lines[-20:])[-4000:], ""
 
@@ -1076,6 +1104,7 @@ _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
 
 
 _HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
+    "hub verifier resource profile unavailable",
     # cursor-agent's stream transport, the observed cause
     "ssh exited with status",
     "connection reset by peer",
@@ -1117,6 +1146,166 @@ def hub_verification_unavailable_reason(output: str) -> Optional[str]:
         if signature in text:
             return signature
     return None
+
+
+# OpenShell injects this hosts entry; ``host.docker.internal`` is Docker
+# Desktop and is not present in a hub-verify sandbox. Keep in lockstep with
+# ``executor_sandbox._OPENSHELL_HOST_ALIAS_DEFAULT``.
+_HUB_VERIFY_SANDBOX_PG_HOST = "host.openshell.internal"
+_HUB_VERIFY_PG_PORT = "55432"
+_HUB_VERIFY_PG_DB = "mac_hubverify"
+_HUB_VERIFY_PG_CONTAINER = "mac-hubverify-postgres"
+_LOOPBACK_PG_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+
+
+def parse_start_test_postgres_export(stdout: str) -> str:
+    """Read the DSN from ``scripts/start-test-postgres.sh`` stdout."""
+
+    for line in (stdout or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("export MAC_TEST_PG_URL="):
+            return stripped.split("=", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def _pg_url_authority(dsn: str) -> Optional[Tuple[str, int]]:
+    parsed = urllib.parse.urlsplit((dsn or "").strip())
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return None
+    return host, int(parsed.port or 5432)
+
+
+def _hub_verify_pg_shares_live_server(candidate: str, live: str) -> bool:
+    """True when *candidate* is the live hub Postgres process, even if the
+    database name or role differs.
+
+    ``start-test-postgres.sh`` will happily emit ``...@127.0.0.1:5432/mac_test``
+    when the hub is already listening on 5432. Exact-string comparison against
+    ``MAC_DATABASE_URL`` (a different database on that same server) would then
+    inject the live cluster into the sandbox.
+    """
+
+    if not candidate or not live:
+        return False
+    if candidate.strip() == live.strip():
+        return True
+    left = _pg_url_authority(candidate)
+    right = _pg_url_authority(live)
+    if left is None or right is None:
+        return False
+    left_host, left_port = left
+    right_host, right_port = right
+    if left_port != right_port:
+        return False
+    if left_host == right_host:
+        return True
+    return left_host in _LOOPBACK_PG_HOSTS or right_host in _LOOPBACK_PG_HOSTS
+
+
+def _hub_verify_sandbox_pg_host(*, sandbox_host: str = "") -> str:
+    return (
+        sandbox_host
+        or os.environ.get("MAC_HUB_VERIFY_PG_HOST")
+        or os.environ.get("MAC_OPENSHELL_HOST_ALIAS")
+        or ""
+    ).strip() or _HUB_VERIFY_SANDBOX_PG_HOST
+
+
+def hub_verify_sandbox_pg_url(
+    raw: str,
+    *,
+    live_database_url: str = "",
+    sandbox_host: str = "",
+) -> Optional[str]:
+    """Return a test DSN the OpenShell hub-verify sandbox can use.
+
+    Refuses the live hub Postgres (same host+port, not merely the same DSN).
+    Rewrites loopback hosts to ``host.openshell.internal`` (override with
+    ``MAC_HUB_VERIFY_PG_HOST`` or ``MAC_OPENSHELL_HOST_ALIAS``) so a dedicated
+    Postgres started on the hub is reachable from inside the sandbox.
+    """
+
+    candidate = (raw or "").strip()
+    live = (live_database_url or "").strip()
+    if not candidate:
+        return None
+    if _hub_verify_pg_shares_live_server(candidate, live):
+        return None
+    host = _hub_verify_sandbox_pg_host(sandbox_host=sandbox_host)
+    parsed = urllib.parse.urlsplit(candidate)
+    hostname = (parsed.hostname or "").strip().lower()
+    if hostname in _LOOPBACK_PG_HOSTS:
+        username = parsed.username or ""
+        password = parsed.password
+        userinfo = username
+        if password is not None:
+            userinfo = "%s:%s" % (username, password)
+        netloc = host
+        if parsed.port:
+            netloc = "%s:%s" % (host, parsed.port)
+        if userinfo:
+            netloc = "%s@%s" % (userinfo, netloc)
+        candidate = urllib.parse.urlunsplit(
+            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+        if _hub_verify_pg_shares_live_server(candidate, live):
+            return None
+    return candidate
+
+
+def _hub_verify_start_test_postgres(repo_root: Path) -> str:
+    helper = repo_root / "scripts" / "start-test-postgres.sh"
+    if not helper.is_file():
+        return ""
+    env = dict(os.environ)
+    env.pop("MAC_TEST_PG_URL", None)
+    env["MAC_TEST_PG_PORT"] = (
+        os.environ.get("MAC_HUB_VERIFY_PG_PORT") or _HUB_VERIFY_PG_PORT
+    ).strip() or _HUB_VERIFY_PG_PORT
+    env["MAC_TEST_PG_DB"] = _HUB_VERIFY_PG_DB
+    env["MAC_TEST_PG_CONTAINER"] = _HUB_VERIFY_PG_CONTAINER
+    env["MAC_TEST_PG_DATADIR"] = os.environ.get("MAC_HUB_VERIFY_PG_DATADIR") or os.path.join(
+        tempfile.gettempdir(), "mac-hubverify-pgdata"
+    )
+    try:
+        proc = subprocess.run(
+            ["bash", str(helper)],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+            env=env,
+        )
+    except Exception:  # noqa: BLE001 - missing helper must not abort verify
+        return ""
+    # 0 is success; ``returncode or 1`` would turn a successful helper into a
+    # miss and leave the sandbox without MAC_TEST_PG_URL (observed after #682).
+    if getattr(proc, "returncode", 1) != 0:
+        return ""
+    return parse_start_test_postgres_export(proc.stdout or "")
+
+
+def hub_verify_test_pg_url(repo_root: Path) -> Optional[str]:
+    """Dedicated test DSN for the hub-verify sandbox, never the live hub DB."""
+
+    explicit = (os.environ.get("MAC_HUB_VERIFY_PG_URL") or "").strip()
+    live = (os.environ.get("MAC_DATABASE_URL") or os.environ.get("MAC_DB") or "").strip()
+    raw = explicit or _hub_verify_start_test_postgres(repo_root)
+    return hub_verify_sandbox_pg_url(raw, live_database_url=live)
+
+
+def hub_verify_sandbox_env_pairs(*, test_pg_url: Optional[str] = None) -> List[str]:
+    """``--env`` values for a hub-verify OpenShell create."""
+
+    pairs = ["HOME=/tmp", "PATH=%s" % SANDBOX_BASE_PATH]
+    dsn = (test_pg_url or "").strip()
+    if dsn:
+        pairs.append("MAC_TEST_PG_URL=%s" % dsn)
+    else:
+        pairs.append("MAC_TEST_PG_LOCAL=1")
+    return pairs
 
 
 def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
@@ -1199,6 +1388,29 @@ def _hub_verify_output_excerpt(
         parts.append(text[start:end])
         previous = end
     return "\n".join(parts)
+
+
+def _hub_verify_exception_detail(exc: Exception) -> JsonDict:
+    """Retain the failure and available output without recording subprocess argv."""
+    detail: JsonDict = {"error_type": type(exc).__name__}
+    if isinstance(exc, subprocess.TimeoutExpired):
+        detail.update(error="verification subprocess timed out", timeout_seconds=exc.timeout)
+    elif isinstance(exc, subprocess.CalledProcessError):
+        detail.update(error="verification subprocess failed", returncode=exc.returncode)
+    else:
+        detail["error"] = _redact_diagnostic_text(str(exc))[:300]
+    output = []
+    for value in (getattr(exc, "stdout", None), getattr(exc, "stderr", None)):
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str) and value:
+            output.append(value)
+    # Redact before excerpting: truncating a credential marker first could
+    # leave its value unrecognizable to the shared redactor.
+    detail["output_excerpt"] = _hub_verify_output_excerpt(
+        _redact_diagnostic_text("\n".join(output))
+    )
+    return detail
 
 
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
@@ -1603,6 +1815,20 @@ def _contract_string_list(value: Any, field: str, *, required: bool = True) -> L
     return strings
 
 
+def _contract_version_mapping(value: Any, field: str) -> Dict[str, str]:
+    if value is None:
+        return {}
+    mapping = _contract_mapping(value, field)
+    result: Dict[str, str] = {}
+    for command, version in mapping.items():
+        name = _contract_string(command, "%s command" % field)
+        minimum = _contract_string(version, "%s.%s" % (field, name))
+        if re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", minimum) is None:
+            raise ValidationError("%s.%s must be a dotted numeric version" % (field, name))
+        result[name] = minimum
+    return result
+
+
 def _contract_relative_paths(value: Any, field: str) -> List[str]:
     paths = _contract_string_list(value, field, required=False)
     for raw_path in paths:
@@ -1840,6 +2066,10 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
                 toolchain.get("required_commands"),
                 "repository runtime contract.toolchain.required_commands",
             ),
+            "minimum_versions": _contract_version_mapping(
+                toolchain.get("minimum_versions"),
+                "repository runtime contract.toolchain.minimum_versions",
+            ),
         },
         "bootstrap": {
             "command": _contract_string(
@@ -1959,6 +2189,575 @@ from mac.agent_health import (  # noqa: E402
     advisory_health_dispatch_ready,
     startup_self_test_clears_dispatch,
 )
+
+
+def run_repository_contract_test_in_openshell(
+    remote_url: str,
+    branch: str,
+    head_sha: str,
+    test_command: str,
+    bootstrap_command: str = "",
+    *,
+    prepared_report: Optional[Mapping[str, Any]] = None,
+    verifier_identity: Optional[Dict[str, Any]] = None,
+    local_repository: Optional[Path] = None,
+    expected_tree_sha: str = "",
+    timeout_seconds: Optional[float] = None,
+) -> Tuple[int, str]:
+    """Clone the pushed branch and run the contract test in an isolated
+    OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
+
+    Isolation is mandatory: this executes pushed (agent-authored) test code
+    for the control plane, so it must not run on the hub host. Injected
+    via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
+    ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+    deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+
+    def bounded_timeout(cap: float) -> float:
+        if deadline is None:
+            return cap
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("repository verification budget exhausted during staging")
+        return min(cap, remaining)
+
+    from . import gitops as _gitops
+
+    # Clean URL + credential in the child ENVIRONMENT. Embedding it in the
+    # URL put the whole token in argv, where `ps` exposed it to every user
+    # on the hub -- observed live on 2026-08-11.
+    if local_repository is not None:
+        if not (
+            _GIT_SHA_RE.fullmatch(head_sha)
+            and _GIT_SHA_RE.fullmatch(expected_tree_sha)
+            and test_command.strip()
+        ):
+            return (
+                1,
+                "pre-push verification unavailable: exact source identity and test command required",
+            )
+        auth_url, auth_env = str(local_repository.resolve()), {}
+    else:
+        auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
+    openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+    image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
+    if not image:
+        return 1, (
+            "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
+            "the deployment-approved immutable OpenShell runtime image"
+        )
+    if not re.fullmatch(r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image):
+        return 1, (
+            "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
+            "the immutable repository-owned OpenShell runtime image"
+        )
+    try:
+        profile_args, profile_env, profile_preflight = verifier_resource_profile()
+    except ValueError as exc:
+        return 1, str(exc)
+    policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+    if local_repository is not None and not policy:
+        return 1, "pre-push verification unavailable: MAC_OPENSHELL_POLICY is required"
+    if prepared_report is not None:
+        from .trusted_artifact import nofollow_regular_file_identity
+
+        try:
+            _policy_path, policy_digest = nofollow_regular_file_identity(policy)
+        except (OSError, ValueError):
+            return (
+                1,
+                "hub verification is unavailable: report verifier policy is missing or invalid",
+            )
+        if verifier_identity is not None:
+            verifier_identity.update(
+                runtime_image_ref=image,
+                policy_sha256=policy_digest,
+                execution_environment="openshell_sandbox",
+                platform="linux",
+            )
+    try:
+        # 1200s could not cover even a scoped run once cloning, uploading
+        # and dependency bootstrap are counted: the scoped gate alone takes
+        # ~15 minutes on this repository. A cap the work cannot meet reads
+        # as a gate failure, which is how a timeout came to look like an
+        # OpenShell fault for a day.
+        timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "2400"))
+    except ValueError:
+        timeout = 1200.0
+    if timeout_seconds is not None:
+        timeout = max(1.0, float(timeout_seconds))
+    if _truthy_env("MAC_OPENSHELL_GC"):
+        try:
+            from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
+
+            try:
+                stale_after = float(os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400")
+            except ValueError:
+                stale_after = 86400.0
+            reconcile_stale_sandboxes(
+                openshell_bin=openshell,
+                stale_after_seconds=max(0.0, stale_after),
+                include_legacy=True,
+                apply=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - verification remains guarded
+            logging.getLogger(__name__).warning(
+                "OpenShell sandbox GC failed before hub verification: %s", exc
+            )
+    import uuid as _uuid
+
+    tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
+    # Unique per invocation: the review sweep may re-tick while a verify is
+    # still running, and a head_sha-derived name collides ("already
+    # exists"). The in-flight guard in the caller also prevents overlap,
+    # but a unique name is the belt-and-suspenders.
+    name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
+    try:
+        clone_args = (
+            ["git", "clone", "--no-local", "--no-checkout", "--", auth_url, str(tmp / "repo")]
+            if local_repository is not None
+            else [
+                "git",
+                "clone",
+                "--branch",
+                branch,
+                "--depth",
+                "1",
+                "--single-branch",
+                "--",
+                auth_url,
+                str(tmp / "repo"),
+            ]
+        )
+        clone = subprocess.run(
+            # Shallow single-branch clone keeps the upload into the sandbox
+            # small (a deep clone's history broke the tar-over-ssh upload
+            # with a broken pipe).
+            clone_args,
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout(300),
+            check=False,
+            env={**os.environ, **auth_env} if auth_env else None,
+            stdin=subprocess.DEVNULL,
+        )
+        if clone.returncode != 0:
+            return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
+                (clone.stderr or clone.stdout or "").strip()
+            )[-800:]
+        if local_repository is not None:
+            checkout = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(tmp / "repo"),
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "checkout",
+                    "--detach",
+                    head_sha,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(120),
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+            if checkout.returncode != 0:
+                return 1, "pre-push verification unavailable: cannot stage the unpublished commit"
+        cloned_head = subprocess.run(
+            ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout(30),
+            check=False,
+        )
+        observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
+        if prepared_report is not None and observed_head != head_sha:
+            # The signed worker inspected this exact canonical-remote
+            # commit. A read-only report has no pushed branch of its own;
+            # trunk may advance while it is being written. Fetch only that
+            # prepared commit, leaving pushed code reviews' HEAD gate intact.
+            for args in (
+                ["fetch", "--depth", "1", "origin", head_sha],
+                ["checkout", "--detach", head_sha],
+            ):
+                selected = subprocess.run(
+                    ["git", "-C", str(tmp / "repo"), *args],
+                    capture_output=True,
+                    text=True,
+                    timeout=bounded_timeout(300),
+                    check=False,
+                    env={**os.environ, **auth_env} if auth_env else None,
+                    stdin=subprocess.DEVNULL,
+                )
+                if selected.returncode != 0:
+                    return (
+                        1,
+                        "hub verification is unavailable: could not fetch prepared report commit",
+                    )
+            selected = subprocess.run(
+                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(30),
+                check=False,
+            )
+            observed_head = selected.stdout.strip() if selected.returncode == 0 else ""
+        if observed_head != head_sha:
+            return 1, (
+                "hub verify clone HEAD mismatch: expected %s, observed %s"
+                % (head_sha, observed_head or "<unresolved>")
+            )
+        # Upload ONE tar file and extract inside the sandbox. Uploading the
+        # directory tree loses .git in transit (OpenShell's upload drops
+        # it), which failed every git-at-checkout contract test — and, once
+        # the exit-97 probe landed, every verify outright with
+        # "/sandbox/repo is not a usable git repo after upload". A single
+        # archive survives any upload path verbatim, .git included.
+        tar = subprocess.run(
+            ["tar", "czf", str(tmp / "repo.tgz"), "-C", str(tmp), "repo"],
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout(120),
+            check=False,
+        )
+        if tar.returncode != 0:
+            return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
+                -800:
+            ]
+        subprocess.run(
+            [openshell, "sandbox", "delete", name],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        argv = [openshell, "sandbox", "create", "--no-auto-providers", *profile_args]
+        if policy:
+            argv += ["--policy", policy]
+        argv += [
+            "--name",
+            name,
+            "--label",
+            "mac.owner=mac",
+            "--label",
+            "mac.kind=hubverify",
+            "--label",
+            "mac.pid=%d" % os.getpid(),
+            "--label",
+            "mac.keep=false",
+            "--from",
+            image,
+        ]
+        # OpenShell's supervisor resets PATH on fresh create/exec
+        # commands instead of preserving the image ENV. Pass the
+        # sandbox-owned runtime path explicitly; never inherit the
+        # control-plane host's PATH. The test database belongs inside the
+        # sandbox too: the gateway may run on a separate Linux fleet host,
+        # and libpq cannot use OpenShell's HTTP network proxy.
+        for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
+            argv += ["--env", value]
+        # `sandbox create` defaults to opening an interactive shell when no
+        # command is supplied. In a non-interactive verifier that leaves the
+        # CLI attached forever even though the sandbox has reached Ready.
+        # Run a bounded no-op initial command so create returns while the
+        # persistent sandbox remains available for upload and exec phases.
+        argv += ["--no-tty", "--", "/bin/true"]
+        report_preflight = ""
+        if prepared_report is not None:
+            expected_tree = str(prepared_report.get("base_tree") or "")
+            if not _GIT_SHA_RE.fullmatch(head_sha) or not _GIT_SHA_RE.fullmatch(expected_tree):
+                return 1, "hub verification is unavailable: invalid prepared report identity"
+            report_preflight = (
+                'test "$(uname -s)" = Linux && '
+                'test "$(git rev-parse HEAD)" = %s && '
+                'test "$(git rev-parse HEAD^{tree})" = %s || '
+                "{ echo 'hub verification is unavailable: report Linux/source identity mismatch' >&2; exit 96; }; "
+            ) % (head_sha, expected_tree)
+        if local_repository is not None:
+            report_preflight = (
+                'test "$(uname -s)" = Linux && '
+                'test "$(git rev-parse HEAD)" = %s && '
+                'test "$(git rev-parse HEAD^{tree})" = %s || '
+                "{ echo 'pre-push verification unavailable: Linux/source identity mismatch' >&2; exit 96; }; "
+            ) % (head_sha, expected_tree_sha)
+        primary_error = None
+        try:
+            create = subprocess.run(
+                argv, capture_output=True, text=True, timeout=bounded_timeout(timeout), check=False
+            )
+            if verifier_identity is not None:
+                verifier_identity["create_returncode"] = int(create.returncode)
+            output = (create.stdout or "") + (create.stderr or "")
+            if create.returncode != 0:
+                return int(create.returncode), output
+
+            upload = subprocess.run(
+                [
+                    openshell,
+                    "sandbox",
+                    "upload",
+                    name,
+                    str(tmp / "repo.tgz"),
+                    "/sandbox",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(timeout),
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+            if verifier_identity is not None:
+                verifier_identity["upload_returncode"] = int(upload.returncode)
+            output += (upload.stdout or "") + (upload.stderr or "")
+            if upload.returncode != 0:
+                return int(upload.returncode), output
+
+            identity_preflight = (
+                "export PATH=%s; hash -r 2>/dev/null || true; "
+                "%scd /sandbox/repo && %s%s"
+                % (
+                    SANDBOX_BASE_PATH,
+                    profile_preflight,
+                    _HUB_VERIFY_GIT_PREFLIGHT,
+                    report_preflight,
+                )
+            )
+
+            def sandbox_exec(command: str, *, initialize: bool) -> subprocess.CompletedProcess[str]:
+                shell_command = (
+                    ("cd /sandbox && tar xzf repo.tgz && " if initialize else "")
+                    + identity_preflight
+                    + command
+                )
+                return subprocess.run(
+                    [
+                        openshell,
+                        "sandbox",
+                        "exec",
+                        "--name",
+                        name,
+                        "--workdir",
+                        "/sandbox",
+                        "--no-tty",
+                        "--timeout",
+                        str(max(1, int(bounded_timeout(timeout)))),
+                        "--",
+                        "/bin/bash",
+                        "-c",
+                        shell_command,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=bounded_timeout(timeout),
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                )
+
+            if bootstrap_command:
+                if verifier_identity is not None:
+                    verifier_identity["execution_attempted"] = True
+                bootstrap = sandbox_exec(bootstrap_command, initialize=True)
+                if verifier_identity is not None:
+                    verifier_identity["bootstrap_returncode"] = int(bootstrap.returncode)
+                output += (bootstrap.stdout or "") + (bootstrap.stderr or "")
+                if bootstrap.returncode != 0:
+                    return int(bootstrap.returncode), output
+
+            proc = sandbox_exec(
+                test_command or "scripts/run-contract-tests.sh",
+                initialize=not bootstrap_command,
+            )
+            if verifier_identity is not None:
+                verifier_identity.update(
+                    execution_attempted=True,
+                    test_returncode=int(proc.returncode),
+                )
+            output += (proc.stdout or "") + (proc.stderr or "")
+            if profile_preflight and VERIFIER_PROFILE_READY not in output:
+                return 1, (
+                    "hub verifier resource profile unavailable: bounded-tmpfs "
+                    "was not established before repository execution\n"
+                    + _hub_review_failure_excerpt(output)
+                )
+            # Head AND tail. A blind tail cannot see the verdict:
+            # run-contract-tests.sh prints the pytest failure first, then
+            # an unconditional whole-repo coverage report (~14KB, one row
+            # per source file), then a coverage summary whose floors both
+            # PASSED, and only then exits with the saved pytest status.
+            # Keeping 2000 trailing bytes therefore kept the coverage
+            # table and OpenShell's generic "ssh exited with status 1" --
+            # so a real rejection was unclassifiable by construction and
+            # retried forever (six tasks, ~6 hours, 2026-08-20).
+            return int(
+                proc.returncode
+            ), output if local_repository is not None else _hub_verify_output_excerpt(output)
+        except Exception as exc:
+            primary_error = exc
+            raise
+        finally:
+            try:
+                subprocess.run(
+                    [openshell, "sandbox", "delete", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+            except Exception as cleanup_error:
+                if primary_error is None:
+                    raise
+                # A cleanup timeout must not replace the test timeout and
+                # its partial output before the caller records evidence.
+                logging.getLogger(__name__).warning(
+                    "Hub verification cleanup also failed: %s",
+                    _hub_verify_exception_detail(cleanup_error),
+                )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def verify_unpublished_repository(
+    worktree: Path,
+    command: str,
+    bootstrap_command: str = "",
+    *,
+    timeout_seconds: Optional[float] = None,
+    allow_untracked: bool = False,
+    prepared_base_sha: str = "",
+) -> JsonDict:
+    """Test a pristine copy of this exact commit on the Linux gateway before push.
+
+    Workspace-written receipts are not authority. The runner stages committed
+    source in a fresh clone, executes through the existing verifier transport,
+    and rejects a source change while verification was in flight. No repository
+    bootstrap or test command is executed by the native host.
+    """
+    import math
+
+    try:
+        budget = float(
+            timeout_seconds
+            if timeout_seconds is not None
+            else os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800")
+        )
+    except ValueError:
+        budget = 1800.0
+    if not math.isfinite(budget) or budget <= 0:
+        budget = 1800.0
+    deadline = time.monotonic() + budget
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("repository verification budget exhausted")
+        return value
+
+    result: JsonDict = {
+        "name": "repository contract test",
+        "command": command,
+        "returncode": 1,
+        "status": "unavailable",
+        "execution_environment": "openshell_verification_pending",
+        "stdout": "",
+        "stderr": "",
+    }
+    if bootstrap_command:
+        result.update(
+            name="repository bootstrap and test gate",
+            command="%s && %s" % (bootstrap_command, command),
+            contract_command=command,
+            bootstrap_command=bootstrap_command,
+        )
+
+    def source_identity() -> Tuple[str, str]:
+        def git(*args: str) -> str:
+            return subprocess.check_output(
+                ["git", "-C", str(worktree), *args],
+                text=True,
+                stderr=subprocess.PIPE,
+                timeout=min(60, remaining()),
+            ).strip()
+
+        if git(
+            "status",
+            "--porcelain",
+            "--untracked-files=no" if allow_untracked else "--untracked-files=all",
+        ):
+            raise ValueError("pre-push verification requires a clean committed worktree")
+        return git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")
+
+    try:
+        head, tree = source_identity()
+        if (
+            command in {"scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh"}
+            and _GIT_SHA_RE.fullmatch(prepared_base_sha)
+            and (worktree / "test-policy.toml").is_file()
+            and os.access(worktree / "scripts/run-sanity-tests.sh", os.X_OK)
+            and subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(worktree),
+                    "merge-base",
+                    "--is-ancestor",
+                    prepared_base_sha,
+                    head,
+                ],
+                capture_output=True,
+                timeout=min(60, remaining()),
+                check=False,
+            ).returncode
+            == 0
+        ):
+            result["contract_command"] = command
+            command = "scripts/run-sanity-tests.sh --base %s" % prepared_base_sha
+            result["command"] = (bootstrap_command + " && " if bootstrap_command else "") + command
+            result["selected_base_sha"] = prepared_base_sha
+        identity: JsonDict = {}
+        rc, output = run_repository_contract_test_in_openshell(
+            "",
+            "",
+            head,
+            command,
+            bootstrap_command,
+            local_repository=worktree,
+            expected_tree_sha=tree,
+            timeout_seconds=remaining(),
+            verifier_identity=identity,
+        )
+        result.update(returncode=rc, stdout=output)
+        result.update(
+            (key, identity[key])
+            for key in (
+                "create_returncode",
+                "upload_returncode",
+                "bootstrap_returncode",
+                "test_returncode",
+            )
+            if key in identity
+        )
+        if identity.get("execution_attempted"):
+            result.update(
+                status="pass" if rc == 0 else "fail",
+                execution_environment="openshell_sandbox",
+                executed_head_sha=head,
+                executed_tree_sha=tree,
+            )
+        else:
+            # A missing runtime or staging failure is not a failed test suite.
+            result["returncode"] = 1
+            result["stderr"] = output
+        if source_identity() != (head, tree):
+            result.update(
+                returncode=1,
+                status="stale_source",
+                stderr="source changed during pre-push verification; refusing to push",
+            )
+    except Exception as exc:  # noqa: BLE001 - unavailable verification never permits push.
+        result.update(returncode=1, status="unavailable", stderr=str(exc))
+    return result
 
 
 class ControlPlane:
@@ -2194,6 +2993,7 @@ class ControlPlane:
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
             agent_has_active_lease=self._agent_has_active_lease,
+            agent_is_virtual=self._agent_is_virtual,
         )
         self.deploy = DeployService(
             self.store,
@@ -2669,15 +3469,7 @@ class ControlPlane:
         if not isinstance(startup, dict):
             return False
         status = str(startup.get("status") or "").strip().lower()
-        if status in {"degraded", "failed"}:
-            return True
-        return bool(
-            str(
-                startup.get("openclaw_failure_class")
-                or startup.get("hermes_failure_class")  # pre-migration reports
-                or ""
-            ).strip()
-        )
+        return status in {"degraded", "failed"}
 
     def _project_agent_health_for_resources(
         self,
@@ -5475,9 +6267,11 @@ class ControlPlane:
                     raise ValidationError(
                         "metadata.origin.%s contradicts the current registered repository" % key
                     )
+            # Repository identity is canonical; the producer still owns its
+            # origin type, which drives grooming cadence and generator yield.
+            origin.setdefault("type", "direct_task")
             origin.update(
                 {
-                    "type": "direct_task",
                     "repository_id": repo.id,
                     "repository_name": repo.name,
                     "repository_path": repo.path,
@@ -6656,7 +7450,7 @@ class ControlPlane:
         if not 0 <= refresh_value <= 500:
             raise ValidationError("refresh_limit must be between 0 and 500")
         agents = self.list_agents()
-        idle_worker_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
+        idle_identity_count = sum(1 for agent in agents if agent.status == AgentStatus.IDLE.value)
 
         # Build the two fleet-wide inputs every stranded-task explanation needs
         # exactly ONCE and reuse them.  ``explain_task_dispatch`` otherwise
@@ -6669,6 +7463,13 @@ class ControlPlane:
         # already computes once per round for exactly this reason.
         projects = {record.name: record for record in self.list_project_records()}
         sync_states = self.dispatch._sync_barrier_states()
+
+        from mac.allocator import summarize_execution_capacity
+
+        capacity = summarize_execution_capacity(
+            self.dispatch._v2_snapshot_agent(agent, sync_states=sync_states) for agent in agents
+        )
+        capacity["idle_identity_count"] = idle_identity_count
 
         def explain(task_id: str) -> JsonDict:
             return self.explain_task_dispatch(
@@ -6685,7 +7486,8 @@ class ControlPlane:
             critical_seconds=critical_value,
             refresh_limit=refresh_value,
             dispatch_explainer=explain,
-            idle_worker_count=idle_worker_count,
+            idle_worker_count=capacity["executable_idle_worker_count"],
+            execution_capacity=capacity,
         )
 
     def update_task(
@@ -8082,6 +8884,32 @@ class ControlPlane:
         # only thing requiring a package, and a tool nothing asks for is still
         # sitting in the security boundary with nothing that would ever notice.
         self.check_sandbox_bom_drift(actor=actor)
+
+    def task_outcome(self, task_id: str) -> JsonDict:
+        from mac.task_outcomes import task_outcome
+
+        return task_outcome(self.store, self.get_task(task_id).id)
+
+    def record_task_acceptance(
+        self, task_id: str, *, evidence_id: str, reason: str, actor: str, accepted: bool = True
+    ) -> JsonDict:
+        from mac.task_outcomes import record_acceptance
+
+        return record_acceptance(
+            self.store,
+            self.get_task(task_id).id,
+            evidence_id=evidence_id,
+            reason=reason,
+            actor=actor,
+            accepted=accepted,
+        )
+
+    def task_outcome_cohort(
+        self, *, project: Optional[str] = None, since_hours: float = 24, limit: int = 100
+    ) -> JsonDict:
+        from mac.task_outcomes import outcome_cohort
+
+        return outcome_cohort(self.store, project=project, since_hours=since_hours, limit=limit)
 
     def task_detail(
         self,
@@ -9511,6 +10339,23 @@ class ControlPlane:
             for row in rows
         ]
 
+    def list_news(
+        self,
+        *,
+        after_sequence: Optional[int] = None,
+        project: Optional[str] = None,
+        limit: int = 100,
+    ) -> JsonDict:
+        """Significant task and agent lifecycle facts for human observers."""
+        from mac.news_feed import build_news_feed
+
+        return build_news_feed(
+            self,
+            after_sequence=after_sequence,
+            project=project,
+            limit=limit,
+        )
+
     # Observability: thin facade over ``self.observability`` so existing
     # callers keep working. New code should call ``cp.observability.<method>``
     # directly.
@@ -10818,7 +11663,7 @@ class ControlPlane:
             TaskState.CANCELLED.value,
         }:
             raise ValidationError("operator close only supports completed or cancelled")
-        return self._transition_task_impl(
+        result = self._transition_task_impl(
             task_id,
             target,
             actor,
@@ -10828,6 +11673,9 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
+        if target == TaskState.CANCELLED.value:
+            self._evict_merge_queue_entry_for_cancelled_task(task_id)
+        return result
 
     def transition_task(
         self,
@@ -10839,7 +11687,7 @@ class ControlPlane:
         lease_id: Optional[str] = None,
         drain_outbox: bool = True,
     ) -> Task:
-        return self._transition_task_impl(
+        result = self._transition_task_impl(
             task_id,
             target_state,
             actor,
@@ -10849,6 +11697,30 @@ class ControlPlane:
             drain_outbox=drain_outbox,
             conn=None,
         )
+        if _state_value(target_state) == TaskState.CANCELLED.value:
+            self._evict_merge_queue_entry_for_cancelled_task(task_id)
+        return result
+
+    def _evict_merge_queue_entry_for_cancelled_task(self, task_id: str) -> None:
+        """Clear this task's live merge-queue entry, if it has one.
+
+        A cancelled task will never call ``claim_slot`` again, so an entry it
+        already holds -- often still at ``attempts == 0`` because it was
+        cancelled before winning a slot -- would otherwise sit in the queue
+        forever with no reaper able to touch it (``stalled_entries`` requires
+        ``attempts >= 1``). Left alone, that is a permanent head-of-line block
+        for every entry behind it. Best-effort: a queue lookup failure must
+        never block the cancellation itself.
+        """
+
+        try:
+            self._native_merge_queue().evict_for_task(task_id, reason="owning task was cancelled")
+        except Exception:  # noqa: BLE001 - cancellation must still succeed.
+            logging.getLogger("mac.merge_queue").warning(
+                "failed to evict merge queue entry for cancelled task %s",
+                task_id,
+                exc_info=True,
+            )
 
     def request_task_input(
         self,
@@ -11065,8 +11937,9 @@ class ControlPlane:
             "reason": str(reason or "").strip() or "operator stopped the task",
             "previous_state": task.state,
             "was_in_flight": task.state in self.IN_FLIGHT_TASK_STATES,
-            # Recorded, never assumed. The worker confirms by releasing the
-            # lease; until then a process may still be running against this.
+            # Revoking assignment authority is not proof that the OS process
+            # has exited. The worker observes the revoked lease and reports
+            # termination separately; until then it may still be running.
             "abort_confirmed": False,
         }
         if task.owner_agent_id:
@@ -11129,6 +12002,7 @@ class ControlPlane:
             task_id,
             metadata={**metadata, "restart_count": restarts},
             actor=actor,
+            _preserve_control_plane_publication_metadata=True,
         )
         return self._transition_task_internal(
             task_id, target, actor, detail, drain_outbox=drain_outbox
@@ -11553,13 +12427,28 @@ class ControlPlane:
                 and reviewed_sha == head_sha
                 and integration.get("squash_merged") is True
             )
+            # The hourly forge reconciler observes GitHub's merged PR record
+            # directly. That proves the reviewed head's content landed even
+            # when the checkout no longer has enough graph history to
+            # distinguish merge, squash, and rebase strategies.
+            proof_forge_merged = (
+                _GIT_SHA_RE.match(reviewed_sha)
+                and reviewed_sha == head_sha
+                and integration.get("forge_merged") is True
+                and int(integration.get("pull_request_number") or 0) > 0
+            )
             if (
                 str(integration.get("status") or "").strip().lower() in {"pass", "passed"}
                 and integration.get("remote_verified") is True
                 and str(integration.get("canonical_ref") or "").strip() == canonical_ref
                 and _GIT_SHA_RE.match(head_sha)
                 and _GIT_SHA_RE.match(proof_sha)
-                and (head_sha == proof_sha or proof_carries_reviewed_head or proof_squash_merged)
+                and (
+                    head_sha == proof_sha
+                    or proof_carries_reviewed_head
+                    or proof_squash_merged
+                    or proof_forge_merged
+                )
             ):
                 return
         raise ValidationError(
@@ -11573,6 +12462,8 @@ class ControlPlane:
         task_id: str,
         agent_id: str,
         lease_seconds: int = 900,
+        *,
+        allow_retry_exclusion_reuse: bool = False,
     ) -> JsonDict:
         """Atomically commit an allocator-v2 task/agent proposal.
 
@@ -11590,6 +12481,7 @@ class ControlPlane:
             sync_beads=False,
             assignment_allocator="authoritative-hub",
             authoritative_allocator_v2=True,
+            allow_retry_exclusion_reuse=allow_retry_exclusion_reuse,
         )
         agent = self.get_agent(agent_id)
         return {
@@ -11608,6 +12500,7 @@ class ControlPlane:
         allow_cooperative_reuse: bool = False,
         assignment_allocator: str = "control-plane",
         authoritative_allocator_v2: bool = False,
+        allow_retry_exclusion_reuse: bool = False,
     ) -> Tuple[Task, Lease]:
         lease_seconds = self._validated_task_lease_seconds(lease_seconds)
         task = self.get_task(task_id)
@@ -11874,6 +12767,7 @@ class ControlPlane:
                     project_paused=project_paused,
                     break_glass=break_glass,
                     role_reason=role_reason,
+                    allow_retry_exclusion_reuse=allow_retry_exclusion_reuse,
                 )
             else:
                 ineligible_reason = self._claim_snapshot_ineligibility_reason(
@@ -13669,6 +14563,15 @@ class ControlPlane:
             actor_ids.append(lease.delegated_agent_id)
         actor_ids = list(dict.fromkeys(actor_ids))
         placeholders = ", ".join("?" for _ in actor_ids)
+        # Lease timestamps come from PostgreSQL's authority clock while
+        # observability/evidence timestamps are generated by the hub process.
+        # A small host/DB skew can therefore make telemetry written after a
+        # claim appear microscopically earlier than lease.created_at. Bound the
+        # skew allowance tightly; task id + attempt actor still prevent another
+        # task's telemetry from resetting this agent's consecutive-expiry count.
+        telemetry_since = (parse_time(lease.created_at) - timedelta(seconds=5)).isoformat(
+            timespec="microseconds"
+        )
         evidence = self.store.query_one(
             """
             SELECT id
@@ -13680,7 +14583,7 @@ class ControlPlane:
             LIMIT 1
             """
             % placeholders,
-            tuple([lease.task_id, *actor_ids, lease.created_at]),
+            tuple([lease.task_id, *actor_ids, telemetry_since]),
         )
         if evidence is not None:
             return True
@@ -13694,7 +14597,7 @@ class ControlPlane:
               AND created_at >= ?
             ORDER BY created_at
             """,
-            ("executor.started", "task", lease.task_id, lease.created_at),
+            ("executor.started", "task", lease.task_id, telemetry_since),
         )
         actors = set(actor_ids)
         for row in rows:
@@ -16439,6 +17342,19 @@ class ControlPlane:
 
     def _ensure_agent_nap_schedule(self, agent_id: str, *, actor: str) -> None:
         agent = self.get_agent(agent_id)
+        if self._agent_is_virtual(agent.id):
+            schedule = self.get_nap_schedule(agent.id)
+            if schedule is not None and schedule.enabled:
+                # Keep the old row and audit history, but retire the worker
+                # schedule that earlier versions assigned to this hub identity.
+                self.configure_nap(
+                    agent.id,
+                    offset_minutes=schedule.offset_minutes,
+                    window_minutes=schedule.window_minutes,
+                    enabled=False,
+                    actor=actor or agent.id,
+                )
+            return
         if agent.status == AgentStatus.OFFLINE.value:
             return
         if self.get_nap_schedule(agent.id) is None:
@@ -17420,6 +18336,8 @@ class ControlPlane:
         )
         due: List[JsonDict] = []
         for row in rows:
+            if self._agent_is_virtual(row["agent_id"]):
+                continue
             offset = int(row["offset_minutes"] or 0) % NAP_WINDOW_MINUTES
             window = int(row["window_minutes"] or 15)
             day_start = as_of_dt.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -17763,7 +18681,7 @@ class ControlPlane:
         rows = self.store.query_all(
             """
             SELECT * FROM agents
-            WHERE status != ? AND last_seen_at <= ?
+            WHERE status != ? AND deleted_at IS NULL AND last_seen_at <= ?
             ORDER BY last_seen_at, id
             """,
             (AgentStatus.OFFLINE.value, cutoff),
@@ -18687,8 +19605,14 @@ class ControlPlane:
 
     # AgentBus broadcast channel: fleet-readable typed events.
 
-    def agentbus_roll_call(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.agentbus_broadcast.roll_call(*args, **kwargs)
+    def agentbus_roll_call(self, agent_id: str = "", *, include_departed: bool = False) -> JsonDict:
+        # agent_id is accepted-and-ignored here so CLI call sites are
+        # identical in local and hub (RemoteDispatch) mode: the hub route is
+        # agent-scoped for authorization only (POST /agents/{id}/...), and
+        # in-process ControlPlane calls carry no per-caller identity to
+        # authorize against.
+        del agent_id
+        return self.agentbus_broadcast.roll_call(include_departed=include_departed)
 
     def publish_agentbus_broadcast(self, *args: Any, **kwargs: Any) -> JsonDict:
         agent_id = self._positional_or_kw(args, kwargs, "agent_id", 0)
@@ -20457,6 +21381,26 @@ class ControlPlane:
             and (not agent_pr_base or agent_pr_base == canonical_branch)
         )
         if reuse_agent_pr:
+            # The evidence's cached PR reference can be stale: a task-id
+            # marker collision in the reuse lookup (fixed going forward by
+            # requiring a head-branch match, but not retroactively for
+            # evidence recorded before that fix) can leave this number
+            # pointing at a branch other than the one just pushed. A
+            # GitHub PR's head branch is immutable once created, so
+            # reusing a mismatched number is not a retry -- it is a
+            # permanent, silent no-op: the push lands on ``branch``, the
+            # recorded PR keeps whatever branch it always had, and every
+            # future publish attempt "succeeds" at reusing the wrong PR
+            # forever while genuinely conflicting against main. Verify the
+            # live head before trusting the cached reference.
+            observed_pr_head = _gitops.pull_request_state(api_url, agent_pr_number)
+            if (
+                observed_pr_head.get("known")
+                and observed_pr_head.get("head_ref")
+                and observed_pr_head.get("head_ref") != branch
+            ):
+                reuse_agent_pr = False
+        if reuse_agent_pr:
             pr = _gitops.PullRequestResult(
                 host=str(agent_pr.get("forge") or ""),
                 number=agent_pr_number,
@@ -21057,6 +22001,25 @@ class ControlPlane:
                     ).get("stdout")
                     or ""
                 ).strip()
+                # Same rationale as reconcile_front below, for a different way an
+                # entry can stop moving: it wins its slot, tests clean, and then
+                # every publication attempt fails for a reason retrying cannot
+                # fix (its branch has no commits against main because another
+                # entry already carried the same change home first). It is
+                # never evicted on its own -- claim_slot() only increments
+                # attempts, it does not judge them -- so it sits at the front
+                # forever, burning every publish attempt for entries behind it
+                # too. evict_exhausted() is the reaper for exactly this; it was
+                # defined but never called from anywhere, so it never ran.
+                evicted_stalled = queue.evict_exhausted(queue_repository, canonical_branch)
+                if evicted_stalled:
+                    commands.append(
+                        {
+                            "name": "merge_queue_stalled_reaper",
+                            "attempt": attempt,
+                            "evicted_entry_ids": evicted_stalled,
+                        }
+                    )
                 commands.append(
                     {
                         "name": "merge_queue_front_recovery",
@@ -21263,7 +22226,23 @@ class ControlPlane:
             else:
                 publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
                 if publication_test_runner is None:
-                    publication_test_runner = self._hub_verify_run_contract_test
+                    # The projected-merge gate reuses the hub_verify sandbox
+                    # runner, which also needs bootstrap.command run before
+                    # test.command (see _hub_verify_run_contract_test) -- but
+                    # ContractTestRunner's signature has no bootstrap slot, so
+                    # curry it in here rather than widening that protocol.
+                    run_contract_test = self._hub_verify_run_contract_test
+                    publication_bootstrap_command = _repository_contract_bootstrap_command_for_task(
+                        task
+                    )
+
+                    def publication_test_runner(
+                        repo_dir: str, branch: str, head_sha: str, command: str
+                    ) -> Tuple[int, str]:
+                        return run_contract_test(
+                            repo_dir, branch, head_sha, command, publication_bootstrap_command
+                        )
+
                 contract_gate = validate_projected_merge_contract(
                     str(root),
                     projected_base_sha,
@@ -22264,6 +23243,14 @@ class ControlPlane:
             }
 
         review = self._default_review_for_task(task_id)
+        if (
+            review is not None
+            and review.status == ReviewStatus.APPROVED.value
+            and task.state == TaskState.NEEDS_REVIEW.value
+        ):
+            # A recovered submission needs its own verdict. Preserve the old
+            # approval as history and use normal selection for a fresh review.
+            review = None
         if review is not None and review.status == ReviewStatus.PENDING.value:
             reviewer_issue = self._default_reviewer_unavailable_reason_for_id(
                 task,
@@ -22476,6 +23463,15 @@ class ControlPlane:
                 assignment_detail,
                 actor,
             )
+        elif (
+            review.status == ReviewStatus.PENDING.value
+            and task.state == TaskState.NEEDS_REVIEW.value
+        ):
+            # A recovered attempt can retain its older pending review. Reuse
+            # the transactional request path so reviewer evidence is authorized
+            # before verification starts, without assigning a second review.
+            review = self.request_review(task_id, review.reviewer_agent_id, actor=actor)
+            task = self.get_task(task_id)
 
         if review.status == ReviewStatus.PENDING.value:
             # mac-jqb: the workflow no longer self-approves. It requires
@@ -22540,9 +23536,13 @@ class ControlPlane:
                     # to hub-verify; with the semantic reviewer removed that
                     # path approves from the already-validated executor
                     # evidence instead of nudging an LLM.
-                    hub_verifiable = self._hub_verify_repo_info(task, evidence) is not None
+                    hub_verifiable = self._hub_verify_repo_info(
+                        task, evidence
+                    ) is not None or self._read_only_report_needs_hub_verify(task, evidence)
                     wait_for_hub = hub_verifiable and (
-                        not is_experiment or not _semantic_reviewer_enabled()
+                        self._read_only_report_needs_hub_verify(task, evidence)
+                        or not is_experiment
+                        or not _semantic_reviewer_enabled()
                     )
                     if wait_for_hub:
                         self._record_default_review_observation(
@@ -22580,7 +23580,11 @@ class ControlPlane:
                 # Repo changes are never rubber-stamped. Even when the
                 # verifier cannot resolve a clone target yet, stay pending
                 # rather than approving a pushed branch without a test run.
-                hub_verifiable = repo_info is not None or evidence_type == "repo_change"
+                hub_verifiable = (
+                    repo_info is not None
+                    or evidence_type == "repo_change"
+                    or self._read_only_report_needs_hub_verify(task, evidence)
+                )
                 if hub_verifiable:
                     self._record_default_review_observation(
                         task_id,
@@ -22735,13 +23739,25 @@ class ControlPlane:
                 # and fall through to publication.
                 pass
             elif self._verdict_value(verdict_evidence) == "rejected":
-                review = self.submit_review(
-                    review.id,
-                    ReviewStatus.REJECTED.value,
-                    review.reviewer_agent_id,
-                    reason="reviewer rejected via signed verdict evidence",
-                    evidence_id=verdict_evidence.id,
-                )
+                try:
+                    review = self.submit_review(
+                        review.id,
+                        ReviewStatus.REJECTED.value,
+                        review.reviewer_agent_id,
+                        reason="reviewer rejected via signed verdict evidence",
+                        evidence_id=verdict_evidence.id,
+                    )
+                except ValidationError:
+                    # A concurrent advancer (the event-driven consumer and the
+                    # periodic sweep both call this function) may have already
+                    # submitted the same verdict between our stale read and
+                    # this write. If the review already landed in the state we
+                    # were about to write, this is a duplicate, not a failure
+                    # -- fall through with the winner's row instead of
+                    # dropping the advancement on the floor.
+                    review = self.reviews.get_review(review.id)
+                    if review.status != ReviewStatus.REJECTED.value:
+                        raise
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.rejected",
@@ -22765,13 +23781,20 @@ class ControlPlane:
                     evidence_id=verdict_evidence.id,
                 )
             else:
-                review = self.submit_review(
-                    review.id,
-                    ReviewStatus.APPROVED.value,
-                    review.reviewer_agent_id,
-                    reason="reviewer approved via signed verdict evidence",
-                    evidence_id=verdict_evidence.id,
-                )
+                try:
+                    review = self.submit_review(
+                        review.id,
+                        ReviewStatus.APPROVED.value,
+                        review.reviewer_agent_id,
+                        reason="reviewer approved via signed verdict evidence",
+                        evidence_id=verdict_evidence.id,
+                    )
+                except ValidationError:
+                    # See the rejected branch above: a concurrent advancer may
+                    # have already submitted this same approval.
+                    review = self.reviews.get_review(review.id)
+                    if review.status != ReviewStatus.APPROVED.value:
+                        raise
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.approved",
@@ -24159,6 +25182,26 @@ class ControlPlane:
     def _dependency_state_satisfies_join(state: str, metadata: Any, join: str) -> bool:
         if state == TaskState.COMPLETED.value:
             return True
+        if state == TaskState.CANCELLED.value:
+            # A cancellation whose disposition asserts the underlying goal was
+            # met elsewhere (the same AUTO_CLEANUP_DISPOSITIONS set governing
+            # repository-ref cleanup: duplicate/superseded/not_applicable)
+            # satisfies even the strict "all_success" join -- it is not a
+            # failure to route around, it IS the resolution. Confirmed live:
+            # an onboarding task was closed --cancelled --disposition
+            # not_applicable after its repository contract was registered
+            # through a different, equally valid path; its 10 dependents had
+            # no join-policy opt-in (the default is "all_success") and stayed
+            # permanently blocked/waiting until dependencies were cleared by
+            # hand. A genuine "this isn't happening" cancellation
+            # (disposition=preserve, or none) still only satisfies
+            # "all_settled" below, unchanged.
+            lifecycle = ensure_json_object(
+                ensure_json_object(metadata).get("repository_ref_lifecycle")
+            )
+            disposition = str(lifecycle.get("disposition") or "").strip().lower()
+            if disposition in AUTO_CLEANUP_DISPOSITIONS:
+                return True
         if join != "all_settled":
             return False
         if state in {
@@ -25628,6 +26671,13 @@ class ControlPlane:
         declared_egress = self._project_declared_egress(task.project)
         if declared_egress:
             metadata["egress_contract"] = declared_egress
+        # Publication is resolved by the hub from task/project/fleet policy at
+        # assignment time. Native executors cannot safely reconstruct project
+        # policy from the task's durable metadata, and must not interpret a
+        # model-written preliminary manifest as an opt-out.
+        runtime = ensure_json_object(metadata.get("runtime"))
+        runtime["publication_target"] = self._default_publication_target(task)
+        metadata["runtime"] = runtime
         payload["metadata"] = metadata
         authorization = self._claimed_break_glass_authorization(task.id, lease.agent_id, lease.id)
         if authorization is None:
@@ -25910,6 +26960,7 @@ class ControlPlane:
         project_paused: bool,
         break_glass: Optional[BreakGlassAuthorization],
         role_reason: Optional[str],
+        allow_retry_exclusion_reuse: bool = False,
     ) -> Optional[str]:
         """Re-check only allocator-v2 hard constraints under transaction locks.
 
@@ -25950,11 +27001,15 @@ class ControlPlane:
             return None
 
         metadata = ensure_json_object(task.metadata)
-        excluded: set[str] = set()
-        for key in ("excluded_agent_ids", "retry_excluded_agent_ids"):
-            values = metadata.get(key)
-            if isinstance(values, list):
-                excluded.update(str(value) for value in values if str(value))
+        excluded = (
+            {str(value) for value in metadata.get("excluded_agent_ids", []) if str(value)}
+            if isinstance(metadata.get("excluded_agent_ids"), list)
+            else set()
+        )
+        if not allow_retry_exclusion_reuse:
+            retry_excluded = metadata.get("retry_excluded_agent_ids")
+            if isinstance(retry_excluded, list):
+                excluded.update(str(value) for value in retry_excluded if str(value))
         if agent.id in excluded:
             return "explicit_agent_excluded"
         target_agent_id = str(metadata.get("target_agent_id") or "").strip()
@@ -26644,6 +27699,19 @@ class ControlPlane:
                         "verification.signature does not verify against signed_by's attestation key"
                     ],
                 }
+        if self._read_only_report_needs_hub_verify(task, evidence):
+            if (
+                not _hub_review_verify_enabled()
+                or self._hub_verify_repo_info(task, evidence) is None
+            ):
+                return {
+                    "valid": False,
+                    "reason": "report_hub_verification_unavailable",
+                    "evidence_type": evidence_type,
+                    "problems": [
+                        "read-only report lacks a valid pending Linux verification contract"
+                    ],
+                }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
             # Option C — deferred test gate: when hub verify is enabled and the
@@ -26941,6 +28009,21 @@ class ControlPlane:
         )
         return not has_passing
 
+    @staticmethod
+    def _read_only_report_needs_hub_verify(task: Task, evidence: Evidence) -> bool:
+        if not metadata_declares_read_only_report_repository(task.metadata):
+            return False
+        manifest = ensure_json_object(evidence.metadata.get("verification"))
+        tests = manifest.get("tests")
+        return isinstance(tests, list) and any(
+            isinstance(item, dict)
+            and (
+                item.get("status") == "deferred"
+                or item.get("execution_environment") == "hub_verify_pending"
+            )
+            for item in tests
+        )
+
     def _hub_verify_repo_info(
         self, task: Task, executor_evidence: Evidence
     ) -> Optional[Dict[str, Any]]:
@@ -26959,6 +28042,63 @@ class ControlPlane:
         meta = ensure_json_object(executor_evidence.metadata)
         verification = ensure_json_object(meta.get("verification"))
         repo = ensure_json_object(verification.get("repo"))
+        if self._read_only_report_needs_hub_verify(task, executor_evidence):
+            contract = _nested_json_object(
+                task.metadata, "execution_contract", "repository_contract"
+            )
+            access = ensure_json_object(verification.get("repository_access"))
+            remote = str(contract.get("canonical_remote_url") or "").strip()
+            branch = str(
+                contract.get("default_branch") or contract.get("canonical_branch") or ""
+            ).strip()
+            command = str(ensure_json_object(contract.get("test")).get("command") or "").strip()
+            if (
+                verification.get("evidence_type") != "operator_result"
+                or access.get("schema") != "mac.report_repository_access.v1"
+                or access.get("mode") != "read_only"
+                or not remote
+                or _gitops.strip_git_remote_auth(remote) != remote
+                or not branch
+                or not command
+                or access.get("canonical_remote_url") != remote
+                or access.get("canonical_branch") != branch
+                or not _GIT_SHA_RE.fullmatch(str(access.get("base_sha") or ""))
+                or not _GIT_SHA_RE.fullmatch(str(access.get("base_tree") or ""))
+                or verification.get("tests")
+                != [
+                    {
+                        "name": "repository contract test",
+                        "command": command,
+                        "returncode": None,
+                        "status": "deferred",
+                        "execution_environment": "hub_verify_pending",
+                        "stdout": "",
+                        "stderr": "",
+                    }
+                ]
+            ):
+                return None
+            return {
+                "remote_url": remote,
+                "branch": branch,
+                "head_sha": access["base_sha"],
+                "files_changed": [],
+                "test_command": command,
+                "bootstrap_command": str(
+                    ensure_json_object(contract.get("bootstrap")).get("command") or ""
+                ).strip(),
+                "repository_access": {
+                    key: access[key]
+                    for key in (
+                        "schema",
+                        "mode",
+                        "canonical_remote_url",
+                        "canonical_branch",
+                        "base_sha",
+                        "base_tree",
+                    )
+                },
+            }
         # The task contract is the canonical, credential-free source of truth.
         # Executor evidence may contain a display-redacted push URL such as
         # ``https://x-access-token:<redacted>@github.com/...``; cloning that
@@ -27003,191 +28143,29 @@ class ControlPlane:
         }
 
     def _hub_verify_run_contract_test(
-        self, remote_url: str, branch: str, head_sha: str, test_command: str
+        self,
+        remote_url: str,
+        branch: str,
+        head_sha: str,
+        test_command: str,
+        bootstrap_command: str = "",
+        *,
+        prepared_report: Optional[Mapping[str, Any]] = None,
+        verifier_identity: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, str]:
-        """Clone the pushed branch and run the contract test in an isolated
-        OpenShell sandbox on the hub. Returns (returncode, tail_of_output).
-
-        Isolation is mandatory: this executes pushed (agent-authored) test code
-        on the control-plane node, so it must not run on the hub host. Injected
-        via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
-        ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+        """Independently verify the pushed branch on the Linux gateway."""
         runner = getattr(self, "_hub_verify_runner", None)
         if runner is not None:
             return runner(remote_url, branch, head_sha, test_command)
-        from . import gitops as _gitops
-
-        # Clean URL + credential in the child ENVIRONMENT. Embedding it in the
-        # URL put the whole token in argv, where `ps` exposed it to every user
-        # on the hub -- observed live on 2026-08-11.
-        auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
-        openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
-        image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "localhost/mac-hermes:net").strip()
-        policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
-        try:
-            # 1200s could not cover even a scoped run once cloning, uploading
-            # and dependency bootstrap are counted: the scoped gate alone takes
-            # ~15 minutes on this repository. A cap the work cannot meet reads
-            # as a gate failure, which is how a timeout came to look like an
-            # OpenShell fault for a day.
-            timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "2400"))
-        except ValueError:
-            timeout = 1200.0
-        if _truthy_env("MAC_OPENSHELL_GC"):
-            try:
-                from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
-
-                try:
-                    stale_after = float(
-                        os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
-                    )
-                except ValueError:
-                    stale_after = 86400.0
-                reconcile_stale_sandboxes(
-                    openshell_bin=openshell,
-                    stale_after_seconds=max(0.0, stale_after),
-                    include_legacy=True,
-                    apply=True,
-                )
-            except Exception as exc:  # noqa: BLE001 - verification remains guarded
-                logging.getLogger(__name__).warning(
-                    "OpenShell sandbox GC failed before hub verification: %s", exc
-                )
-        import uuid as _uuid
-
-        tmp = Path(tempfile.mkdtemp(prefix="mac-hubverify-"))
-        # Unique per invocation: the review sweep may re-tick while a verify is
-        # still running, and a head_sha-derived name collides ("already
-        # exists"). The in-flight guard in the caller also prevents overlap,
-        # but a unique name is the belt-and-suspenders.
-        name = "mac-hubverify-%s" % _uuid.uuid4().hex[:16]
-        try:
-            clone = subprocess.run(
-                # Shallow single-branch clone keeps the upload into the sandbox
-                # small (a deep clone's history broke the tar-over-ssh upload
-                # with a broken pipe).
-                [
-                    "git",
-                    "clone",
-                    "--branch",
-                    branch,
-                    "--depth",
-                    "1",
-                    "--single-branch",
-                    "--",
-                    auth_url,
-                    str(tmp / "repo"),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                check=False,
-                env={**os.environ, **auth_env} if auth_env else None,
-                stdin=subprocess.DEVNULL,
-            )
-            if clone.returncode != 0:
-                return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
-                    (clone.stderr or clone.stdout or "").strip()
-                )[-800:]
-            cloned_head = subprocess.run(
-                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-            observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
-            if observed_head != head_sha:
-                return 1, (
-                    "hub verify clone HEAD mismatch: expected %s, observed %s"
-                    % (head_sha, observed_head or "<unresolved>")
-                )
-            # Upload ONE tar file and extract inside the sandbox. Uploading the
-            # directory tree loses .git in transit (OpenShell's upload drops
-            # it), which failed every git-at-checkout contract test — and, once
-            # the exit-97 probe landed, every verify outright with
-            # "/sandbox/repo is not a usable git repo after upload". A single
-            # archive survives any upload path verbatim, .git included.
-            tar = subprocess.run(
-                ["tar", "czf", str(tmp / "repo.tgz"), "-C", str(tmp), "repo"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-            if tar.returncode != 0:
-                return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
-                    -800:
-                ]
-            subprocess.run(
-                [openshell, "sandbox", "delete", name],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            argv = [openshell, "sandbox", "create", "--no-auto-providers"]
-            if policy:
-                argv += ["--policy", policy]
-            argv += [
-                "--name",
-                name,
-                "--label",
-                "mac.owner=mac",
-                "--label",
-                "mac.kind=hubverify",
-                "--label",
-                "mac.pid=%d" % os.getpid(),
-                "--label",
-                "mac.keep=false",
-                "--from",
-                image,
-                "--env",
-                "HOME=/tmp",
-                # OpenShell's supervisor resets PATH on fresh create/exec
-                # commands instead of preserving the image ENV. Pass the
-                # sandbox-owned runtime path explicitly; never inherit the
-                # control-plane host's PATH.
-                "--env",
-                "PATH=%s" % SANDBOX_BASE_PATH,
-                "--upload",
-                "%s:%s" % (str(tmp / "repo.tgz"), "/sandbox"),
-                "--",
-                "/bin/bash",
-                "-c",
-                "export PATH=%s; hash -r 2>/dev/null || true; "
-                "cd /sandbox && tar xzf repo.tgz && %scd /sandbox/repo && %s"
-                % (
-                    SANDBOX_BASE_PATH,
-                    _HUB_VERIFY_GIT_PREFLIGHT,
-                    test_command or "scripts/run-contract-tests.sh",
-                ),
-            ]
-            try:
-                proc = subprocess.run(
-                    argv, capture_output=True, text=True, timeout=timeout, check=False
-                )
-                out = (proc.stdout or "") + (proc.stderr or "")
-                # Head AND tail. A blind tail cannot see the verdict:
-                # run-contract-tests.sh prints the pytest failure first, then
-                # an unconditional whole-repo coverage report (~14KB, one row
-                # per source file), then a coverage summary whose floors both
-                # PASSED, and only then exits with the saved pytest status.
-                # Keeping 2000 trailing bytes therefore kept the coverage
-                # table and OpenShell's generic "ssh exited with status 1" --
-                # so a real rejection was unclassifiable by construction and
-                # retried forever (six tasks, ~6 hours, 2026-08-20).
-                return int(proc.returncode), _hub_verify_output_excerpt(out)
-            finally:
-                subprocess.run(
-                    [openshell, "sandbox", "delete", name],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    check=False,
-                )
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        return run_repository_contract_test_in_openshell(
+            remote_url,
+            branch,
+            head_sha,
+            test_command,
+            bootstrap_command,
+            prepared_report=prepared_report,
+            verifier_identity=verifier_identity,
+        )
 
     def _run_hub_review_verification(
         self, task: Task, review: Review, executor_evidence: Evidence, actor: str
@@ -27211,7 +28189,11 @@ class ControlPlane:
         if current_task.state == TaskState.COMPLETED.value:
             return None
         assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
+        if (
+            assignment.get("schema") == "mac.review_experiment.v1"
+            and _semantic_reviewer_enabled()
+            and not self._read_only_report_needs_hub_verify(task, executor_evidence)
+        ):
             # Opt-in only. The default review no longer has a semantic
             # reviewer, so experiments take the same hub-verify path as
             # every other repository task.
@@ -27372,9 +28354,14 @@ class ControlPlane:
         if manifest_review_id and manifest_review_id != review_id:
             return False
         repo = manifest.get("repo")
-        if not isinstance(repo, dict):
-            return False
-        return str(repo.get("head_sha") or "").strip() == head_sha
+        if isinstance(repo, dict):
+            return str(repo.get("head_sha") or "").strip() == head_sha
+        access = ensure_json_object(manifest.get("repository_access"))
+        return (
+            access.get("schema") == "mac.report_repository_access.v1"
+            and access.get("mode") == "read_only"
+            and access.get("base_sha") == head_sha
+        )
 
     def _existing_hub_review_verification_evidence(
         self,
@@ -27473,17 +28460,36 @@ class ControlPlane:
         # and process-E2E canaries, and itself falls back to the full
         # suite for broad or uncertain changes. This keeps the independent hub
         # environment without unconditionally duplicating mainline coverage.
-        test_command = self._hub_review_test_command(task, info)
+        report_access = info.get("repository_access")
+        test_command = (
+            info["test_command"] if report_access else self._hub_review_test_command(task, info)
+        )
+        bootstrap_command = (
+            info["bootstrap_command"]
+            if report_access
+            else _repository_contract_bootstrap_command_for_task(task)
+        )
+        verifier_identity: Dict[str, Any] = {}
+        report_options = (
+            {"prepared_report": report_access, "verifier_identity": verifier_identity}
+            if report_access
+            else {}
+        )
         try:
             returncode, output = self._hub_verify_run_contract_test(
-                info["remote_url"], info["branch"], info["head_sha"], test_command
+                info["remote_url"],
+                info["branch"],
+                info["head_sha"],
+                test_command,
+                bootstrap_command,
+                **report_options,
             )
         except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
             self._record_default_review_observation(
                 task.id,
                 "workflow.default_review.hub_verify_error",
                 "warning",
-                {"review_id": review.id, "error": str(exc)[:300]},
+                {"review_id": review.id, **_hub_verify_exception_detail(exc)},
                 actor,
             )
             return None
@@ -27606,6 +28612,11 @@ class ControlPlane:
             ],
             "signed_by": review.reviewer_agent_id,
         }
+        if report_access:
+            manifest.pop("repo")
+            manifest["repository_access"] = dict(report_access)
+            manifest["verifier_runtime"] = verifier_identity
+            manifest["tests"][0]["execution_environment"] = "openshell_sandbox"
         if verdict == "rejected":
             # Lead with the command and its exit status. The excerpt that
             # follows is thousands of lines of mostly-PASSING output -- a
@@ -27922,6 +28933,28 @@ class ControlPlane:
                     "verdict %s cannot resolve executor verification manifest" % evidence.id
                 )
                 continue
+            if self._read_only_report_needs_hub_verify(reviewed_task, executor_evidence):
+                info = self._hub_verify_repo_info(reviewed_task, executor_evidence)
+                tests = manifest.get("tests")
+                if (
+                    info is None
+                    or evidence.metadata.get("hub_verified") is not True
+                    or manifest.get("verified_by") != "hub_review_verifier_v1"
+                    or manifest.get("repository_access") != info["repository_access"]
+                    or not isinstance(tests, list)
+                    or len(tests) != 1
+                    or not isinstance(tests[0], dict)
+                    or tests[0].get("command") != info["test_command"]
+                    or tests[0].get("execution_environment") != "openshell_sandbox"
+                    or (
+                        manifest.get("verdict") == "approved"
+                        and (tests[0].get("returncode") != 0 or tests[0].get("status") != "pass")
+                    )
+                ):
+                    problems.append(
+                        "verdict %s lacks independent report contract verification" % evidence.id
+                    )
+                    continue
             verdict = str(manifest.get("verdict") or "").strip().lower()
             if verdict not in {"approved", "rejected"}:
                 problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
@@ -28350,7 +29383,11 @@ class ControlPlane:
         if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
             return None
         assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
+        if (
+            assignment.get("schema") == "mac.review_experiment.v1"
+            and _semantic_reviewer_enabled()
+            and not metadata_declares_read_only_report_repository(task.metadata)
+        ):
             return None
         name = (
             os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()
@@ -28458,13 +29495,15 @@ class ControlPlane:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
-        if metadata_declares_read_only_report_repository(
-            task.metadata
-        ) and not agent_has_read_only_report_repository_executor(agent.resources):
-            return "reviewer_report_repository_executor_missing"
         hub_review_verifier = _hub_review_verify_enabled() and self._agent_is_hub_review_verifier(
             agent
         )
+        if (
+            metadata_declares_read_only_report_repository(task.metadata)
+            and not hub_review_verifier
+            and not agent_has_read_only_report_repository_executor(agent.resources)
+        ):
+            return "reviewer_report_repository_executor_missing"
         if not hub_review_verifier and not self._agent_seen_recently(
             agent, self._default_reviewer_stale_after_seconds()
         ):

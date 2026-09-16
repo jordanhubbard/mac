@@ -39,14 +39,39 @@ for brew_bin in \
   /opt/homebrew/bin \
   /usr/local/bin; do
   if [ -x "$brew_bin/pg_isready" ] || [ -x "$brew_bin/pg_ctl" ]; then
-    PATH="$brew_bin:${PATH:-}"
+    # Preserve explicit caller overrides (including CI/test shims for docker
+    # and podman).  These directories only fill commands missing from PATH;
+    # putting them first can silently bypass an operator's chosen executable.
+    case ":${PATH:-}:" in
+      *":$brew_bin:"*) ;;
+      *) PATH="${PATH:+${PATH}:}$brew_bin" ;;
+    esac
   fi
 done
 export PATH
 
 emit() { echo "export MAC_TEST_PG_URL=$1"; }
 
-# 1. Already configured -- respect it.
+require_sql() {
+  # pg_isready only proves the server accepts connections. A cluster with
+  # missing storage can pass that probe while every SQL connection fails.
+  # Probe the same user, database and TCP endpoint that we will advertise.
+  local client="$1"
+  shift
+  if ! command -v "$client" >/dev/null 2>&1; then
+    echo "error: psql is required to verify test PostgreSQL SQL readiness." >&2
+    exit 1
+  fi
+  if ! PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=5000' \
+      "$client" -X -w -qAt -v ON_ERROR_STOP=1 "$@" -c 'SELECT 1' >/dev/null 2>&1; then
+    echo "error: test PostgreSQL failed SQL readiness for the requested database." >&2
+    echo "       Check database existence, authentication and server storage before retrying." >&2
+    exit 1
+  fi
+}
+
+# 1. An explicit DSN is caller configuration, not a discovered readiness result.
+# Preserve it verbatim; connection validation belongs to the caller in this path.
 if [ -n "${MAC_TEST_PG_URL:-}" ]; then
   emit "$MAC_TEST_PG_URL"
   exit 0
@@ -55,6 +80,7 @@ fi
 # 2. A server already listening locally (brew services, a running container).
 if command -v pg_isready >/dev/null 2>&1 && pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
   createdb -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+  require_sql psql -h 127.0.0.1 -p "$PORT" -U "$(whoami)" -d "$DB"
   for setting in "max_locks_per_transaction:$LOCKS:out of shared memory" \
                  "max_connections:$CONNS:couldn't get a connection"; do
     name="${setting%%:*}"; rest="${setting#*:}"; want="${rest%%:*}"; symptom="${rest#*:}"
@@ -71,6 +97,7 @@ fi
 # 3. Otherwise run one in a container.
 for engine in docker podman; do
   if command -v "$engine" >/dev/null 2>&1 && "$engine" info >/dev/null 2>&1; then
+    created_container=0
     if ! "$engine" inspect "$CONTAINER" >/dev/null 2>&1; then
       if ! run_log=$("$engine" run -d --name "$CONTAINER" \
         -e POSTGRES_PASSWORD=test -e POSTGRES_DB="$DB" \
@@ -81,11 +108,15 @@ for engine in docker podman; do
         echo "$run_log" >&2
         continue
       fi
+      created_container=1
     else
       "$engine" start "$CONTAINER" >/dev/null 2>&1 || true
     fi
     for _ in $(seq 1 60); do
-      if "$engine" exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+      if "$engine" exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1 \
+          && "$engine" exec -e PGCONNECT_TIMEOUT=5 -e PGOPTIONS='-c statement_timeout=5000' \
+            "$CONTAINER" psql -X -w -U postgres -d "$DB" -v ON_ERROR_STOP=1 \
+            -c 'SELECT 1' >/dev/null 2>&1; then
         emit "postgresql://postgres:test@127.0.0.1:$PORT/$DB"
         exit 0
       fi
@@ -93,7 +124,9 @@ for engine in docker podman; do
     done
     echo "error: $CONTAINER did not become ready in 60s ($engine)" >&2
     "$engine" logs "$CONTAINER" >&2 2>/dev/null || true
-    "$engine" rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    if [ "$created_container" = 1 ]; then
+      "$engine" rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    fi
   fi
 done
 
@@ -117,7 +150,11 @@ if [ -n "$PGBIN" ]; then
   DATADIR="${MAC_TEST_PG_DATADIR:-${TMPDIR:-/tmp}/mac-test-pgdata}"
   LOGFILE="$DATADIR.log"
   if [ ! -s "$DATADIR/PG_VERSION" ]; then
-    rm -rf "$DATADIR"
+    if [ -L "$DATADIR" ] || { [ -e "$DATADIR" ] && \
+        { [ ! -d "$DATADIR" ] || ! contents=$(ls -A "$DATADIR") || [ -n "$contents" ]; }; }; then
+      echo "error: $DATADIR has no PG_VERSION; preserving existing test storage for inspection." >&2
+      exit 1
+    fi
     # -E UTF8 is not optional here. initdb takes its encoding from the locale,
     # and an OpenShell sandbox has no locale at all -- it strips the image's
     # LANG -- so initdb picks locale "C" and creates a SQL_ASCII cluster.
@@ -167,6 +204,7 @@ if [ -n "$PGBIN" ]; then
     if command -v pg_isready >/dev/null 2>&1 \
         && pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
       "$PGBIN/createdb" -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+      require_sql "$PGBIN/psql" -h 127.0.0.1 -p "$PORT" -U "$(id -un)" -d "$DB"
       emit "postgresql://$(id -un)@127.0.0.1:$PORT/$DB"
       exit 0
     fi
@@ -188,6 +226,7 @@ if [ -n "$PGBIN" ]; then
   # The superuser is named for the invoking user, not "postgres", so a second
   # call -- which finds this server listening and takes the branch above --
   # emits a DSN that authenticates instead of "role does not exist".
+  require_sql "$PGBIN/psql" -h 127.0.0.1 -p "$PORT" -U "$(id -un)" -d "$DB"
   emit "postgresql://$(id -un)@127.0.0.1:$PORT/$DB"
   exit 0
 fi

@@ -32,7 +32,7 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 #: Jobs whose failure must reach a person. These are the ones that do NOT run
 #: on pull requests, so a failure here is invisible until something says so.
 #: If a job like this is added to CI, add it here too.
-MAIN_ONLY_CRITICAL = {"docker", "mainline", "publication-scope"}
+MAIN_ONLY_CRITICAL = {"docker", "mainline", "publication-scope", "portfolio"}
 
 
 @pytest.fixture(scope="module")

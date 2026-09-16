@@ -2,8 +2,10 @@
 
 MAC fleet agents run beneath a supervisor-independent crash observer. The
 observer is copied to `~/.mac/bin/mac-crash-observer` and deliberately uses the
-host Python standard library instead of the MAC virtual environment. A broken
-MAC installation therefore cannot disable its own crash reporter.
+managed standalone Python 3.14.7 standard library instead of the MAC virtual
+environment. Native installation refuses an absent or mismatched managed
+interpreter. A broken MAC package environment therefore cannot disable its own
+crash reporter; the observer does not depend on the system Python selection.
 
 The native service manager remains responsible for restart:
 

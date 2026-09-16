@@ -46,6 +46,45 @@ def test_resolve_uses_mac_fleet_env_when_no_explicit_arg():
     assert fleet_env.resolve("MAC_API_TOKEN", env=env) == "rocky-scoped"
 
 
+def test_resolve_falls_back_to_mac_fleet_name_when_mac_fleet_unset():
+    """deploy_env writes MAC_FLEET_NAME into mac.env, not MAC_FLEET.
+
+    A deployed worker process (mac-agent-service) reads mac.env via
+    EnvironmentFile and never receives --fleet, so its only way to learn the
+    active fleet is MAC_FLEET_NAME. Without this fallback, active_fleet stays
+    None forever on every deployed node, the scoped-token pass never
+    activates, and the worker is stuck on the legacy flat token even after it
+    goes stale -- reproduced live as heartbeat 403 "unknown bearer token"
+    against MAC_WORKER_TOKEN while MAC_WORKER_TOKEN__MAC (current) worked.
+    """
+    env = {
+        "MAC_FLEET_NAME": "rocky",
+        "MAC_API_TOKEN__ROCKY": "rocky-scoped",
+        "MAC_API_TOKEN": "legacy-stale",
+    }
+    assert fleet_env.resolve("MAC_API_TOKEN", env=env) == "rocky-scoped"
+
+
+def test_resolve_first_falls_back_to_mac_fleet_name_when_mac_fleet_unset():
+    env = {
+        "MAC_FLEET_NAME": "rocky",
+        "MAC_WORKER_TOKEN__ROCKY": "worker-rocky-scoped",
+        "MAC_WORKER_TOKEN": "legacy-stale",
+    }
+    got = fleet_env.resolve_first(["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"], env=env)
+    assert got == "worker-rocky-scoped"
+
+
+def test_resolve_prefers_explicit_mac_fleet_over_mac_fleet_name():
+    env = {
+        "MAC_FLEET": "rocky",
+        "MAC_FLEET_NAME": "natasha",
+        "MAC_API_TOKEN__ROCKY": "rocky-scoped",
+        "MAC_API_TOKEN__NATASHA": "natasha-scoped",
+    }
+    assert fleet_env.resolve("MAC_API_TOKEN", env=env) == "rocky-scoped"
+
+
 def test_resolve_returns_none_when_nothing_set():
     assert fleet_env.resolve("MAC_API_TOKEN", fleet="rocky", env={}) is None
 

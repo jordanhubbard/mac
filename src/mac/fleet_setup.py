@@ -568,7 +568,13 @@ def _agent_configs(
             },
         }
         if name == hub_name:
-            config["control_bind_host"] = _str(item.get("control_bind_host")) or "0.0.0.0"
+            explicit_bind = _str(item.get("control_bind_host"))
+            if explicit_bind:
+                config["control_bind_host"] = explicit_bind
+            elif network_provider in {"tailscale", "headscale"}:
+                config["control_bind_host"] = "127.0.0.1"
+            else:
+                config["control_bind_host"] = "0.0.0.0"
         agents.append(config)
     return agents
 

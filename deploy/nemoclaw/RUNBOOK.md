@@ -47,6 +47,31 @@ If OpenShell is wrong version, run first:
 OPENSHELL_VERSION=0.0.72 deploy/openshell/bootstrap-openshell.sh
 ```
 
+### macOS and Docker Desktop storage risk
+
+Do not deploy NemoClaw on a macOS host using Docker Desktop until its actual
+state-storage paths have been identified and tested. NemoClaw uses the same
+OpenShell-managed sandbox class and `mac-hermes.Containerfile` as OpenClaw. On
+macOS, that sandbox's state mount can reside on containerd-snapshotter
+overlayfs inside Docker Desktop's VirtioFS-backed VM.
+
+POSIX advisory byte-range locking (`fcntl`/`flock`) has been observed to hang
+indefinitely on that mount under a small concurrent SQLite WAL write test. It
+can therefore expose applications that keep SQLite state there to hangs or
+corruption. NemoClaw's own use of SQLite has not been confirmed, and this is a
+deployment risk rather than a confirmed NemoClaw incident.
+
+Before approving a macOS-hosted deployment:
+
+1. Confirm whether NemoClaw stores any state in SQLite.
+2. Resolve every such database path to its host and sandbox mount.
+3. Run a bounded concurrent SQLite WAL locking probe on the actual mount.
+4. If the mount is affected, bind-mount the state from a host path outside the
+   Docker Desktop overlay or deploy NemoClaw on a non-macOS host.
+
+See the upstream OpenClaw report for the reproduced failure mode:
+https://github.com/openclaw/openclaw/issues/139214
+
 ---
 
 ## Host Migration Procedure

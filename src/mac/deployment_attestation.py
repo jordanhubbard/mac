@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from mac.deploy_env import parse_env_text, write_env_file
+from mac.deploy_env import env_file_lock, parse_env_text, write_env_file
 from mac.services import sign_verification_manifest
 
 
@@ -247,25 +247,30 @@ def install_recovery_manifest(
         or stat.S_IMODE(parent.st_mode) & 0o077
     ):
         raise DeploymentAttestationError("attestation environment directory must be owner-only")
-    values = (
-        _private_env(destination, label="attestation environment") if destination.exists() else {}
-    )
-    values["MAC_ATTESTATION_KEY"] = key
-    descriptor, raw = tempfile.mkstemp(prefix=destination.name + ".", dir=str(destination.parent))
-    os.close(descriptor)
-    temporary = Path(raw)
-    try:
-        write_env_file(temporary, values)
-        with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-        directory_fd = os.open(str(destination.parent), os.O_RDONLY)
+    with env_file_lock(destination):
+        values = (
+            _private_env(destination, label="attestation environment")
+            if destination.exists()
+            else {}
+        )
+        values["MAC_ATTESTATION_KEY"] = key
+        descriptor, raw = tempfile.mkstemp(
+            prefix=destination.name + ".", dir=str(destination.parent)
+        )
+        os.close(descriptor)
+        temporary = Path(raw)
         try:
-            os.fsync(directory_fd)
+            write_env_file(temporary, values)
+            with temporary.open("rb") as stream:
+                os.fsync(stream.fileno())
+            os.replace(temporary, destination)
+            directory_fd = os.open(str(destination.parent), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
-            os.close(directory_fd)
-    finally:
-        temporary.unlink(missing_ok=True)
+            temporary.unlink(missing_ok=True)
 
     fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     # Successful installation consumes the worker-side raw-key copy. The hub

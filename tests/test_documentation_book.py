@@ -111,3 +111,11 @@ def test_documentation_ci_covers_platforms_live_boundaries_and_versioning():
         'mike deploy --push --update-aliases "$version" latest',
     ):
         assert required in workflow
+
+
+def test_documentation_ci_uses_supported_postgres_on_macos():
+    workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+
+    assert "formula=postgresql@17" in workflow
+    assert 'brew list --versions "$formula"' in workflow
+    assert "grep -E '^postgresql(@[0-9]+)?$'" not in workflow

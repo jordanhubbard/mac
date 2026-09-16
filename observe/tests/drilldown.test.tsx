@@ -11,7 +11,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConsoleClient, type Snapshot, type TaskDrilldown } from "../src/lib/api";
+import {
+  ConsoleClient,
+  type Snapshot,
+  type TaskDrilldown,
+} from "../src/lib/api";
 import { TaskView } from "../src/views/Task";
 
 function snapshot(coverage?: Snapshot["transcripts"]): Snapshot {
@@ -116,7 +120,9 @@ describe("a task with no transcript is not a task that did nothing", () => {
       expect(screen.getByText(/No transcript was recorded/)).toBeTruthy(),
     );
     expect(
-      screen.getByText(/gap in recording, not evidence that the agent did nothing/),
+      screen.getByText(
+        /gap in recording, not evidence that the agent did nothing/,
+      ),
     ).toBeTruthy();
     // The fleet-wide fraction is on screen so the operator can calibrate.
     expect(screen.getByText(/2\.4% of tasks/)).toBeTruthy();
@@ -126,7 +132,12 @@ describe("a task with no transcript is not a task that did nothing", () => {
   it("admits when even the coverage fraction is unknown", async () => {
     const client = stubClient(drilldown());
     render(
-      <TaskView client={client} taskId="task_1" snap={snapshot()} onBack={noop} />,
+      <TaskView
+        client={client}
+        taskId="task_1"
+        snap={snapshot()}
+        onBack={noop}
+      />,
     );
     await waitFor(() =>
       expect(
@@ -139,7 +150,9 @@ describe("a task with no transcript is not a task that did nothing", () => {
     const client = stubClient(
       drilldown({
         transcripts: undefined,
-        degraded: [{ section: "transcripts", reason: "StoreError: no such table" }],
+        degraded: [
+          { section: "transcripts", reason: "StoreError: no such table" },
+        ],
       }),
     );
     render(
@@ -260,7 +273,11 @@ describe("missing attribution is labelled, never left blank", () => {
       transcripts: {
         ...withTurn.transcripts!,
         rows: [
-          { ...withTurn.transcripts!.rows[0], has_payload: false, payload_bytes: 0 },
+          {
+            ...withTurn.transcripts!.rows[0],
+            has_payload: false,
+            payload_bytes: 0,
+          },
         ],
       },
     });
@@ -283,9 +300,7 @@ describe("missing attribution is labelled, never left blank", () => {
     await waitFor(() => expect(screen.getByText("empty")).toBeTruthy());
     await userEvent.click(screen.getByRole("button", { expanded: false }));
     await waitFor(() =>
-      expect(
-        screen.getByText(/recorded with an empty payload/),
-      ).toBeTruthy(),
+      expect(screen.getByText(/recorded with an empty payload/)).toBeTruthy(),
     );
     expect(
       screen.getByText(/different from the task having no transcript at all/),
@@ -309,9 +324,7 @@ describe("command_audit is labelled as incomplete by construction", () => {
     expect(
       screen.getByText(/executed inside its\s+sandbox is not captured/),
     ).toBeTruthy();
-    expect(
-      screen.getByText(/not "nothing ran"/),
-    ).toBeTruthy();
+    expect(screen.getByText(/not "nothing ran"/)).toBeTruthy();
   });
 });
 
@@ -338,4 +351,49 @@ describe("an unknown task id is answered, not errored", () => {
     );
     expect(screen.getByText(/not "the hub is down"/)).toBeTruthy();
   });
+});
+
+it("keeps passing tests separate from acceptance and deployment and offers a CLI handoff", async () => {
+  const client = stubClient(
+    drilldown({
+      outcome: {
+        schema: "mac.task_outcome.v1",
+        task_id: "task_1",
+        executor_evidence_id: "ev_current",
+        tests: {
+          status: "reported_pass",
+          reason: "Recorded test results; request acceptance is separate.",
+        },
+        acceptance: {
+          status: "unknown",
+          reason: "No operator acceptance recorded.",
+        },
+        publication: { status: "unknown", target: null, content_hash: null },
+        deployment: { status: "unknown", evidence_id: null },
+        evidence_truncated: false,
+        actions: [
+          {
+            label: "Answer the pending question",
+            command: "mac task edit task_1",
+            requires: "admin",
+          },
+        ],
+      },
+    }),
+  );
+  render(
+    <TaskView
+      client={client}
+      taskId="task_1"
+      snap={snapshot()}
+      onBack={noop}
+    />,
+  );
+  await waitFor(() => expect(screen.getByText(/reported pass/)).toBeTruthy());
+  expect(screen.getByText(/No operator acceptance recorded/)).toBeTruthy();
+  expect(
+    screen.getByText(/publication does not prove deployment/),
+  ).toBeTruthy();
+  expect(screen.getByText("mac task edit task_1")).toBeTruthy();
+  expect(screen.getByText("requires admin")).toBeTruthy();
 });

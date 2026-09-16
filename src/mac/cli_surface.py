@@ -121,7 +121,7 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
                 ),
             ),
             ("Break-glass", ("break-glass", "break-glass-list", "break-glass-revoke")),
-            ("Reporting", ("throughput", "generator-yield")),
+            ("Reporting", ("throughput", "generator-yield", "outcome", "outcomes", "accept")),
             (
                 "Migration",
                 (
@@ -197,6 +197,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("openshell", "sandboxed execution environments for agents"),
             ("mcp", "serve the ledger to coding agents as Model Context Protocol tools"),
             ("plugin", "install mac skills and MCP into Claude, Codex, Cursor, OpenCode"),
+            ("cli-session", "auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)"),
             ("sandbox-image", "the sandbox IMAGE: its bill of materials and its rollout"),
             ("runtime", "runtime images and environment definitions"),
             ("rollout", "staged rollout of a runtime or configuration"),
@@ -331,6 +332,16 @@ def _subparsers_of(parser: argparse.ArgumentParser) -> Optional[argparse._SubPar
         if isinstance(action, argparse._SubParsersAction):
             return action
     return None
+
+
+def _admin_command_count(action: argparse._SubParsersAction) -> int:
+    """Distinct subcommands under `mac admin`, aliases collapsed, excluding help."""
+
+    admin_parser = action.choices.get("admin")
+    admin_action = _subparsers_of(admin_parser) if admin_parser is not None else None
+    if admin_action is None:
+        return 0
+    return len([name for name, _ in _distinct_subcommands(admin_action) if name != "help"])
 
 
 def _distinct_subcommands(
@@ -745,9 +756,13 @@ def _top_level_help_text(action: argparse._SubParsersAction, *, show_all: bool =
                 _format_rows([("admin", "fleet, runtime and control-plane administration")])
             )
             lines.append("")
+        # Count the admin *group's* subcommands. After re-parenting, the
+        # top-level leftover set is empty, so `len(registered - {"admin"})`
+        # printed "0 administrative commands" while `mac admin help` listed
+        # fifty-odd groups (v1.3.0 deck slide 12).
         lines.append(
             "%d administrative commands live under `mac admin` "
-            "(`mac admin help` lists them)." % len(registered - {"admin"})
+            "(`mac admin help` lists them)." % _admin_command_count(action)
         )
         lines.append(
             "They moved: `mac fleet ...` is now `mac admin fleet ...`, and the "

@@ -256,6 +256,11 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "[program:openshell-gateway]" in script
     assert "sudo supervisorctl restart openshell-gateway" in script
     assert "run-gateway.sh" in script
+    assert "wait_for_local_gateway" in script
+    assert "for ((attempt = 1; attempt <= 120; attempt++))" in script
+    assert 'openshell_local_gateway "$cli" status' in script
+    assert "((attempt == 120)) || sleep 1" in script
+    assert "sleep 3" not in script
     assert "unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT KUBERNETES_PORT" in script
     assert "[program:mac-openshell-firewall]" in script
     assert "chain=MAC_OPENSH_GW" in script
@@ -282,6 +287,29 @@ def test_openshell_bootstrap_is_docker_engine_only():
     ]
     assert create_arg_lines
     assert all("--env" not in line and " -- " not in line for line in create_arg_lines)
+
+
+def test_bootstrap_pins_the_managed_gateway_endpoint_into_mac_env():
+    """Live-found on natasha (2026-09-04): the openshell CLI's own persisted
+    "active gateway" selection is local, unrelated state that any other
+    process (a NemoClaw pilot, in this case) can silently repoint. Because
+    mac-agent's executor never explicitly set OPENSHELL_GATEWAY_ENDPOINT, it
+    inherited whatever gateway happened to be selected, and every
+    coding-agent sandbox preflight probe (all 5 configured agents) failed
+    uniformly with no per-agent credential explanation -- they were all
+    quietly hitting the wrong gateway. bootstrap-openshell.sh must pin this
+    into mac.env exactly like it already pins its own
+    openshell_local_gateway() calls to OPENSHELL_LOCAL_GATEWAY_ENDPOINT, so
+    mac-agent's process (which sources mac.env) is immune to that drift."""
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(encoding="utf-8")
+    assert 'OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"' in script
+    recipe = script.split("# --- 11. env recipe in mac.env", 1)[1].split(
+        "# sanity: mac.env must still source cleanly", 1
+    )[0]
+    assert 'echo "OPENSHELL_GATEWAY_ENDPOINT=$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"' in recipe
+    # The stale-key cleanup sed must also strip a prior run's value so
+    # rerunning bootstrap can never leave two conflicting definitions.
+    assert "/^OPENSHELL_GATEWAY_ENDPOINT=/d" in script
 
 
 def test_linux_bootstrap_installs_and_verifies_docker_buildx():
@@ -397,8 +425,8 @@ def test_openshell_image_uses_pinned_offline_assets():
 
     assert "prefetching pinned runtime-image assets on the host" in builder
     assert 'REVIEWED_TOOL_ASSETS="$ROOT/deploy/reviewed-tool-assets.sh"' in preparer
-    assert "FROM docker.io/library/python@sha256:" in containerfile
-    assert "FROM ghcr.io/astral-sh/uv@sha256:" in containerfile
+    assert "FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:" in containerfile
+    assert "FROM ghcr.io/astral-sh/uv:0.12.12@sha256:" in containerfile
     assert "docker.io/library/python:3.12" not in containerfile
     assert 'ARG NODE_VERSION="22.23.1"' in containerfile
     assert 'ARG PNPM_VERSION="11.13.1"' in containerfile
@@ -481,6 +509,10 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     )
     assert '"$OSH_DOCKER_BIN" run --rm "$OSH_SUPERVISOR_IMAGE" --version' in bootstrap
     assert '"openshell-sandbox $OPENSHELL_VERSION"' in bootstrap
+    assert '"$OSH_DOCKER_BIN" cp "$container_id:$entrypoint" "$extracted"' in bootstrap
+    assert 'install -m700 "$extracted" "$MAC_HOME/bin/openshell-sandbox"' in bootstrap
+    assert "if kind == 3:  # PT_INTERP" in bootstrap
+    assert "reviewed OpenShell supervisor is not statically linked" in bootstrap
     firewall = bootstrap.index("# --- 7. firewall :17670")
     gateway = bootstrap.index("# --- 8. gateway service + register")
     assert firewall < gateway
@@ -981,6 +1013,60 @@ exec /bin/mv "$@"
     assert (recovered / "state" / "marker.txt").read_text() == "new-state"
 
 
+@pytest.mark.parametrize("status", ["exited", "running"])
+@pytest.mark.parametrize("owned_name", [True, False])
+def test_schema_recovery_consumes_real_probe_name_only_when_stopped(tmp_path, status, owned_name):
+    from mac.executor_sandbox import _coding_agent_probe_sandbox_name
+
+    name = _coding_agent_probe_sandbox_name() if owned_name else "operator-sandbox"
+    bootstrap = (ROOT / "deploy/openshell/bootstrap-openshell.sh").read_text()
+    function = (
+        "retire_managed_sandboxes_via_docker() {"
+        + bootstrap.split("retire_managed_sandboxes_via_docker() {", 1)[1].split(
+            "\n}\n\nretire_managed_sandboxes_before_upgrade", 1
+        )[0]
+        + "\n}\n"
+    )
+    harness = r"""
+set -eu
+OSH_DOCKER_BIN=fixture_docker
+log() { :; }
+write_managed_openshell_container_ids() {
+  if [ -f "$REMOVED" ]; then : > "$2"; else printf 'exact-container\n' > "$2"; fi
+}
+fixture_docker() {
+  case "$1" in
+    inspect)
+      case "$3" in
+        '{{.State.Status}}') printf '%s\n' "$STATUS" ;;
+        *) printf '%s\n' "$SANDBOX_NAME" ;;
+      esac ;;
+    rm)
+      test "$2" = exact-container || return 1
+      printf '%s\n' "$2" > "$REMOVED" ;;
+    *) return 1 ;;
+  esac
+}
+"""
+    removed = tmp_path / "removed"
+    result = subprocess.run(
+        ["bash", "-c", harness + function + "\nretire_managed_sandboxes_via_docker"],
+        env={
+            **os.environ,
+            "TMPDIR": str(tmp_path),
+            "REMOVED": str(removed),
+            "STATUS": status,
+            "SANDBOX_NAME": name,
+        },
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    expected = owned_name and status == "exited"
+    assert (result.returncode == 0) is expected, result.stderr
+    assert removed.exists() is expected
+
+
 def test_schema_fallback_requires_stopped_exact_managed_containers():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
@@ -1006,7 +1092,9 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     )[0]
     assert "openshell.ai/managed-by=openshell" in inventory_writer
     assert "openshell.ai/sandbox-name" in direct
-    assert "^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$" in direct
+    assert (
+        "^mac-(task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$" in direct
+    )
     assert 'sandbox_name" = "$expected_openclaw' in direct
     checkpoint = direct.index("checkpoint_openclaw_with_docker")
     exact_remove = direct.index('"$OSH_DOCKER_BIN" rm "$container_id"')
@@ -1353,6 +1441,6 @@ def test_openshell_image_installs_dev_extra_for_contract_tests():
         encoding="utf-8"
     )
     assert "uv sync --frozen --no-editable --extra dev" in containerfile
-    assert "COPY pyproject.toml uv.lock README.md /tmp/mac-src/" in containerfile
+    assert "COPY .python-version pyproject.toml uv.lock README.md /tmp/mac-src/" in containerfile
     assert "COPY src /tmp/mac-src/src" in containerfile
     assert "/tmp/mac-src[dev]" not in containerfile

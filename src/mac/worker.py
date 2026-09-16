@@ -103,6 +103,7 @@ from mac.repository_contract import (
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.persistence_redaction import redact_for_persistence
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -162,6 +163,9 @@ from mac.worker_runtime_deps import (
 )
 
 logger = logging.getLogger("mac.worker")
+
+# Input safety is independent of whether durable artifact uploads are enabled.
+_MAX_EVIDENCE_INPUT_BYTES = 50 * 1024 * 1024
 Executor = Callable[[JsonDict, Path], "WorkerExecution"]
 CommandAuditSink = Callable[[JsonDict], None]
 StatusUpdateSink = Callable[[JsonDict], JsonDict]
@@ -223,6 +227,50 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+#: Bounded retry for a fenced-write conflict on a state-mutating API call
+#: (currently just POST .../start). A fenced write means the server detected
+#: a CONCURRENT, valid write racing this one and refused rather than
+#: corrupting state -- by construction transient, since the conflicting
+#: writer's own operation is already completing. Confirmed live: an unrelated
+#: concurrent operator call (mac task update --dependencies) racing an
+#: agent's claim+start on the same task produced exactly this 400, and the
+#: worker treated it as a fatal "worker_exception", transitioning the task
+#: straight to permanently blocked instead of retrying what the server's own
+#: error message says is retryable ("task state changed during fenced
+#: write; retry"). 3 attempts with a short, fixed backoff resolves this in
+#: virtually all real cases without masking a genuinely stuck/looping
+#: conflict behind indefinite retries.
+FENCED_WRITE_RETRY_ATTEMPTS = 3
+FENCED_WRITE_RETRY_DELAY_SECONDS = 0.5
+
+
+def _is_fenced_write_conflict(exc: "MacApiError") -> bool:
+    if exc.status_code != 400:
+        return False
+    return "fenced write" in (exc.detail or str(exc)).lower()
+
+
+def _post_with_fenced_write_retry(
+    client: "MacApiClient",
+    path: str,
+    payload: JsonDict,
+    *,
+    attempts: int = FENCED_WRITE_RETRY_ATTEMPTS,
+    delay_seconds: float = FENCED_WRITE_RETRY_DELAY_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Any:
+    last_exc: Optional[MacApiError] = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return client.post(path, payload)
+        except MacApiError as exc:
+            if not _is_fenced_write_conflict(exc) or attempt == attempts:
+                raise
+            last_exc = exc
+            sleep(delay_seconds)
+    raise last_exc  # pragma: no cover - unreachable, loop always returns or raises
+
+
 #: How long after the first SIGTERM/SIGINT the worker keeps letting the current
 #: task run before it actively abandons the assignment (releases the lease and
 #: goes offline). Tuned to the unit that runs it: ``mac-agent-service`` sets
@@ -235,18 +283,57 @@ def _env_float(name: str, default: float) -> float:
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 540.0
 
 
+#: Ceiling on how long this worker will hold itself out of dispatch waiting
+#: for the deploy controller's release call. deploy-mac-fleet.sh's own
+#: REMOTE_TYPED_BARRIER_RELEASE step is supposed to remove the barrier file
+#: once the node is safe to rejoin the cohort, but that release is not
+#: atomic with the barrier's creation: an interrupted deploy can die between
+#: the two, leaving the worker fenced forever with no external process ever
+#: coming back to unfence it. Observed live on 2026-09-03 (natasha stuck
+#: status=draining for hours after a deploy claimed "synchronized typed
+#: cohort finalized"). Real deploys observed on this fleet complete within
+#: ~15-20 minutes; 45 minutes is a conservative multiple that still resolves
+#: the fence in well under an hour rather than requiring an operator to
+#: notice and intervene by hand.
+DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS = 45 * 60.0
+
+
+def _deployment_barrier_max_age_seconds() -> float:
+    raw = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS")
+    if not raw:
+        return DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+    return value if value > 0 else DEFAULT_DEPLOY_BARRIER_MAX_AGE_SECONDS
+
+
 def _deployment_barrier_state() -> tuple[str, bool]:
-    """Return the configured rollout generation and whether its barrier is live."""
+    """Return the configured rollout generation and whether its barrier is live.
+
+    A barrier older than ``_deployment_barrier_max_age_seconds()`` is treated
+    as expired rather than live: the deploy that armed it is long past any
+    realistic completion window, so continuing to fence this worker out of
+    dispatch serves no one and nothing else is coming to release it (see the
+    constant's docstring above).
+    """
 
     generation = (os.environ.get("MAC_WORKER_DEPLOY_GENERATION") or "").strip()
     barrier = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_FILE") or ""
     if not generation or not barrier:
         return generation, False
+    barrier_path = Path(barrier)
     try:
-        barrier_generation = Path(barrier).read_text(encoding="utf-8").strip()
+        barrier_generation = barrier_path.read_text(encoding="utf-8").strip()
+        barrier_age = time.time() - barrier_path.stat().st_mtime
     except OSError:
-        barrier_generation = ""
-    return generation, barrier_generation == generation
+        return generation, False
+    if barrier_generation != generation:
+        return generation, False
+    if barrier_age > _deployment_barrier_max_age_seconds():
+        return generation, False
+    return generation, True
 
 
 def _deployment_heartbeat_payload(
@@ -348,6 +435,16 @@ class WorkerExecution:
     @property
     def succeeded(self) -> bool:
         return self.returncode == 0
+
+
+def _redact_worker_execution(execution: WorkerExecution) -> WorkerExecution:
+    return WorkerExecution(
+        returncode=execution.returncode,
+        summary=redact_for_persistence(execution.summary),
+        stdout=redact_for_persistence(execution.stdout),
+        stderr=redact_for_persistence(execution.stderr),
+        metadata=redact_for_persistence(execution.metadata),
+    )
 
 
 @dataclass
@@ -661,7 +758,35 @@ def _read_only_report_executor_attestation(
             _read_only_report_extra_create_argv(require_approval=False)
         if not _read_only_report_environment_passthrough_valid():
             return None
-        python_candidate = (os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or sys.executable).strip()
+        configured_python = (os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or "").strip()
+        python_candidate = configured_python or sys.executable
+        # A persistent venv can outlive its base interpreter. Homebrew patch
+        # upgrades exposed this with a copied Mach-O launcher that still
+        # existed but referenced a removed Cellar framework. Execute-probe the
+        # configured candidate; if it is stale, recover through the interpreter
+        # already running this worker. The resolved file and digest below are
+        # still what the hub approves, so task execution cannot retarget a
+        # symlink after approval.
+        probe = subprocess.run(
+            [python_candidate, "-c", "import mac"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if probe.returncode != 0 and configured_python:
+            python_candidate = sys.executable
+            probe = subprocess.run(
+                [python_candidate, "-c", "import mac"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        if probe.returncode != 0:
+            return None
         python_path, python_sha256 = nofollow_regular_file_identity(
             Path(python_candidate).expanduser().resolve(strict=True)
         )
@@ -738,11 +863,28 @@ def _apply_read_only_report_executor_approval(resources: Any, environ: Dict[str,
     for key, name in _REPORT_EXECUTOR_APPROVAL_ENV.items():
         environ[name] = str(marker[key])
     # The generated fleet wrapper historically embedded these paths instead of
-    # exporting them. Bind the actual spawned runtime to the exact same paths
-    # the hub approved, including on a deployment-realistic environment where
-    # none of the three variables existed before registration.
+    # exporting them. A Python venv commonly uses a symlinked launcher:
+    # resolving it is necessary to attest the immutable executable, while
+    # invoking it through the venv path is necessary for Python to discover
+    # pyvenv.cfg and the installed ``mac`` package. Retain a configured
+    # launcher only when its resolved no-follow identity still matches the
+    # approved tuple; otherwise replace it with the approved executable.
+    python_runtime_name = _REPORT_EXECUTOR_RUNTIME_PATH_ENV["python_path"]
+    configured_python = environ.get(python_runtime_name, "")
+    try:
+        configured_python_identity = nofollow_regular_file_identity(
+            Path(configured_python).expanduser().resolve(strict=True)
+        )
+    except Exception:  # noqa: BLE001 - an unusable launcher must not survive approval.
+        configured_python_identity = ("", "")
+    if configured_python_identity != (
+        str(marker["python_path"]),
+        str(marker["python_sha256"]),
+    ):
+        environ[python_runtime_name] = str(marker["python_path"])
     for key, name in _REPORT_EXECUTOR_RUNTIME_PATH_ENV.items():
-        environ[name] = str(marker[key])
+        if key != "python_path" and not environ.get(name):
+            environ[name] = str(marker[key])
     return True
 
 
@@ -784,6 +926,22 @@ def _active_worker_deployment_generation() -> Optional[str]:
     except OSError:
         return None
     return generation if observed == generation else None
+
+
+def _resources_without_retired_gateway(resources: JsonDict) -> JsonDict:
+    """Withdraw retired advertisements only for a configured current runtime."""
+    implementation = (os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "").strip().lower()
+    if implementation not in {"hermes", "none"}:
+        return resources
+    refreshed = dict(resources)
+    refreshed.pop("openclaw_runtime", None)
+    for key, selector in (("chat_gateway", "implementation"), ("gateway_ownership", "owner")):
+        value = refreshed.get(key)
+        if implementation == "none" or (
+            isinstance(value, Mapping) and value.get(selector) == "openclaw"
+        ):
+            refreshed.pop(key, None)
+    return refreshed
 
 
 def register_worker(
@@ -847,7 +1005,7 @@ def register_worker(
         resources = {**(resources or {}), "media_routes": _routes}
     # This self-report is recomputed from the process that is about to claim
     # work.  Never trust a similarly named value supplied through --resources.
-    resources = dict(resources or {})
+    resources = _resources_without_retired_gateway(dict(resources or {}))
     resources.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
     report_executor_attestation = _read_only_report_executor_attestation(executor_argv)
     if report_executor_attestation is not None:
@@ -869,6 +1027,10 @@ def register_worker(
     )
     _register_runtime_identity_for_worker(client, name, hermes_instance_id)
     agent_resources = dict(resources or {})
+    if capabilities:
+        from mac.deploy_env import normalize_worker_capabilities
+
+        capabilities = normalize_worker_capabilities(",".join(capabilities)).split(",")
     deployment_generation = _active_worker_deployment_generation()
     if deployment_generation:
         agent_resources["deployment_generation"] = deployment_generation
@@ -954,6 +1116,12 @@ class MacWorker(
         # Rate-limit self-heal rotations: one per window, so a non-key cause of
         # signature rejections can never drive a rotation loop.
         self._last_attestation_heal_at = 0.0
+        # Rate-limit the post-verdict review-tick failure log: a genuine,
+        # ongoing outage (not the routine "token lacks required scope: admin"
+        # rejection this used to hit before every worker credential carried
+        # `review:advance`) should still be visible, but not as a warning per
+        # verdict recorded.
+        self._last_review_advance_failure_logged_at = 0.0
         self.poll_interval_seconds = float(poll_interval_seconds)
         self._inner_loop_wake = threading.Event()
         self._inner_loop = PersistentAgentLoop(
@@ -1528,8 +1696,23 @@ class MacWorker(
             subject_id=task_id,
             detail={"lease_id": lease_id, "agent_id": self.agent_id},
         )
+        # Preparation and host finalization can both wait on Git/OpenShell.
+        # The lease belongs to this whole assignment, not only its executor.
+        renewal_stop = threading.Event()
+        renewal_thread: Optional[threading.Thread] = None
         try:
-            self.client.post(
+            interval = self.lease_renew_interval_seconds
+            if interval is None:
+                interval = max(1.0, min(60.0, float(self.lease_seconds) / 2.0))
+            if self.lease_seconds > 0 and interval > 0:
+                renewal_thread = threading.Thread(
+                    target=self._renew_lease_until_stopped,
+                    args=(lease_id, task_id, renewal_stop, interval),
+                    daemon=True,
+                )
+                renewal_thread.start()
+            _post_with_fenced_write_retry(
+                self.client,
                 "/tasks/%s/start?%s"
                 % (
                     quote(task_id, safe=""),
@@ -1572,6 +1755,10 @@ class MacWorker(
                     task_dir = self._prepare_task_workspace(task, lease)
                 else:
                     raise
+            if not self._assignment_is_current(task_id, lease_id):
+                return self._stale_result(
+                    task_id, lease, "assignment no longer current after workspace preparation"
+                )
             _emit_task_progress(
                 self,
                 task,
@@ -1579,7 +1766,7 @@ class MacWorker(
                 continuation="local",
             )
             started = time.monotonic()
-            execution = self._execute_with_lease_renewal(task, lease, task_dir)
+            execution = self._execute_task(task, lease, task_dir)
             duration_ms = (time.monotonic() - started) * 1000.0
             self._observe_metric(
                 "worker.execution.duration_ms",
@@ -1629,7 +1816,7 @@ class MacWorker(
                 self._append_harness_recovery_log(task_dir, "bootstrap", _b_choice, _b_msg)
                 if _b_recovered:
                     started = time.monotonic()
-                    execution = self._execute_with_lease_renewal(task, lease, task_dir)
+                    execution = self._execute_task(task, lease, task_dir)
             evidence = self._record_execution(
                 task_id,
                 task_dir,
@@ -1810,9 +1997,12 @@ class MacWorker(
             )
         except subprocess.TimeoutExpired as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             stdout = _coerce_process_output(exc.stdout)
             stderr = _coerce_process_output(exc.stderr)
+            process_tree_terminated = bool(getattr(exc, "process_tree_terminated", False))
+            sandbox_cleanup = getattr(exc, "sandbox_cleanup", {})
             execution = WorkerExecution(
                 124,
                 "executor timed out after %ss" % exc.timeout,
@@ -1820,9 +2010,11 @@ class MacWorker(
                 stderr=stderr,
                 metadata={
                     "timeout_seconds": exc.timeout,
-                    "process_tree_terminated": True,
+                    "process_tree_terminated": process_tree_terminated,
+                    "sandbox_cleanup": sandbox_cleanup,
                 },
             )
+            execution = _redact_worker_execution(execution)
             evidence = (
                 self._record_execution(
                     task_id,
@@ -1847,7 +2039,8 @@ class MacWorker(
                         "manual_repair_required": False,
                         "output_tail": _executor_output_tail(execution),
                         "timeout_seconds": exc.timeout,
-                        "process_tree_terminated": True,
+                        "process_tree_terminated": process_tree_terminated,
+                        "sandbox_cleanup": sandbox_cleanup,
                         "evidence_id": evidence.get("id") if evidence else None,
                     },
                 },
@@ -1861,7 +2054,8 @@ class MacWorker(
             )
         except Exception as exc:
             if not self._assignment_is_current(task_id, lease_id):
-                return self._stale_result(task_id, lease, str(exc))
+                stale_reason = str(redact_for_persistence(str(exc)))
+                return self._stale_result(task_id, lease, stale_reason)
             # A bare ``worker_exception`` transition used to carry only
             # ``error=str(exc)`` -- none of the keys ``_diagnostic_output_tail``
             # scans (stdout/stderr/output/*_tail), so the hub recorded an empty
@@ -1871,20 +2065,21 @@ class MacWorker(
             # it (plus the exception type and evidence id) on the transition so
             # the failure is diagnosable from the task history alone.
             exc_type = type(exc).__name__
-            tb_text = traceback.format_exc()
+            error_text = str(redact_for_persistence(str(exc)))
+            tb_text = str(redact_for_persistence(traceback.format_exc()))
             self._observe_log(
                 "worker.execution.exception",
                 level="error",
                 subject_type="task",
                 subject_id=task_id,
-                detail={"error": str(exc), "exception_type": exc_type},
+                detail={"error": error_text, "exception_type": exc_type},
             )
             evidence: Optional[JsonDict] = None
             if task_dir is not None:
                 try:
                     exc_execution = WorkerExecution(
                         1,
-                        "worker raised %s: %s" % (exc_type, exc),
+                        "worker raised %s: %s" % (exc_type, error_text),
                         stdout="",
                         stderr=tb_text,
                         metadata={
@@ -1912,7 +2107,7 @@ class MacWorker(
                             # Same: an unexpected worker exception is not
                             # self-evidently operator-actionable.
                             "manual_repair_required": False,
-                            "error": str(exc),
+                            "error": error_text,
                             "exception_type": exc_type,
                             "output_tail": tb_text,
                             "evidence_id": evidence.get("id") if evidence else None,
@@ -1923,6 +2118,9 @@ class MacWorker(
                 pass
             raise
         finally:
+            renewal_stop.set()
+            if renewal_thread is not None:
+                renewal_thread.join(timeout=1.0)
             self._clear_active_assignment(task_id, lease_id)
 
     def _assignment_is_current(self, task_id: str, lease_id: str) -> bool:
@@ -1981,24 +2179,12 @@ class MacWorker(
             error=reason,
         )
 
-    def _execute_with_lease_renewal(
+    def _execute_task(
         self,
         task: JsonDict,
         lease: JsonDict,
         task_dir: Path,
     ) -> WorkerExecution:
-        stop = threading.Event()
-        thread: Optional[threading.Thread] = None
-        interval = self.lease_renew_interval_seconds
-        if interval is None:
-            interval = max(1.0, min(60.0, float(self.lease_seconds) / 2.0))
-        if self.lease_seconds > 0 and interval > 0:
-            thread = threading.Thread(
-                target=self._renew_lease_until_stopped,
-                args=(lease["id"], task["id"], stop, interval),
-                daemon=True,
-            )
-            thread.start()
         metadata = task.get("metadata") if isinstance(task, dict) else {}
         runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
         break_glass = (
@@ -2015,21 +2201,16 @@ class MacWorker(
                     "break_glass_authorization_id": break_glass.get("id"),
                 }
             )
-        try:
-            return self._call_executor(
-                task,
-                task_dir,
-                {
-                    "agent_id": self.agent_id,
-                    "task_id": task["id"],
-                    "lease_id": lease["id"],
-                    "metadata": audit_metadata,
-                },
-            )
-        finally:
-            stop.set()
-            if thread is not None:
-                thread.join(timeout=1.0)
+        return self._call_executor(
+            task,
+            task_dir,
+            {
+                "agent_id": self.agent_id,
+                "task_id": task["id"],
+                "lease_id": lease["id"],
+                "metadata": audit_metadata,
+            },
+        )
 
     def _renew_lease_until_stopped(
         self,
@@ -2668,6 +2849,7 @@ class MacWorker(
                 error=None if execution.succeeded else execution.summary,
             )
         except Exception as exc:
+            error_text = str(redact_for_persistence(str(exc)))
             if isinstance(exc, RepositoryAccessError):
                 # The repository-access learning is written before the
                 # exception is raised. Re-run reviewer selection immediately
@@ -2687,11 +2869,11 @@ class MacWorker(
                     "message_id": message.get("id"),
                     "review_id": review_id,
                     "executor_evidence_id": executor_evidence_id,
-                    "error": str(exc),
+                    "error": error_text,
                     "failure_class": getattr(exc, "failure_class", ""),
                 },
             )
-            return WorkerRunResult(status="review_verdict_failed", error=str(exc))
+            return WorkerRunResult(status="review_verdict_failed", error=error_text)
 
     def _advance_review_workflow_after_verdict(self, task_id: str) -> None:
         try:
@@ -2700,13 +2882,25 @@ class MacWorker(
                 {},
             )
         except Exception as exc:  # noqa: BLE001 - verdict evidence is already recorded.
-            self._observe_log(
-                "worker.review_workflow.advance_failed",
-                level="warning",
-                subject_type="task",
-                subject_id=task_id,
-                detail={"agent_id": self.agent_id, "error": str(exc)},
-            )
+            # This used to fire on every verdict recorded fleet-wide (any
+            # worker token lacked the scope for /reviews/default/tick,
+            # rejected "token lacks required scope: admin") -- a permanent,
+            # expected failure, not a transient one, so it was pure log spam
+            # rather than a signal anyone could act on. Now that
+            # `review:advance` is minted into every worker credential
+            # (WORKER_SCOPES), a failure here is a real, actionable signal
+            # again -- but still rate-limit it, since a genuine outage would
+            # otherwise still log once per verdict across the whole fleet.
+            now = time.monotonic()
+            if now - self._last_review_advance_failure_logged_at >= 300.0:
+                self._last_review_advance_failure_logged_at = now
+                self._observe_log(
+                    "worker.review_workflow.advance_failed",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"agent_id": self.agent_id, "error": str(exc)},
+                )
 
     def _process_agentbus_control(
         self, *, repository_update_only: bool = False
@@ -4253,6 +4447,8 @@ class MacWorker(
         lease_id: str,
         attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
+        self._redact_verification_manifest(task_dir)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         if execution.succeeded:
@@ -4262,6 +4458,8 @@ class MacWorker(
                 execution,
                 attempt_state=attempt_state,
             )
+            if not self._assignment_is_current(task_id, lease_id):
+                raise RuntimeError("assignment no longer current after finalization")
         metadata = self._execution_metadata(task_dir, execution)
         result_path = task_dir / "worker-result.json"
         _write_host_control_text(
@@ -4393,7 +4591,7 @@ class MacWorker(
                         "%s %s"
                         % (
                             test.get("command"),
-                            "passed" if test.get("returncode") == 0 else "FAILED",
+                            _test_activity_status(test),
                         )
                     )
         if repo.get("pushed") is True:
@@ -4624,7 +4822,7 @@ class MacWorker(
         test_command = _repository_contract_test_command(task)
         hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
         test_item = self._run_repository_contract_test(
-            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify
+            worktree, test_command, task_dir=task_dir, hub_verify=hub_verify, task=task
         )
         tests = [test_item]
         repo = _repository_context_repo_snapshot(context)
@@ -4677,10 +4875,10 @@ class MacWorker(
         elif prepush_problems:
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
-        elif test_item.get("returncode") == 0 or (
-            hub_verify and _is_hub_verify_deferred_item(test_item)
-        ):
+        elif _worker_verification_item_passed(test_item) is True:
             if publication_target is not None:
+                if not self._assignment_is_current(task_id, lease_id):
+                    raise RuntimeError("assignment no longer current after repository verification")
                 publication = guarded_push(publication_target)
                 display = (
                     publication.target.remote_display
@@ -4916,43 +5114,22 @@ class MacWorker(
         *,
         task_dir: Optional[Path] = None,
         hub_verify: bool = False,
+        task: Optional[JsonDict] = None,
     ) -> JsonDict:
-        sandbox_item = _sandbox_repository_verification_item(
-            task_dir, command, hub_verify=hub_verify
-        )
-        if sandbox_item is not None:
-            return sandbox_item
-        if not command:
-            return {
-                "name": "repository contract test",
-                "command": "",
-                "returncode": 1,
-                "status": "fail",
-                "stderr": "repository contract test.command is missing",
-            }
-        try:
-            # Progress-based watchdog: kills only when the command stops
-            # emitting output (MAC_TEST_STALL_TIMEOUT, default 300s), with
-            # MAC_WORKER_REPOSITORY_TEST_TIMEOUT (1800s) as a hard backstop.
-            # Total-runtime constants kept going stale as legitimate work grew
-            # (venv bootstrap + suite) and killed healthy runs mid-flight.
-            from mac.task_executor import run_with_stall_watchdog
+        # A task-local sandbox receipt may describe the pre-rebase tree or be
+        # written by the coding agent. Run the final committed source through
+        # the existing Linux verifier before this fallback can push it.
+        from mac.executor_prompt import _repository_contract_bootstrap, _repository_prepared_base
+        from mac.services import verify_unpublished_repository
 
-            proc = run_with_stall_watchdog(["bash", "-lc", command], worktree)
-        except Exception as exc:  # noqa: BLE001 - report as verification failure.
-            return {
-                "name": "repository contract test",
-                "command": command,
-                "returncode": 1,
-                "status": "fail",
-                "stderr": str(exc),
-            }
-        return _process_check_item(
-            "repository contract test",
-            proc.returncode,
-            command=command,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+        if task is None:
+            task = _task_payload_from_workspace(task_dir) if task_dir is not None else {}
+        bootstrap = _repository_contract_bootstrap(task)
+        return verify_unpublished_repository(
+            worktree,
+            command,
+            str(bootstrap.get("command") or ""),
+            prepared_base_sha=_repository_prepared_base(task),
         )
 
     def _execution_submission_problems(self, task_dir: Path, evidence: JsonDict) -> List[str]:
@@ -4975,17 +5152,33 @@ class MacWorker(
         ):
             problems.append("verification.signed_by and verification.signature are required")
         if evidence_type:
-            if (
-                evidence_type == "investigation"
-                and declared_non_repository_outcome_evidence_type(
-                    ensure_json_object(task_payload.get("metadata"))
-                )
-                != "investigation"
-            ):
+            declared_outcome = declared_non_repository_outcome_evidence_type(
+                ensure_json_object(task_payload.get("metadata"))
+            )
+            if evidence_type == "investigation" and declared_outcome != "investigation":
                 problems.append(
                     "investigation evidence requires an operator-authored "
                     "investigation execution contract"
                 )
+            elif declared_outcome and evidence_type != declared_outcome:
+                # The reverse mismatch: the task's own execution contract
+                # declares a non-repository outcome (e.g. an onboarding
+                # contract-authoring task, evidence_type=investigation,
+                # repository_required=False -- see
+                # ControlPlane._normalize_task_execution_contract), but the
+                # agent's own evidence manifest claims a repo-coupled type
+                # (commonly "repo_change", the executor's generic default
+                # whenever it made a git commit). Trusting the agent's claim
+                # here demanded pushed=true/pr_url from a task whose own
+                # instructions explicitly say "do NOT push or open a pull
+                # request" -- confirmed live: an agent that followed those
+                # instructions correctly was blocked by its own tooling's
+                # wrong evidence_type default. The task's declared contract
+                # is the operator's authoritative intent; the agent cannot
+                # unilaterally impose a stricter requirement than what was
+                # asked. Coerce rather than reject: the agent already did
+                # the work correctly, so use the correct decoder for it.
+                evidence_type = declared_outcome
             problems.extend(
                 _worker_verification_contract_problems(
                     manifest,
@@ -5141,6 +5334,8 @@ class MacWorker(
         executor_evidence_id: str,
         message_id: str,
     ) -> JsonDict:
+        execution = _redact_worker_execution(execution)
+        self._redact_verification_manifest(task_dir)
         _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
         _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         result_path = task_dir / "review-result.json"
@@ -5200,7 +5395,7 @@ class MacWorker(
         return (execution.summary or "").strip()
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
-        metadata = dict(execution.metadata)
+        metadata = redact_for_persistence(dict(execution.metadata))
         # The external activation probe is optional diagnostic evidence only.
         # It consumes activations supplied by an instrumented runtime; it cannot
         # inspect hosted-model internals. Its adapter catches model/checkpoint/
@@ -5228,7 +5423,10 @@ class MacWorker(
             ensure_json_object(task_payload.get("metadata")).get("review_context"),
             dict,
         )
-        manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
+        persisted_manifest = self._load_verification_manifest(task_dir)
+        manifest = metadata.get("verification") or persisted_manifest
+        if persisted_manifest.get("status") == "invalid":
+            manifest = persisted_manifest
         manifest = ensure_json_object(manifest)
         if trusted_read_only_context:
             # Read-only report provenance is not a publishable repo anchor.
@@ -5266,7 +5464,10 @@ class MacWorker(
                 serialized_context,
                 task=task_payload,
             )
-        metadata["verification"] = self._sign_verification_manifest(manifest)
+        metadata = redact_for_persistence(metadata)
+        metadata["verification"] = self._sign_verification_manifest(
+            redact_for_persistence(manifest)
+        )
         metadata.setdefault(
             "workspace_outputs",
             {
@@ -5333,34 +5534,55 @@ class MacWorker(
         )
         return False
 
-    def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
+    def _redact_verification_manifest(self, task_dir: Path) -> JsonDict:
         manifest_path = task_dir / "mac-evidence.json"
-        if not manifest_path.exists():
+        try:
+            raw = _read_bounded_evidence_file(manifest_path, _MAX_EVIDENCE_INPUT_BYTES)
+        except FileNotFoundError:
             return {
                 "schema": "mac.worker_evidence.v1",
                 "status": "missing",
                 "problems": ["mac-evidence.json was not produced by the executor"],
             }
+        except OSError:
+            raw = b""
         try:
-            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 - malformed evidence should be captured, not crash reporting
+            loaded = json.loads(raw)
+            if not isinstance(loaded, dict):
+                raise ValueError("not an object")
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            loaded = {
+                "schema": "mac.worker_evidence.v1",
+                "status": "invalid",
+                "problems": [
+                    "mac-evidence.json must be a bounded regular file containing a JSON object"
+                ],
+            }
+        try:
+            redacted = redact_for_persistence(loaded)
+        except RecursionError:
+            redacted = {
+                "schema": "mac.worker_evidence.v1",
+                "status": "invalid",
+                "problems": ["mac-evidence.json exceeds supported nesting depth"],
+            }
+        content = json.dumps(redacted, indent=2, sort_keys=True)
+        try:
+            _write_host_control_text(manifest_path, content, task_dir)
+        except OSError:
             return {
                 "schema": "mac.worker_evidence.v1",
                 "status": "invalid",
-                "problems": ["could not parse mac-evidence.json: %s" % exc],
-                "uri": manifest_path.resolve().as_uri(),
+                "problems": ["could not replace unsafe mac-evidence.json"],
             }
-        if not isinstance(loaded, dict):
-            return {
-                "schema": "mac.worker_evidence.v1",
-                "status": "invalid",
-                "problems": ["mac-evidence.json must contain a JSON object"],
-                "uri": manifest_path.resolve().as_uri(),
-            }
-        loaded.setdefault("schema", "mac.worker_evidence.v1")
-        loaded.setdefault("uri", manifest_path.resolve().as_uri())
-        loaded.setdefault("sha256", _sha256_file(manifest_path))
-        return loaded
+        redacted.setdefault("schema", "mac.worker_evidence.v1")
+        # Hash the bytes actually persisted, without trusting an executor-supplied digest.
+        redacted["uri"] = manifest_path.absolute().as_uri()
+        redacted["sha256"] = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
+        return redacted
+
+    def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
+        return self._redact_verification_manifest(task_dir)
 
     def _call_executor(
         self,
@@ -5372,10 +5594,12 @@ class MacWorker(
             prior_context = self.executor.audit_context
             self.executor.audit_context = audit_context
             try:
-                return self.executor(task, task_dir)
+                execution = self.executor(task, task_dir)
             finally:
                 self.executor.audit_context = prior_context
-        return self.executor(task, task_dir)
+        else:
+            execution = self.executor(task, task_dir)
+        return _redact_worker_execution(execution)
 
     def _record_command_audit(self, record: JsonDict) -> None:
         payload = {
@@ -5997,6 +6221,7 @@ class MacWorker(
         # chat_gateway, gateway_ownership, and representation.  Only refresh the
         # attestation when we have a real base to refresh.
         if command_resources is not None:
+            command_resources = _resources_without_retired_gateway(command_resources)
             command_resources["dispatch_policy"] = self._dispatch_policy_resource()
             command_resources = self._resources_with_live_report_executor_attestation(
                 command_resources
@@ -6110,9 +6335,7 @@ class MacWorker(
             # all (ADR 0015): its kernel cannot enforce Landlock, so a probe
             # sandbox never starts and leaves a restarting container behind.
             host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
-            sandboxed = not host_install and _env_truthy(
-                os.environ.get("MAC_OPENSHELL_SANDBOX")
-            )
+            sandboxed = not host_install and _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
 
             def _verify(choice: Any) -> bool:
                 try:
@@ -6773,24 +6996,36 @@ def _write_host_control_text(path: Path, content: str, workspace: Path) -> None:
         path.parent.resolve().relative_to(workspace_resolved)
     except (OSError, ValueError):
         raise OSError("host control output is outside task workspace") from None
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        info = None
-    if info is not None and not stat.S_ISREG(info.st_mode):
-        path.unlink()
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags, 0o600)
-    try:
-        opened = os.fstat(fd)
-        if not stat.S_ISREG(opened.st_mode):
-            raise OSError("host control output is not a regular file")
-        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
-            handle.write(content)
-            handle.flush()
-    finally:
-        os.close(fd)
+    # A fresh inode avoids truncating a hard-linked executor output. os.replace
+    # also replaces symlink/FIFO leaves without opening or following them.
+    atomic_write_text(path, content)
+
+
+def _read_bounded_evidence_file(path: Path, limit: int) -> bytes:
+    """Read one stable regular file; never follow links or block on a FIFO."""
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > limit:
+        raise OSError("unsafe or oversized evidence file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as handle:
+        opened = os.fstat(handle.fileno())
+
+        def identity(info):
+            return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or identity(opened) != identity(before)
+        ):
+            raise OSError("evidence file changed before read")
+        raw = handle.read(limit + 1)
+        if len(raw) > limit or identity(os.fstat(handle.fileno())) != identity(opened):
+            raise OSError("evidence file changed during read")
+        if identity(path.lstat()) != identity(opened):
+            raise OSError("evidence file was replaced during read")
+    return raw
 
 
 def _capture_evidence_artifact(
@@ -6816,29 +7051,60 @@ def _capture_evidence_artifact(
     source_size = source_info.st_size
     source_digest = hashlib.sha256()
     captured = bytearray()
-    try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(path, flags)
-        opened = os.fstat(fd)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_dev != source_info.st_dev
-            or opened.st_ino != source_info.st_ino
-        ):
-            os.close(fd)
+    redacted = False
+    source_hash_available = True
+    if path.suffix in {".json", ".txt"} and artifact_type != "media":
+        try:
+            raw = _read_bounded_evidence_file(path, _MAX_EVIDENCE_INPUT_BYTES)
+        except OSError:
+            raw = b""
+            source_hash_available = False
+            content = b"Evidence omitted: unsafe, changing, or oversized text file."
+        else:
+            source_digest.update(raw)
+            try:
+                value = json.loads(raw) if path.suffix == ".json" else raw.decode("utf-8")
+                cleaned = redact_for_persistence(value)
+                # Preserve byte identity for already sanitized signed artifacts.
+                content = (
+                    raw
+                    if cleaned == value
+                    else (
+                        json.dumps(cleaned, indent=2, sort_keys=True).encode()
+                        if path.suffix == ".json"
+                        else cleaned.encode()
+                    )
+                )
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                content = b"Evidence omitted: malformed text or JSON artifact."
+        redacted = content != raw
+        sanitized_size = len(content)
+        content = content[:max_bytes]
+        truncated = sanitized_size > len(content)
+    else:
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            fd = os.open(path, flags)
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_dev != source_info.st_dev
+                or opened.st_ino != source_info.st_ino
+            ):
+                os.close(fd)
+                return None
+            with os.fdopen(fd, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    source_digest.update(chunk)
+                    if len(captured) < max_bytes:
+                        remaining = max_bytes - len(captured)
+                        captured.extend(chunk[:remaining])
+        except OSError:
             return None
-        with os.fdopen(fd, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                source_digest.update(chunk)
-                if len(captured) < max_bytes:
-                    remaining = max_bytes - len(captured)
-                    captured.extend(chunk[:remaining])
-    except OSError:
-        return None
-    content = bytes(captured)
+        content = bytes(captured)
+        truncated = source_size > len(content)
     content_digest = "sha256:%s" % hashlib.sha256(content).hexdigest()
-    source_sha256 = "sha256:%s" % source_digest.hexdigest()
-    truncated = source_size > len(content)
+    source_sha256 = "sha256:%s" % source_digest.hexdigest() if source_hash_available else None
     return {
         "name": name,
         "artifact_type": artifact_type,
@@ -6853,6 +7119,7 @@ def _capture_evidence_artifact(
             "schema": "mac.evidence_artifact_capture.v1",
             "source_size_bytes": source_size,
             "source_sha256": source_sha256,
+            "redacted": redacted,
             "captured_size_bytes": len(content),
             "capture_limit_bytes": max_bytes,
         },
@@ -6889,7 +7156,9 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         ),
     ]
     try:
-        wip_manifest = json.loads((task_dir / "repository-wip.json").read_text(encoding="utf-8"))
+        wip_manifest = json.loads(
+            _read_bounded_evidence_file(task_dir / "repository-wip.json", _MAX_EVIDENCE_INPUT_BYTES)
+        )
     except Exception:
         wip_manifest = {}
     if isinstance(wip_manifest, dict):
@@ -7646,6 +7915,17 @@ def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str
     return authed, _redact_git_remote_auth(authed)
 
 
+def _test_activity_status(test: JsonDict) -> str:
+    status = str(test.get("status") or "").strip().lower()
+    if status in {"deferred", "unavailable", "skipped", "not_run", "stale_source"}:
+        return status.replace("_", " ")
+    if test.get("returncode") is None:
+        return "not run"
+    return (
+        "passed" if test.get("returncode") == 0 and status not in {"fail", "failed"} else "FAILED"
+    )
+
+
 def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
@@ -7662,22 +7942,23 @@ def _repository_finalizer_prepush_problems(
     files_changed = _manifest_list(repo.get("files_changed"))
     if not files_changed and not _worker_allows_empty_repo_change_evidence(task, "repo_change"):
         problems.append("repo evidence requires changed files")
-    # When hub-verify mode is active and the test item is the deferred sentinel,
-    # skip the passing-test gate — the hub finalizer will run the contract test
-    # after the branch is pushed.  All other prepush checks (head_sha, dirty,
-    # files_changed) are still enforced.
-    if hub_verify and _is_hub_verify_deferred_item(test_item):
-        pass  # test gate intentionally skipped in hub-verify deferred mode
-    elif _worker_verification_item_passed(test_item) is not True:
+    if (
+        str(test_item.get("status") or "").lower()
+        in {"deferred", "unavailable", "stale_source", "not_run", "skipped", "fail", "failed"}
+        or _worker_verification_item_passed(test_item) is not True
+    ):
         problems.append("repo code evidence requires at least one passing test/check")
+    if test_item.get("executed_head_sha") and test_item["executed_head_sha"] != head_sha:
+        problems.append("repository tests do not match the commit being pushed")
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
 
 
 def _hub_verify_deferred_test_item(command: str) -> JsonDict:
-    """Return the deferred sentinel emitted when MAC_REVIEW_HUB_VERIFY=1 and no
-    sandbox result is available.  The hub finalizer will run the contract test
-    after the branch is pushed; the worker must not block on it."""
+    """Report pending independent review without claiming a test result.
+
+    This is valid for native read-only reports; it never authorizes a code push.
+    """
     return {
         "name": "repository contract test",
         "command": command,
@@ -7760,6 +8041,18 @@ def _trusted_read_only_report_test_item(
     command = _repository_contract_test_command(task)
     if not command:
         return None, ["read-only repository report current contract lacks test.command"]
+    if (
+        sys.platform == "darwin"
+        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM") == "darwin"
+        and os.environ.get("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE")
+        == REPORT_REPOSITORY_MACOS_HOST_POSTURE
+    ):
+        # A native agent can write files in its workspace. None of those files
+        # can attest to a Linux test run. The signed host projection requests
+        # independent hub verification, which gates report publication.
+        if not _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY")):
+            return None, ["native read-only repository reports require Linux hub verification"]
+        return _hub_verify_deferred_test_item(command), []
     item = _sandbox_repository_verification_item(
         task_dir,
         command,
@@ -7994,8 +8287,10 @@ def _worker_verification_contract_problems(
             problems.append("artifact evidence requires artifacts")
         return problems
     if evidence_type == "no_change":
+        from mac.evidence_validators import no_change_reason
+
         problems = _worker_require_clean_repo_anchor(manifest)
-        if not str(manifest.get("reason") or manifest.get("no_change_reason") or "").strip():
+        if not no_change_reason(manifest):
             problems.append("no_change evidence requires a reason")
         if _worker_passed_verification_check_count(manifest) < 1:
             problems.append("no_change evidence requires at least one passing check")
@@ -8112,10 +8407,15 @@ def _worker_allows_empty_repo_change_evidence(task: JsonDict, evidence_type: str
 
 
 def _worker_require_clean_repo_anchor(manifest: JsonDict) -> List[str]:
+    from mac.evidence_validators import repo_files_changed_problem
+
     repo = manifest.get("repo")
     if not isinstance(repo, dict):
         return ["repo evidence requires verification.repo object"]
     problems: List[str] = []
+    files_problem = repo_files_changed_problem(repo.get("files_changed"))
+    if files_problem:
+        problems.append(files_problem)
     head_sha = str(repo.get("head_sha") or "").strip()
     if not GIT_SHA_RE.match(head_sha):
         problems.append("repo.head_sha must be a git SHA")

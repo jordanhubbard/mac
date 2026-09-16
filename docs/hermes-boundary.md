@@ -66,7 +66,7 @@ provenance only.
 
 Phase 2 implements this through `mac.hermes_adapter` and the `mac-hermes` CLI.
 Hermes gateway code should use that adapter, or an equivalent API client, rather
-than importing `ControlPlane` or editing SQLite directly.
+than importing `ControlPlane` or editing the authority database directly.
 
 ## Interaction Flow
 

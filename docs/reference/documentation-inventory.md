@@ -63,6 +63,7 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/assessment-task-de3502.md`](../archive/field-notes/assessment-task-de3502.md) | Assessment: task_de35029099d34c94be186c8992ee706a |
 | historical archive | [`archive/field-notes/assessment-task-f6a813.md`](../archive/field-notes/assessment-task-f6a813.md) | Assessment: task_f6a813fede7841d28b154af3a544864a |
 | historical archive | [`archive/field-notes/assessment-task-f9cd72.md`](../archive/field-notes/assessment-task-f9cd72.md) | Assessment: task_f9cd72342aef4e7b8701b131b12d29ff |
+| historical archive | [`archive/field-notes/canary-v1.3.1.md`](../archive/field-notes/canary-v1.3.1.md) | v1.3.1 fleet canary |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md`](../archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md) | Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable) |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-5404b15-skill.md`](../archive/field-notes/closeout-dreamrepair-5404b15-skill.md) | Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | [`archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md`](../archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md) | Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
@@ -94,6 +95,7 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md`](../archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md) | Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task |
 | historical archive | [`archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md`](../archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md) | Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6 |
 | historical archive | [`archive/field-notes/haskell_migration.md`](../archive/field-notes/haskell_migration.md) | A Notional Haskell Migration Plan for MAC |
+| historical archive | [`archive/field-notes/investigation-contract-gate-env-8454149d-resolution.md`](../archive/field-notes/investigation-contract-gate-env-8454149d-resolution.md) | Contract gate environment repair resolution |
 | historical archive | [`archive/field-notes/investigation-dream-skill-generic-area-bucket.md`](../archive/field-notes/investigation-dream-skill-generic-area-bucket.md) | Investigation: dream finding with a generic `skill` affected label — placeholder area bucket, not a defect location |
 | historical archive | [`archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md`](../archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md) | Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal |
 | historical archive | [`archive/field-notes/investigation-dream-tests-generic-area-bucket.md`](../archive/field-notes/investigation-dream-tests-generic-area-bucket.md) | Investigation: dream finding `dreamrepair:173ce952` with a generic `tests` affected label — placeholder area bucket, not a defect location |
@@ -172,6 +174,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`guide/03-advanced.md`](../guide/03-advanced.md) | Advanced Concepts |
 | supplemental reference | [`guide/04-ui.md`](../guide/04-ui.md) | The UI |
 | supplemental reference | [`guide/05-developer-guide.md`](../guide/05-developer-guide.md) | Developer Guide |
+| supplemental reference | [`guide/06-trust-workflow.md`](../guide/06-trust-workflow.md) | A request people can verify |
 | supplemental reference | [`guide/README.md`](../guide/README.md) | mac documentation |
 | supplemental reference | [`hermes-boundary.md`](../hermes-boundary.md) | Hermes Boundary |
 | supplemental reference | [`hermes-integration.md`](../hermes-integration.md) | Hermes Integration |
@@ -186,6 +189,10 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`in-flight-agent-messages.md`](../in-flight-agent-messages.md) | Reaching an agent that is already working |
 | landing page | [`index.md`](../index.md) | MAC: trustworthy work across an agent fleet |
 | supplemental reference | [`integration-authority-contract.md`](../integration-authority-contract.md) | Integration Authority Contract |
+| supplemental reference | [`investigations/dependency-drift.md`](../investigations/dependency-drift.md) | Dependency mutation during interpreter discovery |
+| runbook | [`investigations/hermes-deployment-readiness.md`](../investigations/hermes-deployment-readiness.md) | Hermes deployment profile and readiness |
+| supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
+| supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
 | supplemental reference | [`memory-tier-schema.md`](../memory-tier-schema.md) | MAC vector memory tier — schema, collections, model, TTLs |
 | supplemental reference | [`memory-tier-verification.md`](../memory-tier-verification.md) | Memory tier — end-to-end verification |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
@@ -194,11 +201,23 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`openshell-nemo-relay-e2e.md`](../openshell-nemo-relay-e2e.md) | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | [`openshell-nemo-relay-integration.md`](../openshell-nemo-relay-integration.md) | OpenShell + NeMo Relay integration |
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
+| supplemental reference | [`presentations/agentfabric-overview/README.md`](../presentations/agentfabric-overview/README.md) | AgentFabric overview — authoring package |
+| supplemental reference | [`presentations/agentfabric-overview/SKILL.md`](../presentations/agentfabric-overview/SKILL.md) | AgentFabric overview presentation |
+| supplemental reference | [`presentations/agentfabric-overview/current-deliverables.md`](../presentations/agentfabric-overview/current-deliverables.md) | Current deliverables — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/deck-specification.md`](../presentations/agentfabric-overview/deck-specification.md) | Deck specification — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/narrative-specification.md`](../presentations/agentfabric-overview/narrative-specification.md) | Narrative specification — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/prompts/deck-authoring-prompt.md`](../presentations/agentfabric-overview/prompts/deck-authoring-prompt.md) | Deck authoring prompt — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/prompts/image-prompts.md`](../presentations/agentfabric-overview/prompts/image-prompts.md) | Image prompts — intentionally empty |
+| supplemental reference | [`presentations/agentfabric-overview/qa-ledger.md`](../presentations/agentfabric-overview/qa-ledger.md) | QA ledger — AgentFabric overview |
+| supplemental reference | [`presentations/agentfabric-overview/source-notes.md`](../presentations/agentfabric-overview/source-notes.md) | Source notes — AgentFabric overview |
+| supplemental reference | [`problems.md`](../problems.md) | Fleet recovery: evidence and remaining acceptance |
 | runbook | [`production-deployment.md`](../production-deployment.md) | Production Deployment |
+| supplemental reference | [`python-baseline.md`](../python-baseline.md) | Python baseline |
 | generated reference | [`reference/cli.md`](../reference/cli.md) | Command-line reference |
 | generated reference | [`reference/documentation-inventory.md`](../reference/documentation-inventory.md) | Documentation inventory |
 | generated reference | [`reference/openapi.md`](../reference/openapi.md) | HTTP API reference |
 | generated reference | [`reference/staged-module-integration-audit.md`](../reference/staged-module-integration-audit.md) | Staged-but-unwired `src/mac` module integration audit |
+| supplemental reference | [`releases/v1.5.0-audit.md`](../releases/v1.5.0-audit.md) | v1.5.0 documentation and contribution audit |
 | supplemental reference | [`repository-cicd-monitor.md`](../repository-cicd-monitor.md) | Repository CI/CD lifecycle monitoring |
 | supplemental reference | [`repository-ref-hygiene.md`](../repository-ref-hygiene.md) | Managed Repository Ref Hygiene |
 | supplemental reference | [`repository-runtime-contract.md`](../repository-runtime-contract.md) | Repository Runtime Contract |

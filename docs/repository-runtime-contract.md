@@ -19,12 +19,14 @@ toolchain:
     - python3
     - git
     - gh
+  minimum_versions:
+    git: "2.38"
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:
     - .venv/bin/python
 test:
-  command: PATH=.venv/bin:$PATH .venv/bin/python -m pytest
+  command: scripts/run-contract-tests.sh
 evidence:
   required:
     - repo.head_sha
@@ -45,6 +47,9 @@ evidence:
 - `toolchain.required_commands`: commands that must exist before bootstrap can
   run. Keep this list small and portable. Project bootstrap scripts should fail
   loudly when a required command is still missing.
+- `toolchain.minimum_versions`: minimum dotted versions for commands in
+  `required_commands`. Fleet prerequisite receipts verify these floors before
+  phase 2; mac requires Git 2.38 for `merge-tree --write-tree`.
 - `bootstrap.command`: an idempotent command run from the repository root to
   create the local build/test environment.
 - `bootstrap.creates`: relative paths expected after bootstrap. These are used
@@ -105,9 +110,11 @@ mac declares its own contract in `.mac/project.yaml`. Its bootstrap command is:
 python3 scripts/bootstrap-project.py
 ```
 
-That script first verifies `python3`, `git`, and `gh`, then creates
-`.venv` and installs the dev extra so a fresh macOS, Linux, or WSL2 agent can run:
+That script verifies the declared tools and reviewed Python baseline, then
+creates `.venv` from the committed lock with the development extra. MAC code
+execution and pre-push verification run in an approved Linux OpenShell sandbox;
+macOS remains a control-client and native-service platform. The canonical gate is:
 
 ```console
-PATH=.venv/bin:$PATH .venv/bin/python -m pytest
+scripts/run-contract-tests.sh
 ```

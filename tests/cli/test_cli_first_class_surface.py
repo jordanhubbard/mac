@@ -31,6 +31,7 @@ Two properties are asserted here, and the second matters as much as the first:
 from __future__ import annotations
 
 import argparse
+import re
 
 import pytest
 
@@ -258,6 +259,10 @@ def test_top_level_help_is_only_the_first_class_objects(parser, capsys):
         assert name in out
     assert "Getting started:" not in out, "administrative groups are back at the top level"
     assert "mac admin help" in out
+    assert "0 administrative commands live under" not in out
+    match = re.search(r"(\d+) administrative commands live under", out)
+    assert match is not None, out
+    assert int(match.group(1)) >= 20, out
 
 
 # --------------------------------------------------------------------------

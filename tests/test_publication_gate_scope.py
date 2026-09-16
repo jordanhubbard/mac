@@ -51,7 +51,7 @@ def test_the_timeout_can_cover_the_work_it_gates():
     """A cap the work cannot meet is not a gate, it is an outage that reports
     itself as a gate failure. The scoped run alone takes ~15 minutes before
     clone, upload and dependency bootstrap."""
-    source = inspect.getsource(services.ControlPlane._hub_verify_run_contract_test)
+    source = inspect.getsource(services.run_repository_contract_test_in_openshell)
 
     assert '"2400"' in source, (
         "MAC_HUB_VERIFY_TIMEOUT's default must cover a scoped gate plus its setup; 1200s did not"
@@ -84,6 +84,45 @@ def test_a_short_failure_is_not_mangled():
     from mac.merge_queue import _failure_excerpt
 
     assert _failure_excerpt(RuntimeError("boom")) == "boom"
+
+
+def test_the_publication_gate_also_runs_bootstrap_before_its_test_command():
+    """The projected-merge gate reuses _hub_verify_run_contract_test, which
+    needs bootstrap.command run before test.command in a fresh sandbox (see
+    test_hub_verify_evidence_window.py). Confirmed live: mac-fleet-canary's
+    review approved via hub_verify (which got the bootstrap fix), then
+    publication immediately failed with the identical
+    "full repository contract test failed" -- because this second call site
+    curried the runner without threading bootstrap_command through, so the
+    sandbox still had no venv for `.venv/bin/pytest`."""
+    source = inspect.getsource(services.ControlPlane._publish_git_target_attempt)
+
+    assert "_repository_contract_bootstrap_command_for_task" in source, (
+        "the projected-merge gate's runner must supply bootstrap_command to "
+        "_hub_verify_run_contract_test, or every repository whose "
+        "test.command assumes a pre-built toolchain fails publication even "
+        "after review approves it"
+    )
+
+
+def test_the_publish_attempt_reaps_stalled_merge_queue_entries():
+    """evict_exhausted() must run on the same cadence as reconcile_front().
+
+    An entry that wins a slot, tests clean, and then can never open a pull
+    request (its branch has no commits against main because another entry
+    already landed the same change) is invisible to claim_slot() -- that
+    method only increments attempts, it never judges them. evict_exhausted()
+    is the reaper built for exactly this, but it was defined in
+    native_merge_queue.py and never called from anywhere in services.py, so
+    it never ran and a stalled entry blocked the front of the queue forever.
+    """
+    source = inspect.getsource(services.ControlPlane._publish_git_target_attempt)
+
+    assert "evict_exhausted" in source, (
+        "the publish-attempt loop must call queue.evict_exhausted() before "
+        "claim_slot(), or an entry that wins a slot and then can never open "
+        "a pull request wedges the front of the queue forever"
+    )
 
 
 def test_the_chosen_gate_command_is_recorded():

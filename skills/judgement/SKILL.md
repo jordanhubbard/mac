@@ -63,8 +63,9 @@ threshold (default two hours) without a publication. Twenty-two tasks were
 in `reviewing` on 2026-08-23, including a P0 titled "Diagnose why the hub
 self-tick fails to drain the 66 REVIEWING tasks".
 
-**Intervene:** if hub-verify can still run, leave it for the next review
-sweep. If it is waiting on an LLM reviewer, stop the task. If a
+**Intervene:** a pending virtual review in the hub's active verification guard
+belongs to its bounded external runner; task age alone must not stop it.
+For genuinely stale reviews without an active runner, stop the task. If a
 non-virtual agent holds the review, hold that agent.
 
 ### 5. `semantic_reviewer_still_assigned`
@@ -78,12 +79,18 @@ hub-reviewer plus the workers that were not part of the defect.
 
 ### 6. `excessive_reviewing_population`
 
-More than a tenth of non-terminal tasks, or more than twenty tasks, sit in
-`needs_review` / `reviewing`. That is a process pile-up, not a busy day.
+Queue size alone does not establish a process failure. Fresh reviews and
+active hub verification are normal work, including large review queues.
 
-**Intervene:** stop the oldest stuck reviews first. If the pile-up persists
-across a cycle, hold the worker fleet so new work stops feeding the queue,
-then redeploy.
+**Intervene:** address stuck reviews individually first. If the same stalled
+reviews persist into the next judgement cycle and meet both configured
+thresholds (default: at least twenty tasks and a tenth of non-terminal tasks),
+hold worker dispatch and pause registered projects so new work stops feeding
+the queue. Recheck after targeted recovery in that cycle; do not hold the fleet
+if recovery cleared the queue. This backpressure preserves healthy in-flight
+tasks and reviews. It does not cancel work or trigger an automatic redeploy.
+Reserve one intervention from the cycle budget for that hold so repeated
+individual recovery failures cannot exhaust the budget before backpressure.
 
 ### 7. `too_many_gates`
 
@@ -96,7 +103,7 @@ the same class of defect that made the semantic reviewer worth removing.
 
 ### 8. `orphaned_pull_request`
 
-An open PR names a task that is already `completed` or `cancelled`, or
+An open PR identifies its owning task as already `completed` or `cancelled`, or
 the same task id already has a merged PR. Observed 2026-08-23: 56 open
 PRs against `main`, zero review decisions. Several were copies of work
 that later landed under another number (`#585` after `#577`, `#587`
@@ -105,9 +112,15 @@ after `#580`, `#582`/`#612` after `#614`).
 **Intervene:** close the orphaned PR. Do not open a replacement. The
 branch is archaeology, not a second review queue.
 
+Ownership comes from a consistent task identity in the title, branch or
+`Task:` / `Task ID:` field. Investigation, dependency and other body references
+are supporting context. They do not authorize PR closure or task completion.
+Conflicting ownership declarations and ambiguous short ids authorize neither.
+Merged-task reconciliation additionally requires the full durable owning id.
+
 ### 9. `duplicate_pull_request`
 
-Two or more open PRs name the same task. The deploy-generation
+Two or more open PRs identify the same owning task. The deploy-generation
 retirement record was opened five times (`#485`, `#609`–`#613`). Task
 stop/restart was opened three times (`#514`, `#641`, `#642`).
 
@@ -116,12 +129,15 @@ ask another agent to re-implement the same change.
 
 ### 10. `unlanded_pull_request`
 
-A PR is still open, the task is `failed` / `blocked` / `reviewing`,
+A PR is still open, the task is `failed` / `blocked` / `waiting`,
 and nothing with that task id has merged. This is the good work that
 got stuck in semantic review and never landed — `#643` (docs audit),
 `#634` (route-ladder ADR), and dozens more.
 
-**Intervene:** stop the looping task. Do **not** close the PR. The
+**Intervene:** stop a blocked task; retain failed or waiting work for recovery.
+An open PR is normal during `needs_review` or `reviewing` and does not justify
+stopping it. The age, repeated rejection and semantic reviewer checks above
+handle actual review stalls. Do **not** close the PR. The
 branch is the salvage. Hub-verify is the only gate left; a later
 operator or judgement cycle can land it. Closing it is how the work
 disappears a second time.

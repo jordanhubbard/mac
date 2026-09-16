@@ -513,6 +513,15 @@ class RemoteDispatch:
             refresh_limit=refresh_limit,
         )
 
+    def task_outcome(self, task_id: str) -> _Dictish:
+        return _Dictish(self._get("/tasks/%s/outcome" % quote(task_id, safe="")))
+
+    def record_task_acceptance(self, task_id: str, **kwargs: Any) -> _Dictish:
+        return _Dictish(self._post("/tasks/%s/acceptance" % quote(task_id, safe=""), kwargs))
+
+    def task_outcome_cohort(self, **kwargs: Any) -> _Dictish:
+        return _Dictish(self._get("/tasks/outcomes", **kwargs))
+
     def diagnostics_report(
         self,
         *,
@@ -794,6 +803,16 @@ class RemoteDispatch:
     ) -> _Dictish:
         body = _drop_none({"actor": actor, "reason": reason})
         return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
+
+    def stop_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        reason: Optional[str] = None,
+    ) -> _Dictish:
+        body = _drop_none({"actor": actor, "reason": reason})
+        return _Dictish(self._post("/tasks/%s/stop" % quote(task_id, safe=""), body))
 
     def update_task(self, task_id: str, **fields: Any) -> _Dictish:
         return _Dictish(self._put("/tasks/%s" % quote(task_id, safe=""), _drop_none(dict(fields))))
@@ -1726,6 +1745,39 @@ class RemoteDispatch:
             )
         )
 
+    def read_agentbus_traffic(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+        *,
+        include_addressed: bool = True,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/agents/%s/agentbus/traffic" % quote(agent_id, safe=""),
+                after_cursor=after_cursor,
+                limit=limit,
+                include_addressed=include_addressed,
+            )
+        )
+
+    def agentbus_roll_call(
+        self,
+        agent_id: str,
+        *,
+        include_departed: bool = False,
+    ) -> _Dictish:
+        # The route is agent-scoped for authorization only (an agent connects
+        # to the bus as itself, same as read_agentbus_traffic); the roster it
+        # returns is fleet-wide, not filtered to agent_id.
+        return _Dictish(
+            self._get(
+                "/agents/%s/agentbus/roll-call" % quote(agent_id, safe=""),
+                include_departed=include_departed,
+            )
+        )
+
     # -- Inbox (task_7faf8e56) ----------------------------------------------
     #
     # RemoteDispatch wrapped the entire agentbus surface EXCEPT the inbox, and
@@ -2560,6 +2612,13 @@ class RemoteDispatch:
 
     def list_events(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/events", **kw))
+
+    def list_news(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._get("/news", **kw))
+
+    def stream_news(self, **kw: Any) -> Any:
+        lines = self._client.stream_lines("/news/stream" + _query(kw))
+        return self._decode_event_lines(lines)
 
     def list_command_audit(self, **kw: Any) -> List[_Dictish]:
         agent_id = kw.pop("agent_id", None)

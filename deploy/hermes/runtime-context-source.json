@@ -1,0 +1,16 @@
+{
+  "upstream_repository": "https://github.com/NousResearch/hermes-agent",
+  "upstream_commit": "9dd6634c5635321cf38840cc30e9b51226689128",
+  "patch": "runtime-context.patch",
+  "patch_sha256": "56d87cbb391ab7a154279dfac0f533c34e870c7e04599d3a18567f0c03d3427f",
+  "files": {
+    "agent/prompt_builder.py": {
+      "original_sha256": "1ef76793711d76012cff2f36183df5251428ac654f1632002535117196be6a26",
+      "patched_sha256": "b90968227468fd6d84411f9abe8eaf2317cbe5305e878ef152ed8dbccb6bf8c7"
+    },
+    "tests/agent/test_prompt_builder.py": {
+      "original_sha256": "1e5290575ba188beb016fb4d18810216641476c447b88070161007c6a26c1281",
+      "patched_sha256": "64f9e9544043d2d8a9a3545fab9f7a8077c492a71177f3547af6674e56a68312"
+    }
+  }
+}

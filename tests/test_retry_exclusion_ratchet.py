@@ -31,6 +31,8 @@ requirement, which sent the operator to add capabilities that were already there
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mac.allocator import (
@@ -51,7 +53,7 @@ def _task(excluded=(), target=None, capabilities=CAPABLE):
         priority=1,
         created_at="2026-08-02T03:00:25Z",
         required_capabilities=frozenset(capabilities),
-        excluded_agent_ids=frozenset(excluded),
+        retry_excluded_agent_ids=frozenset(excluded),
         target_agent_id=target,
     )
 
@@ -103,6 +105,15 @@ def test_the_exclusion_is_honoured_when_an_alternative_exists():
     placed = _dispatch(_task(excluded={"agent_worker5"}), _fleet(extra_capable=True))
 
     assert placed == ["agent_worker9"]
+
+
+def test_an_explicit_safety_exclusion_is_never_relaxed():
+    task = replace(
+        _task(),
+        excluded_agent_ids=frozenset({"agent_worker5"}),
+    )
+
+    assert _dispatch(task, _fleet()) == []
 
 
 def test_an_unexcluded_task_is_unaffected():

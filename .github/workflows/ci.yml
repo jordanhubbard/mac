@@ -5,8 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       publish_images:
@@ -23,6 +21,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Dead-code contract (vulture >=90%, allowlisted)
         run: scripts/dead-code-check.sh
 
@@ -37,10 +37,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -62,15 +64,16 @@ jobs:
         # and restored from the newest entry for that branch: the checkpoint
         # validates itself against the tree and the runner fingerprint
         # (src/mac/test_checkpoint.py), so a wrong or stale restore costs a full
-        # run, never a wrong result. `always: true` so a RED run still saves the
-        # checkpoint -- a red run is precisely the one worth resuming from.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        # run, never a wrong result. The explicit always() save step below
+        # also preserves progress when the test gate fails. Cache entries are
+        # immutable, so each rerun attempt needs its own save key.
+        id: test_checkpoint_restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .mac-test-checkpoint
-          key: mac-test-checkpoint-sanity-${{ github.head_ref }}-${{ github.run_id }}
+          key: mac-test-checkpoint-sanity-${{ github.head_ref }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             mac-test-checkpoint-sanity-${{ github.head_ref }}-
-          save-always: true
       - name: Check the committed impact map is collectable
         # sanity-test depends on impact-map the same way test-schema-migrations
         # depends on postgres-schema. A stale interned node id is a pytest
@@ -82,6 +85,15 @@ jobs:
           MAC_TEST_CHECKPOINT: "1"
           MAC_IMPACT_MAP_CHECKED: "1"
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
+      - name: Save test-gate checkpoint
+        if: >-
+          always() &&
+          steps.test_checkpoint_restore.outputs.cache-primary-key != '' &&
+          steps.test_checkpoint_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .mac-test-checkpoint
+          key: ${{ steps.test_checkpoint_restore.outputs.cache-primary-key }}
 
   mainline:
     if: >-
@@ -96,10 +108,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -120,18 +134,27 @@ jobs:
         # pass when the gate falls through to the whole-repo coverage run: the
         # complete, coverage-measured suite still runs before this job can go
         # green (src/mac/test_checkpoint.py, "COVERAGE FLOORS").
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: test_checkpoint_restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .mac-test-checkpoint
-          key: mac-test-checkpoint-mainline-${{ github.run_id }}
+          key: mac-test-checkpoint-mainline-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             mac-test-checkpoint-mainline-
-          save-always: true
       - name: Run impact-selected diff coverage gate (full on unsafe resolution)
         env:
           MAC_TEST_SELECT_BASE: ${{ github.event.before }}
           MAC_TEST_CHECKPOINT: "1"
         run: scripts/run-contract-tests.sh
+      - name: Save test-gate checkpoint
+        if: >-
+          always() &&
+          steps.test_checkpoint_restore.outputs.cache-primary-key != '' &&
+          steps.test_checkpoint_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .mac-test-checkpoint
+          key: ${{ steps.test_checkpoint_restore.outputs.cache-primary-key }}
       - name: Upload coverage policy evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -149,10 +172,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up secondary Python
-        run: uv python install 3.12
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.12
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -168,12 +193,11 @@ jobs:
             exit 1
           fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
-      - name: Run secondary-version public/process compatibility slice
+      - name: Run public/process compatibility slice
         run: scripts/run-compatibility-tests.sh
 
   ide:
     name: IDE typecheck and browser tests
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -201,7 +225,6 @@ jobs:
 
   observe:
     name: Observability console typecheck, tests and build
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -259,20 +282,18 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync PostgreSQL test dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Run live PostgreSQL schema, migration, and concurrency contracts
         run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
 
-  nightly:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  upfront-validation:
+    name: Full candidate validation and historical fault detection
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
@@ -281,10 +302,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -300,28 +323,27 @@ jobs:
             exit 1
           fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
-      - name: Run full scheduled matrix
+      - name: Run full candidate suite
         run: scripts/run-contract-tests.sh
       - name: Prove historical fault detection
-        if: matrix.python-version == '3.11'
         # Through `uv run`, not bare. Invoked bare, the script's
         # `#!/usr/bin/env python3` shebang selects the SYSTEM interpreter, which
         # has no psycopg -- and fault-replay spawns every probe with its own
         # `sys.executable`, so each one died on
         # "ImportError: PostgresStore requires psycopg" before it could replay
-        # anything. The step still passed its own smoke checks, so the nightly
+        # anything. The step still passed its own smoke checks, so the deferred job
         # reported a failure that looked like a product regression and was a
         # missing interpreter.
-        run: uv run --extra dev --python ${{ matrix.python-version }} python scripts/fault-replay.py
+        run: uv run --extra dev python scripts/fault-replay.py
 
   portfolio:
     if: >-
-      github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
@@ -330,10 +352,12 @@ jobs:
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Set up primary Python
-        run: uv python install 3.11
+        with:
+          version: "0.12.12"
+      - name: Set up fleet Python
+        run: uv python install
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # The suite runs against Postgres because the fleet does. Provisioned
         # with the same script developers use, rather than a service container,
@@ -359,16 +383,17 @@ jobs:
         with:
           name: test-portfolio
           path: .test-portfolio/
-      - name: Commit the refreshed impact map to main
+      - name: Open a PR for the refreshed impact map
         # The producer of the committed map is this job: a green whole-repo
-        # portfolio run with MAC_TEST_REBUILD_MAP=1. It used to run only on a
-        # nightly schedule, so a merge that deleted tests left interned node
-        # ids stranded until the next cron -- and every subsequent PR's
-        # always_run guards failed. Push-to-main is therefore part of the
-        # same dependency: if main moved, regenerate. [skip ci] keeps the
-        # data-only commit from re-triggering CI (and the image republish
-        # path). The rebase-retry loop tolerates a racing push to main.
+        # portfolio run with MAC_TEST_REBUILD_MAP=1. Branch protection rejects
+        # `git push origin HEAD:main` (GH013), and that rejection used to fail
+        # this job — so a red main meant "git was not allowed to push", not
+        # "the product is red". Land the refresh on a bot-owned branch as a
+        # pull request. The map is already uploaded as the test-portfolio
+        # artifact; a blocked push or PR must not fail the job.
         if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           map=src/mac/data/test_impact_map.json
@@ -378,30 +403,34 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          branch=ci/impact-map-refresh
+          git checkout -B "$branch"
           git add "$map"
-          git commit -m "chore(test-selection): refresh committed impact map [skip ci]" \
+          git commit -m "chore(test-selection): refresh committed impact map" \
             -m "Rebuilt from the portfolio coverage run at ${GITHUB_SHA}."
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:main; then
-              echo "pushed refreshed impact map"
-              exit 0
-            fi
-            echo "push rejected (attempt ${attempt}); rebasing onto origin/main"
-            git fetch origin main
-            git rebase origin/main
-          done
-          echo "failed to push refreshed impact map after retries" >&2
-          exit 1
+          if ! git push origin "HEAD:refs/heads/${branch}" --force; then
+            echo "::warning::could not push ${branch}; map is in the test-portfolio artifact"
+            exit 0
+          fi
+          if gh pr view "$branch" --json number --jq .number >/dev/null 2>&1; then
+            echo "updated existing impact-map PR"
+            exit 0
+          fi
+          gh pr create --base main --head "$branch" \
+            --title "chore(test-selection): refresh committed impact map" \
+            --body "Portfolio job rebuilt \`src/mac/data/test_impact_map.json\` from ${GITHUB_SHA}. Opened because branch protection forbids pushing the refresh directly to main." \
+            || echo "::warning::could not open PR; branch ${branch} was pushed"
 
   container-contract:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+        with:
+          version: "0.12.12"
       - name: Sync dependencies
-        run: uv sync --extra dev --python 3.11
+        run: uv sync --locked --extra dev
       - name: Start test PostgreSQL
         # This job ran pytest with no database at all -- the only pytest job in
         # the workflow missing this step. The suite fails fast rather than
@@ -472,7 +501,7 @@ jobs:
     concurrency:
       group: mac-deployment-frozen-image
       cancel-in-progress: false
-    needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
+    needs: [dead-code, mainline, compatibility, postgres-contract, upfront-validation, container-contract, publication-scope]
     permissions:
       contents: read
       packages: write
@@ -667,17 +696,10 @@ jobs:
           echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
           echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
       - name: Tag the reused digest with this commit
-        # `git-<sha>` is a consumed contract, not a convenience: the nightly
-        # documentation boundary runs
-        # `ghcr.io/jordanhubbard/mac:git-$GITHUB_SHA`, and deploy/certifier
-        # documents the same per-commit reference. The build-and-push step
-        # above was its ONLY producer, and that step is skipped whenever the
-        # frozen image inputs are unchanged and this job reuses an
-        # already-published digest -- so a reusing commit landed on main with
-        # no per-commit tag at all, and the next nightly died with exit 125
-        # pulling a manifest that was never pushed (run 32334374935, commit
-        # d623f3d7). Publishing the tag only on the path that happens to
-        # rebuild made the contract depend on whether the inputs churned.
+        # Preserve per-commit references for deployment and external consumers,
+        # including commits that reuse an already-published immutable digest.
+        # Candidate documentation smoke now builds locally, but image reuse
+        # must not make the public git-<sha> contract disappear.
         if: steps.image-identity.outputs.disposition == 'reused'
         env:
           IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
@@ -1048,7 +1070,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.publication-scope.outputs.certifier_changed == 'true'
     runs-on: ubuntu-latest
-    needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
+    needs: [dead-code, mainline, compatibility, postgres-contract, upfront-validation, container-contract, publication-scope]
     permissions:
       contents: read
       packages: write
@@ -1199,7 +1221,7 @@ jobs:
     #
     # This adds a `tested-<frozen-inputs-sha>` tag pointing at the SAME digest,
     # only once every code gate is green. deploy-mac-fleet.sh requires it.
-    needs: [openshell-runtime-image, dead-code, mainline, compatibility, postgres-contract]
+    needs: [openshell-runtime-image, dead-code, mainline, compatibility, postgres-contract, upfront-validation, container-contract]
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
@@ -1238,8 +1260,11 @@ jobs:
       - mainline
       - compatibility
       - postgres-contract
+      - upfront-validation
+      - container-contract
       - publication-scope
       - docker
+      - portfolio
     if: always() && failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

@@ -19,7 +19,8 @@ Measured on the fleet hub with it disabled: a simple read went from 3.46s to
 30s deadline.
 
 The hub keeps its own structured observability. The access log was a duplicate,
-written on the worst possible thread.
+written on the worst possible thread. ``mac.hub_serve`` is the process entry
+point (needed for dual bind); it must keep access_log=False.
 """
 
 from __future__ import annotations
@@ -29,24 +30,26 @@ import pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def test_the_fleet_installer_disables_the_access_log():
+def test_the_fleet_installer_starts_hub_serve():
     script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
 
     launch = [
         line
         for line in script.splitlines()
-        if "uvicorn" in line and "mac.api:create_app" in line and line.strip().startswith("exec")
+        if "mac.hub_serve" in line and line.strip().startswith("exec")
     ]
 
-    assert launch, "no uvicorn launch line found in the installer"
-    for line in launch:
-        assert "--no-access-log" in line, line.strip()[:120]
+    assert launch, "no mac.hub_serve launch line found in the installer"
 
 
-def test_the_systemd_unit_disables_it_too():
+def test_hub_serve_disables_the_access_log():
+    source = (ROOT / "src" / "mac" / "hub_serve.py").read_text(encoding="utf-8")
+    assert "access_log=False" in source
+
+
+def test_the_systemd_unit_starts_hub_serve():
     unit = (ROOT / "deploy" / "systemd" / "mac.service").read_text(encoding="utf-8")
-
-    assert "--no-access-log" in unit
+    assert "mac.hub_serve" in unit
 
 
 def test_the_hub_launcher_raises_its_descriptor_limit():
@@ -65,7 +68,7 @@ def test_the_hub_launcher_raises_its_descriptor_limit():
     script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
 
     launcher = script[script.index("HERMES_REDACT_SECRETS") - 2000 :]
-    launcher = launcher[: launcher.index("--no-access-log") + 40]
+    launcher = launcher[: launcher.index("mac.hub_serve") + 40]
 
     assert "ulimit -n" in launcher
     assert "MAC_SERVICE_NOFILE_LIMIT" in launcher

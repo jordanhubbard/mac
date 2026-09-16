@@ -25,6 +25,10 @@ ad-hoc CLI shelling:
   structure. Results are secret-free dataclasses; any credential-bearing field
   is reduced to an env-var *name* plus a presence flag, mirroring
   :meth:`mac.agent_provider.ProviderDecision.observable`.
+- **HGX login is interactive, not token provisioning.** HGX owns its own
+  browser-backed session.  When it expires, the operator runs ``hgx login``
+  once in the account that runs HGX; MAC neither requests nor stores an HGX
+  API token.
 - **``standard-dind`` is an explicit path.** OpenShell / Docker execution needs
   the ``standard-dind`` flavor; creating one is a first-class, parameterized
   option rather than a magic string callers must remember.
@@ -52,6 +56,7 @@ from mac.fleet_deploy import SshTarget, parse_ssh_target
 __all__ = [
     "HGX_PROVIDER_SCHEMA",
     "STANDARD_DIND_FLAVOR",
+    "HGX_LOGIN_GUIDANCE",
     "HgxError",
     "HgxCommandError",
     "HgxSessionNotFoundError",
@@ -67,6 +72,14 @@ HGX_PROVIDER_SCHEMA = "mac.hgx_provider.v1"
 # The session flavor required when OpenShell/Docker (docker-in-docker)
 # execution is needed. Kept as a named constant so callers never hand-type it.
 STANDARD_DIND_FLAVOR = "standard-dind"
+
+# HGX authenticates through its own browser-backed login session.  Keep this
+# user-facing wording here so commands which surface an expired HGX session
+# give operators the right recovery, rather than suggesting token setup.
+HGX_LOGIN_GUIDANCE = (
+    "HGX uses a one-time interactive `hgx login` browser bounce, not a MAC or "
+    "provider API token. Run `hgx login` once in this operating account, then retry."
+)
 
 # hgx info can print a fallback bootstrap password; it is banned outright.
 _FORBIDDEN_VERB = "info"
@@ -316,11 +329,21 @@ class HgxProvider:
                 argv=argv,
             ) from exc
         if completed.returncode != 0:
+            message = "hgx %s failed (exit %d)" % (verb, completed.returncode)
+            stderr = completed.stderr or ""
+            auth_markers = (
+                "not authenticated",
+                "login token expired",
+                "session revoked",
+                "run: hgx login",
+            )
+            if any(marker in stderr.lower() for marker in auth_markers):
+                message = "%s. %s" % (message, HGX_LOGIN_GUIDANCE)
             raise HgxCommandError(
-                "hgx %s failed (exit %d)" % (verb, completed.returncode),
+                message,
                 argv=argv,
                 returncode=completed.returncode,
-                stderr=completed.stderr or "",
+                stderr=stderr,
             )
         return completed.stdout or ""
 

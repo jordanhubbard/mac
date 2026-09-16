@@ -83,6 +83,7 @@ class FakeForge:
         self.checks_pending = False
         self.checks_failed: tuple = ()
         self.checks_known = True
+        self.pr_head_ref = ""
 
     # -- required checks --------------------------------------------------
     def required_check_verdicts(self, repo_url, sha, contexts, **_):
@@ -116,6 +117,7 @@ class FakeForge:
             "sha": self.queue_merged_sha,
             "state": "closed" if self.queue_merged_sha else "open",
             "head_sha": "",
+            "head_ref": self.pr_head_ref,
         }
 
     def land_from_queue(self, sha: str, number: int = 101) -> str:
@@ -547,6 +549,49 @@ def test_hub_reuses_the_pull_request_the_agent_opened(cp, tmp_path, monkeypatch)
     assert proof["pull_request_opened_by"] == "agent"
 
 
+def test_hub_does_not_reuse_a_pr_number_pointing_at_a_different_branch(cp, tmp_path, monkeypatch):
+    """Evidence can carry a PR number whose live head branch is not the one
+    just pushed: a task-id marker collision when the agent's PR-open call
+    reused a stale, unrelated PR (see #770 for how that misidentification
+    happens). A GitHub PR's head branch is immutable, so reusing that
+    number would silently keep pointing at the wrong branch forever while
+    the real work sat on an unreferenced branch. Observed live on
+    mac-fleet-canary: an approved task's publish repeatedly "succeeded" at
+    reusing PR #1 while PR #1's actual head stayed a different task's
+    stale, conflicting branch."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.pr_head_ref = "some/other/task-branch"
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(
+        cp,
+        source,
+        task_head,
+        pull_request={
+            "opened": True,
+            "forge": "github",
+            "number": 77,
+            "url": "https://github.invalid/acme/widgets/pull/77",
+            "state": "open",
+            "base": "main",
+            "head": "task/feature",
+            "opened_by": "agent",
+        },
+    )
+
+    publication = cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+    assert publication.status == "published"
+    # The cached PR #77 points at a different branch, so the hub must not
+    # merge it -- it opens its own PR for the branch it actually pushed.
+    assert forge.opened
+    assert forge.merges == [{"number": 101, "method": "squash", "sha": task_head}]
+
+    detail = published_detail(cp, task.id)
+    assert detail["pull_request_number"] == 101
+    assert detail["pull_request_opened_by"] == "hub_fallback"
+
+
 def test_hub_fallback_pull_request_is_recorded_as_a_fallback(cp, tmp_path, monkeypatch):
     """A worker that opened no PR still publishes -- visibly, not silently."""
     remote, source, main_head, task_head = build_repo(tmp_path)
@@ -725,6 +770,15 @@ def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp
     forge = FakeForge(remote, tmp_path / "forge")
     install_forge(monkeypatch, forge)
     task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    queue = cp._native_merge_queue()
+    reaper_calls: list[tuple[str, str]] = []
+
+    def reap_stalled(repository, branch):
+        reaper_calls.append((repository, branch))
+        return ["mergeq_stalled"]
+
+    monkeypatch.setattr(queue, "evict_exhausted", reap_stalled)
+    monkeypatch.setattr(cp, "_native_merge_queue", lambda: queue)
 
     # Someone else lands on main between the gate and the merge -- exactly once,
     # so the second attempt projects onto the tip that is really there.
@@ -753,6 +807,10 @@ def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(cp, tmp
 
     assert publication.status == "published"
     detail = published_detail(cp, task.id)
+    assert reaper_calls
+    assert next(
+        item for item in detail["commands"] if item["name"] == "merge_queue_stalled_reaper"
+    )["evicted_entry_ids"] == ["mergeq_stalled"]
     # The first attempt refused to merge a projection that was already stale.
     assert detail["attempt"] == 2
     assert [item["sha"] for item in forge.merges] == [task_head]

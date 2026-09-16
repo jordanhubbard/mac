@@ -393,6 +393,21 @@ if args and args[0] == "rm":
     state_path.write_text(json.dumps(state), encoding="utf-8")
     raise SystemExit(0)
 
+if args and args[0] == "cp":
+    container_id, separator, source = args[1].partition(":")
+    if not separator or source != "/sandbox":
+        raise SystemExit(65)
+    if not any(item["Id"] == container_id for item in state.get("containers", [])):
+        raise SystemExit(66)
+    destination = Path(args[2])
+    destination.mkdir(parents=True)
+    (destination / "task.json").write_text(
+        json.dumps({{"container_id": container_id}}), encoding="utf-8"
+    )
+    state["copied"] = sorted(set(state.get("copied", [])) | {{container_id}})
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    raise SystemExit(0)
+
 print("unexpected " + runtime + " invocation", file=sys.stderr)
 raise SystemExit(64)
 """
@@ -456,6 +471,18 @@ def _openshell_container(
             },
         },
     }
+
+
+def _legacy_openshell_task_container(
+    container_id: str,
+    *,
+    sandbox: str = "mac-task-1e8ef5df",
+    running: bool = False,
+    container_name: str | None = None,
+) -> dict[str, Any]:
+    container = _openshell_container(container_id, sandbox=sandbox, running=running)
+    container["Name"] = "/" + (container_name or sandbox)
+    return container
 
 
 @dataclass
@@ -790,6 +817,20 @@ def test_deploy_credentials_are_absent_from_gate_and_daemon_children(
     _assert_success_marker(run)
 
 
+def test_explicitly_disabled_openshell_skips_unreachable_legacy_inventory(
+    tmp_path: Path,
+) -> None:
+    """Phase-one policy must cross the isolated child-process boundary."""
+    run = _run_quiescence(
+        tmp_path,
+        openshell_mode="nonzero",
+        extra_env={"MAC_DEPLOY_OPENSHELL_ENABLED": "0"},
+    )
+
+    _assert_success_marker(run)
+    assert not any(line.startswith("openshell:") for line in _call_lines(run))
+
+
 def test_container_probe_gets_metadata_only_docker_config(tmp_path: Path) -> None:
     docker_config = tmp_path / "docker-config-with-auth"
     docker_config.mkdir()
@@ -1057,6 +1098,23 @@ def test_stop_wrapper_failure_blocks_delete_and_receipt(tmp_path: Path, mode: st
     _assert_no_secret(run)
 
 
+def test_stop_wrapper_timeout_reports_actionable_timeout_evidence(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        wrapper_mode="child-timeout",
+        seed_marker=True,
+        extra_env={"MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS": "1"},
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert "managed OpenClaw stop wrapper timed out" in run.result.stderr
+    assert "elapsed=" in run.result.stderr
+    assert "effective_timeout=1.000s" in run.result.stderr
+    assert "requested_timeout=1.000s" in run.result.stderr
+    assert "limiting_bound=MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS" in run.result.stderr
+    _assert_no_secret(run)
+
+
 def test_timeout_kills_descendant_that_ignores_term(tmp_path: Path) -> None:
     if shutil.which("ps") is None:
         pytest.skip("ps(1) is required to observe descendant termination state")
@@ -1179,6 +1237,76 @@ def test_stopped_openshell_managed_container_is_compatible_and_proved(
     }
     state = json.loads(run.docker_state.read_text(encoding="utf-8"))
     assert [item["Id"] for item in state["containers"]] == [container_id]
+
+
+def test_stopped_legacy_task_container_is_preserved_before_exact_deletion(
+    tmp_path: Path,
+) -> None:
+    container_id = "f" * 64
+    legacy = _legacy_openshell_task_container(container_id)
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        docker=[legacy],
+    )
+
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]["legacy_containers"]
+    assert proof["reconciled"] == ["mac-task-1e8ef5df"]
+    assert proof["reconciled_count"] == 1
+    calls = _call_lines(run)
+    copy_index = next(
+        index for index, line in enumerate(calls) if f"cp {container_id}:/sandbox" in line
+    )
+    delete_index = calls.index(f"docker:--context default rm -f {container_id}")
+    assert copy_index < delete_index
+    state = json.loads(run.docker_state.read_text(encoding="utf-8"))
+    assert state["copied"] == [container_id]
+    assert state["containers"] == []
+    recovery_dirs = list((run.mac_home / "openshell-recovery").iterdir())
+    assert len(recovery_dirs) == 1
+    manifest = json.loads((recovery_dirs[0] / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema"] == "mac.openshell.legacy_task_preservation.v1"
+    assert manifest["container_id"] == container_id
+    assert manifest["identity_evidence"] == {
+        "container_name_matches_sandbox": True,
+        "legacy_mac_labels_absent": True,
+        "openshell_inventory_absent": True,
+        "openshell_managed": True,
+        "state": "stopped",
+    }
+    assert (recovery_dirs[0] / "workspace" / "task.json").is_file()
+    _assert_no_secret(run)
+
+
+@pytest.mark.parametrize(
+    ("running", "container_name"),
+    [(True, None), (False, "some-other-container")],
+)
+def test_live_or_identity_ambiguous_legacy_task_container_is_never_deleted(
+    tmp_path: Path, running: bool, container_name: str | None
+) -> None:
+    container_id = "e" * 64
+    legacy = _legacy_openshell_task_container(
+        container_id, running=running, container_name=container_name
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        docker=[legacy],
+        extra_env={"MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS": "0.3"},
+    )
+
+    if running:
+        assert run.result.returncode != 0
+        assert not run.marker.exists()
+    else:
+        assert run.result.returncode != 0
+        assert not run.marker.exists()
+    assert not any(f"rm -f {container_id}" in line for line in _call_lines(run))
+    assert not any(f"cp {container_id}:/sandbox" in line for line in _call_lines(run))
 
 
 def _dead_pid() -> int:
@@ -1350,6 +1478,24 @@ def test_live_lease_owned_sandbox_is_never_interrupted_during_drain(
         "mac-task-protected-live-fixture" in line and ("delete" in line or "download" in line)
         for line in _call_lines(run)
     )
+    _assert_no_secret(run)
+
+
+def test_live_hubverify_sandbox_does_not_block_task_lease_drain(tmp_path: Path) -> None:
+    """A hub-owned verifier is not a worker task lease and remains untouched."""
+    hubverify = _managed_task_sandbox(
+        "mac-hubverify-live-fixture", kind="hubverify", pid=os.getpid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([hubverify])},
+    )
+
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_task_sandboxes"]["final_state"] == "quiescent"
+    assert not any("sandbox delete mac-hubverify-live-fixture" in line for line in _call_lines(run))
     _assert_no_secret(run)
 
 
@@ -1994,7 +2140,9 @@ def test_linux_podman_docker_symlink_is_classified_as_one_native_podman_store(
     calls = _call_lines(run)
     assert not any("context" in line for line in calls)
     assert sum(line.startswith("podman:system connection list") for line in calls) == 1
-    assert sum(line.startswith("podman:ps ") for line in calls) == 4
+    # Includes the all-states inventory used to identify stopped legacy task
+    # containers before the ordinary repeated-absence proof.
+    assert sum(line.startswith("podman:ps ") for line in calls) == 5
 
 
 @pytest.mark.parametrize(

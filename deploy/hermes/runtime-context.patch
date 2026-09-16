@@ -1,0 +1,68 @@
+diff --git a/agent/prompt_builder.py b/agent/prompt_builder.py
+index d19848b..f1812f1 100644
+--- a/agent/prompt_builder.py
++++ b/agent/prompt_builder.py
+@@ -1559,6 +1559,21 @@ def _load_cursorrules(cwd_path: Path, context_length: Optional[int] = None) -> st
+                              read_path=str(cwd_path / ".cursorrules"))
+
+
++def _load_external_runtime_context(context_length: Optional[int] = None) -> str:
++    """Optional deployment-owned context, additive to project and persona files."""
++    configured = os.environ.get("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", "").strip()
++    if not configured:
++        return ""
++    path = Path(configured).expanduser()
++    content = _read_context_file(path)
++    if not content:
++        logger.warning("Configured MAC runtime context is missing or empty: %s", path)
++        return ""
++    return _context_section(
++        content, "MAC runtime context", "MAC runtime context", path, context_length,
++    )
++
++
+ def build_context_files_prompt(
+     cwd: Optional[str] = None, skip_soul: bool = False, context_length: Optional[int] = None,
+     allow_install_tree_fallback: bool = False, home_override: "Path | None" = None,
+@@ -1586,6 +1601,7 @@ def build_context_files_prompt(
+     else:
+         sections = [_load_hermes_md(cwd_path, context_length) or _load_agents_md(cwd_path, context_length)
+                     or _load_claude_md(cwd_path, context_length) or _load_cursorrules(cwd_path, context_length)]
++    sections.append(_load_external_runtime_context(context_length))
+     if not skip_soul:
+         sections.append(load_soul_md(context_length, home_override=home_override))
+     sections = [s for s in sections if s]
+diff --git a/tests/agent/test_prompt_builder.py b/tests/agent/test_prompt_builder.py
+index 3be8ddb..4f28de4 100644
+--- a/tests/agent/test_prompt_builder.py
++++ b/tests/agent/test_prompt_builder.py
+@@ -414,7 +414,29 @@ class TestBuildContextFilesPrompt:
+     def test_loads_agents_md(self, tmp_path):
+         (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.")
+         result = build_context_files_prompt(cwd=str(tmp_path))
+         assert "Ruff for linting" in result
+         assert "Project Context" in result
+
++    def test_mac_runtime_context_is_additive_to_project_and_soul(self, tmp_path, monkeypatch):
++        workspace = tmp_path / "workspace"
++        workspace.mkdir()
++        (workspace / "AGENTS.md").write_text("existing user project instructions")
++        home = tmp_path / "hermes-home"
++        home.mkdir()
++        (home / "SOUL.md").write_text("existing persona context")
++        runtime = home / "mac-runtime-context.md"
++        runtime.write_text("MAC Task and Project Runtime")
++        monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", str(runtime))
++
++        result = build_context_files_prompt(cwd=str(workspace), home_override=home)
++
++        assert "existing user project instructions" in result
++        assert "MAC Task and Project Runtime" in result
++        assert "existing persona context" in result
++
++    def test_missing_configured_mac_runtime_context_is_not_claimed(self, tmp_path, monkeypatch):
++        monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", str(tmp_path / "missing.md"))
++        result = build_context_files_prompt(cwd=str(tmp_path), skip_soul=True)
++        assert "MAC runtime context" not in result
++
+     # --- AGENTS.md directory chain (port of grok-cli instructions.ts) ---

@@ -34,6 +34,7 @@ from mac.models import (
     TaskState,
     TransitionError,
     ValidationError,
+    ensure_json_object,
     json_dumps,
     json_loads,
     new_id,
@@ -582,15 +583,25 @@ class ReviewService:
                 error=str((rejected_feedback or {}).get("feedback") or "") or None,
             )
             refund_attempt = bool(classification.is_infrastructure)
+            metadata = ensure_json_object(reviewed_task.metadata)
+            infrastructure_failures = int(metadata.get("review_infrastructure_failure_count") or 0)
+            if refund_attempt:
+                infrastructure_failures += 1
             effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
             exhausted = effective_attempts >= reviewed_task.max_attempts
-            transition_target = TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
+            infrastructure_exhausted = refund_attempt and infrastructure_failures >= 3
+            transition_target = (
+                TaskState.BLOCKED.value
+                if exhausted or infrastructure_exhausted
+                else TaskState.OPEN.value
+            )
             transition_detail = {
                 "review_id": review_id,
                 "review_status": status_value,
                 "reason": "review rejected after max attempts" if exhausted else "review rejected",
                 "review_failure_class": classification.failure_class,
                 "review_failure_is_infrastructure": classification.is_infrastructure,
+                "review_infrastructure_failure_count": infrastructure_failures,
             }
             if refund_attempt:
                 # Name the refund in the transition detail so the ledger shows
@@ -601,6 +612,12 @@ class ReviewService:
                 )
             if exhausted:
                 transition_detail["manual_repair_required"] = True
+            if infrastructure_exhausted:
+                transition_detail["manual_repair_required"] = True
+                transition_detail["reason"] = (
+                    "review harness failed %d consecutive times; operator repair required"
+                    % infrastructure_failures
+                )
         with self.store.transaction() as conn:
             locked_task = conn.execute(
                 """
@@ -645,6 +662,8 @@ class ReviewService:
                     rejected_feedback,
                     history,
                 )
+                if refund_attempt:
+                    metadata["review_infrastructure_failure_count"] = infrastructure_failures
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),

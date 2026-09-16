@@ -115,12 +115,14 @@ class AgentStateService:
         get_agent: Callable[[str], Agent],
         get_evidence: Callable[[str], Evidence],
         agent_has_active_lease: Callable[[str], bool],
+        agent_is_virtual: Callable[[str], bool],
     ) -> None:
         self.store = store
         self.observability = observability
         self._get_agent = get_agent
         self._get_evidence = get_evidence
         self._agent_has_active_lease = agent_has_active_lease
+        self._agent_is_virtual = agent_is_virtual
 
     # Moods -------------------------------------------------------------
 
@@ -587,6 +589,8 @@ class AgentStateService:
         actor: Optional[str] = None,
     ) -> NapSchedule:
         agent = self._get_agent(agent_id)
+        if enabled and self._agent_is_virtual(agent.id):
+            raise ValidationError("virtual agents do not have worker nap schedules")
         if offset_minutes is None:
             offset_minutes = _deterministic_nap_offset(agent.name)
         offset_minutes = int(offset_minutes)
@@ -653,6 +657,8 @@ class AgentStateService:
         agent_id: str,
         now: Optional[datetime] = None,
     ) -> Optional[Dict[str, str]]:
+        if self._agent_is_virtual(agent_id):
+            return None
         schedule = self.get_nap_schedule(agent_id)
         if schedule is None or not schedule.enabled:
             return None
@@ -676,6 +682,8 @@ class AgentStateService:
         detail: Optional[Dict[str, Any]] = None,
     ) -> NapRun:
         agent = self._get_agent(agent_id)
+        if self._agent_is_virtual(agent.id):
+            raise ValidationError("virtual agents cannot enter worker naps")
         if self._agent_has_active_lease(agent.id):
             raise ValidationError(
                 "agent %s holds an active lease; release it before napping" % agent.id

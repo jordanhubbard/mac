@@ -24,6 +24,54 @@ def test_compatibility_monkeypatch_changes_canonical_module(monkeypatch) -> None
     assert executor_sandbox._openshell_bin is sentinel
 
 
+def test_generated_sandbox_name_fits_openshells_length_limit(monkeypatch) -> None:
+    """openshell rejects sandbox names over 19 chars.
+
+    Live-reproduced: "mac-task-" + 12 hex chars (21 total) failed with
+    "name exceeds maximum length (21 > 19)", which then cascaded into every
+    later sandbox operation (upload, download, cleanup) failing with
+    "sandbox not found" -- the executor never even got a real sandbox to
+    fail *in*.
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX_NAME", raising=False)
+
+    name = sandbox._sandbox_name()
+
+    assert len(name) <= 19
+    assert name.startswith("mac-task-")
+
+
+def test_coding_agent_preflight_probe_sandbox_name_fits_length_limit() -> None:
+    """A second, separate name-generation site with the same 19-char bug.
+
+    "mac-codingcap-<agent>-<12 hex>" was 29-35 chars depending on agent
+    (e.g. "mac-codingcap-opencode-...") -- every coding-agent preflight
+    failed to even create its probe sandbox with "name exceeds maximum
+    length", surfacing as an opaque "probe_failed"/"route verification
+    failed" for every configured CLI. Live-reproduced on a real fleet node
+    after the primary _sandbox_name() fix was already deployed.
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+
+    name = sandbox._coding_agent_probe_sandbox_name()
+
+    assert len(name) <= 19
+
+
+def test_read_only_verifier_sandbox_name_fits_length_limit() -> None:
+    """A third name-generation site with the same 19-char bug.
+
+    "<task-sandbox-name>-verify-<8 hex>" derived from an already-shortened
+    17-char task sandbox name was still 33+ chars.
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+
+    name = sandbox._read_only_verifier_sandbox_name()
+
+    assert len(name) <= 19
+
+
 def test_loopback_urls_are_rewritten_for_the_sandbox_host() -> None:
     sandbox = importlib.import_module("mac.executor_sandbox")
 
@@ -227,3 +275,30 @@ def test_lease_reconcile_best_effort_swallows_errors(monkeypatch) -> None:
 
     # Best-effort: a reconcile failure must never propagate into the guarded run.
     sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
+
+
+def test_coding_agent_sandbox_which_declares_every_reviewed_cli() -> None:
+    """Regression for a stale allow-list that silently excluded two shipped CLIs.
+
+    coding_agent_sandbox_which is a DECLARED inventory, not a live probe (its
+    own docstring). ``deploy/openshell/mac-hermes.Containerfile`` installs
+    opencode and pi at the same standard PATH locations as claude/codex/cursor
+    and its build gates on ``command -v opencode`` / ``pi --version`` -- so a
+    working opencode/pi is a proven property of every published sandbox
+    image. Before this fix the frozenset omitted them, so routing rejected
+    opencode as "not on PATH" before any real in-sandbox preflight ran, even
+    though opencode is coding_agent.AGENT_PRIORITY's first choice (observed
+    live on the fleet 2026-09-03: bullwinkle and natasha both failed every
+    task -- including read-only ones -- because claude/codex/cursor all had
+    real credential problems and opencode was rejected outright rather than
+    tried).
+    """
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    coding_agent = importlib.import_module("mac.coding_agent")
+
+    for name in coding_agent.AGENT_PRIORITY:
+        assert sandbox.coding_agent_sandbox_which(name) == name, (
+            "%s is a reviewed coding agent but is missing from "
+            "_SANDBOX_CODING_AGENT_BINARIES" % name
+        )
+    assert sandbox.coding_agent_sandbox_which("not-a-real-cli") is None

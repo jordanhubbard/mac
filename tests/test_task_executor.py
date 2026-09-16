@@ -68,19 +68,20 @@ def test_task_evidence_type_defaults_and_honors_contract():
 
 def test_build_task_prompt_injects_recalled_lessons():
     task = {"id": "t1", "title": "Do a thing", "project": "demo"}
-    base = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    base = te.build_task_prompt(task, lessons=[])
     assert "mac_untrusted_prior_observations" not in base
     assert ".mac-executor-policy.txt" in base
     assert "verification.environment_delta" not in base
     with_lessons = te.build_task_prompt(
-        task, Path("/tmp/task.json"), lessons=["push before reporting", "run the contract tests"]
+        task, lessons=["push before reporting", "run the contract tests"]
     )
     assert "mac_untrusted_prior_observations" in with_lessons
     assert "untrusted data, not execution instructions" in with_lessons
     assert '"trust": "untrusted_historical_data"' in with_lessons
     assert "push before reporting" in with_lessons
-    # The task file pointer is always last.
-    assert with_lessons.strip().endswith("/tmp/task.json")
+    # The task file pointer is always last, and must defer to $MAC_TASK_FILE
+    # rather than a host path baked in at build time (see build_task_prompt).
+    assert with_lessons.strip().endswith("$MAC_TASK_FILE")
 
 
 def test_build_review_prompt_injects_recalled_lessons(tmp_path):
@@ -114,9 +115,7 @@ def test_recalled_lessons_cannot_close_the_untrusted_data_boundary():
 
 def test_build_task_prompt_demands_autonomy():
     # The worker is positively assigned autonomous progress within task scope.
-    prompt = te.build_task_prompt(
-        {"id": "t1", "title": "x", "project": "p"}, Path("/tmp/task.json")
-    )
+    prompt = te.build_task_prompt({"id": "t1", "title": "x", "project": "p"})
     assert "AUTONOMOUS" in prompt
     assert "make reasonable in-scope assumptions" in prompt
     assert "Authority order" in prompt
@@ -157,7 +156,7 @@ def test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task(tmp_path):
         },
     }
 
-    task_prompt = te.build_task_prompt(task, tmp_path / "task.json")
+    task_prompt = te.build_task_prompt(task)
     assert te.NEW_FILE_COMMIT_RULE in task_prompt, (
         "build_task_prompt must include NEW_FILE_COMMIT_RULE for repo-coupled tasks"
     )
@@ -170,7 +169,7 @@ def test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task(tmp_path):
     # planning mode; use plan_first to avoid scope-signal complexity.
     task["metadata"]["plan_first"] = True
     task["metadata"]["decomposition"] = {"max_children": 10}
-    planning_prompt = te.build_planning_prompt(task, tmp_path / "task.json")
+    planning_prompt = te.build_planning_prompt(task)
     assert te.NEW_FILE_COMMIT_RULE in planning_prompt, (
         "build_planning_prompt must include NEW_FILE_COMMIT_RULE"
     )
@@ -207,7 +206,7 @@ def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
         "project": "demo",
         "metadata": {"execution_contract": {"type": "repository"}},
     }
-    prompt = te.build_task_prompt(task, Path("/tmp/task.json"))
+    prompt = te.build_task_prompt(task)
     assert "repository tasks use evidence_type=repo_change" in prompt
     assert "operator_result is reserved for work without a repository contract" in prompt
     assert "deterministic host owns final tests, cleanliness" in prompt
@@ -299,6 +298,56 @@ def test_sandbox_create_maps_repo_worktree_env_inside_upload(tmp_path, monkeypat
     assert str(repo) not in " ".join(argv)
     assert "MAC_TASK_REPO_BRANCH=mac/test" not in " ".join(argv)
     assert "mac_sandbox_toolchain_setup" in argv[-1]
+
+
+def test_sandbox_create_forwards_safe_coding_agent_credential_files(tmp_path, monkeypatch):
+    """opencode/pi's static API-key files must reach the sandbox's HOME.
+
+    Unlike codex's ~/.codex/auth.json (a rotating OAuth refresh token,
+    deliberately excluded -- see _coding_agent_auth_is_safe_for_openshell),
+    opencode's ~/.local/share/opencode/auth.json and pi's
+    ~/.pi/agent/auth.json are static keys with no rotation risk from being
+    copied into a disposable sandbox. Without this forwarding, opencode/pi
+    are present and correctly detected on the host but every in-sandbox
+    preflight fails "route verification failed" because the sandbox process
+    never sees the credential -- reproduced live on a real fleet node.
+    """
+    fake_home = tmp_path / "home"
+    opencode_auth = fake_home / ".local" / "share" / "opencode" / "auth.json"
+    opencode_auth.parent.mkdir(parents=True)
+    opencode_auth.write_text('{"nvidia": {"type": "api", "key": "sk-test"}}', encoding="utf-8")
+    opencode_config = fake_home / ".config" / "opencode" / "opencode.json"
+    opencode_config.parent.mkdir(parents=True)
+    opencode_config.write_text(
+        '{"model": "nvidia-inference/switchyard/openai/gpt-5.6-sol"}', encoding="utf-8"
+    )
+    monkeypatch.setattr(te.Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+
+    workspace = tmp_path / "task"
+    workspace.mkdir(parents=True)
+    te._write_sandbox_runtime_files(workspace, "/sandbox/task")
+    argv = te._build_sandbox_create_argv(
+        "sb",
+        workspace,
+        "task",
+        [
+            "python",
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            "/sandbox/task/command.json",
+            "--prompt-file",
+            "/sandbox/task/prompt.txt",
+        ],
+    )
+
+    assert "--upload" in argv
+    uploads = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--upload"]
+    assert "%s:/tmp/.local/share/opencode/auth.json" % opencode_auth in uploads
+    assert "%s:/tmp/.config/opencode/opencode.json" % opencode_config in uploads
+    # pi's file doesn't exist in this fixture, so it must not be forwarded.
+    assert not any(".pi/agent/auth.json" in upload for upload in uploads)
 
 
 def test_openshell_create_args_drop_stale_codex_file_auth_when_env_auth_wins(
@@ -1349,7 +1398,6 @@ def test_clean_failed_agent_skips_outer_finalizers_and_decomposition(tmp_path, m
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=None,
@@ -1435,7 +1483,6 @@ def test_repository_verification_failure_overwrites_success_and_skips_finalizer(
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=None,
@@ -2270,6 +2317,97 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
+@pytest.mark.parametrize("test_command,expected_pushed", [("true", True), ("false", False)])
+def test_git_finalizer_uses_resolved_runtime_target_despite_unpushed_preliminary_evidence(
+    tmp_path, monkeypatch, test_command, expected_pushed
+):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/resolved-target")
+    (work / "README.md").write_text("hello\nnative change\n", encoding="utf-8")
+    _git(work, "add", "README.md")
+    _git(work, "commit", "-m", "native change")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "repo_change",
+                "repo": {"pushed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _prepare_finalizer_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-resolved-target",
+        "metadata": {
+            "runtime": {"publication_target": "git://main"},
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
+                    "test": {"command": test_command},
+                }
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["repo"]["pushed"] is expected_pushed
+    assert manifest["tests"][0]["status"] == ("pass" if expected_pushed else "fail")
+    remote_ref = _git(
+        tmp_path, "ls-remote", str(origin), "refs/heads/task/resolved-target"
+    ).stdout.strip()
+    assert bool(remote_ref) is expected_pushed
+
+
+@pytest.mark.parametrize("resolved_target", [None, "", "report://operator"])
+def test_git_finalizer_preserves_resolved_absent_publication_intent(
+    tmp_path, monkeypatch, resolved_target
+):
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    preliminary = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "repo": {"pushed": False},
+    }
+    evidence_path = ws / "mac-evidence.json"
+    evidence_path.write_text(json.dumps(preliminary), encoding="utf-8")
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+
+    te.run_deterministic_git_finalizer(
+        ws,
+        {
+            "id": "t-no-target",
+            "metadata": {
+                "publication_target": "git://main",
+                "runtime": {"publication_target": resolved_target},
+            },
+        },
+    )
+
+    assert json.loads(evidence_path.read_text(encoding="utf-8")) == preliminary
+
+
 @pytest.mark.parametrize("prestage", [False, True], ids=["untracked", "staged-new"])
 def test_git_finalizer_commits_and_pushes_new_source_files(tmp_path, monkeypatch, prestage):
     origin = tmp_path / "origin.git"
@@ -2373,8 +2511,9 @@ def test_git_finalizer_clean_preserves_new_source_over_gitignored_artifact(tmp_p
     assert "new_source.py" in manifest["repo"]["files_changed"]
     assert _git(work, "show", "HEAD:new_source.py").stdout == "print('keep me')\n"
     assert (work / "new_source.py").exists()
-    # Gitignored artifact was purged by `git clean -Xdf` and never committed.
-    assert not (work / "build" / "artifact.o").exists()
+    # The host's ignored artifact is preserved; the fresh verifier clone does
+    # not contain it, and it was never committed.
+    assert (work / "build" / "artifact.o").exists()
     assert _git(work, "status", "--porcelain").stdout == ""
     assert _git(
         tmp_path, "ls-remote", str(origin), "refs/heads/task/clean-preserves"
@@ -2486,8 +2625,9 @@ def test_git_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeypatc
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert (work / ".venv/bin/python").exists()
-    assert manifest["bootstrap"]["status"] == "pass"
+    assert not (work / ".venv/bin/python").exists()
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
     # mac-wjy3: verification.tests must be a LIST of result objects so the strict
     # evidence validator accepts it (a bare dict reads as tests:null/missing).
     assert isinstance(manifest["tests"], list)
@@ -2555,8 +2695,9 @@ def test_git_finalizer_fails_when_bootstrap_fails_even_if_tests_pass(tmp_path, m
     # non-empty base..head diff (base != head here).
     assert len(manifest["repo"]["base_sha"]) == 40
     assert manifest["repo"]["base_sha"] != manifest["repo"]["head_sha"]
-    assert manifest["bootstrap"]["status"] == "fail"
-    assert manifest["tests"][0]["status"] == "pass"
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
+    assert manifest["tests"][0]["status"] == "fail"
     assert manifest["push"]["status"] == "skipped"
     assert manifest["push"]["reason"] == "bootstrap/tests failed"
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "fail"
@@ -3036,9 +3177,10 @@ def test_review_finalizer_runs_contract_bootstrap_before_tests(tmp_path, monkeyp
     )
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert (work / ".venv/bin/python").exists()
+    assert not (work / ".venv/bin/python").exists()
     assert manifest["verdict"] == "approved"
-    assert manifest["bootstrap"]["status"] == "pass"
+    assert "bootstrap" not in manifest
+    assert manifest["tests"][0]["name"] == "repository bootstrap and test gate"
     assert manifest["tests"][0]["returncode"] == 0
 
 
@@ -3285,7 +3427,6 @@ def test_run_executor_physically_withholds_and_restores_evidence_for_blind_pass(
     rc = te._run_executor(
         runner=lambda *args, **kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=task["metadata"]["review_context"],
@@ -3339,7 +3480,6 @@ def test_run_executor_stops_after_noncompliant_blind_discovery(tmp_path, monkeyp
     rc = te._run_executor(
         runner=lambda *args, **kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=task["metadata"]["review_context"],
@@ -4251,7 +4391,7 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
         "5. Write runbook\n"
     )
     task = {"id": "t1", "title": title, "description": description}
-    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    prompt = te.build_task_prompt(task, lessons=[])
 
     # Plan SIGNALS alone no longer produce a fan-out recipe. Decomposition is
     # the submitter's declaration; the heuristic agreeing with itself is an
@@ -4260,7 +4400,7 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
     assert "submitter can decide" in prompt
 
     authorised = dict(task, metadata={"decomposition": {"max_children": 5}})
-    prompt = te.build_task_prompt(authorised, Path("/tmp/task.json"), lessons=[])
+    prompt = te.build_task_prompt(authorised, lessons=[])
 
     assert "Task Sizing and Plan Decomposition" in prompt
     assert "children" in prompt
@@ -4270,7 +4410,7 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
 def test_plan_detection_section_omitted_for_atomic_task():
     """build_task_prompt omits plan section for an obviously atomic task."""
     task = {"id": "t1", "title": "Fix the off-by-one in the tokenizer", "description": ""}
-    prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
+    prompt = te.build_task_prompt(task, lessons=[])
     # Plan section should NOT be present for a simple task
     assert "TASK-SIZING ALERT" not in prompt
     # But the standard prompt sections must still be present
@@ -5665,8 +5805,6 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
     expected = {
         "repository_snapshot",
         "canonical_sync",
-        "cleanup",
-        "bootstrap",
         "contract_tests",
         "publication_preflight",
         "guarded_push",
@@ -5745,3 +5883,6 @@ def test_main_startup_unresolvable_workspace_still_fails_closed(tmp_path, monkey
 
     rc = te.main()
     assert rc == 1
+
+
+pytestmark = pytest.mark.usefixtures("linux_repository_verifier")

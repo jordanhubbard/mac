@@ -18,15 +18,21 @@ can produce many pull requests.
 
 ## Evidence and review
 
-Work is not accepted because an agent says it succeeded. It is accepted because
-**evidence** was recorded and a **review** judged it.
+A successful executor exit is not proof that the request was satisfied.
+**Evidence**, **review**, **publication**, and **operator acceptance** record
+different facts.
 
 - Evidence is typed. A `code` deliverable expects a repository change; a
   `report` deliverable is satisfied by an `operator_result` — a substantive
   summary with no diff. That distinction exists so a non-code task cannot be
   closed by a diff, and a code task cannot be closed by prose.
 - The default review workflow runs on the hub's publication worker, clones the
-  repository, and runs a contract gate.
+  repository, and runs a contract gate. That validates the recorded tests, not
+  every behavior in the request. Qualifying non-repository results can follow
+  a deterministic approval path; do not read that as independent user acceptance.
+- `mac task outcome <id>` separates these facts. `mac task accept` records an
+  operator decision against the current executor evidence and attempt. It
+  cannot bypass review, complete a task, or prove deployment.
 
 ## Publication: the hard part
 
@@ -96,84 +102,38 @@ cast produces a space-separated string and `'T' > ' '`. Filter with an
 ISO-formatted literal instead. The same trap has produced wrong retention
 metrics and wrong incident rates.
 
-## Known gaps
+## Recovery and delivery limits
 
-These are real, measured, and tracked. They are here so you can operate around
-them.
+AgentBus broadcasts supply context between tasks. Harness hooks also provide
+partial in-flight delivery; support varies by harness and message type. A
+queued message is not proof that the executor read or acted on it. Consult
+[the hook implementation status](../adr/0032-cli-session-hooks-not-tmux.md)
+and inspect acknowledgments. For a required stop, use the authenticated
+`mac task stop` lifecycle operation, which checks executor abort, rather than
+relying on conversational delivery.
 
-### AgentBus consumption is partial
+Use `mac task why-unclaimed <id>` and `mac task throughput` to distinguish live
+dependencies, failed blockers, held work, and publication parks. Recovery is
+state-specific: neither repeated publication sweeps nor cancelling a failed
+dependency guarantees progress. The [trust workflow](06-trust-workflow.md)
+shows the operator handoff and the evidence to preserve before retrying.
 
-Workers emit typed events (`git.pushed`, `task.claimed`, `capacity.saturated`
-and others) from their own git and task paths, and the hub emits the terminal
-ones from the path that performs them: `git.pr_opened`, `git.merged` and
-`git.canonical_advanced`.
-
-Two consumers exist. Between tasks a worker acts on `sandbox.policy_changed`
-and declines to claim under a superseded guardrail. Before a task starts, the
-worker reads the recent feed, keeps the events relevant to that task (same
-task, repository, project, or a branch/tip the task builds on), and attaches at
-most 50 of them to the task record — which is what the coding agent's prompt
-renders as its **AgentBus context**, and what the finalizer checks before
-opening a pull request.
-
-That closes the failure this section used to describe: a task that opened eight
-pull requests across eight leases, one every ~30 minutes, because nothing could
-tell it its own work had already merged.
-
-What is still open:
-
-- **The addressed bus (`/agentbus/traffic`) has no consumer.** Broadcasts are
-  read; point-to-point messages are still only read by a human running
-  `mac admin agentbus read`.
-- **Filtered reads can starve.** The hub's filtered read scans a bounded ten
-  pages and returns nothing on a miss *without advancing the caller's cursor*,
-  so a rare event type can sit permanently beyond the window. Every consumer in
-  the codebase works around it by reading unfiltered and filtering locally
-  (tracked as `task_8cc72ba4`).
-- **Retention is the only bound on the feed's history**, so context older than
-  the retained window is not recoverable from the bus — use the ledger.
-
-### What the hub cannot do yet
-
-The hub *detects* runaway conditions — the signal above fired on that task
-while it was happening — but cannot act. The AgentBus lifecycle vocabulary has
-`fleet`, `project`, `agent` and `task` scopes, and the verbs `stand_down`,
-`abort`, `pause`, `resume`, `status`; but nothing consumes a directive, and the
-hub has no authority to issue one. Detection without a channel is a report
-nobody reads.
-
-### Permanent failures are retried as transient
-
-Publication treats every failure as retryable. That is right for a network
-error, a lease conflict or a full queue window, and wrong for a reviewed commit
-that no longer exists:
-
-```
-git publication verify_commit failed:
-fatal: Not a valid object name <sha>^{commit}
-```
-
-No number of retries makes that SHA resolve. Until classification lands, a task
-in this state consumes publication sweep slots indefinitely. The mitigation is
-to park it: `mac task ask <id> --question "..."` moves it to `needs_input` and
-out of the sweep.
-
-### Dead dependencies are indistinguishable from live ones
-
-A task blocked on a `failed` dependency looks exactly like one legitimately
-sequenced behind live work, in every list view. Nothing computes whether a
-blocker can still arrive.
+An idle identity is not execution capacity. Throughput reports baseline
+allocator-eligible workers separately from idle identities, with exclusion
+reasons. A baseline-eligible worker may still fail a particular task's
+capability, hardware, project, or tenant requirements; inspect the task's
+allocation explanation before changing fleet size.
 
 ## Operating notes
 
 - **`MAC_REVIEW_TICK_LIMIT`** caps how many tasks the publication sweep
   advances per cycle. Raising it to work around a starved sweep gives the
   starving task more slots too; fix the cause instead.
-- **The hub serves code from `~/.mac/src/mac`**, not from a developer checkout.
-  Deploy is a fast-forward there plus a supervisor restart, and it is verified
-  by PID change rather than checkout SHA — `refresh-source` has reported
-  `restart_requested: false` while the checkout advanced.
-- **`schema.sql` is `CREATE TABLE IF NOT EXISTS` with no migration framework.**
-  It creates missing *tables* on restart, so a new table provisions itself. It
-  is a **no-op for a new column on an existing table** — those need a
-  hand-applied `ALTER`, and `migrations/` is manual-only; nothing reads it.
+- **The hub serves deployed code**, not the operator's checkout. Verify the
+  deployed revision and the running process after a rollout; a source update
+  alone does not prove that the process loaded it.
+- **Schema changes use versioned migrations.** `mac.schema_migrations` owns
+  the ordered checksum ledger and transactional application. Deploy invokes
+  `mac-schema-migrate`; ordinary startup verifies the schema and fails on
+  drift. Editing the bootstrap `schema.sql` is not an upgrade procedure. See
+  [the migration contract](../adr/0021-schema-changes-need-versioned-migrations.md).

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 
@@ -19,6 +21,84 @@ TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
 # this image-owned baseline explicitly; repository-contract tool directories
 # are prepended to it by the task executor.
 SANDBOX_BASE_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+
+VERIFIER_PROFILE_READY = "[hub-verifier-profile] bounded-tmpfs ready"
+
+
+def verifier_resource_profile() -> tuple[list[str], list[str], str]:
+    """Controller-owned resources shared by hub and worker verification.
+
+    The shell fragment must run in every fresh create/exec shell before any
+    toolchain or repository bootstrap. Agent shell exports do not survive exec.
+    """
+    profile = (os.environ.get("MAC_HUB_VERIFY_PROFILE") or "").strip()
+    if profile in {"", "default"}:
+        return [], [], ""
+    if profile != "bounded-tmpfs":
+        raise ValueError(
+            "hub verifier resource profile unavailable: MAC_HUB_VERIFY_PROFILE "
+            "must be default or bounded-tmpfs"
+        )
+    args = [
+        "--cpu",
+        "12",
+        "--memory",
+        "32Gi",
+        "--driver-config-json",
+        json.dumps(
+            {
+                "docker": {
+                    "mounts": [
+                        {
+                            "type": "tmpfs",
+                            "target": "/sandbox/test-storage",
+                            "size_bytes": 8 * 1024**3,
+                            "mode": 0o1777,
+                            "options": ["exec"],
+                        }
+                    ]
+                }
+            }
+        ),
+    ]
+    # Large repository fixtures must not consume the database's bounded mount.
+    # Both paths stay sandbox-local; PostgreSQL keeps its normal durability.
+    environment = [
+        "TMPDIR=/sandbox/test-scratch",
+        "MAC_TEST_PG_DATADIR=/sandbox/test-storage/mac-test-pgdata",
+        "MAC_TEST_JOBS=8",
+    ]
+    preflight = (
+        'if [ "$(uname -s)" != Linux ] || '
+        '[ "$(stat -f -c %T /sandbox/test-storage 2>/dev/null)" != tmpfs ] || '
+        "[ ! -w /sandbox/test-storage ]; then "
+        "echo 'hub verifier resource profile unavailable: bounded-tmpfs "
+        "requires a writable Linux tmpfs at /sandbox/test-storage' >&2; exit 96; fi; "
+        "export " + " ".join(shlex.quote(value) for value in environment) + "; "
+        'if ! mkdir -p "$TMPDIR" || [ ! -w "$TMPDIR" ]; then '
+        "echo 'hub verifier resource profile unavailable: fixture scratch is not writable' "
+        ">&2; exit 96; fi; "
+        f"echo '{VERIFIER_PROFILE_READY}'; "
+    )
+    return args, environment, preflight
+
+
+def verifier_profile_create_args(extra: list[str]) -> list[str]:
+    """Add the fixed profile after validating caller-owned create arguments.
+
+    Conflicting resource/driver flags are errors, never duplicate flags whose
+    precedence would depend on the OpenShell CLI version. Report callers still
+    apply their full allowlist before reaching this function.
+    """
+    args, _, _ = verifier_resource_profile()
+    if args and any(
+        token.split("=", 1)[0] in {"--cpu", "--memory", "--driver-config-json"} for token in extra
+    ):
+        raise ValueError(
+            "bounded-tmpfs profile conflicts with MAC_OPENSHELL_CREATE_ARGS resource overrides"
+        )
+    return [*extra, *args]
 
 
 def truthy(value: Any) -> bool:

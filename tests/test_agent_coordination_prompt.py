@@ -39,7 +39,7 @@ def _prompt(monkeypatch, agent_id: str | None) -> str:
         monkeypatch.delenv("MAC_AGENT_ID", raising=False)
     else:
         monkeypatch.setenv("MAC_AGENT_ID", agent_id)
-    return build_task_prompt(TASK, Path("/tmp/task.json"))
+    return build_task_prompt(TASK)
 
 
 # --- the executor prompt --------------------------------------------------

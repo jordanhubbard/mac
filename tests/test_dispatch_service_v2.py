@@ -70,6 +70,178 @@ def test_pull_claim_triggers_global_round_and_ignores_request_filters():
     assert cp._active_assignment_for_agent(second_worker) is not None
 
 
+def test_pull_claims_explicit_target_without_global_allocation_round(monkeypatch):
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target")
+    task = cp.create_task(
+        "targeted",
+        project="mac",
+        required_capabilities=["python"],
+        metadata={"target_agent_id": target.id},
+    )
+
+    def global_round_must_not_run(**_kwargs):
+        raise AssertionError("explicit target should use the bounded direct path")
+
+    monkeypatch.setattr(cp.dispatch, "_allocate_v2_round", global_round_must_not_run)
+
+    assignment = cp.claim_next_for_agent(target.id)
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+    assert assignment["agent"]["id"] == target.id
+    assert cp.get_task(task.id).state == TaskState.CLAIMED.value
+
+
+def test_retry_exclusion_relaxation_reaches_the_transactional_claim_boundary():
+    """Regression: allocator selection and the locked claim must agree.
+
+    The former fake-claim coverage passed while the live dispatcher selected
+    the pinned worker and then rejected it from persisted metadata forever.
+    """
+
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target")
+    task = cp.create_task(
+        "targeted retry",
+        project="mac",
+        required_capabilities=["python"],
+        metadata={
+            "target_agent_id": target.id,
+            "retry_excluded_agent_ids": [target.id],
+        },
+    )
+
+    explanation = cp.dispatch.explain_task_dispatch(task.id)
+    assignment = cp.dispatch_once()
+
+    assert explanation["task_ready"] is True
+    assert explanation["dispatchable"] is True
+    assert explanation["retry_exclusion_relaxed"] is True
+    assert explanation["retry_exclusion_relaxed_agent_ids"] == [target.id]
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+    assert assignment["agent"]["id"] == target.id
+    assert cp.get_task(task.id).state == TaskState.CLAIMED.value
+
+
+def test_targeted_task_ineligible_falls_through_to_the_global_round():
+    """A target_agent_id task the agent is not actually eligible for (missing
+    capability) must be skipped by the bounded direct path, not claimed
+    incorrectly and not left stuck blocking the fallback global round."""
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target", capabilities=["python"])
+    ineligible_task = cp.create_task(
+        "targeted but ineligible",
+        project="mac",
+        required_capabilities=["rust"],
+        metadata={"target_agent_id": target.id},
+    )
+    fallback_task = cp.create_task(
+        "untargeted fallback",
+        project="mac",
+        required_capabilities=["python"],
+    )
+
+    assignment = cp.claim_next_for_agent(target.id)
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == fallback_task.id
+    assert cp.get_task(ineligible_task.id).state == TaskState.OPEN.value
+
+
+def test_targeted_claim_raising_falls_through_to_a_later_eligible_target(monkeypatch):
+    """claim_task_v2 raising AuthorizationError/TransitionError/ValidationError
+    for one targeted candidate (e.g. a lost claim race) must be swallowed and
+    the loop must continue to the next targeted candidate rather than
+    propagating or silently returning nothing."""
+    from mac.models import ValidationError
+
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target")
+    first_task = cp.create_task(
+        "targeted first",
+        project="mac",
+        required_capabilities=["python"],
+        metadata={"target_agent_id": target.id},
+    )
+    second_task = cp.create_task(
+        "targeted second",
+        project="mac",
+        required_capabilities=["python"],
+        metadata={"target_agent_id": target.id},
+    )
+
+    real_claim = cp.claim_task_v2
+
+    def flaky_claim(task_id, agent_id, **kwargs):
+        if task_id == first_task.id:
+            raise ValidationError("synthetic lost-race for test coverage")
+        return real_claim(task_id, agent_id, **kwargs)
+
+    monkeypatch.setattr(cp, "claim_task_v2", flaky_claim)
+
+    assignment = cp.claim_next_for_agent(target.id)
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == second_task.id
+    assert cp.get_task(first_task.id).state == TaskState.OPEN.value
+
+
+def test_no_targeted_tasks_returns_none_and_uses_the_global_round(monkeypatch):
+    """An agent with no target_agent_id-tagged tasks at all must fall straight
+    through the bounded direct path (empty result set) to the ordinary global
+    allocation round, not error or stall."""
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    target = worker(cp, "target")
+    task = cp.create_task("untargeted", project="mac", required_capabilities=["python"])
+    calls = []
+    real_targeted = cp.dispatch._claim_targeted_task_for_agent
+
+    def counted_targeted(agent, **kwargs):
+        result = real_targeted(agent, **kwargs)
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(cp.dispatch, "_claim_targeted_task_for_agent", counted_targeted)
+
+    assignment = cp.claim_next_for_agent(target.id)
+
+    assert calls == [None]
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+
+
+def test_explain_reuses_a_caller_supplied_sync_states_without_rebuilding(monkeypatch):
+    """A caller explaining many tasks in one pass (task_flow_report) builds
+    sync_states once and passes it explicitly; explain_task_dispatch must not
+    rebuild it in that case."""
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    worker(cp, "first")
+    task = cp.create_task("explain", project="mac", required_capabilities=["python"])
+    sync_states = cp.dispatch._sync_barrier_states()
+    calls = 0
+    real_non_terminal_tasks = cp._non_terminal_tasks
+
+    def counted_non_terminal_tasks():
+        nonlocal calls
+        calls += 1
+        return real_non_terminal_tasks()
+
+    monkeypatch.setattr(cp, "_non_terminal_tasks", counted_non_terminal_tasks)
+
+    explanation = cp.dispatch.explain_task_dispatch(task.id, sync_states=sync_states)
+
+    assert explanation["candidate_count"] == 1
+    assert calls == 0
+
+
 def test_idle_pull_is_write_free_and_does_not_claim_reconciliation_leases():
     cp = ControlPlane.in_memory()
     active_project(cp)
@@ -265,3 +437,25 @@ def test_explain_non_open_task_uses_v2_task_rejection():
     assert explanation["task_ready"] is False
     assert explanation["dispatchable"] is False
     assert [reason["code"] for reason in explanation["task_reasons"]] == ["task_not_open"]
+
+
+def test_explain_builds_sync_barrier_state_once_for_all_agents(monkeypatch):
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    worker(cp, "first")
+    worker(cp, "second")
+    task = cp.create_task("explain", project="mac", required_capabilities=["python"])
+    calls = 0
+    real_non_terminal_tasks = cp._non_terminal_tasks
+
+    def counted_non_terminal_tasks():
+        nonlocal calls
+        calls += 1
+        return real_non_terminal_tasks()
+
+    monkeypatch.setattr(cp, "_non_terminal_tasks", counted_non_terminal_tasks)
+
+    explanation = cp.dispatch.explain_task_dispatch(task.id)
+
+    assert explanation["candidate_count"] == 2
+    assert calls == 1

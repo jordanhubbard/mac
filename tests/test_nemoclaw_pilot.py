@@ -198,6 +198,21 @@ def test_install_script_no_operator_identity():
         )
 
 
+def test_runbook_documents_macos_docker_desktop_storage_risk():
+    text = RUNBOOK_MD.read_text(encoding="utf-8")
+    for required in (
+        "macOS and Docker Desktop storage risk",
+        "containerd-snapshotter",
+        "VirtioFS",
+        "SQLite WAL",
+        "fcntl`/`flock",
+        "NemoClaw's own use of SQLite has not been confirmed",
+        "bind-mount",
+        "https://github.com/openclaw/openclaw/issues/139214",
+    ):
+        assert required in text
+
+
 # ---------------------------------------------------------------------------
 # config.yaml
 # ---------------------------------------------------------------------------

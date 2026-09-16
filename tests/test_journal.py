@@ -105,7 +105,9 @@ def test_snapshot_prefers_openclaw_workspace_when_root_has_no_soul(tmp_path):
     _make_agent_home(workspace)
     root = tmp_path / "journal"
 
-    m = journal.snapshot(home=home, root=root, date="2026-08-26", agent_id="natasha", run_hook=False)
+    m = journal.snapshot(
+        home=home, root=root, date="2026-08-26", agent_id="natasha", run_hook=False
+    )
 
     dest = root / "2026-08-26"
     assert (dest / "SOUL.md").read_text().startswith("# SOUL")

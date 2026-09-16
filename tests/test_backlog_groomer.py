@@ -14,6 +14,10 @@ from mac.backlog_groomer import (
     ProjectGroomingPolicy,
     build_grooming_description,
 )
+from mac.executor_scope import maybe_auto_decompose
+from mac.executor_prompt import task_evidence_type
+from mac.services import ControlPlane
+from mac.test_support import ephemeral_store
 
 
 def _iso(dt: datetime) -> str:
@@ -70,6 +74,7 @@ def test_policy_parsing():
 def test_description_mentions_plan_steps_and_size():
     d = build_grooming_description("mac", "https://github.com/o/r", 5)
     assert "plan_steps" in d and "5 concrete" in d and "READ-ONLY" in d
+    assert "evidence_type=operator_result" in d
 
 
 # --------------------------------------------------------------------------- #
@@ -106,6 +111,13 @@ class FakeCP:
     def list_tasks(self):
         return list(self._tasks)
 
+    def ready_tasks(self):
+        return [
+            task
+            for task in self._tasks
+            if task.state == "open" and not bool(task.metadata.get("no_dispatch"))
+        ]
+
     def create_task(
         self,
         title,
@@ -132,6 +144,11 @@ class FakeCP:
         self.logs.append((a, k))
 
 
+class FailingReadyCP(FakeCP):
+    def ready_tasks(self):
+        raise RuntimeError("ready query failed")
+
+
 def _proj(name="mac", url="https://github.com/o/r", **groom):
     md = {"repository_url": url, "backlog_grooming": {"enabled": True, **groom}}
     return FakeProject(name=name, metadata=md)
@@ -155,9 +172,81 @@ def test_grooms_idle_opted_in_project():
     created = cp.created[0]
     assert created["project"] == "mac"
     assert created["metadata"]["origin"]["type"] == "backlog_grooming"
-    # repo-coupled (origin has url) but investigation-gated, not code
+    # Repo context is requested, but no evidence override is supplied.
     assert created["metadata"]["origin"]["repository_url"] == "https://github.com/o/r"
-    assert created["metadata"]["evidence_type"] == "investigation"
+    assert created["metadata"]["deliverable"] == "report"
+    assert created["metadata"]["report_repository_access"] == {
+        "schema": "mac.report_repository_access.v1",
+        "mode": "read_only",
+    }
+    assert "evidence_type" not in created["metadata"]
+
+
+def test_grooming_task_passes_real_control_plane_normalization(tmp_path, monkeypatch):
+    cp = ControlPlane(ephemeral_store(), secret_key="backlog-groomer-test-secret-key-32+")
+    repo = tmp_path / "mac"
+    contract_dir = repo / ".mac"
+    contract_dir.mkdir(parents=True)
+    (contract_dir / "project.yaml").write_text(
+        "\n".join(
+            [
+                "schema: mac.repository_contract.v1",
+                "project: mac",
+                "canonical_remote_url: https://github.com/o/r",
+                "default_branch: main",
+                "platforms: [darwin, linux, wsl2]",
+                "toolchain:",
+                "  required_commands: [python3]",
+                "bootstrap:",
+                "  command: python3 scripts/bootstrap-project.py",
+                "  creates: [.venv/bin/python]",
+                "test:",
+                "  command: pytest",
+                "evidence:",
+                "  required: [tests]",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cp.create_project(
+        "mac",
+        metadata={
+            "repository_url": "https://github.com/o/r",
+            "backlog_grooming": {"enabled": True},
+        },
+    )
+    cp.register_project_repository("mac", str(repo), project="mac")
+
+    report = _groomer(cp).run_once()
+
+    assert report["groomed_count"] == 1
+    task = cp.get_task(report["projects"][0]["task_id"])
+    assert "evidence_type" not in task.metadata
+    assert task.metadata["report_repository_access"] == {
+        "schema": "mac.report_repository_access.v1",
+        "mode": "read_only",
+    }
+    assert task.metadata["execution_contract"]["type"] == "repository"
+    assert task.metadata["execution_contract"]["repository_contract"]["project"] == "mac"
+    assert task_evidence_type(task.to_dict()) == "operator_result"
+    assert "plan_steps" in task.description
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "mac-evidence.json").write_text(
+        '{"evidence_type":"operator_result","summary":"Prioritized work.",'
+        '"plan_steps":[{"title":"Add coverage","description":"Cover the gap."}]}',
+        encoding="utf-8",
+    )
+    posted = {}
+    monkeypatch.setattr(
+        "mac.executor_scope._hub_post_child_tasks",
+        lambda task_id, children: posted.update(task_id=task_id, children=children) or {},
+    )
+    assert maybe_auto_decompose(workspace, task.to_dict()) is True
+    assert posted["task_id"] == task.id
+    assert posted["children"] == [{"title": "Add coverage", "description": "Cover the gap."}]
 
 
 def test_skips_project_not_opted_in():
@@ -167,12 +256,30 @@ def test_skips_project_not_opted_in():
 
 
 def test_skips_when_not_idle():
-    # 2 pending tasks meets min_ready=2 -> not idle
-    tasks = [FakeTask("a", "mac", "open"), FakeTask("b", "mac", "running")]
+    # "Idle" means the dispatch-ready backlog is already at its threshold.
+    tasks = [FakeTask("a", "mac", "open"), FakeTask("b", "mac", "open")]
     cp = FakeCP([_proj()], tasks=tasks)
     report = _groomer(cp).run_once()
     assert report["groomed_count"] == 0
-    assert "not idle" in report["projects"][0]["skipped_reason"]
+    result = report["projects"][0]
+    assert result["active_tasks"] == 2
+    assert result["ready_tasks"] == 2
+    assert "ready backlog sufficient" in result["skipped_reason"]
+
+
+def test_parked_and_in_flight_work_does_not_suppress_grooming():
+    tasks = [
+        FakeTask("held", "mac", "open", {"no_dispatch": True}),
+        FakeTask("blocked", "mac", "blocked"),
+        FakeTask("running", "mac", "running"),
+        FakeTask("reviewing", "mac", "reviewing"),
+    ]
+    cp = FakeCP([_proj()], tasks=tasks)
+    report = _groomer(cp).run_once()
+    assert report["groomed_count"] == 1
+    result = report["projects"][0]
+    assert result["active_tasks"] == 4
+    assert result["ready_tasks"] == 0
 
 
 def test_grooming_tasks_do_not_count_as_project_work():
@@ -189,6 +296,30 @@ def test_grooming_tasks_do_not_count_as_project_work():
     report = _groomer(cp).run_once()
     assert report["groomed_count"] == 0
     assert report["projects"][0]["skipped_reason"] == "grooming task already open"
+
+
+def test_completed_grooming_task_does_not_count_as_ready_work():
+    old = FakeTask(
+        "g",
+        "mac",
+        "open",
+        {"origin": {"type": "backlog_grooming"}},
+        created_at=_iso(datetime.now(timezone.utc) - timedelta(hours=8)),
+    )
+    cp = FakeCP([_proj()], tasks=[old])
+    report = _groomer(cp, regroom_interval_seconds=3600).run_once()
+    assert report["groomed_count"] == 0
+    assert report["projects"][0]["ready_tasks"] == 0
+    assert report["projects"][0]["skipped_reason"] == "grooming task already open"
+
+
+def test_ready_snapshot_failure_skips_grooming():
+    cp = FailingReadyCP([_proj()])
+    report = _groomer(cp).run_once()
+    result = report["projects"][0]
+    assert report["groomed_count"] == 0
+    assert result["error"] == "ready task snapshot unavailable"
+    assert result["skipped_reason"] == "could not determine ready backlog"
 
 
 def test_skips_non_repo_project():

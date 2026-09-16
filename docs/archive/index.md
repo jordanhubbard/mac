@@ -58,6 +58,7 @@ to their retained sources.
 - [Assessment: task_de35029099d34c94be186c8992ee706a](../archive/field-notes/assessment-task-de3502.md) — `archive/field-notes/assessment-task-de3502.md`
 - [Assessment: task_f6a813fede7841d28b154af3a544864a](../archive/field-notes/assessment-task-f6a813.md) — `archive/field-notes/assessment-task-f6a813.md`
 - [Assessment: task_f9cd72342aef4e7b8701b131b12d29ff](../archive/field-notes/assessment-task-f9cd72.md) — `archive/field-notes/assessment-task-f9cd72.md`
+- [v1.3.1 fleet canary](../archive/field-notes/canary-v1.3.1.md) — `archive/field-notes/canary-v1.3.1.md`
 - [Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable)](../archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md) — `archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md`
 - [Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem)](../archive/field-notes/closeout-dreamrepair-5404b15-skill.md) — `archive/field-notes/closeout-dreamrepair-5404b15-skill.md`
 - [Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable)](../archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md) — `archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md`
@@ -89,6 +90,7 @@ to their retained sources.
 - [Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task](../archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md) — `archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md`
 - [Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6](../archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md) — `archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md`
 - [A Notional Haskell Migration Plan for MAC](../archive/field-notes/haskell_migration.md) — `archive/field-notes/haskell_migration.md`
+- [Contract gate environment repair resolution](../archive/field-notes/investigation-contract-gate-env-8454149d-resolution.md) — `archive/field-notes/investigation-contract-gate-env-8454149d-resolution.md`
 - [Investigation: dream finding with a generic `skill` affected label — placeholder area bucket, not a defect location](../archive/field-notes/investigation-dream-skill-generic-area-bucket.md) — `archive/field-notes/investigation-dream-skill-generic-area-bucket.md`
 - [Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal](../archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md) — `archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md`
 - [Investigation: dream finding `dreamrepair:173ce952` with a generic `tests` affected label — placeholder area bucket, not a defect location](../archive/field-notes/investigation-dream-tests-generic-area-bucket.md) — `archive/field-notes/investigation-dream-tests-generic-area-bucket.md`

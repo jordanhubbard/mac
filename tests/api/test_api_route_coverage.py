@@ -1417,6 +1417,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/tasks/{task_id}"): {"task_id": "delete_task_id"},
         ("POST", "/tasks/{task_id}/transition"): {"task_id": "transition_task_id"},
         ("POST", "/tasks/{task_id}/reopen"): {"task_id": "reopen_task_id"},
+        ("POST", "/tasks/{task_id}/stop"): {"task_id": "reopen_task_id"},
         ("POST", "/tasks/{task_id}/ask"): {"task_id": "ask_task_id"},
         ("POST", "/tasks/{task_id}/answer"): {"task_id": "answer_task_id"},
         ("POST", "/tasks/{task_id}/force-complete"): {"task_id": "force_complete_task_id"},
@@ -1429,6 +1430,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
             "authorization_id": "break_glass_authorization_id"
         },
         ("POST", "/tasks/{task_id}/reviews"): {"task_id": "review_task_id"},
+        ("POST", "/tasks/{task_id}/acceptance"): {"task_id": "publication_task_id"},
         ("DELETE", "/fleets/{fleet_id_or_name}"): {"fleet_id_or_name": "delete_fleet_id"},
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {
@@ -1703,6 +1705,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         elif path_template == "/action-events/stream":
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/dashboard/stream":
+            kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
+        elif path_template == "/news/stream":
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/v1/memory/recall":
             kwargs["params"] = {"q": "route coverage", "limit": 1}
@@ -2009,6 +2013,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/tasks/{task_id}/reopen"): {
             "actor": "operator",
             "reason": "route coverage reopen",
+        },
+        ("POST", "/tasks/{task_id}/stop"): {
+            "actor": "operator",
+            "reason": "route coverage stop",
         },
         ("POST", "/tasks/{task_id}/ask"): {
             "actor": "operator",
@@ -2643,6 +2651,11 @@ edges:
         ("POST", "/tasks/{task_id}/reviews"): {
             "reviewer_agent_id": ctx["reviewer_agent_id"],
             "actor": "dispatcher",
+        },
+        ("POST", "/tasks/{task_id}/acceptance"): {
+            "evidence_id": ctx["publication_evidence_id"],
+            "reason": "Operator inspected the exact result prepared for publication.",
+            "accepted": True,
         },
         ("POST", "/reviews/{review_id}/claim"): {
             "reviewer_agent_id": ctx["reviewer_agent_id"],

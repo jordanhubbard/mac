@@ -9,6 +9,8 @@ from typing import Iterable, Iterator, Optional
 import pytest
 from mac.services import ControlPlane
 
+pytest_plugins = ["tests.pg_worker_databases"]
+
 
 # Namespaces addressable by MAC_TEST_DISABLE_GROUPS. Each maps a group name to a
 # predicate over the test's file path. Markers ARE the namespaces (the api/cli/ui
@@ -108,6 +110,31 @@ def _no_ticket_mirror(monkeypatch):
     pointing `tickets_dir` at a tmp directory.
     """
     monkeypatch.setenv("MAC_NO_TICKET_MIRROR", "1")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_coding_harness(monkeypatch):
+    """Tests never inherit a developer's live coding-harness identity.
+
+    CLI tests call ``main()`` in-process. Inheriting ``CLAUDECODE=1`` made an
+    unreleased auto-join implementation write to the developer's real
+    ``~/.claude/settings.json`` during pytest. Tests that exercise harness
+    detection pass an explicit environment or opt in with ``monkeypatch``.
+    """
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_task_repository_identity(monkeypatch):
+    """Fixture repositories never inherit their caller's task checkout identity.
+
+    Workers export MAC_TASK_REPO_* for their real task. Those paths and hashes
+    must not override a test's synthetic repository or make a fixture inspect
+    the live checkout. Tests of environment precedence opt in with monkeypatch.
+    """
+    for name in list(os.environ):
+        if name.startswith("MAC_TASK_REPO_"):
+            monkeypatch.delenv(name, raising=False)
 
 
 # ----------------------------------------------------------------------
@@ -299,3 +326,53 @@ def bind_soul(
         persona_id=persona.id,
     )
     return instance.id
+
+
+@pytest.fixture
+def linux_repository_verifier(monkeypatch, tmp_path):
+    """Simulate only gateway transport for finalizer integration tests.
+
+    The real verifier still checks source identity. Contract commands actually
+    run in a fresh clone, inside the Linux test sandbox. The separate transport
+    contract tests exercise production OpenShell argv and unavailable gateways.
+    """
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    from mac import services
+
+    def run(_remote, _branch, head, command, bootstrap="", **kwargs):
+        assert sys.platform == "linux", "repository test execution belongs on Linux"
+        with tempfile.TemporaryDirectory(dir=tmp_path) as directory:
+            target = Path(directory) / "repo"
+            clone = subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--no-local",
+                    "--no-checkout",
+                    str(kwargs["local_repository"]),
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if clone.returncode:
+                return clone.returncode, clone.stderr
+            checkout = subprocess.run(
+                ["git", "-C", str(target), "checkout", "--detach", head],
+                capture_output=True,
+                text=True,
+            )
+            if checkout.returncode:
+                return checkout.returncode, checkout.stderr
+            shell = (("%s && " % bootstrap) if bootstrap else "") + command
+            result = subprocess.run(
+                ["bash", "-lc", shell], cwd=target, capture_output=True, text=True
+            )
+            kwargs["verifier_identity"]["execution_attempted"] = True
+            return result.returncode, result.stdout + result.stderr
+
+    monkeypatch.setattr(services, "run_repository_contract_test_in_openshell", run)

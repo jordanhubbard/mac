@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from mac.api import _required_scope
+from mac.api import TokenPrincipal, _required_scope
+from mac.worker_credentials import WORKER_SCOPES
 
 
 def test_v1_router_requires_agent_scope_any_method():
@@ -60,3 +61,31 @@ def test_memory_rewrite_routes_are_admin_not_agent():
     # The read-only neighbours keep the surrounding /v1 behaviour.
     assert _required_scope("GET", "/v1/memory/health") == "agent"
     assert _required_scope("GET", "/v1/memory/recall") == "agent"
+
+
+def test_review_tick_requires_review_advance_not_bare_admin():
+    # Regression: this used to be flat "admin", which meant no ordinary fleet
+    # worker credential could ever call it -- every worker's own post-verdict
+    # /reviews/default/tick call was rejected with "token lacks required
+    # scope: admin", so the REVIEWING queue only drained when an admin token
+    # happened to invoke it by hand. `review:advance` is minted into every
+    # worker credential (WORKER_SCOPES) instead.
+    assert _required_scope("POST", "/reviews/default/tick") == "review:advance"
+    assert _required_scope("POST", "/reviews/default/tick?limit=10") == "review:advance"
+
+
+def test_worker_credential_carries_review_advance_scope():
+    assert "review:advance" in WORKER_SCOPES
+
+
+def test_review_advance_scope_semantics():
+    # Admin inherits every scope, including the new one.
+    assert TokenPrincipal(scopes=frozenset({"admin"})).has_scope("review:advance")
+    # A worker-shaped token (WORKER_SCOPES) has it directly.
+    assert TokenPrincipal(scopes=frozenset(WORKER_SCOPES)).has_scope("review:advance")
+    # A plain `write` token does NOT inherit it -- deliberately narrower than
+    # the {"roles", "workflow"} write-inherited scopes, since the review tick
+    # is the closest thing the swarm has to an auto-merge button.
+    assert not TokenPrincipal(scopes=frozenset({"write"})).has_scope("review:advance")
+    # `read` alone obviously doesn't have it either.
+    assert not TokenPrincipal(scopes=frozenset({"read"})).has_scope("review:advance")

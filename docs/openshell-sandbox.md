@@ -1,10 +1,11 @@
 # Running Hermes under the OpenShell sandbox
 
-This describes MAC's OpenShell runtime path: one per-agent OpenShell supervisor
-launches Hermes gateway/session work and autonomous executor children as
-confined descendants of an [OpenShell](https://github.com/NVIDIA/OpenShell)
-sandbox. OpenShell is the **sole guardrail authority**, letting the agent run
-full `--yolo` safely.
+This describes the confined Linux execution path. Code tasks and their
+independent verification run inside policy-governed OpenShell sandboxes.
+Conversational gateway services are a separate deployment concern: the selected
+Hermes service can run natively with its preserved profile. The macOS hub runs
+native control and service clients and delegates repository verification to
+Linux; installing OpenShell on macOS is not the supported recovery path.
 
 ## Why
 
@@ -64,12 +65,21 @@ because the answer determines what other layers are allowed to stop checking.
 | platform | posture | what confines the agent |
 | --- | --- | --- |
 | Linux | OpenShell managed runtime | Landlock filesystem confinement, an allowed-command set, and a per-binary egress proxy. Fails closed: if the kernel cannot enforce Landlock the executor refuses to run. |
-| macOS | `macos_host` (ADR 0015) | Host OS protections — SIP, TCC, Gatekeeper. There is no OpenShell binary, runtime image or policy, and `MAC_OPENSHELL_SANDBOX` on darwin is a misconfiguration, not a posture to waive. |
+| macOS | `macos_host` (ADR 0015) | Host OS protections — SIP, TCC, Gatekeeper. No local OpenShell runtime; a verifier CLI/tunnel may connect to a Linux gateway. `MAC_OPENSHELL_SANDBOX` on darwin is a misconfiguration, not a posture to waive. |
 
 **Accepted, 2026-08-19.** macOS nodes run the agent as a plain host
 application and this is fine for the fleet's threat model: macOS applications
 carry their own OS-level protections, and the darwin nodes are operator
 machines rather than untrusted multi-tenant workers.
+
+For remote verification, `deploy/openshell/install-certifier-gateway-tunnel.sh`
+checks its explicit loopback endpoint with a bounded, read-only
+`sandbox list --limit 1 --names` RPC and confirms that the launchd tunnel job
+is still loaded. An empty sandbox list is healthy. OpenShell 0.0.72 `status`
+can exit successfully after displaying a connection error, so its exit code
+alone is insufficient. A failed readiness check restores the prior launchd
+generation. This proves tunnel and control-API readiness; sandbox execution
+and completion still require their own verification.
 
 Be precise about what that does and does not mean, so nobody over-reads it.
 macOS App Sandbox applies to *entitled application bundles*; a launchd-run
@@ -86,6 +96,44 @@ nothing on either platform while making the real boundary harder to see. Do not
 re-add it. If darwin confinement needs strengthening, strengthen it here — a
 `sandbox-exec` profile or a hardened launchd job — not by filtering data
 elsewhere in the system.
+
+## Verifier resources
+
+The hub runs pushed repository code on its configured Linux OpenShell gateway.
+A macOS hub may own the CLI/tunnel connection, but does not host that runtime.
+The same verifier execution path serves independent review and projected-merge
+publication checks.
+
+`MAC_HUB_VERIFY_PROFILE` is an opt-in setting on each hub and Linux OpenShell
+worker process. Unset, empty,
+or `default` retains the driver's existing behavior. `bounded-tmpfs` requests
+12 CPUs, 32 GiB memory and an 8 GiB Docker-driver tmpfs at
+`/sandbox/test-storage`, with `MAC_TEST_PG_DATADIR` pointing to its
+`mac-test-pgdata` subdirectory and `MAC_TEST_JOBS=8`. Repository fixture scratch
+uses `TMPDIR=/sandbox/test-scratch` on the sandbox filesystem, so large fixture
+copies cannot fill PostgreSQL's mount. The tmpfs uses mode 1777 and does not
+expose a host directory. PostgreSQL keeps its normal durability settings.
+
+Before extracting or bootstrapping the repository, the sandbox proves that it
+is on Linux and that the requested path is a writable tmpfs. A missing proof,
+unknown profile or unsupported backend cannot produce a passing verification.
+No arbitrary driver JSON, host mounts or shell arguments are accepted through
+this setting. It changes resources, not test selection, coverage, signing or
+the isolation policy.
+
+Worker sandboxes request the same limits at creation. Every fresh verification
+shell reapplies the storage preflight and environment before toolchain setup;
+settings in the agent's shell are not inherited. Separate read-only verifier
+sandboxes use this profile without widening their create-argument allowlist.
+With the profile enabled, explicit worker `--cpu`, `--memory` or
+`--driver-config-json` overrides are rejected instead of passing duplicate flags.
+
+Enable the profile only on a qualified Linux gateway through the supported
+hub/worker configuration and deployment path. It affects future sandboxes; do not restart
+active verifiers to change their storage. Source publication alone does not
+prove activation: inspect the next independent sandbox's limits and mount,
+then observe its required tests and normal publication completing. Keep
+failed-run evidence when diagnosing resource exhaustion or unsupported drivers.
 
 ## Prerequisites
 

@@ -26,7 +26,7 @@ Together they cannot collide.
 |---|---|
 | `README.md` | What the deck covers, its slide list, where it is published, and how to rebuild it |
 | `AUDIT.md` | Every factual claim traced to a file, commit or generated reference |
-| `build_deck.py` | Deterministic builder for the `.pptx` |
+| `build_deck.py` or `build_deck.mjs` | Deterministic builder for the `.pptx` |
 | `images/*.svg` | Diagram sources, hand-authored |
 
 `AUDIT.md` is the part that matters. A capabilities deck ages badly precisely because nobody can
@@ -54,12 +54,19 @@ need to know, the failure message names it when it fires.
 
 | Directory | Commit | Deck | Subject |
 |---|---|---|---|
+| [`20260914T203809Z-c7be3a5a`](20260914T203809Z-c7be3a5a/README.md) | `c7be3a5a` | [Public PPTX](https://github.com/jordanhubbard/mac/releases/download/v1.5.0/mac-v1.5.0-capabilities.pptx) · [Slides (account-restricted)](https://docs.google.com/presentation/d/1i9PUkXG1iPDeU1AmDqxUM439zwdtXqbDkTQikGIRyNA/edit?usp=drivesdk) | v1.5.0 — upfront validation, PostgreSQL test isolation, Hermes readiness and auditable task outcomes |
+| [`20260906T051311Z-a787bff1`](20260906T051311Z-a787bff1/README.md) | `a787bff1` | [Google Slides](https://docs.google.com/presentation/d/1VX5AkOBjjz4X2DsUynYazO4ok9KuFXz7CjQN785HVkY/edit?usp=drivesdk) | v1.4.0 — OpenClaw chat-gateway reliability hardening, the filesystem root cause that forced a cutover, and the fleet's chat gateway moving back to Hermes |
+| [`20260904T212515Z-c7a3fee1`](20260904T212515Z-c7a3fee1/README.md) | `c7a3fee1` | [Google Slides](https://docs.google.com/presentation/d/11mrPpsYR-wzRTLYsCiKF3wWcniGP811D6s0zYgPIoV4/edit?usp=drivesdk) | v1.3.5 — OpenShell/OpenClaw onboarding root-cause fixes and fleet dispatch/attestation reliability fixes |
+| [`20260902T131314Z-a168e9d0`](20260902T131314Z-a168e9d0/README.md) | `a168e9d0` | [Google Slides](https://docs.google.com/presentation/d/16ZYljibDJ1toiyuBpKmxaiqSjsZ7j69bPDIuGB2tDH4/edit?usp=drivesdk) | v1.3.5 release candidate — artifact publication, deploy resilience, fleet visibility, the contract-test allowance, and the transactional release workflow |
+| [`20260831T143751Z-e78a7ba7`](20260831T143751Z-e78a7ba7/README.md) | `e78a7ba7` | [Google Slides](https://docs.google.com/presentation/d/1uPIlC_TYrp3XHd4ARIbrdxNjPiYgAE7pjdi2n_2FUD8/edit) | v1.3.4 — resilient contract gates, supported PostgreSQL CI, host-Python upgrade recovery, and bounded lease-telemetry clock skew |
+| [`20260828T104510Z-d8d491d6`](20260828T104510Z-d8d491d6/README.md) | `d8d491d6` | [Google Slides](https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit) | What the control plane can do today — object model, twelve task states, coordination, fleet, measurement at v1.3.0 |
 | [`20260825T000816Z-e8040fec`](20260825T000816Z-e8040fec/README.md) | `e8040fec` | [Google Slides](https://docs.google.com/presentation/d/1cLzjGERKojHg0w1FOyUnlqlsVu_OZVM5b_kGc7T3fSw/edit) | What the control plane can do today — object model, twelve task states, coordination, fleet, measurement at v1.2.0 |
 | [`20260820T182340Z-bac50778`](20260820T182340Z-bac50778/README.md) | `bac50778` | [Google Slides](https://docs.google.com/presentation/d/1vzkNL3_IM-ophzQWUpJl3JE5L-X3MnEva8m6edeEOQk/edit) | How the control plane is put together — hub↔workers, the life of a task, inside the hub, with live console captures |
 | [`20260820T011224Z-8b424c20`](20260820T011224Z-8b424c20/README.md) | `8b424c20` | [Google Slides](https://docs.google.com/presentation/d/1DXgpB-3fy4IDLynGloaAP349BWrwoVSw8T46VyPdT3M/edit) | What the control plane can do today — object model, task lifecycle, coordination, fleet, measurement |
 
-Newest first. The `e8040fec` deck and the `8b424c20` deck disagree about ADR 0016's status and the
-task-state count, which is the convention working as intended: each is true of its own commit.
+Newest first. The `d8d491d6` deck and the `e8040fec` deck disagree about route count,
+ADR 0023/0033 status, and the ledger census, which is the convention working as intended:
+each is true of its own commit.
 
 ## Screenshots of a live fleet
 

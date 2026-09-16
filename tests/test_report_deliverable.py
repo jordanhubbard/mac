@@ -825,7 +825,6 @@ def test_executor_clean_read_only_report_skips_git_finalizer(tmp_path, monkeypat
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=None,
@@ -881,7 +880,6 @@ def test_read_only_verification_failure_overwrites_complete_model_manifest(tmp_p
     rc = te._run_executor(
         runner=lambda *_args, **_kwargs: None,
         task=task,
-        task_file=task_file,
         task_workspace=tmp_path,
         task_id=task["id"],
         review_context=None,

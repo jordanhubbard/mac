@@ -79,7 +79,7 @@ def _fake_run(monkeypatch):
         done = lambda rc, out="", err="": subprocess.CompletedProcess(argv, rc, out, err)
         if argv[0] == "git" and "rev-parse" in argv:
             return done(0, HEAD_SHA + "\n")
-        if argv[0] in ("git", "tar"):
+        if argv[0] in ("git", "tar", "bash"):
             return done(0)
         if "delete" in argv:
             return done(0)
@@ -91,6 +91,10 @@ def _fake_run(monkeypatch):
 
 def _capture(monkeypatch):
     _fake_run(monkeypatch)
+    monkeypatch.setenv(
+        "MAC_HUB_VERIFY_IMAGE",
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
+    )
     plane = types.SimpleNamespace()  # no _hub_verify_runner -> the real path
     return ControlPlane._hub_verify_run_contract_test(
         plane, "https://example.invalid/r.git", "b", HEAD_SHA, "scripts/run-contract-tests.sh"
@@ -126,6 +130,10 @@ def test_the_blind_tail_that_caused_this_would_still_fail(monkeypatch):
 def test_a_genuinely_dead_harness_is_still_unavailable(monkeypatch):
     """#522 must survive this fix: no gate ran, so there is no verdict to sign."""
     monkeypatch.setattr(gitops, "askpass_remote_auth", lambda url: (url, {}), raising=False)
+    monkeypatch.setenv(
+        "MAC_HUB_VERIFY_IMAGE",
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
+    )
 
     def run(argv, **kwargs):
         done = lambda rc, out="", err="": subprocess.CompletedProcess(argv, rc, out, err)
@@ -142,6 +150,64 @@ def test_a_genuinely_dead_harness_is_still_unavailable(monkeypatch):
     )
 
     assert hub_verification_unavailable_reason(output) == "ssh exited with status"
+
+
+def test_hub_verify_runs_bootstrap_before_test_command(monkeypatch):
+    """A repository whose test.command assumes a pre-built toolchain (e.g.
+    ``.venv/bin/pytest``) is unrunnable in a fresh sandbox unless
+    bootstrap.command has already created that toolchain. Observed live on
+    the mac-fleet-canary repository: every hub_verify attempt failed with
+    ``.venv/bin/pytest: No such file or directory`` (exit 127) because the
+    sandbox never ran bootstrap.command -- permanently stranding every task
+    that used a venv-relative test command."""
+    captured_argv = []
+
+    def run(argv, **kwargs):
+        done = lambda rc, out="", err="": subprocess.CompletedProcess(argv, rc, out, err)
+        if argv[0] == "git" and "rev-parse" in argv:
+            return done(0, HEAD_SHA + "\n")
+        if argv[0] in ("git", "tar", "bash") or "create" in argv or "upload" in argv:
+            return done(0)
+        if "delete" in argv:
+            return done(0)
+        captured_argv.append(argv)
+        return done(0, "all passed")
+
+    monkeypatch.setattr(services.subprocess, "run", run)
+    monkeypatch.setattr(gitops, "askpass_remote_auth", lambda url: (url, {}), raising=False)
+    monkeypatch.setenv(
+        "MAC_HUB_VERIFY_IMAGE",
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
+    )
+    plane = types.SimpleNamespace()
+    ControlPlane._hub_verify_run_contract_test(
+        plane,
+        "https://example.invalid/r.git",
+        "b",
+        HEAD_SHA,
+        ".venv/bin/pytest -q",
+        'python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"',
+    )
+
+    bootstrap = next(argv[-1] for argv in captured_argv if "python3 -m venv .venv" in argv[-1])
+    test = next(argv[-1] for argv in captured_argv if ".venv/bin/pytest -q" in argv[-1])
+    assert "tar xzf repo.tgz" in bootstrap
+    assert "tar xzf repo.tgz" not in test
+
+
+def test_hub_verify_refuses_the_obsolete_local_hermes_image(monkeypatch):
+    monkeypatch.setenv("MAC_HUB_VERIFY_IMAGE", "localhost/mac-hermes:net")
+
+    rc, output = ControlPlane._hub_verify_run_contract_test(
+        types.SimpleNamespace(),
+        "https://example.invalid/r.git",
+        "b",
+        HEAD_SHA,
+        "true",
+    )
+
+    assert rc == 1
+    assert "immutable repository-owned OpenShell runtime image" in output
 
 
 def test_the_excerpt_survives_the_second_truncation_on_the_way_to_the_worker(

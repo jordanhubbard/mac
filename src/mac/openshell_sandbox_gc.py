@@ -8,7 +8,7 @@ import re
 import subprocess
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 
 DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
@@ -17,7 +17,7 @@ DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
 #: sandbox is given.
 DEFAULT_ERROR_GRACE_SECONDS = 15 * 60
 MANAGED_NAME_RE = re.compile(
-    r"^mac-(?:task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+    r"^mac-(?:task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
 )
 
 
@@ -48,6 +48,34 @@ def _pid_is_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _process_identity(pid: int) -> Tuple[str, str]:
+    """Return (state, identity) for a PID without treating EPERM as liveness.
+
+    Linux's boot id plus proc start time is stable for one process incarnation,
+    unlike a PID. ``state`` is present, absent, or unknown; callers must fail
+    closed on unknown.
+    """
+
+    if pid <= 0:
+        return "absent", ""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "absent", ""
+    except PermissionError:
+        return "unknown", ""
+    try:
+        boot_id = open("/proc/sys/kernel/random/boot_id", encoding="ascii").read().strip()
+        stat = open("/proc/%d/stat" % pid, encoding="ascii").read()
+        # comm may contain spaces and parentheses, so split only after its final ')'.
+        start_time = stat[stat.rfind(")") + 2 :].split()[19]
+    except (OSError, IndexError):
+        return "unknown", ""
+    if not boot_id or not start_time:
+        return "unknown", ""
+    return "present", "%s:%s" % (boot_id, start_time)
 
 
 def stale_sandbox_candidates(
@@ -268,7 +296,8 @@ def _keep_is_falsey(value: Any) -> bool:
 def classify_orphan_task_sandbox(
     sandbox: Mapping[str, Any],
     *,
-    pid_is_alive: Callable[[int], bool] = _pid_is_alive,
+    pid_is_alive: Optional[Callable[[int], bool]] = None,
+    process_identity: Callable[[int], Tuple[str, str]] = _process_identity,
 ) -> Dict[str, Any]:
     """Classify a single sandbox for fail-closed dead-PID reaping.
 
@@ -287,6 +316,8 @@ def classify_orphan_task_sandbox(
     kind = str(labels.get("mac.kind") or "").strip().lower()
     keep_raw = labels.get("mac.keep")
     pid_raw = str(labels.get("mac.pid") or "").strip()
+    pid_start = str(labels.get("mac.pid.start") or "").strip()
+    boot_id = str(labels.get("mac.boot.id") or "").strip()
     phase = str(row.get("phase") or "").strip()
 
     record: Dict[str, Any] = {
@@ -327,12 +358,30 @@ def classify_orphan_task_sandbox(
         record["reason"] = "mac.pid is not a positive integer"
         return record
     record["pid"] = pid
-    if pid_is_alive(pid):
-        record["reason"] = "recorded creator PID is still alive"
+    if pid_is_alive is not None:
+        if pid_is_alive(pid):
+            record["reason"] = "recorded creator PID is still alive"
+            return record
+        state, identity = "absent", ""
+    else:
+        state, identity = process_identity(pid)
+    if state == "unknown":
+        record["reason"] = "recorded creator process identity could not be proved"
+        return record
+    if state == "present":
+        recorded_identity = "%s:%s" % (boot_id, pid_start) if boot_id and pid_start else ""
+        if not recorded_identity:
+            record["reason"] = "recorded creator PID is alive but has no process identity"
+            return record
+        if identity == recorded_identity:
+            record["reason"] = "recorded creator process identity is still alive"
+            return record
+        record["reap"] = True
+        record["reason"] = "MAC-owned disposable sandbox whose creator PID was reused"
         return record
 
     record["reap"] = True
-    record["reason"] = "MAC-owned task sandbox with mac.keep=false and dead recorded PID"
+    record["reason"] = "MAC-owned disposable sandbox with a dead recorded PID"
     return record
 
 

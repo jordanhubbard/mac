@@ -91,8 +91,9 @@ because authority differs:
   routes (`/agentbus/human-directive`) *refuse* agent tokens entirely, so
   operator speech is distinguishable from agent speech by construction.
 - **Hub** — schedules dispatch, runs the review sweep, publishes, prunes. It
-  observes runaway conditions but, today, cannot act on them (see
-  [Advanced Concepts](03-advanced.md#what-the-hub-cannot-do-yet)).
+  performs recovery within its authenticated task and lease authority; the
+  [recovery and delivery limits](03-advanced.md#recovery-and-delivery-limits)
+  describe what remains outside that control.
 - **Worker agent** (`mac-agent`) — registers, heartbeats, claims one task at a
   time under a lease, executes it, submits evidence.
 - **Coding agent** — the CLI (Claude Code, Codex, Cursor) the worker spawns
@@ -212,7 +213,7 @@ Workers **consume** it too. Before claiming a task a worker acts on
 traffic and attaches it to the task the coding agent receives, so the agent
 starts knowing whether its work already landed and whether the trunk moved
 under it. What is still missing is documented in
-[Advanced Concepts](03-advanced.md#agentbus-consumption-is-partial).
+[recovery and delivery limits](03-advanced.md#recovery-and-delivery-limits).
 
 ## Where to go next
 

@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, Mapping, Optional, 
 from uuid import uuid4
 
 from mac.agent_health import advisory_health_dispatch_ready
+from mac.models import REPORT_REPOSITORY_EXECUTOR_POSTURES
 from mac.roles_service import machine_hardware_satisfies
 
 
@@ -141,7 +142,12 @@ class AllocationTask:
     # it wants evidence about which kinds are genuinely executor-free rather
     # than a guess.
     requires_execution: bool = True
+    # Operator/safety exclusions are hard. Retry exclusions are a placement
+    # preference that is relaxed only when every otherwise-valid pair is
+    # excluded; keeping them separate is what lets the claim transaction
+    # repeat the allocator's exact decision.
     excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
+    retry_excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     required_capabilities: FrozenSet[str] = field(default_factory=frozenset)
     required_resources: Mapping[str, Any] = field(default_factory=dict)
     required_hardware: Mapping[str, Any] = field(default_factory=dict)
@@ -283,14 +289,47 @@ class AllocationAgent:
         # requirement; making silence disqualifying would strand every worker
         # mid-upgrade. The unsatisfiable-requirements diagnostic reports the
         # silent ones separately.
+        # ``openclaw_runtime.confinement`` describes the OpenClaw chat
+        # gateway's own OpenShell container -- a claim about that process,
+        # never about this agent's TASK-execution sandbox. It happened to be
+        # a usable proxy while every fleet node ran OpenClaw, and happens to
+        # keep working today only where a pre-cutover value is still sitting
+        # unrefreshed in the DB (confirmed live: natasha/bullwinkle still
+        # carry a 2026-09-04 OpenClaw-era snapshot after their chat gateway
+        # moved to Hermes). The moment that stale value is cleared by a
+        # normal re-registration -- which is exactly what happened to rocky
+        # this session -- a fully healthy host-install worker reads as
+        # "no execution boundary" and dispatch starves it, even though its
+        # own executor already reported a verified attestation for the
+        # thing this check actually cares about.
+        #
+        # ``report_repository_executor_attestation`` (worker.py's
+        # ``read_only_report_repository_executor_attestation``) is that
+        # thing: a fresh, per-registration, schema-versioned claim about
+        # THIS agent's task-execution boundary, covering both the Linux
+        # OpenShell/Landlock posture and the macOS host-install posture ADR
+        # 0015 establishes as the legitimate, by-design confinement for a
+        # darwin node (no container is possible there, so "macos_host" is
+        # not an absence of a boundary -- it is the boundary).
         runtime = resources.get("openclaw_runtime")
         confinement = runtime.get("confinement") if isinstance(runtime, Mapping) else None
-        proven = bool(
+        proven_legacy = bool(
             isinstance(confinement, Mapping)
             and str(confinement.get("provider") or "").strip()
             and isinstance(runtime, Mapping)
             and runtime.get("verified") is True
         )
+        attestation = resources.get("report_repository_executor_attestation")
+        proven_attestation = bool(
+            isinstance(attestation, Mapping)
+            and attestation.get("verified") is True
+            and (
+                str(attestation.get("platform") or ""),
+                str(attestation.get("isolation_posture") or ""),
+            )
+            in REPORT_REPOSITORY_EXECUTOR_POSTURES
+        )
+        proven = proven_legacy or proven_attestation
         contradicted = resources.get("openshell_required") is False
         execution_boundary_verified = proven or not contradicted
         return cls(
@@ -355,6 +394,7 @@ class AssignmentProposal:
     agent_id: str
     task_rank: int
     agent_rank: int
+    retry_exclusion_relaxed: bool = False
 
     def to_dict(self) -> JsonDict:
         return {
@@ -363,6 +403,7 @@ class AssignmentProposal:
             "agent_id": self.agent_id,
             "task_rank": self.task_rank,
             "agent_rank": self.agent_rank,
+            "retry_exclusion_relaxed": self.retry_exclusion_relaxed,
         }
 
 
@@ -909,7 +950,7 @@ def evaluate_pair(
         # requirements -- pointing the operator at agent capabilities when the
         # actual bar was an exclusion. Codes are matched on their stem
         # (rejection_kind), so suffixing is backwards compatible.
-        if agent.id in task.excluded_agent_ids:
+        if agent.id in task.excluded_agent_ids or agent.id in task.retry_excluded_agent_ids:
             reasons.append("%s:excluded" % AGENT_TARGET_MISMATCH)
         if task.target_agent_id is not None and task.target_agent_id != agent.id:
             reasons.append("%s:pinned" % AGENT_TARGET_MISMATCH)
@@ -964,6 +1005,58 @@ def evaluate_pair(
         agent_id=agent.id,
         agent_rejections=tuple(reasons),
     )
+
+
+def summarize_execution_capacity(agents: Iterable[AllocationAgent]) -> Dict[str, Any]:
+    """Baseline async capacity, using the allocator's actual pair decisions.
+
+    This is not a promise that a particular project's task can run: capability,
+    project, tenant and routing requirements still need a task evaluation.
+    """
+    eligible: list[str] = []
+    excluded: list[Dict[str, Any]] = []
+    for agent in agents:
+        # Count capacity in any tenant this machine admits, not just the
+        # default tenant. A particular task must still match its own tenant.
+        tenants = agent.authorized_tenants
+        tenant = next(iter(sorted(tenants - agent.denied_tenants)), None) if tenants else None
+        probe = AllocationTask(id="capacity-probe", priority=0, created_at="", tenant_id=tenant)
+        decision = evaluate_pair(probe, agent)
+        if decision.allowed:
+            eligible.append(agent.id)
+        else:
+            excluded.append({"agent_id": agent.id, "reasons": list(decision.agent_rejections)})
+    return {
+        "schema": "mac.execution_capacity.v1",
+        "scope": "baseline_async_execution",
+        "eligible_worker_ids": sorted(eligible),
+        "executable_idle_worker_count": len(eligible),
+        "excluded": excluded,
+        "task_compatibility": "Use task ready or task why-unclaimed for project and task requirements.",
+    }
+
+
+def relax_retry_exclusions(
+    task: AllocationTask,
+    agents: Iterable[AllocationAgent],
+) -> Tuple[AllocationTask, Tuple[str, ...]]:
+    """Drop retry-only exclusions when they are the sole placement barrier.
+
+    Explicit operator/safety exclusions remain hard. The returned agent ids
+    make the relaxation an explicit part of the proposal handed to the
+    transactional claim boundary instead of an allocator-local fiction.
+    """
+
+    agent_list = list(agents)
+    if not task.retry_excluded_agent_ids:
+        return task, ()
+    if any(evaluate_pair(task, agent).allowed for agent in agent_list):
+        return task, ()
+    unbarred = replace(task, retry_excluded_agent_ids=frozenset())
+    recovered = tuple(
+        sorted(agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed)
+    )
+    return (unbarred, recovered) if recovered else (task, ())
 
 
 class AuthoritativeAllocator:
@@ -1076,12 +1169,9 @@ class AuthoritativeAllocator:
         # which is how the first attempt at this fix silently changed nothing.
         relaxed_exclusions: Dict[str, tuple[str, ...]] = {}
         for index, task in enumerate(task_list):
-            if not task_evaluations[task.id].allowed or not task.excluded_agent_ids:
+            if not task_evaluations[task.id].allowed or not task.retry_excluded_agent_ids:
                 continue
-            if any(base_pairs[(task.id, agent.id)].allowed for agent in agent_list):
-                continue
-            unbarred = replace(task, excluded_agent_ids=frozenset())
-            recovered = [agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed]
+            unbarred, recovered = relax_retry_exclusions(task, agent_list)
             if not recovered:
                 continue
             task_list[index] = unbarred
@@ -1205,6 +1295,7 @@ class AuthoritativeAllocator:
                     agent_id=agent.id,
                     task_rank=task_rank,
                     agent_rank=agent_rank,
+                    retry_exclusion_relaxed=task.id in relaxed_exclusions,
                 )
                 try:
                     committed = claim_pair(proposal)

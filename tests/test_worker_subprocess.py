@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import subprocess
@@ -13,7 +14,9 @@ from mac.api_client import MacApiError
 from mac.worker_subprocess import (
     SubprocessExecutor,
     _cargo_path_dirs,
+    _cleanup_task_sandbox_after_timeout,
     _ensure_json_object,
+    _terminate_process_tree,
 )
 
 
@@ -128,7 +131,92 @@ def test_executor_timeout_preserves_timeout_evidence(tmp_path) -> None:
 
     assert records[-1]["phase"] == "timeout"
     assert records[-1]["metadata"]["timeout_seconds"] == 0.01
+    assert records[-1]["metadata"]["process_tree_terminated"] is True
     assert executor.has_active_process() is False
+
+
+def test_process_tree_cleanup_reports_unverified_without_psutil(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def import_without_psutil(name, *args, **kwargs):
+        if name == "psutil":
+            raise ImportError("psutil deliberately unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_psutil)
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert _terminate_process_tree(process, grace_seconds=0.2) is False
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+
+def test_executor_timeout_harvests_and_deletes_exact_sandbox(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "mac-task-timeout")
+    cleanups = []
+    monkeypatch.setattr(
+        "mac.worker_subprocess._cleanup_task_sandbox_after_timeout",
+        lambda name, workspace: (
+            cleanups.append((name, workspace))
+            or {"sandbox": name, "harvested": True, "deleted": True}
+        ),
+    )
+    executor = SubprocessExecutor(
+        [sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.01
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        executor({"id": "task_timeout_sandbox", "metadata": {}}, tmp_path)
+
+    assert cleanups == [("mac-task-timeout", tmp_path)]
+    assert caught.value.process_tree_terminated is True
+    assert caught.value.sandbox_cleanup == {
+        "sandbox": "mac-task-timeout",
+        "harvested": True,
+        "deleted": True,
+    }
+
+
+def test_executor_timeout_reports_failed_sandbox_delete_truthfully(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "mac-task-leaked")
+    monkeypatch.setattr(
+        "mac.worker_subprocess._cleanup_task_sandbox_after_timeout",
+        lambda _name, _workspace: {"harvested": True, "deleted": False},
+    )
+    executor = SubprocessExecutor(
+        [sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.01
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        executor({"id": "task_timeout_leak", "metadata": {}}, tmp_path)
+
+    assert caught.value.process_tree_terminated is False
+
+
+def test_timeout_cleanup_retains_sandbox_when_harvest_fails(tmp_path, monkeypatch) -> None:
+    deleted = []
+    monkeypatch.setattr(
+        "mac.executor_sandbox._sandbox_download",
+        lambda _name, _workspace, _destination: False,
+    )
+    monkeypatch.setattr(
+        "mac.executor_sandbox._sandbox_delete",
+        lambda name: deleted.append(name) or True,
+    )
+
+    outcome = _cleanup_task_sandbox_after_timeout("mac-task-preserve", tmp_path)
+
+    assert outcome == {
+        "sandbox": "mac-task-preserve",
+        "harvested": False,
+        "deleted": False,
+        "error": "sandbox harvest did not complete; retained for recovery",
+    }
+    assert deleted == []
 
 
 def test_audit_failures_do_not_mask_task_execution() -> None:

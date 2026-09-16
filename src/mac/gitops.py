@@ -31,6 +31,7 @@ class PullRequestResult:
     number: int
     url: str
     state: str
+    reused: bool = False
 
 
 @dataclass
@@ -953,6 +954,12 @@ def open_pull_request(
     title = title or ("mac: %s" % head)
     body = body or ""
 
+    task_id = _mac_task_id(title, body)
+    if task_id:
+        existing = _find_existing_task_pr(api_base, headers, owner, repo, host_kind, task_id, base)
+        if existing is not None:
+            return existing
+
     create_url = "%s/repos/%s/%s/pulls" % (api_base, owner, repo)
     payload = {"title": title, "body": body, "head": head, "base": base}
 
@@ -976,6 +983,90 @@ def open_pull_request(
         url=str(pr.get("html_url") or pr.get("url") or ""),
         state=str(pr.get("state") or "open"),
     )
+
+
+_MAC_TASK_MARKER_RE = re.compile(r"\btask_[0-9a-f]{8,32}\b")
+_MAC_TASK_BODY_MARKER_RE = re.compile(r"- task: `(task_[0-9a-f]{8,32})`")
+
+
+def _mac_task_id(title: str, body: str) -> str:
+    """Stable task identity embedded in every MAC-authored pull request.
+
+    Every PR body mac opens carries an unambiguous ``- task: `<id>` ``
+    marker (see ``agent_pull_request`` / the hub's own publish body) naming
+    the task that actually owns this PR, so that marker is checked first.
+    Falling back to the first task-id-shaped token anywhere in title+body
+    misidentifies a conflict-integration task's PR: its title deliberately
+    names the ORIGINAL task it is repairing (see
+    ``_handoff_conflict_to_integration``) before its own id, e.g. "Integrate
+    conflicting approved task task_A onto current main (task_B)" -- a bare
+    first-match search returns task_A, so the reuse lookup below finds and
+    silently "reuses" task_A's already-open, unrelated PR. That PR's head
+    branch is immutable once created, so the reuse is a no-op: the real fix
+    lands on an orphaned branch with no open PR, while the stale PR stays
+    permanently CONFLICTING. Observed live on mac-fleet-canary: every
+    retry for hours kept "successfully" reusing PR #1 (task_A's PR) for
+    task_B's resolved commits.
+    """
+    body_match = _MAC_TASK_BODY_MARKER_RE.search(body or "")
+    if body_match:
+        return body_match.group(1)
+    match = _MAC_TASK_MARKER_RE.search("%s\n%s" % (title, body))
+    return match.group(0) if match else ""
+
+
+def _find_existing_task_pr(
+    api_base: str,
+    headers: dict,
+    owner: str,
+    repo: str,
+    host_kind: str,
+    task_id: str,
+    base: str,
+) -> Optional[PullRequestResult]:
+    """Find an open PR for a task across lease-specific branch names."""
+    list_url = "%s/repos/%s/%s/pulls?state=open" % (api_base, owner, repo)
+    last_exc: Optional[Exception] = None
+    data = None
+    # Concurrent agents publishing to the same small repo can transiently
+    # trip this GET (timeout, rate limiting, momentary forge hiccup) --
+    # confirmed live: one of three agents landing on the same fresh repo
+    # within seconds of each other hit this and silently never opened its
+    # PR, because the failure was fatal on the first try. A few short
+    # retries resolve the transient case without weakening the fail-closed
+    # duplicate-prevention guarantee below.
+    for attempt in range(3):
+        try:
+            data = _http_get_json(list_url, headers)
+            last_exc = None
+            break
+        except Exception as exc:  # noqa: BLE001 - retried below, re-raised with cause if exhausted
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+    if last_exc is not None:
+        # Fail closed: an unreadable task index must not mint a possible duplicate.
+        raise RuntimeError(
+            "could not verify whether task %s already has an open PR: %s" % (task_id, last_exc)
+        ) from last_exc
+    if not isinstance(data, list):
+        raise RuntimeError("forge returned an invalid open-PR index for task %s" % task_id)
+    for pr in data:
+        if not isinstance(pr, dict):
+            continue
+        pr_base = (pr.get("base") or {}).get("ref") if isinstance(pr.get("base"), dict) else None
+        if pr_base and pr_base != base:
+            continue
+        if task_id not in "%s\n%s" % (pr.get("title") or "", pr.get("body") or ""):
+            continue
+        return PullRequestResult(
+            host=host_kind,
+            number=int(pr.get("number") or 0),
+            url=str(pr.get("html_url") or pr.get("url") or ""),
+            state=str(pr.get("state") or "open"),
+            reused=True,
+        )
+    return None
 
 
 def _find_existing_pr(
@@ -1561,7 +1652,14 @@ def pull_request_state(
             "error": _scrub_secret(str(exc), token)[:300],
         }
     if not isinstance(pr, dict):
-        return {"known": False, "merged": False, "sha": "", "state": "", "head_sha": ""}
+        return {
+            "known": False,
+            "merged": False,
+            "sha": "",
+            "state": "",
+            "head_sha": "",
+            "head_ref": "",
+        }
     head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
     return {
         "known": True,
@@ -1569,6 +1667,7 @@ def pull_request_state(
         "sha": str(pr.get("merge_commit_sha") or pr.get("merged_commit_id") or "").strip(),
         "state": str(pr.get("state") or ""),
         "head_sha": str((head or {}).get("sha") or "").strip(),
+        "head_ref": str((head or {}).get("ref") or "").strip(),
         "host": host_kind,
     }
 
@@ -1807,6 +1906,7 @@ def open_pull_request_for_target(
         "base": base,
         "head": head,
         "opened_by": "agent",
+        "reused": bool(pr.reused),
     }
 
 

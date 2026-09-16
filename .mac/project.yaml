@@ -20,6 +20,8 @@ toolchain:
     - initdb
     - pg_ctl
     - postgres
+  minimum_versions:
+    git: "2.38"
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:

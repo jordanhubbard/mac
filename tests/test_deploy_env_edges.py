@@ -252,24 +252,21 @@ def test_incomplete_worker_credential_stays_explicitly_in_compatibility_mode(tmp
     assert "MAC_WORKER_CREDENTIAL_ID" not in values
 
 
-def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> None:
+def test_legacy_openclaw_selector_normalizes_to_hermes(tmp_path) -> None:
     cfg = _cfg(tmp_path)
     stale = str(tmp_path / "stale.json")
-    openclaw = deploy_env.build_mac_env(
+    hermes = deploy_env.build_mac_env(
         {"MAC_WORKER_RESOURCES_FILE": stale},
         cfg,
         environ={"MAC_CHAT_GATEWAY_IMPL": "openclaw"},
     )
-    assert openclaw["MAC_CHAT_GATEWAY_IMPL"] == "openclaw"
-    assert openclaw["MAC_WORKER_RESOURCES_FILE"] == str(
-        tmp_path / ".mac" / "openclaw" / "service-advertisement.json"
-    )
+    assert hermes["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
+    assert hermes["MAC_WORKER_RESOURCES_FILE"] == str(tmp_path / ".mac" / "worker-resources.json")
+    assert not any(key.startswith("MAC_OPENCLAW_") for key in hermes)
 
-    # OpenClaw is the sole chat gateway; deselecting it means a pure worker
-    # (``none``), which withdraws the OpenClaw advertisement and reverts to the
-    # generic worker-resources file.
+    # A pure worker stays gateway-free and uses the generic health report.
     reverted = deploy_env.build_mac_env(
-        openclaw,
+        hermes,
         cfg,
         environ={"MAC_CHAT_GATEWAY_IMPL": "none"},
     )
@@ -315,6 +312,24 @@ def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path)
     assert "MAC_DB" not in spoke
     assert "MAC_DATABASE_URL" not in spoke
     assert "MAC_CLIENT_PRINCIPALS_FILE" not in spoke
+
+
+def test_hub_verify_uses_the_deployment_approved_runtime_image(tmp_path):
+    runtime = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+
+    hub = deploy_env.build_mac_env(
+        {"MAC_HUB_VERIFY_IMAGE": "localhost/mac-hermes:net"},
+        _cfg(tmp_path),
+        environ={"MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": runtime},
+    )
+    spoke = deploy_env.build_mac_env(
+        {},
+        _cfg(tmp_path, agent="spoke", manager="hub"),
+        environ={"MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": runtime},
+    )
+
+    assert hub["MAC_HUB_VERIFY_IMAGE"] == runtime
+    assert spoke["MAC_HUB_VERIFY_IMAGE"] == runtime
 
 
 def test_spoke_env_removes_stale_local_control_plane_configuration(tmp_path):
@@ -378,6 +393,25 @@ def test_explicit_optional_openshell_disable_scrubs_stale_runtime_env(tmp_path):
     assert not (set(deploy_env.OPENSHELL_MANAGED_RUNTIME_KEYS) & set(values))
 
 
+@pytest.mark.parametrize("agent,disabled", [("spoke", False), ("hub", True)])
+def test_verifier_client_is_configured_without_enabling_native_runtime(tmp_path, agent, disabled):
+    image = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+    env = {"MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": image}
+    if disabled:
+        env.update(MAC_DEPLOY_OPENSHELL="0", MAC_DEPLOY_OPENSHELL_REQUIRED="0")
+    values = deploy_env.build_mac_env(
+        {"MAC_OPENSHELL_POLICY": "/managed/review-policy.yaml", "MAC_OPENSHELL_SANDBOX": "1"},
+        _cfg(tmp_path, agent=agent, manager="hub"),
+        environ=env,
+    )
+    assert values["MAC_HUB_VERIFY_IMAGE"] == image
+    assert values["MAC_OPENSHELL_BIN"] == str(tmp_path / ".mac/bin/openshell")
+    assert values["MAC_OPENSHELL_POLICY"] == "/managed/review-policy.yaml"
+    if disabled:
+        assert "MAC_OPENSHELL_SANDBOX" not in values
+        assert "MAC_OPENSHELL_CREATE_ARGS" not in values
+
+
 def test_required_worker_cannot_be_weakened_by_explicit_openshell_disable(tmp_path):
     stale = {
         "MAC_OPENSHELL_SANDBOX": "1",
@@ -431,7 +465,6 @@ def test_deploy_generation_is_projected_to_exact_worker_barrier(tmp_path):
     (
         {"MAC_DEPLOY_OPENSHELL_ENABLED": "1"},
         {"MAC_DEPLOY_OPENSHELL_REQUIRED": "true"},
-        {"MAC_CHAT_GATEWAY_IMPL": "openclaw"},
     ),
 )
 def test_active_openshell_rebinds_stale_runtime_cli_to_reviewed_path(tmp_path, environ):

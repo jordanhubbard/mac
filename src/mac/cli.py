@@ -131,8 +131,8 @@ def _read_json_arg(
         raise SystemExit("invalid JSON in %s: %s" % (label, exc))
 
 
-# Output mode. Text (human-readable one-liners) is the DEFAULT; the global
-# --json flag switches every command to JSON. Set from main().
+# Output mode. Interactive terminals default to compact text; redirected and
+# machine-driven invocations default to JSON. Set from main().
 _OUTPUT_JSON = False
 
 # Short-id mode. When False (the default), task list lines show a short unique
@@ -143,6 +143,24 @@ _FULL_IDS = False
 def _set_output_json(enabled: bool) -> None:
     global _OUTPUT_JSON
     _OUTPUT_JSON = bool(enabled)
+
+
+def _stdout_is_interactive() -> bool:
+    isatty = getattr(sys.stdout, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _disable_noninteractive_pagers() -> None:
+    """Keep every child CLI on a pipe-safe, non-blocking output path."""
+    os.environ.update(
+        {
+            "PAGER": "cat",
+            "GIT_PAGER": "cat",
+            "GH_PAGER": "cat",
+            "SYSTEMD_PAGER": "cat",
+            "MANPAGER": "cat",
+        }
+    )
 
 
 def _set_full_ids(enabled: bool) -> None:
@@ -777,6 +795,26 @@ def _plane(args: argparse.Namespace) -> Any:
     return resolve_dispatch(args)
 
 
+def _maybe_auto_join_cli_session(args: argparse.Namespace) -> None:
+    """Best-effort ADR 0032 auto-trigger: never affects the command's outcome.
+
+    Skips its own subcommands (``mac admin cli-session ...``) to avoid a
+    redundant registration call ahead of the explicit one, and is a total
+    no-op when no known coding-CLI harness is detected in the environment --
+    the overwhelmingly common case for scripted/CI/plain-terminal usage.
+    """
+    if getattr(args, "cli_session_command", None) is not None:
+        return
+    try:
+        from mac import cli_session
+
+        if cli_session.detect_live_harness() is None:
+            return
+        cli_session.auto_join(_plane(args))
+    except Exception:  # noqa: BLE001 - ambient side effect, never fatal
+        pass
+
+
 def cmd_mcp_serve(args: argparse.Namespace) -> None:
     """Serve the mac ledger to a coding agent as MCP tools, over stdio.
 
@@ -792,6 +830,37 @@ def cmd_mcp_serve(args: argparse.Namespace) -> None:
     from mac.mcp_server import serve
 
     raise SystemExit(serve(_plane(args)))
+
+
+def cmd_cli_session_ensure_registered(args: argparse.Namespace) -> None:
+    """Idempotently register this host+user as a live AgentBus identity.
+
+    ``main()`` calls this automatically when a known coding-CLI harness is
+    detected (ADR 0032's auto-trigger addendum); this verb exists so an
+    operator can also run it by hand, or a script can pre-warm the cache.
+    """
+    from mac import cli_session
+
+    identity = cli_session.ensure_registered_cached(
+        _plane(args),
+        harness=args.harness or cli_session.detect_live_harness() or "unknown",
+    )
+    cli_session.install_hook_config(args.harness or cli_session.detect_live_harness() or "")
+    _print(identity)
+
+
+def cmd_cli_session_hook(args: argparse.Namespace) -> None:
+    """The program a harness's hook config invokes at a turn boundary.
+
+    Drains this session's AgentBus inbox without blocking and prints the
+    harness's own hook-output JSON shape. Never raises and never exits
+    non-zero for a drain failure -- an empty/failed drain must look like a
+    normal turn to the harness, not a broken hook (ADR 0032 §5).
+    """
+    from mac import cli_session
+
+    output = cli_session.run_hook(_plane(args), harness=args.harness, event=args.event)
+    _print(output)
 
 
 def cmd_plugin_install(args: argparse.Namespace) -> None:
@@ -3446,6 +3515,33 @@ def cmd_task_generator_yield(args: argparse.Namespace) -> None:
     _print(_plane(args).generator_yield_report())
 
 
+def cmd_task_outcome(args: argparse.Namespace) -> None:
+    _print(_plane(args).task_outcome(args.task_id))
+
+
+def cmd_task_accept(args: argparse.Namespace) -> None:
+    reason = _read_text_arg(args.reason, args.reason_file, label="acceptance reason").strip()
+    _print(
+        _plane(args).record_task_acceptance(
+            args.task_id,
+            evidence_id=args.evidence,
+            reason=reason,
+            actor="operator",
+            accepted=not args.reject,
+        )
+    )
+
+
+def cmd_task_outcomes(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).task_outcome_cohort(
+            project=_effective_read_project(args),
+            since_hours=args.since_hours,
+            limit=args.limit,
+        )
+    )
+
+
 def cmd_task_throughput(args: argparse.Namespace) -> None:
     """Print task-flow KPIs, stranded work, and shared-resource collisions."""
 
@@ -4461,7 +4557,14 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
             pending = _pending_inbox_summary(cp, str(row.get("id") or ""))
             row["pending_inbox_count"] = (pending or {}).get("count")
     if getattr(args, "health", False):
-        age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
+        from mac.dispatch import DispatchError
+
+        try:
+            age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
+        except DispatchError:
+            # RemoteDispatch rejects unsupported attributes at lookup time.
+            # The agent response already carries the fallback timestamps.
+            age_helper = None
         for row in rows:
             age: Optional[float]
             if callable(age_helper):
@@ -6076,6 +6179,71 @@ def cmd_agentbus_broadcast(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_agentbus_traffic(args: argparse.Namespace) -> None:
+    """Read the whole bus as ``agent_id`` hears it, not just what is addressed to it.
+
+    ``read``/``wait``/``drain`` answer "has anyone said anything to me" on one
+    known stream or inbox. This is the fleet activity firehose -- point-to-point
+    AND group traffic across every stream the agent may hear, the thing an
+    operator actually wants when asking "what is the fleet doing right now".
+    The read endpoint has existed since 2026-08-17 with no CLI command calling
+    it, which is the whole reason nobody used it from a terminal.
+
+    Without --follow this is one page, like ``broadcast``. With --follow it
+    polls forever, printing each new batch as it arrives, until interrupted --
+    the tail-mode counterpart to ``wait``'s single-shot exit-on-first-message.
+    """
+    import time as _time
+
+    cp = _plane(args)
+    include_addressed = not args.exclude_addressed
+    cursor = args.after_cursor or ""
+    if not args.follow:
+        traffic = cp.read_agentbus_traffic(
+            args.agent_id,
+            cursor,
+            args.limit,
+            include_addressed=include_addressed,
+        )
+        _print(traffic)
+        return
+    interval = max(0.1, float(args.poll_interval_seconds))
+    try:
+        while True:
+            traffic = cp.read_agentbus_traffic(
+                args.agent_id,
+                cursor,
+                args.limit,
+                include_addressed=include_addressed,
+            )
+            if traffic:
+                for item in traffic:
+                    entry = item.to_dict() if hasattr(item, "to_dict") else item
+                    _print(entry)
+                    next_cursor = entry.get("cursor") if hasattr(entry, "get") else None
+                    if next_cursor:
+                        cursor = str(next_cursor)
+            _time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
+def cmd_agentbus_roll_call(args: argparse.Namespace) -> None:
+    """Who is on the bus right now, and what each of them can do.
+
+    One-shot fleet roster as ``agent_id`` (the identity the CLI session
+    authenticates as -- reused for authorization only, the roster itself is
+    not scoped to it). Pairs with ``traffic`` for "what is the fleet doing":
+    this answers who is out there, traffic answers what they are saying.
+    """
+    _print(
+        _plane(args).agentbus_roll_call(
+            args.agent_id,
+            include_departed=args.include_departed,
+        )
+    )
+
+
 def cmd_agentbus_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_agentbus_content(
@@ -6213,6 +6381,9 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
     author = getattr(args, "author", "") or os.environ.get("MAC_AGENT_ID", "")
     if getattr(args, "dry_run", False):
         # Preview only: never runs the contract gate, spawns a reviewer, or lands.
+        # The literal script name below is a fixed label, not necessarily what
+        # will run -- the real gate resolves the target's own repository
+        # contract test command first (see auto_land.run_contract_gate).
         _print(
             {
                 "schema": "mac.auto_land.dry_run.v1",
@@ -6223,7 +6394,8 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
                 "author": author,
                 "would_run": ["contract-gate", "adversarial-review"],
                 "gates": [
-                    "contract (scripts/run-contract-tests.sh)",
+                    "contract (the target's own repository-contract test command,"
+                    " falling back to scripts/run-contract-tests.sh)",
                     "adversarial-review (independent agent, default-to-reject)",
                     "independence (reviewer != author)",
                     "head_sha (land only the reviewed revision)",
@@ -6975,6 +7147,67 @@ def cmd_events_list(args: argparse.Namespace) -> None:
     )
 
 
+def _news_item_dict(item: Any) -> Dict[str, Any]:
+    return item.to_dict() if hasattr(item, "to_dict") else dict(item)
+
+
+def _emit_news_item(item: Any) -> None:
+    row = _news_item_dict(item)
+    if _OUTPUT_JSON:
+        print(json.dumps(row, sort_keys=True))
+        return
+    stamp = str(row.get("created_at") or "").replace("T", " ")[:19]
+    print("%s  %-5s  %s" % (stamp or "?", row.get("kind") or "?", row.get("summary") or ""))
+
+
+def cmd_news(args: argparse.Namespace) -> None:
+    """Show recent significant activity and optionally follow it live."""
+    cp = _plane(args)
+    page = cp.list_news(project=args.project, limit=args.limit)
+    page_dict = page.to_dict() if hasattr(page, "to_dict") else dict(page)
+    items = list(page_dict.get("items") or [])
+    if not args.follow:
+        if _OUTPUT_JSON:
+            _print(page_dict)
+        elif not items:
+            print("(none)")
+        else:
+            for item in items:
+                _emit_news_item(item)
+        return
+
+    for item in reversed(items):
+        _emit_news_item(item)
+    cursor = int(page_dict.get("cursor") or 0)
+    streamer = getattr(cp, "stream_news", None)
+    try:
+        while True:
+            if streamer is not None:
+                for item in streamer(
+                    after_sequence=cursor,
+                    project=args.project,
+                    timeout_seconds=55,
+                    poll_interval_seconds=1,
+                ):
+                    row = _news_item_dict(item)
+                    cursor = max(cursor, int(row.get("sequence") or 0))
+                    _emit_news_item(row)
+                continue
+            time.sleep(args.poll_interval)
+            next_page = cp.list_news(
+                after_sequence=cursor,
+                project=args.project,
+                limit=500,
+            )
+            next_dict = next_page.to_dict() if hasattr(next_page, "to_dict") else dict(next_page)
+            for item in next_dict.get("items") or []:
+                row = _news_item_dict(item)
+                cursor = max(cursor, int(row.get("sequence") or 0))
+                _emit_news_item(row)
+    except KeyboardInterrupt:
+        return
+
+
 def cmd_action_events_list(args: argparse.Namespace) -> None:
     _print(
         [
@@ -7628,8 +7861,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit JSON instead of the default human-readable text. Works in any "
-        "position (e.g. `mac task list --json` or `mac --json task list`).",
+        help="Emit JSON explicitly. Non-interactive stdout already defaults to JSON; "
+        "interactive terminals default to human-readable text. Works in any position "
+        "(e.g. `mac task list --json` or `mac --json task list`).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -8737,6 +8971,31 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    outcome = task.add_parser(
+        "outcome", help="inspect tests, acceptance, publication and deployment separately"
+    )
+    outcome.add_argument("task_id")
+    _set(cmd_task_outcome, outcome)
+    accept = task.add_parser(
+        "accept", help="record operator acceptance of the current executor evidence"
+    )
+    accept.add_argument("task_id")
+    accept.add_argument("--evidence", required=True)
+    accept.add_argument("--reason")
+    accept.add_argument(
+        "--reason-file", help="read the acceptance reason from a file or stdin with -"
+    )
+    accept.add_argument(
+        "--reject", action="store_true", help="record that the result does not meet the request"
+    )
+    _set(cmd_task_accept, accept)
+    outcomes = task.add_parser("outcomes", help="measure a bounded cohort by task creation time")
+    outcomes.add_argument("--project")
+    outcomes.add_argument("--all", action="store_true")
+    outcomes.add_argument("--since-hours", type=float, default=24)
+    outcomes.add_argument("--limit", type=int, default=100)
+    _set(cmd_task_outcomes, outcomes)
+
     throughput = task.add_parser(
         "throughput",
         help="task-to-main KPIs, stage dwell, stranded work, and resource collisions",
@@ -9283,7 +9542,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     hgx = sub.add_parser(
         "hgx",
-        help="operator controls for fungible HGX provider capacity",
+        help=(
+            "operator controls for fungible HGX provider capacity; authenticate "
+            "once with interactive `hgx login` (no API token)"
+        ),
     ).add_subparsers(dest="hgx_command", required=True)
     hgx_capacity = hgx.add_parser(
         "capacity",
@@ -9374,6 +9636,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the user home used to find harness config directories",
     )
     _set(cmd_plugin_uninstall, plugin_uninstall)
+    cli_session = sub.add_parser(
+        "cli-session",
+        help="auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)",
+    ).add_subparsers(dest="cli_session_command", required=True)
+    cli_session_ensure = cli_session.add_parser(
+        "ensure-registered",
+        help="idempotently register this host+user as a live AgentBus identity",
+    )
+    cli_session_ensure.add_argument(
+        "--harness",
+        help="coding CLI harness (default: auto-detect from the environment)",
+    )
+    _set(cmd_cli_session_ensure_registered, cli_session_ensure)
+    cli_session_hook = cli_session.add_parser(
+        "hook",
+        help="drain this session's AgentBus inbox; invoked by a harness's own hook config",
+    )
+    cli_session_hook.add_argument("--harness", default="claude")
+    cli_session_hook.add_argument(
+        "--event",
+        choices=("SessionStart", "UserPromptSubmit"),
+        default="UserPromptSubmit",
+    )
+    _set(cmd_cli_session_hook, cli_session_hook)
     openshell = sub.add_parser(
         "openshell", help="OpenShell sandbox guardrail commands"
     ).add_subparsers(dest="openshell_command", required=True)
@@ -11076,6 +11362,37 @@ def build_parser() -> argparse.ArgumentParser:
     bus_broadcast.add_argument("--project")
     _set(cmd_agentbus_broadcast, bus_broadcast)
 
+    bus_traffic = agentbus.add_parser(
+        "traffic",
+        help="watch fleet activity: the whole bus, not just what is addressed to you",
+        description=(
+            "Point-to-point AND group traffic across every stream this agent "
+            "may hear, not just its own inbox or one known stream -- the "
+            "thing an operator actually wants when asking 'what is the fleet "
+            "doing right now'. Without --follow this is one page; with "
+            "--follow it polls and prints forever until interrupted."
+        ),
+    )
+    bus_traffic.add_argument("agent_id", help="identity to authenticate and listen as")
+    bus_traffic.add_argument("--after-cursor", default="")
+    bus_traffic.add_argument("--limit", type=int, default=100)
+    bus_traffic.add_argument(
+        "--exclude-addressed",
+        action="store_true",
+        help="drop chunks already addressed to this agent (it handles those via inbox/wait)",
+    )
+    bus_traffic.add_argument("--follow", action="store_true", help="poll and tail forever")
+    bus_traffic.add_argument("--poll-interval-seconds", type=float, default=2.0)
+    _set(cmd_agentbus_traffic, bus_traffic)
+
+    bus_roll_call = agentbus.add_parser(
+        "roll-call",
+        help="who is on the bus right now, and what each of them can do",
+    )
+    bus_roll_call.add_argument("agent_id", help="identity to authenticate as")
+    bus_roll_call.add_argument("--include-departed", action="store_true")
+    _set(cmd_agentbus_roll_call, bus_roll_call)
+
     bus_publish = agentbus.add_parser("publish")
     bus_publish.add_argument("sender_agent_id")
     bus_publish.add_argument("--recipient-agent-id")
@@ -11853,6 +12170,20 @@ def build_parser() -> argparse.ArgumentParser:
     events_list.add_argument("--until", help="ISO timestamp upper bound (inclusive)")
     events_list.add_argument("--limit", type=int, default=100)
     _set(cmd_events_list, events_list)
+    news = events.add_parser(
+        "news",
+        help="significant task and agent transitions as a human-readable feed",
+    )
+    news.add_argument("--project", help="show task activity for one project (omits agents)")
+    news.add_argument("--limit", type=int, default=50, help="recent items to show initially")
+    news.add_argument("--follow", action="store_true", help="stay subscribed for new activity")
+    news.add_argument(
+        "--poll-interval",
+        type=float,
+        default=2.0,
+        help="local-authority fallback interval in seconds",
+    )
+    _set(cmd_news, news)
 
     action_events = sub.add_parser(
         "action-events",
@@ -12309,8 +12640,12 @@ def _redirect_moved_command(raw: Sequence[str]) -> None:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     raw = list(argv) if argv is not None else list(sys.argv[1:])
+    interactive = _stdout_is_interactive()
+    _set_output_json(not interactive)
+    if not interactive:
+        _disable_noninteractive_pagers()
     # --json is position-independent: strip it before argparse (so it works after
-    # the subcommand too) and switch output mode. Text is the default.
+    # the subcommand too) and switch output mode explicitly.
     if "--json" in raw:
         _set_output_json(True)
         raw = [a for a in raw if a != "--json"]
@@ -12329,6 +12664,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 0
     _redirect_moved_command(raw)
     args = parser.parse_args(raw)
+    _maybe_auto_join_cli_session(args)
     try:
         args.func(args)
     except MACError as exc:

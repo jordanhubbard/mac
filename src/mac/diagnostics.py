@@ -665,3 +665,133 @@ def _lifecycle_stage_dwell(
             },
         )
     ]
+
+
+#: The exact hold-reason prefix deploy/deploy-mac-fleet.sh stamps
+#: (hold_reason="mac admin fleet roll-forward repair retained after
+#: ${deploy_ts}") on an agent it could not cleanly finish deploying. Every
+#: other dispatch_hold reason in the fleet is an intentional, indefinite
+#: operator/interactive hold (e.g. "Interactive Cursor session; executing
+#: only task_X") and must never be matched here -- releasing one of those
+#: would open an isolated interactive session to arbitrary dispatch.
+ROLL_FORWARD_REPAIR_HOLD_PREFIX = "mac admin fleet roll-forward repair retained after "
+
+#: How long a roll-forward-repair hold may persist before it is presumed
+#: abandoned rather than owned by a still-running deploy. Deploys observed in
+#: this fleet complete (or fail back to this hold) within ~15-20 minutes, so
+#: one hour is a conservative multiple, not a tight guess.
+STALE_DISPATCH_HOLD_THRESHOLD_SECONDS = 3600
+
+#: How long an agent may sit in status='draining' before it is presumed stuck
+#: rather than mid-deploy. A deploy's own drain window is bounded by
+#: MAC_PHASE1_TOTAL_TIMEOUT_SECONDS (default 600s / 10 minutes); 30 minutes
+#: gives real deploys generous headroom without leaving a genuinely stuck
+#: agent unreported for hours.
+STUCK_DRAINING_THRESHOLD_SECONDS = 1800
+
+
+@register(
+    "stale-dispatch-hold",
+    "agents held under an abandoned deploy's roll-forward-repair hold",
+)
+def _stale_dispatch_hold(
+    control_plane: Any, threshold_seconds: int = STALE_DISPATCH_HOLD_THRESHOLD_SECONDS
+) -> List[Finding]:
+    from datetime import timedelta
+
+    from mac.models import parse_time, utcnow
+
+    cutoff = (parse_time(utcnow()) - timedelta(seconds=threshold_seconds)).isoformat(
+        timespec="microseconds"
+    )
+    rows = control_plane.store.query_all(
+        "SELECT id, name, dispatch_hold_reason, dispatch_hold_at FROM agents "
+        "WHERE dispatch_hold = 1 AND deleted_at IS NULL "
+        "AND dispatch_hold_reason LIKE ? AND dispatch_hold_at < ? "
+        "ORDER BY dispatch_hold_at",
+        (ROLL_FORWARD_REPAIR_HOLD_PREFIX + "%", cutoff),
+    )
+    if not rows:
+        return [
+            Finding(
+                "stale-dispatch-hold",
+                "ok",
+                "no stale roll-forward-repair holds",
+                {"threshold_seconds": threshold_seconds, "cutoff": cutoff},
+            )
+        ]
+    held = [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "dispatch_hold_reason": row["dispatch_hold_reason"],
+            "dispatch_hold_at": row["dispatch_hold_at"],
+        }
+        for row in rows
+    ]
+    return [
+        Finding(
+            "stale-dispatch-hold",
+            "warn",
+            "%d agent(s) held under an abandoned roll-forward-repair hold" % len(held),
+            {
+                "threshold_seconds": threshold_seconds,
+                "cutoff": cutoff,
+                "count": len(held),
+                "agents": held,
+            },
+        )
+    ]
+
+
+@register(
+    "stuck-draining",
+    "agents left in status='draining' well past a deploy's own drain window",
+)
+def _stuck_draining(
+    control_plane: Any, threshold_seconds: int = STUCK_DRAINING_THRESHOLD_SECONDS
+) -> List[Finding]:
+    from datetime import timedelta
+
+    from mac.models import parse_time, utcnow
+
+    cutoff = (parse_time(utcnow()) - timedelta(seconds=threshold_seconds)).isoformat(
+        timespec="microseconds"
+    )
+    rows = control_plane.store.query_all(
+        "SELECT id, name, status, health_status, updated_at FROM agents "
+        "WHERE status = 'draining' AND deleted_at IS NULL AND updated_at < ? "
+        "ORDER BY updated_at",
+        (cutoff,),
+    )
+    if not rows:
+        return [
+            Finding(
+                "stuck-draining",
+                "ok",
+                "no agent stuck draining",
+                {"threshold_seconds": threshold_seconds, "cutoff": cutoff},
+            )
+        ]
+    stuck = [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "health_status": row["health_status"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+    return [
+        Finding(
+            "stuck-draining",
+            "warn",
+            "%d agent(s) stuck draining past %d seconds" % (len(stuck), threshold_seconds),
+            {
+                "threshold_seconds": threshold_seconds,
+                "cutoff": cutoff,
+                "count": len(stuck),
+                "agents": stuck,
+            },
+        )
+    ]

@@ -42,7 +42,9 @@ def _launchd_stop_function_variants():
     )
 
 
-def _run_launchd_stop_harness(tmp_path, functions, command, mode):
+def _run_launchd_stop_harness(
+    tmp_path, functions, command, mode, *, transition_timeout="2", poll_delay="0"
+):
     case_dir = tmp_path / mode
     fake_bin = case_dir / "bin"
     fake_bin.mkdir(parents=True)
@@ -62,6 +64,9 @@ case "$1" in
     IFS= read -r value < "$FAKE_LAUNCHCTL_COUNT"
     value=$((value + 1))
     printf '%s\n' "$value" > "$FAKE_LAUNCHCTL_COUNT"
+    if [ "$value" -gt 1 ] && [ "$FAKE_LAUNCHCTL_POLL_DELAY_SECONDS" != 0 ]; then
+      sleep "$FAKE_LAUNCHCTL_POLL_DELAY_SECONDS"
+    fi
     case "$mode" in
       absent) echo 'Could not find service synthetic' >&2; exit 113 ;;
       delayed)
@@ -118,23 +123,15 @@ exec "$@"
         "FAKE_LAUNCHCTL_STATE": str(state),
         "FAKE_LAUNCHCTL_COUNT": str(count),
         "FAKE_LAUNCHCTL_CALLS": str(calls),
-        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.15",
-        # The contract under test is the 150ms aggregate transition bound,
-        # not whether a freshly scheduled shell plus the Python process-group
-        # wrapper can start inside 50ms on a loaded xdist runner.  Keep the
-        # per-command bound finite but comfortably above scheduler jitter;
-        # mac_launchd_wait_unloaded still clamps each attempt to the smaller
-        # remaining aggregate deadline.
+        "FAKE_LAUNCHCTL_POLL_DELAY_SECONDS": poll_delay,
+        # State transitions need time for real subprocess scheduling. The
+        # short aggregate deadline has its own persistent-job assertions.
+        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": transition_timeout,
         "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
         "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
     }
-    # mac_run_bounded wraps each poll in a stdlib-only ``python -c`` process-group
-    # guard (never imports ``mac``). coverage.py's ``patch = ["subprocess"]`` would
-    # trace every such child via COVERAGE_PROCESS_{START,CONFIG} + a site .pth,
-    # adding ~5.6x interpreter-start overhead for ZERO src/mac coverage — enough to
-    # blow the 150ms aggregate bound (which needs multiple bounded polls) once xdist
-    # contention piles on, flaking the "delayed" case. Strip it so the wrapper runs
-    # at native speed; the 150ms contract stays exact and coverage is unaffected.
+    # The stdlib-only launchd wrappers do not import mac. Tracing their startup
+    # adds interpreter overhead without measuring any src/mac code.
     env.pop("COVERAGE_PROCESS_START", None)
     env.pop("COVERAGE_PROCESS_CONFIG", None)
     return subprocess.run(
@@ -148,6 +145,7 @@ exec "$@"
         check=False,
         capture_output=True,
         text=True,
+        timeout=6,
     )
 
 
@@ -224,30 +222,18 @@ def test_launchd_quiescence_waits_for_removal_and_fails_closed(tmp_path):
     ):
         variant_dir = tmp_path / str(variant)
 
-        delayed = _run_launchd_stop_harness(variant_dir, functions, command, "delayed")
+        delayed = _run_launchd_stop_harness(
+            variant_dir, functions, command, "delayed", poll_delay="0.10"
+        )
         assert delayed.returncode == 0, delayed.stderr
         assert (variant_dir / "delayed" / "calls").read_text(encoding="utf-8") == (
             f"{expected_call}\n"
         )
+        assert (variant_dir / "delayed" / "count").read_text(encoding="utf-8") == "3\n"
 
         absent = _run_launchd_stop_harness(variant_dir, functions, command, "absent")
         assert absent.returncode == 0, absent.stderr
         assert not (variant_dir / "absent" / "calls").exists()
-
-        persistent = _run_launchd_stop_harness(variant_dir, functions, command, "persistent")
-        assert persistent.returncode != 0
-        assert "remained loaded" in persistent.stderr
-        assert (variant_dir / "persistent" / "calls").read_text(
-            encoding="utf-8"
-        ) == f"{expected_call}\n"
-
-        failed = _run_launchd_stop_harness(variant_dir, functions, command, "failed")
-        assert failed.returncode != 0
-        assert "launchctl bootout failed" in failed.stderr
-        assert "synthetic bootout refusal" in failed.stderr
-        assert (variant_dir / "failed" / "calls").read_text(
-            encoding="utf-8"
-        ) == f"{expected_call}\n"
 
         inspect_error = _run_launchd_stop_harness(variant_dir, functions, command, "inspect-error")
         assert inspect_error.returncode != 0
@@ -271,6 +257,25 @@ def test_launchd_quiescence_waits_for_removal_and_fails_closed(tmp_path):
         assert (variant_dir / "failed-then-absent" / "calls").read_text(
             encoding="utf-8"
         ) == f"{expected_call}\n"
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize("mode", ["persistent", "failed"])
+def test_launchd_quiescence_enforces_short_aggregate_deadline(tmp_path, mode):
+    for variant, (functions, command, expected_call) in enumerate(
+        _launchd_stop_function_variants()
+    ):
+        variant_dir = tmp_path / str(variant)
+        result = _run_launchd_stop_harness(
+            variant_dir, functions, command, mode, transition_timeout="0.15"
+        )
+
+        assert result.returncode != 0
+        assert "remained loaded" in result.stderr
+        assert (variant_dir / mode / "calls").read_text(encoding="utf-8") == (f"{expected_call}\n")
+        if mode == "failed":
+            assert "launchctl bootout failed" in result.stderr
+            assert "synthetic bootout refusal" in result.stderr
 
 
 def test_launchd_mutation_boundary_delegates_to_exact_bounded_helper_and_fails_closed(
@@ -709,6 +714,85 @@ run_bounded_node_phase {shlex.quote(str(specs))} stdin-proof stdin_draining_work
         assert f"worker{number}: stdin-proof passed" in result.stdout
 
 
+def test_bounded_node_phase_explains_a_child_that_dies_without_publishing_status(tmp_path):
+    # Regression for a 2026-09-01 fleet deploy: bullwinkle's phase1-prepare
+    # reported "status 125" with an otherwise-empty log, which reads as a
+    # mysterious phase failure. That status is synthesized by the controller
+    # when it loses track of a child (kill -0/`jobs -pr` race, or the child
+    # was killed externally) -- it is not necessarily a command failure
+    # inside the phase. The controller must say so explicitly.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    bounded = (
+        "run_bounded_node_phase() {"
+        + deploy.split("run_bounded_node_phase() {", 1)[1].split(
+            "\n}\n\npreflight_probe_helper_source", 1
+        )[0]
+        + "\n}"
+    )
+    specs = tmp_path / "selected-specs"
+    specs.write_text("victim|fixture\n", encoding="utf-8")
+    snippet = f"""set -euo pipefail
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+NODE_PARALLELISM=1
+BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=0
+stable_worker_agent_id() {{ printf '%s\n' "$1"; }}
+persist_bounded_phase_failure_evidence() {{ return 1; }}
+self_destructing_worker() {{
+  # Simulate a child that dies before it can write its own status file.
+  # $$ is inherited from the parent shell inside a subshell -- BASHPID is
+  # the subshell's own pid, the one that must die here.
+  kill -9 $BASHPID
+}}
+{bounded}
+run_bounded_node_phase {shlex.quote(str(specs))} die-before-status self_destructing_worker
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "victim: die-before-status child exited without publishing its status "
+        "file (status=125 synthesized)" in result.stderr
+    )
+    assert "controller/job-control condition" in result.stderr
+    assert "ERROR: victim: die-before-status failed with status 125" in result.stderr
+
+
+def test_bounded_node_phase_does_not_treat_jobs_listing_as_child_liveness(tmp_path):
+    # A 2026-09-10 HGX prerequisite command completed successfully but its
+    # child was temporarily absent from `jobs -pr` while publishing the
+    # atomic status file. The controller must use the child's PID instead.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    bounded = (
+        "run_bounded_node_phase() {"
+        + deploy.split("run_bounded_node_phase() {", 1)[1].split(
+            "\n}\n\npreflight_probe_helper_source", 1
+        )[0]
+        + "\n}"
+    )
+    specs = tmp_path / "selected-specs"
+    specs.write_text("healthy|fixture\n", encoding="utf-8")
+    snippet = f"""set -euo pipefail
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+NODE_PARALLELISM=1
+BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=0
+stable_worker_agent_id() {{ printf '%s\\n' "$1"; }}
+jobs() {{ return 0; }}
+live_worker() {{ sleep 0.2; printf 'completed\\n'; }}
+{bounded}
+run_bounded_node_phase {shlex.quote(str(specs))} jobs-race live_worker
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "healthy: jobs-race passed" in result.stdout
+    assert "status=125 synthesized" not in result.stderr
+
+
 def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     legacy = deploy.split("legacy_hub_bootstrap() {", 1)[1].split(
@@ -1066,10 +1150,7 @@ def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
     # parsers on the node. The controller must omit the assignment unless the
     # operator actually set a value.
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    assert (
-        'if [ -n "${MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS:-}" ]; then'
-        in deploy
-    )
+    assert 'if [ -n "${MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS:-}" ]; then' in deploy
     assert "add_remote_env MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS" in deploy
     assert 'if [ -n "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-}" ]; then' in deploy
     assert "add_remote_env MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT" in deploy
@@ -1081,9 +1162,49 @@ def test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set():
         "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
         "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
         "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
+        "MAC_ROLLBACK_DIRECTORY_SNAPSHOT_TIMEOUT_SECONDS",
+        # launchd-lifecycle.sh's own bounded-command timeouts (macOS phase-2
+        # rollback snapshotting, e.g. "could not durably snapshot MAC_HOME/
+        # openclaw for rollback" -- live-confirmed on 2026-09-03 to time out
+        # at the 10s/45s node defaults on a fleet whose accumulated OpenClaw
+        # state made the real copy+fsync take longer).
+        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS",
+        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS",
+        "MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS",
+        "MAC_LAUNCHD_POLL_INTERVAL_SECONDS",
     ):
         assert 'if [ -n "${!_timeout_var:-}" ]; then' in deploy
         assert name in deploy
+
+
+def test_hub_agent_restart_gate_poll_ceiling_is_configurable_not_hardcoded():
+    # Regression: hub_agent_restart_gate's three poll loops
+    # (prepare-new/verify/arm-release) each bounded themselves at
+    # `min(timeout, 300.0)` -- a bare literal that ignored
+    # MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS entirely, so an operator who set that
+    # to something larger got no relief. Live-confirmed on 2026-09-03: a
+    # freshly-restarted worker's mac-agent restart had been deferred through
+    # a long preceding OpenClaw verification sequence, so it had not
+    # published a single heartbeat yet when this 300s clock started --
+    # "deployment release proof failed: agent lacks strict idle,
+    # dispatch-ready health, generation, hold, lease, credential, or
+    # report-executor proof" every time, with no way to grant it more time.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "min(timeout, 300.0)" not in deploy
+    # 3 poll loops (prepare-new/verify/arm-release) plus 1 explanatory
+    # comment naming the pattern.
+    assert deploy.count("min(timeout, gate_max_wait)") == 4
+    assert (
+        'gate_max_wait = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_MAX_WAIT") or "300"))'
+        in deploy
+    )
+    # Same default (300s) preserved when the operator sets nothing, and the
+    # override is threaded all the way from the local env through the SSH
+    # command that runs the gate on the hub.
+    assert (
+        'MAC_DEPLOY_GATE_MAX_WAIT=$(shell_quote "${MAC_DEPLOY_GATE_MAX_WAIT_SECONDS:-300}")'
+        in deploy
+    )
 
 
 def _arm_phase2_rollback_source():
@@ -1192,6 +1313,11 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
 
     assert 'path_check("mac-cli", mac_bin, executable=True)' in builder
     assert 'path_check("github-cli", github_cli, executable=True)' in builder
+    # The prerequisite runs in an SSH shell, whose PATH does not necessarily
+    # include the user-owned MAC toolchain.  Prefer its modern Git before the
+    # Ubuntu 22.04 system Git (2.34) so the merge-queue floor can be proved.
+    assert 'mac_home / "bin" / "git"' in builder
+    assert builder.index('mac_home / "bin" / "git"') < builder.index('shutil.which("git")')
     assert "MAC_PREREQ_NETWORK_PROVIDER=" in builder
     assert 'provider in {"tailscale", "headscale"}' in builder
     assert 'ipaddress.ip_network("100.64.0.0/10")' in builder
@@ -1794,13 +1920,17 @@ def test_same_host_attestation_recovery_keeps_distinct_hub_and_worker_copies():
         "\n)\n\nreconcile_report_repository_executor_approval", 1
     )[0]
 
-    hub_path = next(line.strip() for line in recovery.splitlines() if "local hub_manifest=" in line)
+    hub_path = next(line.strip() for line in recovery.splitlines() if "hub_manifest=" in line)
     worker_path = next(
         line.strip() for line in recovery.splitlines() if "local worker_manifest=" in line
     )
     assert "attestation-recovery-hub-" in hub_path
     assert "attestation-recovery-worker-" in worker_path
     assert hub_path != worker_path
+    assert 'mkdir -p "$HOME/.mac/attestation-recovery"' in recovery
+    assert 'chmod 0700 "$HOME/.mac/attestation-recovery"' in recovery
+    assert 'hub_manifest="${hub_relay_dir}/mac-attestation-recovery-hub-' in recovery
+    assert 'local hub_manifest="/tmp/' not in recovery
     assert 'Path(os.environ["MAC_DEPLOY_ATTESTATION_MANIFEST"]).unlink(' in recovery
     assert "missing_ok=True" in recovery
 
@@ -2079,7 +2209,7 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
 
     drain = main.index("drain_mac_agent_before_deploy\n")
     stop = main.index("stop_existing_services_for_deploy\n", drain)
-    venv = main.index('"$VENV/bin/python" -m pip install -e', stop)
+    venv = main.index('"$PY" -m mac.native_runtime', stop)
     bootstrap = main.index("bootstrap_enabled_openshell\n", venv)
     service_install = main.index('case "$SUPERVISOR_KIND" in', bootstrap)
     runtime_proof = main.index("verify_managed_openshell_runtime\n", service_install)
@@ -2219,7 +2349,12 @@ def test_deployment_preserves_operator_holds_and_clears_only_its_own():
     assert '"/agents/%s/dispatch-hold/acquire" % agent_id' in hub_gate
     # Managed nodes never let an ordinary worker restart clear a later operator
     # hold; all deployment release is explicit, hub-side, and reason-bound.
-    assert 'set_remote_mac_startup_hold_policy "$agent" 0' in deploy
+    prepare = deploy.split("prepare_remote_mac_agent_deployment() {", 1)[1].split("\n}\n\n", 1)[0]
+    recovery = deploy.split("retain_remote_generation_for_forward_repair() {", 1)[1].split(
+        "\n}\n\n", 1
+    )[0]
+    assert 'set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"' in prepare
+    assert 'set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"' in recovery
 
 
 def test_failed_typed_transaction_aborts_exact_epoch_before_node_retention():
@@ -4511,6 +4646,59 @@ def test_typed_prepare_and_composite_rollback_are_journal_ordered():
     assert phase2 < phase1 < composite < aborted
 
 
+def test_retain_forward_recovery_reconciles_attestation_authority_after_release():
+    """retain_forward preserves node state as-is, including any attestation
+    candidate key install_and_prove_attestation_candidate already installed
+    before the hub epoch aborted -- hub abort discards the pending candidate
+    row, so the node's installed key and the hub's registered key can
+    diverge. reconcile_bound_worker_attestation_key exists precisely to fix
+    this (probe, verify against the hub, rotate only if needed) but had no
+    call site. It must run only for retain_forward, only after that
+    recovery's own generation lock is released (reconcile asserts its own
+    freshly computed deployment_id_for_agent lock, which it acquires here
+    under a distinct id), and before the aborted-node journal mutation."""
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = deploy.split("recover_cohort_node() {", 1)[1].split(
+        "\n}\n\nrecover_active_cohort_transaction", 1
+    )[0]
+    assert (
+        'local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4" hub_agent="$5"'
+        in recovery
+    )
+
+    retain_forward_case = recovery.split("retain_forward)", 1)[1].split("\n      ;;\n  esac", 1)[0]
+    assert "retain_remote_generation_for_forward_repair" in retain_forward_case
+    assert "reconcile_bound_worker_attestation_key" not in retain_forward_case
+
+    release_lock = recovery.index('release_remote_deployment_lock "$agent" "$deployment_id"')
+    reconcile_guard = recovery.index(
+        'if [ "$action" = retain_forward ] && [ "$reconcile_retained_worker" = 1 ]; then',
+        release_lock,
+    )
+    reconcile_acquire = recovery.index(
+        'acquire_remote_deployment_lock "$agent" "$reconcile_deployment_id" 0', reconcile_guard
+    )
+    reconcile_call = recovery.index("reconcile_bound_worker_attestation_key", reconcile_acquire)
+    reconcile_release = recovery.index(
+        'release_remote_deployment_lock "$agent" "$reconcile_deployment_id"', reconcile_call
+    )
+    aborted_node = recovery.index("cohort_journal_mutate aborted-node", reconcile_release)
+    assert (
+        release_lock
+        < reconcile_guard
+        < reconcile_acquire
+        < reconcile_call
+        < reconcile_release
+        < aborted_node
+    )
+
+    for call_site in (
+        'recover_cohort_node \\\n      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
+        'recover_cohort_node \\\n        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
+    ):
+        assert call_site in deploy
+
+
 def test_phase1_recovery_replays_retained_helper_and_reviewed_cli_identity(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     restore_function = (
@@ -4711,6 +4899,61 @@ printf '%s\n' "$result"
         "upload:/fixture/functions",
         "ssh",
     ]
+
+
+def test_phase1_quiesce_forwards_daemon_timeout_overrides_to_the_node(tmp_path, monkeypatch):
+    # Regression: an operator-set MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS
+    # override reached deploy_host's phase-2 SSH command (see
+    # test_daemon_and_openclaw_timeouts_are_forwarded_only_when_set) but NOT
+    # this phase-1 quiesce SSH command -- the one that actually stops the
+    # daemon and raises "managed OpenClaw stop wrapper timed out" when the
+    # node's 20s default is too tight. An override that never reaches the
+    # step it exists for is worthless; observed live on 2026-09-03: setting
+    # the override made no difference across repeated deploy attempts,
+    # every one failing at this exact quiesce step with the node's
+    # unmodified 20s default.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    quiesce = (
+        "quiesce_remote_agent_for_cohort() {"
+        + deploy.split("quiesce_remote_agent_for_cohort() {", 1)[1].split(
+            "\n}\n\nprepare_remote_mac_agent_deployment", 1
+        )[0]
+        + "\n}"
+    )
+    ssh_command_file = tmp_path / "ssh-command"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+DEPLOY_CONTROLLER_NONCE=controller
+PHASE1_QUIESCE_HELPER=/fixture/helper
+PHASE1_DAEMON_FUNCTIONS=/fixture/functions
+OPENSHELL_REVIEWED_CLI_VERSION=fixture-version
+GIT_REV=fixture-revision
+MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS=300
+MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS=600
+stable_worker_agent_id() {{ printf '%s\n' agent_fixture; }}
+phase1_restore_contract_digest_for_agent() {{ printf '%s\n' restore-sha; }}
+reviewed_openshell_cli_status_value() {{ printf '%s\n' "$2-sha"; }}
+fenced_remote_upload() {{ return 0; }}
+ssh_target_args() {{ printf '%s\\0' fixture-target; }}
+remote_deployment_fenced_exec() {{ printf '%s\n' fixture-fence; }}
+shell_quote() {{ printf '%q' "$1"; }}
+ssh() {{ printf '%s\n' "${{@: -1}}" > {shlex.quote(str(ssh_command_file))}; return 23; }}
+{quiesce}
+set +e
+quiesce_remote_agent_for_cohort fixture exact-generation systemd mac linux
+true
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    command = ssh_command_file.read_text(encoding="utf-8")
+    assert "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS=300" in command
+    assert "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS=600" in command
+    # Unset overrides must not appear as empty assignments (would fail-close
+    # bounded_number() on the node).
+    assert "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS=" not in command
+    assert "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS=" not in command
+    assert "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS=" not in command
+    assert "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS=" not in command
 
 
 def test_recovery_aborts_unmutated_pre_route_without_route_attestation(tmp_path):

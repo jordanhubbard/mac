@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 
-PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.11 python3 python; do if $$candidate -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then command -v $$candidate || printf '%s\n' "$$candidate"; break; fi; done)
+PYTHON_VERSION := $(shell cat .python-version)
+PYTHON ?= $(shell for candidate in "$(VENV)/bin/python" python3.14 python3 python; do if "$$candidate" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' "$(PYTHON_VERSION)" >/dev/null 2>&1; then command -v "$$candidate" || printf '%s\n' "$$candidate"; break; fi; done)
 ARGS ?=
 HUB ?=
 VENV ?= .venv
@@ -33,13 +34,13 @@ GUI_PACKAGE ?= dist/mac-hub-ui.tar.gz
 DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
-CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade-supervisor mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway mac-schema-migrate
+CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade-supervisor mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-openshell-supervisor mac-openshell-collector mac-git-askpass mac-router mac-pg-backup mac-schema-migrate
 
 .PHONY: help require-python require-npm require-uv \
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
-	install-hooks setup deploy test coverage test-api test-cli test-local-console test-systemd-local-console test-ui test-schema-migrations cli-coverage lint lint-fix lint-local-console format-local-console \
+	install-hooks setup deploy release test coverage test-api test-cli test-local-console test-systemd-local-console test-ui test-schema-migrations cli-coverage lint lint-fix lint-local-console format-local-console \
 	test-portfolio impact-map fault-replay sanity-test compatibility-test postgres-schema \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-graph docs-lab docs-reference env-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
@@ -49,8 +50,8 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-hub-upgrade
 help: ## Show the supported local build, install, run, test, and cleanup commands.
 	@printf '%s\n' \
 		'MAC local development and client commands' \
-		'Install prerequisites: Python 3.11+, git, gh, and npm.' \
-		'Build and test targets also require uv.' \
+		'Install prerequisites: Python $(PYTHON_VERSION), git, gh, and npm.' \
+		'Install, build and test targets require uv.' \
 		'' \
 		'  make install       Install/link the CLI and build the hub UI' \
 		'  make build         Build the CLI wheel and the hub UI bundle' \
@@ -64,8 +65,8 @@ help: ## Show the supported local build, install, run, test, and cleanup command
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 require-python:
-	@if [ -z "$(PYTHON)" ]; then \
-		echo "Python 3.11+ is required ($(VENV)/bin/python, python3.11, python3, or python)" >&2; \
+	@if [ -z "$(PYTHON)" ] || ! "$(PYTHON)" -c 'import platform,sys; raise SystemExit(platform.python_version() != sys.argv[1])' "$(PYTHON_VERSION)"; then \
+		echo "Python $(PYTHON_VERSION) is required; run uv python install and use its interpreter" >&2; \
 		exit 127; \
 	fi
 
@@ -119,7 +120,7 @@ package: package-cli package-gui ## Produce verified CLI and hub UI distribution
 package-cli: build-cli ## Verify the wheel's console-script entry points.
 	@whl=$$(ls dist/mac-*.whl); \
 		echo "verifying entry points in $$whl ..."; \
-		entries=$$(unzip -p "$$whl" 'mac-*.dist-info/entry_points.txt' 2>/dev/null); \
+		entries=$$("$(PYTHON)" -c 'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(z.read(next(n for n in z.namelist() if n.endswith(".dist-info/entry_points.txt"))).decode())' "$$whl") || exit 1; \
 		for s in $(CONSOLE_SCRIPTS); do \
 			if printf '%s\n' "$$entries" | grep -q "^$$s = "; then \
 				echo "  ok: $$s console script present"; \
@@ -240,6 +241,10 @@ deploy: require-python ## Deploy to an already configured fleet hub.
 		exit 2; \
 	fi
 	$(PYTHON) setup.py $(if $(HUB),--hub $(HUB),) $(ARGS)
+
+release: ## Create a tagged GitHub release (RELEASE_DOCS=dir; FLEET=<name> deploys it).
+	@if [ -z "$(RELEASE_DOCS)" ]; then echo "usage: make release RELEASE_DOCS=docs/presentation/<release-dir> [BUMP=patch] [FLEET=<name>]"; exit 2; fi
+	scripts/release.sh $(BUMP) --docs-dir "$(RELEASE_DOCS)" $(if $(FLEET),--fleet $(FLEET),)
 
 # ---------------------------------------------------------------------------
 # Tests and quality gates.

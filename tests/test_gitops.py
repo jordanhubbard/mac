@@ -102,6 +102,8 @@ def test_open_pull_request_github_happy(monkeypatch: pytest.MonkeyPatch) -> None
             return _FakeResponse(
                 {"number": 42, "html_url": "https://github.com/x/y/pull/42", "state": "open"}
             )
+        if "/pulls?state=open" in url:
+            return _FakeResponse([])
         return _FakeResponse({"default_branch": "main"})
 
     with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
@@ -135,6 +137,8 @@ def test_open_pull_request_gitea_happy(monkeypatch: pytest.MonkeyPatch) -> None:
             return _FakeResponse(
                 {"number": 7, "html_url": "https://gitea.local/x/y/pulls/7", "state": "open"}
             )
+        if "/pulls?state=open" in url:
+            return _FakeResponse([])
         return _FakeResponse({"default_branch": "trunk"})
 
     with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
@@ -159,6 +163,153 @@ def test_open_pull_request_requires_token(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv("GITEA_TOKEN", raising=False)
     with pytest.raises(ValueError, match="GITEA_TOKEN"):
         open_pull_request("https://gitea.local/x/y", head="b")
+
+
+def test_open_pull_request_reuses_task_pr_across_lease_branches(monkeypatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    posts = []
+    task_id = "task_d5b6ebd1146e789c114037cda9fff9d9"
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if req.get_method() == "POST":
+            posts.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"number": 168, "html_url": "https://github.com/x/y/pull/168"})
+        if "/pulls?state=open" in url:
+            return _FakeResponse(
+                [
+                    {
+                        "number": 168,
+                        "html_url": "https://github.com/x/y/pull/168",
+                        "state": "open",
+                        "title": "the work (%s)" % task_id,
+                        "body": "- task: `%s`" % task_id,
+                        "head": {"ref": "mac/agent_a/%s-lease_old" % task_id},
+                        "base": {"ref": "main"},
+                    }
+                ]
+            )
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="mac/agent_b/%s-lease_new" % task_id,
+            title="the work (%s)" % task_id,
+            body="- task: `%s`" % task_id,
+        )
+
+    assert result.number == 168
+    assert result.url.endswith("/168")
+    assert result.reused is True
+    assert posts == []
+
+
+def test_open_pull_request_does_not_reuse_an_unrelated_tasks_pr(monkeypatch) -> None:
+    """A conflict-integration task's title deliberately names the ORIGINAL
+    task it repairs (see _handoff_conflict_to_integration), e.g. "Integrate
+    conflicting approved task task_A onto current main (task_B)". Reusing
+    task_A's already-open PR for task_B's push is wrong: that PR's head
+    branch is immutable, so it silently stays bound to task_A's stale
+    branch forever while task_B's resolved commits land on an orphaned,
+    PR-less branch. Observed live on mac-fleet-canary."""
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    posts = []
+    task_a = "task_3ac578f2ec0a4ea98371edf41e29b8d4"
+    task_b = "task_00b35c19f421d211cdf8076763046914"
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if req.get_method() == "POST":
+            posts.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"number": 2, "html_url": "https://github.com/x/y/pull/2"})
+        if "/pulls?state=open" in url:
+            return _FakeResponse(
+                [
+                    {
+                        "number": 1,
+                        "html_url": "https://github.com/x/y/pull/1",
+                        "state": "open",
+                        "title": "canary: implement toolkit/union_find.py (%s)" % task_a,
+                        "body": "- task: `%s`" % task_a,
+                        "head": {"ref": "mac/agent_rocky/%s-lease_old" % task_a},
+                        "base": {"ref": "main"},
+                    }
+                ]
+            )
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="mac/agent_rocky/%s-lease_new" % task_b,
+            title="Integrate conflicting approved task %s onto current main (%s)"
+            % (task_a, task_b),
+            body="- task: `%s`\n- head: `deadbeef`\n- base at push: `cafef00d`\n" % task_b,
+        )
+
+    assert result.number == 2
+    assert result.reused is False
+    assert len(posts) == 1
+    assert posts[0]["head"] == "mac/agent_rocky/%s-lease_new" % task_b
+
+
+def test_open_pull_request_fails_closed_when_task_pr_index_is_unreadable(monkeypatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    monkeypatch.setattr("mac.gitops.time.sleep", lambda _seconds: None)
+
+    def offline(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if "/pulls?state=open" in url:
+            raise OSError("offline")
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=offline):
+        with pytest.raises(RuntimeError, match="could not verify") as excinfo:
+            open_pull_request(
+                "https://github.com/x/y.git",
+                head="lease-specific",
+                title="work (task_d5b6ebd1146e789c114037cda9fff9d9)",
+            )
+    # The underlying transient error is preserved, not swallowed -- a bare
+    # "could not verify" with no cause is undiagnosable when this recurs.
+    assert "offline" in str(excinfo.value)
+    assert excinfo.value.__cause__ is not None
+
+
+def test_open_pull_request_retries_transient_pr_index_failure_then_succeeds(monkeypatch) -> None:
+    # Concurrent agents publishing to the same fresh repo can transiently trip
+    # this GET (rate limiting, a momentary forge hiccup) -- confirmed live: one
+    # of three agents landing on jordanhubbard/mac-fleet-canary within seconds
+    # of the others hit exactly this and never opened its PR because the first
+    # failure was treated as fatal.
+    monkeypatch.setenv("GH_TOKEN", "ghp_xxx")
+    monkeypatch.setattr("mac.gitops.time.sleep", lambda _seconds: None)
+    posts = []
+    attempts = {"list": 0}
+
+    def flaky_then_recovers(req: Any, timeout: float = 0) -> _FakeResponse:
+        url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+        if req.get_method() == "POST":
+            posts.append(json.loads(req.data.decode("utf-8")))
+            return _FakeResponse({"number": 9, "html_url": "https://github.com/x/y/pull/9"})
+        if "/pulls?state=open" in url:
+            attempts["list"] += 1
+            if attempts["list"] < 3:
+                raise OSError("transient forge hiccup")
+            return _FakeResponse([])
+        return _FakeResponse({"default_branch": "main"})
+
+    with mock.patch("mac.gitops.urllib.request.urlopen", side_effect=flaky_then_recovers):
+        result = open_pull_request(
+            "https://github.com/x/y.git",
+            head="lease-specific",
+            title="work (task_d5b6ebd1146e789c114037cda9fff9d9)",
+        )
+
+    assert result.number == 9
+    assert attempts["list"] == 3
+    assert len(posts) == 1
 
 
 def test_https_remote_for_token_auth_rewrites_ssh_when_token_present(

@@ -69,6 +69,20 @@ def test_marking_an_agent_offline_does_not_refresh_its_last_seen(cp) -> None:
     )
 
 
+def test_stale_sweep_skips_tombstoned_agents(cp) -> None:
+    """A decommissioned row must not make the hub liveness tick fail."""
+    tombstoned = _agent(cp, "decommissioned")
+    live = _agent(cp, "stale-live")
+    cp.delete_agent(tombstoned.id, actor="test")
+    _age_last_seen(cp, tombstoned.id, 3600)
+    _age_last_seen(cp, live.id, 3600)
+
+    marked = cp.mark_stale_agents_offline(60)
+
+    assert [agent.id for agent in marked] == [live.id]
+    assert cp.get_agent(tombstoned.id).deleted_at
+
+
 def test_a_real_heartbeat_still_refreshes_last_seen(cp) -> None:
     """The fix must not break the thing heartbeats are for."""
     agent = _agent(cp, "live")

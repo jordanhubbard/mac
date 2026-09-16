@@ -7,37 +7,47 @@ or deploy venv exists.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
+import fcntl
 import ipaddress
 import os
+import plistlib
 import re
 import secrets
 import shlex
 import sys
 import urllib.parse
-from typing import Dict, Mapping, MutableMapping, Optional, Sequence
+from typing import Callable, Dict, Iterator, Mapping, MutableMapping, Optional, Sequence
 
+from mac.atomic_file import atomic_write_text
 from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provider_env_vars
+from mac.mesh_bind import (
+    MeshBindError,
+    deploy_mac_bind_host,
+    lookup_tailscale_ipv4,
+    overlay_ipv4_from_url,
+)
 
 
 DEFAULT_WORKER_CAPABILITIES = (
-    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 LEGACY_WORKER_CAPABILITIES = (
-    "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
+    "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
     "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 
 
 def normalize_worker_capabilities(value: str) -> str:
-    """Upgrade the former fleet default without overriding real customization."""
+    """Retire the old runtime name while preserving useful capabilities."""
     items = [item.strip() for item in str(value or "").split(",") if item.strip()]
-    if not items or set(items) == set(LEGACY_WORKER_CAPABILITIES.split(",")):
+    if not items:
         return DEFAULT_WORKER_CAPABILITIES
-    return ",".join(items)
+    return ",".join(dict.fromkeys("hermes" if item == "openclaw" else item for item in items))
 
 
 PROVIDERS = tuple(ROUTER_PROVIDERS)
@@ -259,6 +269,32 @@ def read_env_file(path: Path) -> Dict[str, str]:
     return parse_env_text(path.read_text(encoding="utf-8"))
 
 
+@contextmanager
+def env_file_lock(path: Path) -> Iterator[None]:
+    """Serialize read-modify-write access to a deployment env file.
+
+    Several independent processes (deploy generation/barrier writes,
+    attestation-key installation) each read the whole env file, change one
+    key, and write the whole file back. Without mutual exclusion, whichever
+    write lands last silently discards the other's key -- observed in
+    practice as a deploy generation write being clobbered back to a stale
+    value by a concurrent attestation-key install, which then makes every
+    later generation-match guard fail. Callers must perform their full
+    read-modify-write cycle inside this context.
+    """
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 _ENV_SAFE = re.compile(r"^[A-Za-z0-9_./:@=,+%-]*$")
 
 
@@ -277,8 +313,16 @@ def render_env(values: Mapping[str, str]) -> str:
 
 
 def write_env_file(path: Path, values: Mapping[str, str]) -> None:
-    path.write_text(render_env(values), encoding="utf-8")
-    path.chmod(0o600)
+    atomic_write_text(path, render_env(values), mode=0o600)
+
+
+def update_env_file(path: Path, updates: Mapping[str, str]) -> Dict[str, str]:
+    """Atomically merge deployment-owned values without losing concurrent writes."""
+    with env_file_lock(path):
+        values = read_env_file(path)
+        values.update({key: str(value) for key, value in updates.items()})
+        write_env_file(path, values)
+    return values
 
 
 def stable_id(prefix: str, value: str) -> str:
@@ -353,7 +397,44 @@ def _apply_openshell_deploy_config(
     return True
 
 
-def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
+def _gateway_home(
+    cfg: DeployEnvConfig, existing: Mapping[str, str], env: Mapping[str, str]
+) -> Path:
+    """Preserve the upstream service's profile instead of migrating credentials.
+
+    mac.env may contain a stale deploy-generated HERMES_HOME. The installed
+    service definition is the authority for the profile it actually runs.
+    A conflicting new override needs an explicit service migration first.
+    """
+    service_home = ""
+    plist = cfg.paths.home / "Library/LaunchAgents/ai.hermes.gateway.plist"
+    unit = cfg.paths.home / ".config/systemd/user/hermes-gateway.service"
+    if plist.exists():
+        with plist.open("rb") as stream:
+            definition = plistlib.load(stream)
+        service_home = definition.get("EnvironmentVariables", {}).get("HERMES_HOME", "")
+        if not service_home:
+            raise ValueError("Installed Hermes launchd service has no HERMES_HOME")
+    elif unit.exists():
+        for line in unit.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("Environment="):
+                for assignment in shlex.split(line.strip().split("=", 1)[1]):
+                    if assignment.startswith("HERMES_HOME="):
+                        service_home = assignment.split("=", 1)[1]
+        if not service_home:
+            raise ValueError("Installed Hermes systemd service has no HERMES_HOME")
+    requested = str(env.get("HERMES_HOME") or "").strip()
+    previous = str(existing.get("HERMES_HOME") or "").strip()
+    if service_home and requested and requested != previous:
+        if Path(requested) != Path(service_home):
+            raise ValueError("HERMES_HOME conflicts with the installed Hermes service profile")
+    selected = service_home or requested or previous or str(cfg.paths.home / ".hermes")
+    if not isinstance(selected, str) or not Path(selected).is_absolute():
+        raise ValueError("Hermes service profile must be an absolute path")
+    return Path(selected)
+
+
+def _path_values(cfg: DeployEnvConfig, gateway_home: Path) -> Dict[str, str]:
     paths = cfg.paths
     hub_url = _mac_hub_url(cfg)
     values = {
@@ -363,7 +444,8 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HUB_URL": hub_url,
         "MAC_URL": hub_url,
         "MAC_SUPERVISOR_KIND": cfg.control.supervisor_kind,
-        "HERMES_HOME": str(paths.mac_home / "openclaw"),
+        "MAC_NETWORK_PROVIDER": cfg.control.network_provider,
+        "HERMES_HOME": str(gateway_home),
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REDACT_SECRETS": "true",
         "ACC_DIR": str(paths.home / ".acc"),
@@ -374,17 +456,13 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM": "1",
         "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
         "MAC_HERMES_STARTUP_CHECK": "1",
-        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(
-            paths.mac_home / "openclaw" / "mac-runtime-context.json"
-        ),
-        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(
-            paths.mac_home / "openclaw" / "mac-runtime-context.md"
-        ),
+        "MAC_HERMES_RUNTIME_CONTEXT_FILE": str(gateway_home / "mac-runtime-context.json"),
+        "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN": str(gateway_home / "mac-runtime-context.md"),
         "MAC_HERMES_RUNTIME_CONTEXT_REQUIRED": "1",
         "MAC_HERMES_WORKSPACE": str(paths.mac_home / "src" / "mac"),
         "MAC_PROJECT_CONTRACT_FILE": str(paths.mac_home / "src" / "mac" / ".mac" / "project.yaml"),
         "MAC_SELF_UPDATE_REPO": str(paths.mac_home / "src" / "mac"),
-        "MAC_MEMORY_TOPOLOGY_FILE": str(paths.mac_home / "openclaw" / "mac-memory-topology.json"),
+        "MAC_MEMORY_TOPOLOGY_FILE": str(gateway_home / "mac-memory-topology.json"),
     }
     if cfg.identity.is_hub:
         values.update(
@@ -499,19 +577,17 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
 def _chat_gateway_values(cfg: DeployEnvConfig, env: Mapping[str, str]) -> Dict[str, str]:
     """Point worker registration at verified chat-gateway service metadata.
 
-    OpenClaw is the sole chat gateway. The installer creates this file only
-    after its liveness, readiness, model, and channel probes pass, so a failed
-    prepare cannot advertise desired state as live state. The only supported
-    runtime selections are ``openclaw`` (a chat-gateway host) and ``none`` (a
-    pure worker); any other value is normalized to ``openclaw``.
+    Hermes is the fleet chat gateway; ``none`` remains available for a pure
+    worker. A legacy or invalid selector normalizes to Hermes so a stale
+    environment cannot recreate deprecated OpenClaw state.
     """
     implementation = (
-        (env.get("MAC_CHAT_GATEWAY_IMPL") or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL") or "openclaw")
+        (env.get("MAC_CHAT_GATEWAY_IMPL") or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL") or "hermes")
         .strip()
         .lower()
     )
-    if implementation != "none":
-        implementation = "openclaw"
+    if implementation not in {"hermes", "none"}:
+        implementation = "hermes"
     values = {"MAC_CHAT_GATEWAY_IMPL": implementation}
     if implementation == "openclaw":
         public_identity = (
@@ -878,6 +954,7 @@ def build_mac_env(
     cfg: DeployEnvConfig,
     *,
     environ: Optional[Mapping[str, str]] = None,
+    lookup: Optional[Callable[..., str]] = None,
 ) -> Dict[str, str]:
     env = os.environ if environ is None else environ
     values: Dict[str, str] = dict(existing)
@@ -893,7 +970,23 @@ def build_mac_env(
             ),
         )
     _ensure_secret_values(values)
-    values.update(_path_values(cfg))
+    values.update(_path_values(cfg, _gateway_home(cfg, existing, env)))
+    finder = lookup or lookup_tailscale_ipv4
+    tailscale_ip = finder(environ=env)
+    if not tailscale_ip:
+        existing_ip = str(values.get("MAC_TAILSCALE_IP") or "").strip()
+        tailscale_ip = existing_ip or overlay_ipv4_from_url(cfg.control.hub_url)
+    if tailscale_ip:
+        values["MAC_TAILSCALE_IP"] = tailscale_ip
+    try:
+        values["MAC_BIND_HOST"] = deploy_mac_bind_host(
+            cfg.control.bind_host,
+            network_provider=cfg.control.network_provider,
+            is_hub=cfg.identity.is_hub,
+            tailscale_ip=tailscale_ip,
+        )
+    except MeshBindError as exc:
+        raise ValueError(str(exc)) from exc
     if cfg.identity.is_hub:
         # Evidence artifact bytes live in a hub-local blob store so ledger DB
         # growth decouples from artifact volume (mac.evidence_blobs). setdefault
@@ -1005,7 +1098,22 @@ def build_mac_env(
     else:
         values.pop("MAC_WORKER_DEPLOY_GENERATION", None)
         values.pop("MAC_WORKER_DEPLOY_BARRIER_FILE", None)
+    verifier_policy = values.get("MAC_OPENSHELL_POLICY")
     openshell_explicitly_disabled = _apply_openshell_deploy_config(values, env)
+    runtime_image = (env.get("MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE") or "").strip()
+    if runtime_image:
+        # Pre-push and hub verification execute repository tests in the same
+        # reviewed runtime family as workers. Never retain the pre-publication
+        # localhost/mac-hermes:net fallback: OpenShell interprets it as a local
+        # registry reference and every review fails before a test starts.
+        values["MAC_HUB_VERIFY_IMAGE"] = runtime_image
+        # Native nodes still need the managed CLI and policy to ask a Linux
+        # gateway to verify code. These do not enable a local sandbox runtime.
+        values["MAC_OPENSHELL_BIN"] = str(cfg.paths.mac_home / "bin" / "openshell")
+        values.setdefault(
+            "MAC_OPENSHELL_POLICY",
+            verifier_policy or str(cfg.paths.mac_home / "openshell-policy.yaml"),
+        )
     openshell_active = any(
         (
             _enabled(str(env.get("MAC_DEPLOY_OPENSHELL_ENABLED") or "")),
@@ -1043,12 +1151,12 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
     values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
     values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-task-executor"))
-    # Report executors use deployment-owned, no-follow artifacts. The Python
-    # binary is a real file copied beside the venv launchers (not the mutable
-    # venv/bin/python symlink); the task wrapper must exec these exact paths.
-    values["MAC_TASK_EXECUTOR_PYTHON"] = str(
-        cfg.paths.mac_home / "venv" / "bin" / "mac-report-python"
-    )
+    # Registration resolves this venv launcher to the current base interpreter,
+    # execute-probes it, and sends that exact file identity to the hub for
+    # approval. Do not copy the interpreter into the venv: Homebrew Python
+    # binaries retain a versioned Cellar dylib reference, so a routine patch
+    # upgrade left the copy executable but unloadable before MAC could run.
+    values["MAC_TASK_EXECUTOR_PYTHON"] = str(cfg.paths.mac_home / "venv" / "bin" / "python")
     values["MAC_TASK_EXECUTOR_SCRIPT"] = str(cfg.paths.mac_home / "bin" / "mac-task-executor.py")
     values["MAC_SELF_UPDATE_REPO"] = str(cfg.paths.mac_home / "src" / "mac")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
@@ -1111,8 +1219,9 @@ def write_mac_env_file(
     *,
     environ: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
-    values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
-    write_env_file(cfg.paths.env_file, values)
+    with env_file_lock(cfg.paths.env_file):
+        values = build_mac_env(read_env_file(cfg.paths.env_file), cfg, environ=environ)
+        write_env_file(cfg.paths.env_file, values)
     return values
 
 

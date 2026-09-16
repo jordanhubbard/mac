@@ -442,3 +442,66 @@ def test_unsatisfiable_requirements_is_ok_when_every_task_is_runnable():
     findings = diagnostics.run_diagnostics(cp, names=["unsatisfiable-requirements"])
     assert findings[0].severity == "ok"
     assert findings[0].detail["count"] == 0
+
+
+def test_stale_dispatch_hold_check_only_matches_the_roll_forward_repair_reason():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("host", resources={"cpu": 4, "memory_gb": 8})
+    abandoned = cp.register_agent(machine.id, "abandoned-by-deploy", capabilities=[])
+    interactive = cp.register_agent(machine.id, "interactive-session", capabilities=[])
+
+    # A deploy that failed leaves this exact reason string (see
+    # deploy/deploy-mac-fleet.sh's hold_reason=... at "roll-forward repair").
+    cp.set_agent_dispatch_hold(
+        abandoned.id, "mac admin fleet roll-forward repair retained after 20260901T151713Z"
+    )
+    # An intentional, indefinite interactive hold must never be flagged --
+    # releasing one would open an isolated session to arbitrary dispatch.
+    cp.set_agent_dispatch_hold(interactive.id, "Interactive Cursor session; do not dispatch")
+
+    # Both holds are fresh: neither is stale yet.
+    findings = diagnostics.run_diagnostics(cp, names=["stale-dispatch-hold"])
+    assert findings and len(findings) == 1
+    assert findings[0].severity == "ok"
+
+    # Age only the abandoned-deploy hold past the threshold.
+    cp.store.execute(
+        "UPDATE agents SET dispatch_hold_at=? WHERE id=?",
+        ("2000-01-01T00:00:00.000000+00:00", abandoned.id),
+    )
+
+    findings = diagnostics.run_diagnostics(cp, names=["stale-dispatch-hold"])
+    assert findings and len(findings) == 1
+    warn = findings[0]
+    assert warn.severity == "warn"
+    assert warn.detail["count"] == 1
+    flagged_ids = {entry["id"] for entry in warn.detail["agents"]}
+    assert abandoned.id in flagged_ids
+    assert interactive.id not in flagged_ids
+
+
+def test_stuck_draining_check():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("host", resources={"cpu": 4, "memory_gb": 8})
+    agent = cp.register_agent(machine.id, "mid-deploy", capabilities=[])
+
+    findings = diagnostics.run_diagnostics(cp, names=["stuck-draining"])
+    assert findings and len(findings) == 1
+    assert findings[0].severity == "ok"
+
+    # A freshly-drained agent (e.g. genuinely mid-deploy) is not yet stuck.
+    cp.store.execute("UPDATE agents SET status='draining' WHERE id=?", (agent.id,))
+    findings = diagnostics.run_diagnostics(cp, names=["stuck-draining"])
+    assert findings[0].severity == "ok"
+
+    # Aged well past the threshold: a deploy this old is presumed abandoned.
+    cp.store.execute(
+        "UPDATE agents SET status='draining', updated_at=? WHERE id=?",
+        ("2000-01-01T00:00:00.000000+00:00", agent.id),
+    )
+    findings = diagnostics.run_diagnostics(cp, names=["stuck-draining"])
+    assert findings and len(findings) == 1
+    warn = findings[0]
+    assert warn.severity == "warn"
+    assert warn.detail["count"] == 1
+    assert {entry["id"] for entry in warn.detail["agents"]} == {agent.id}

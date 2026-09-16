@@ -185,31 +185,17 @@ def test_every_mac_command_shown_resolves():
     assert not unknown, "commands that do not exist:\n  " + "\n  ".join(sorted(set(unknown)))
 
 
-def test_the_known_gaps_are_still_gaps():
-    """The guide tells operators to work around three gaps. If one is fixed and
-    the page still claims it, the page is now misinformation.
+def test_guide_does_not_repeat_retired_gap_claims():
+    """A literal endpoint search missed consumers using the dispatch client.
 
-    This is a canary, not a prohibition: closing a gap SHOULD fail here, and the
-    fix is to update the page in the same change.
+    The guide now describes partial harness delivery and the explicit schema
+    migration owner instead of making universal absence claims.
     """
     advanced = (GUIDE / "03-advanced.md").read_text(encoding="utf-8")
-    # UPDATED DELIBERATELY. The broadcast half is no longer write-only: workers
-    # act on sandbox policy events between tasks, and read the feed into the
-    # task context before starting one. The page now says so, and says what is
-    # still missing -- the ADDRESSED bus, which the check below still guards.
-    assert "AgentBus consumption is partial" in advanced
-    assert "The addressed bus (`/agentbus/traffic`) has no consumer." in advanced
-
-    consumers = []
-    for path in (ROOT / "src").rglob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if "/agentbus/traffic" in text and path.name not in ("api.py", "cli.py", "dispatch.py"):
-            consumers.append(str(path.relative_to(ROOT)))
-
-    assert not consumers, (
-        "something now consumes AgentBus traffic (%s) -- update "
-        "docs/guide/03-advanced.md, which still tells operators nothing does" % consumers
-    )
+    assert "partial in-flight delivery" in advanced
+    assert "mac.schema_migrations" in advanced
+    assert "has no consumer" not in advanced
+    assert "no migration framework" not in advanced
 
 
 def test_mermaid_blocks_are_balanced():

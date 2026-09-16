@@ -32,7 +32,21 @@ def _default_timeout_seconds() -> float:
 
 
 class MacApiError(RuntimeError):
-    """Raised when a MAC API operation cannot be completed."""
+    """Raised when a MAC API operation cannot be completed.
+
+    ``status_code``/``detail`` are populated for an HTTP error response
+    (None for a transport-level failure like a timeout or DNS error) so a
+    caller can distinguish a transient, retryable condition -- a fenced-write
+    conflict ("task state changed during fenced write; retry") reported as a
+    normal HTTP 400 -- from a genuine, permanent rejection, without having to
+    string-match the formatted message. The message format itself is
+    unchanged for existing ``str(exc)`` callers.
+    """
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None, detail: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = detail
 
 
 class MacApiClient:
@@ -95,7 +109,11 @@ class MacApiClient:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8")
-            raise MacApiError("mac API %s %s failed: %s" % (method, path, detail)) from exc
+            raise MacApiError(
+                "mac API %s %s failed: %s" % (method, path, detail),
+                status_code=exc.code,
+                detail=detail,
+            ) from exc
         except urllib.error.URLError as exc:
             raise MacApiError("mac API %s %s failed: %s" % (method, path, exc.reason)) from exc
         except OSError as exc:

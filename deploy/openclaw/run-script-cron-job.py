@@ -47,10 +47,13 @@ wrappers.  Standard library only.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -361,6 +364,68 @@ def authorize_delivery_target(
     return None, "slack_broadcast_outside_home_channel"
 
 
+DEFAULT_SANDBOX_CLI_LOCK_TIMEOUT = 300.0
+
+
+def sandbox_cli_lock_path() -> Path:
+    """One host-wide mutex around every subprocess call into the sandboxed
+    OpenClaw CLI (``openclaw-agent`` / ``openclaw-message``).
+
+    launchd fires each script job (dream-cycle, dream-synthesis, ...) as an
+    independent process on its own ``StartCalendarInterval``; two jobs sharing
+    an hourly schedule race to open the sandbox's plugin-state SQLite DB and
+    intermittently corrupt it ("database disk image is malformed"). Staggering
+    schedules (apply-cron-plan.mjs) reduces contention but does not bound it —
+    a future job, a manual run, or clock drift can still collide. This lock is
+    the durable guarantee: any two invocations serialize regardless of when
+    they were scheduled to run.
+    """
+    return openclaw_home() / "sandbox-cli.lock"
+
+
+def run_locked(
+    argv: list,
+    *,
+    lock_path: Optional[Path] = None,
+    lock_timeout: float = DEFAULT_SANDBOX_CLI_LOCK_TIMEOUT,
+    **run_kwargs: Any,
+) -> "subprocess.CompletedProcess":
+    """``subprocess.run(argv, **run_kwargs)`` serialized against other callers.
+
+    Mirrors the checkpoint-lock idiom in install-openclaw-gateway.sh's host
+    wrapper: an exclusive, non-blocking ``flock`` retried until acquired or
+    ``lock_timeout`` elapses, on a regular file owned by the current user (so a
+    symlink or a file planted by another user cannot be used to interfere).
+    """
+    path = lock_path or sandbox_cli_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(str(path), flags, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+            raise RuntimeError("sandbox CLI lock identity is unsafe: %s" % path)
+        os.fchmod(descriptor, 0o600)
+        deadline = time.monotonic() + lock_timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "sandbox CLI lock timed out after %ss: %s" % (lock_timeout, path)
+                    )
+                time.sleep(0.1)
+        return subprocess.run(argv, **run_kwargs)
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(descriptor)
+
+
 # --------------------------------------------------------------------------- #
 # Default subprocess seams (thin, injected)                                    #
 # --------------------------------------------------------------------------- #
@@ -401,61 +466,6 @@ def default_script_runner(
     return (result.stdout or "").strip(), ""
 
 
-def sandbox_wrapper_settings(agent_bin: str) -> Tuple[str, str]:
-    """Read OPEN_SHELL and SANDBOX out of the host wrapper script.
-
-    The wrapper is the only place that knows which sandbox this host talks to.
-    Returns ("", "") when the path is not a wrapper, so a non-sandboxed
-    deployment keeps the plain argv path.
-    """
-    try:
-        text = Path(agent_bin).read_text(encoding="utf-8")
-    except OSError:
-        return "", ""
-
-    def pick(key: str) -> str:
-        match = re.search(r"^%s=\"?([^\"\n]+)\"?$" % key, text, re.MULTILINE)
-        return match.group(1).strip() if match else ""
-
-    return pick("OPEN_SHELL"), pick("SANDBOX")
-
-
-def stage_prompt_in_sandbox(agent_bin: str, prompt: str, *, session_id: str = "") -> str:
-    """Write ``prompt`` into the sandbox over stdin; return its in-sandbox path.
-
-    Returns "" when the sandbox cannot be resolved or the write fails, so the
-    caller falls back to argv rather than losing the run.
-    """
-    openshell, sandbox = sandbox_wrapper_settings(agent_bin)
-    if not openshell or not sandbox:
-        return ""
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", session_id or "prompt") or "prompt"
-    path = "/sandbox/prompts/%s.txt" % name[:64]
-    try:
-        subprocess.run(
-            [
-                openshell,
-                "sandbox",
-                "exec",
-                "--name",
-                sandbox,
-                "--no-tty",
-                "--",
-                "/bin/bash",
-                "-c",
-                "mkdir -p /sandbox/prompts && cat > %s" % path,
-            ],
-            input=prompt,
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=120,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return path
-
-
 def default_agent_runner(
     agent_bin: str,
     prompt: str,
@@ -463,33 +473,18 @@ def default_agent_runner(
     session_id: str = "",
     timeout: float = DEFAULT_AGENT_TIMEOUT,
 ) -> str:
-    """Run one agent turn through the host ``openclaw-agent`` wrapper (--json).
+    """Run one agent turn through the host ``hermes`` CLI's one-shot mode.
 
-    A multi-line prompt is staged INSIDE the sandbox and passed by path, never
-    as argv. ``openclaw-agent`` is the same sandbox wrapper as
-    ``openclaw-message``, so it inherits the same refusal:
-
-        "command argument 12 contains newline or carriage return characters"
-
-    A script job's prompt carries the script's stdout under "## Script Output",
-    so it is always multi-line. The error was returned AS the agent's reply, and
-    once delivery was fixed the fleet cheerfully published that error to Slack
-    every hour -- a 138-character "dream report" that was the sandbox complaining.
-
-    stdin is not argv, so piping the prompt into a sandbox-local file carries the
-    newlines safely; ``--message-file`` then reads it from inside.
+    Post-cutover (2026-09-05): ``agent_bin`` is the ``hermes`` executable
+    (installed natively on the host, not inside an OpenShell sandbox), so
+    there is no sandbox exec-transport argv boundary to work around -- a
+    multi-line prompt passes straight through subprocess argv (which is never
+    interpreted by a shell) without staging or escaping. ``session_id`` is
+    accepted for interface compatibility with the prior OpenClaw runner but is
+    not passed to ``hermes --oneshot``, which manages its own session state.
     """
-    staged = ""
-    if "\n" in prompt or "\r" in prompt:
-        staged = stage_prompt_in_sandbox(agent_bin, prompt, session_id=session_id)
-    if staged:
-        args = [agent_bin, "--agent", "main", "--message-file", staged]
-    else:
-        args = [agent_bin, "--agent", "main", "--message", prompt]
-    if session_id:
-        args += ["--session-id", session_id]
-    args += ["--json"]
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+    args = [agent_bin, "--oneshot", prompt]
+    result = run_locked(args, capture_output=True, text=True, timeout=timeout, check=False)
     output = (result.stdout or "").strip()
     if result.returncode != 0 and not output:
         return (result.stderr or "").strip()
@@ -502,11 +497,13 @@ def default_deliver_runner(
     text: str,
     *,
     account: str = "default",
+    timeout: float = DEFAULT_AGENT_TIMEOUT,
 ) -> None:
-    """Deliver ``text`` to a Slack channel via the host ``openclaw-message`` wrapper."""
+    """Deliver ``text`` to a Slack channel via the host ``hermes send`` CLI."""
     platform, channel_id = target
-    subprocess.run(
+    run_locked(
         message_args(message_bin, platform, channel_id, text, account=account),
+        timeout=timeout,
         check=True,
     )
 
@@ -519,56 +516,24 @@ def message_args(
     *,
     account: str = "default",
 ) -> list:
-    """Build the ``openclaw-message`` argv (kept pure so it is testable).
+    """Build the ``hermes send`` argv (kept pure so it is testable).
 
-    The body travels as JSON in ``--presentation``, never as ``--message``.
-
-    ``openclaw-message`` is a five-line wrapper that execs
-    ``openshell sandbox exec ... -- openclaw message "$@"``, and OpenShell's exec
-    transport REFUSES any argv token containing a newline:
-
-        code: 'Client specified an invalid argument'
-        message: "command argument 12 contains newline or carriage return characters"
-
-    So the limit is the sandbox boundary, not the chat CLI, and it applies to
-    every multi-line payload regardless of which tool is on the far side. Script
-    job output is prose and is therefore always multi-line: on the hub, three
-    jobs ran hourly and failed 220 times each on exactly this.
-
-    ``json.dumps`` escapes the newlines, so the token crossing the boundary has
-    none while the body survives intact. ``--message`` keeps a single-line
-    summary because the CLI requires it.
+    Post-cutover (2026-09-05): delivery runs through ``hermes send``, native
+    on the host (installed by the Hermes shell installer, not sandboxed), so
+    the OpenShell exec-transport argv-newline restriction that forced the
+    prior ``openclaw-message``/``--presentation`` workarounds does not apply
+    here -- ``text`` passes straight through subprocess argv, no escaping.
+    ``account`` is accepted for interface compatibility with the prior
+    OpenClaw runner; ``hermes send`` resolves the sending identity from its
+    own gateway credentials and does not take an explicit account selector.
     """
     return [
         message_bin,
         "send",
-        "--channel",
-        platform,
-        "--account",
-        account,
-        "--target",
-        "channel:%s" % channel_id,
-        "--message",
-        summary_line(text),
-        "--presentation",
-        json.dumps({"text": text}),
+        "--to",
+        "%s:%s" % (platform, channel_id),
+        text,
     ]
-
-
-def summary_line(text: str, *, limit: int = 200) -> str:
-    """A single-line stand-in for a multi-line body.
-
-    Never empty: the CLI rejects a missing message, and a job whose output was
-    whitespace would otherwise fail for a second, unrelated reason.
-    """
-    first = ""
-    for line in str(text or "").splitlines():
-        if line.strip():
-            first = line.strip()
-            break
-    if not first:
-        return "(no summary)"
-    return first[:limit]
 
 
 # --------------------------------------------------------------------------- #
@@ -632,7 +597,9 @@ def calendar_day_key(now: Optional[float] = None) -> str:
 
 
 def delivery_receipt_path(output_dir: str, job: dict) -> Path:
-    return Path(output_dir).expanduser() / ("%s.last-success.json" % _slug(job.get("name") or "job"))
+    return Path(output_dir).expanduser() / (
+        "%s.last-success.json" % _slug(job.get("name") or "job")
+    )
 
 
 def already_delivered_today(job: dict, output_dir: str, *, now: Optional[float] = None) -> bool:
@@ -827,6 +794,20 @@ def _default_home_bin(name: str) -> str:
     return str(mac_home() / "bin" / name)
 
 
+def _default_hermes_bin() -> str:
+    """Resolve the ``hermes`` CLI installed by the Hermes shell installer.
+
+    Unlike the OpenClaw wrappers this replaces, ``hermes`` is not installed
+    under ``$MAC_HOME/bin`` -- the upstream installer places it under
+    ``~/.local/bin`` (added to PATH by the installer's shell rc changes), so
+    resolve it there via PATH first and fall back to that fixed path.
+    """
+    found = shutil.which("hermes")
+    if found:
+        return found
+    return str(Path.home() / ".local" / "bin" / "hermes")
+
+
 def _resolve_legacy_scripts_dir(args: argparse.Namespace) -> str:
     """Resolve the read-only fallback home, honoring an explicit opt-out.
 
@@ -856,13 +837,15 @@ def main(argv: Optional[list] = None) -> int:
     )
     agent_bin = (
         args.agent_bin
+        or os.environ.get("MAC_HERMES_AGENT_BIN")
         or os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-        or _default_home_bin("openclaw-agent")
+        or _default_hermes_bin()
     )
     message_bin = (
         args.message_bin
+        or os.environ.get("MAC_HERMES_MESSAGE_BIN")
         or os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
-        or _default_home_bin("openclaw-message")
+        or _default_hermes_bin()
     )
     account = args.account or os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID") or "default"
     output_dir = args.output_dir or str(script_jobs_output_dir())

@@ -26,10 +26,11 @@ from __future__ import annotations
 
 import ast
 import re
-import typing
 from pathlib import Path
 
 import pytest
+from fastapi import APIRouter, Depends, FastAPI, Query
+from fastapi.testclient import TestClient
 
 from mac.api import create_app
 from mac.services import ControlPlane
@@ -117,15 +118,24 @@ def _normalise(path: str) -> str:
     return re.sub(r"%[sd]", "{}", path.split("?")[0]).rstrip("/") or "/"
 
 
+def _route_contracts(app):
+    """Read the public wire contract, including prefixed and nested routers.
+
+    FastAPI may retain included routers as branches in app.routes. OpenAPI
+    resolves those branches and reports the actual query aliases and shapes.
+    """
+    routes = {}
+    for path, path_item in app.openapi()["paths"].items():
+        template = re.sub(r"\{[^}]+\}", "{}", path).rstrip("/") or "/"
+        for method, operation in path_item.items():
+            if method.upper() in HTTP_HELPERS.values():
+                routes[(method.upper(), template)] = operation
+    return routes
+
+
 @pytest.fixture(scope="module")
 def hub_routes():
-    app = create_app(control_plane=ControlPlane.in_memory())
-    routes = {}
-    for route in app.routes:
-        template = re.sub(r"\{[^}]+\}", "{}", getattr(route, "path", ""))
-        for method in getattr(route, "methods", None) or []:
-            routes.setdefault((method, template.rstrip("/") or "/"), []).append(route)
-    return routes
+    return _route_contracts(create_app(control_plane=ControlPlane.in_memory()))
 
 
 # --------------------------------------------------------------------------
@@ -178,9 +188,12 @@ def test_the_extractor_sees_the_whole_surface():
 # --------------------------------------------------------------------------
 
 
-def _query_params(route) -> dict:
-    hints = typing.get_type_hints(route.endpoint)
-    return {name: hint for name, hint in hints.items() if name != "return"}
+def _query_params(operation) -> dict:
+    return {
+        parameter["name"]: parameter["schema"]
+        for parameter in operation.get("parameters", [])
+        if parameter["in"] == "query"
+    }
 
 
 def test_task_listing_accepts_repeated_state(hub_routes):
@@ -190,10 +203,10 @@ def test_task_listing_accepts_repeated_state(hub_routes):
     FastAPI keeps only the last repeat and the default view silently filters on
     one state.
     """
-    route = hub_routes[("GET", "/tasks")][0]
+    route = hub_routes[("GET", "/tasks")]
     state = _query_params(route)["state"]
 
-    assert "List" in str(state) or "list" in str(state), (
+    assert any(schema.get("type") == "array" for schema in [state, *state.get("anyOf", [])]), (
         "GET /tasks declares state as %s; the CLI sends it repeated, so a "
         "scalar keeps only the last value" % state
     )
@@ -210,7 +223,7 @@ def test_every_query_parameter_the_client_sends_is_declared(hub_routes):
         matches = hub_routes.get((verb, _normalise(path)))
         if not matches:
             continue
-        declared = set(_query_params(matches[0]))
+        declared = set(_query_params(matches))
         for name in kwargs:
             if name not in declared:
                 unknown.append(
@@ -221,6 +234,31 @@ def test_every_query_parameter_the_client_sends_is_declared(hub_routes):
     assert not unknown, "query parameters the hub ignores:\n  %s" % "\n  ".join(
         sorted(set(unknown))
     )
+
+
+def test_contracts_include_nested_prefixes_and_dependency_query_aliases():
+    app = FastAPI()
+    parent = APIRouter()
+    child = APIRouter()
+
+    def filters(values: list[str] = Query(default=[], alias="state")):
+        return values
+
+    @child.get("/items/{item_id}")
+    def items(item_id: str, states=Depends(filters)):
+        return {"id": item_id, "states": states}
+
+    parent.include_router(child, prefix="/nested")
+    app.include_router(parent, prefix="/api")
+    contracts = _route_contracts(app)
+    assert set(contracts) == {("GET", "/api/nested/items/{}")}
+    query = _query_params(contracts[("GET", "/api/nested/items/{}")])
+    assert set(query) == {"state"}
+    assert query["state"]["type"] == "array"
+    with TestClient(app) as client:
+        response = client.get("/api/nested/items/example?state=open&state=waiting")
+    assert response.status_code == 200
+    assert response.json() == {"id": "example", "states": ["open", "waiting"]}
 
 
 def test_eval_run_filtering_actually_filters():

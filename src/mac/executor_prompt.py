@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
+from mac.evidence_validators import repo_files_changed_problem
 from mac.agent_command import PROMPT_SENTINEL
 from mac.bus_task_context import (
     bus_context_from_task,
@@ -334,6 +335,15 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
             manifest = {}
     evidence_type = str(manifest.get("evidence_type") or task_evidence_type(task))
     repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+    files_changed = repo.get("files_changed")
+    files_problem = repo_files_changed_problem(files_changed)
+    files_count = len(files_changed or []) if repo and not files_problem else None
+    if (
+        not files_problem
+        and evidence_type in {"repo_change", "documentation"}
+        and not files_changed
+    ):
+        files_problem = "repo evidence requires changed files"
     # verification.tests is canonically a LIST of result objects (mac-wjy3), but
     # accept a bare dict for backward compatibility with older manifests.
     tests_raw = manifest.get("tests")
@@ -362,10 +372,12 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     signals = {
         "returncode": returncode,
         "pushed": bool(repo.get("pushed")) if repo else None,
-        "files_changed": len(repo.get("files_changed") or []) if repo else None,
+        "files_changed": files_count,
         "tests": tests_state,
         "checks_pass": checks_pass if checks else None,
     }
+    if files_problem:
+        signals["evidence_problem"] = files_problem
     # Surface the exact new files that were left uncommitted so the curated
     # lesson can tell the next agent to `git add -A` and commit ALL new files
     # up front instead of wasting an attempt on the same new-file refusal.
@@ -380,19 +392,25 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
     success = (
         returncode == 0
         and bool(manifest)
+        and not files_problem
         and tests_state != "fail"
         and (checks_pass if checks else True)
         and (signals["pushed"] is not False)
     )
+    error_signature = ""
+    if not success:
+        error_signature = (
+            "untracked_new_files_at_finalize"
+            if new_file_refusal
+            else "verification_contract_failed: " + files_problem
+            if files_problem
+            else _error_signature(manifest)
+        )
     return {
         "evidence_type": evidence_type,
         "outcome": "success" if success else "failure",
         "signals": signals,
-        "error_signature": ""
-        if success
-        else (
-            "untracked_new_files_at_finalize" if new_file_refusal else _error_signature(manifest)
-        ),
+        "error_signature": error_signature,
     }
 
 
@@ -516,7 +534,18 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
     lines.extend(
         [
             "For normal repository tasks, MAC prepares a task-owned git worktree before the executor starts.",
-            "Use $MAC_TASK_REPO_WORKTREE, or metadata.runtime.repository_worktree in task.json, as the only writable checkout.",
+            # Deliberately NOT offering task.json's runtime.repository_worktree
+            # metadata field here as an alternative: that field is a
+            # host-absolute path for the worker's own host-side orchestration
+            # (see worker.py/worker_repo_prep.py), not a path that exists
+            # inside the sandbox. Advertising it here previously sent an agent
+            # straight at it -- auto-rejected as "external_directory" by the
+            # sandbox's own permission model, the same failure mode
+            # $MAC_TASK_FILE's deferral fixed for task.json itself.
+            # $MAC_TASK_REPO_WORKTREE is exported correctly for both the
+            # sandboxed and non-sandboxed execution paths, so it is the only
+            # reference that belongs in agent-facing text.
+            "Use $MAC_TASK_REPO_WORKTREE as the only writable checkout.",
             "Treat origin.repository_path / $MAC_TASK_REPO_SOURCE as read-only registered source state; do not edit it for feature or bug work.",
             "The registered source checkout remains clean; make and test all changes in the task worktree.",
             "Agent ownership ends with tested task-worktree changes and preliminary evidence. The deterministic host finalizer exclusively owns fetching canonical state, rebasing, committing tracked modifications, pushing, and publication; host-finalized evidence supplies the pushed ref.",
@@ -853,15 +882,13 @@ def _coordination_section(task: Dict[str, Any]) -> str:
     )
 
 
-def build_task_prompt(
-    task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None
-) -> str:
+def build_task_prompt(task: Dict[str, Any], lessons: Optional[List[str]] = None) -> str:
     """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     evidence_contract = (
         "This is a read-only repository report. Evidence must use evidence_type=operator_result; repository mutation, commit, push, and host finalization are forbidden."
         if metadata_declares_read_only_report_repository(metadata)
-        else "Evidence contract: repository tasks use evidence_type=repo_change when the requested change is still absent in this tree; already_satisfied and needs_restatement use evidence_type=no_change and must not open a pull request. operator_result is reserved for work without a repository contract. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
+        else "Evidence contract: repository tasks use evidence_type=repo_change when the requested change is still absent in this tree; already_satisfied and needs_restatement use evidence_type=no_change and must not open a pull request. operator_result is reserved for work without a repository contract. For no_change, canonical_reconcile.reason also supplies the explicit no-change reason; do not duplicate it at the top level. Include at least one completed passing check and what it established. A still-running check is not a pass. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
     )
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
@@ -874,7 +901,9 @@ def build_task_prompt(
             "to develop and check the changed behavior. Do NOT run the repository's "
             "full contract/pre-push gate, even when task.json asks for it: after the "
             "coding agent exits, the deterministic host runs the authoritative "
-            "impact-scoped repository gate in this same sandbox. "
+            "impact-scoped repository gate in a fresh Linux OpenShell sandbox. "
+            "Run all repository tests and builds in Linux OpenShell; never run "
+            "them on a native macOS host. "
             "Repeating that gate here wastes the bounded authoring budget and is not "
             "additional evidence."
         ),
@@ -910,7 +939,18 @@ def build_task_prompt(
     lessons_section = _lessons_section(lessons or [])
     if lessons_section:
         parts.append(lessons_section)
-    parts.append("Read the full task from: %s" % str(task_file))
+    # NOT str(task_file): the prompt is built once, on the host, before the
+    # OpenShell sandbox exists. A host-absolute path baked in here (the
+    # worker's own $MAC_TASK_FILE, e.g. ~/.mac/agent-workspaces/task_.../
+    # task.json) does not exist inside the sandbox, where the file lands at
+    # /sandbox/<basename>/task.json instead. $MAC_TASK_FILE is exported by
+    # both the sandboxed and non-sandboxed execution paths pointing at
+    # whichever location is actually correct for that run, so deferring to
+    # it (matching the $MAC_TASK_WORKSPACE references above) resolves
+    # correctly either way. Live-reproduced: opencode read this line
+    # literally and tried the wrong (host) absolute path, which its own
+    # sandbox permission model then auto-rejected as "external_directory".
+    parts.append("Read the full task from: $MAC_TASK_FILE")
     return "\n\n".join(parts)
 
 

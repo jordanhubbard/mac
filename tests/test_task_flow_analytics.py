@@ -15,6 +15,7 @@ from mac.api import create_app
 from mac.cli import build_parser
 from mac.models import TaskFlowStage, TaskState, parse_time, utcnow
 from mac.services import ControlPlane
+from mac.task_flow_analytics import TaskFlowAnalyticsService
 
 
 def _running_task(cp: ControlPlane, *, project: str = "flow"):
@@ -129,6 +130,39 @@ def test_report_opens_and_resolves_stranding_episode():
         (episode["id"],),
     )
     assert resolved["resolved_at"] == when
+
+
+def test_report_does_not_call_deliberately_held_work_stranded():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task(
+        "staged for later",
+        project="flow",
+        metadata={"no_dispatch": True},
+    )
+    future = (parse_time(utcnow()) + timedelta(minutes=11)).isoformat(timespec="microseconds")
+
+    report = cp.task_flow.report(
+        warning_seconds=300,
+        critical_seconds=600,
+        refresh_limit=0,
+        dispatch_explainer=lambda _task_id: (_ for _ in ()).throw(
+            AssertionError("held tasks must not consume dispatch diagnostics")
+        ),
+        observed_at=future,
+    )
+
+    assert task.id not in {episode["task_id"] for episode in report["stranding"]["episodes"]}
+
+
+def test_deferred_dispatch_diagnostics_are_not_reported_as_ready_unclaimed():
+    assert (
+        TaskFlowAnalyticsService._stranding_reason(
+            TaskFlowStage.READY_QUEUE.value,
+            None,
+            dispatch_diagnostic="deferred",
+        )
+        == "dispatch_diagnostic_deferred"
+    )
 
 
 def test_contention_uses_digest_and_is_included_in_snapshot():

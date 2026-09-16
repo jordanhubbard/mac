@@ -120,6 +120,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONTINUITY_MIN_SCORE` | str | consumer-defined | core | Core setting: continuity min score. |
 | `MAC_CONTINUITY_TOKEN_BUDGET` | str | consumer-defined | core | Core setting: continuity token budget. |
 | `MAC_CONTRACT_DESCRIPTION` | str | consumer-defined | core | Core setting: contract description. |
+| `MAC_CONTRACT_GIT` | str | consumer-defined | core | Core setting: contract git. |
 | `MAC_CONTRACT_MARKER` | str | consumer-defined | core | Core setting: contract marker. |
 | `MAC_CONTRACT_RUNTIME_VENV` | str | consumer-defined | core | Core setting: contract runtime venv. |
 | `MAC_CONTRACT_SNAPSHOT` | str | consumer-defined | core | Core setting: contract snapshot. |
@@ -221,6 +222,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID` | str | consumer-defined | deployment | Deployment setting: deploy gate expected principal id. |
 | `MAC_DEPLOY_GATE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy gate generation. |
 | `MAC_DEPLOY_GATE_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate hold reason. |
+| `MAC_DEPLOY_GATE_MAX_WAIT` | str | consumer-defined | deployment | Deployment setting: deploy gate max wait. |
+| `MAC_DEPLOY_GATE_MAX_WAIT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy gate max wait seconds. |
 | `MAC_DEPLOY_GATE_PHASE` | str | consumer-defined | deployment | Deployment setting: deploy gate phase. |
 | `MAC_DEPLOY_GATE_PRIOR_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate prior hold reason. |
 | `MAC_DEPLOY_GATE_PRIOR_OWNED` | str | consumer-defined | deployment | Deployment setting: deploy gate prior owned. |
@@ -464,11 +467,14 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_GITHUB_INGEST_MAX_ISSUES_PER_REPO` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max issues per repo. |
 | `MAC_GITHUB_INGEST_MAX_OPEN_TASKS_PER_PROJECT` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max open tasks per project. |
 | `MAC_HEADSCALE_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: headscale command timeout seconds. |
+| `MAC_HERMES_AGENT_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent bin. |
 | `MAC_HERMES_AGENT_DIR` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent dir. |
 | `MAC_HERMES_ALLOW_APPROVAL_PROMPTS` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes allow approval prompts. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply gateway runtime shim. |
 | `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply slack account shim. |
+| `MAC_HERMES_DRY_RUN` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes dry run. |
 | `MAC_HERMES_EXISTING_PORT` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes existing port. |
+| `MAC_HERMES_FLEET_NAME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes fleet name. |
 | `MAC_HERMES_GATEWAY_API_KEY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway api key. |
 | `MAC_HERMES_GATEWAY_BASE_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway base url. |
 | `MAC_HERMES_GATEWAY_MODEL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway model. |
@@ -478,6 +484,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_HOME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes home. |
 | `MAC_HERMES_INSTANCE_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes instance id. |
 | `MAC_HERMES_LOG_SUMMARY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes log summary. |
+| `MAC_HERMES_MESSAGE_BIN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes message bin. |
 | `MAC_HERMES_PERSONA_ID` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes persona id. |
 | `MAC_HERMES_PYTHON` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes python. |
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context file. |
@@ -542,9 +549,15 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_UPGRADE_REQUIRED_CHECKS` | bool | consumer-defined | hub | Hub setting: hub upgrade required checks. |
 | `MAC_HUB_URL` | str | consumer-defined | hub | Hub setting: hub url. |
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
+| `MAC_HUB_VERIFY_PG_DATADIR` | str | consumer-defined | hub | Data directory for the dedicated hub-verify Postgres started by `scripts/start-test-postgres.sh`. Defaults to a temp `mac-hubverify-pgdata` directory, never the live hub cluster. |
+| `MAC_HUB_VERIFY_PG_HOST` | str | consumer-defined | hub | Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.openshell.internal` (OpenShell's host-bridge alias). Does not select the live hub Postgres. |
+| `MAC_HUB_VERIFY_PG_PORT` | int | consumer-defined | hub | Port passed to `scripts/start-test-postgres.sh` when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432. |
+| `MAC_HUB_VERIFY_PG_URL` | str | consumer-defined | hub | Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way. |
+| `MAC_HUB_VERIFY_PROFILE` | str | default | hub | Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
 | `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |
+| `MAC_HUMAN_USERNAME` | str | consumer-defined | core | Core setting: human username. |
 | `MAC_IDE_HANDOFF_FILE` | str | consumer-defined | core | Core setting: ide handoff file. |
 | `MAC_IDE_PROXY_TOKEN` | str | consumer-defined | core | Core setting: ide proxy token. |
 | `MAC_IMAGE_BUILDER` | str | consumer-defined | core | Core setting: image builder. |
@@ -674,6 +687,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_NEMOCLAW_SLACK_APP_TOKEN` | str | consumer-defined | core | Core setting: nemoclaw slack app token. |
 | `MAC_NEMOCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | core | Core setting: nemoclaw slack bot token. |
 | `MAC_NEMOCLAW_SLACK_WORKSPACE` | str | consumer-defined | core | Core setting: nemoclaw slack workspace. |
+| `MAC_NETWORK_PROVIDER` | str | consumer-defined | core | Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / public addresses and binds loopback plus the Tailscale IPv4 instead. Not a host firewall by itself; it is the listen-address policy that makes the overlay the only worker path. Unset means no mesh bind policy (container/dev). |
 | `MAC_NOTIFIER_DRAIN_HUB_AGENT` | str | consumer-defined | notifier | Notifier setting: notifier drain hub agent. |
 | `MAC_NOTIFIER_DRAIN_LIMIT` | int | consumer-defined | notifier | Notifier setting: notifier drain limit. |
 | `MAC_NOTIFIER_DRAIN_ON_HEARTBEAT` | str | consumer-defined | notifier | Notifier setting: notifier drain on heartbeat. |
@@ -736,7 +750,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SLACK_APP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack app token. |
 | `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
 | `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
-| `MAC_OPENCLAW_STARTUP_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw startup ok. |
 | `MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw subprocess timeout seconds. |
 | `MAC_OPENCLAW_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw supervisor. |
 | `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |
@@ -826,6 +839,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_HELPER_SOURCE` | str | consumer-defined | core | Core setting: phase1 helper source. |
 | `MAC_PHASE1_LOCAL_RESTORE_MANIFEST` | str | consumer-defined | core | Core setting: phase1 local restore manifest. |
 | `MAC_PHASE1_MEDIA_READINESS_SECONDS` | int | consumer-defined | core | Core setting: phase1 media readiness seconds. |
+| `MAC_PHASE1_OPENSHELL_ENABLED` | bool | consumer-defined | core | Core setting: phase1 openshell enabled. |
 | `MAC_PHASE1_OS` | str | consumer-defined | core | Core setting: phase1 os. |
 | `MAC_PHASE1_OSH_ASSET_SHA` | str | consumer-defined | core | Core setting: phase1 osh asset sha. |
 | `MAC_PHASE1_OSH_CLI_SHA` | str | consumer-defined | core | Core setting: phase1 osh cli sha. |
@@ -1070,7 +1084,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SELF_HEAL_NAP_STALL_SECONDS` | int | consumer-defined | core | Core setting: self heal nap stall seconds. |
 | `MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal pin divergence seconds. |
 | `MAC_SELF_HEAL_READ_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal read silence seconds. |
+| `MAC_SELF_HEAL_STALE_DEPLOY_HOLD_SECONDS` | int | consumer-defined | core | Core setting: self heal stale deploy hold seconds. |
 | `MAC_SELF_HEAL_STARVATION_SECONDS` | int | consumer-defined | core | Core setting: self heal starvation seconds. |
+| `MAC_SELF_HEAL_STUCK_DRAINING_SECONDS` | int | consumer-defined | core | Core setting: self heal stuck draining seconds. |
 | `MAC_SELF_UPDATE_GIT_TIMEOUT` | int | consumer-defined | core | Core setting: self update git timeout. |
 | `MAC_SELF_UPDATE_REPO` | str | consumer-defined | core | Core setting: self update repo. |
 | `MAC_SELF_UPDATE_SERVICE_TIMEOUT` | int | consumer-defined | core | Core setting: self update service timeout. |
@@ -1113,6 +1129,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_ID` | str | consumer-defined | task-execution | Task Execution setting: task id. |
 | `MAC_TASK_MAX_ITERATIONS` | str | consumer-defined | task-execution | Task Execution setting: task max iterations. |
 | `MAC_TASK_MODEL` | str | consumer-defined | task-execution | Task Execution setting: task model. |
+| `MAC_TASK_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | task-execution | Task Execution setting: task openshell sandbox name. |
 | `MAC_TASK_REPO_ACCESS_MODE` | str | consumer-defined | task-repository | Task Repository setting: task repo access mode. |
 | `MAC_TASK_REPO_ACCESS_SCHEMA` | str | consumer-defined | task-repository | Task Repository setting: task repo access schema. |
 | `MAC_TASK_REPO_BASE_SHA` | str | consumer-defined | task-repository | Task Repository setting: task repo base sha. |
@@ -1142,6 +1159,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_PG_DATADIR` | str | consumer-defined | core | Core setting: test pg datadir. |
 | `MAC_TEST_PG_DB` | str | consumer-defined | core | Core setting: test pg db. |
 | `MAC_TEST_PG_IMAGE` | str | consumer-defined | core | Core setting: test pg image. |
+| `MAC_TEST_PG_LOCAL` | str | consumer-defined | core | Core setting: test pg local. |
 | `MAC_TEST_PG_MAX_CONNECTIONS` | str | consumer-defined | core | Core setting: test pg max connections. |
 | `MAC_TEST_PG_MAX_LOCKS` | str | consumer-defined | core | Core setting: test pg max locks. |
 | `MAC_TEST_PG_PORT` | int | consumer-defined | core | Core setting: test pg port. |
@@ -1150,6 +1168,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_PORTFOLIO_OUTPUT` | str | consumer-defined | core | Core setting: test portfolio output. |
 | `MAC_TEST_REBUILD_MAP` | bool | consumer-defined | core | Core setting: test rebuild map. |
 | `MAC_TEST_SELECT_BASE` | str | consumer-defined | core | Core setting: test select base. |
+| `MAC_TEST_SERIAL_SLICE` | str | consumer-defined | core | Core setting: test serial slice. |
 | `MAC_TEST_STALL_TIMEOUT` | int | consumer-defined | core | Core setting: test stall timeout. |
 | `MAC_TICK_BLOCKING_HUB_VERIFY` | str | consumer-defined | core | Core setting: tick blocking hub verify. |
 | `MAC_TICK_RUNS_REVIEW_SWEEP` | str | consumer-defined | core | Core setting: tick runs review sweep. |
@@ -1196,6 +1215,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_CREDENTIAL_VERSION` | str | consumer-defined | worker | Worker setting: worker credential version. |
 | `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
 | `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Worker setting: worker deploy barrier file. |
+| `MAC_WORKER_DEPLOY_BARRIER_MAX_AGE_SECONDS` | int | consumer-defined | worker | Worker setting: worker deploy barrier max age seconds. |
 | `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Worker setting: worker deploy generation. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |

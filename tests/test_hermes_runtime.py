@@ -31,6 +31,9 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
             [
                 "schema: mac.repository_contract.v1",
                 "project: repo-beads-mac",
+                "platforms:",
+                "  - darwin",
+                "  - linux",
                 "toolchain:",
                 "  required_commands:",
                 "    - python3",
@@ -118,6 +121,19 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert stored["endpoints"]["mac_api"] == "http://hub.example.internal:8789/path"
     assert stored["workspace"]["path"] == str(workspace)
     assert stored["workspace"]["project_contract"]["project"] == "repo-beads-mac"
+    assert stored["workspace"]["project_contract"]["platforms"] == ["darwin", "linux"]
+    quality_gate = next(
+        item
+        for item in stored["session_capabilities"]["capabilities"]
+        if item["name"] == "quality_gate"
+    )
+    assert quality_gate["kind"] == "repository_verification"
+    assert quality_gate["execution"]["platform"] == "linux"
+    assert quality_gate["execution"]["host_execution"] is False
+    assert (
+        "scripts/run-contract-tests.sh"
+        not in stored["session_capabilities"]["direct_session_workflow"]
+    )
     capability_names = {item["name"] for item in stored["session_capabilities"]["capabilities"]}
     assert {
         "mac_api",
@@ -202,6 +218,9 @@ def test_write_runtime_context_materializes_mac_task_project_bridge(tmp_path):
     assert env["MAC_PROJECT_CONTRACT_FILE"] == str(workspace / ".mac" / "project.yaml")
     assert "token=hidden" not in str(stored)
     assert "MAC_TOKEN" not in env
+    assert "registered project repository contracts" in str(stored)
+    assert "registered Beads repositories" not in str(stored)
+    assert "Beads bridge state" not in str(stored)
 
 
 def test_stable_id_matches_deployed_worker_id_shape():

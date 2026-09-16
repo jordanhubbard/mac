@@ -57,6 +57,7 @@ from mac.hermes_config_surface import (
 )
 from mac.hermes_startup import build_hermes_startup_report
 from mac.loop_stall_detector import LoopStallDetector
+from mac.mesh_bind import hosts_include_non_loopback, parse_bind_hosts, runtime_bind_error
 from mac.observability_console import (
     build_console_snapshot,
     build_project_graph,
@@ -903,6 +904,12 @@ class TaskAnswerRequest(BaseModel):
     # task_x" actually means.
     disposition: str = "resume"
     replaced_by: Optional[str] = None
+
+
+class TaskAcceptanceRequest(BaseModel):
+    evidence_id: str
+    reason: str = Field(min_length=1, max_length=8000)
+    accepted: bool = True
 
 
 class EvidenceCreate(BaseModel):
@@ -2438,11 +2445,23 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # is doing infra work, not user-facing writes).
         return "deploy"
     if path.startswith("/reviews/default"):
-        # The automated review tick is the closest thing the swarm has
-        # to an auto-merge button. Restrict to admin so an ordinary
-        # `write` token can't flush every reviewable task to
-        # COMPLETED on demand. mac-iez.
-        return "admin"
+        # The automated review tick is the closest thing the swarm has to an
+        # auto-merge button, so it does not fall under the generic `write`
+        # bucket (mac-iez). It is NOT admin-only either: a worker cannot
+        # advance a task's review to COMPLETED by calling this route --
+        # `advance_default_review_workflows` only lands work that already has
+        # a recorded, independently-authored verdict from `/reviews/{id}/decision`
+        # (itself gated by `_assert_review_actor`, so a worker can never
+        # author its own approval). This route just drains the queue for
+        # decisions that already exist. Without a scope a normal fleet worker
+        # holds, every worker's own post-verdict tick call was rejected with
+        # "token lacks required scope: admin", so the queue only drained when
+        # an admin-scoped caller happened to invoke it manually -- REVIEWING
+        # tasks piled up for months. `review:advance` is minted into every
+        # worker credential (WORKER_SCOPES) but is deliberately NOT inherited
+        # by a plain `write` token (TokenPrincipal.has_scope), so a
+        # non-fleet write-scoped caller still cannot flush the queue.
+        return "review:advance"
     if re.match(r"^/tasks/[^/]+/(force-complete|reopen|release|ask|answer)$", path):
         # These recovery/control-plane endpoints bypass normal worker flow or
         # make held work dispatchable. They must never be available to an
@@ -2547,6 +2566,8 @@ def _should_record_http_observation(path: str) -> bool:
             # telemetry source and feed the read -> metric -> refresh loop the
             # two lines above already exist to break.
             "/dashboard/observe",
+            "/news",
+            "/news/stream",
             "/.well-known/agent-card.json",
             "/.well-known/agent.json",
         }
@@ -4468,6 +4489,13 @@ def create_app(
         return merged
 
     initial_tokens = _current_auth_tokens()
+    mesh_bind_error = runtime_bind_error(
+        bind_host=os.environ.get("MAC_BIND_HOST") or "",
+        network_provider=os.environ.get("MAC_NETWORK_PROVIDER") or "",
+        mesh_ip=os.environ.get("MAC_TAILSCALE_IP") or "",
+    )
+    if mesh_bind_error:
+        raise ValidationError(mesh_bind_error)
     # mac-853j: refuse to fail-open when the API is bound to a non-loopback
     # interface. Deployments that explicitly want a no-auth dev mode can
     # set MAC_API_ALLOW_OPEN=1, but the default for a 0.0.0.0 hub is
@@ -4481,7 +4509,7 @@ def create_app(
             "yes",
             "on",
         }
-        is_loopback = bind_host in {"", "127.0.0.1", "::1", "localhost"}
+        is_loopback = not hosts_include_non_loopback(parse_bind_hosts(bind_host))
         if not is_loopback and not allow_open:
             raise ValidationError(
                 "auth fail-open refused: MAC_BIND_HOST=%r is non-loopback and "
@@ -5732,6 +5760,31 @@ def create_app(
             project=project, verify_git=verify_git, offset=offset, limit=limit
         )
 
+    @app.get("/tasks/outcomes")
+    def task_outcome_cohort(
+        project: Optional[str] = Query(default=None),
+        since_hours: float = Query(default=24, gt=0, le=2160),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        return cp.task_outcome_cohort(project=project, since_hours=since_hours, limit=limit)
+
+    @app.get("/tasks/{task_id}/outcome")
+    def task_outcome(task_id: str) -> Dict[str, Any]:
+        return cp.task_outcome(task_id)
+
+    @app.post("/tasks/{task_id}/acceptance")
+    def record_task_acceptance(
+        task_id: str,
+        body: TaskAcceptanceRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if principal.agent_id:
+            raise AuthorizationError("request acceptance requires an operator token")
+        task = cp.get_task(task_id)
+        principal.assert_tenant(cp._task_tenant_id(task))
+        actor = principal.human_id or principal.client_id or "operator"
+        return cp.record_task_acceptance(task.id, actor=actor, **_data(body))
+
     @app.get("/tasks/{task_id}")
     def get_task(
         task_id: str,
@@ -6190,6 +6243,15 @@ def create_app(
         # Recovery: return a stuck/terminal task (failed/cancelled/blocked) to
         # OPEN so it can be retried or reconciled. Counterpart to force-complete.
         return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
+
+    @app.post("/tasks/{task_id}/stop")
+    def stop_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.stop_task(task_id, actor=body.actor, reason=body.reason).to_dict()
 
     @app.post("/tasks/{task_id}/ask")
     def ask_task(
@@ -7950,6 +8012,42 @@ def create_app(
             until=until,
             limit=limit,
         )
+
+    @app.get("/news")
+    def list_news(
+        after_sequence: Optional[int] = Query(default=None, ge=0),
+        project: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        return cp.list_news(after_sequence=after_sequence, project=project, limit=limit)
+
+    @app.get("/news/stream")
+    async def stream_news(
+        request: Request,
+        after_sequence: int = Query(default=0, ge=0),
+        project: Optional[str] = Query(default=None),
+        timeout_seconds: float = Query(default=300.0),
+        poll_interval_seconds: float = Query(default=1.0),
+    ) -> StreamingResponse:
+        """Follow the same curated activity representation returned by /news."""
+        clamped_timeout = clamp_stream_timeout(timeout_seconds)
+        clamped_interval = clamp_stream_poll_interval(poll_interval_seconds)
+
+        async def iter_news() -> Any:
+            cursor = max(0, int(after_sequence))
+            deadline = time.monotonic() + clamped_timeout
+            while True:
+                if await _client_gone(request):
+                    break
+                page = cp.list_news(after_sequence=cursor, project=project, limit=500)
+                for item in page["items"]:
+                    cursor = max(cursor, int(item["sequence"]))
+                    yield json.dumps(item, sort_keys=True, default=str) + "\n"
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(0 if page["items"] else clamped_interval)
+
+        return StreamingResponse(iter_news(), media_type="application/x-ndjson")
 
     @app.post("/sandbox/rollout")
     def roll_out_sandbox_image(body: SandboxRolloutRequest) -> Dict[str, Any]:

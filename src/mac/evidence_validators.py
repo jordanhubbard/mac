@@ -27,6 +27,17 @@ GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 WORKTREE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+def repo_files_changed_problem(value: Any) -> Optional[str]:
+    """Validate a supplied path list; evidence-specific rules require its presence."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(
+        not isinstance(path, str) or not path.strip() for path in value
+    ):
+        return "repo.files_changed must be a list of non-empty path strings"
+    return None
+
+
 def normalize_manifest_tests(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     """Normalize ``verification.tests`` so it is always a list of result objects.
 
@@ -187,6 +198,9 @@ class EvidenceValidator:
         if repo is None:
             return ["repo evidence requires verification.repo object"]
         problems: List[str] = []
+        files_problem = repo_files_changed_problem(manifest.raw["repo"].get("files_changed"))
+        if files_problem:
+            problems.append(files_problem)
         if not GIT_SHA_RE.match(repo.head_sha):
             problems.append("repo.head_sha must be a git SHA")
         if repo.dirty not in {False, "false", "False", 0, "0"}:
@@ -319,6 +333,15 @@ class ArtifactValidator(TestValidator):
         return problems
 
 
+def no_change_reason(manifest: Mapping[str, Any]) -> str:
+    """Read the explicit reason without requiring a duplicate of reconciliation."""
+    reconcile = manifest.get("canonical_reconcile")
+    reconcile = reconcile if isinstance(reconcile, Mapping) else {}
+    return str(
+        manifest.get("reason") or manifest.get("no_change_reason") or reconcile.get("reason") or ""
+    ).strip()
+
+
 class NoChangeValidator(EvidenceValidator):
     evidence_type = "no_change"
 
@@ -331,9 +354,7 @@ class NoChangeValidator(EvidenceValidator):
         # inspected, but requiring a newly pushed ref contradicts the evidence
         # type and turned correct investigations into deterministic retries.
         problems = self.require_clean_repo_anchor(manifest)
-        if not str(
-            manifest.raw.get("reason") or manifest.raw.get("no_change_reason") or ""
-        ).strip():
+        if not no_change_reason(manifest.raw):
             problems.append("no_change evidence requires a reason")
         if self.passed_checks(manifest, context) < 1:
             problems.append("no_change evidence requires at least one passing check")

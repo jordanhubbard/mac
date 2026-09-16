@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="880" viewBox="0 0 1520 880" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="fl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5A6B7A"/>
+    </marker>
+  </defs>
+  <rect width="1520" height="880" fill="#FFFFFF"/>
+
+  <text x="40" y="46" font-size="30" font-weight="700" fill="#1B2530">A task is a state machine with receipts</text>
+  <text x="40" y="76" font-size="16.5" fill="#5A6B7A">Twelve states in <tspan font-family="Menlo, Consolas, monospace" font-size="15">TaskState</tspan>, three of them terminal. What makes it a control plane rather than a queue is what must be true to move between them.</text>
+
+  <text x="40" y="114" font-size="13.5" font-weight="700" fill="#2E6F9E">THE PATH WORK TAKES WHEN IT GOES WELL</text>
+
+  <rect x="40" y="126" width="170" height="58" rx="8" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="125" y="161" font-size="16" font-weight="700" fill="#1B4E73" text-anchor="middle">open</text>
+  <path d="M216 155 L 239 155" stroke="#5A6B7A" stroke-width="2" marker-end="url(#fl)"/>
+
+  <rect x="245" y="126" width="170" height="58" rx="8" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="330" y="161" font-size="16" font-weight="700" fill="#1B4E73" text-anchor="middle">claimed</text>
+  <path d="M421 155 L 444 155" stroke="#5A6B7A" stroke-width="2" marker-end="url(#fl)"/>
+
+  <rect x="450" y="126" width="170" height="58" rx="8" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="535" y="161" font-size="16" font-weight="700" fill="#1B4E73" text-anchor="middle">running</text>
+  <path d="M626 155 L 649 155" stroke="#5A6B7A" stroke-width="2" marker-end="url(#fl)"/>
+
+  <rect x="655" y="126" width="170" height="58" rx="8" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="740" y="161" font-size="16" font-weight="700" fill="#1B4E73" text-anchor="middle">needs_review</text>
+  <text x="740" y="202" font-size="11.5" fill="#B5651D" text-anchor="middle">hub still drives this (ADR 0016 Accepted)</text>
+  <path d="M831 155 L 854 155" stroke="#5A6B7A" stroke-width="2" marker-end="url(#fl)"/>
+
+  <rect x="860" y="126" width="170" height="58" rx="8" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="945" y="161" font-size="16" font-weight="700" fill="#1B4E73" text-anchor="middle">reviewing</text>
+  <path d="M1036 155 L 1059 155" stroke="#5A6B7A" stroke-width="2" marker-end="url(#fl)"/>
+
+  <rect x="1065" y="126" width="170" height="58" rx="8" fill="#E3F0E7" stroke="#3E7C4F" stroke-width="2"/>
+  <text x="1150" y="155" font-size="16" font-weight="700" fill="#265536" text-anchor="middle">completed</text>
+  <text x="1150" y="173" font-size="11.5" fill="#3E7C4F" text-anchor="middle">terminal</text>
+
+  <text x="1260" y="146" font-size="13" fill="#5A6B7A">Terminal states are</text>
+  <text x="1260" y="164" font-size="13" fill="#5A6B7A">completed, failed and</text>
+  <text x="1260" y="182" font-size="13" fill="#5A6B7A">cancelled. Everything</text>
+  <text x="1260" y="200" font-size="13" fill="#5A6B7A">else still wants</text>
+  <text x="1260" y="218" font-size="13" fill="#5A6B7A">something from somebody</text>
+  <text x="1260" y="236" font-size="13" fill="#5A6B7A">— which is why that is</text>
+  <text x="1260" y="254" font-size="13" fill="#5A6B7A">the default list view.</text>
+
+  <text x="40" y="226" font-size="13.5" font-weight="700" fill="#8C3227">THE STATES THAT MEAN SOMETHING IS OWED</text>
+
+  <rect x="40" y="238" width="170" height="58" rx="8" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="125" y="264" font-size="15" font-weight="700" fill="#2F3A45" text-anchor="middle">waiting</text>
+  <text x="125" y="282" font-size="11.5" fill="#5A6B7A" text-anchor="middle">on a timer or window</text>
+
+  <rect x="245" y="238" width="170" height="58" rx="8" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="330" y="264" font-size="15" font-weight="700" fill="#2F3A45" text-anchor="middle">blocked</text>
+  <text x="330" y="282" font-size="11.5" fill="#5A6B7A" text-anchor="middle">on another task</text>
+
+  <rect x="450" y="238" width="170" height="58" rx="8" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="535" y="264" font-size="15" font-weight="700" fill="#2F3A45" text-anchor="middle">needs_input</text>
+  <text x="535" y="282" font-size="11.5" fill="#5A6B7A" text-anchor="middle">on a human answer</text>
+
+  <rect x="655" y="238" width="170" height="58" rx="8" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="740" y="264" font-size="15" font-weight="700" fill="#2F3A45" text-anchor="middle">stopped</text>
+  <text x="740" y="282" font-size="11.5" fill="#5A6B7A" text-anchor="middle">held by an operator</text>
+
+  <rect x="860" y="238" width="170" height="58" rx="8" fill="#FBF4F3" stroke="#DCBCB6"/>
+  <text x="945" y="264" font-size="15" font-weight="700" fill="#8C3227" text-anchor="middle">failed</text>
+  <text x="945" y="282" font-size="11.5" fill="#A9827B" text-anchor="middle">terminal</text>
+
+  <rect x="1065" y="238" width="170" height="58" rx="8" fill="#FBF4F3" stroke="#DCBCB6"/>
+  <text x="1150" y="264" font-size="15" font-weight="700" fill="#8C3227" text-anchor="middle">cancelled</text>
+  <text x="1150" y="282" font-size="11.5" fill="#A9827B" text-anchor="middle">terminal</text>
+
+  <text x="40" y="326" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">mac task ask / answer / needs-input</tspan> turn the human out-of-band question into a ledger state, so a task waiting on a person is visible rather than silently stalled.</text>
+  <text x="40" y="346" font-size="13.5" fill="#2F3A45"><tspan font-weight="700">mac task why-unclaimed</tspan> explains a task that is ready but unassigned, because "nothing is happening" is the hardest fleet question to answer from a board.</text>
+
+  <!-- GATES -->
+  <text x="40" y="392" font-size="13.5" font-weight="700" fill="#2E6F9E">WHAT MUST BE TRUE TO MOVE — THE PART THAT IS NOT A QUEUE</text>
+
+  <rect x="40" y="406" width="345" height="288" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M40 416 a10 10 0 0 1 10 -10 h325 a10 10 0 0 1 10 10 v38 h-345 z" fill="#2E6F9E"/>
+  <text x="60" y="440" font-size="15.5" font-weight="700" fill="#FFFFFF">1 · CLAIM — leases and fences</text>
+  <text x="60" y="474" font-size="13" fill="#2F3A45">Every mutation is authorized by an exact</text>
+  <text x="60" y="493" font-size="13" fill="#2F3A45">lease and fence, not merely by an agent id,</text>
+  <text x="60" y="512" font-size="13" fill="#2F3A45">so two workers cannot claim one change.</text>
+  <text x="60" y="540" font-size="13" fill="#2F3A45">Lease expiry is the single liveness</text>
+  <text x="60" y="559" font-size="13" fill="#2F3A45">mechanism — a dead agent's work is</text>
+  <text x="60" y="578" font-size="13" fill="#2F3A45">reclaimed rather than lost.</text>
+  <text x="60" y="606" font-size="13" fill="#2F3A45">The dispatcher accounts for tenant pool</text>
+  <text x="60" y="625" font-size="13" fill="#2F3A45">policy, resources, capacity, stale</text>
+  <text x="60" y="644" font-size="13" fill="#2F3A45">heartbeats and expired leases.</text>
+  <text x="60" y="674" font-size="12.5" fill="#5A6B7A">Releasing a worker returns the lease.</text>
+
+  <rect x="405" y="406" width="345" height="288" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M405 416 a10 10 0 0 1 10 -10 h325 a10 10 0 0 1 10 10 v38 h-345 z" fill="#2E6F9E"/>
+  <text x="425" y="440" font-size="15.5" font-weight="700" fill="#FFFFFF">2 · PROVE — typed evidence</text>
+  <text x="425" y="474" font-size="13" fill="#2F3A45">Evidence rows are typed manifests bound to</text>
+  <text x="425" y="493" font-size="13" fill="#2F3A45">one exact attempt — repo_change,</text>
+  <text x="425" y="512" font-size="13" fill="#2F3A45">review_verdict, and their digests.</text>
+  <text x="425" y="540" font-size="13" fill="#2F3A45">Affected-test selection determines the</text>
+  <text x="425" y="559" font-size="13" fill="#2F3A45">required verification scope for each</text>
+  <text x="425" y="578" font-size="13" fill="#2F3A45">attempt before publication.</text>
+  <text x="425" y="606" font-size="13" fill="#2F3A45">A short-retention command audit records</text>
+  <text x="425" y="625" font-size="13" fill="#2F3A45">what worker subprocesses really ran, so</text>
+  <text x="425" y="644" font-size="13" fill="#2F3A45">local shell history is never the evidence.</text>
+  <text x="425" y="674" font-size="12.5" fill="#5A6B7A">Evidence from one stage never authorizes a later one.</text>
+
+  <rect x="770" y="406" width="345" height="288" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M770 416 a10 10 0 0 1 10 -10 h325 a10 10 0 0 1 10 10 v38 h-345 z" fill="#2E6F9E"/>
+  <text x="790" y="440" font-size="15.5" font-weight="700" fill="#FFFFFF">3 · REVIEW — independence</text>
+  <text x="790" y="474" font-size="13" fill="#2F3A45">A reviewer must be a different agent or</text>
+  <text x="790" y="493" font-size="13" fill="#2F3A45">persona, and an approval of model-generated</text>
+  <text x="790" y="512" font-size="13" fill="#2F3A45">evidence must name a different model.</text>
+  <text x="790" y="540" font-size="13" fill="#2F3A45">The approval binds to the current executor</text>
+  <text x="790" y="559" font-size="13" fill="#2F3A45">evidence for that exact attempt.</text>
+  <text x="790" y="587" font-size="13" fill="#2F3A45">A blind arm physically removes the executor</text>
+  <text x="790" y="606" font-size="13" fill="#2F3A45">evidence file before the discovery pass,</text>
+  <text x="790" y="625" font-size="13" fill="#2F3A45">then restores it for adjudication.</text>
+  <text x="790" y="653" font-size="13" fill="#2F3A45">Reviews record what the reviewer said, not</text>
+  <text x="790" y="672" font-size="13" fill="#2F3A45">only which way it voted.</text>
+
+  <rect x="1135" y="406" width="345" height="288" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M1135 416 a10 10 0 0 1 10 -10 h325 a10 10 0 0 1 10 10 v38 h-345 z" fill="#2E6F9E"/>
+  <text x="1155" y="440" font-size="15.5" font-weight="700" fill="#FFFFFF">4 · LAND — the merge queue</text>
+  <text x="1155" y="474" font-size="13" fill="#2F3A45">Approved work lands through a pull request</text>
+  <text x="1155" y="493" font-size="13" fill="#2F3A45">the agent owns, not a push to main.</text>
+  <text x="1155" y="521" font-size="13" fill="#2F3A45">A native durable queue per (repository,</text>
+  <text x="1155" y="540" font-size="13" fill="#2F3A45">branch) tests entries speculatively, in a</text>
+  <text x="1155" y="559" font-size="13" fill="#2F3A45">Zuul-style train; a failure evicts the entry</text>
+  <text x="1155" y="578" font-size="13" fill="#2F3A45">and discards results projected behind it.</text>
+  <text x="1155" y="606" font-size="13" fill="#2F3A45">The speculation window is TCP congestion</text>
+  <text x="1155" y="625" font-size="13" fill="#2F3A45">control: floor 1, ceiling 4, additive growth,</text>
+  <text x="1155" y="644" font-size="13" fill="#2F3A45">halved on any failure.</text>
+  <text x="1155" y="674" font-size="12.5" font-weight="700" fill="#265536">Invariant: never land an untested tree.</text>
+
+  <rect x="40" y="716" width="1440" height="128" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="64" y="746" font-size="15.5" font-weight="700" fill="#1B2530">Recovery is a first-class verb, not an incident</text>
+  <text x="64" y="772" font-size="13.5" fill="#2F3A45">Stranded work, stalled finalizers and expired leases each have a named recovery path — <tspan font-family="Menlo, Consolas, monospace" font-size="13">recover-stranded</tspan>, <tspan font-family="Menlo, Consolas, monospace" font-size="13">recover-finalizer</tspan>, <tspan font-family="Menlo, Consolas, monospace" font-size="13">recover-stalled-finalizer</tspan> —</text>
+  <text x="64" y="794" font-size="13.5" fill="#2F3A45">because a fleet that cannot reclaim its own work degrades quietly. Break-glass override is grantable, listable and revocable, so an emergency leaves a record instead of</text>
+  <text x="64" y="816" font-size="13.5" fill="#2F3A45">an ambient permission. Failure causes are classified rather than free-text, which is what makes "why did this attempt die" answerable across thousands of tasks.</text>
+</svg>

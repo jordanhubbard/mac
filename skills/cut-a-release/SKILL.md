@@ -199,7 +199,16 @@ Land it the way all work lands here — through a pull request, not a push to
 
 ```bash
 git tag vX.Y.Z && git push origin vX.Y.Z
-gh release create vX.Y.Z --title "mac vX.Y.Z" --notes-file notes.md
+```
+
+The tag-triggered `Release artifacts` workflow builds the exact-version wheel,
+installs it into a clean environment, proves `mac.task_executor` imports, then
+creates the GitHub release when necessary and attaches the wheel. Wait for that
+workflow to pass before calling the release complete. If release notes need more
+than the generated changelog, update the release after publication:
+
+```bash
+gh release edit vX.Y.Z --title "mac vX.Y.Z" --notes-file notes.md
 ```
 
 Write the notes from the deck's `AUDIT.md`, not from the commit log. The log

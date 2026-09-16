@@ -120,6 +120,17 @@ openshell_local_gateway(){
   OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" "$cli" "$@"
 }
 
+wait_for_local_gateway(){
+  local cli="$1" attempt
+  for ((attempt = 1; attempt <= 120; attempt++)); do
+    if openshell_local_gateway "$cli" status >/dev/null 2>&1; then
+      return 0
+    fi
+    ((attempt == 120)) || sleep 1
+  done
+  return 1
+}
+
 register_and_select_local_gateway(){
   local cli="$1" registrations
   # `gateway add` is not idempotent. Remove the reviewed name when it already
@@ -305,7 +316,7 @@ build_runtime_image() {
 }
 
 verify_supervisor_image() {
-  local runtime_config version_output
+  local runtime_config version_output container_id entrypoint extracted
   runtime_config="$(mktemp -d)"
   printf '{}' > "$runtime_config/config.json"
   log "pulling and verifying OpenShell supervisor $OSH_SUPERVISOR_IMAGE"
@@ -320,6 +331,53 @@ verify_supervisor_image() {
     echo "ERROR: OpenShell supervisor version mismatch: expected $OPENSHELL_VERSION, got '$version_output'" >&2
     return 1
   fi
+  entrypoint="$("$OSH_DOCKER_BIN" image inspect --format '{{json .Config.Entrypoint}}' \
+    "$OSH_SUPERVISOR_IMAGE")"
+  entrypoint="$(python3 -c '
+import json, sys
+value = json.loads(sys.argv[1])
+if not isinstance(value, list) or len(value) != 1 or not value[0].startswith("/"):
+    raise SystemExit("reviewed supervisor image has no exact absolute entrypoint")
+print(value[0])
+' "$entrypoint")" || return 1
+  container_id="$("$OSH_DOCKER_BIN" create "$OSH_SUPERVISOR_IMAGE")" || return 1
+  extracted="$(mktemp "${TMPDIR:-/tmp}/openshell-sandbox.XXXXXX")"
+  if ! "$OSH_DOCKER_BIN" cp "$container_id:$entrypoint" "$extracted"; then
+    "$OSH_DOCKER_BIN" rm -f "$container_id" >/dev/null 2>&1 || true
+    rm -f "$extracted"
+    echo "ERROR: failed to extract the reviewed OpenShell supervisor" >&2
+    return 1
+  fi
+  "$OSH_DOCKER_BIN" rm -f "$container_id" >/dev/null
+  if ! python3 - "$extracted" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_bytes()
+if raw[:4] != b"\x7fELF" or raw[4] not in (1, 2) or raw[5] not in (1, 2):
+    raise SystemExit("reviewed supervisor is not an ELF binary")
+order = "<" if raw[5] == 1 else ">"
+if raw[4] == 2:
+    (offset,) = struct.unpack_from(order + "Q", raw, 32)
+    entry_size, count = struct.unpack_from(order + "HH", raw, 54)
+else:
+    (offset,) = struct.unpack_from(order + "I", raw, 28)
+    entry_size, count = struct.unpack_from(order + "HH", raw, 42)
+if not entry_size or offset + entry_size * count > len(raw):
+    raise SystemExit("reviewed supervisor has an invalid ELF program table")
+for index in range(count):
+    (kind,) = struct.unpack_from(order + "I", raw, offset + index * entry_size)
+    if kind == 3:  # PT_INTERP means the binary requires a host/container loader.
+        raise SystemExit("reviewed supervisor is dynamically linked")
+PY
+  then
+    rm -f "$extracted"
+    echo "ERROR: reviewed OpenShell supervisor is not statically linked" >&2
+    return 1
+  fi
+  install -m700 "$extracted" "$MAC_HOME/bin/openshell-sandbox"
+  rm -f "$extracted"
   log "OpenShell supervisor: $version_output"
 }
 
@@ -1041,7 +1099,7 @@ retire_managed_sandboxes_via_docker() {
     # the API path: only the historical disposable families already reviewed
     # by mac.openshell_sandbox_gc are eligible, and only after every container
     # is stopped. Any future family fails closed until explicitly reviewed.
-    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
+    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
       action=disposable
     elif [ -n "$expected_openclaw" ] && [ "$sandbox_name" = "$expected_openclaw" ]; then
       action=openclaw
@@ -1788,9 +1846,8 @@ else
   echo "ERROR: OpenShell gateway requires a working systemd user manager or supervisord" >&2
   exit 1
 fi
-sleep 3
-if ! register_and_select_local_gateway "$BIN/openshell" \
-    || ! openshell_local_gateway "$BIN/openshell" status >/dev/null 2>&1; then
+if ! wait_for_local_gateway "$BIN/openshell" \
+    || ! register_and_select_local_gateway "$BIN/openshell"; then
   stop_gateway_fail_closed
   echo "ERROR: OpenShell gateway did not pass its local status probe" >&2
   exit 1
@@ -1832,7 +1889,7 @@ else
   log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
 fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
+sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d;/^OPENSHELL_GATEWAY_ENDPOINT=/d' "$ENVF"
 sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
 {
   echo ""
@@ -1845,6 +1902,17 @@ sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
   echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref$codex_uploads\""
   echo "MAC_OPENSHELL_GPU_AVAILABLE=$gpu_runtime_available"
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
+  # Pin the gateway every mac-agent subprocess talks to, matching what this
+  # script already uses for its own openshell_local_gateway() calls (line
+  # ~120). Without this, mac-agent's executor inherits whatever gateway the
+  # openshell CLI's own persisted "active gateway" selection happens to be --
+  # local, unrelated state any other process (e.g. a NemoClaw pilot) can
+  # silently repoint. Live-found on natasha (2026-09-04): the active gateway
+  # drifted to a NemoClaw pilot endpoint, so every coding-agent sandbox
+  # preflight probe uniformly failed (all 5 configured agents) with no
+  # per-agent credential explanation, because they were all quietly hitting
+  # the wrong gateway.
+  echo "OPENSHELL_GATEWAY_ENDPOINT=$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)

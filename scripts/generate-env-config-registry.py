@@ -110,6 +110,7 @@ INT_SUFFIXES = (
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 CONSUMER_DEFAULTS = {
+    "MAC_HUB_VERIFY_PROFILE": "default",
     # The contract runner deliberately bounds its default. Operators may still
     # request ``auto`` or another explicit worker count for a qualified host.
     "MAC_TEST_JOBS": "2",
@@ -122,6 +123,41 @@ CONSUMER_DEFAULTS = {
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_HUB_VERIFY_PROFILE": (
+        "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "
+        "driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB "
+        "sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. "
+        "Repository fixture scratch uses a separate sandbox-local directory so fixture "
+        "copies cannot fill the database mount. Requires a writable "
+        "Linux tmpfs proof before repository code runs; unsupported profiles fail closed. "
+        "Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, "
+        "including separate read-only verifiers; existing sandbox resources remain unchanged. "
+        "Conflicting worker create resource overrides are rejected."
+    ),
+    "MAC_HUB_VERIFY_PG_URL": (
+        "Dedicated test Postgres DSN injected into the hub-verify OpenShell "
+        "sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host "
+        "and port, not merely the same database name). Loopback hosts are "
+        "rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / "
+        "`MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the "
+        "hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a "
+        "dedicated port (default 55432) and rewrites that DSN the same way."
+    ),
+    "MAC_HUB_VERIFY_PG_HOST": (
+        "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the "
+        "hub-verify test DSN. Default `host.openshell.internal` (OpenShell's "
+        "host-bridge alias). Does not select the live hub Postgres."
+    ),
+    "MAC_HUB_VERIFY_PG_PORT": (
+        "Port passed to `scripts/start-test-postgres.sh` when hub-verify "
+        "provisions a dedicated test DSN. Default 55432 so the helper does not "
+        "attach to the live hub listener on 5432."
+    ),
+    "MAC_HUB_VERIFY_PG_DATADIR": (
+        "Data directory for the dedicated hub-verify Postgres started by "
+        "`scripts/start-test-postgres.sh`. Defaults to a temp "
+        "`mac-hubverify-pgdata` directory, never the live hub cluster."
+    ),
     "MAC_DEPLOY_GATEWAY_PROBE_FATAL": (
         "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, "
         "and therefore the whole deploy cohort; unset or `0` records the failure, "
@@ -130,6 +166,14 @@ CURATED_DESCRIPTIONS = {
         "mac-agent and none of them consult chat, so a node that cannot post is "
         "degraded for conversation and fully capable of work. Set it for a deploy "
         "whose purpose is to prove the chat surface."
+    ),
+    "MAC_NETWORK_PROVIDER": (
+        "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` "
+        "or `headscale`, the hub process refuses to listen on `0.0.0.0` / LAN / "
+        "public addresses and binds loopback plus the Tailscale IPv4 instead. "
+        "Not a host firewall by itself; it is the listen-address policy that "
+        "makes the overlay the only worker path. Unset means no mesh bind "
+        "policy (container/dev)."
     ),
     "MAC_OPENCLAW_READY_LOG_TIMEOUT": (
         "Seconds to wait for `[gateway] ready` in the host log after `verify` "

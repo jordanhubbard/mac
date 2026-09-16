@@ -27,8 +27,8 @@ def test_make_help_exposes_conventional_lifecycle() -> None:
     # to say "canonical Fleet IDE" for a bundle no hub has ever mounted.
     assert "the hub serves at /ui" in result.stdout
     assert "canonical Fleet IDE" not in result.stdout
-    assert "Python 3.11+, git, gh, and npm" in result.stdout
-    assert "Build and test targets also require uv." in result.stdout
+    assert "Python 3.14.7, git, gh, and npm" in result.stdout
+    assert "Install, build and test targets require uv." in result.stdout
 
 
 def test_makefile_defaults_to_help_and_keeps_fleet_setup_distinct() -> None:
@@ -56,6 +56,24 @@ def test_make_dry_run_builds_both_supported_surfaces() -> None:
     assert result.returncode == 0, result.stderr
     assert "uv build --wheel" in result.stdout
     assert "npm run build" in result.stdout
+
+
+def test_package_cli_verifies_the_current_console_script_contract() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    scripts = makefile.split("CONSOLE_SCRIPTS = ", 1)[1].splitlines()[0].split()
+
+    assert "mac-hermes-gateway" not in scripts
+    assert {
+        "mac",
+        "mac-agent",
+        "mac-evidence",
+        "mac-git-askpass",
+        "mac-openshell-collector",
+        "mac-openshell-supervisor",
+        "mac-pg-backup",
+        "mac-router",
+        "mac-schema-migrate",
+    } <= set(scripts)
 
 
 def test_gui_launcher_selects_auth_without_printing_the_token() -> None:

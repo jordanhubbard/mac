@@ -91,7 +91,7 @@ if scenario in {"deferred", "tainted-deferral"}:
     print("Gateway target: ws://127.0.0.1:18789", file=sys.stderr)
     print("Source: local loopback", file=sys.stderr)
     print("Config: /home/sandbox/.config/mac-openclaw/openclaw.json", file=sys.stderr)
-    print("Bind: lan", file=sys.stderr)
+    print("Bind: loopback", file=sys.stderr)
     if scenario == "tainted-deferral":
         print("ERROR gateway database unavailable", file=sys.stderr)
     raise SystemExit(1)
@@ -328,9 +328,21 @@ def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> No
     policy = (mac_home / "openclaw" / "openclaw-policy.yaml").read_text(encoding="utf-8")
     assert "MAC_OPENCLAW_CONTROL_URL=http://host.openshell.internal:8789" in runtime
     assert "http://host.openshell.internal:8789/v1" in config
+    assert '"bind": "loopback"' in config
+    assert '"bind": "lan"' not in config
     assert "host: host.openshell.internal" in policy
     assert "127.0.0.1:8789" not in runtime
     assert "localhost:8789" not in runtime
+
+
+def test_installer_does_not_emit_lan_gateway_bind() -> None:
+    """bind=lan published 18789 onto every supervisor NIC. Chat is outbound;
+    operators use sandbox exec; OpenClaw's tailnet bind is not visible in the
+    sandbox netns. Loopback is the only reliable refuse.
+    """
+    text = INSTALLER.read_text(encoding="utf-8")
+    assert '"bind": "loopback"' in text
+    assert '"bind": "lan"' not in text
 
 
 def test_prepare_renders_distinct_agentbus_and_model_router_ports(tmp_path: Path) -> None:
@@ -676,6 +688,60 @@ def test_installer_preserves_public_identity_and_migrated_script_jobs() -> None:
     assert '"MAC_OPENCLAW_REPRESENTATION_MODE": os.environ.get' in installer
     assert '"$OPENCLAW_HOST_DIR/host-script-jobs.json"' in installer
     assert 'not str(job.get("legacy_script") or "").strip()' in installer
+
+
+def _extract_finalize_cron_plan_script() -> str:
+    """Pull the embedded python heredoc that finalizes MANAGED_DIR/cron-plan.json
+    (curiosity-job upsert + same-schedule staggering) out of the installer so it
+    can be executed directly against synthetic job data."""
+    installer = INSTALLER.read_text(encoding="utf-8")
+    marker = "python3 - \"$MANAGED_DIR/cron-plan.json\" <<'PY'\n"
+    start = installer.index(marker) + len(marker)
+    end = installer.index("\nPY", start)
+    return installer[start:end]
+
+
+def test_finalize_cron_plan_staggers_jobs_sharing_an_identical_schedule(tmp_path: Path) -> None:
+    """task_2e7e9e31: dream-cycle and dream-synthesis were both migrated from
+    Hermes with the identical unstaggered cron expression "0 * * * *", so both
+    fire the local openclaw CLI at the same instant every hour. Concurrent
+    invocations race to open the same host-persisted plugin-state SQLite
+    database, observed on rocky as intermittent "database disk image is
+    malformed" corruption. Jobs sharing a schedule must be staggered a few
+    minutes apart when the plan is finalized."""
+    script = _extract_finalize_cron_plan_script()
+    assert "by_cron" in script, "finalize step must group jobs by cron expression"
+
+    plan_path = tmp_path / "cron-plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema": "mac.openclaw_cron_migration.v1",
+                "jobs": [
+                    {"legacy_id": "adf20933eff0", "name": "dream-cycle", "cron": "0 * * * *"},
+                    {"legacy_id": "2d437df2441e", "name": "dream-synthesis", "cron": "0 * * * *"},
+                    {
+                        "legacy_id": "61c34b2f9752",
+                        "name": "kslug-nightly-news",
+                        "cron": "0 6 * * *",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["python3", "-c", script, str(plan_path)], check=True, capture_output=True, text=True
+    )
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    by_name = {job["name"]: job["cron"] for job in plan["jobs"]}
+    # First job in the colliding group keeps its original minute...
+    assert by_name["dream-cycle"] == "0 * * * *"
+    # ...the second is staggered away from it, so they no longer fire together.
+    assert by_name["dream-synthesis"] == "5 * * * *"
+    # A schedule with no collision is left untouched.
+    assert by_name["kslug-nightly-news"] == "0 6 * * *"
 
 
 def test_apply_cron_plan_receipt_counts_only_successful_cli_mutations(tmp_path: Path) -> None:
@@ -1416,6 +1482,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert 'sandbox delete "$SANDBOX" >/dev/null 2>&1 || true' not in stop_wrapper
     assert "/sandbox/workspace" in stop_wrapper
     assert "/sandbox/state" in stop_wrapper
+    reclaim = wrapper.split("reclaim_stale_sandbox() {", 1)[1].split("\n}\n", 1)[0]
+    assert "/sandbox/workspace" in reclaim
+    assert "/sandbox/state" not in reclaim
+    assert "retained last validated host state" in reclaim
     assert "pgrep -x openclaw" not in stop_wrapper
     assert "trap cleanup EXIT" in wrapper
     assert "stop_gateway" in wrapper
@@ -2035,13 +2105,14 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
     assert "--account omgjkh --target channel:C456HOME" in calls_text
 
 
-def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
+def test_fleet_deploy_defaults_to_hermes_while_retaining_explicit_legacy_cleanup() -> None:
     config = FLEET_CONFIG.read_text(encoding="utf-8")
     deploy = (
         DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     )
     unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
-    assert "gateway_impl: openclaw" in config
+    assert "gateway_impl: hermes" in config
+    assert '*) MAC_CHAT_GATEWAY_IMPL="hermes"' in deploy
     assert 'openclaw|"")\n      install_linux_openclaw_service' in deploy
     assert "install_darwin_openclaw_service" in deploy
     assert "OPENCLAW_SUPERVISORD_PROG" in deploy
@@ -2445,6 +2516,7 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
     config = json.loads((mac_home / "openclaw" / "managed" / "openclaw.json").read_text())
     runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text()
     workspace = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text()
+    assert config["gateway"]["bind"] == "loopback"
     assert config["channels"] == {}
     assert config["plugins"]["entries"]["slack"] == {"enabled": False}
     assert config["plugins"]["entries"]["telegram"] == {"enabled": False}
@@ -2570,6 +2642,79 @@ def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(
         (openclaw_home / "service-advertisement.json").read_text(encoding="utf-8")
     )
     assert advertisement["gateway_ownership"]["exclusive"] is True
+    assert advertisement["gateway_ownership"]["services"]["nemoclaw"] == "not_installed"
+    assert not (openclaw_home / "verification-pending.json").exists()
+
+
+def test_finalize_supervisord_no_such_process_exit_4_yields_not_installed(
+    tmp_path: Path,
+) -> None:
+    """supervisorctl's exit code for 'no such process' is not part of its
+    documented contract and has been observed as both 1 and 4 across
+    supervisord builds. Live-found on an HGX-provisioned fleet node whose
+    supervisorctl returned exit 4 for the identical 'ERROR (no such process)'
+    message that other builds return with exit 1: matching on rc==1 alone
+    misclassified this as a real inspection failure ("could not inspect
+    supervisord program mac-hermes-gateway (exit 4)"), which made
+    finalize_openclaw_gateway's exclusivity proof fail even though the
+    hermes-gateway program was correctly never configured on that node."""
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(json.dumps(pending), encoding="utf-8")
+    sudo = bin_dir / "sudo"
+    sudo.write_text(
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    sudo.chmod(0o700)
+    supervisorctl = bin_dir / "supervisorctl"
+    supervisorctl.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in\n'
+        "  *-openclaw-gateway) echo 'mac-openclaw-gateway     RUNNING   pid 1234'; exit 0 ;;\n"
+        "  *-hermes-gateway)   echo 'mac-hermes-gateway: ERROR (no such process)'; exit 4 ;;\n"
+        "  *-nemoclaw-gateway) echo 'mac-nemoclaw-gateway: ERROR (no such process)'; exit 4 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    supervisorctl.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": "supervisord",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
+    }
+
+    subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    advertisement = json.loads(
+        (openclaw_home / "service-advertisement.json").read_text(encoding="utf-8")
+    )
+    assert advertisement["gateway_ownership"]["exclusive"] is True
+    assert advertisement["gateway_ownership"]["services"]["hermes"] == "not_installed"
     assert advertisement["gateway_ownership"]["services"]["nemoclaw"] == "not_installed"
     assert not (openclaw_home / "verification-pending.json").exists()
 

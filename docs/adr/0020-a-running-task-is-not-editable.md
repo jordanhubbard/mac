@@ -1,12 +1,20 @@
 # ADR 0020 - A running task is not editable; stop it first
 
-- Status: **Proposed**
+- Status: **Partially implemented** (stop/start lifecycle and guarded scope edits)
 - Date: 2026-08-20
 - Decision owner: MAC fleet owner
 - Related: ADR 0013 (one authoritative hub allocator), ADR 0016 (agents decide
   what a task needs), ADR 0019 (privilege is an ACL on a resource tree)
 
-## Context
+## Implementation note — 2026-09-14
+
+The current task lifecycle guards scope changes while execution is active and
+provides stop/start recovery. Metadata-only and priority updates have separate
+rules; the behavior is pinned by `tests/test_task_stop_start.py`. The original
+unconditional-edit observation below is historical context, not the current
+contract. This note records implementation, not completion of every proposal.
+
+## Historical context
 
 `mac task update` edits a task in place regardless of its state. Applied to a
 RUNNING task this produces a split brain: the ledger holds one description and

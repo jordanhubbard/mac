@@ -23,7 +23,7 @@ def test_hub_schema_migration_runs_quiesced_before_any_upgraded_hub_start() -> N
     call = source.index(
         "\n# The upgraded package is installed and the typed hub is still quiesced here."
     )
-    package = source.index('"$VENV/bin/python" -m pip install -e')
+    package = source.index('"$PY" -m mac.native_runtime')
     legacy_quiescence = source.index("stop_existing_services_for_deploy")
     systemd_start = source.index('run_systemctl restart "$MAC_SERVICE_NAME"')
     launchd_start = source.index(

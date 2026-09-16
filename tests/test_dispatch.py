@@ -637,6 +637,57 @@ def test_remote_dispatch_read_agentbus_chunks_passes_agent_id():
     assert "limit=5" in url
 
 
+def test_remote_dispatch_read_agentbus_traffic_hits_agent_scoped_route():
+    """`mac agentbus traffic` in hub mode — the firehose route, agent-scoped
+    for auth the same way the inbox is (an agent connects to the bus as
+    itself)."""
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("GET", "/agents/agent_rocky/agentbus/traffic"): [
+                {"from_agent_id": "agent_peer", "addressed_to_me": True}
+            ]
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+    traffic = disp.read_agentbus_traffic(
+        "agent_rocky", "2026-01-01T00:00:00Z::chunk_1", 25, include_addressed=False
+    )
+    assert [item.to_dict() for item in traffic] == [
+        {"from_agent_id": "agent_peer", "addressed_to_me": True}
+    ]
+    method, url, _body, token = fake.calls[-1]
+    assert method == "GET"
+    assert "/agents/agent_rocky/agentbus/traffic" in url
+    assert "after_cursor=2026-01-01T00%3A00%3A00Z" in url
+    assert "limit=25" in url
+    assert "include_addressed=false" in url
+    assert token == "tok"
+
+
+def test_remote_dispatch_agentbus_roll_call_hits_agent_scoped_route():
+    """`mac agentbus roll-call` in hub mode -- agent_id authorizes, the roster
+    returned is fleet-wide, not filtered to it."""
+    from mac.http_client import HubClient
+
+    fake = _FakeTransport(
+        response_for={
+            ("GET", "/agents/agent_rocky/agentbus/roll-call"): {
+                "schema": "mac.agentbus.roll_call.v1",
+                "agents": [{"id": "agent_rocky"}, {"id": "agent_peer"}],
+            }
+        }
+    )
+    disp = RemoteDispatch(HubClient("http://hub:8789", token="tok", transport=fake))
+    roster = disp.agentbus_roll_call("agent_rocky", include_departed=True)
+    assert roster.to_dict()["agents"] == [{"id": "agent_rocky"}, {"id": "agent_peer"}]
+    method, url, _body, _token = fake.calls[-1]
+    assert method == "GET"
+    assert "/agents/agent_rocky/agentbus/roll-call" in url
+    assert "include_departed=true" in url
+
+
 def test_remote_dispatch_project_repository_wrappers_hit_hub_paths():
     from mac.http_client import HubClient
 
@@ -1391,6 +1442,56 @@ def test_remote_dispatch_task_close_uses_api_transition_shape(monkeypatch):
         "actor": "codex-cli",
         "detail": {"reason": "done"},
     }
+
+
+def test_remote_dispatch_task_stop_uses_admin_stop_route(monkeypatch):
+    import io
+    import json as _json
+    import sys
+
+    from mac.cli import main
+    from mac.http_client import HubClient
+
+    monkeypatch.delenv("MAC_DB", raising=False)
+    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
+    fake = _FakeTransport(
+        response_for={("POST", "/tasks/task_xyz/stop"): {"id": "task_xyz", "state": "stopped"}}
+    )
+    orig_init = HubClient.__init__
+    monkeypatch.setattr(
+        HubClient,
+        "__init__",
+        lambda self, base_url, *, token=None, transport=None: orig_init(
+            self, base_url, token=token, transport=fake
+        ),
+    )
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            [
+                "--hub-url",
+                "http://hub.example:8789",
+                "task",
+                "stop",
+                "task_xyz",
+                "--reason",
+                "integration recovery",
+                "--actor",
+                "operator",
+            ]
+        )
+    finally:
+        sys.stdout = old
+
+    assert rc == 0
+    assert _json.loads(out.getvalue()) == {"id": "task_xyz", "state": "stopped"}
+    method, url, payload, _token = fake.calls[0]
+    assert method == "POST"
+    assert url == "http://hub.example:8789/tasks/task_xyz/stop"
+    assert payload == {"actor": "operator", "reason": "integration recovery"}
 
 
 def test_dictish_supports_attribute_access():
