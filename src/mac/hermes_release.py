@@ -90,15 +90,25 @@ def source_identity(runtime: Path) -> dict[str, str]:
 
 
 PROBE = """
-import importlib.metadata,json,os,platform,sys
+import importlib.metadata,json,os,platform,subprocess,sys,tempfile
 from pathlib import Path
 runtime=Path(sys.argv[1]).resolve()
-sys.path.insert(0,str(runtime))
 home=Path(sys.argv[2]); markdown=Path(sys.argv[3])
 os.environ['HERMES_HOME']=str(home)
 os.environ['MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN']=str(markdown)
 import slack_bolt,slack_sdk,aiohttp,mcp
+import hermes_cli.main,hermes_cli.stderr_timestamp
 from agent import prompt_builder
+modules=(hermes_cli.main,hermes_cli.stderr_timestamp,prompt_builder)
+if any(runtime not in Path(module.__file__).resolve().parents for module in modules):
+    raise SystemExit('Hermes service imports a different source runtime')
+# Exercise the same module wrapper and child interpreter as the supervised
+# service, from its profile directory. Help exits without starting a gateway.
+with tempfile.TemporaryDirectory(prefix='hermes-service-probe-') as scratch:
+    subprocess.run([sys.executable,'-m','hermes_cli.stderr_timestamp',
+        '--error-log',str(Path(scratch)/'stderr.log'),'--',
+        sys.executable,'-m','hermes_cli.main','--help'],
+        check=True,capture_output=True,text=True,timeout=30)
 text=markdown.read_text().strip()
 prompt=prompt_builder.build_context_files_prompt(cwd=str(home),home_override=home)
 soul=home/'SOUL.md'
@@ -121,7 +131,8 @@ def qualify(runtime: Path, home: Path, markdown: Path, expected: dict) -> dict:
                 str(runtime),
                 str(home),
                 str(markdown),
-            ]
+            ],
+            cwd=home,
         ).splitlines()[-1]
     )
     if observed["python"] != expected["python"]:
@@ -183,7 +194,6 @@ def prepare(
             uv,
             "sync",
             "--locked",
-            "--no-install-project",
             "--no-default-groups",
             "--python",
             expected["python"],
@@ -194,6 +204,8 @@ def prepare(
         ],
         cwd=runtime,
     )
+    # Hermes supports editable installs. Its service runs Python modules from
+    # the profile directory, so dependencies alone are not a usable release.
     # Upstream service installation uses venv/, while uv owns .venv/.
     (runtime / "venv").symlink_to(".venv", target_is_directory=True)
     observed = qualify(runtime, home, markdown, expected)

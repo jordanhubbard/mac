@@ -73,8 +73,13 @@ integrity instead of forbidding every file with a `.patch` suffix.
 
 The gateway installer prepares an external release from the reviewed revision,
 applies both manifests, and installs the locked `slack` and `mcp` extras using
-the reviewed Python and uv versions. The profile's runtime context and persona
-must appear in the candidate's constructed prompt before selection.
+the reviewed Python and uv versions. Hermes itself is installed in editable
+mode, as supported by upstream, so service modules resolve from the selected
+environment even when the working directory is the profile. Qualification runs
+the actual service stderr wrapper and CLI child with `--help` from that directory,
+without adding the source directory to `PYTHONPATH` or `sys.path`. The profile's
+runtime context and persona must appear in the candidate's constructed prompt
+before selection.
 
 The regular `~/.local/bin/hermes` launcher is the runtime selection point.
 Deployment replaces it atomically after qualification and uses upstream's CLI
