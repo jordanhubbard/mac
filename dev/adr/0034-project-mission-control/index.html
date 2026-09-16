@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0018-task-graph-progressive-disclosure/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0034-project-mission-control/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>ADR 0018 - The task view is a graph under progressive disclosure, not a board - MAC Documentation</title>
+        <title>ADR 0034 - Project Mission Control is an additional observe view, not the IDE - MAC Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0018-the-task-view-is-a-graph-under-progressive-disclosure-not-a-board" class="md-skip">
+        <a href="#adr-0034-project-mission-control-is-an-additional-observe-view-not-the-ide" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0018 - The task view is a graph under progressive disclosure, not a board
+              ADR 0034 - Project Mission Control is an additional observe view, not the IDE
             
           </span>
         </div>
@@ -1762,34 +1762,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Context">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-graph-is-three-different-relations-and-they-must-not-be-merged" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        "The graph" is three different relations, and they must not be merged
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-join-policy-is-part-of-the-edges-meaning" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The join policy is part of the edge's meaning
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -1801,78 +1773,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Decision">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-the-table-is-the-spine-the-graph-is-disclosed-progressively" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. The table is the spine; the graph is disclosed progressively
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-containment-nests-dependency-links" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Containment nests; dependency links
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-every-edge-carries-its-join-policy-and-its-liveness" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Every edge carries its join policy and its liveness
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-the-existing-honesty-and-read-only-guarantees-extend-to-edges" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. The existing honesty and read-only guarantees extend to edges
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#5-the-hub-gains-one-endpoint-and-it-returns-a-bounded-neighbourhood" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. The hub gains one endpoint, and it returns a bounded neighbourhood
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#6-no-graph-rendering-dependency-is-added-in-the-first-increment" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. No graph-rendering dependency is added in the first increment
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -1880,17 +1780,6 @@
     <span class="md-ellipsis">
       
         Consequences
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternatives considered
       
     </span>
   </a>
@@ -1914,7 +1803,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0018-task-graph-progressive-disclosure.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0034-project-mission-control.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1922,175 +1811,54 @@
   
 
 
-<h1 id="adr-0018-the-task-view-is-a-graph-under-progressive-disclosure-not-a-board">ADR 0018 - The task view is a graph under progressive disclosure, not a board<a class="headerlink" href="#adr-0018-the-task-view-is-a-graph-under-progressive-disclosure-not-a-board" title="Permanent link">&para;</a></h1>
+<h1 id="adr-0034-project-mission-control-is-an-additional-observe-view-not-the-ide">ADR 0034 - Project Mission Control is an additional observe view, not the IDE<a class="headerlink" href="#adr-0034-project-mission-control-is-an-additional-observe-view-not-the-ide" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: <strong>Proposed</strong></li>
-<li>Date: 2026-08-19</li>
+<li>Status: <strong>Accepted</strong></li>
+<li>Date: 2026-08-28</li>
 <li>Decision owner: MAC fleet owner</li>
-<li>Related: ADR 0013 (one authoritative hub allocator), ADR 0016 (agents decide
-  what a task needs), ADR 0034 (project-scoped Mission Control canvas as an
-  <em>additional</em> view), <code>docs/task-dependency-semantics.md</code> (dependency failure
-  semantics and required invariants)</li>
+<li>Related: ADR 0018 (task view is a graph under progressive disclosure),
+  ADR 0025 (the hub UI is the observability console)</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>The observability console (<code>observe/</code>) presents tasks as counts by state and as
-per-state dwell. <code>StuckView</code> says it plainly in its own docstring: <em>"A state
-whose p50 dwell is measured in days is not a queue, it is a graveyard."</em></p>
-<p>The console can say how many tasks are blocked. It cannot say <strong>what blocks
-them</strong>, because the hub never sends the edges. <code>observe/src/lib/api.ts</code> has no
-dependency field at all — the only <code>depth</code> it carries is merge-queue depth.</p>
-<p>On 2026-08-19 the ledger held:</p>
-<table>
-<thead>
-<tr>
-<th>State</th>
-<th>Count</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>blocked</td>
-<td>355</td>
-</tr>
-<tr>
-<td>waiting</td>
-<td>19</td>
-</tr>
-<tr>
-<td>failed</td>
-<td>2,105</td>
-</tr>
-<tr>
-<td>cancelled</td>
-<td>3,531</td>
-</tr>
-<tr>
-<td>open</td>
-<td>84</td>
-</tr>
-<tr>
-<td>running</td>
-<td>2</td>
-</tr>
-</tbody>
-</table>
-<p><code>task_9f3b80b8</code> records that <strong>165 of those blocked tasks wait on dependencies
-that can never complete</strong>. That is a third of the blocked population, dead, and
-it took a hand-written query to find. A board cannot show it: on a board a
-dead-blocked task and a task whose dependency lands in five minutes are the
-same card in the same column. The distinguishing fact is not a property of the
-task. It is a property of the <em>edge</em>.</p>
-<h3 id="the-graph-is-three-different-relations-and-they-must-not-be-merged">"The graph" is three different relations, and they must not be merged<a class="headerlink" href="#the-graph-is-three-different-relations-and-they-must-not-be-merged" title="Permanent link">&para;</a></h3>
-<p>This is the central scoping decision, and getting it wrong makes the view
-unreadable:</p>
-<ol>
-<li><strong>Containment</strong> — parent to child, created by decomposition. <code>services.py</code>
-   records a <code>dependency_graph</code> in <code>task.children_added</code> history when a parent
-   decomposes. A <strong>tree</strong>: each child has one parent.</li>
-<li><strong>Dependency</strong> — task blocks task. A <strong>DAG</strong>, cross-cutting: a node may have
-   many predecessors and many dependents, and edges routinely cross containment
-   boundaries.</li>
-<li><strong>Lineage</strong> — retry and replacement. A task superseded by a retry is
-   historically continuous with it but is a distinct row.</li>
-</ol>
-<p>A view that draws all three as one relation produces a hairball. A view that
-draws only the first is a prettier board.</p>
-<h3 id="the-join-policy-is-part-of-the-edges-meaning">The join policy is part of the edge's meaning<a class="headerlink" href="#the-join-policy-is-part-of-the-edges-meaning" title="Permanent link">&para;</a></h3>
-<p><code>_dependency_join_policy_of()</code> (<code>task_ledger_audit.py:989</code>) resolves each task's
-join to <code>all_success</code> (the default) or <code>all_settled</code> (cooperative integration
-parents). The same edge from a <strong>failed</strong> dependency means different things:
-under <code>all_success</code> the dependent is dead and will never run; under
-<code>all_settled</code> it is released and will.</p>
-<p>So "blocked by a failed task" is <strong>not</strong> sufficient to tell an operator whether
-work is stuck. Any view that renders an edge without its join policy will
-confidently mislabel dead work as pending, which is precisely the condition
-that let 165 tasks accumulate unnoticed.</p>
+<p>ADR 0018 refused a fleet-wide node-and-edge canvas as the <em>primary</em> task view:
+thousands of blocked tasks with cross-cutting edges are a hairball, and the
+operator's usual question is local. It explicitly reserved an additional
+visual canvas for later, with its own justification, that would not replace
+the table spine.</p>
+<p>A Cursor-only canvas of explorer + SVG DAG + inspector proved to be the right
+shape for operating one project's live DAG (on the order of a hundred tasks,
+not six thousand). That canvas was a snapshot. Operators need the same layout
+against the ledger, in the hub UI.</p>
+<p>Shipping <code>ide/</code> at <code>/ui</code> is still forbidden (ADR 0025). <code>ide/</code> mutates, and it
+is not what the fleet serves.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>Add a <strong>graph view over a table spine</strong>, in the console, read-only.</p>
-<h3 id="1-the-table-is-the-spine-the-graph-is-disclosed-progressively">1. The table is the spine; the graph is disclosed progressively<a class="headerlink" href="#1-the-table-is-the-spine-the-graph-is-disclosed-progressively" title="Permanent link">&para;</a></h3>
-<p>The default view stays a table — sortable, scannable, keyboard-navigable, and
-honest at 6,800 rows, which no node-and-edge canvas is. Each row carries a
-disclosure triangle. Expanding a row reveals, indented beneath it:</p>
-<ul>
-<li>its <strong>children</strong> (containment), themselves expandable, and</li>
-<li>its <strong>blockers</strong> and <strong>dependents</strong> (dependency), rendered as distinct edge
-  kinds with distinct affordances, never as more children.</li>
-</ul>
-<p>Progressive disclosure is the right primitive because the operator's question
-is almost always local: <em>why is this one not moving?</em> That question needs the
-neighbourhood of one node, not a fleet-wide canvas.</p>
-<h3 id="2-containment-nests-dependency-links">2. Containment nests; dependency links<a class="headerlink" href="#2-containment-nests-dependency-links" title="Permanent link">&para;</a></h3>
-<p>Disclosure triangles suit a tree and <strong>do not</strong> suit a DAG. A dependency edge
-can point to a node that is already visible elsewhere, or upward, or into
-another project; and dependency graphs can contain cycles, which is itself a
-bug worth surfacing rather than a case to render.</p>
-<p>Therefore: containment <strong>nests</strong> (indentation, recursive expansion), dependency
-<strong>links</strong> (a row that names the other task and can focus it, re-rooting the
-table on that node with a back path). No edge is drawn twice, and no attempt is
-made to lay out a DAG as a tree.</p>
-<p>A cycle is reported as a cycle, explicitly, not rendered.</p>
-<h3 id="3-every-edge-carries-its-join-policy-and-its-liveness">3. Every edge carries its join policy and its liveness<a class="headerlink" href="#3-every-edge-carries-its-join-policy-and-its-liveness" title="Permanent link">&para;</a></h3>
-<p>An edge row states the blocker's state, the dependent's join policy, and the
-resulting verdict — <strong>satisfiable</strong> or <strong>dead</strong>. "Blocked by <code>task_x</code> (failed;
-join <code>all_success</code>) — this task can never run" is the sentence the console
-cannot say today, and it is the whole point of the feature.</p>
-<p>Dead-blocked subtrees are countable and filterable from the top of the view.</p>
-<h3 id="4-the-existing-honesty-and-read-only-guarantees-extend-to-edges">4. The existing honesty and read-only guarantees extend to edges<a class="headerlink" href="#4-the-existing-honesty-and-read-only-guarantees-extend-to-edges" title="Permanent link">&para;</a></h3>
-<p><code>observe/tests/readonly.test.ts</code> asserts the console issues only GET and HEAD,
-routes every call through <code>src/lib/http.ts</code>, and contains no mutating verb
-anywhere in the source tree. <code>observe/tests/honesty.test.tsx</code> asserts a missing
-section says <em>unavailable</em> and never renders as <code>0</code>, and that "no transitions
-happened" is distinguishable from "transitions unavailable".</p>
-<p>Both extend unchanged. Specifically: a task whose edges could not be loaded
-shows <strong>edges unavailable</strong>, never "no dependencies". Those are opposite facts,
-and conflating them recreates the original bug in a new place.</p>
-<h3 id="5-the-hub-gains-one-endpoint-and-it-returns-a-bounded-neighbourhood">5. The hub gains one endpoint, and it returns a bounded neighbourhood<a class="headerlink" href="#5-the-hub-gains-one-endpoint-and-it-returns-a-bounded-neighbourhood" title="Permanent link">&para;</a></h3>
-<p>The graph is served as the neighbourhood of a node to a requested radius, not
-as a whole-ledger dump. 6,849 tasks in one project is already past what a
-client should receive to answer "why is this blocked". The hub owns traversal,
-cycle detection, and join-policy resolution, because it already owns them
-(<code>task_ledger_audit._dependency_audit</code>) and a second implementation in
-TypeScript would drift.</p>
-<h3 id="6-no-graph-rendering-dependency-is-added-in-the-first-increment">6. No graph-rendering dependency is added in the first increment<a class="headerlink" href="#6-no-graph-rendering-dependency-is-added-in-the-first-increment" title="Permanent link">&para;</a></h3>
-<p><code>observe/package.json</code> declares exactly two dependencies: <code>react</code> and
-<code>react-dom</code>. The table-plus-disclosure design is deliberately chosen to need no
-third. A visual canvas may later prove necessary for wide fan-out; if so it is
-a separate ADR with its own justification, and it will be an additional view,
-not a replacement for the table.</p>
-<p><a href="../0034-project-mission-control/">ADR 0034</a> is that additional view: a
-project-scoped, capped SVG DAG in the same console, still with no extra
-dependency. The table spine stays.</p>
+<p>Add <strong>Mission Control</strong> to the observability console (<code>observe/</code>), read-only.</p>
+<ol>
+<li><strong>Additional view.</strong> Live, Stuck, Projects, and the rest stay. Mission
+   Control is a Fleet-group rail entry and a deep-link from a project name.</li>
+<li><strong>One project, capped.</strong> <code>GET /dashboard/observe/projects/{project}/graph</code>
+   returns schema <code>mac.dashboard.observe.project_graph.v1</code>. Live tasks fill a
+   hard cap first (~200). Omitted rows and edges are named. There is no
+   unbounded read.</li>
+<li><strong>The hub owns join policy.</strong> Each edge carries the waiter's join policy
+   and a verdict (<code>dead</code> / <code>pending</code> / <code>satisfied</code> / <code>settled</code> / <code>unknown</code>).
+   A failed blocker under <code>all_success</code> is not drawn the same as a slow one.</li>
+<li><strong>SVG, no new dependency.</strong> <code>observe/</code> still depends only on <code>react</code> and
+   <code>react-dom</code>. Layout is a small layered DAG in the console itself.</li>
+<li><strong>Honesty and GET-only extend unchanged.</strong> A graph the hub could not read
+   is omitted and shown as unavailable, never as an empty DAG. The console
+   still cannot issue POST.</li>
+</ol>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The console answers "why is this task not moving" without a SQL prompt.</li>
-<li>Dead-blocked work becomes a number on a dashboard instead of a discovery.
-  Expect that number to be <strong>large</strong> the first time it renders — 165 in one
-  project — and expect it to read as a regression when it is a measurement.</li>
-<li>A bounded-radius endpoint means some questions ("show me every dead-blocked
-  chain in the fleet") are aggregate queries, not traversals. That is a
-  deliberate split, and the aggregate side is scoped as its own task.</li>
-<li>Deep chains still expand into long indented lists. Depth capping and "N more"
-  affordances are required, and must state what was elided rather than
-  silently truncating.</li>
+<li>Operators can watch a project's real DAG at <code>/ui</code> without opening a snapshot
+  or the unshipped IDE.</li>
+<li>Projects too large for the cap still have an honest truncated view rather
+  than a silent subset.</li>
+<li>ADR 0018's table-plus-disclosure neighbourhood remains the planned answer
+  to "why is this one task not moving" at fleet scale; Mission Control does
+  not replace that work.</li>
 </ul>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<p><strong>A node-and-edge canvas as the primary view.</strong> Rejected for the first
-increment. It is the obvious mental image of "task graph" and it fails at this
-scale: 355 blocked tasks with cross-cutting edges is a hairball, it needs a
-layout dependency, and it is hostile to keyboard navigation and to search — the
-two things operators actually use. The table answers the common question
-better.</p>
-<p><strong>Extend the kanban with a "blocked by" column.</strong> Rejected: a column shows one
-hop. The 165 dead-blocked tasks were dead through <em>chains</em>, and one hop cannot
-distinguish a blocker that is merely slow from one that is terminal.</p>
-<p><strong>Ship the whole ledger to the client and traverse in TypeScript.</strong> Rejected:
-duplicates join-policy resolution that already exists in Python, and would
-drift from it. <code>docs/task-dependency-semantics.md</code> defines required invariants;
-one implementation should enforce them.</p>
-<p><strong>Draw containment and dependency as one relation.</strong> Rejected: they have
-different shapes (tree vs DAG) and different meanings. Merging them makes
-expansion ambiguous — the operator cannot tell whether an indented row is part
-of this work or merely blocking it.</p>
 
 
 

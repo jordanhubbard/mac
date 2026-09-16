@@ -582,6 +582,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mission-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mission Control
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-fleet-ide-ide-prototype-not-deployed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1962,6 +1973,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mission-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mission Control
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-fleet-ide-ide-prototype-not-deployed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2034,18 +2056,19 @@ front door is <code>/ui</code>.</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        C1[&quot;Live movement&quot;]
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        C2[&quot;Stuck work&quot;]
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        C3[&quot;Agents · Projects&quot;]
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        C4[&quot;Pipelines · Dream &amp; nap&quot;]
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        C5[&quot;Merge queue · Telemetry&quot;]
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        C6[&quot;Task drill-down&quot;]
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    end
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    subgraph &quot;Fleet IDE — ide/ (prototype, not served)&quot;
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        I1[&quot;Task Kanban&quot;]
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        I2[&quot;Task Inspector&quot;]
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        I3[&quot;Project tree&quot;]
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    end
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    API[&quot;hub API&quot;]
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    C1 &amp; C2 &amp; C3 &amp; C4 &amp; C5 &amp; C6 --&gt;|GET only| API
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    I1 &amp; I2 &amp; I3 --&gt;|GET + mutations| API
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        C3b[&quot;Mission Control&quot;]
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        C4[&quot;Pipelines · Dream &amp; nap&quot;]
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        C5[&quot;Merge queue · Telemetry&quot;]
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        C6[&quot;Task drill-down&quot;]
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    end
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    subgraph &quot;Fleet IDE — ide/ (prototype, not served)&quot;
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        I1[&quot;Task Kanban&quot;]
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        I2[&quot;Task Inspector&quot;]
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        I3[&quot;Project tree&quot;]
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    end
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    API[&quot;hub API&quot;]
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    C1 &amp; C2 &amp; C3 &amp; C3b &amp; C4 &amp; C5 &amp; C6 --&gt;|GET only| API
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    I1 &amp; I2 &amp; I3 --&gt;|GET + mutations| API
 </code></pre></div>
 <h2 id="the-observability-console-ui-the-hub-ui">The observability console (<code>/ui</code>) — the hub UI<a class="headerlink" href="#the-observability-console-ui-the-hub-ui" title="Permanent link">&para;</a></h2>
 <p>Served at <code>/ui</code> and <code>/ui/console</code>. Built from <code>observe/</code> (React + Vite) into
@@ -2084,7 +2107,11 @@ also be the one that commands.</p>
 </tr>
 <tr>
 <td><strong>Projects</strong></td>
-<td>per-project counts and repository registration</td>
+<td>per-project counts and repository registration; names open Mission Control</td>
+</tr>
+<tr>
+<td><strong>Mission Control</strong></td>
+<td>one project's live dependency DAG — explorer, viewport, inspector</td>
 </tr>
 <tr>
 <td><strong>Pipelines</strong></td>
@@ -2129,6 +2156,19 @@ a command displayed earlier may no longer be applicable.</p>
 <p>The Live chart is the one worth understanding. A count tells you 360 tasks are
 blocked. Only a series over time tells you whether they are <em>arriving or
 draining</em> — which is the difference between a backlog and a leak.</p>
+<h2 id="mission-control">Mission Control<a class="headerlink" href="#mission-control" title="Permanent link">&para;</a></h2>
+<p>Mission Control is the additional view <a href="../../adr/0018-task-graph-progressive-disclosure/">ADR 0018</a>
+reserved and <a href="../../adr/0034-project-mission-control/">ADR 0034</a> accepted: a
+project-scoped SVG DAG in this same console, not a board and not the Fleet IDE.</p>
+<p>It answers "what is waiting on what in <em>this</em> project". The hub sends a
+bounded graph (<code>GET /dashboard/observe/projects/{project}/graph</code>): live tasks
+fill the cap first, each edge carries join policy and a dead/pending/satisfied
+verdict, and a section the hub could not read is omitted rather than drawn as
+an empty canvas. Deep-link with <code>?view=mission-control&amp;project=NAME</code>. Click a
+project name on the Projects view to open it.</p>
+<p>The table spine (Live, Stuck, Projects) stays the way to scan the whole fleet.
+A 6,000-task project will say what was omitted; it will not pretend to have
+laid out every row.</p>
 <h2 id="the-fleet-ide-ide-prototype-not-deployed">The Fleet IDE (<code>ide/</code>) — prototype, not deployed<a class="headerlink" href="#the-fleet-ide-ide-prototype-not-deployed" title="Permanent link">&para;</a></h2>
 <p><strong>No hub serves this.</strong> It runs only from a checkout, against a hub it reaches
 through a local Vite proxy. It is not what you see at <code>&lt;hub&gt;/ui</code>, and nothing in
