@@ -1052,6 +1052,36 @@ def test_explicit_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
     assert recovery(scenario, policy="rollback")["recovery_required"] is False
 
 
+@pytest.mark.parametrize(
+    ("checkpoint", "forward_state"),
+    [
+        ("phase1-prepare-start", "phase1_prepare_started"),
+        ("phase1-armed", "phase1_armed"),
+        ("quiesce-start", "quiesce_started"),
+        ("quiesced", "quiesced"),
+        ("phase2-armed", "phase2_armed"),
+        ("phase2-start", "phase2_started"),
+        ("prepared", "prepared"),
+    ],
+)
+def test_recovery_preserves_forward_phase_after_abort_intent(tmp_path, checkpoint, forward_state):
+    scenario = Scenario(tmp_path)
+    advance_one_node_to(scenario, checkpoint)
+    candidate = recovery(scenario)["candidates"][0]
+    assert candidate["recovery_from_state"] == forward_state
+    if forward_state == "phase1_prepare_started":
+        assert candidate["restore_contract_sha256"] is None
+
+    if scenario.journal["hub_state"] != "unopened":
+        scenario.call("hub-aborted", evidence_file=scenario.hub_receipt("aborted"))
+    scenario.call("abort-start", node=scenario.nodes[0], recovery_action="retain_forward")
+    # Reopening the journal through the CLI models a fresh recovery process.
+    resumed = recovery(scenario)["candidates"][0]
+    assert resumed["state"] == "aborting"
+    assert resumed["recovery_from_state"] == forward_state
+    assert resumed["restore_contract_sha256"] == candidate["restore_contract_sha256"]
+
+
 def test_default_recovery_retains_every_mutated_node_and_binds_that_policy(
     tmp_path: Path,
 ) -> None:

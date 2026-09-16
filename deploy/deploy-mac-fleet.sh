@@ -14077,7 +14077,7 @@ PY
 retain_remote_generation_for_forward_repair() {
   local output="$1" agent="$2" deployment_id="$3" generation="$4"
   local source_commit="$5" deploy_ts="$6" agent_id hold_reason code
-  agent_id="$(stable_worker_agent_id "$agent")"
+  agent_id="$(stable_worker_agent_id "$agent")" || return 1
   hold_reason="mac admin fleet roll-forward repair retained after ${deploy_ts}"
 
   # Hub fencing is the primary safety boundary. Preserve any pre-existing hold
@@ -14085,8 +14085,8 @@ retain_remote_generation_for_forward_repair() {
   # defensive for recovery against older hubs; it cannot retroactively close
   # an admission gap created by those hubs during abort.
   hub_agent_restart_gate rehold "$agent_id" "$generation" "" "$hold_reason" \
-    0 0 0 >/dev/null
-  set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"
+    0 0 0 >/dev/null || return 1
+  set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id" || return 1
 
   code='import datetime as dt
 import json
@@ -14163,7 +14163,7 @@ print(json.dumps(payload, sort_keys=True, separators=(",", ":")))'
   run_fenced_remote_python \
     "$agent" "$deployment_id" "$code" "$deployment_id" "$generation" \
     "$source_commit" "$deploy_ts" \
-    "$(staged_bundle_remote_root_for_deployment "$deployment_id")" "$agent" > "$output"
+    "$(staged_bundle_remote_root_for_deployment "$deployment_id")" "$agent" > "$output" || return 1
   chmod 0600 "$output"
 }
 
@@ -14237,6 +14237,7 @@ recover_cohort_node() {
   local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4" hub_agent="$5"
   local values agent stable_id runtime_generation deployment_id deploy_ts source_commit
   local os_kind supervisor requested_action restore_contract_sha256 probe action evidence
+  local recovery_from_state reconcile_retained_worker=0
   local phase2_evidence phase1_evidence
   local -a candidate_values=()
   if ! values="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
@@ -14258,6 +14259,7 @@ for key in (
 ):
     print(payload.get(key) or "")
 print(payload.get("restore_contract_sha256") or "")
+print(payload.get("recovery_from_state") or "")
 PY
 )"; then
     return 1
@@ -14273,11 +14275,25 @@ PY
   supervisor="${candidate_values[7]:-}"
   requested_action="${candidate_values[8]:-}"
   restore_contract_sha256="${candidate_values[9]:-}"
+  recovery_from_state="${candidate_values[10]:-}"
   [ -n "$agent" ] && [ -n "$stable_id" ] && [ -n "$runtime_generation" ] \
     && [ -n "$deployment_id" ] && [ -n "$source_commit" ] || {
       echo "ERROR: durable cohort recovery candidate is incomplete" >&2
       return 1
     }
+  if [ "$requested_action" = retain_forward ]; then
+    # Preparation cannot have stopped a worker or installed a successor key;
+    # it may not even have produced a supervisor contract. The journal retains
+    # the forward phase across abort/retry. Never infer it from a missing file,
+    # which would turn damaged later-phase proof into early-phase authority.
+    case "$recovery_from_state" in
+      phase1_prepare_started|phase1_armed) ;;
+      quiesce_started|quiesced|phase2_armed|phase2_started|prepared)
+        reconcile_retained_worker=1
+        ;;
+      *) echo "ERROR: ${agent}: retained recovery lacks a valid durable forward phase" >&2; return 1 ;;
+    esac
+  fi
   # Never use ambient stale-takeover authority during recovery. A successor
   # deployment lock is proof that this controller no longer owns the node.
   if ! acquire_remote_deployment_lock "$agent" "$deployment_id" 0; then
@@ -14364,7 +14380,7 @@ PY
   if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
     return 1
   fi
-  if [ "$action" = retain_forward ]; then
+  if [ "$action" = retain_forward ] && [ "$reconcile_retained_worker" = 1 ]; then
     # retain_forward preserves node state as-is, including any attestation
     # candidate key that install_and_prove_attestation_candidate already
     # installed before the hub epoch aborted. Hub abort discards the pending

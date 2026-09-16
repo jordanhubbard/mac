@@ -37,6 +37,7 @@ def _run_recovery(
     failure="",
     proof_fault="",
     commit_length=40,
+    recovery_from_state="quiesced",
 ):
     source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
     names = (
@@ -99,6 +100,9 @@ def _run_recovery(
     contract_path = mac_home / f"phase1-cohort-restore-contract-generation-{ordinal}.json"
     contract_path.write_bytes(raw_contract)
     contract_path.chmod(0o600)
+    if recovery_from_state == "phase1_prepare_started":
+        contract_path.unlink()
+        contract_digest = None
     if proof_fault == "missing":
         contract_path.unlink()
     elif proof_fault == "digest":
@@ -190,6 +194,7 @@ def _run_recovery(
                 "os": "linux",
                 "supervisor": "auto",
                 "recovery_action": "retain_forward",
+                "recovery_from_state": recovery_from_state,
                 "restore_contract_sha256": contract_digest,
             }
         ).encode()
@@ -207,12 +212,21 @@ assert_remote_deployment_lock() { test "$(cat "$LOCK")" = "$2"; }
 acquire_remote_deployment_lock() { printf '%s' "$2" > "$LOCK"; }
 release_remote_deployment_lock() { assert_remote_deployment_lock "$@" && rm -f "$LOCK"; }
 cohort_journal_mutate() { record "journal $1"; }
-hub_agent_restart_gate() { test "$(cat "$HOLD")" = 'existing operator hold'; }
-set_remote_mac_startup_hold_policy() { test "$2" = 0; }
+hub_agent_restart_gate() {
+  test "$FAILURE" != rehold || return 73
+  test "$(cat "$HOLD")" = 'existing operator hold'
+}
+set_remote_mac_startup_hold_policy() {
+  test "$FAILURE" != startup-policy || return 73
+  test "$2" = 0
+}
 staged_bundle_remote_root_for_deployment() { printf '%s' "$STAGED"; }
 run_fenced_remote_python() {
   assert_remote_deployment_lock "$1" "$2" || return 1
   local code="$3"; shift 3
+  if [[ "$code" == *mac.fleet_node_forward_retention* ]]; then
+    test "$FAILURE" != retention-write || return 73
+  fi
   "$PYTHON_BIN" -c "$code" "$@"
 }
 ssh_target_args() { printf 'fixture-host\0'; }
@@ -337,6 +351,41 @@ def test_normal_attestation_recovery_still_restarts_after_key_install(tmp_path):
     assert observed["state"]["verified"] == [False, True]
 
 
+@pytest.mark.parametrize("phase", ["phase1_prepare_started", "phase1_armed"])
+def test_pre_quiescence_retention_does_not_stop_or_rekey_running_worker(tmp_path, phase):
+    observed = _run_recovery(tmp_path, recovery_from_state=phase)
+    assert observed["result"].returncode == 0, observed["result"].stderr
+    assert observed["worker"] == "running"
+    assert observed["calls"] == ["journal abort-start", "journal aborted-node"]
+    assert observed["state"]["rotations"] == 0
+    assert observed["state"]["verified"] == []
+
+
+@pytest.mark.parametrize("phase", ["", "aborting", "planned", "finalized"])
+def test_retention_rejects_unknown_forward_phase_before_mutation(tmp_path, phase):
+    observed = _run_recovery(tmp_path, recovery_from_state=phase)
+    assert observed["result"].returncode != 0
+    assert observed["worker"] == "running"
+    assert observed["calls"] == []
+    assert observed["state"]["rotations"] == 0
+
+
+@pytest.mark.parametrize(
+    "phase", ["quiesce_started", "quiesced", "phase2_armed", "phase2_started", "prepared"]
+)
+def test_post_quiescence_retention_stops_and_proves_worker_before_completion(tmp_path, phase):
+    observed = _run_recovery(tmp_path, recovery_from_state=phase)
+    assert observed["result"].returncode == 0, observed["result"].stderr
+    assert observed["worker"] == "stopped"
+    assert observed["calls"] == [
+        "journal abort-start",
+        "service stop",
+        "install",
+        "journal aborted-node",
+    ]
+    assert observed["state"]["verified"] == [False, True]
+
+
 @pytest.mark.parametrize("failure", ["stop", "upload", "install", "second-proof"])
 def test_retained_recovery_does_not_report_success_after_boundary_failure(tmp_path, failure):
     observed = _run_recovery(tmp_path, failure=failure)
@@ -347,6 +396,18 @@ def test_retained_recovery_does_not_report_success_after_boundary_failure(tmp_pa
         assert observed["worker"] == "stopped"
     if failure in {"stop", "upload", "install"}:
         assert True not in observed["state"]["verified"]
+
+
+@pytest.mark.parametrize("failure", ["rehold", "startup-policy", "retention-write"])
+@pytest.mark.parametrize("phase", ["phase1_prepare_started", "quiesced"])
+def test_failed_retention_prerequisite_cannot_advance_recovery(tmp_path, failure, phase):
+    observed = _run_recovery(tmp_path, failure=failure, recovery_from_state=phase)
+    assert observed["result"].returncode != 0
+    assert observed["calls"] == ["journal abort-start"]
+    assert observed["state"]["rotations"] == 0
+    assert observed["state"]["verified"] == []
+    assert observed["worker"] == "running"
+    assert observed["hold"] == "existing operator hold"
 
 
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])

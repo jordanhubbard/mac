@@ -2319,6 +2319,7 @@ def _rollback_candidates(journal: dict[str, Any]) -> list[dict[str, Any]]:
                 "deploy_ts": journal["deploy_ts"],
                 "source_commit": journal["source_commit"],
                 "state": node["state"],
+                "recovery_from_state": node["abort_from_state"] or node["state"],
                 "recovery_action": action,
                 "route_identity": node["route_identity"],
                 "restore_contract_sha256": node["restore_contract_sha256"],

@@ -198,7 +198,14 @@ logical_planned
 
 Abort states retain the forward state that selected recovery and record
 `abort_started -> aborted` per node. Recovery walks nodes in reverse mutation
-order. Its normal action is `retain_forward`: preserve the newest node state,
+order. Each recovery candidate carries that durable forward state, including
+after an interrupted abort. Before `quiesce_started`, retention preserves the
+running worker and its key: preparation has not acquired authority to change
+either, and an interrupted preparation may not have produced a supervisor
+contract. From `quiesce_started` onward, retention keeps the worker stopped
+using the journal-bound supervisor proof. A missing proof at those later phases
+is an error, never grounds to infer that the node is still in preparation.
+Its normal action is `retain_forward`: preserve the newest node state,
 process barrier, dispatch hold, and immutable diagnostic bundle, then release
 only the controller lock for a successor deployment. Prior-generation
 compensation requires the explicit `--recovery-policy rollback` break-glass
