@@ -1013,6 +1013,60 @@ exec /bin/mv "$@"
     assert (recovered / "state" / "marker.txt").read_text() == "new-state"
 
 
+@pytest.mark.parametrize("status", ["exited", "running"])
+@pytest.mark.parametrize("owned_name", [True, False])
+def test_schema_recovery_consumes_real_probe_name_only_when_stopped(tmp_path, status, owned_name):
+    from mac.executor_sandbox import _coding_agent_probe_sandbox_name
+
+    name = _coding_agent_probe_sandbox_name() if owned_name else "operator-sandbox"
+    bootstrap = (ROOT / "deploy/openshell/bootstrap-openshell.sh").read_text()
+    function = (
+        "retire_managed_sandboxes_via_docker() {"
+        + bootstrap.split("retire_managed_sandboxes_via_docker() {", 1)[1].split(
+            "\n}\n\nretire_managed_sandboxes_before_upgrade", 1
+        )[0]
+        + "\n}\n"
+    )
+    harness = r"""
+set -eu
+OSH_DOCKER_BIN=fixture_docker
+log() { :; }
+write_managed_openshell_container_ids() {
+  if [ -f "$REMOVED" ]; then : > "$2"; else printf 'exact-container\n' > "$2"; fi
+}
+fixture_docker() {
+  case "$1" in
+    inspect)
+      case "$3" in
+        '{{.State.Status}}') printf '%s\n' "$STATUS" ;;
+        *) printf '%s\n' "$SANDBOX_NAME" ;;
+      esac ;;
+    rm)
+      test "$2" = exact-container || return 1
+      printf '%s\n' "$2" > "$REMOVED" ;;
+    *) return 1 ;;
+  esac
+}
+"""
+    removed = tmp_path / "removed"
+    result = subprocess.run(
+        ["bash", "-c", harness + function + "\nretire_managed_sandboxes_via_docker"],
+        env={
+            **os.environ,
+            "TMPDIR": str(tmp_path),
+            "REMOVED": str(removed),
+            "STATUS": status,
+            "SANDBOX_NAME": name,
+        },
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    expected = owned_name and status == "exited"
+    assert (result.returncode == 0) is expected, result.stderr
+    assert removed.exists() is expected
+
+
 def test_schema_fallback_requires_stopped_exact_managed_containers():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
@@ -1038,7 +1092,9 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     )[0]
     assert "openshell.ai/managed-by=openshell" in inventory_writer
     assert "openshell.ai/sandbox-name" in direct
-    assert "^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$" in direct
+    assert (
+        "^mac-(task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$" in direct
+    )
     assert 'sandbox_name" = "$expected_openclaw' in direct
     checkpoint = direct.index("checkpoint_openclaw_with_docker")
     exact_remove = direct.index('"$OSH_DOCKER_BIN" rm "$container_id"')

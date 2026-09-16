@@ -81,6 +81,7 @@ _MAC_CONTRACT_RUNTIME_VENV_REQUESTED="${MAC_CONTRACT_RUNTIME_VENV:-}"
 # sweep silently removes it and every test fails with "MAC_TEST_PG_URL is
 # unset", pointing at the CI provisioning step rather than at this line.
 _MAC_TEST_PG_URL_REQUESTED="${MAC_TEST_PG_URL:-}"
+_MAC_TEST_PG_DATADIR_REQUESTED="${MAC_TEST_PG_DATADIR:-}"
 # A remote OpenShell gateway cannot reach the hub's loopback database through
 # its HTTP proxy. Provision PostgreSQL inside that sandbox instead. Explicit
 # local mode takes precedence over an inherited test DSN; normal callers keep
@@ -127,7 +128,7 @@ else
     # the helper finds a running server, or a container engine, or starts a
     # server from installed binaries, and says so on stderr when it cannot.
     _pg_helper="$(dirname "$0")/start-test-postgres.sh"
-    if [ -x "$_pg_helper" ] && _pg_dsn=$("$_pg_helper"); then
+    if [ -x "$_pg_helper" ] && _pg_dsn=$(MAC_TEST_PG_DATADIR="$_MAC_TEST_PG_DATADIR_REQUESTED" "$_pg_helper"); then
         eval "$_pg_dsn"
     fi
 fi

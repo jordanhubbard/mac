@@ -9490,7 +9490,7 @@ restart_remote_mac_agent_under_epoch() {
   # per-node hold/release gate from inside an open hub transaction.
   local agent="$1" supervisor="$2" fleet_name="$3"
   local activation_mode="${4:-activate}" deployment_id command
-  local resolved_supervisor manager_action
+  local resolved_supervisor manager_action lifecycle_source lifecycle_remote
   local ssh_parts=() ssh_args=() ssh_target item last_index
   case "$activation_mode" in
     activate) manager_action=start ;;
@@ -9514,11 +9514,15 @@ restart_remote_mac_agent_under_epoch() {
       command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); fi"
       ;;
     launchd)
-      # The installer writes a per-user LaunchAgent and defers registration
-      # until this exact post-manifest handoff. A system-domain kickstart can
-      # neither find nor bootstrap it. Reuse the reviewed bounded lifecycle to
-      # prove the old job absent and bootstrap the replacement in gui/<uid>.
-      command="lifecycle=\"\$HOME/.mac/logs/launchd-lifecycle-${TS}.sh\"; label=$(shell_quote "com.${fleet_name}.agent"); domain=\"gui/\$(id -u)\"; plist=\"\$HOME/Library/LaunchAgents/\${label}.plist\"; [ -f \"\$lifecycle\" ] && [ ! -L \"\$lifecycle\" ] || { echo \"bounded launchd lifecycle contract is unavailable: \$lifecycle\" >&2; exit 1; };"
+      # Recovery can stop a worker before phase two ever created its retained
+      # helper. Supply this operation's reviewed contract under the same node
+      # lock instead of depending on an installer side effect. The same helper
+      # handles the post-install handoff in the per-user gui/<uid> domain.
+      lifecycle_source="$ROOT/deploy/lib/launchd-lifecycle.sh"
+      lifecycle_remote="/tmp/mac-epoch-launchd-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
+      fenced_remote_upload "$agent" "$deployment_id" \
+        "$lifecycle_source" "$lifecycle_remote" || return 1
+      command="lifecycle=$(shell_quote "$lifecycle_remote"); label=$(shell_quote "com.${fleet_name}.agent"); domain=\"gui/\$(id -u)\"; plist=\"\$HOME/Library/LaunchAgents/\${label}.plist\"; [ -f \"\$lifecycle\" ] && [ ! -L \"\$lifecycle\" ] || { echo \"bounded launchd lifecycle contract is unavailable: \$lifecycle\" >&2; exit 1; }; trap 'rm -f -- \"\$lifecycle\"' EXIT;"
       if [ "$manager_action" != stop ]; then
         command+=" [ -f \"\$plist\" ] && [ ! -L \"\$plist\" ] || { echo \"launchd agent plist missing or unsafe: \$plist\" >&2; exit 1; };"
       fi
@@ -14016,8 +14020,9 @@ retain_remote_generation_for_forward_repair() {
   hold_reason="mac admin fleet roll-forward repair retained after ${deploy_ts}"
 
   # Hub fencing is the primary safety boundary. Preserve any pre-existing hold
-  # reason; if the epoch abort restored an unheld state, install a dedicated
-  # repair hold before touching the node-local controller lock.
+  # reason, including the epoch hold retained by hub abort. The rehold remains
+  # defensive for recovery against older hubs; it cannot retroactively close
+  # an admission gap created by those hubs during abort.
   hub_agent_restart_gate rehold "$agent_id" "$generation" "" "$hold_reason" \
     0 0 0 >/dev/null
   set_remote_mac_startup_hold_policy "$agent" 0 "$deployment_id"

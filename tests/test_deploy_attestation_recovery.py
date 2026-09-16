@@ -251,7 +251,10 @@ def test_retained_recovery_does_not_report_success_after_boundary_failure(tmp_pa
 
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 @pytest.mark.parametrize("action", ["activate", "restart", "stop"])
-def test_epoch_worker_lifecycle_uses_only_the_selected_supervisor(tmp_path, supervisor, action):
+@pytest.mark.parametrize("upload_fails", [False, True])
+def test_epoch_worker_lifecycle_uses_only_the_selected_supervisor(
+    tmp_path, supervisor, action, upload_fails
+):
     source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
     function = _shell_function(source, "restart_remote_mac_agent_under_epoch", "hub_target")
     bin_dir = tmp_path / "bin"
@@ -264,7 +267,9 @@ def test_epoch_worker_lifecycle_uses_only_the_selected_supervisor(tmp_path, supe
     sudo = bin_dir / "sudo"
     sudo.write_text('#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n')
     sudo.chmod(0o700)
-    lifecycle = tmp_path / ".mac/logs/launchd-lifecycle-fixture.sh"
+    # No phase-two install has run: its timestamped helper does not exist.
+    # The operation must transport its own reviewed helper before invoking it.
+    lifecycle = tmp_path / "deploy/lib/launchd-lifecycle.sh"
     lifecycle.parent.mkdir(parents=True)
     lifecycle.write_text(
         'mac_launchd_stop_job_if_present() { printf "stop\\n" >> "$CALLS"; }\n'
@@ -280,6 +285,12 @@ assert_remote_deployment_lock() { :; }
 phase1_resolved_supervisor_for_agent() { printf '%s' "$SUPERVISOR"; }
 ssh_target_args() { printf 'fixture-host\0'; }
 shell_quote() { printf '%q' "$1"; }
+fenced_remote_upload() {
+  test "$2" = recovery-deployment || return 1
+  test "$3" = "$ROOT/deploy/lib/launchd-lifecycle.sh" || return 1
+  test "$UPLOAD_FAILS" = 0 || return 73
+  cp -f "$3" "$4"
+}
 remote_deployment_fenced_exec() { shift 2; printf '%q ' "$@"; }
 ssh() { bash -c "${!#}"; }
 """
@@ -290,7 +301,8 @@ ssh() { bash -c "${!#}"; }
             "set -eu\nTS=fixture\n"
             + function
             + stubs
-            + f"\nrestart_remote_mac_agent_under_epoch node {supervisor} fleet {action}",
+            + f"\nif restart_remote_mac_agent_under_epoch node {supervisor} fleet {action}; "
+            + "then exit 0; else exit $?; fi",
         ],
         env={
             **os.environ,
@@ -298,11 +310,18 @@ ssh() { bash -c "${!#}"; }
             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
             "CALLS": str(calls),
             "SUPERVISOR": supervisor,
+            "ROOT": str(tmp_path),
+            "DEPLOY_CONTROLLER_NONCE": tmp_path.name,
+            "UPLOAD_FAILS": "1" if upload_fails else "0",
         },
         text=True,
         capture_output=True,
         timeout=10,
     )
+    if supervisor == "launchd" and upload_fails:
+        assert result.returncode != 0
+        assert not calls.exists(), "failed helper transport must not touch the service"
+        return
     assert result.returncode == 0, result.stderr
     if supervisor == "launchd":
         expected = ["stop"] if action == "stop" else ["stop", "bootstrap"]

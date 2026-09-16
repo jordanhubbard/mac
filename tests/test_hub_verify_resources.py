@@ -53,11 +53,7 @@ def _create(calls):
 
 def _exec(calls, *, initialize=False):
     marker = "tar xzf repo.tgz"
-    return next(
-        argv
-        for argv in calls
-        if "exec" in argv and ((marker in argv[-1]) is initialize)
-    )
+    return next(argv for argv in calls if "exec" in argv and ((marker in argv[-1]) is initialize))
 
 
 @pytest.mark.parametrize("profile", [None, "", "default"])
@@ -96,7 +92,8 @@ def test_bounded_profile_requests_native_limits_and_local_test_storage(monkeypat
         }
     }
     env = [argv[i + 1] for i, value in enumerate(argv[:-1]) if value == "--env"]
-    assert "TMPDIR=/sandbox/test-storage" in env
+    assert "TMPDIR=/sandbox/test-scratch" in env
+    assert "MAC_TEST_PG_DATADIR=/sandbox/test-storage/mac-test-pgdata" in env
     assert "MAC_TEST_JOBS=8" in env
     assert "MAC_TEST_PG_LOCAL=1" in env
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env)
@@ -146,12 +143,13 @@ def test_storage_preflight_gates_repository_execution(
     _, calls = _invoke(monkeypatch, output=READY)
     command = _exec(calls, initialize=True)[-1]
     assert READY in command
-    preflight = "export PATH=" + command.split("export PATH=", 1)[1].split(
-        "cd /sandbox/repo", 1
-    )[0]
+    preflight = "export PATH=" + command.split("export PATH=", 1)[1].split("cd /sandbox/repo", 1)[0]
     # Replace only the mount operand, not the same prefix inside the fake
     # command directory on Linux sandboxes (whose pytest TMPDIR is this mount).
     preflight = preflight.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
+    preflight = preflight.replace(
+        "TMPDIR=/sandbox/test-scratch", "TMPDIR=" + shlex.quote(str(tmp_path / "scratch"))
+    )
     marker = tmp_path / "repository-started"
     result = real_run(
         ["/bin/bash", "-c", preflight + 'touch "$1"', "preflight", str(marker)],
@@ -164,6 +162,32 @@ def test_storage_preflight_gates_repository_execution(
     assert (READY in result.stdout) is (expected == 0)
     if expected:
         assert UNAVAILABLE in result.stderr
+
+
+def test_profile_refuses_unavailable_fixture_scratch(monkeypatch, tmp_path):
+    from mac.openshell_runtime import verifier_resource_profile
+
+    monkeypatch.setenv("MAC_HUB_VERIFY_PROFILE", "bounded-tmpfs")
+    for name, value in [("uname", "Linux"), ("stat", "tmpfs")]:
+        executable = tmp_path / name
+        executable.write_text("#!/bin/sh\necho " + value + "\n")
+        executable.chmod(0o755)
+    scratch = tmp_path / "not-a-directory"
+    scratch.touch()
+    _, _, shell = verifier_resource_profile()
+    shell = shell.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
+    shell = shell.replace("TMPDIR=/sandbox/test-scratch", "TMPDIR=" + shlex.quote(str(scratch)))
+    marker = tmp_path / "repository-started"
+    result = subprocess.run(
+        ["bash", "-c", shell + "touch " + shlex.quote(str(marker))],
+        env={"PATH": str(tmp_path) + ":/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 96
+    assert "fixture scratch is not writable" in result.stderr
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("profile", [None, "default", "bounded-tmpfs"])
@@ -220,7 +244,7 @@ def test_fresh_worker_shell_reasserts_profile_before_setup(
         "_sandbox_toolchain_setup_shell",
         lambda: (
             "mac_sandbox_toolchain_setup() { "
-            + "printf '%s\\n' \"$TMPDIR $MAC_TEST_JOBS\" > "
+            + "printf '%s\\n' \"$TMPDIR $MAC_TEST_PG_DATADIR $MAC_TEST_JOBS\" > "
             + shlex.quote(str(marker))
             + "; exit 0; }"
         ),
@@ -228,6 +252,7 @@ def test_fresh_worker_shell_reasserts_profile_before_setup(
     environment = {
         "MAC_TASK_WORKSPACE": str(tmp_path),
         "TMPDIR": "/agent-stale",
+        "MAC_TEST_PG_DATADIR": "/agent-stale-pg",
         "MAC_TEST_JOBS": "99",
     }
     shell = (
@@ -236,6 +261,8 @@ def test_fresh_worker_shell_reasserts_profile_before_setup(
         else sandbox._sandbox_read_only_repository_verification_shell(environment)
     )
     shell = shell.replace(" /sandbox/test-storage ", " " + shlex.quote(str(tmp_path)) + " ")
+    scratch = tmp_path / "scratch"
+    shell = shell.replace("TMPDIR=/sandbox/test-scratch", "TMPDIR=" + shlex.quote(str(scratch)))
     result = subprocess.run(
         ["/bin/bash", "--noprofile", "--norc", "-c", shell],
         env={"PATH": str(tmp_path) + os.pathsep + "/usr/bin:/bin"},
@@ -246,7 +273,8 @@ def test_fresh_worker_shell_reasserts_profile_before_setup(
     assert result.returncode == expected, result.stderr
     assert marker.exists() is (expected == 0)
     if not expected:
-        assert marker.read_text().strip() == "/sandbox/test-storage 8"
+        assert marker.read_text().strip() == f"{scratch} /sandbox/test-storage/mac-test-pgdata 8"
+        assert scratch.is_dir()
     else:
         assert UNAVAILABLE in result.stderr
 

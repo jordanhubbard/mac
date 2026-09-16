@@ -206,9 +206,7 @@ def test_reaper_reaps_reused_pid_with_different_process_identity():
 def test_reaper_fails_closed_when_process_identity_is_permission_denied():
     row = _orphan(pid="1234")
     row["labels"].update({"mac.boot.id": "boot", "mac.pid.start": "10"})
-    record = classify_orphan_task_sandbox(
-        row, process_identity=lambda _pid: ("unknown", "")
-    )
+    record = classify_orphan_task_sandbox(row, process_identity=lambda _pid: ("unknown", ""))
     assert record["reap"] is False
     assert "could not be proved" in record["reason"]
 

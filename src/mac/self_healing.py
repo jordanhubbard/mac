@@ -15,13 +15,15 @@ This sentinel closes that loop:
 * PLAN/ACT — a violated invariant becomes a filed fleet task (the fleet is
   the actuator; tasks are the plan), deduped by finding fingerprint so a
   standing problem yields one task, not a storm. Findings that need a
-  specific host are pinned via ``metadata.target_agent_id``.
+  specific host are pinned via ``metadata.target_agent_id``. Interrupted
+  deployment recovery is escalated directly while its admission fence stays
+  intact; the deployment journal owns that recovery, not the task pipeline.
 * VERIFY — a fingerprint whose previous fix task COMPLETED but whose
   invariant is violated again is re-filed with an incremented attempt and
   the prior task referenced ("the fix did not hold — roll back or re-plan").
   After ``max_attempts`` the sentinel stops filing and raises an operator
-  notification instead: autonomy escalates to a human only after it has
-  demonstrably failed N times, not before it has tried.
+  notification instead. Deployment recovery findings do not spend attempts
+  in a pipeline whose readiness has not been established.
 
 No-op unless ``MAC_SELF_HEAL_ENABLED`` is set.
 """
@@ -621,12 +623,11 @@ class SelfHealingSentinel:
                         "hold_reason": reason,
                         "held_at": getattr(agent, "dispatch_hold_at", None),
                         "remediation": (
-                            "Confirm the node is actually running the deployed "
-                            "generation and its worker service is healthy (it "
-                            "usually is -- the deploy tool's own finalize step "
-                            "just failed to release the hold). If so, release it "
-                            "with `mac agent resume %s`. If the node is genuinely "
-                            "broken, fix the host first." % agent_id
+                            "Resume the journaled deployment recovery and verify "
+                            "the node's generation, credentials, and execution "
+                            "readiness before releasing its exact owned hold. "
+                            "Hold age does not prove readiness; preserve the "
+                            "dispatch fence while recovery is incomplete."
                         ),
                     },
                     target_agent_id=agent_id,
@@ -871,53 +872,28 @@ class SelfHealingSentinel:
             actions.append(action)
         return actions
 
-    #: Findings this sentinel can fix directly, in-process, without routing
-    #: through the task-execution pipeline (a coding agent, an OpenShell
-    #: sandbox, attestation-signed evidence, PR review). This exists because
-    #: routing an INFRASTRUCTURE fix through that pipeline is circular when
-    #: the infrastructure fault is what broke the pipeline: on 2026-09-03,
-    #: agent_rocky's own attempt at fixing a deploy defect failed because its
-    #: attestation key was one of the things left broken by an earlier
-    #: interrupted deploy -- it could not get its own fix verified. A finding
-    #: whose remediation is "release/reset one field this process can already
-    #: safely write" must not wait on the very system it is unblocking.
-    _DIRECT_REMEDIATIONS = ("stale_deploy_hold",)
-
-    def _remediate_directly(self, finding: Finding) -> Dict[str, Any]:
-        """Fix a finding in-process; return the outcome dict for the report.
-
-        Never raises: a remediation that fails falls back to filing a fix
-        task exactly as before, so a bug in the direct path degrades to the
-        pre-existing, slower-but-safe behavior rather than losing the finding.
-        """
-        if finding.kind == "stale_deploy_hold":
-            agent_id = str(finding.detail.get("agent_id") or "")
-            if not agent_id:
-                return {"action": "error", "error": "stale_deploy_hold finding missing agent_id"}
-            self.control_plane.clear_agent_dispatch_hold(agent_id)
-            self.control_plane.record_notification(
-                "self_heal.remediated",
-                "Self-heal released a stale deploy hold",
-                "%s\n\nReleased directly (mac agent resume equivalent) -- no fix "
-                "task was needed; this is an in-process infrastructure repair, "
-                "not a code change." % finding.summary,
-                subject_type="agent",
-                subject_id=agent_id,
-                metadata={"kind": finding.kind, "fingerprint": finding.fingerprint},
-            )
-            return {"action": "remediated", "agent_id": agent_id}
-        raise ValueError("no direct remediation registered for kind=%s" % finding.kind)
-
     def _act_on(self, finding: Finding, *, actor: str) -> Dict[str, Any]:
-        if finding.kind in self._DIRECT_REMEDIATIONS:
+        if finding.kind == "stale_deploy_hold":
+            # The deployment journal owns recovery. Neither elapsed time nor
+            # a heartbeat proves its physical compensation has completed.
+            # Notify without clearing a fence or routing recovery through the
+            # same task pipeline whose readiness is in question.
+            if finding.fingerprint in self._escalated_fingerprints:
+                return {"action": "escalated_previously"}
             try:
-                return self._remediate_directly(finding)
-            except Exception:  # noqa: BLE001 - fall back to task filing below.
-                _log.warning(
-                    "direct remediation failed for %s; falling back to a fix task",
-                    finding.fingerprint,
-                    exc_info=True,
+                self.control_plane.record_notification(
+                    "self_heal.escalated",
+                    "Deployment recovery requires attention; dispatch hold retained",
+                    "%s\n\n%s" % (finding.summary, finding.detail["remediation"]),
+                    subject_type="agent",
+                    subject_id=finding.target_agent_id,
+                    channels=["dashboard"],
+                    metadata={"finding": finding.to_dict()},
                 )
+            except Exception as exc:  # noqa: BLE001 - retry notification next cycle.
+                return {"action": "error", "error": str(exc)[:500]}
+            self._escalated_fingerprints.add(finding.fingerprint)
+            return {"action": "escalated"}
         active_task, completed_attempts, newest_completed = self._history_for(finding.fingerprint)
         if active_task is not None:
             return {"action": "in_progress", "task_id": getattr(active_task, "id", None)}

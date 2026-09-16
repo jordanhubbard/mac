@@ -157,7 +157,9 @@ def test_pre_push_deletes_sandbox_after_exec_failure(
         if "create" in argv or "delete" in argv:
             return subprocess.CompletedProcess(argv, 0, "", "")
         if "upload" in argv:
-            return subprocess.CompletedProcess(argv, 9 if failed_phase == "upload" else 0, "upload", "")
+            return subprocess.CompletedProcess(
+                argv, 9 if failed_phase == "upload" else 0, "upload", ""
+            )
         phase = "bootstrap" if "bootstrap-project" in argv[-1] else "test"
         return subprocess.CompletedProcess(argv, 9 if phase == failed_phase else 0, phase, "")
 

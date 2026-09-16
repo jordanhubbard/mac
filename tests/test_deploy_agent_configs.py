@@ -3881,6 +3881,9 @@ def test_optional_openshell_disable_retires_only_mac_owned_darwin_sandboxes(tmp_
     them because it only reaps a sandbox whose owning process is already dead.
     The darwin migration has to remove them -- and only them.
     """
+    from mac.executor_sandbox import _coding_agent_probe_sandbox_name
+
+    probe_container = "openshell-" + _coding_agent_probe_sandbox_name()
     installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     start = installer.index("openshell_disable_requested() {")
     end = installer.index("\ninstall_or_validate_shared_services() {", start)
@@ -3900,6 +3903,9 @@ case "$1" in
     case "$*" in
       *"name=^openshell-mac-codingcap-"*)
         printf '%s\\n' 'openshell-mac-codingcap-aaa' 'openshell-mac-codingcap-bbb'
+        ;;
+      *"name=^openshell-mac-cc-"*)
+        printf '%s\\n' "$PROBE_CONTAINER"
         ;;
       *"name=^openshell-mac-task-"*)
         printf '%s\\n' 'openshell-mac-task-ccc'
@@ -3943,6 +3949,7 @@ reconcile_disabled_optional_openshell
             "MAC_DEPLOY_OPENSHELL_REQUIRED": " no ",
             "DOCKER_CALLS": str(calls),
             "DOCKER_REMOVED": str(removed),
+            "PROBE_CONTAINER": probe_container,
             # Pin PATH so an operator-installed openshell on the developer's
             # own Mac cannot change what this test observes.
             "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -3952,11 +3959,12 @@ reconcile_disabled_optional_openshell
     assert result.returncode == 0, result.stderr
     # Order of retirement is immaterial; the set of names is the contract.
     assert sorted(removed.read_text(encoding="utf-8").split()) == [
+        probe_container,
         "openshell-mac-codingcap-aaa",
         "openshell-mac-codingcap-bbb",
         "openshell-mac-task-ccc",
     ]
-    assert "retired 3 MAC-owned OpenShell sandbox container(s)" in result.stdout
+    assert "retired 4 MAC-owned OpenShell sandbox container(s)" in result.stdout
     # Every removal is name-scoped: no bulk prune may reach an operator's own
     # containers, and the unowned gateway is still left alone.
     docker_calls = calls.read_text(encoding="utf-8")

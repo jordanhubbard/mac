@@ -17,7 +17,7 @@ DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
 #: sandbox is given.
 DEFAULT_ERROR_GRACE_SECONDS = 15 * 60
 MANAGED_NAME_RE = re.compile(
-    r"^mac-(?:task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
+    r"^mac-(?:task|hubverify|cc|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
 )
 
 
