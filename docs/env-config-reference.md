@@ -208,6 +208,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_FIRECRAWL_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy firecrawl install. |
 | `MAC_DEPLOY_FIRECRAWL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy firecrawl port. |
 | `MAC_DEPLOY_FIRECRAWL_URL` | str | consumer-defined | deployment | Deployment setting: deploy firecrawl url. |
+| `MAC_DEPLOY_FIRST_HUB_BOOTSTRAP` | str | consumer-defined | deployment | Deployment setting: deploy first hub bootstrap. |
 | `MAC_DEPLOY_FLEETS_CONFIG` | str | consumer-defined | deployment | Deployment setting: deploy fleets config. |
 | `MAC_DEPLOY_FLEET_CONFIG` | str | consumer-defined | deployment | Deployment setting: deploy fleet config. |
 | `MAC_DEPLOY_FLEET_NAME` | str | consumer-defined | deployment | Deployment setting: deploy fleet name. |

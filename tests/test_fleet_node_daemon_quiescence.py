@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -80,6 +81,16 @@ with calls.open("a", encoding="utf-8") as stream:
 
 state = json.loads(state_path.read_text(encoding="utf-8"))
 args = sys.argv[1:]
+if args == ["gateway", "list", "--output", "json"]:
+    if mode == "gateway-error":
+        raise SystemExit(70)
+    if mode == "gateway-malformed":
+        print("not-json")
+    elif mode == "gateway-registered":
+        print('[{{"name":"existing","endpoint":"http://127.0.0.1:17670"}}]')
+    else:
+        print("[]")
+    raise SystemExit(0)
 if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
     offset = int(args[args.index("--offset") + 1]) if "--offset" in args else 0
     if mode == "timeout":
@@ -518,6 +529,7 @@ def _run_quiescence(
     assert_phase: str | None = None,
     install_openshell: bool = True,
     openshell_dangling_symlink: bool = False,
+    existing_paths: tuple[str, ...] = (),
 ) -> QuiescenceRun:
     home = tmp_path / "home"
     mac_home = home / ".mac"
@@ -640,6 +652,10 @@ def _run_quiescence(
         _write_executable(fake_bin / "docker", _fake_runtime_source("docker"))
 
     marker = mac_home / f"daemon-resource-quiescence-{GENERATION}.json"
+    for relative in existing_paths:
+        existing = home / relative
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_text("existing state\n", encoding="utf-8")
     if seed_marker:
         marker.write_text('{"schema":"stale"}\n', encoding="utf-8")
         marker.chmod(0o600)
@@ -981,12 +997,116 @@ def test_from_scratch_node_with_no_openshell_binary_quiesces_cleanly(
     assert not any(line.startswith("openshell:") for line in calls)
 
 
-def test_broken_openshell_symlink_still_fails_closed(tmp_path: Path) -> None:
+def test_first_hub_with_prepared_cli_and_no_gateway_quiesces(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",  # A real prepared-only CLI cannot list sandboxes.
+        extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
+    )
+    _assert_success_marker(run)
+    calls = _call_lines(run)
+    assert "openshell:gateway list --output json" in calls
+    assert not any(line.startswith("openshell:sandbox") for line in calls)
+    assert any("label=openshell.ai/managed-by=openshell" in line for line in calls)
+
+
+@pytest.mark.parametrize("flag", ["0", "", "true"])
+def test_prepared_cli_exception_requires_explicit_first_hub(tmp_path: Path, flag: str) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": flag},
+    )
+    assert run.result.returncode != 0
+    assert "OpenShell sandbox inventory failed" in run.result.stderr
+    assert not run.marker.exists()
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        ".mac/src/mac",
+        ".mac/venv",
+        ".mac/mac.env",
+        ".mac/deployed-source-revision",
+        ".mac/openshell/gateway.toml",
+        ".mac/openshell/ghome/state",
+        ".config/openshell/gateway",
+        ".local/state/openshell/gateway/openshell.db",
+        ".local/share/openshell/state",
+        ".config/systemd/user/openshell-gateway.service",
+    ],
+)
+def test_first_hub_existing_state_cannot_hide_failed_inventory(
+    tmp_path: Path, existing: str
+) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        existing_paths=(existing,),
+        extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
+    )
+    assert run.result.returncode != 0
+    assert "OpenShell sandbox inventory failed" in run.result.stderr
+    assert not run.marker.exists()
+
+
+@pytest.mark.parametrize("mode", ["gateway-error", "gateway-malformed", "gateway-registered"])
+def test_first_hub_requires_empty_gateway_registrations(tmp_path: Path, mode: str) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode=mode,
+        extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
+    )
+    assert run.result.returncode != 0
+    assert "first-hub OpenShell gateway" in run.result.stderr
+    assert not run.marker.exists()
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_first_hub_refuses_existing_openshell_containers(tmp_path: Path, running: bool) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        docker=[_openshell_container("existing", running=running)],
+        extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
+    )
+    assert run.result.returncode != 0
+    assert "first-hub OpenShell-managed containers already exist" in run.result.stderr
+    assert not run.marker.exists()
+    assert not any(" rm " in line or " stop " in line for line in _call_lines(run))
+
+
+@pytest.mark.process_e2e
+def test_first_hub_refuses_unregistered_gateway_listener(tmp_path: Path) -> None:
+    with socket.socket() as listener:
+        try:
+            listener.bind(("127.0.0.1", 17670))
+        except OSError:
+            pytest.skip("OpenShell gateway port already occupied")
+        listener.listen()
+        run = _run_quiescence(
+            tmp_path,
+            sandbox_source="none",
+            extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
+        )
+    assert run.result.returncode != 0
+    assert "first-hub OpenShell gateway listener already exists" in run.result.stderr
+    assert not run.marker.exists()
+
+
+@pytest.mark.parametrize("first_hub", ["0", "1"])
+def test_broken_openshell_symlink_still_fails_closed(tmp_path: Path, first_hub: str) -> None:
     run = _run_quiescence(
         tmp_path,
         sandbox_source="none",
         install_openshell=False,
         openshell_dangling_symlink=True,
+        extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": first_hub},
     )
     assert run.result.returncode != 0
     assert "managed executable is unreadable" in run.result.stderr
