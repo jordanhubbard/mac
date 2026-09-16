@@ -2,6 +2,7 @@
 
 import base64
 import hmac
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -27,9 +28,25 @@ def _shell_function(source, name, next_name, *, subshell=False):
     return start + body + f"\n{closing}\n"
 
 
-def _run_recovery(tmp_path, *, ordinal=0, retained=True, key_valid=False, failure=""):
+def _run_recovery(
+    tmp_path,
+    *,
+    ordinal=0,
+    retained=True,
+    key_valid=False,
+    failure="",
+    proof_fault="",
+    commit_length=40,
+):
     source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
     names = (
+        (
+            "phase1_restore_contract_file_for_agent",
+            "phase1_restore_contract_digest_for_agent",
+            False,
+        ),
+        ("phase1_resolved_supervisor_for_agent", "cleanup_failed_phase1_prepare_lock", False),
+        ("restart_remote_mac_agent_under_epoch", "hub_target", False),
         (
             "retain_remote_generation_for_forward_repair",
             "write_cohort_composite_rollback_evidence",
@@ -61,6 +78,67 @@ def _run_recovery(tmp_path, *, ordinal=0, retained=True, key_valid=False, failur
     hold.write_text("existing operator hold")
     agent = f"node-{ordinal}"
     state = {"key": "registered-key-" + "a" * 48, "verified": [], "rotations": 0}
+    # The old controller directory is gone. Only the old node's durable
+    # contract and the journal's digest survive; the new controller is empty.
+    contract = {
+        "schema": "mac.phase1_cohort_restore_contract.v1",
+        "status": "prepared",
+        "agent": agent,
+        "generation": f"generation-{ordinal}",
+        "revision": "d" * commit_length,
+        "fleet": "fleet",
+        "rollback_capable": True,
+        "supervisor": {"manager": "systemd"},
+    }
+    if proof_fault in {"agent", "generation", "revision", "fleet"}:
+        contract[proof_fault] = "different"
+    elif proof_fault == "manager":
+        contract["supervisor"]["manager"] = "unrecognized"
+    raw_contract = (json.dumps(contract, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    contract_digest = hashlib.sha256(raw_contract).hexdigest()
+    contract_path = mac_home / f"phase1-cohort-restore-contract-generation-{ordinal}.json"
+    contract_path.write_bytes(raw_contract)
+    contract_path.chmod(0o600)
+    if proof_fault == "missing":
+        contract_path.unlink()
+    elif proof_fault == "digest":
+        contract_digest = "0" * 64
+    elif proof_fault == "mode":
+        contract_path.chmod(0o644)
+    elif proof_fault == "symlink":
+        target = mac_home / "other-contract.json"
+        contract_path.rename(target)
+        contract_path.symlink_to(target)
+    if not retained and proof_fault != "current_missing":
+        current = {**contract, "generation": "recovery-deployment", "revision": "e" * 40}
+        current_raw = (json.dumps(current, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        ready = {
+            "schema": "mac.phase1_restore_contract_ready.v1",
+            "agent": agent,
+            "generation": "recovery-deployment",
+            "revision": "e" * 40,
+            "contract": current,
+            "contract_sha256": hashlib.sha256(current_raw).hexdigest(),
+        }
+        ready_path = controller / f"phase1-restore-contract-agent_{agent}.json"
+        ready_path.write_text(json.dumps(ready))
+        ready_path.chmod(0o600)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    service = bin_dir / "systemctl"
+    service.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        ' stop) printf "service stop\\n" >> "$CALLS"; '
+        '[ "$FAILURE" != stop ] || exit 73; printf stopped > "$WORKER" ;;\n'
+        ' restart) printf "restart\\n" >> "$CALLS"; printf running > "$WORKER" ;;\n'
+        " *) exit 74 ;;\n"
+        "esac\n"
+    )
+    service.chmod(0o700)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n')
+    sudo.chmod(0o700)
 
     class Hub(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -108,15 +186,17 @@ def _run_recovery(tmp_path, *, ordinal=0, retained=True, key_valid=False, failur
                 "generation": f"generation-{ordinal}",
                 "deployment_id": "aborted-deployment",
                 "deploy_ts": "fixture",
-                "source_commit": "d" * 40,
+                "source_commit": "d" * commit_length,
                 "os": "linux",
-                "supervisor": "systemd",
+                "supervisor": "auto",
                 "recovery_action": "retain_forward",
+                "restore_contract_sha256": contract_digest,
             }
         ).encode()
     ).decode()
-    # Only transport, supervisor and journal boundaries are replaced. The
-    # reviewed shell, private-file checks, key install/consumption and signed
+    # Only transport, supervisor commands and journal writes are replaced.
+    # The composed recovery, phase-one proof resolver and service-control
+    # shell run together, as do private-file checks, key installation and signed
     # HTTP proof all execute. The conditional deliberately disables implicit
     # errexit, as the real recovery caller does.
     stubs = r"""
@@ -134,16 +214,6 @@ run_fenced_remote_python() {
   assert_remote_deployment_lock "$1" "$2" || return 1
   local code="$3"; shift 3
   "$PYTHON_BIN" -c "$code" "$@"
-}
-restart_remote_mac_agent_under_epoch() {
-  if [ "${4:-activate}" = stop ]; then
-    record 'service stop'
-    test "$FAILURE" != stop || return 73
-    printf stopped > "$WORKER"
-  else
-    test "${4:-activate}" = restart || return 74
-    record restart; printf running > "$WORKER"
-  fi
 }
 ssh_target_args() { printf 'fixture-host\0'; }
 shell_quote() { printf '%q' "$1"; }
@@ -177,6 +247,7 @@ ssh() {
         f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
         f"TMPDIR_LOCAL={shlex.quote(str(controller))}\n"
         "TS=fixture\nCOHORT_JOURNAL_REVISION=1\n"
+        f"GIT_REV={'e' * 40}\n"
         + functions
         + stubs
         + f"\nif {command}; then exit 0; else exit 1; fi\n"
@@ -184,6 +255,7 @@ ssh() {
     env = {
         **os.environ,
         "HOME": str(home),
+        "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         "PYTHONPATH": str(ROOT / "src"),
         "CALLS": str(calls),
         "LOCK": str(tmp_path / "lock"),
@@ -208,13 +280,19 @@ ssh() {
         "env": read_env_file(env_file),
         "home": mac_home,
         "hold": hold.read_text(),
+        "controller": controller,
     }
 
 
 @pytest.mark.parametrize("ordinal", range(3))
 @pytest.mark.parametrize("key_valid", [False, True])
-def test_retained_recovery_keeps_each_cohort_worker_stopped(tmp_path, ordinal, key_valid):
-    observed = _run_recovery(tmp_path, ordinal=ordinal, key_valid=key_valid)
+@pytest.mark.parametrize("commit_length", [40, 64])
+def test_retained_recovery_keeps_each_cohort_worker_stopped(
+    tmp_path, ordinal, key_valid, commit_length
+):
+    observed = _run_recovery(
+        tmp_path, ordinal=ordinal, key_valid=key_valid, commit_length=commit_length
+    )
     assert observed["result"].returncode == 0, observed["result"].stderr
     assert observed["worker"] == "stopped"
     assert "restart" not in observed["calls"]
@@ -227,6 +305,28 @@ def test_retained_recovery_keeps_each_cohort_worker_stopped(tmp_path, ordinal, k
     barrier = observed["home"] / "deploy-start-barrier"
     assert barrier.read_text().strip() == f"generation-{ordinal}"
     assert not list((observed["home"] / "attestation-recovery").glob("*.json"))
+    assert not list(observed["controller"].glob("phase1-restore-contract-*.json"))
+
+
+@pytest.mark.parametrize(
+    "proof_fault",
+    ["missing", "digest", "agent", "generation", "revision", "fleet", "manager", "mode", "symlink"],
+)
+def test_retained_recovery_requires_exact_durable_supervisor_proof(tmp_path, proof_fault):
+    observed = _run_recovery(tmp_path, proof_fault=proof_fault)
+    assert observed["result"].returncode != 0
+    assert observed["worker"] == "running"
+    assert "service stop" not in observed["calls"]
+    assert "restart" not in observed["calls"]
+    assert "journal aborted-node" not in observed["calls"]
+    assert observed["state"]["rotations"] == 0
+    assert observed["hold"] == "existing operator hold"
+
+
+def test_activation_cannot_substitute_retained_proof_for_current_phase_one(tmp_path):
+    observed = _run_recovery(tmp_path, retained=False, proof_fault="current_missing")
+    assert observed["result"].returncode != 0
+    assert "restart" not in observed["calls"]
 
 
 def test_normal_attestation_recovery_still_restarts_after_key_install(tmp_path):
@@ -252,8 +352,9 @@ def test_retained_recovery_does_not_report_success_after_boundary_failure(tmp_pa
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 @pytest.mark.parametrize("action", ["activate", "restart", "stop"])
 @pytest.mark.parametrize("upload_fails", [False, True])
+@pytest.mark.parametrize("retained_proof", [False, True])
 def test_epoch_worker_lifecycle_uses_only_the_selected_supervisor(
-    tmp_path, supervisor, action, upload_fails
+    tmp_path, supervisor, action, upload_fails, retained_proof
 ):
     source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
     function = _shell_function(source, "restart_remote_mac_agent_under_epoch", "hub_target")
@@ -294,6 +395,7 @@ fenced_remote_upload() {
 remote_deployment_fenced_exec() { shift 2; printf '%q ' "$@"; }
 ssh() { bash -c "${!#}"; }
 """
+    recovery_args = f" old-generation {'d' * 40} {'a' * 64}" if retained_proof else ""
     result = subprocess.run(
         [
             "bash",
@@ -301,7 +403,7 @@ ssh() { bash -c "${!#}"; }
             "set -eu\nTS=fixture\n"
             + function
             + stubs
-            + f"\nif restart_remote_mac_agent_under_epoch node {supervisor} fleet {action}; "
+            + f"\nif restart_remote_mac_agent_under_epoch node {supervisor} fleet {action}{recovery_args}; "
             + "then exit 0; else exit $?; fi",
         ],
         env={
@@ -318,6 +420,10 @@ ssh() { bash -c "${!#}"; }
         capture_output=True,
         timeout=10,
     )
+    if retained_proof and action != "stop":
+        assert result.returncode != 0
+        assert not calls.exists(), "retained proof cannot activate a successor"
+        return
     if supervisor == "launchd" and upload_fails:
         assert result.returncode != 0
         assert not calls.exists(), "failed helper transport must not touch the service"

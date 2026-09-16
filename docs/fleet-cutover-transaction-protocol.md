@@ -106,6 +106,13 @@ dispatching a repair task through the affected pipeline. Elapsed time is not a
 readiness proof; the deployment journal continues to own physical recovery.
 Abort never revokes an unrelated principal, key, approval, or operator hold.
 
+Retained-worker attestation recovery resolves the supervisor from the interrupted
+node's owner-private phase-one contract, checked against the journal's generation,
+source revision, and contract digest under the recovery lock. It does not require
+the former controller's temporary files or a new phase-one preparation. This proof
+authorizes keeping the retained worker stopped only; activating a successor still
+requires that successor's own phase-one proof.
+
 Status is read-only and returns `absent`, `open`, `proved`, `committed`,
 `aborted`, or `mismatch` for the supplied exact identity digest. Transport
 failure is never interpreted as `absent`.

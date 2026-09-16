@@ -7856,17 +7856,41 @@ PY
 }
 
 phase1_resolved_supervisor_for_agent() {
-  local agent="$1" generation path
-  generation="$(deployment_id_for_agent "$agent")"
-  path="$(phase1_restore_contract_file_for_agent "$agent")"
-  "$PYTHON_BIN" - "$path" "$agent" "$generation" "$GIT_REV" <<'PY'
+  local agent="$1" generation path code mode=local revision="$GIT_REV"
+  local expected_sha256="" fleet_name="" deployment_id
+  deployment_id="$(deployment_id_for_agent "$agent")" || return 1
+  if [ "$#" -eq 1 ]; then
+    generation="$deployment_id"
+    path="$(phase1_restore_contract_file_for_agent "$agent")" || return 1
+  elif [ "$#" -eq 5 ]; then
+    # Recovery belongs to the interrupted generation. Its owner-private
+    # contract lives on the bound node, not in this new controller's tempdir.
+    mode=retained
+    generation="$2"; revision="$3"; expected_sha256="$4"; fleet_name="$5"
+    path=""
+  else
+    echo "ERROR: invalid phase-1 supervisor proof arguments" >&2
+    return 1
+  fi
+  code="$(command cat <<'PY'
 import hashlib
 import json
 import os
+from pathlib import Path
+import re
 import stat
 import sys
 
-path, agent, generation, revision = sys.argv[1:]
+mode, path, agent, generation, revision, expected_sha256, fleet = sys.argv[1:]
+if mode == "retained":
+    if (
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,511}", generation) is None
+        or re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", revision) is None
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+        or not fleet
+    ):
+        raise SystemExit("retained supervisor proof lacks its journal binding")
+    path = Path.home() / ".mac" / ("phase1-cohort-restore-contract-%s.json" % generation)
 descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
 try:
     metadata = os.fstat(descriptor)
@@ -7879,23 +7903,41 @@ try:
     ):
         raise SystemExit("phase-1 supervisor contract is unsafe")
     raw = os.read(descriptor, metadata.st_size + 1)
-    if len(raw) != metadata.st_size:
+    after = os.fstat(descriptor)
+    if len(raw) != metadata.st_size or (
+        metadata.st_dev, metadata.st_ino, metadata.st_size,
+        metadata.st_mtime_ns, metadata.st_ctime_ns,
+    ) != (
+        after.st_dev, after.st_ino, after.st_size,
+        after.st_mtime_ns, after.st_ctime_ns,
+    ):
         raise SystemExit("phase-1 supervisor contract changed while reading")
 finally:
     os.close(descriptor)
 payload = json.loads(raw)
-contract = payload.get("contract") if isinstance(payload, dict) else None
+if mode == "retained":
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise SystemExit("phase-1 supervisor contract differs from the durable journal")
+    contract = payload
+    if not isinstance(contract, dict) or contract.get("fleet") != fleet:
+        raise SystemExit("retained supervisor contract belongs to another fleet")
+else:
+    contract = payload.get("contract") if isinstance(payload, dict) else None
+    canonical_contract = (
+        json.dumps(contract, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "mac.phase1_restore_contract_ready.v1"
+        or payload.get("agent") != agent
+        or payload.get("generation") != generation
+        or payload.get("revision") != revision
+        or payload.get("contract_sha256") != hashlib.sha256(canonical_contract).hexdigest()
+    ):
+        raise SystemExit("phase-1 supervisor proof differs from the active generation")
 supervisor = contract.get("supervisor") if isinstance(contract, dict) else None
-canonical_contract = (
-    json.dumps(contract, sort_keys=True, separators=(",", ":")) + "\n"
-).encode()
 if (
-    payload.get("schema") != "mac.phase1_restore_contract_ready.v1"
-    or payload.get("agent") != agent
-    or payload.get("generation") != generation
-    or payload.get("revision") != revision
-    or payload.get("contract_sha256") != hashlib.sha256(canonical_contract).hexdigest()
-    or not isinstance(contract, dict)
+    not isinstance(contract, dict)
     or contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
     or contract.get("status") != "prepared"
     or contract.get("agent") != agent
@@ -7905,9 +7947,17 @@ if (
     or not isinstance(supervisor, dict)
     or supervisor.get("manager") not in {"launchd", "systemd", "supervisord"}
 ):
-    raise SystemExit("phase-1 supervisor contract differs from the active generation")
+    raise SystemExit("phase-1 supervisor contract differs from the bound generation")
 print(supervisor["manager"])
 PY
+)" || return 1
+  if [ "$mode" = retained ]; then
+    run_fenced_remote_python "$agent" "$deployment_id" "$code" \
+      "$mode" "$path" "$agent" "$generation" "$revision" "$expected_sha256" "$fleet_name"
+  else
+    "$PYTHON_BIN" -c "$code" \
+      "$mode" "$path" "$agent" "$generation" "$revision" "$expected_sha256" "$fleet_name"
+  fi
 }
 
 cleanup_failed_phase1_prepare_lock() {
@@ -9499,9 +9549,19 @@ restart_remote_mac_agent_under_epoch() {
     *) echo "ERROR: ${agent}: unsupported epoch activation mode ${activation_mode}" >&2; return 1 ;;
   esac
   deployment_id="$(deployment_id_for_agent "$agent")"
-  assert_remote_deployment_lock "$agent" "$deployment_id"
-  resolved_supervisor="$(phase1_resolved_supervisor_for_agent "$agent")" \
-    || return 1
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
+  if [ "$#" -gt 4 ]; then
+    # Retained proof can authorize keeping a failed worker stopped, never
+    # activating a new generation without its own phase-1 preparation.
+    if [ "$#" -ne 7 ] || [ "$activation_mode" != stop ]; then
+      echo "ERROR: retained supervisor proof may only stop a recovery worker" >&2
+      return 1
+    fi
+    resolved_supervisor="$(phase1_resolved_supervisor_for_agent \
+      "$agent" "$5" "$6" "$7" "$fleet_name")" || return 1
+  else
+    resolved_supervisor="$(phase1_resolved_supervisor_for_agent "$agent")" || return 1
+  fi
   if [ "$supervisor" != auto ] && [ "$supervisor" != "$resolved_supervisor" ]; then
     echo "ERROR: ${agent}: configured supervisor differs from phase-1 proof" >&2
     return 1
@@ -12147,7 +12207,8 @@ reconcile_bound_worker_attestation_key() (
       # process barrier fences task execution, not startup registration, so
       # restarting here would loop on authentication failures. Preserve the
       # failed successor and prove its installed key with the worker stopped.
-      restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name" stop || return 1
+      restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name" stop \
+        "${6:-}" "${7:-}" "${8:-}" || return 1
       ;;
     *) echo "ERROR: invalid attestation recovery worker lifecycle" >&2; return 1 ;;
   esac
@@ -14329,7 +14390,8 @@ PY
       return 1
     fi
     if ! reconcile_bound_worker_attestation_key \
-      "$agent" "$hub_agent" "$supervisor" "$fleet_name" keep_stopped; then
+      "$agent" "$hub_agent" "$supervisor" "$fleet_name" keep_stopped \
+      "$runtime_generation" "$source_commit" "$restore_contract_sha256"; then
       release_remote_deployment_lock "$agent" "$reconcile_deployment_id" >/dev/null 2>&1 || true
       return 1
     fi
