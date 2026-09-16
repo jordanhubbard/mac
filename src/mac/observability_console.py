@@ -39,13 +39,16 @@ from mac.models import json_loads
 import math
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 __all__ = [
+    "GRAPH_NODE_LIMIT",
+    "GRAPH_SCHEMA_VERSION",
     "SCHEMA_VERSION",
     "TASK_SCHEMA_VERSION",
     "TERMINAL_TASK_STATES",
     "build_console_snapshot",
+    "build_project_graph",
     "build_task_drilldown",
     "build_transcript_entry",
     "bucket_transitions",
@@ -67,6 +70,11 @@ OLDEST_TASKS = 15
 RECENT_TRANSITIONS = 60
 AGENT_LIMIT = 200
 RECENT_CYCLE_RUNS = 12
+GRAPH_SCHEMA_VERSION = "mac.dashboard.observe.project_graph.v1"
+# One project's live work, plus a bounded remainder of recently updated
+# terminal rows. A fleet-wide dump is the thing ADR 0018 refused; 200 is
+# enough for a project like OVStudio (~130 live tasks) and still a cap.
+GRAPH_NODE_LIMIT = 200
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +176,74 @@ def _counts(rows: Sequence[Dict[str, Any]], key: str) -> Dict[str, int]:
         name = row.get(key)
         out[str(name) if name is not None else "(none)"] = int(row.get("n") or 0)
     return out
+
+
+def _as_mapping(value: Any) -> Dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _join_policy_of(metadata: Any) -> str:
+    """Keep in step with ``task_ledger_audit._dependency_join_policy_of``.
+
+    Duplicated here so the observe path does not import the audit module
+    (subprocess, git) on every hub boot. The default is ``all_success``;
+    cooperative integration parents default to ``all_settled``.
+    """
+    md = _as_mapping(metadata)
+    policy = _as_mapping(md.get("dependency_policy"))
+    coordination = _as_mapping(md.get("coordination"))
+    declared = str(policy.get("join") or coordination.get("join_policy") or "").strip()
+    if declared:
+        return declared
+    if str(coordination.get("mode") or "") == "cooperative_integration":
+        return "all_settled"
+    return "all_success"
+
+
+def _edge_verdict(dependency_state: Any, join_policy: str) -> str:
+    """What this edge means for the waiter, given the blocker's state.
+
+    ``unknown`` is a real answer — missing blocker state or an unrecognised
+    join policy. It is never coerced to pending or dead.
+    """
+    state = str(dependency_state or "")
+    if state == "completed":
+        return "satisfied"
+    if state in {"failed", "cancelled"}:
+        if join_policy == "all_settled":
+            return "settled"
+        if join_policy == "all_success":
+            return "dead"
+        return "unknown"
+    if not state:
+        return "unknown"
+    return "pending"
+
+
+def _cyclic_node_ids(node_ids: Sequence[str], edges: Sequence[Mapping[str, str]]) -> set[str]:
+    """Nodes that still have unmet inbound edges after a Kahn pass — a cycle."""
+    idset = set(node_ids)
+    incoming: Dict[str, int] = {node: 0 for node in node_ids}
+    outbound: Dict[str, List[str]] = {node: [] for node in node_ids}
+    for edge in edges:
+        source = str(edge.get("from") or "")
+        dest = str(edge.get("to") or "")
+        if source not in idset or dest not in idset:
+            continue
+        incoming[dest] = incoming.get(dest, 0) + 1
+        outbound.setdefault(source, []).append(dest)
+    ready = [node for node, count in incoming.items() if count == 0]
+    seen = 0
+    while ready:
+        node = ready.pop()
+        seen += 1
+        for dest in outbound.get(node, []):
+            incoming[dest] -= 1
+            if incoming[dest] == 0:
+                ready.append(dest)
+    if seen == len(idset):
+        return set()
+    return {node for node, count in incoming.items() if count > 0}
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +707,179 @@ def build_console_snapshot(
 
     payload["degraded"] = sections.degraded
     payload["observability_sequence"] = int((payload.get("telemetry") or {}).get("cursor") or 0)
+    payload["build_ms"] = round((time.monotonic() - started) * 1000.0, 1)
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Project graph (Mission Control)
+# ---------------------------------------------------------------------------
+
+
+def build_project_graph(
+    cp: Any,
+    project: str,
+    *,
+    now: Optional[datetime] = None,
+    node_limit: int = GRAPH_NODE_LIMIT,
+) -> Dict[str, Any]:
+    """Bounded dependency graph for one project. Read-only.
+
+    Live (non-terminal) tasks fill the cap first; recently updated terminal
+    rows fill any remainder. Edges come from ``task_edges``. An edge whose
+    other end is outside the node set is still returned so the inspector can
+    name the missing blocker, and is counted in ``omitted_edges``.
+
+    Failure omits ``graph`` entirely and names the section in ``degraded``.
+    An empty project is a successful empty graph, not a degradation.
+    """
+    started = time.monotonic()
+    moment = now or datetime.now(timezone.utc)
+    name = str(project or "").strip()
+    cap = max(1, min(GRAPH_NODE_LIMIT, int(node_limit)))
+    payload: Dict[str, Any] = {
+        "schema": GRAPH_SCHEMA_VERSION,
+        "server_time": moment.isoformat(),
+        "project": name,
+        "found": bool(name),
+    }
+    if not name:
+        payload["degraded"] = []
+        payload["build_ms"] = round((time.monotonic() - started) * 1000.0, 1)
+        return payload
+
+    store = cp.store
+    sections = _Sections()
+    terminal_sql = ", ".join("'%s'" % state for state in TERMINAL_TASK_STATES)
+
+    def q(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
+        return [dict(row) for row in store.query_all(sql, tuple(params))]
+
+    def assemble() -> Dict[str, Any]:
+        by_state = _counts(
+            q(
+                "SELECT state, COUNT(*) AS n FROM tasks WHERE project = ? GROUP BY state",
+                (name,),
+            ),
+            "state",
+        )
+        total = sum(by_state.values())
+        live_total = sum(n for state, n in by_state.items() if state not in TERMINAL_TASK_STATES)
+        live_rows = q(
+            "SELECT id, title, state, project, priority, owner_agent_id, "
+            "updated_at, created_at, metadata "
+            "FROM tasks WHERE project = ? AND state NOT IN (%s) "
+            "ORDER BY updated_at ASC, id ASC LIMIT %d" % (terminal_sql, cap),
+            (name,),
+        )
+        remainder = cap - len(live_rows)
+        terminal_rows: List[Dict[str, Any]] = []
+        if remainder > 0:
+            terminal_rows = q(
+                "SELECT id, title, state, project, priority, owner_agent_id, "
+                "updated_at, created_at, metadata "
+                "FROM tasks WHERE project = ? AND state IN (%s) "
+                "ORDER BY updated_at DESC, id DESC LIMIT %d" % (terminal_sql, remainder),
+                (name,),
+            )
+        rows = live_rows + terminal_rows
+        shown_ids = [str(row["id"]) for row in rows]
+        shown_set = set(shown_ids)
+
+        nodes: List[Dict[str, Any]] = []
+        join_by_id: Dict[str, str] = {}
+        for row in rows:
+            metadata = json_loads(row.get("metadata"), {})
+            join_policy = _join_policy_of(metadata)
+            join_by_id[str(row["id"])] = join_policy
+            raw_hold = _as_mapping(metadata).get("no_dispatch")
+            no_dispatch = raw_hold is True or raw_hold == 1 or raw_hold == "true"
+            node = {
+                "id": str(row["id"]),
+                "title": str(row.get("title") or ""),
+                "state": str(row.get("state") or ""),
+                "priority": int(row.get("priority") or 0),
+                "owner_agent_id": row.get("owner_agent_id"),
+                "updated_at": row.get("updated_at"),
+                "created_at": row.get("created_at"),
+                "dwell_seconds": _age_seconds(row.get("updated_at"), moment),
+                "age_seconds": _age_seconds(row.get("created_at"), moment),
+                "no_dispatch": no_dispatch,
+                "join_policy": join_policy,
+                "cyclic": False,
+            }
+            nodes.append(node)
+
+        edges: List[Dict[str, Any]] = []
+        if shown_ids:
+            placeholders = ", ".join("?" * len(shown_ids))
+            edge_rows = q(
+                "SELECT e.task_id, e.dependency_task_id, "
+                "d.state AS dependency_state, d.title AS dependency_title, "
+                "d.project AS dependency_project "
+                "FROM task_edges e "
+                "LEFT JOIN tasks d ON d.id = e.dependency_task_id "
+                "WHERE e.task_id IN (%s)" % placeholders,
+                tuple(shown_ids),
+            )
+        else:
+            edge_rows = []
+
+        omitted_edges = 0
+        dead_waiters: set[str] = set()
+        for row in edge_rows:
+            waiter = str(row.get("task_id") or "")
+            blocker = str(row.get("dependency_task_id") or "")
+            join_policy = join_by_id.get(waiter, "all_success")
+            from_in_view = blocker in shown_set
+            if not from_in_view:
+                omitted_edges += 1
+            verdict = _edge_verdict(row.get("dependency_state"), join_policy)
+            if verdict == "dead":
+                dead_waiters.add(waiter)
+            edges.append(
+                {
+                    "from": blocker,
+                    "to": waiter,
+                    "join_policy": join_policy,
+                    "from_state": row.get("dependency_state"),
+                    "from_title": row.get("dependency_title"),
+                    "from_project": row.get("dependency_project"),
+                    "from_in_view": from_in_view,
+                    "verdict": verdict,
+                }
+            )
+
+        cyclic = _cyclic_node_ids(
+            shown_ids, [{"from": edge["from"], "to": edge["to"]} for edge in edges]
+        )
+        for node in nodes:
+            node["cyclic"] = node["id"] in cyclic
+
+        live_ids = {node["id"] for node in nodes if node["state"] not in TERMINAL_TASK_STATES}
+        held = sum(1 for node in nodes if node["no_dispatch"] and node["id"] in live_ids)
+        dead_blocked = sum(1 for waiter in dead_waiters if waiter in live_ids)
+        omitted = max(0, total - len(nodes))
+        omitted_live = max(0, live_total - len(live_rows))
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "by_state": by_state,
+            "total": total,
+            "live_total": live_total,
+            "shown": len(nodes),
+            "omitted": omitted,
+            "omitted_live": omitted_live,
+            "omitted_edges": omitted_edges,
+            "held": held,
+            "dead_blocked": dead_blocked,
+            "truncated": omitted > 0,
+        }
+
+    graph = sections.run("graph", assemble)
+    if graph is not None:
+        payload["graph"] = graph
+    payload["degraded"] = sections.degraded
     payload["build_ms"] = round((time.monotonic() - started) * 1000.0, 1)
     return payload
 

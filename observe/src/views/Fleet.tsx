@@ -183,7 +183,13 @@ export function AgentsView({ snap }: { snap: Snapshot }) {
 }
 
 /** Projects: which ones carry the live work, and how it is distributed. */
-export function ProjectsView({ snap }: { snap: Snapshot }) {
+export function ProjectsView({
+  snap,
+  onOpenMission,
+}: {
+  snap: Snapshot;
+  onOpenMission?: (project: string) => void;
+}) {
   const projects = snap.projects;
   if (!projects) {
     return <Unavailable what="Projects" reason={reason(snap, "projects")} />;
@@ -230,7 +236,19 @@ export function ProjectsView({ snap }: { snap: Snapshot }) {
               <tbody>
                 {projects.rows.map((row) => (
                   <tr key={row.project}>
-                    <td className="truncate">{row.project}</td>
+                    <td className="truncate">
+                      {onOpenMission ? (
+                        <button
+                          type="button"
+                          className="rowlink"
+                          onClick={() => onOpenMission(row.project)}
+                        >
+                          {row.project}
+                        </button>
+                      ) : (
+                        row.project
+                      )}
+                    </td>
                     <td className="n">{count(row.live)}</td>
                     <td className="n">{count(row.total)}</td>
                     <td>

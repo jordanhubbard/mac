@@ -48,8 +48,9 @@ export function TaskView({
   if (!taskId) {
     return (
       <Empty>
-        Pick a task from <strong>Live</strong> or <strong>Stuck work</strong> to
-        see its history, transcript and commands.
+        Pick a task from <strong>Live</strong>, <strong>Stuck work</strong>,{" "}
+        <strong>News board</strong>, or <strong>Mission Control</strong> to see
+        its history, transcript and commands.
       </Empty>
     );
   }

@@ -26,7 +26,19 @@ CONTAINERFILE = ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
 ADR_0001 = ROOT / "docs" / "adr" / "0001-unify-hermes-runtime-into-mac.md"
 FATE_DOC = ROOT / "docs" / "hermes-vendor-fate.md"
 
-_IMPORT_HERMES_CLI = re.compile(r"(?:^|\s)(?:from\s+hermes_cli\b|import\s+hermes_cli\b)")
+
+def _live_hermes_cli_import_lines(source: str) -> list[int]:
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            modules = [node.module or ""]
+        else:
+            continue
+        if any(module.split(".")[0] == "hermes_cli" for module in modules):
+            lines.append(node.lineno)
+    return sorted(lines)
 
 
 def test_vendored_hermes_tree_is_gone() -> None:
@@ -67,13 +79,27 @@ def test_a_no_live_hermes_cli_imports_in_mac_sources() -> None:
     offenders: list[str] = []
     for path in SRC_MAC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            stripped = line.lstrip()
-            if stripped.startswith("#"):
-                continue
-            if _IMPORT_HERMES_CLI.search(line):
-                offenders.append("%s:%d:%s" % (path.relative_to(ROOT), lineno, line.strip()))
+        # Qualification scripts are data passed to the external interpreter.
+        # Inspect executable imports, not examples or subprocess script strings.
+        for lineno in _live_hermes_cli_import_lines(text):
+            line = text.splitlines()[lineno - 1]
+            offenders.append("%s:%d:%s" % (path.relative_to(ROOT), lineno, line.strip()))
     assert offenders == [], "live hermes_cli imports returned:\n" + "\n".join(offenders)
+
+
+@pytest.mark.parametrize(
+    ("source", "lines"),
+    [
+        ("import hermes_cli.main as main", [1]),
+        ("import os, hermes_cli.main", [1]),
+        ("from hermes_cli import main", [1]),
+        ("def start():\n    from hermes_cli.main import main", [2]),
+        ('PROBE = """\nimport hermes_cli.main\n"""', []),
+        ("# import hermes_cli\nimport hermes_cli_tools", []),
+    ],
+)
+def test_live_import_guard_distinguishes_code_from_script_data(source, lines):
+    assert _live_hermes_cli_import_lines(source) == lines
 
 
 def test_a_hermes_config_surface_degrades_without_hermes_cli() -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 import platform
 import plistlib
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -43,6 +44,14 @@ def build_context_files_prompt(cwd=None, home_override=None):
 """
     builder.write_text(original)
     (upstream / "hermes").write_text("print('selected qualified runtime')\n")
+    (upstream / "hermes_cli").mkdir()
+    (upstream / "hermes_cli/__init__.py").write_text("")
+    (upstream / "hermes_cli/main.py").write_text("print('Hermes CLI help')\n")
+    (upstream / "hermes_cli/stderr_timestamp.py").write_text(
+        "import subprocess,sys\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(subprocess.call(sys.argv[sys.argv.index('--')+1:]))\n"
+    )
     (upstream / ".gitignore").write_text(".venv/\nvenv\n__pycache__/\n")
     for module in ("slack_bolt", "slack_sdk", "aiohttp", "mcp"):
         (upstream / f"{module}.py").write_text("")
@@ -75,14 +84,18 @@ def build_context_files_prompt(cwd=None, home_override=None):
     uv = tmp_path / "uv"
     uv.write_text(
         f"#!{sys.executable}\n"
-        + """import json,os,sys
+        + """import json,os,sys,venv
 from pathlib import Path
 if sys.argv[1:] == ['--version']:
     print('uv 0.12.12'); sys.exit()
 Path('sync-args.json').write_text(json.dumps(sys.argv[1:]))
 if os.environ.get('FAIL_SYNC'): sys.exit(1)
-p=Path('.venv/bin');p.mkdir(parents=True)
-(p/'python').symlink_to(sys.executable)
+venv.EnvBuilder(system_site_packages=True).create('.venv')
+# Model uv's editable install, but use a real isolated interpreter and its
+# site initialization. A dependency-only sync must not make source importable.
+if '--no-install-project' not in sys.argv:
+    site=next(Path('.venv/lib').glob('python*/site-packages'))
+    (site/'hermes-fixture.pth').write_text(str(Path.cwd())+'\\n')
 """
     )
     uv.chmod(0o755)
@@ -106,6 +119,7 @@ def test_fresh_release_qualifies_then_activates_and_reuses_without_sync(fixture)
     assert not fixture["launcher"].exists()
     args = json.loads((runtime / "sync-args.json").read_text())
     assert "--locked" in args and "--no-default-groups" in args
+    assert "--no-install-project" not in args
     assert args.count("--extra") == 2 and "slack" in args and "mcp" in args
     release.activate(
         runtime, fixture["launcher"], fixture["home"], fixture["markdown"], fixture["manifests"]
@@ -118,6 +132,42 @@ def test_fresh_release_qualifies_then_activates_and_reuses_without_sync(fixture)
     before = (runtime / "sync-args.json").stat().st_mtime_ns
     assert release.prepare(**fixture) == runtime
     assert (runtime / "sync-args.json").stat().st_mtime_ns == before
+
+
+def test_qualification_rejects_missing_service_installation(fixture, monkeypatch):
+    runtime = release.prepare(**fixture)
+    next((runtime / ".venv/lib").glob("python*/site-packages/hermes-fixture.pth")).unlink()
+    # Neither the caller's cwd nor PYTHONPATH may rescue the missing install.
+    monkeypatch.chdir(runtime)
+    monkeypatch.setenv("PYTHONPATH", str(runtime))
+    with pytest.raises(RuntimeError, match="preparation failed"):
+        release.qualify(
+            runtime, fixture["home"], fixture["markdown"], release.recipe(fixture["manifests"])
+        )
+    assert not fixture["launcher"].exists()
+
+
+def test_qualification_runs_service_child_not_only_imports(fixture):
+    runtime = release.prepare(**fixture)
+    (runtime / "hermes_cli/main.py").write_text(
+        "if __name__ == '__main__':\n    raise SystemExit(37)\n"
+    )
+    with pytest.raises(RuntimeError, match="preparation failed"):
+        release.qualify(
+            runtime, fixture["home"], fixture["markdown"], release.recipe(fixture["manifests"])
+        )
+
+
+def test_qualification_rejects_other_runtime_on_environment_path(fixture):
+    runtime = release.prepare(**fixture)
+    other = fixture["root"] / "other"
+    shutil.copytree(runtime / "hermes_cli", other / "hermes_cli")
+    site = next((runtime / ".venv/lib").glob("python*/site-packages"))
+    (site / "hermes-fixture.pth").write_text(str(other) + "\n" + str(runtime) + "\n")
+    with pytest.raises(RuntimeError, match="preparation failed"):
+        release.qualify(
+            runtime, fixture["home"], fixture["markdown"], release.recipe(fixture["manifests"])
+        )
 
 
 @pytest.mark.parametrize("failure", ["patch", "dependencies", "prompt"])

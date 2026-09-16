@@ -163,7 +163,7 @@ class SplayTree:
                 self._rotate_right(g)
                 self._rotate_right(p)
             elif x == p.right and p == g.right:
-                self._rotate_right(g)  # intentional: zig-zig variant
+                self._rotate_left(g)
                 self._rotate_left(p)
             elif x == p.right and p == g.left:
                 # Zig-zag
@@ -196,13 +196,17 @@ class SplayTree:
         self._splay(node)
 
     def access(self, soul_id: str, new_key: float):
-        """Touch a node — splay it to root with updated key."""
+        """Touch a node — update its key and splay it to root."""
         if soul_id not in self._nodes:
             self.insert(soul_id, new_key)
             return
-        node = self._nodes[soul_id]
-        node.key = new_key
-        self._splay(node)
+        # Recency scores change over time and on every touch. Updating the key
+        # in place would leave the binary-search ordering based on the old key,
+        # so the descending walk used by top_n() could rank stale siblings above
+        # the freshly accessed node or its promoted parents. Remove and reinsert
+        # to preserve the score invariant, then let insert() splay the node.
+        self.remove(soul_id)
+        self.insert(soul_id, new_key)
 
     def top_n(self, n: int) -> list[str]:
         """Return up to n soul_ids in descending recency order (root first)."""
@@ -365,6 +369,12 @@ class SoulGraph:
 
     def hot(self, n: int = 10) -> list[SoulNode]:
         """Top-n most recently/frequently accessed nodes (splay order)."""
+        # Time decay changes every unpinned score even when the node is never
+        # touched. Keep the index honest before ranking, otherwise an untouched
+        # node can keep a stale creation-time key and outrank a parent that was
+        # just partially promoted by child access.
+        for node_id, node in list(self.nodes.items()):
+            self.splay.access(node_id, node.recency_score())
         ids = self.splay.top_n(n)
         return [self.nodes[i] for i in ids if i in self.nodes]
 

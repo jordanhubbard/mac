@@ -133,6 +133,7 @@ request and response definitions.
 | `GET` | `/curiosity/candidates` | List Curiosity Candidates |
 | `POST` | `/curiosity/candidates/{candidate_id}/{decision}` | Decide Curiosity Candidate |
 | `GET` | `/dashboard/observe` | Dashboard Observe |
+| `GET` | `/dashboard/observe/projects/{project}/graph` | Dashboard Observe Project Graph |
 | `GET` | `/dashboard/observe/tasks/{task_id}` | Dashboard Observe Task |
 | `GET` | `/dashboard/observe/transcripts/{transcript_id}` | Dashboard Observe Transcript |
 | `GET` | `/dashboard/state` | Dashboard State |
