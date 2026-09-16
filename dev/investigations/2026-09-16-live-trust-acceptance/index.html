@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/guide/06-trust-workflow/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/investigations/2026-09-16-live-trust-acceptance/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>A request people can verify - MAC Documentation</title>
+        <title>Live request and recovery acceptance, 2026-09-16 - MAC Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#a-request-people-can-verify" class="md-skip">
+        <a href="#live-request-and-recovery-acceptance-2026-09-16" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              A request people can verify
+              Live request and recovery acceptance, 2026-09-16
             
           </span>
         </div>
@@ -343,7 +343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../guide/" class="md-nav__link">
         
   
   
@@ -371,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../01-architecture/" class="md-nav__link">
+      <a href="../../guide/01-architecture/" class="md-nav__link">
         
   
   
@@ -399,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../02-getting-started/" class="md-nav__link">
+      <a href="../../guide/02-getting-started/" class="md-nav__link">
         
   
   
@@ -427,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../03-advanced/" class="md-nav__link">
+      <a href="../../guide/03-advanced/" class="md-nav__link">
         
   
   
@@ -455,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../04-ui/" class="md-nav__link">
+      <a href="../../guide/04-ui/" class="md-nav__link">
         
   
   
@@ -483,7 +483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../05-developer-guide/" class="md-nav__link">
+      <a href="../../guide/05-developer-guide/" class="md-nav__link">
         
   
   
@@ -1754,10 +1754,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#define-one-observable-result" class="md-nav__link">
+  <a href="#what-was-deployed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Define one observable result
+        What was deployed
       
     </span>
   </a>
@@ -1765,10 +1765,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#read-the-result-before-accepting-it" class="md-nav__link">
+  <a href="#live-recovery-evidence" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Read the result before accepting it
+        Live recovery evidence
       
     </span>
   </a>
@@ -1776,10 +1776,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#recover-with-the-existing-lifecycle" class="md-nav__link">
+  <a href="#what-the-evidence-says-about-the-design" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recover with the existing lifecycle
+        What the evidence says about the design
       
     </span>
   </a>
@@ -1787,10 +1787,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#measure-a-creation-cohort" class="md-nav__link">
+  <a href="#scope-and-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Measure a creation cohort
+        Scope and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations-and-follow-up-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations and follow-up work
       
     </span>
   </a>
@@ -1814,7 +1825,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/guide/06-trust-workflow.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/investigations/2026-09-16-live-trust-acceptance.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1822,142 +1833,138 @@
   
 
 
-<h1 id="a-request-people-can-verify">A request people can verify<a class="headerlink" href="#a-request-people-can-verify" title="Permanent link">&para;</a></h1>
-<p>Start with the <a href="../02-getting-started/">supported setup</a>: PostgreSQL, the
-configured gateway, one registered repository project, and one executable
-worker. Keep the current generator yield gate and dispatch holds in place
-while validating this path. Additional tasks or workers do not repair an
-unreliable request-to-result loop.</p>
-<h2 id="define-one-observable-result">Define one observable result<a class="headerlink" href="#define-one-observable-result" title="Permanent link">&para;</a></h2>
-<p>Write a brief with the starting behavior, the requested behavior, one example
-that demonstrates the change, and the repository's test command. Include the
-scope boundary: what files or behavior the worker may change. Register the
-repository from its checkout and use its returned project name explicitly.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac project register</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">mac project list</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">mac task create &quot;Implement the behavior in brief.txt&quot; --project &lt;project&gt; --description-file brief.txt</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">mac task show &lt;id&gt;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">mac task why-unclaimed &lt;id&gt;</span>
-</code></pre></div>
-<p>Use one small repository change as the canary. Require a real worker execution,
-a review of the intended behavior, canonical publication, and a demonstration
-of the resulting behavior. A fixture executor is useful for integration tests
-but cannot prove that a live coding agent or deployed application works.</p>
-<h2 id="read-the-result-before-accepting-it">Read the result before accepting it<a class="headerlink" href="#read-the-result-before-accepting-it" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac task outcome &lt;id&gt;</span>
-</code></pre></div>
+<h1 id="live-request-and-recovery-acceptance-2026-09-16">Live request and recovery acceptance, 2026-09-16<a class="headerlink" href="#live-request-and-recovery-acceptance-2026-09-16" title="Permanent link">&para;</a></h1>
+<p>The original ten-task cohort and all three workers' coding checks on the final deployed runtime are accepted. Conflict recovery required operator assistance. Slack provider configuration was repaired and directly verified; the next scheduled channel broadcast remains an independent pending observation, described below; this report does not claim hands-off fleet reliability.</p>
+<h2 id="what-was-deployed">What was deployed<a class="headerlink" href="#what-was-deployed" title="Permanent link">&para;</a></h2>
+<p>The three static workers ran MAC source <code>03fcd3db0a4ffbf5a28cc20ee0089719851cac35</code> with MAC and Hermes on Python 3.14.7. The Linux verifier image was <code>ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:1d4c5eb635c5fc53737b89949e22e04246870d57fa92f6b29547395716ea745d</code>. Verification stayed inside Linux OpenShell; no OpenShell runtime was deployed on macOS.</p>
+<p>The final qualified deployment transaction finalized, its hub epoch committed, and all three workers returned healthy with their rollout holds cleared. The original code canaries and worker-1 report ran after the earlier <code>3e498a6b</code> rollout; worker-3's repaired report ran after <code>03fcd3db</code>. Five ordinary canaries completed and were separately accepted: LRU behavior, trie behavior, token end offsets, worker-1's read-only report, and worker-3's read-only report. The last report passed 99 tests and mypy across 11 source files at canary revision <code>45f9ca7e6d45145bab881652f5571712291fd7cc</code>.</p>
+<p>Eight project pauses owned by this rollout were restored after those five acceptances. The user's activation of nanolang and pre-existing pauses were preserved. Recovery experiments did not extend those project pauses.</p>
+<p>The final-revision execution audit requires code execution after the last runtime rollout: worker-2's failed-test repair and worker-3's corrected conflict canary supply it; worker-1's separate token-whitespace canary also completed and was accepted. Task <code>task_23eed90a65674b3b9cd9bf4f93b1c837</code>, executor <code>ev_6660f07d4b2041bc87c8f582f11efea3</code>, independent review <code>review_0edcb4a52d3c45e6889a72a1bc7e5805</code> and publication <code>pub_0353fd1ad4934bc6ad8654fa96a7be93</code> produced PR72 at <code>89fdc17110aa96e09e64364b3ed0ed03f627a5ee</code>. Independent Linux verification passed 104 tests, mypy across 11 files, exact token end offsets across surrounding whitespace and token immutability. Its task-owned authoring and verifier sandboxes were absent after completion. Earlier accepted results remain valid for their observed versions and are not relabelled as later execution.</p>
+<h2 id="live-recovery-evidence">Live recovery evidence<a class="headerlink" href="#live-recovery-evidence" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
+<th>Case</th>
+<th>Observed fault or boundary</th>
 <th>Result</th>
-<th>What it establishes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Tests: <code>reported_pass</code></td>
-<td>Current evidence contains passing test return codes. This is a recorded report, not a new verification run.</td>
+<td>Missing input</td>
+<td>Original task parked at zero attempts; operator supplied the exact expression <code>12.5 + 3</code> through the public answer command.</td>
+<td>Accepted. Report preserved the leading space and returned offsets 1, 6, and 8. Full 99-test contract, signed review and report publication passed; independent Linux behavior check matched; sandbox removed.</td>
 </tr>
 <tr>
-<td>Acceptance: <code>accepted</code></td>
-<td>An authenticated operator recorded that the current evidence satisfies the request. It is bound to that evidence and attempt.</td>
+<td>Worker loss</td>
+<td>One SIGKILL to worker-3's worker service at 13:03:39 UTC during the exact task sandbox's observed 45-second pause.</td>
+<td>Accepted. Systemd restarted after five seconds; a new execution resumed the still-valid original lease and attempt. Full 99-test contract and report publication passed, with one current executor result and one publication. No manual restart, forced expiry or task reopen was required. Both task sandboxes were removed.</td>
 </tr>
 <tr>
-<td>Publication: <code>published</code></td>
-<td>The completed task has a matching published record for its current executor evidence. Inspect the publication target and canonical proof in task detail.</td>
+<td>Failed tests</td>
+<td>Deliberate assertion at the start of LRUCache.get caused 6 failures and 93 passes.</td>
+<td>Accepted. Initial rejection produced no push, PR or publication and left canonical main unchanged. After explicit repair authorization, the original task passed the unchanged contract and merged PR67 at <code>92419dcf5a0ef4e97b62b37f33d87d60d7006f7f</code>. Independent Linux verification passed 100 tests, mypy across 11 files and the missing-get eviction-order check; task sandbox and lease were cleared.</td>
 </tr>
 <tr>
-<td>Deployment: <code>recorded</code></td>
-<td>Deployment evidence explicitly links to this executor evidence. Read its contents; existence alone is not a live health check.</td>
-</tr>
-<tr>
-<td><code>unknown</code></td>
-<td>The matching evidence is absent. No success or zero is inferred.</td>
+<td>Publication conflict</td>
+<td>Both workers prepared <code>92419dcf</code> and added different regressions to the same absent file. B merged; the gate refused A's actual add/add conflict.</td>
+<td>Accepted with operator assistance. Independent-agent repair PR70 preserved both original bodies at <code>062e30ee</code>; original A was rejected for omitting the requested scenario and corrected in attempt 2. Its old PR69 initially stranded publication; the operator closed that superseded PR and requested normal gated publication of the current reviewed evidence. PR71 merged <code>aff777da2f981bf995fbacf68ea9479d3f248d4c</code>. Independent Linux verification passed 103 tests, mypy across 11 files and both exact requested scenarios. Both original results were accepted; leases and task sandboxes cleared.</td>
 </tr>
 </tbody>
 </table>
-<p>Inspect the diff, run the requested scenario, and record what you observed in
-<code>acceptance.txt</code>. Copy the current executor evidence ID from the outcome:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac task accept &lt;id&gt; --evidence &lt;evidence-id&gt; --reason-file acceptance.txt</span>
-</code></pre></div>
-<p>Use <code>--reject</code> when the result does not satisfy the request. Acceptance is an
-operator write, unavailable to agent-bound tokens. It does not approve a review,
-complete a task, merge code, or deploy it. A new attempt or new executor evidence
-invalidates the displayed acceptance and requires a new decision. Avoid editing
-a reviewed request to mean something different; file the changed request as new
-work so its history and acceptance remain meaningful.</p>
-<p>Deployment after publication belongs to a separate task that depends on the
-completed code task. While holding that deployment task's lease, record evidence
-of kind <code>deployment</code> whose metadata names the code task's exact
-<code>executor_evidence_id</code>. The outcome view follows that dependency and offers an
-inspection command for the deployment task. Unlinked records and records for an
-older executor result do not count. This preserves the completed code task's
-evidence boundary; do not reopen it merely to append a rollout claim.</p>
-<p>The shipped console's Task view shows the same evidence and task-specific CLI
-handoffs. Use an authenticated profile for the same hub. Its HTTP layer remains
-read-only; commands execute only when you run them.</p>
-<h2 id="recover-with-the-existing-lifecycle">Recover with the existing lifecycle<a class="headerlink" href="#recover-with-the-existing-lifecycle" title="Permanent link">&para;</a></h2>
-<p>Inspect <code>mac task show &lt;id&gt;</code> before every recovery. Preserve evidence, attempt
-history, the existing branch/PR, and the current canonical revision.</p>
+<p>Conflict recovery was assisted, not hands-off: the operator rejected A, staged a clarification of the original requirements with a dependency on the integration child, reopened the original task, accepted the independently checked child, released A after the child completed, closed superseded PR69, and invoked the public publication command for the current independently reviewed evidence after its recorded backoff expired. No task was force-completed and no publication gate was bypassed. The child also recovered a transient <code>merge_queue_slot_lost</code> through its ordinary bounded retry.</p>
+<p>The resumed worker did not itself observe the earlier process loss. Operator signal receipts, the service journal, replacement process identity and the later execution transcript establish the interruption and recovery. A model's narrative is not a substitute for those observations.</p>
+<p>Current executor evidence accepted for missing input: <code>ev_101719e6189f49e6b066ff71b81292e7</code>. Worker-loss evidence: <code>ev_5c8c4f7e683a4ccf9897b50b7bb73491</code>. Accepted repaired-test evidence: <code>ev_222dbd2486524fba95aae17c5450dcdd</code>. Deliberately failed test evidence retained: <code>ev_63c9af124b7f4f94a577e8fc2a098940</code>. The operational parent is <code>task_de8195a73b6d448bb8bf286abaf4576e</code>; its ledger holds the deployment, independent checks, fault receipts and acceptance checkpoints.</p>
+<h2 id="what-the-evidence-says-about-the-design">What the evidence says about the design<a class="headerlink" href="#what-the-evidence-says-about-the-design" title="Permanent link">&para;</a></h2>
+<p>The strongest decisions are worth preserving: PostgreSQL holds durable task and lease history; an actual failed repository gate prevents publication; review and verification remain independent of authoring; and operator acceptance is attached to the current evidence rather than inferred from a green test. The live conflict gate also preserved canonical main and assigned repair to an agent other than the original author. Those are useful boundaries, not obstacles to bypass.</p>
+<p>The remaining weakness is repeated interpretation of the same execution facts. The recovery task's human-readable brief substituted publication-time main for the reviewed attempt base and named a MAC-specific test script, while its structured repository contract still held the correct command. The flow view likewise used a resettable attempt counter where history derivation counted successive claims. Both defects create incompatible views without losing the underlying authoritative records. Repair should consume those existing records consistently; neither a new ledger nor a replacement runtime is justified by these observations.</p>
+<p>The next correction should bind PR reuse to the actual reviewed branch: it directly blocked a valid result in this run. Then make generated repair context and attempt analytics consume the existing evidence and history consistently. Use the demonstrated multi-lease retry as the acceptance scenario. Adding another retry loop or publication owner would preserve the ambiguity that caused the failure.</p>
+<p>The user-facing acceptance work also covers the shipped console: obsolete request responses cannot overwrite a newer task selection, response-body reads have deadlines, and CLI recovery handoffs remain explicit. The exact-source UI suite and live asset byte checks support those claims; they do not establish a rendered browser walkthrough. Live capacity reporting correctly showed zero executable idle workers while virtual operator/reviewer records were idle, matching the allocator's rejection of the queued integration task.</p>
+<h2 id="scope-and-limits">Scope and limits<a class="headerlink" href="#scope-and-limits" title="Permanent link">&para;</a></h2>
+<p>Automated exact-source UI tests and byte comparisons established that the shipped console assets matched the qualified source; a rendered browser walkthrough is not claimed. Tests, operator acceptance, publication and linked deployment remain separate outcomes. Report publication does not imply application deployment.</p>
+<p>At the September 16 15:06 UTC checkpoint, the fixed original ten-task cohort had 10 accepted completions out of 10. Median creation-to-completion time was 46,215 seconds (12.84 hours); the ledger reported 15 interventions under its narrow definition. The integration child and additional final-revision canary are tracked separately, without changing that original denominator. Creation-to-completion time includes deliberate staging holds, rollout waits and controlled recovery interventions; this experiment does not measure ordinary dispatch latency or establish a production service level. Costs without observed priced routes remain unknown. Public intervention counts cover only their documented ledger events; the deliberate service signal and other external operator actions are separately recorded and must not disappear from the interpretation.</p>
 <table>
 <thead>
 <tr>
-<th>Failure</th>
-<th>Smallest safe next step</th>
-<th>Evidence of recovery</th>
+<th>Original case</th>
+<th>Task</th>
+<th>Creation to completion</th>
+<th>Accepted</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Worker disappears</td>
-<td>Inspect agent health, the supervisor restart and the task lease. A restarted worker may resume its still-valid lease. If it expires, let the hub reconcile expiry; diagnose with <code>mac task why-unclaimed</code> before reopening. Do not start a competing executor.</td>
-<td>The resumed execution proves its current lease authority, or a newly admitted attempt replaces the expired lease. Expired or revoked authority cannot submit current evidence; recovery must not duplicate publication.</td>
+<td>worker-3 LRU code</td>
+<td><code>task_883bd8474136bcf15b83fb258c00ad55</code></td>
+<td>12.4 h</td>
+<td>Yes</td>
 </tr>
 <tr>
-<td>Repository tests fail</td>
-<td>Read the full failed gate output. Correct the existing work in an isolated checkout and rerun the repository gate.</td>
-<td>Passing results identify the revised evidence; no push from a failed gate.</td>
+<td>worker-2 trie code</td>
+<td><code>task_62896378399a0e2a8086962919e01907</code></td>
+<td>12.52 h</td>
+<td>Yes</td>
 </tr>
 <tr>
-<td>Task asks a question</td>
-<td>Use <code>mac task edit &lt;id&gt;</code> to read and answer the pending question. Check the answer disposition before resuming.</td>
-<td>Answer and resulting state are durable in task history.</td>
+<td>worker-1 token-end code</td>
+<td><code>task_f569f8a6f6372704d432921ff98cc14f</code></td>
+<td>12.66 h</td>
+<td>Yes</td>
 </tr>
 <tr>
-<td>Canonical branch conflicts</td>
-<td>Inspect the publication failure, existing PR and any integration task already created by the hub. Follow that repair through independent review and publication before starting another repair. Verify that the PR head matches the current reviewed branch; preserve superseded evidence.</td>
-<td>Fresh evidence is verified against the current base, required behaviors survive integration, and the original request is separately accepted. Stale approval cannot land the old result.</td>
+<td>worker-1 report</td>
+<td><code>task_00e09b814320a53699e442aa2debcbdd</code></td>
+<td>12.79 h</td>
+<td>Yes</td>
 </tr>
 <tr>
-<td>Work must stop</td>
-<td>Use <code>mac task stop &lt;id&gt; --reason-file stop.txt</code>. If abort fails, inspect the reported error before claiming the process stopped.</td>
-<td>Hub confirms the stop and records the transition.</td>
+<td>worker-3 report</td>
+<td><code>task_e7953b07d4dbef7d229e2330fb3a4cd1</code></td>
+<td>17.28 h</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Missing input</td>
+<td><code>task_7b3fd89cace7eae478d489aa9b06ab80</code></td>
+<td>13.13 h</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Failed-test repair</td>
+<td><code>task_5ca714452342d39347c07baa47d4419d</code></td>
+<td>12.88 h</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Worker loss</td>
+<td><code>task_576efd8fec045301627f53b4ffc75c36</code></td>
+<td>12.24 h</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Conflict A correction</td>
+<td><code>task_e0fa0a06f7b20256f346d9530f7031c9</code></td>
+<td>14.14 h</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Conflict B</td>
+<td><code>task_210c56508f490a2ceb5bc4d157a0639e</code></td>
+<td>13.18 h</td>
+<td>Yes</td>
 </tr>
 </tbody>
 </table>
-<p>These are recovery procedures, not claims that all live fault scenarios have
-already passed. The repository's HTTP/process, lease, input-state, and native
-merge-queue tests exercise controlled failures. Deployment verification must
-record the actual revision, worker, task, evidence, publication, and observed
-behavior separately.</p>
-<p>The <a href="../../investigations/2026-09-16-live-trust-acceptance/">September 16 live acceptance record</a>
-identifies observed recoveries, operator interventions, outstanding checks and
-the revisions each result covers.</p>
-<h2 id="measure-a-creation-cohort">Measure a creation cohort<a class="headerlink" href="#measure-a-creation-cohort" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac task outcomes --project &lt;project&gt; --since-hours 168 --limit 100</span>
-</code></pre></div>
-<p>This includes unfinished tasks in the denominator and groups results by recorded
-origin type. It reports accepted completions, completion time, observed priced
-model routes, and recorded operator interventions. Missing cost is <code>null</code>, not
-zero. Route cost excludes uninstrumented model calls, infrastructure, and human
-time. Intervention counts cover recorded acceptance, answers, and confirmed
-stops; they cannot count work nobody recorded.</p>
-<p>A truncated result is labelled a bounded sample, not the complete cohort. Widen
-the limit (maximum 500) or narrow the creation window before comparing results.
-Do not compare completion fractions from cohorts with different observation
-ages as if they measured the same opportunity to finish. Keep autonomous task
-generation bounded until comparable cohorts show accepted useful work without
-increasing cost or operator repair effort.</p>
+<p>The hourly generator yield gate remains in place. These results do not justify removing PostgreSQL authority, lease fencing, signed evidence, independent verification or bounded task generation.</p>
+<h2 id="known-limitations-and-follow-up-work">Known limitations and follow-up work<a class="headerlink" href="#known-limitations-and-follow-up-work" title="Permanent link">&para;</a></h2>
+<p>The deploy controller's initial drain/compensation failure remains recorded under <code>task_f06257ed57ae4611a2b272447fe836dd</code>. The successful retry waited for actual task and verifier quiescence; it did not lower readiness checks.</p>
+<p>Native authoring needs a complete handoff of the approved Linux image, writable workspace and task-owned cleanup (<code>task_4fd62a58b37143a49c2796cd9e6da196</code>). Failed exploratory sandboxes were removed only after owner and workspace checks.</p>
+<p>A valid nested report can still acquire a bootstrap line as its short summary (<code>task_bafad98f86fad5886c245523b01b6cb8</code>). Substantive report evidence was inspected directly for acceptance; the short-summary presentation defect remains distinct.</p>
+<p>The final live audit found provider configuration drift despite connected Slack gateways. worker-2 and worker-3 retained rejected custom-provider credentials; worker-1 also retained endpoint/provider environment differences. The installer correction landed separately as MAC PR856 (<code>5439b5e7</code>). Under operational task <code>task_a777c53459f34314a82862dbd874e5d5</code>, the operator used the existing <code>mac.hermes_chat_config</code> owner to synchronize each installed Hermes profile from its deploy-authoritative environment, remove one stale custom credential-pool entry per host, and restart only its existing chat gateway. Protected backups were retained on each host; persona files were preserved and code workers were not restarted. All three selected Hermes runtimes then resolved credentials without explicit key/base overrides and returned the expected model-generation response with HTTP 200. Each new gateway writer reported Slack connected. This verifies provider generation and gateway reconnection, not a human-authored Slack round trip. Deployed MAC source remains the qualified <code>03fcd3db</code>; this configuration repair is not presented as a rollout of PR856's new installer code.</p>
+<p>worker-1's explicit channel-only cron routing fix is deployed. The September 16 18:00 Pacific scheduled delivery has not yet been observed; no unsolicited test broadcast was sent.</p>
+<p>Flow analytics disagrees with raw history after a public reopen resets the current attempt counter (<code>task_99c6db349bc94cdf807acc7042a7e015</code>). The failed-test case has a correctly retained failure followed by a successful new lease, while the flow view incorrectly shows completed attempt 1 and pending attempt 2. Acceptance uses actual history, current signed evidence, review and canonical proof; the derived attempt labels are not reliable evidence of ongoing work.</p>
+<p>Conflict repair context needs to consume the reviewed base and declared project test command (<code>task_b169d5b48fcb449ca0e980c877facaf4</code>). The live repair task carries the correct structured contract but a contradictory brief and misleading landed-since provenance. The integration child nevertheless completed and was independently accepted; context defects are recorded separately from that successful result.</p>
+<p>PR reuse also conflates stable task identity with lease-specific branch identity (<code>task_d5f50ff10c604c32bbe60b0c2afd677e</code>). The worker attached the old PR69 to its corrected result; the hub detected a branch mismatch but its fallback performed the same lookup and reused PR69 again. Closing the superseded PR is a recorded operator intervention. It does not establish that retries reconcile PR identity automatically.</p>
 
 
 
