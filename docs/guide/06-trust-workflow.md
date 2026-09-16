@@ -73,7 +73,7 @@ history, the existing branch/PR, and the current canonical revision.
 
 | Failure | Smallest safe next step | Evidence of recovery |
 |---|---|---|
-| Worker disappears | Inspect agent health and the task lease. Let the hub reconcile expiry; diagnose with `mac task why-unclaimed` before reopening. Do not start a competing executor. | Old lease loses authority; only the new attempt may submit current evidence. |
+| Worker disappears | Inspect agent health, the supervisor restart and the task lease. A restarted worker may resume its still-valid lease. If it expires, let the hub reconcile expiry; diagnose with `mac task why-unclaimed` before reopening. Do not start a competing executor. | The resumed execution proves its current lease authority, or a newly admitted attempt replaces the expired lease. Expired or revoked authority cannot submit current evidence; recovery must not duplicate publication. |
 | Repository tests fail | Read the full failed gate output. Correct the existing work in an isolated checkout and rerun the repository gate. | Passing results identify the revised evidence; no push from a failed gate. |
 | Task asks a question | Use `mac task edit <id>` to read and answer the pending question. Check the answer disposition before resuming. | Answer and resulting state are durable in task history. |
 | Canonical branch conflicts | Inspect the publication failure and existing PR. Rebase or resolve in the isolated task branch, rerun tests, and submit updated evidence through the review path. | Fresh evidence is verified against the current base; stale approval cannot land the old result. |
