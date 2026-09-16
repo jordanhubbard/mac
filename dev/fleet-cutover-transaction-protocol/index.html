@@ -2085,6 +2085,12 @@ The self-healing sentinel reports an aged recovery hold without clearing it or
 dispatching a repair task through the affected pipeline. Elapsed time is not a
 readiness proof; the deployment journal continues to own physical recovery.
 Abort never revokes an unrelated principal, key, approval, or operator hold.</p>
+<p>Retained-worker attestation recovery resolves the supervisor from the interrupted
+node's owner-private phase-one contract, checked against the journal's generation,
+source revision, and contract digest under the recovery lock. It does not require
+the former controller's temporary files or a new phase-one preparation. This proof
+authorizes keeping the retained worker stopped only; activating a successor still
+requires that successor's own phase-one proof.</p>
 <p>Status is read-only and returns <code>absent</code>, <code>open</code>, <code>proved</code>, <code>committed</code>,
 <code>aborted</code>, or <code>mismatch</code> for the supplied exact identity digest. Transport
 failure is never interpreted as <code>absent</code>.</p>
@@ -2157,7 +2163,14 @@ authenticated URLs are not journal data.</p>
 </code></pre></div>
 <p>Abort states retain the forward state that selected recovery and record
 <code>abort_started -&gt; aborted</code> per node. Recovery walks nodes in reverse mutation
-order. Its normal action is <code>retain_forward</code>: preserve the newest node state,
+order. Each recovery candidate carries that durable forward state, including
+after an interrupted abort. Before <code>quiesce_started</code>, retention preserves the
+running worker and its key: preparation has not acquired authority to change
+either, and an interrupted preparation may not have produced a supervisor
+contract. From <code>quiesce_started</code> onward, retention keeps the worker stopped
+using the journal-bound supervisor proof. A missing proof at those later phases
+is an error, never grounds to infer that the node is still in preparation.
+Its normal action is <code>retain_forward</code>: preserve the newest node state,
 process barrier, dispatch hold, and immutable diagnostic bundle, then release
 only the controller lock for a successor deployment. Prior-generation
 compensation requires the explicit <code>--recovery-policy rollback</code> break-glass
