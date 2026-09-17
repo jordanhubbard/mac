@@ -63,6 +63,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   <openssl/evp.h>/<sha.h>/<err.h> and the build links -lcrypto; without it
 #   `make build` fails and a coding agent will destructively stub sign.c just to
 #   compile. A real build dependency belongs in the base image.
+# libffi-dev: libffi headers + linker input. nanolang's interpreter includes
+#   <ffi.h> and links -lffi; the header is architecture-specific on Debian, so
+#   the compile/link/run probe below proves the dependency on both published
+#   image architectures instead of only checking an apt package name.
 # clang/llvm/lld/qemu-system-misc: the current production executor cannot yet
 #   materialize ADR 0009 root-level overlay images.  Until that lane exists,
 #   the synchronized cut-over must carry the complete, architecture-neutral
@@ -105,7 +109,7 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev libffi-dev openjdk-17-jre-headless clang llvm lld \
     && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
@@ -116,6 +120,9 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && command -v llvm-objcopy >/dev/null \
     && command -v ld.lld >/dev/null \
     && command -v qemu-system-riscv64 >/dev/null \
+    && printf '%s\n' '#include <ffi.h>' 'int main(void) { ffi_cif cif; return ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 0, &ffi_type_void, NULL) == FFI_OK ? 0 : 1; }' > /tmp/mac-libffi-probe.c \
+    && cc -std=c99 -Wall -Wextra -Werror /tmp/mac-libffi-probe.c -lffi -o /tmp/mac-libffi-probe \
+    && /tmp/mac-libffi-probe \
     && printf '%s\n' 'void _start(void) { for (;;) {} }' > /tmp/mac-riscv-probe.c \
     && clang --target=riscv64-unknown-elf -march=rv64imac -mabi=lp64 -mcmodel=medany -ffreestanding -fuse-ld=lld -nostdlib -nostartfiles -Wl,-e,_start /tmp/mac-riscv-probe.c -o /tmp/mac-riscv-probe.elf \
     && llvm-objcopy -O binary /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin \
@@ -123,7 +130,7 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && qemu-system-riscv64 --version \
     && qemu-system-riscv64 -M virt -device help > /tmp/mac-qemu-devices 2>&1 \
     && for device in virtio-gpu-device virtio-keyboard-device virtio-mouse-device virtio-sound-device virtio-blk-device virtio-net-device; do grep -F "$device" /tmp/mac-qemu-devices >/dev/null || exit 1; done \
-    && rm -f /tmp/mac-riscv-probe.c /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin /tmp/mac-qemu-devices \
+    && rm -f /tmp/mac-libffi-probe.c /tmp/mac-libffi-probe /tmp/mac-riscv-probe.c /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin /tmp/mac-qemu-devices \
     && (cd /tmp/mac-openshell-build-assets && sha256sum -c SHA256SUMS) \
     && case "$TARGETARCH" in \
          amd64) asset_arch=amd64; gh_arch=amd64 ;; \
