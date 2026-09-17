@@ -50,18 +50,19 @@ venv_generation = venv_marker.read_text() if venv_marker.is_file() else "absent"
 config_path = Path(os.environ["ROLLBACK_TEST_CONF"])
 config_generation = config_path.read_text() if config_path.is_file() else "absent"
 bin_generation = (Path(os.environ["ROLLBACK_TEST_BIN"]) / "generation").read_text()
-revision_generation = Path(os.environ["ROLLBACK_TEST_REVISION"]).read_text()
+revision_path = Path(os.environ["ROLLBACK_TEST_REVISION"])
+revision_generation = revision_path.read_text() if revision_path.is_file() else "absent"
 openclaw_home = Path(os.environ["ROLLBACK_TEST_OPENCLAW_HOME"])
 expected = "current" if action == "quiesce" else "restored"
 expected_source = (
     os.environ.get("ROLLBACK_TEST_QUIESCE_SOURCE_STATE", expected)
     if action == "quiesce"
-    else expected
+    else os.environ.get("ROLLBACK_TEST_RESTORE_SOURCE_STATE", expected)
 )
 expected_venv = (
     os.environ.get("ROLLBACK_TEST_QUIESCE_VENV_STATE", expected)
     if action == "quiesce"
-    else expected
+    else os.environ.get("ROLLBACK_TEST_RESTORE_VENV_STATE", expected)
 )
 expected_config = (
     os.environ.get("ROLLBACK_TEST_QUIESCE_CONFIG_STATE", expected)
@@ -79,7 +80,9 @@ expected_revision = (
         os.environ["ROLLBACK_TEST_CURRENT_REVISION"],
     )
     if action == "quiesce"
-    else os.environ["ROLLBACK_TEST_PRIOR_REVISION"]
+    else os.environ.get(
+        "ROLLBACK_TEST_RESTORE_REVISION", os.environ["ROLLBACK_TEST_PRIOR_REVISION"]
+    )
 )
 if (
     source_generation != expected_source
@@ -98,9 +101,13 @@ if (
 if action == "restore":
     if openclaw_home.exists():
         raise SystemExit("prior-absent OpenClaw runtime state was not removed")
-    if value("--active-gateway") != "hermes":
+    if value("--active-gateway") != os.environ.get(
+        "ROLLBACK_TEST_ACTIVE_GATEWAY", "hermes"
+    ):
         raise SystemExit("rollback did not use the recorded prior gateway owner")
-    if value("--agent-prior-state") != "active":
+    if value("--agent-prior-state") != os.environ.get(
+        "ROLLBACK_TEST_AGENT_PRIOR_STATE", "active"
+    ):
         raise SystemExit("rollback did not use the recorded prior worker state")
 if action == "restore" and os.environ.get("ROLLBACK_TEST_FAIL_RESTORE") == "1":
     raise SystemExit("injected supervisor restore failure")
@@ -113,8 +120,14 @@ if action == "quiesce":
     hermes_marker.unlink(missing_ok=True)
     agent_marker.unlink(missing_ok=True)
 else:
-    hermes_marker.write_text("active")
-    agent_marker.write_text("active")
+    if value("--active-gateway") == "none":
+        hermes_marker.unlink(missing_ok=True)
+    else:
+        hermes_marker.write_text("active")
+    if value("--agent-prior-state") == "active":
+        agent_marker.write_text("active")
+    else:
+        agent_marker.unlink(missing_ok=True)
     if mode == "inactive":
         control_marker.unlink(missing_ok=True)
     else:
@@ -281,11 +294,13 @@ def _generate_rollback(
     control_active: bool,
     config_existed: bool = True,
     extra_artifacts: Mapping[Path, bytes] | None = None,
+    from_scratch: bool = False,
+    partial_venv: bool = False,
 ) -> tuple[Path, dict[str, Path]]:
     successor_generation = "successor-generation-rocky-001"
-    prior_generation = "prior-generation-rocky-000"
+    prior_generation = "" if from_scratch else "prior-generation-rocky-000"
     successor_revision = "c" * 40
-    prior_revision = "b" * 40
+    prior_revision = "" if from_scratch else "b" * 40
     mac_home = tmp_path / "mac-home"
     log_dir = mac_home / "logs"
     backup_root = mac_home / "backups"
@@ -297,9 +312,12 @@ def _generate_rollback(
     venv = tmp_path / "venv"
     venv_backup = backup_root / "venv.old"
     _write_generation(source, "current")
-    _write_generation(source_backup, "restored")
-    _write_generation(venv, "current", python=True)
-    _write_generation(venv_backup, "restored", python=True)
+    if not from_scratch:
+        _write_generation(source_backup, "restored")
+    if not partial_venv:
+        _write_generation(venv, "current", python=True)
+    if not from_scratch:
+        _write_generation(venv_backup, "restored", python=True)
 
     bin_dir = mac_home / "bin"
     bin_backup = backup_root / "bin.old"
@@ -309,34 +327,48 @@ def _generate_rollback(
     revision_backup = backup_root / "revision.old"
     revision.write_text(successor_revision + "\n", encoding="utf-8")
     revision.chmod(0o600)
-    revision_backup.write_text(prior_revision + "\n", encoding="utf-8")
-    revision_backup.chmod(0o600)
+    if not from_scratch:
+        revision_backup.write_text(prior_revision + "\n", encoding="utf-8")
+        revision_backup.chmod(0o600)
     env_file = mac_home / "mac.env"
     env_backup = backup_root / "mac.env.old"
-    env_file.write_text(f"MAC_WORKER_DEPLOY_GENERATION={successor_generation}\n", encoding="utf-8")
+    current_env = (
+        "MAC_BOOTSTRAP_STATE=from-scratch\n"
+        if from_scratch
+        else f"MAC_WORKER_DEPLOY_GENERATION={successor_generation}\n"
+    )
+    prior_env = (
+        "MAC_BOOTSTRAP_STATE=from-scratch\n"
+        if from_scratch
+        else f"MAC_WORKER_DEPLOY_GENERATION={prior_generation}\n"
+    )
+    env_file.write_text(current_env, encoding="utf-8")
     env_file.chmod(0o600)
-    env_backup.write_text(f"MAC_WORKER_DEPLOY_GENERATION={prior_generation}\n", encoding="utf-8")
+    env_backup.write_text(prior_env, encoding="utf-8")
     env_backup.chmod(0o600)
     openclaw_home = mac_home / "openclaw"
-    _write_generation(openclaw_home, "current")
-    (openclaw_home / "managed").mkdir()
-    (openclaw_home / "managed" / "sandbox-name").write_text("successor-sandbox\n", encoding="utf-8")
-    (openclaw_home / "sandbox-live").touch()
-    installer = source / "deploy" / "openclaw" / "install-openclaw-gateway.sh"
-    installer.parent.mkdir(parents=True)
-    installer.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        '[ "${1:-}" = withdraw ]\n'
-        '[ "$(<"$MAC_SRC/generation")" = current ]\n'
-        '[ "$(<"$MAC_HOME/openclaw/generation")" = current ]\n'
-        '[ -f "$MAC_HOME/openclaw/sandbox-live" ]\n'
-        '[ "${ROLLBACK_TEST_FAIL_WITHDRAW:-0}" != 1 ]\n'
-        'rm -f "$MAC_HOME/openclaw/sandbox-live"\n'
-        ': > "$ROLLBACK_TEST_WITHDRAW_MARKER"\n',
-        encoding="utf-8",
-    )
-    installer.chmod(0o700)
+    if not from_scratch:
+        _write_generation(openclaw_home, "current")
+        (openclaw_home / "managed").mkdir()
+        (openclaw_home / "managed" / "sandbox-name").write_text(
+            "successor-sandbox\n", encoding="utf-8"
+        )
+        (openclaw_home / "sandbox-live").touch()
+        installer = source / "deploy" / "openclaw" / "install-openclaw-gateway.sh"
+        installer.parent.mkdir(parents=True)
+        installer.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            '[ "${1:-}" = withdraw ]\n'
+            '[ "$(<"$MAC_SRC/generation")" = current ]\n'
+            '[ "$(<"$MAC_HOME/openclaw/generation")" = current ]\n'
+            '[ -f "$MAC_HOME/openclaw/sandbox-live" ]\n'
+            '[ "${ROLLBACK_TEST_FAIL_WITHDRAW:-0}" != 1 ]\n'
+            'rm -f "$MAC_HOME/openclaw/sandbox-live"\n'
+            ': > "$ROLLBACK_TEST_WITHDRAW_MARKER"\n',
+            encoding="utf-8",
+        )
+        installer.chmod(0o700)
 
     config_dir = tmp_path / "supervisord"
     config_dir.mkdir()
@@ -422,8 +454,8 @@ def _generate_rollback(
         "ROLLBACK_SCRIPT": str(rollback),
         "ROLLBACK_LATEST": str(latest),
         "DEPLOY_TS": "20260719T120000Z",
-        "ROLLBACK_ACTIVE_GATEWAY": "hermes",
-        "ROLLBACK_AGENT_PRIOR_STATE": "active",
+        "ROLLBACK_ACTIVE_GATEWAY": "none" if from_scratch else "hermes",
+        "ROLLBACK_AGENT_PRIOR_STATE": "absent" if from_scratch else "active",
         "ROLLBACK_PRIOR_GENERATION": prior_generation,
         "ROLLBACK_PRIOR_REVISION": prior_revision,
         "ROLLBACK_INTENT": str(rollback_intent),
@@ -448,7 +480,7 @@ def _generate_rollback(
         + "\nROLLBACK_AUX_ARTIFACT_COUNT=3\n"
         + f"ROLLBACK_AUX_ARTIFACT_PATHS=({shlex.quote(str(revision))})\n"
         + f"ROLLBACK_AUX_ARTIFACT_BACKUPS=({shlex.quote(str(revision_backup))})\n"
-        + "ROLLBACK_AUX_ARTIFACT_EXISTED=(1)\n"
+        + f"ROLLBACK_AUX_ARTIFACT_EXISTED=({int(not from_scratch)})\n"
         + "ROLLBACK_AUX_ARTIFACT_MODES=(user)\n"
         + f"ROLLBACK_AUX_ARTIFACT_PATHS[1]={shlex.quote(str(env_file))}\n"
         + f"ROLLBACK_AUX_ARTIFACT_BACKUPS[1]={shlex.quote(str(env_backup))}\n"
@@ -485,13 +517,13 @@ def _generate_rollback(
                 "status": "armed",
                 "generation": successor_generation,
                 "revision": successor_revision,
-                "prior_generation": prior_generation,
-                "prior_revision": prior_revision,
+                "prior_generation": prior_generation or None,
+                "prior_revision": prior_revision or None,
                 "rollback_capable": True,
                 "prior_topology": {
                     "supervisor": "supervisord",
-                    "active_gateway": "hermes",
-                    "agent_prior_state": "active",
+                    "active_gateway": "none" if from_scratch else "hermes",
+                    "agent_prior_state": "absent" if from_scratch else "active",
                 },
                 "rollback": {
                     "path": str(rollback),
@@ -1321,6 +1353,68 @@ def test_generated_rollback_restores_artifacts_before_exact_prior_topology(
     assert len(completion["prior_topology_proof"]["sha256"]) == 64
     assert not list((tmp_path / "mac-home" / "backups").glob("rollback-current.*"))
     assert not list((tmp_path / "mac-home" / "backups").glob("rollback-current-file.*"))
+
+
+def test_generated_rollback_restores_a_partial_from_scratch_install_to_absence(
+    tmp_path: Path,
+) -> None:
+    rollback, paths = _generate_rollback(
+        tmp_path,
+        control_active=False,
+        config_existed=False,
+        from_scratch=True,
+        partial_venv=True,
+    )
+    env = _rollback_env(paths)
+    env.update(
+        ROLLBACK_TEST_QUIESCE_VENV_STATE="absent",
+        ROLLBACK_TEST_RESTORE_SOURCE_STATE="absent",
+        ROLLBACK_TEST_RESTORE_VENV_STATE="absent",
+        ROLLBACK_TEST_RESTORE_CONFIG_STATE="absent",
+        ROLLBACK_TEST_RESTORE_REVISION="absent",
+        ROLLBACK_TEST_PRIOR_REVISION="",
+        ROLLBACK_TEST_ACTIVE_GATEWAY="none",
+        ROLLBACK_TEST_AGENT_PRIOR_STATE="absent",
+        ROLLBACK_TEST_QUIESCE_OPENCLAW="absent",
+    )
+
+    first = subprocess.run(
+        ["/bin/bash", str(rollback)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert [event["action"] for event in _events(paths["log"])] == [
+        "quiesce",
+        "restore",
+    ]
+    assert not paths["source"].exists()
+    assert not paths["venv"].exists()
+    assert not paths["revision"].exists()
+    assert not paths["config"].exists()
+    assert (paths["bin"] / "generation").read_text() == "restored"
+    completion = json.loads(paths["completion_receipt"].read_text(encoding="utf-8"))
+    assert completion["prior_generation"] is None
+    assert completion["prior_revision"] is None
+
+    replay = subprocess.run(
+        ["/bin/bash", str(rollback)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert replay.returncode == 0, replay.stderr
+    assert json.loads(replay.stdout) == completion
+    assert [event["action"] for event in _events(paths["log"])] == [
+        "quiesce",
+        "restore",
+    ]
 
 
 def test_generated_rollback_removes_supervisord_config_absent_from_prior_generation(

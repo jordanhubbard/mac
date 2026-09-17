@@ -4649,6 +4649,13 @@ elif [ -z "\$ROLLBACK_PRIOR_GENERATION" ] \
     && [ -n "\$ROLLBACK_PRIOR_REVISION" ] \
     && [ "\$rollback_current_revision" = "\$ROLLBACK_PRIOR_REVISION" ]; then
   rollback_generation_state=prior
+elif [ -z "\$ROLLBACK_PRIOR_GENERATION" ] \
+    && [ -z "\$rollback_current_generation" ] \
+    && [ -z "\$ROLLBACK_PRIOR_REVISION" ] \
+    && [ -z "\$rollback_current_revision" ]; then
+  # A from-scratch first-hub install has no predecessor identity. Failure
+  # before source publication therefore leaves two honest empty witnesses.
+  rollback_generation_state=prior
 elif { [ "\$rollback_current_generation" = "\$ROLLBACK_PRIOR_GENERATION" ] \
         || { [ -z "\$ROLLBACK_PRIOR_GENERATION" ] \
              && [ -z "\$rollback_current_generation" ]; }; } \
@@ -4882,6 +4889,10 @@ trap 'rollback_error_handler "\$?"' ERR
 
 rollback_supervisor="\${SUPERVISOR_KIND:-\$OS_KIND}"
 rollback_control_mode="\$ROLLBACK_CONTROL_PLANE_MODE"
+rollback_from_scratch=0
+if [ -z "\$ROLLBACK_PRIOR_GENERATION" ] && [ -z "\$ROLLBACK_PRIOR_REVISION" ]; then
+  rollback_from_scratch=1
+fi
 rollback_args=()
 rollback_restore_args=(
   --active-gateway "\$ROLLBACK_ACTIVE_GATEWAY"
@@ -4969,6 +4980,30 @@ rollback_directory_state() {
   if [ "\$rollback_generation_state" = prior ] \
       && [ -d "\$destination" ] && [ ! -L "\$destination" ]; then
     printf '%s\n' canonical-prior
+    return 0
+  fi
+  if [ "\$rollback_from_scratch" = 1 ]; then
+    case "\$rollback_generation_state" in
+      prior)
+        if [ -e "\$destination" ] || [ -L "\$destination" ]; then
+          echo "rollback failed: from-scratch prior directory unexpectedly exists" >&2
+          return 1
+        fi
+        ;;
+      successor|applying)
+        if [ -e "\$destination" ] || [ -L "\$destination" ]; then
+          [ -d "\$destination" ] && [ ! -L "\$destination" ] || {
+            echo "rollback failed: from-scratch successor directory is unsafe" >&2
+            return 1
+          }
+        fi
+        ;;
+      *)
+        echo "rollback failed: invalid from-scratch generation state" >&2
+        return 1
+        ;;
+    esac
+    printf '%s\n' prior-absent
     return 0
   fi
   echo "rollback failed: neither a durable backup nor the untouched prior directory is available" >&2
@@ -5085,6 +5120,7 @@ restore_dir_or_keep_prior() {
         && [ -d "\$destination" ] && [ ! -L "\$destination" ] \
         || { echo "rollback failed: untouched prior directory changed after preflight" >&2; return 1; }
       ;;
+    prior-absent) restore_absent_dir "\$destination" ;;
     *) echo "rollback failed: invalid directory restoration state" >&2; return 1 ;;
   esac
 }
