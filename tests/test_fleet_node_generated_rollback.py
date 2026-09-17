@@ -1359,19 +1359,20 @@ def test_generated_rollback_restores_artifacts_before_exact_prior_topology(
     assert not list((tmp_path / "mac-home" / "backups").glob("rollback-current-file.*"))
 
 
-def test_generated_rollback_restores_a_partial_from_scratch_install_to_absence(
-    tmp_path: Path,
+@pytest.mark.parametrize("partial_venv", [True, False])
+def test_generated_rollback_restores_a_from_scratch_install_to_absence(
+    tmp_path: Path, partial_venv: bool
 ) -> None:
     rollback, paths = _generate_rollback(
         tmp_path,
         control_active=False,
         config_existed=False,
         from_scratch=True,
-        partial_venv=True,
+        partial_venv=partial_venv,
     )
     env = _rollback_env(paths)
     env.update(
-        ROLLBACK_TEST_QUIESCE_VENV_STATE="absent",
+        ROLLBACK_TEST_QUIESCE_VENV_STATE="absent" if partial_venv else "current",
         ROLLBACK_TEST_RESTORE_SOURCE_STATE="absent",
         ROLLBACK_TEST_RESTORE_VENV_STATE="absent",
         ROLLBACK_TEST_RESTORE_CONFIG_STATE="absent",
