@@ -4270,7 +4270,11 @@ write_rollback_script() {
       || die "existing phase-2 rollback intent is invalid"
     return 0
   fi
-  if control_plane_enabled; then
+  # The shared-services manager normally owns an active control plane, but a
+  # from-scratch first hub has no prior service to restore. Phase-1 quiescence
+  # is the durable discriminator between those states.
+  if truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}" \
+      && control_plane_enabled; then
     rollback_control_plane_mode=active
   fi
   rollback_supervisord_conf="$(supervisord_conf_dir)/$MAC_SUPERVISORD_CONF_NAME"
