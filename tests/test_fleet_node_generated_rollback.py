@@ -460,6 +460,7 @@ def _generate_rollback(
         "ROLLBACK_PRIOR_REVISION": prior_revision,
         "ROLLBACK_INTENT": str(rollback_intent),
         "ROLLBACK_COMPLETION_RECEIPT": str(completion_receipt),
+        "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE": "0" if from_scratch else "1",
     }
     extra_declarations = ""
     for index, (path, prior_bytes) in enumerate((extra_artifacts or {}).items(), start=3):
@@ -492,6 +493,9 @@ def _generate_rollback(
         + "ROLLBACK_AUX_ARTIFACT_MODES[2]=system\n"
         + extra_declarations
         + f". {shlex.quote(str(lifecycle))}\n"
+        + "\ntruthy() { "
+        + 'case "${1:-}" in 1|true|TRUE|yes|YES|on|ON) return 0 ;; '
+        + "*) return 1 ;; esac; }\n"
         + "\ncontrol_plane_enabled() { "
         + ("return 0" if control_active else "return 1")
         + "; }\n"
@@ -1388,14 +1392,19 @@ def test_generated_rollback_restores_a_partial_from_scratch_install_to_absence(
     )
 
     assert first.returncode == 0, first.stderr
-    assert [event["action"] for event in _events(paths["log"])] == [
+    events = _events(paths["log"])
+    assert [event["action"] for event in events] == [
         "quiesce",
         "restore",
     ]
+    assert [event["mode"] for event in events] == ["inactive", "inactive"]
     assert not paths["source"].exists()
     assert not paths["venv"].exists()
     assert not paths["revision"].exists()
     assert not paths["config"].exists()
+    assert not paths["control"].exists()
+    assert not paths["hermes"].exists()
+    assert not paths["agent"].exists()
     assert (paths["bin"] / "generation").read_text() == "restored"
     completion = json.loads(paths["completion_receipt"].read_text(encoding="utf-8"))
     assert completion["prior_generation"] is None
