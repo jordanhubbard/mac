@@ -96,16 +96,18 @@ ARG CURSOR_VERSION="2026.07.23-e383d2b"
 ARG OPENCODE_VERSION="1.18.18"
 ARG PI_VERSION="0.84.2"
 ARG BUILDX_VERSION="0.30.1"
+ARG RUST_VERSION="1.95.0"
 ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
+COPY deploy/verify-rust-contract.sh /usr/local/bin/mac-verify-rust-contract
 COPY --from=uv /uv /usr/local/bin/uv
 RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/sources.list.d/mac-bookworm-backports.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev pkg-config openjdk-17-jre-headless clang llvm lld \
     && python3 -c "import re,subprocess; v=tuple(map(int,re.search(r'[0-9]+(?:\.[0-9]+)+',subprocess.check_output(['git','version'],text=True)).group().split('.')[:2])); assert v >= (2,38), v" \
     && apt-get install -y --no-install-recommends postgresql postgresql-client \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
@@ -126,10 +128,16 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && rm -f /tmp/mac-riscv-probe.c /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin /tmp/mac-qemu-devices \
     && (cd /tmp/mac-openshell-build-assets && sha256sum -c SHA256SUMS) \
     && case "$TARGETARCH" in \
-         amd64) asset_arch=amd64; gh_arch=amd64 ;; \
-         arm64) asset_arch=arm64; gh_arch=arm64 ;; \
+         amd64) asset_arch=amd64; gh_arch=amd64; rust_target=x86_64-unknown-linux-gnu ;; \
+         arm64) asset_arch=arm64; gh_arch=arm64; rust_target=aarch64-unknown-linux-gnu ;; \
          *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 2 ;; \
        esac \
+    && tar -xJf "/tmp/mac-openshell-build-assets/rust-${asset_arch}.tar.xz" -C /tmp \
+    && "/tmp/rust-${RUST_VERSION}-${rust_target}/install.sh" --prefix=/usr/local --disable-ldconfig \
+         --components="rustc,rust-std-${rust_target},cargo,rustfmt-preview" \
+    && rm -rf "/tmp/rust-${RUST_VERSION}-${rust_target}" \
+    && chmod 0755 /usr/local/bin/mac-verify-rust-contract \
+    && /usr/local/bin/mac-verify-rust-contract "$RUST_VERSION" \
     && install -d -m0755 /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins \
     && install -m0755 "/tmp/mac-openshell-build-assets/buildx-${asset_arch}" /usr/local/lib/docker/cli-plugins/docker-buildx \
     && ln -s /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx \

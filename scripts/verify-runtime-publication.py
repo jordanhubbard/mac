@@ -109,6 +109,7 @@ def main() -> int:
             "-c",
             (
                 "set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; "
+                "/usr/local/bin/mac-verify-rust-contract 1.95.0; "
                 "gh --version | head -1 | grep -Eq '^gh version 2\\.95\\.0 '; "
                 "command -v codex; command -v claude; command -v cursor-agent; "
                 'test "$(codex --version)" = "codex-cli 0.140.0"; '

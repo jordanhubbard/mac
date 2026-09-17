@@ -129,6 +129,7 @@ def test_frozen_contract_covers_every_copy_arg_and_base_digest_boundary() -> Non
         ".python-version",
         "README.md",
         "deploy/verify-bash-contract.sh",
+        "deploy/verify-rust-contract.sh",
         "pyproject.toml",
         "src",
         "uv.lock",
