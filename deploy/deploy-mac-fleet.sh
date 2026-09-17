@@ -4807,20 +4807,26 @@ PY
   echo "==> ${agent}: read-only from-scratch first-hub prerequisite receipt passed"
 }
 
-# A first install has no prior topology, so there is nothing to restore and
-# nothing to roll back to. Recovery is therefore a bounded teardown of what this
-# invocation uploaded plus release of the node-local lock -- deliberately not
-# restore_remote_phase1_generation, which would assert a generation that never
-# existed.
+# A first install has no prior topology or generation. Its sealed phase-2
+# rollback contract nevertheless owns every successor artifact and records the
+# prior-absent source/venv state. Execute that contract before removing uploaded
+# bootstrap files; otherwise a failure after source publication leaves a
+# partial install that the next from-scratch preflight must correctly reject.
 recover_first_hub_bootstrap_failure() {
   local agent="$1" deployment_id="$2"
+  local phase2_evidence="$TMPDIR_LOCAL/first-hub-recovery-phase2.json"
+  if ! rollback_remote_phase2_generation \
+    "$agent" "$deployment_id" "$GIT_REV" "$TS" > "$phase2_evidence"; then
+    return 1
+  fi
+  chmod 0600 "$phase2_evidence"
   if ! cleanup_remote_legacy_bootstrap_files "$agent" "$deployment_id"; then
     return 1
   fi
   if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
     return 1
   fi
-  echo "==> ${agent}: failed first-hub install removed its uploaded bootstrap files; node remains uninstalled"
+  echo "==> ${agent}: failed first-hub install restored its sealed prior-absent state"
 }
 
 first_hub_bootstrap() {

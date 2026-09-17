@@ -1015,19 +1015,22 @@ def test_first_hub_bootstrap_takes_no_hub_dependent_arm():
     assert first.index("acquire_remote_deployment_lock") < first.index("deploy_host")
 
 
-def test_first_hub_bootstrap_recovery_is_teardown_not_rollback():
+def test_first_hub_bootstrap_recovery_restores_the_sealed_prior_absent_state():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recover = deploy.split("recover_first_hub_bootstrap_failure() {", 1)[1].split("\n}\n", 1)[0]
 
     # Nothing existed before this install, so there is no phase-1 topology to
-    # restore and no phase-2 generation to roll back to. Recovery removes what
-    # this invocation uploaded and says so.
+    # restore. The phase-2 contract still owns successor artifacts and must
+    # restore their recorded prior absence before uploaded files are removed.
     assert "restore_remote_phase1_generation" not in recover
-    assert "rollback_remote_phase2_generation" not in recover
+    assert "rollback_remote_phase2_generation" in recover
     assert "probe_remote_cohort_recovery_action" not in recover
+    assert recover.index("rollback_remote_phase2_generation") < recover.index(
+        "cleanup_remote_legacy_bootstrap_files"
+    )
     assert "cleanup_remote_legacy_bootstrap_files" in recover
     assert "release_remote_deployment_lock" in recover
-    assert "node remains uninstalled" in recover
+    assert "restored its sealed prior-absent state" in recover
 
 
 def test_first_hub_bootstrap_tears_down_after_install_failure(tmp_path):
