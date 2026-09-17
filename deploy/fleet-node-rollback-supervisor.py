@@ -1049,6 +1049,24 @@ def terminate_orphaned_hub_listeners(
     hosts: Sequence[str], port: int, deadline: Deadline, poll_seconds: float
 ) -> None:
     """Remove only an unambiguously identified legacy ``mac.hub_serve`` owner."""
+    try:
+        import psutil
+    except ImportError:
+        # A from-scratch hub has no virtual environment yet.  We cannot safely
+        # identify or terminate an orphan without psutil, but a closed socket is
+        # already a complete proof of quiescence and needs no process metadata.
+        for host in hosts:
+            family = socket.AF_INET6 if ":" in host else socket.AF_INET
+            sock = socket.socket(family, socket.SOCK_STREAM)
+            try:
+                sock.settimeout(min(0.5, deadline.require("proving control-plane quiescence")))
+                if sock.connect_ex((host, port)) == 0:
+                    raise ProtocolError(
+                        "psutil is unavailable while the control-plane listener remains open"
+                    )
+            finally:
+                sock.close()
+        return
     owners = listener_processes(hosts, port)
     if not owners:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1064,8 +1082,6 @@ def terminate_orphaned_hub_listeners(
         raise ProtocolError("control-plane listeners have ambiguous process ownership")
     pid = next(iter(owners))
     try:
-        import psutil
-
         process = psutil.Process(pid)
         created = process.create_time()
         command = process.cmdline()

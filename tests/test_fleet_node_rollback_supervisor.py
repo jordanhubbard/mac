@@ -393,7 +393,12 @@ def _base_command(
     return command, receipt
 
 
-def _run(command: List[str], *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: List[str],
+    *,
+    timeout: float = 60.0,
+    extra_env: Optional[Mapping[str, str]] = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     # coverage.py's ``patch = ["subprocess"]`` propagates measurement into every
     # Python child via these vars + a site .pth hook. The helper and the fake
@@ -413,6 +418,8 @@ def _run(command: List[str], *, timeout: float = 60.0) -> subprocess.CompletedPr
         DBUS_SESSION_BUS_ADDRESS="unix:path=/secret/dbus",
         XDG_RUNTIME_DIR="/secret/runtime",
     )
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         command,
         text=True,
@@ -483,6 +490,40 @@ def test_quiesce_terminates_only_exact_orphaned_hub_listener(tmp_path: Path) -> 
         if listener.poll() is None:
             listener.terminate()
             listener.wait(timeout=5)
+
+
+def test_quiesce_without_psutil_proves_an_already_closed_port(tmp_path: Path) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    _write_state(tmp_path, _loaded_systemd_state())
+    blocked = tmp_path / "blocked-import"
+    blocked.mkdir()
+    (blocked / "psutil.py").write_text("raise ImportError('blocked by test')\n", encoding="utf-8")
+    command, receipt = _base_command(tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES)
+    command.extend(["--systemctl", str(systemctl)])
+
+    result = _run(command, extra_env={"PYTHONPATH": str(blocked)})
+
+    assert result.returncode == 0, result.stderr
+    _assert_passed_receipt(receipt, "quiesce", "systemd")
+
+
+def test_quiesce_without_psutil_fails_closed_for_a_live_listener(tmp_path: Path) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    _write_state(tmp_path, _loaded_systemd_state())
+    blocked = tmp_path / "blocked-import"
+    blocked.mkdir()
+    (blocked / "psutil.py").write_text("raise ImportError('blocked by test')\n", encoding="utf-8")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        command, receipt = _base_command(tmp_path, "quiesce", "systemd", port, SYSTEMD_NAMES)
+        command.extend(["--systemctl", str(systemctl)])
+        result = _run(command, extra_env={"PYTHONPATH": str(blocked)})
+
+    assert result.returncode != 0
+    assert "psutil is unavailable while the control-plane listener remains open" in result.stderr
+    assert not receipt.exists()
 
 
 def test_quiesce_refuses_to_terminate_an_unrelated_listener(tmp_path: Path) -> None:

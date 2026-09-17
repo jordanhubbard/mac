@@ -402,12 +402,36 @@ stop_qdrant_container_if_present() {
   done
 }
 
+render_systemd_unit() {
+  local output="$1" env_dest_sed="" runtime_sed=""
+  case "$CONTAINER_CMD_ABS" in
+    /*) ;;
+    *)
+      echo "[qdrant] ERROR: selected container runtime is not an absolute path: $CONTAINER_CMD_ABS" >&2
+      return 1
+      ;;
+  esac
+  if ! grep -Fq '@QDRANT_CONTAINER_RUNTIME@' "$UNIT_TEMPLATE"; then
+    echo "[qdrant] ERROR: systemd unit template has no container-runtime placeholder" >&2
+    return 1
+  fi
+  env_dest_sed="$(printf '%s' "$ENV_DEST" | sed 's/[&|\\]/\\&/g')"
+  runtime_sed="$(printf '%s' "$CONTAINER_CMD_ABS" | sed 's/[&|\\]/\\&/g')"
+  sed \
+    -e "s|/etc/mac/qdrant.env|${env_dest_sed}|g" \
+    -e "s|@QDRANT_CONTAINER_RUNTIME@|${runtime_sed}|g" \
+    "$UNIT_TEMPLATE" > "$output"
+  if grep -Fq '@QDRANT_CONTAINER_RUNTIME@' "$output"; then
+    echo "[qdrant] ERROR: systemd unit retained an unresolved container-runtime placeholder" >&2
+    return 1
+  fi
+}
+
 case "$SUPERVISOR_KIND" in
   systemd)
     echo "[qdrant] Installing systemd unit"
     unit_tmp="$(mktemp)"
-    env_dest_sed="$(printf '%s' "$ENV_DEST" | sed 's/[&|]/\\&/g')"
-    sed "s|/etc/mac/qdrant.env|${env_dest_sed}|g" "$UNIT_TEMPLATE" > "$unit_tmp"
+    render_systemd_unit "$unit_tmp"
     sudo install -m 0644 "$unit_tmp" "$UNIT_DEST"
     rm -f "$unit_tmp"
     sudo systemctl daemon-reload
