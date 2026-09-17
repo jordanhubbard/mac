@@ -1370,6 +1370,12 @@ def test_generated_rollback_restores_a_from_scratch_install_to_absence(
         from_scratch=True,
         partial_venv=partial_venv,
     )
+    # First-hub installation stages skills before it creates a managed
+    # OpenClaw sandbox identity.  The workspace must be removed as a successor
+    # artifact without invoking sandbox withdrawal.
+    staged_skill = paths["openclaw_home"] / "workspace" / "skills" / "example"
+    staged_skill.mkdir(parents=True)
+    staged_skill.joinpath("SKILL.md").write_text("staged\n", encoding="utf-8")
     env = _rollback_env(paths)
     env.update(
         ROLLBACK_TEST_QUIESCE_VENV_STATE="absent" if partial_venv else "current",
@@ -1406,6 +1412,8 @@ def test_generated_rollback_restores_a_from_scratch_install_to_absence(
     assert not paths["control"].exists()
     assert not paths["hermes"].exists()
     assert not paths["agent"].exists()
+    assert not paths["openclaw_home"].exists()
+    assert not paths["withdraw"].exists()
     assert (paths["bin"] / "generation").read_text() == "restored"
     completion = json.loads(paths["completion_receipt"].read_text(encoding="utf-8"))
     assert completion["prior_generation"] is None

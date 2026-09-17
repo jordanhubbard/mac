@@ -5100,7 +5100,7 @@ verified_contract_call \
 # tree.  The withdrawal independently deletes and proves the exact managed
 # sandbox absent.
 if [ "\$rollback_generation_state" = successor ] \
-    && { [ -e "\$MAC_HOME/openclaw" ] || [ -L "\$MAC_HOME/openclaw" ]; }; then
+    && { [ -e "\$MAC_HOME/openclaw/managed" ] || [ -L "\$MAC_HOME/openclaw/managed" ]; }; then
   [ -d "\$MAC_HOME/openclaw" ] && [ ! -L "\$MAC_HOME/openclaw" ] \
     || { echo "rollback failed: current OpenClaw runtime tree is unsafe" >&2; exit 1; }
   current_openclaw_installer="\$SRC_DIR/deploy/openclaw/install-openclaw-gateway.sh"
