@@ -1311,9 +1311,13 @@ ensure_docker_engine() {
     if getent group docker >/dev/null 2>&1; then
       sudo usermod -aG docker "$USER" >/dev/null 2>&1 || true
     fi
-    if command -v setfacl >/dev/null && [ -S /var/run/docker.sock ]; then
-      sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock >/dev/null 2>&1 || true
-    fi
+  fi
+  # A non-interactive SSH session can already see a newly granted docker group
+  # while the long-lived systemd user manager still has its older supplementary
+  # group set. The gateway runs under that manager, so grant this exact user
+  # access to the local daemon socket even when the deploy shell's probe passes.
+  if command -v setfacl >/dev/null && [ -S /var/run/docker.sock ]; then
+    sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock >/dev/null 2>&1 || true
   fi
   if ! "$OSH_DOCKER_BIN" info >/dev/null 2>&1; then
     echo "Docker Engine/Moby is installed but this user cannot reach the daemon." >&2

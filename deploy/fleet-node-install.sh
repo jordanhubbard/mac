@@ -4755,6 +4755,12 @@ trap '' HUP INT TERM
 verified_contract_call() {
   local kind="\$1" path="\$2" expected_sha256="\$3"
   shift 3
+  # Source/venv transitions can move the interpreter selected at startup.
+  # Re-resolve it for every retained contract instead of executing a path that
+  # may now belong to the artifact journal rather than the live filesystem.
+  ROLLBACK_PY="\$(rollback_python)"
+  "\$ROLLBACK_PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' \
+    || { echo "rollback failed: no live Python 3.9 or newer" >&2; return 1; }
   "\$ROLLBACK_PY" - "\$kind" "\$path" "\$expected_sha256" "\$@" <<'PY'
 import hashlib
 import os

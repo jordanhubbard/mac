@@ -256,6 +256,22 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "[program:openshell-gateway]" in script
     assert "sudo supervisorctl restart openshell-gateway" in script
     assert "run-gateway.sh" in script
+    ensure_docker = script.split("ensure_docker_engine() {", 1)[1].split(
+        "\n}\n\nensure_docker_buildx()", 1
+    )[0]
+    assert ensure_docker.count('sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock') == 1
+    assert (
+        'sudo usermod -aG docker "$USER" >/dev/null 2>&1 || true\n'
+        "    fi\n"
+        "  fi\n"
+        "  # A non-interactive SSH session can already see a newly granted docker group\n"
+        in ensure_docker
+    )
+    acl = ensure_docker.index(
+        "if command -v setfacl >/dev/null && [ -S /var/run/docker.sock ]; then"
+    )
+    final_probe = ensure_docker.rindex('if ! "$OSH_DOCKER_BIN" info >/dev/null 2>&1; then')
+    assert acl < final_probe
     assert "wait_for_local_gateway" in script
     assert "for ((attempt = 1; attempt <= 120; attempt++))" in script
     assert 'openshell_local_gateway "$cli" status' in script
