@@ -124,6 +124,12 @@ network first; do not deploy to a guessed host.
 - [ ] The crash observer is installed outside the MAC virtualenv and the native
       supervisor has restart enabled.
 
+First-hub bootstrap accepts a checksum-verified, prepared OpenShell CLI before
+its gateway exists. It proves that gateway registrations, runtime state,
+the local listener, and OpenShell containers are absent before installing MAC
+and bootstrapping the gateway. An existing or unreadable gateway still requires
+successful sandbox inventory; a failed inventory is never an absence proof.
+
 **Stop conditions:** low disk/inodes, failed workspace GC, unsupported Python,
 unsupported tool OS/architecture, reviewed-asset download or checksum failure,
 missing supervisor control, or a required tool visible only in an interactive

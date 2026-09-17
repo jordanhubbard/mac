@@ -9202,6 +9202,7 @@ PY
   else
     add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
   fi
+  add_remote_env MAC_DEPLOY_FIRST_HUB_BOOTSTRAP "$FIRST_HUB_BOOTSTRAP"
   # Daemon stop wrappers (especially a managed OpenClaw sandbox checkpoint)
   # can exceed the node default quiescence bound. Forward only when set so an
   # empty assignment cannot fail-close bounded_number() on the node.

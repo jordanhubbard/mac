@@ -83,6 +83,9 @@ def _capability_harness(tmp_path: Path, *, has_gpu: bool) -> str:
     """Run the real capability block with a fake nvidia-smi."""
     fake_bin = tmp_path / "fakebin"
     fake_bin.mkdir(exist_ok=True)
+    # A GPU test host must not leak its real nvidia-smi into the no-GPU case.
+    for tool in ("tr", "grep"):
+        (fake_bin / tool).symlink_to(shutil.which(tool))
     if has_gpu:
         nvidia = fake_bin / "nvidia-smi"
         nvidia.write_text(
@@ -90,11 +93,9 @@ def _capability_harness(tmp_path: Path, *, has_gpu: bool) -> str:
             encoding="utf-8",
         )
         nvidia.chmod(0o755)
-    return (
-        'export PATH="%s:$PATH"\n'
-        'capabilities="ops,python"\n'
-        "%s\n"
-        'printf "%%s\\n" "$capabilities"\n' % (fake_bin, _extract_capability_block())
+    return 'export PATH="%s"\ncapabilities="ops,python"\n%s\nprintf "%%s\\n" "$capabilities"\n' % (
+        fake_bin,
+        _extract_capability_block(),
     )
 
 

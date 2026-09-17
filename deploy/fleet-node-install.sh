@@ -6826,7 +6826,7 @@ EOF
   # retired legacy gateway.
   for env_name in \
     USER LOGNAME TMPDIR SHELL \
-    XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR \
+    XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR \
     DBUS_SESSION_BUS_ADDRESS \
     DOCKER_CONFIG DOCKER_HOST DOCKER_CONTEXT \
     CONTAINERS_CONF CONTAINERS_STORAGE_CONF CONTAINERS_REGISTRIES_CONF \
@@ -6842,6 +6842,7 @@ EOF
     MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256 \
     MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256 \
     MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256 \
+    MAC_DEPLOY_FIRST_HUB_BOOTSTRAP \
     MAC_DEPLOY_OPENSHELL_ENABLED \
     MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS \
     MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS; do
@@ -6873,6 +6874,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -6925,6 +6927,7 @@ openshell = mac_home / "bin" / "openshell"
 stop_wrapper = mac_home / "bin" / "openclaw-gateway-stop"
 reviewed_cli_receipt = mac_home / "openshell" / "reviewed-cli.json"
 reviewed_cli_summary_cache = None
+prepared_cli_without_gateway = False
 endpoint = "http://127.0.0.1:17670"
 max_output_bytes = 4 * 1024 * 1024
 
@@ -7228,6 +7231,7 @@ common_child_environment = (
     "LANG",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
     "DBUS_SESSION_BUS_ADDRESS",
@@ -7274,19 +7278,77 @@ def openshell_env():
 
 
 def openshell_ever_installed():
-    # A from-scratch node (--first-hub-bootstrap) never installs OpenShell at
-    # all -- $MAC_HOME/bin/openshell simply does not exist, not even as a
-    # broken symlink. That is a fact about this host, not about the current
-    # deploy's OpenShell config (MAC_DEPLOY_OPENSHELL_ENABLED is deliberately
-    # NOT consulted here or forwarded into this gate's isolated subprocess
-    # environment): if the binary was never installed, no OpenShell-managed
-    # sandbox could ever have been created through it, regardless of what
-    # this deploy's own config says, so it is safe to report "no sandboxes"
-    # without going through the strict ownership/executable checks below. A
-    # PRESENT-but-broken openshell path (e.g. a dangling symlink left by a
-    # partial prior install) is a different, real problem and must still
-    # reach resolve_owned_executable and fail closed on it.
+    # CLI preparation precedes first-hub installation. CLI presence alone does
+    # not prove a gateway exists; that separate case requires the proof below.
+    # A dangling CLI symlink is corruption and must still fail validation.
     return openshell.exists() or openshell.is_symlink()
+
+
+def prove_prepared_cli_without_gateway(runtimes):
+    """Recognize phase-zero CLI preparation, never an unavailable gateway.
+
+    Only the explicit first-hub path may use this proof. Inspect local state,
+    registrations, the gateway listener, and every discovered container daemon
+    before allowing source installation to precede gateway bootstrap.
+    """
+    if os.environ.get("MAC_DEPLOY_FIRST_HUB_BOOTSTRAP") != "1":
+        return False
+    if not openshell_ever_installed():
+        return False
+    target = resolve_owned_executable(openshell)
+    reviewed_openshell_cli_summary()
+    home = Path(os.environ["HOME"])
+    state_paths = [
+        mac_home / "src" / "mac",
+        mac_home / "venv",
+        mac_home / "mac.env",
+        mac_home / "deployed-source-revision",
+        home / ".config/systemd/user/openshell-gateway.service",
+        Path("/etc/supervisor/conf.d/openshell-gateway.conf"),
+    ]
+    for variable, default in (
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_STATE_HOME", ".local/state"),
+    ):
+        state_paths.append(home / default / "openshell")
+        if os.environ.get(variable):
+            state_paths.append(Path(os.environ[variable]) / "openshell")
+    for path in state_paths:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raise QuiescenceFailure("cannot inspect first-hub OpenShell runtime state")
+        return False
+    if resolve_sandbox_name() is not None:
+        return False
+    prepared = mac_home / "openshell"
+    if prepared.is_symlink() or set(prepared.iterdir()) != {reviewed_cli_receipt}:
+        return False
+    registrations = run_bounded(
+        [str(target), "gateway", "list", "--output", "json"], env=openshell_env()
+    )
+    if registrations.timed_out or registrations.returncode != 0:
+        raise QuiescenceFailure("first-hub OpenShell gateway registration inventory failed")
+    try:
+        values = json.loads(registrations.stdout)
+    except (ValueError, TypeError):
+        raise QuiescenceFailure("first-hub OpenShell gateway registrations are malformed")
+    if values != []:
+        raise QuiescenceFailure("first-hub OpenShell gateway registrations are not empty")
+    try:
+        with socket.create_connection(("127.0.0.1", 17670), timeout=min(1, remaining_time())):
+            raise QuiescenceFailure("first-hub OpenShell gateway listener already exists")
+    except ConnectionRefusedError:
+        pass
+    except OSError:
+        raise QuiescenceFailure("cannot prove first-hub OpenShell gateway listener absent")
+    for runtime in runtimes:
+        if list_managed_openshell_ids(runtime, all_states=True):
+            raise QuiescenceFailure("first-hub OpenShell-managed containers already exist")
+    return True
 
 
 def openshell_disabled_for_deployment():
@@ -7306,6 +7368,8 @@ def openshell_disabled_for_deployment():
 
 
 def sandbox_inventory(expected):
+    if prepared_cli_without_gateway:
+        return False
     if openshell_disabled_for_deployment():
         return False
     if not openshell_ever_installed():
@@ -7549,7 +7613,11 @@ def list_openshell_sandboxes():
     MAC-managed task sandboxes.
     """
 
-    if openshell_disabled_for_deployment() or not openshell_ever_installed():
+    if (
+        prepared_cli_without_gateway
+        or openshell_disabled_for_deployment()
+        or not openshell_ever_installed()
+    ):
         return []
     openshell_target = resolve_owned_executable(openshell)
     reviewed_openshell_cli_summary()
@@ -9307,9 +9375,13 @@ try:
         )
     elif mode == "quiesce":
         runtimes = discover_working_runtimes()
+        prepared_cli_without_gateway = prove_prepared_cli_without_gateway(runtimes)
         retained = prove_legacy_nemoclaw_inactive(runtimes)
         sandbox = quiesce_openclaw_sandbox()
         openshell_task_sandboxes = reconcile_managed_task_sandboxes()
+        if prepared_cli_without_gateway:
+            openshell_task_sandboxes["inventory_source"] = "proved_uninitialized_gateway"
+            openshell_task_sandboxes["reviewed_openshell_cli"] = reviewed_openshell_cli_summary()
         openshell_task_sandboxes["legacy_containers"] = (
             reconcile_legacy_task_containers(runtimes)
         )
