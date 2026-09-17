@@ -19,9 +19,9 @@ Environment=POSTGRES_USER=mac
 EnvironmentFile=-/etc/mac/postgres.env
 
 ExecStartPre=/bin/bash -lc 'install -d -m 0750 "$POSTGRES_DATA_DIR"'
-ExecStartPre=-/bin/bash -lc 'podman rm -f "$POSTGRES_CONTAINER_NAME"'
-ExecStart=/bin/bash -lc 'exec podman run --rm --name "$POSTGRES_CONTAINER_NAME" --pull=missing --security-opt=no-new-privileges -e POSTGRES_DB="$POSTGRES_DB" -e POSTGRES_USER="$POSTGRES_USER" -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" -p "$POSTGRES_BIND_ADDR:$POSTGRES_PORT:5432" -v "$POSTGRES_DATA_DIR:/var/lib/postgresql/data" "$POSTGRES_IMAGE"'
-ExecStop=/bin/bash -lc 'podman stop -t 15 "$POSTGRES_CONTAINER_NAME"'
+ExecStartPre=-/bin/bash -lc '@POSTGRES_CONTAINER_RUNTIME@ rm -f "$POSTGRES_CONTAINER_NAME"'
+ExecStart=/bin/bash -lc 'exec @POSTGRES_CONTAINER_RUNTIME@ run --rm --name "$POSTGRES_CONTAINER_NAME" --pull=missing --security-opt=no-new-privileges -e POSTGRES_DB="$POSTGRES_DB" -e POSTGRES_USER="$POSTGRES_USER" -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" -p "$POSTGRES_BIND_ADDR:$POSTGRES_PORT:5432" -v "$POSTGRES_DATA_DIR:/var/lib/postgresql/data" "$POSTGRES_IMAGE"'
+ExecStop=/bin/bash -lc '@POSTGRES_CONTAINER_RUNTIME@ stop -t 15 "$POSTGRES_CONTAINER_NAME"'
 
 Restart=on-failure
 RestartSec=5s

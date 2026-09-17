@@ -145,6 +145,33 @@ def test_systemd_unit_template_exists() -> None:
     assert SYSTEMD_UNIT.exists()
     text = SYSTEMD_UNIT.read_text(encoding="utf-8")
     assert "POSTGRES_BIND_ADDR=127.0.0.1" in text
+    assert text.count("@POSTGRES_CONTAINER_RUNTIME@") == 3
+
+
+def test_systemd_unit_uses_the_selected_container_runtime(tmp_path: Path) -> None:
+    function = _extract_function(INSTALL_SCRIPT, "render_systemd_unit")
+    for runtime in ("/usr/bin/docker", "/usr/bin/podman"):
+        rendered = tmp_path / (Path(runtime).name + ".service")
+        result = subprocess.run(
+            ["bash", "-c", function + '\nrender_systemd_unit "$OUTPUT"'],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "UNIT_TEMPLATE": str(SYSTEMD_UNIT),
+                "ENV_DEST": "/etc/ovswarm/postgres.env",
+                "CONTAINER_CMD_ABS": runtime,
+                "OUTPUT": str(rendered),
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        text = rendered.read_text(encoding="utf-8")
+        assert "@POSTGRES_CONTAINER_RUNTIME@" not in text
+        assert text.count(runtime) == 3
+        assert "EnvironmentFile=-/etc/ovswarm/postgres.env" in text
+        other_runtime = "/usr/bin/podman" if runtime.endswith("docker") else "/usr/bin/docker"
+        assert other_runtime not in text
 
 
 def test_native_package_fallback_uses_noninteractive_apt() -> None:
