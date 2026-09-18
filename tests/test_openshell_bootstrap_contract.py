@@ -430,6 +430,25 @@ def test_openshell_image_provides_process_inspection_baseline() -> None:
     assert "command -v ps >/dev/null" in containerfile
 
 
+def test_openshell_image_proves_the_libffi_development_contract() -> None:
+    """Native repository builds need the header and linker input, not only libffi at runtime."""
+    containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
+        encoding="utf-8"
+    )
+
+    package_install = " ".join(
+        line.strip()
+        for line in containerfile.splitlines()
+        if "apt-get install -y --no-install-recommends" in line
+    )
+    assert "libffi-dev" in package_install.split()
+    assert "#include <ffi.h>" in containerfile
+    assert "ffi_prep_cif" in containerfile
+    assert "cc -std=c99 -Wall -Wextra -Werror /tmp/mac-libffi-probe.c" in containerfile
+    assert "-lffi -o /tmp/mac-libffi-probe" in containerfile
+    assert "&& /tmp/mac-libffi-probe" in containerfile
+
+
 def test_openshell_image_uses_pinned_offline_assets():
     builder = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(encoding="utf-8")
     preparer = (ROOT / "deploy" / "openshell" / "prepare-runtime-image-assets.sh").read_text(
