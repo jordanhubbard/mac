@@ -17,6 +17,7 @@ CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
 CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.220}"
 CURSOR_VERSION="${CURSOR_VERSION:-2026.07.23-e383d2b}"
 BUILDX_VERSION="${BUILDX_VERSION:-0.30.1}"
+RUST_VERSION="${RUST_VERSION:-1.95.0}"
 LEIN_COMMIT="40227328d4a9c8945362d6d626d19c2449175df6"
 
 while [ "$#" -gt 0 ]; do
@@ -37,7 +38,8 @@ done
   && [ "$CODEX_VERSION" = "0.140.0" ] \
   && [ "$CLAUDE_VERSION" = "2.1.220" ] \
   && [ "$CURSOR_VERSION" = "2026.07.23-e383d2b" ] \
-  && [ "$BUILDX_VERSION" = "0.30.1" ] || {
+  && [ "$BUILDX_VERSION" = "0.30.1" ] \
+  && [ "$RUST_VERSION" = "1.95.0" ] || {
     echo "ERROR: runtime tool version is unreviewed; update versions and exact hashes together" >&2
     exit 2
   }
@@ -102,6 +104,12 @@ fetch buildx-amd64 \
 fetch buildx-arm64 \
   31d012d52d6df68aef4b55db62330967b562811f0de30cdfaa4505f314797c76 \
   "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-arm64"
+fetch rust-amd64.tar.xz \
+  2e0338f18ecbaa4a0f631b9e80e8b8e26bb6fe77dd5454fba8a70cf96c1e84a1 \
+  "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz"
+fetch rust-arm64.tar.xz \
+  094c9c36531911c5cc7dd6ab2d3069ab8dcd744d6239b0bda1387b243dfc391e \
+  "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-aarch64-unknown-linux-gnu.tar.xz"
 fetch lein \
   f8e1266c0c78c08bd4af6e111889ecc316c9dd56d1e8645bbee6c1703d351bc3 \
   "https://raw.githubusercontent.com/technomancy/leiningen/${LEIN_COMMIT}/bin/lein"

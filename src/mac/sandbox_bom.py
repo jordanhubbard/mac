@@ -148,6 +148,7 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     # Libraries a build links against rather than a binary it invokes. A
     # contract may legitimately name these; nanolang's sign.c needs libcrypto.
     "libssl-dev": ("libssl-dev",),
+    "pkg-config": ("pkg-config",),
     "openssl": ("openssl",),
     # Base-image commands: declared by contracts, already present, no package
     # to add. Mapped to nothing so they are neither "unmapped" nor duplicated.
@@ -175,6 +176,10 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     "mac": (),
     "pnpm": (),
     "lein": (),
+    # Reviewed native Rust distribution, checksum-pinned by the asset preparer.
+    "cargo": (),
+    "rustc": (),
+    "rustfmt": (),
     **{name: () for name in _CODING_AGENT_COMMANDS},
 }
 

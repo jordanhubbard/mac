@@ -58,6 +58,18 @@ def test_a_contract_supplies_its_required_commands():
     }
 
 
+def test_rust_contract_uses_reviewed_distribution_not_distro_packages():
+    commands = {"cargo", "rustc", "rustfmt"}
+    bom = derive_bom([_registration("agentos", commands | {"pkg-config", "libssl-dev"})])
+    assert commands <= set(bom["commands"])
+    assert not (commands & set(bom["unmapped_commands"]))
+    assert not (commands & set(bom["packages"]))
+    assert {"pkg-config", "libssl-dev"} <= set(bom["packages"])
+    gaps = bom_gaps(bom, CONTAINERFILE.read_text())
+    assert not (commands & set(gaps["missing_commands"]))
+    assert not ({"pkg-config", "libssl-dev"} & set(gaps["missing_packages"]))
+
+
 @pytest.mark.parametrize("record", [None, {}, "junk", {"metadata": "not-a-mapping"}])
 def test_a_record_with_no_contract_contributes_nothing(record):
     assert contract_commands(record) == set()

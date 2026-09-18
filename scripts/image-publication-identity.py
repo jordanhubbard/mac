@@ -67,6 +67,7 @@ IMAGE_SPECS = {
             "deploy/openshell/prepare-runtime-image-assets.sh",
             "deploy/reviewed-tool-assets.sh",
             "deploy/verify-bash-contract.sh",
+            "deploy/verify-rust-contract.sh",
         ),
         "trees": ("src",),
         "build_args": {
@@ -79,6 +80,7 @@ IMAGE_SPECS = {
             "GH_VERSION": "2.95.0",
             "NODE_VERSION": "22.23.1",
             "PNPM_VERSION": "11.13.1",
+            "RUST_VERSION": "1.95.0",
         },
     },
 }
@@ -594,6 +596,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         ]
     command = (
         "set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; "
+        "/usr/local/bin/mac-verify-rust-contract 1.95.0; "
         'test "$(node --version)" = v22.23.1; '
         'test "$(pnpm --version)" = 11.13.1; '
         "gh --version | head -n1 | grep -F 'gh version 2.95.0'; "
