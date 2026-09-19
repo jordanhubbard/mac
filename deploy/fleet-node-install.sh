@@ -5813,7 +5813,14 @@ def private_bytes(path: str) -> bytes:
             or before.st_size > 4 * 1024 * 1024
         ):
             raise SystemExit("existing phase-2 rollback intent is not private and bounded")
-        raw = os.read(descriptor, before.st_size + 1)
+        raw = bytearray()
+        while len(raw) < before.st_size:
+            chunk = os.read(descriptor, min(64 * 1024, before.st_size - len(raw)))
+            if not chunk:
+                raise SystemExit("sealed auxiliary rollback artifact was truncated")
+            raw.extend(chunk)
+        if os.read(descriptor, 1):
+            raise SystemExit("sealed auxiliary rollback artifact grew while reading")
         after = os.fstat(descriptor)
         if len(raw) != before.st_size or (
             before.st_dev,
@@ -12311,6 +12318,127 @@ handle_failed_openclaw_successor() {
   fi
 }
 
+sealed_auxiliary_rollback_artifact_was_absent() {
+  local path="$1" mode="${2:-user}" state=""
+  [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] || return 1
+  case "$mode" in
+    user|system) ;;
+    *) return 1 ;;
+  esac
+  # apply-phase2 is a separate process from arm-phase2, so its in-memory
+  # ROLLBACK_AUX_ARTIFACT_* arrays are deliberately empty.  The exact arrays
+  # were embedded in the rollback program before the private intent bound that
+  # program by digest.  Revalidate both sealed files, then read (never source)
+  # the declarations to distinguish an authenticated prior absence from
+  # missing rollback provenance.
+  verify_existing_phase2_sealed_state >/dev/null || return 1
+  verify_phase2_rollback_intent sealed-replay >/dev/null || return 1
+  state="$({
+    MAC_ROLLBACK_INTENT="$ROLLBACK_INTENT" \
+    MAC_ROLLBACK_SCRIPT="$ROLLBACK_SCRIPT" \
+      "$PY" - "$path" "$mode" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+
+def private_bytes(path: str, expected_mode: int, limit: int) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or stat.S_IMODE(before.st_mode) != expected_mode
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > limit
+        ):
+            raise SystemExit("sealed auxiliary rollback artifact is unsafe")
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(raw) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise SystemExit("sealed auxiliary rollback artifact changed while reading")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+query_path, query_mode = sys.argv[1:]
+if not re.fullmatch(r"[A-Za-z0-9_./:+-]+", query_path):
+    raise SystemExit("auxiliary rollback query path is unsafe")
+if query_mode not in {"user", "system"}:
+    raise SystemExit("auxiliary rollback query mode is invalid")
+
+intent_raw = private_bytes(os.environ["MAC_ROLLBACK_INTENT"], 0o600, 4 * 1024 * 1024)
+script_raw = private_bytes(os.environ["MAC_ROLLBACK_SCRIPT"], 0o700, 2 * 1024 * 1024)
+try:
+    intent = json.loads(intent_raw)
+except (TypeError, ValueError):
+    raise SystemExit("sealed auxiliary rollback intent is malformed")
+rollback = intent.get("rollback") if isinstance(intent, dict) else None
+if not isinstance(rollback, dict):
+    raise SystemExit("sealed auxiliary rollback intent has no rollback binding")
+if rollback.get("path") != os.environ["MAC_ROLLBACK_SCRIPT"]:
+    raise SystemExit("sealed auxiliary rollback path differs")
+if rollback.get("sha256") != hashlib.sha256(script_raw).hexdigest():
+    raise SystemExit("sealed auxiliary rollback digest differs")
+
+try:
+    script = script_raw.decode("utf-8")
+except UnicodeDecodeError:
+    raise SystemExit("sealed auxiliary rollback program is not UTF-8")
+
+declarations: dict[str, dict[int, str]] = {}
+for name in ("PATHS", "EXISTED", "MODES"):
+    matches: dict[int, str] = {}
+    pattern = re.compile(
+        rf"^ROLLBACK_AUX_ARTIFACT_{name}\[([0-9]+)\]=([^\r\n]+)$",
+        re.MULTILINE,
+    )
+    for match in pattern.finditer(script):
+        index = int(match.group(1))
+        if index in matches:
+            raise SystemExit("duplicate sealed auxiliary rollback declaration")
+        matches[index] = match.group(2)
+    declarations[name] = matches
+
+indices = [
+    index
+    for index, value in declarations["PATHS"].items()
+    if value == query_path
+]
+if len(indices) != 1:
+    raise SystemExit("sealed auxiliary rollback path is missing or duplicated")
+index = indices[0]
+if declarations["MODES"].get(index) != query_mode:
+    raise SystemExit("sealed auxiliary rollback mode differs")
+existed = declarations["EXISTED"].get(index)
+if existed not in {"0", "1"}:
+    raise SystemExit("sealed auxiliary rollback existence state is invalid")
+print("prior-absent" if existed == "0" else "prior-present")
+PY
+  } 2>/dev/null)" || return 1
+  [ "$state" = prior-absent ]
+}
+
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
   local unit_staging="$LOG_DIR/${MAC_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
@@ -12321,7 +12449,8 @@ install_linux_service() {
     write_rollback_script
   fi
   if control_plane_enabled; then
-    if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_UNIT_BACKUP" ]; then
+    if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_UNIT_BACKUP" ] \
+        && ! sealed_auxiliary_rollback_artifact_was_absent "$unit" system; then
       die "cannot mutate the control-plane unit without a prior-generation backup"
     fi
     MAC_UNIT_MUTATED=1
@@ -13255,7 +13384,8 @@ install_linux_agent_service() {
     snapshot_rollback_file "$unit" "$MAC_AGENT_UNIT_BACKUP" system
     write_rollback_script
   fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_AGENT_UNIT_BACKUP" ]; then
+  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_AGENT_UNIT_BACKUP" ] \
+      && ! sealed_auxiliary_rollback_artifact_was_absent "$unit" system; then
     die "cannot mutate the agent unit without a prior-generation backup"
   fi
   MAC_AGENT_UNIT_MUTATED=1

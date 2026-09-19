@@ -70,6 +70,116 @@ def _valid_receipt() -> dict[str, object]:
     }
 
 
+def _run_sealed_auxiliary_absence_check(
+    tmp_path: Path,
+    *,
+    existed: str | None,
+    mode: str = "system",
+    tamper_digest: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    intent = tmp_path / "rollback-intent.json"
+    rollback = tmp_path / "rollback.sh"
+    unit = "/etc/systemd/system/mac.service"
+    declarations = [
+        "#!/usr/bin/env bash",
+        "ROLLBACK_AUX_ARTIFACT_COUNT=1",
+        f"ROLLBACK_AUX_ARTIFACT_PATHS[0]={unit}",
+    ]
+    if existed is not None:
+        declarations.append(f"ROLLBACK_AUX_ARTIFACT_EXISTED[0]={existed}")
+    declarations.append(f"ROLLBACK_AUX_ARTIFACT_MODES[0]={mode}")
+    rollback.write_text("\n".join(declarations) + "\n", encoding="utf-8")
+    rollback.chmod(0o700)
+    digest = hashlib.sha256(rollback.read_bytes()).hexdigest()
+    if tamper_digest:
+        digest = "0" * 64
+    intent.write_text(
+        json.dumps(
+            {
+                "rollback": {
+                    "path": str(rollback),
+                    "sha256": digest,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    intent.chmod(0o600)
+    helper = _function(
+        "sealed_auxiliary_rollback_artifact_was_absent",
+        "install_linux_service",
+    )
+    command = f"""set -euo pipefail
+PY=${{TEST_PY:?}}
+ROLLBACK_INTENT=${{TEST_INTENT:?}}
+ROLLBACK_SCRIPT=${{TEST_ROLLBACK:?}}
+DEPLOY_ROLLBACK_ARMED=1
+verify_existing_phase2_sealed_state() {{ :; }}
+verify_phase2_rollback_intent() {{ :; }}
+{helper}
+sealed_auxiliary_rollback_artifact_was_absent "$1" system
+"""
+    return subprocess.run(
+        ["/bin/bash", "-c", command, "fixture", unit],
+        env={
+            **os.environ,
+            "TEST_PY": sys.executable,
+            "TEST_INTENT": str(intent),
+            "TEST_ROLLBACK": str(rollback),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_sealed_prior_absent_auxiliary_unit_allows_first_install(tmp_path: Path) -> None:
+    result = _run_sealed_auxiliary_absence_check(tmp_path, existed="0")
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("existed", "mode", "tamper_digest"),
+    [
+        ("1", "system", False),
+        (None, "system", False),
+        ("0", "user", False),
+        ("0", "system", True),
+    ],
+)
+def test_sealed_auxiliary_absence_check_fails_closed_without_exact_provenance(
+    tmp_path: Path,
+    existed: str | None,
+    mode: str,
+    tamper_digest: bool,
+) -> None:
+    result = _run_sealed_auxiliary_absence_check(
+        tmp_path,
+        existed=existed,
+        mode=mode,
+        tamper_digest=tamper_digest,
+    )
+
+    assert result.returncode != 0
+
+
+def test_linux_service_guards_accept_only_sealed_prior_absence() -> None:
+    source = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    control = source.split("install_linux_service() {", 1)[1].split(
+        "\n}\n\ninstall_linux_no_gateway_service() {", 1
+    )[0]
+    agent = source.split("install_linux_agent_service() {", 1)[1].split(
+        "\n}\n\ninstall_supervisord_service() {", 1
+    )[0]
+
+    assert '&& ! sealed_auxiliary_rollback_artifact_was_absent "$unit" system; then' in control
+    assert "cannot mutate the control-plane unit without a prior-generation backup" in control
+    assert '&& ! sealed_auxiliary_rollback_artifact_was_absent "$unit" system; then' in agent
+    assert "cannot mutate the agent unit without a prior-generation backup" in agent
+
+
 def _resource(payload: dict[str, object], label: str, domain: str) -> dict[str, object]:
     resources = payload["supervisor"]["resources"]  # type: ignore[index]
     target_prefix = f"gui/{os.getuid()}/" if domain == "gui" else "system/"
