@@ -6657,6 +6657,7 @@ prepare_network_prerequisites() {
 
 classify_fungible_machine_onboarding() {
   local selected_specs_file="$1" spec fields=() agent supervisor instance_kind
+  local route_identity route_sha256
   local ssh_parts=() ssh_args=() ssh_target item last_index command output
   local failed=0
   [ -r "$MACHINE_ONBOARDING_HELPER" ] || {
@@ -6678,7 +6679,9 @@ classify_fungible_machine_onboarding() {
     while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
     last_index=$((${#ssh_parts[@]} - 1))
     ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
-    command="python3 - inspect --supervisor $(shell_quote "$supervisor")"
+    route_identity="$(node_route_identity_file "$agent")"
+    route_sha256="$(sha256_file "$route_identity")"
+    command="python3 - inspect --supervisor $(shell_quote "$supervisor") --agent $(shell_quote "$agent") --route-identity-sha256 $(shell_quote "$route_sha256")"
     output="$TMPDIR_LOCAL/machine-onboarding-inspect-$(stable_worker_agent_id "$agent").json"
     if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
       -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
@@ -6689,18 +6692,28 @@ classify_fungible_machine_onboarding() {
       continue
     fi
     chmod 0600 "$output"
-    if ! "$PYTHON_BIN" - "$output" <<'PY'
+    if ! "$PYTHON_BIN" - "$output" "$agent" "$route_sha256" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 checks=value.get("checks")
-if (
-    value.get("schema")!="mac.fleet_machine_onboarding_status.v1"
-    or value.get("status")!="eligible"
-    or value.get("instance_kind")!="fungible"
-    or not isinstance(checks,dict)
-    or not checks
-    or any(item is not True for item in checks.values())
-):
+if value.get("schema")!="mac.fleet_machine_onboarding_status.v1" or value.get("instance_kind")!="fungible":
+    raise SystemExit("phase-zero eligibility status is invalid")
+if value.get("status")=="eligible":
+    if not isinstance(checks,dict) or not checks or any(item is not True for item in checks.values()):
+        raise SystemExit("phase-zero pristine eligibility status is invalid")
+elif value.get("status")=="refreshable":
+    receipt=value.get("receipt")
+    if (
+        not isinstance(receipt,dict)
+        or receipt.get("agent")!=sys.argv[2]
+        or receipt.get("agent_id")!="agent_"+__import__("re").sub(r"[^A-Za-z0-9_.-]+","_",sys.argv[2].lower()).strip("_")
+        or receipt.get("route_identity_sha256")!=sys.argv[3]
+        or receipt.get("services_started") is not False
+        or not isinstance(receipt.get("generation"),str)
+        or not isinstance(receipt.get("source_revision"),str)
+    ):
+        raise SystemExit("phase-zero refresh eligibility status is invalid")
+else:
     raise SystemExit("phase-zero eligibility status is invalid")
 PY
     then
@@ -6718,7 +6731,7 @@ register_fungible_onboarding_placeholder() (
   set -euo pipefail
   umask 077
   local agent="$1" hub_agent="$2" fleet_name="$3" capabilities="$4"
-  local generation="$5" route_sha256="$6"
+  local generation="$5" source_revision="$6" route_sha256="$7"
   local agent_id request output remote_request command
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
   agent_id="$(stable_worker_agent_id "$agent")"
@@ -6726,7 +6739,7 @@ register_fungible_onboarding_placeholder() (
   output="$TMPDIR_LOCAL/machine-onboarding-placeholder-${agent_id}.json"
   remote_request="/tmp/mac-machine-onboarding-register-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
   "$PYTHON_BIN" - "$request" "$agent" "$agent_id" "$fleet_name" \
-    "$capabilities" "$generation" "$GIT_REV" "$route_sha256" <<'PY'
+    "$capabilities" "$generation" "$source_revision" "$route_sha256" <<'PY'
 import json,os,re,sys,tempfile
 from pathlib import Path
 output_raw,agent,agent_id,fleet,capabilities,generation,revision,route=sys.argv[1:]
@@ -6791,7 +6804,7 @@ PY
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" "$command" > "$output" <<'PY'
-import json,os,sys,urllib.request
+import json,os,sys,urllib.error,urllib.request
 
 path=sys.argv[1]
 request_value=json.load(open(path,encoding="utf-8"))
@@ -6808,20 +6821,35 @@ def call(method,route,body=None):
         value=json.load(response)
     return value
 
+def optional_agent(agent_id):
+    try:
+        return call("GET","/agents/"+agent_id)
+    except urllib.error.HTTPError as error:
+        if error.code==404:
+            return None
+        raise
+
 rows=call("GET","/agents")
 if not isinstance(rows,list):
     raise SystemExit("hub agent registry response is invalid")
 same_name=[row for row in rows if isinstance(row,dict) and row.get("name")==agent_body["name"]]
-same_id=[row for row in rows if isinstance(row,dict) and row.get("id")==agent_body["agent_id"]]
-for row in same_name+same_id:
+existing=optional_agent(agent_body["agent_id"])
+for row in same_name+([existing] if isinstance(existing,dict) else []):
     if (
         row.get("id")!=agent_body["agent_id"]
         or row.get("name")!=agent_body["name"]
+        or row.get("machine_id")!=machine_body["machine_id"]
         or row.get("instance_kind")!="fungible"
-        or row.get("status")!="draining"
-        or row.get("health_status")!="degraded"
         or row.get("current_task_id") is not None
-        or row.get("deleted_at") is not None
+        or (row.get("resources") or {}).get("machine_onboarding")
+            != agent_body["resources"]["machine_onboarding"]
+        or (
+            row.get("deleted_at") is None
+            and (
+                row.get("status")!="draining"
+                or row.get("health_status")!="degraded"
+            )
+        )
     ):
         raise SystemExit("existing agent identity is not the exact failed-prephase fungible placeholder")
 machine=call("POST","/machines",machine_body)
@@ -6859,7 +6887,7 @@ print(json.dumps({
 PY
   chmod 0600 "$output"
   "$PYTHON_BIN" - "$output" "$agent" "$agent_id" "$generation" \
-    "$GIT_REV" "$route_sha256" <<'PY'
+    "$source_revision" "$route_sha256" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 expected={
@@ -6886,7 +6914,8 @@ prepare_fungible_machine_onboarding_worker() (
   set -euo pipefail
   umask 077
   local spec="$1" hub_agent="$2" fields=() agent agent_id supervisor fleet_name
-  local capabilities generation route_identity route_sha256 placeholder
+  local capabilities generation source_revision route_identity route_sha256 placeholder
+  local classification classification_status classification_values=()
   local archive_sha256
   local remote_prefix remote_helper remote_archive remote_assets remote_identity
   local remote_placeholder ssh_parts=() ssh_args=() ssh_target item last_index
@@ -6899,7 +6928,6 @@ prepare_fungible_machine_onboarding_worker() (
     echo "ERROR: ${agent}: phase-zero onboarding refuses a static fleet record" >&2
     return 1
   }
-  generation="$(worker_generation_for_agent "$agent")"
   route_identity="$(node_route_identity_file "$agent")"
   route_sha256="$("$PYTHON_BIN" - "$route_identity" <<'PY'
 import hashlib,json,sys
@@ -6907,6 +6935,37 @@ value=json.load(open(sys.argv[1],encoding="utf-8"))
 print(hashlib.sha256((json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode()).hexdigest())
 PY
 )"
+  classification="$TMPDIR_LOCAL/machine-onboarding-inspect-${agent_id}.json"
+  mapfile -t classification_values < <("$PYTHON_BIN" - "$classification" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+print(value.get("status") or "")
+receipt=value.get("receipt") if isinstance(value.get("receipt"),dict) else {}
+print(receipt.get("generation") or "")
+print(receipt.get("source_revision") or "")
+print(receipt.get("route_identity_sha256") or "")
+PY
+)
+  classification_status="${classification_values[0]:-}"
+  if [ "$classification_status" = refreshable ]; then
+    generation="${classification_values[1]:-}"
+    source_revision="${classification_values[2]:-}"
+    [ "${classification_values[3]:-}" = "$route_sha256" ] || {
+      echo "ERROR: ${agent}: refreshable onboarding receipt lost its route binding" >&2
+      return 1
+    }
+    register_fungible_onboarding_placeholder \
+      "$agent" "$hub_agent" "$fleet_name" "$capabilities" \
+      "$generation" "$source_revision" "$route_sha256" >/dev/null
+    echo "==> ${agent}: published phase-zero baseline re-registered without host mutation; placeholder remains draining"
+    return 0
+  fi
+  [ "$classification_status" = eligible ] || {
+    echo "ERROR: ${agent}: phase-zero classification is neither pristine nor refreshable" >&2
+    return 1
+  }
+  generation="$(worker_generation_for_agent "$agent")"
+  source_revision="$GIT_REV"
   archive_sha256="$(sha256_file "$ARCHIVE")"
   remote_prefix="/tmp/mac-machine-onboarding-${agent_id}-${DEPLOY_CONTROLLER_NONCE}"
   remote_helper="${remote_prefix}.py"
@@ -6936,12 +6995,12 @@ for path in sys.argv[1:]:
   pinned_remote_verified_upload "$agent" "$ARCHIVE" "$remote_archive"
   pinned_remote_private_upload "$agent" "$REVIEWED_TOOL_ASSETS_SOURCE" "$remote_assets"
   pinned_remote_private_upload "$agent" "$route_identity" "$remote_identity"
-  prepare_command="python3 $(shell_quote "$remote_helper") prepare --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$GIT_REV") --supervisor $(shell_quote "$supervisor") --archive $(shell_quote "$remote_archive") --reviewed-assets $(shell_quote "$remote_assets") --route-identity $(shell_quote "$remote_identity")"
+  prepare_command="python3 $(shell_quote "$remote_helper") prepare --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$source_revision") --supervisor $(shell_quote "$supervisor") --archive $(shell_quote "$remote_archive") --reviewed-assets $(shell_quote "$remote_assets") --route-identity $(shell_quote "$remote_identity")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" "$prepare_command" > "$prepare_receipt"
   chmod 0600 "$prepare_receipt"
-  "$PYTHON_BIN" - "$prepare_receipt" "$agent" "$generation" "$GIT_REV" \
+  "$PYTHON_BIN" - "$prepare_receipt" "$agent" "$generation" "$source_revision" \
     "$route_sha256" "$archive_sha256" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
@@ -6959,14 +7018,15 @@ if (
     raise SystemExit("remote phase-zero stage receipt is invalid")
 PY
   placeholder="$(register_fungible_onboarding_placeholder \
-    "$agent" "$hub_agent" "$fleet_name" "$capabilities" "$generation" "$route_sha256")"
+    "$agent" "$hub_agent" "$fleet_name" "$capabilities" \
+    "$generation" "$source_revision" "$route_sha256")"
   pinned_remote_private_upload "$agent" "$placeholder" "$remote_placeholder"
-  commit_command="python3 $(shell_quote "$remote_helper") commit --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$GIT_REV") --supervisor $(shell_quote "$supervisor") --placeholder $(shell_quote "$remote_placeholder")"
+  commit_command="python3 $(shell_quote "$remote_helper") commit --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$source_revision") --supervisor $(shell_quote "$supervisor") --placeholder $(shell_quote "$remote_placeholder")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" "$commit_command" > "$commit_receipt"
   chmod 0600 "$commit_receipt"
-  "$PYTHON_BIN" - "$commit_receipt" "$agent" "$generation" "$GIT_REV" \
+  "$PYTHON_BIN" - "$commit_receipt" "$agent" "$generation" "$source_revision" \
     "$route_sha256" <<'PY'
 import json,os,stat,sys
 path=sys.argv[1]; metadata=os.lstat(path); value=json.load(open(path,encoding="utf-8"))
