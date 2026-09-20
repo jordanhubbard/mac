@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from mac.services import ControlPlane
+
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "deploy" / "fleet-node-machine-onboard.py"
@@ -266,6 +268,125 @@ def _prepared(module, tmp_path: Path, monkeypatch):
         },
     )
     return layout, placeholder
+
+
+def _publish_fake_baseline(module, tmp_path: Path, monkeypatch):
+    layout, placeholder = _prepared(module, tmp_path, monkeypatch)
+    (layout.stage("onboard:test") / "source" / "uv.lock").write_text(
+        "version = 1\n", encoding="utf-8"
+    )
+
+    def fake_run(argv, *, env=None, timeout=900):
+        del env, timeout
+        args = [str(item) for item in argv]
+        if "venv" in args:
+            target = Path(args[-1])
+            (target / "bin").mkdir(parents=True)
+            for name in ("python", "mac"):
+                executable = target / "bin" / name
+                executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                executable.chmod(0o755)
+        if args[0].endswith("/python") and "-c" in args:
+            return subprocess.CompletedProcess(args, 0, "3.14.7\n", "")
+        if args[-1:] == ["--version"] and args[0].endswith("/uv"):
+            return subprocess.CompletedProcess(args, 0, "uv 0.12.12\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    receipt = module.commit(
+        layout,
+        generation="onboard:test",
+        agent="worker4",
+        source_revision="1" * 40,
+        supervisor="supervisord",
+        placeholder=placeholder,
+    )
+    return layout, receipt
+
+
+def _tree_fingerprint(root: Path) -> list[tuple[str, int, int, int, str]]:
+    result = []
+    for path in sorted(root.rglob("*")):
+        metadata = path.lstat()
+        result.append(
+            (
+                str(path.relative_to(root)),
+                metadata.st_mode,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                os.readlink(path) if path.is_symlink() else "",
+            )
+        )
+    return result
+
+
+def test_published_baseline_inspection_is_idempotent_and_host_read_only(
+    module, tmp_path, monkeypatch
+):
+    layout, receipt = _publish_fake_baseline(module, tmp_path, monkeypatch)
+    before = _tree_fingerprint(layout.home)
+
+    first = module.inspect(
+        layout,
+        supervisor="supervisord",
+        agent="worker4",
+        route_identity_sha256=receipt["route_identity_sha256"],
+    )
+    second = module.inspect(
+        layout,
+        supervisor="supervisord",
+        agent="worker4",
+        route_identity_sha256=receipt["route_identity_sha256"],
+    )
+
+    assert first == second
+    assert first["status"] == "refreshable"
+    assert first["receipt"] == {
+        "agent": "worker4",
+        "agent_id": "agent_worker4",
+        "generation": "onboard:test",
+        "source_revision": "1" * 40,
+        "route_identity_sha256": receipt["route_identity_sha256"],
+        "services_started": False,
+    }
+    assert _tree_fingerprint(layout.home) == before
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("route", "route_identity_sha256"),
+        ("agent", "agent"),
+        ("deployed", "deployed revision"),
+        ("service", "service configuration"),
+    ],
+)
+def test_published_baseline_refresh_rejects_mismatched_or_deployed_state(
+    module, tmp_path, monkeypatch, damage, message
+):
+    layout, receipt = _publish_fake_baseline(module, tmp_path, monkeypatch)
+    route_sha256 = receipt["route_identity_sha256"]
+    agent = "worker4"
+    if damage == "route":
+        route_sha256 = "f" * 64
+    elif damage == "agent":
+        agent = "worker5"
+    elif damage == "deployed":
+        (layout.mac_home / "deployed-source-revision").write_text("2" * 40)
+    else:
+        monkeypatch.setattr(
+            module,
+            "_service_configuration_paths",
+            lambda _layout: [tmp_path / "mac-agent.service"],
+        )
+
+    with pytest.raises(module.OnboardingError, match=message):
+        module.inspect(
+            layout,
+            supervisor="supervisord",
+            agent=agent,
+            route_identity_sha256=route_sha256,
+        )
 
 
 @pytest.fixture
@@ -588,6 +709,77 @@ def test_controller_exposes_precohort_mode_without_weakening_typed_deploy():
         '&& [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then\n'
         "    recover_incomplete_cohort_transaction_before_deploy"
     ) in text
+
+
+@pytest.mark.parametrize("tombstone_first", [False, True])
+def test_registration_only_refresh_creates_or_resurrects_exact_placeholder(tombstone_first):
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine(
+        "worker4", machine_id="machine_worker4", resources={}, trusted=True
+    )
+    resource = {
+        "schema": "mac.fleet_machine_onboarding_resource.v1",
+        "status": "prepared",
+        "generation": "onboard:test",
+        "source_revision": "1" * 40,
+        "route_identity_sha256": "a" * 64,
+        "instance_kind": "fungible",
+    }
+    if tombstone_first:
+        prior = cp.register_agent(
+            machine.id,
+            "worker4",
+            agent_id="agent_worker4",
+            resources={"machine_onboarding": resource},
+            status="draining",
+            health_status="degraded",
+            instance_kind="fungible",
+        )
+        cp.delete_agent(prior.id, actor="hub-ephemeral-expiry")
+
+    refreshed = cp.register_agent(
+        machine.id,
+        "worker4",
+        agent_id="agent_worker4",
+        resources={"machine_onboarding": resource},
+        status="draining",
+        health_status="degraded",
+        instance_kind="fungible",
+        allow_resurrection=True,
+    )
+    repeated = cp.register_agent(
+        machine.id,
+        "worker4",
+        agent_id="agent_worker4",
+        resources={"machine_onboarding": resource},
+        status="draining",
+        health_status="degraded",
+        instance_kind="fungible",
+        allow_resurrection=True,
+    )
+
+    assert refreshed.id == repeated.id == "agent_worker4"
+    assert repeated.deleted_at is None
+    assert repeated.status == "draining"
+    assert repeated.health_status == "degraded"
+    assert repeated.instance_kind == "fungible"
+    assert repeated.resources["machine_onboarding"] == resource
+
+
+def test_controller_refresh_path_returns_before_any_host_payload_upload():
+    text = DEPLOY.read_text(encoding="utf-8")
+    worker = text.split("prepare_fungible_machine_onboarding_worker() (", 1)[1].split(
+        "\n)\n\nprepare_fungible_machine_onboarding()", 1
+    )[0]
+    refresh = worker.split('if [ "$classification_status" = refreshable ]; then', 1)[1].split(
+        "return 0", 1
+    )[0]
+    assert "register_fungible_onboarding_placeholder" in refresh
+    assert "source_revision" in refresh
+    assert "route_sha256" in refresh
+    assert "pinned_remote_" not in refresh
+    assert "prepare_command" not in refresh
+    assert "commit_command" not in refresh
 
 
 def test_controller_counts_zero_preparation_modes_without_pipefail_exit():

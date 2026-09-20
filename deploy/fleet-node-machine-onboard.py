@@ -361,6 +361,136 @@ def validate_pristine(layout: Layout, supervisor: str) -> dict[str, Any]:
     }
 
 
+def _owner_directory(path: Path, description: str) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError as exc:
+        raise OnboardingError(f"{description} is missing") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise OnboardingError(f"{description} is not an owner-controlled directory")
+
+
+def _regular_executable(path: Path, description: str) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError as exc:
+        raise OnboardingError(f"{description} is unavailable") from exc
+    if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
+        raise OnboardingError(f"{description} is not a regular executable")
+    return resolved
+
+
+def validate_published_baseline(
+    layout: Layout,
+    supervisor: str,
+    *,
+    agent: str,
+    route_identity_sha256: str,
+) -> dict[str, Any]:
+    """Prove an existing phase-zero baseline is safe for registration-only refresh."""
+
+    if HEX_SHA256.fullmatch(route_identity_sha256 or "") is None:
+        raise OnboardingError("expected route identity digest is invalid")
+    receipt = _private_json(layout.receipt, RECEIPT_SCHEMA)
+    expected_agent_id = "agent_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", agent.lower()).strip("_")
+    expected = {
+        "status": "published",
+        "agent": agent,
+        "agent_id": expected_agent_id,
+        "route_identity_sha256": route_identity_sha256,
+        "instance_kind": "fungible",
+        "barrier": {"status": "draining", "health_status": "degraded"},
+        "versions": {"uv": UV_VERSION, "python": PYTHON_VERSION},
+        "services_started": False,
+    }
+    different = [key for key, wanted in expected.items() if receipt.get(key) != wanted]
+    if different:
+        raise OnboardingError(
+            "published onboarding receipt differs at: " + ",".join(sorted(different))
+        )
+    generation = _safe_generation(str(receipt.get("generation") or ""))
+    source_revision = str(receipt.get("source_revision") or "")
+    if re.fullmatch(r"[0-9a-f]{40}", source_revision) is None:
+        raise OnboardingError("published onboarding source revision is invalid")
+    if HEX_SHA256.fullmatch(str(receipt.get("source_archive_sha256") or "")) is None:
+        raise OnboardingError("published onboarding source archive digest is invalid")
+
+    if _path_exists(layout.mac_home / "deployed-source-revision"):
+        raise OnboardingError("published onboarding baseline has a deployed revision")
+    if _mac_env_has_generation(layout.mac_home / "mac.env"):
+        raise OnboardingError("published onboarding baseline has a worker generation")
+    if _service_configuration_paths(layout):
+        raise OnboardingError("published onboarding baseline has service configuration")
+    if _service_processes(supervisor):
+        raise OnboardingError("published onboarding baseline has a service process")
+
+    _owner_directory(layout.source, "published onboarding source")
+    _owner_directory(layout.venv, "published onboarding venv")
+    paths = receipt.get("paths")
+    if not isinstance(paths, dict):
+        raise OnboardingError("published onboarding receipt paths are invalid")
+    final_uv = layout.mac_home / "lib" / "uv" / "versions" / UV_VERSION / "uv"
+    expected_paths = {
+        "source": str(layout.source),
+        "venv": str(layout.venv),
+        "uv": str(final_uv),
+        "mac_link": str(layout.mac_bin),
+        "gh_link": str(layout.gh_bin),
+    }
+    path_differences = [key for key, wanted in expected_paths.items() if paths.get(key) != wanted]
+    if path_differences:
+        raise OnboardingError(
+            "published onboarding receipt path differs at: " + ",".join(sorted(path_differences))
+        )
+    python_raw = paths.get("python")
+    if not isinstance(python_raw, str) or not python_raw:
+        raise OnboardingError("published onboarding Python path is invalid")
+    python = Path(python_raw)
+    python_root = (layout.mac_home / "lib" / "python").resolve(strict=True)
+    try:
+        _regular_executable(python, "published onboarding Python").relative_to(python_root)
+    except ValueError as exc:
+        raise OnboardingError("published onboarding Python escapes its managed root") from exc
+    _regular_executable(final_uv, "published onboarding uv")
+    _regular_executable(layout.venv / "bin" / "python", "published venv Python")
+    if not layout.mac_bin.is_symlink() or layout.mac_bin.readlink() != layout.venv / "bin" / "mac":
+        raise OnboardingError("published onboarding mac link differs")
+    _regular_executable(layout.mac_bin, "published onboarding mac")
+    if not layout.gh_bin.is_symlink():
+        raise OnboardingError("published onboarding gh link differs")
+    _regular_executable(layout.gh_bin, "published onboarding gh")
+    for required in (layout.source / "pyproject.toml", layout.source / "uv.lock"):
+        if not required.is_file() or required.is_symlink():
+            raise OnboardingError(f"published onboarding source lacks {required.name}")
+    python_version = _run(
+        (
+            str(layout.venv / "bin" / "python"),
+            "-I",
+            "-c",
+            "import platform; print(platform.python_version())",
+        )
+    ).stdout.strip()
+    if python_version != PYTHON_VERSION:
+        raise OnboardingError("published venv Python version differs")
+    uv_report = _run((str(final_uv), "--version")).stdout.strip()
+    if re.fullmatch(rf"uv {re.escape(UV_VERSION)}(?: .*)?", uv_report) is None:
+        raise OnboardingError("published uv version differs")
+    return {
+        "generation": generation,
+        "source_revision": source_revision,
+        "route_identity_sha256": route_identity_sha256,
+        "agent": agent,
+        "agent_id": expected_agent_id,
+        "services_started": False,
+    }
+
+
 def validate_route_identity(path: Path) -> tuple[dict[str, Any], str]:
     value = _private_json(path, ROUTE_SCHEMA)
     if value.get("adapter") != "ssh-machine":
@@ -832,9 +962,31 @@ def commit(
             raise
 
 
-def inspect(layout: Layout, *, supervisor: str) -> dict[str, Any]:
+def inspect(
+    layout: Layout,
+    *,
+    supervisor: str,
+    agent: str | None = None,
+    route_identity_sha256: str | None = None,
+) -> dict[str, Any]:
     # Deliberately do not acquire onboarding_lock here: creating the lock or
     # ~/.mac would turn cohort-wide classification into a remote mutation.
+    if _path_exists(layout.receipt):
+        if not agent or not route_identity_sha256:
+            raise OnboardingError(
+                "published onboarding inspection requires agent and route identity"
+            )
+        return {
+            "schema": STATUS_SCHEMA,
+            "status": "refreshable",
+            "instance_kind": "fungible",
+            "receipt": validate_published_baseline(
+                layout,
+                supervisor,
+                agent=agent,
+                route_identity_sha256=route_identity_sha256,
+            ),
+        }
     return {
         "schema": STATUS_SCHEMA,
         "status": "eligible",
@@ -861,6 +1013,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--archive")
     parser.add_argument("--reviewed-assets")
     parser.add_argument("--route-identity")
+    parser.add_argument("--route-identity-sha256")
     parser.add_argument("--placeholder")
     return parser.parse_args(argv)
 
@@ -876,7 +1029,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     layout = Layout.for_home(Path(args.home), Path(args.mac_home) if args.mac_home else None)
     try:
         if args.action == "inspect":
-            payload = inspect(layout, supervisor=args.supervisor)
+            payload = inspect(
+                layout,
+                supervisor=args.supervisor,
+                agent=args.agent,
+                route_identity_sha256=args.route_identity_sha256,
+            )
         elif args.action == "prepare":
             _required(
                 args,
