@@ -442,6 +442,33 @@ def _run(
     return completed
 
 
+def _reviewed_python_interpreter(python_root: Path) -> Path:
+    if python_root.is_symlink():
+        raise OnboardingError("reviewed Python install root is a symlink")
+    try:
+        resolved_root = python_root.resolve(strict=True)
+    except OSError as error:
+        raise OnboardingError("reviewed Python install root is unavailable") from error
+
+    resolved_candidates: dict[Path, list[Path]] = {}
+    for candidate in sorted(python_root.glob("*/bin/python3.14")):
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(resolved_root)
+        except (OSError, ValueError) as error:
+            raise OnboardingError(
+                "reviewed Python interpreter resolves outside its managed root"
+            ) from error
+        metadata = resolved.stat()
+        if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
+            raise OnboardingError("reviewed Python interpreter is not an executable file")
+        resolved_candidates.setdefault(resolved, []).append(candidate)
+
+    if len(resolved_candidates) != 1:
+        raise OnboardingError("reviewed Python install did not yield one interpreter")
+    return next(iter(resolved_candidates))
+
+
 def install_reviewed_toolchain(
     stage: Path,
     reviewed_assets: Path,
@@ -493,12 +520,10 @@ def install_reviewed_toolchain(
         ),
         env=python_env,
     )
-    candidates = sorted(python_root.glob("*/bin/python3.14"))
-    if len(candidates) != 1:
-        raise OnboardingError("reviewed Python install did not yield one interpreter")
+    interpreter = _reviewed_python_interpreter(python_root)
     version = _run(
         (
-            str(candidates[0]),
+            str(interpreter),
             "-I",
             "-c",
             "import platform; print(platform.python_version())",
@@ -507,7 +532,7 @@ def install_reviewed_toolchain(
     ).stdout.strip()
     if version != PYTHON_VERSION:
         raise OnboardingError("reviewed Python version differs")
-    return uv, candidates[0]
+    return uv, interpreter
 
 
 def _trusted_gh() -> Path:

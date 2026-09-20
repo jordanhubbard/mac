@@ -75,6 +75,44 @@ def _fake_toolchain(module, stage: Path):
     return uv, python
 
 
+def test_reviewed_python_deduplicates_uv_aliases_to_one_managed_interpreter(module, tmp_path):
+    python_root = tmp_path / "python"
+    real = python_root / "cpython-3.14.7-linux-x86_64-gnu" / "bin" / "python3.14"
+    real.parent.mkdir(parents=True)
+    real.write_text("#!/bin/sh\n", encoding="utf-8")
+    real.chmod(0o755)
+    alias = python_root / "cpython-3.14-linux-x86_64-gnu"
+    alias.symlink_to(real.parents[1], target_is_directory=True)
+
+    assert module._reviewed_python_interpreter(python_root) == real.resolve()
+
+
+def test_reviewed_python_rejects_distinct_managed_interpreters(module, tmp_path):
+    python_root = tmp_path / "python"
+    for name in ("cpython-3.14.7-a", "cpython-3.14.7-b"):
+        interpreter = python_root / name / "bin" / "python3.14"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("#!/bin/sh\n", encoding="utf-8")
+        interpreter.chmod(0o755)
+
+    with pytest.raises(module.OnboardingError, match="did not yield one interpreter"):
+        module._reviewed_python_interpreter(python_root)
+
+
+def test_reviewed_python_rejects_alias_that_escapes_managed_root(module, tmp_path):
+    python_root = tmp_path / "python"
+    outside = tmp_path / "outside" / "bin" / "python3.14"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("#!/bin/sh\n", encoding="utf-8")
+    outside.chmod(0o755)
+    alias = python_root / "cpython-3.14-alias"
+    alias.parent.mkdir(parents=True)
+    alias.symlink_to(outside.parents[1], target_is_directory=True)
+
+    with pytest.raises(module.OnboardingError, match="outside its managed root"):
+        module._reviewed_python_interpreter(python_root)
+
+
 @pytest.fixture()
 def module(monkeypatch):
     value = _load_helper()
