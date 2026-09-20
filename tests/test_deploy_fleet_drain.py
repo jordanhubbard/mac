@@ -1369,11 +1369,65 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     assert 'mac_home / "bin" / "git"' in builder
     assert builder.index('mac_home / "bin" / "git"') < builder.index('shutil.which("git")')
     assert "MAC_PREREQ_NETWORK_PROVIDER=" in builder
-    assert 'provider in {"tailscale", "headscale"}' in builder
+    assert 'provider in {"tailscale", "headscale"} and hostname.endswith(".ts.net")' in builder
     assert 'ipaddress.ip_network("100.64.0.0/10")' in builder
-    assert 'hostname.endswith((".ts.net", ".svc.cluster.local"))' in builder
+    assert 'hostname.endswith(".svc.cluster.local")' in builder
     assert "parsed.username is not None" in builder
     assert "parsed.query" in builder
+
+
+def _run_typed_service_prerequisite(provider: str, *urls: str) -> subprocess.CompletedProcess:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
+        "\n}\n\nprerequisite_bundle_digests", 1
+    )[0]
+    definitions = "def truthy" + builder.split("def truthy", 1)[1].split(
+        "\nhome = Path.home()", 1
+    )[0]
+    script = "\n".join(
+        [
+            "import hashlib, ipaddress, os, stat, urllib.parse",
+            "from pathlib import Path",
+            definitions,
+            'os.environ["MAC_PREREQ_NETWORK_PROVIDER"] = %r' % provider,
+            *(
+                'print(service_check("route-hub", %r, "1", Path("."))["host"])' % url
+                for url in urls
+            ),
+        ]
+    )
+    return subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+
+
+def test_typed_service_prerequisite_accepts_direct_private_routes_without_mesh_provider():
+    result = _run_typed_service_prerequisite(
+        "none",
+        "http://10.57.228.137:8789",
+        "http://hub.ns.svc.cluster.local:8789",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["10.57.228.137", "hub.ns.svc.cluster.local"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "url", "accepted"),
+    [
+        ("none", "http://8.8.8.8:8789", False),
+        ("tailscale", "http://100.72.16.110:8789", True),
+        ("headscale", "http://[fd7a:115c:a1e0::1]:8789", True),
+        ("tailscale", "https://hub.example.ts.net:8789", True),
+        ("none", "https://hub.example.ts.net:8789", False),
+    ],
+)
+def test_typed_service_prerequisite_keeps_public_and_mesh_boundaries(
+    provider: str, url: str, accepted: bool
+):
+    result = _run_typed_service_prerequisite(provider, url)
+
+    assert (result.returncode == 0) is accepted
 
 
 def test_typed_route_receipt_proves_hub_reachability_without_prior_mac_env():

@@ -7331,13 +7331,17 @@ def service_check(name, url, required, state_root):
         provider = os.environ["MAC_PREREQ_NETWORK_PROVIDER"]
         local = hostname in {"127.0.0.1", "::1", "localhost"}
         managed_mesh = False
-        if provider in {"tailscale", "headscale"}:
-            try:
-                ipaddress.ip_address(hostname)
-            except ValueError:
-                managed_mesh = hostname.endswith((".ts.net", ".svc.cluster.local"))
-            else:
-                managed_mesh = managed_mesh_address(hostname)
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            # In-cluster DNS and RFC1918/CGNAT/ULA addresses are also the
+            # reviewed direct-private route for provider=none fleets.  Only a
+            # tailnet-owned DNS suffix depends on a mesh provider declaration.
+            managed_mesh = hostname.endswith(".svc.cluster.local") or (
+                provider in {"tailscale", "headscale"} and hostname.endswith(".ts.net")
+            )
+        else:
+            managed_mesh = managed_mesh_address(hostname)
         if (
             parsed.scheme not in {"http", "https"}
             or not hostname
