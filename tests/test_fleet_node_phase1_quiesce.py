@@ -389,15 +389,26 @@ case "$command" in
     ;;
   is-enabled)
     unit=${1:?}
+    if [ "$unit" = "${FAKE_SYSTEMD_EMPTY_ENABLED_UNIT:-}" ]; then
+      exit 1
+    fi
     case "$unit" in
       mac-gen-server.service|mac-gen-audio-server.service|mac-gen-video-server.service)
         if [ "${FAKE_MEDIA_STATE:-absent}" = absent ]; then
+          if [ "${FAKE_SYSTEMD_ABSENT_EMPTY:-0}" = 1 ]; then
+            printf 'Failed to get unit file state for %s: No such file or directory\n' "$unit" >&2
+            exit 1
+          fi
           printf 'not-found\n'
           exit 4
         fi
         ;;
     esac
     if [ -f "$FAKE_SYSTEMD_STATE/$unit.absent" ]; then
+      if [ "${FAKE_SYSTEMD_ABSENT_EMPTY:-0}" = 1 ]; then
+        printf 'Failed to get unit file state for %s: No such file or directory\n' "$unit" >&2
+        exit 1
+      fi
       printf 'not-found\n'
       exit 4
     fi
@@ -807,6 +818,54 @@ def test_systemd_restore_reconstructs_exact_enablement_intent(
     assert agent_enablement.read_text(encoding="utf-8") == "disabled\n"
     assert hermes_enablement.read_text(encoding="utf-8") == "masked\n"
     assert not openclaw_enablement.exists()
+
+
+def test_systemd_accepts_empty_is_enabled_for_independently_proven_absent_units(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env["FAKE_SYSTEMD_STATE"] = str(state)
+    env["FAKE_SYSTEMD_ABSENT_EMPTY"] = "1"
+    units = {
+        "mac-agent.service",
+        "mac-hermes-gateway.service",
+        "mac-openclaw-gateway.service",
+        "mac-nemoclaw-gateway.service",
+        "mac-gen-server.service",
+        "mac-gen-audio-server.service",
+        "mac-gen-video-server.service",
+    }
+    for unit in units:
+        (state / f"{unit}.absent").touch()
+    _install_systemctl(tmp_path / "bin")
+
+    prepared = _run_action(env, "prepare")
+
+    assert prepared.returncode == 0, prepared.stderr
+    contract = json.loads(prepared.stdout)
+    resources = [
+        *contract["supervisor"]["resources"],
+        *contract["supervisor"]["media_resources"],
+    ]
+    assert {item["name"] for item in resources} == units
+    assert {item["prior_state"] for item in resources} == {"absent"}
+    assert {item["enabled_state"] for item in resources} == {"not-found"}
+
+
+def test_systemd_rejects_empty_is_enabled_for_installed_unit(tmp_path: Path) -> None:
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env["FAKE_SYSTEMD_STATE"] = str(state)
+    env["FAKE_SYSTEMD_EMPTY_ENABLED_UNIT"] = "mac-agent.service"
+    _install_systemctl(tmp_path / "bin")
+
+    result = _run_action(env, "prepare")
+
+    assert result.returncode != 0
+    assert "systemd enablement inspection failed" in result.stderr
 
 
 def test_launchd_restore_reconstructs_disable_overrides_for_active_and_absent_jobs(
