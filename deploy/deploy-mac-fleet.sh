@@ -8942,17 +8942,24 @@ case "$supervisor" in
   systemd)
     unit="${MAC_DEPLOY_FLEET_NAME:?}-agent.service"
     if [ "$action" = restart ] || [ "$action" = stop ]; then
-      if [ "$(systemd_worker_property "$unit" LoadState)" != loaded ]; then
+      load_state="$(systemd_worker_property "$unit" LoadState)"
+      if [ "$load_state" = not-found ] && [ "$action" = stop ]; then
+        # A retained partial successor can legitimately precede worker-unit
+        # installation. Recovery's stop operation is already satisfied in that
+        # exact state; restart must still reject it below.
+        echo "exact systemd worker unit is absent and already stopped: $unit" >&2
+      elif [ "$load_state" != loaded ]; then
         echo "exact systemd worker unit is not loaded: $unit" >&2
         exit 1
-      fi
-      run_fleet_systemctl stop "$unit" >/dev/null
-      active_state="$(systemd_worker_property "$unit" ActiveState)"
-      sub_state="$(systemd_worker_property "$unit" SubState)"
-      main_pid="$(systemd_worker_property "$unit" MainPID)"
-      if [ "$active_state" != inactive ] || [ "$sub_state" != dead ] || [ "$main_pid" != 0 ]; then
-        echo "exact systemd worker did not become inactive/dead with pid 0: $unit" >&2
-        exit 1
+      else
+        run_fleet_systemctl stop "$unit" >/dev/null
+        active_state="$(systemd_worker_property "$unit" ActiveState)"
+        sub_state="$(systemd_worker_property "$unit" SubState)"
+        main_pid="$(systemd_worker_property "$unit" MainPID)"
+        if [ "$active_state" != inactive ] || [ "$sub_state" != dead ] || [ "$main_pid" != 0 ]; then
+          echo "exact systemd worker did not become inactive/dead with pid 0: $unit" >&2
+          exit 1
+        fi
       fi
     fi
     if [ "$action" = restart ]; then

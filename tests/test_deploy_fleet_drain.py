@@ -375,7 +375,9 @@ def test_outer_coordinator_never_prompts_for_launchd_definition_privilege():
     assert 'sudo -n grep -Fqx "$marker_line" "$plist"' in deploy
 
 
-def _run_outer_linux_worker_manager(tmp_path, supervisor, *, stop_fails=False):
+def _run_outer_linux_worker_manager(
+    tmp_path, supervisor, *, action="restart", stop_fails=False, systemd_load="loaded"
+):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
         "validate_router_topology_spec() {", 1
@@ -440,7 +442,7 @@ case "$1" in
     property=${3#--property=}
     state=$(cat "$FAKE_MANAGER_STATE")
     case "$property" in
-      LoadState) printf 'loaded\n' ;;
+      LoadState) printf '%s\n' "$FAKE_SYSTEMD_LOAD" ;;
       ActiveState) [ "$state" = active ] && printf 'active\n' || printf 'inactive\n' ;;
       SubState) [ "$state" = active ] && printf 'running\n' || printf 'dead\n' ;;
       MainPID) [ "$state" = active ] && printf '4321\n' || printf '0\n' ;;
@@ -463,7 +465,7 @@ esac
         [
             "bash",
             "-c",
-            'set -euo pipefail\naction=restart\nsupervisor="$1"\n' + manager,
+            f'set -euo pipefail\naction={action}\nsupervisor="$1"\n' + manager,
             "outer-manager",
             supervisor,
         ],
@@ -481,6 +483,7 @@ esac
             "FAKE_MANAGER_STATE": str(state),
             "FAKE_MANAGER_CALLS": str(calls),
             "FAKE_STOP_FAIL": "1" if stop_fails else "0",
+            "FAKE_SYSTEMD_LOAD": systemd_load,
         },
         check=False,
         capture_output=True,
@@ -504,6 +507,22 @@ def test_outer_linux_worker_manager_runtime_is_exact_and_fail_closed(tmp_path):
         failed_calls = failed_calls_path.read_text(encoding="utf-8").splitlines()
         assert any(call.startswith("stop mac-agent") for call in failed_calls)
         assert not any(call.startswith("start mac-agent") for call in failed_calls)
+
+
+def test_outer_systemd_stop_accepts_an_exact_absent_worker_unit(tmp_path):
+    stopped, calls_path = _run_outer_linux_worker_manager(
+        tmp_path, "systemd", action="stop", systemd_load="not-found"
+    )
+    assert stopped.returncode == 0, stopped.stderr
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    assert calls == ["show mac-agent.service --property=LoadState --value"]
+
+    restarted, restart_calls_path = _run_outer_linux_worker_manager(
+        tmp_path / "restart", "systemd", action="restart", systemd_load="not-found"
+    )
+    assert restarted.returncode != 0
+    restart_calls = restart_calls_path.read_text(encoding="utf-8").splitlines()
+    assert restart_calls == ["show mac-agent.service --property=LoadState --value"]
 
 
 def test_failed_release_compensation_is_required_bounded_and_never_success():

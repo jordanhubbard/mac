@@ -530,6 +530,8 @@ def _run_quiescence(
     install_openshell: bool = True,
     openshell_dangling_symlink: bool = False,
     existing_paths: tuple[str, ...] = (),
+    phase1_retained_successor: bool = False,
+    phase1_bad_authority_digest: bool = False,
 ) -> QuiescenceRun:
     home = tmp_path / "home"
     mac_home = home / ".mac"
@@ -652,6 +654,9 @@ def _run_quiescence(
         _write_executable(fake_bin / "docker", _fake_runtime_source("docker"))
 
     marker = mac_home / f"daemon-resource-quiescence-{GENERATION}.json"
+    if phase1_retained_successor:
+        (mac_home / "src" / "mac").mkdir(parents=True, mode=0o700)
+        (mac_home / "venv").mkdir(mode=0o755)
     for relative in existing_paths:
         existing = home / relative
         existing.parent.mkdir(parents=True, exist_ok=True)
@@ -662,6 +667,44 @@ def _run_quiescence(
 
     harness = tmp_path / "harness.sh"
     invocation = ""
+    if phase1_retained_successor:
+        builder = tmp_path / "build-phase1-authority.py"
+        builder.write_text(
+            """import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+mac_home, generation, revision = map(str, sys.argv[1:])
+nested = Path(mac_home) / ("daemon-resource-restore-contract-%s.json" % generation)
+outer = Path(mac_home) / ("phase1-cohort-restore-contract-%s.json" % generation)
+payload = {
+    "schema": "mac.phase1_cohort_restore_contract.v1",
+    "status": "prepared",
+    "generation": generation,
+    "revision": revision,
+    "rollback_capable": True,
+    "rollback_ineligible_reason": None,
+    "daemon_restore_contract": {
+        "path": str(nested),
+        "sha256": hashlib.sha256(nested.read_bytes()).hexdigest(),
+    },
+}
+outer.write_text(json.dumps(payload, sort_keys=True) + "\\n", encoding="utf-8")
+outer.chmod(0o600)
+print(hashlib.sha256(outer.read_bytes()).hexdigest())
+""",
+            encoding="utf-8",
+        )
+        invocation += (
+            "\ndaemon_resource_quiescence_gate prepare-restore phase1_prepare\n"
+            f"export MAC_PHASE1_RESTORE_CONTRACT_PATH={_shell_quote(str(mac_home / ('phase1-cohort-restore-contract-' + GENERATION + '.json')))}\n"
+            'export MAC_PHASE1_RESTORE_CONTRACT_SHA256="$("$PY" '
+            f'{_shell_quote(str(builder))} "$MAC_HOME" "$DEPLOY_GENERATION" "$DEPLOY_REV")"\n'
+        )
+        if phase1_bad_authority_digest:
+            invocation += "export MAC_PHASE1_RESTORE_CONTRACT_SHA256=" + "0" * 64 + "\n"
     if run_quiesce:
         invocation += f"\n{FUNCTION}\n"
     if assert_phase is not None:
@@ -1011,6 +1054,60 @@ def test_first_hub_with_prepared_cli_and_no_gateway_quiesces(tmp_path: Path) -> 
     assert any("label=openshell.ai/managed-by=openshell" in line for line in calls)
 
 
+def test_phase1_retained_successor_with_prepared_cli_quiesces(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        phase1_retained_successor=True,
+    )
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_task_sandboxes"]["inventory_source"] == (
+        "proved_uninitialized_gateway"
+    )
+    calls = _call_lines(run)
+    assert "openshell:gateway list --output json" in calls
+    assert not any(line.startswith("openshell:sandbox") for line in calls)
+
+
+def test_retained_successor_without_phase1_authority_fails_closed(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        existing_paths=(".mac/src/mac", ".mac/venv"),
+    )
+    assert run.result.returncode != 0
+    assert "OpenShell sandbox inventory failed" in run.result.stderr
+    assert not run.marker.exists()
+
+
+def test_retained_successor_with_bad_phase1_authority_fails_closed(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        phase1_retained_successor=True,
+        phase1_bad_authority_digest=True,
+    )
+    assert run.result.returncode != 0
+    assert "phase-1 prepared-gateway authority digest differs" in run.result.stderr
+    assert not run.marker.exists()
+
+
+def test_retained_successor_with_installed_identity_fails_closed(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        phase1_retained_successor=True,
+        existing_paths=(".mac/deployed-source-revision",),
+    )
+    assert run.result.returncode != 0
+    assert "retained successor has an installed identity" in run.result.stderr
+    assert not run.marker.exists()
+
+
 @pytest.mark.parametrize("flag", ["0", "", "true"])
 def test_prepared_cli_exception_requires_explicit_first_hub(tmp_path: Path, flag: str) -> None:
     run = _run_quiescence(
@@ -1063,7 +1160,7 @@ def test_first_hub_requires_empty_gateway_registrations(tmp_path: Path, mode: st
         extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
     )
     assert run.result.returncode != 0
-    assert "first-hub OpenShell gateway" in run.result.stderr
+    assert "prepared OpenShell gateway" in run.result.stderr
     assert not run.marker.exists()
 
 
@@ -1076,7 +1173,7 @@ def test_first_hub_refuses_existing_openshell_containers(tmp_path: Path, running
         extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
     )
     assert run.result.returncode != 0
-    assert "first-hub OpenShell-managed containers already exist" in run.result.stderr
+    assert "prepared OpenShell-managed containers already exist" in run.result.stderr
     assert not run.marker.exists()
     assert not any(" rm " in line or " stop " in line for line in _call_lines(run))
 
@@ -1095,7 +1192,7 @@ def test_first_hub_refuses_unregistered_gateway_listener(tmp_path: Path) -> None
             extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
         )
     assert run.result.returncode != 0
-    assert "first-hub OpenShell gateway listener already exists" in run.result.stderr
+    assert "prepared OpenShell gateway listener already exists" in run.result.stderr
     assert not run.marker.exists()
 
 

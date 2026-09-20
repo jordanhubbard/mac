@@ -6896,6 +6896,8 @@ EOF
     MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256 \
     MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256 \
     MAC_DEPLOY_FIRST_HUB_BOOTSTRAP \
+    MAC_PHASE1_RESTORE_CONTRACT_PATH \
+    MAC_PHASE1_RESTORE_CONTRACT_SHA256 \
     MAC_DEPLOY_OPENSHELL_ENABLED \
     MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS \
     MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS; do
@@ -7337,14 +7339,106 @@ def openshell_ever_installed():
     return openshell.exists() or openshell.is_symlink()
 
 
-def prove_prepared_cli_without_gateway(runtimes):
-    """Recognize phase-zero CLI preparation, never an unavailable gateway.
+def prove_phase1_prepared_cli_authority(runtimes):
+    """Validate the controller-bound retained-successor exception.
 
-    Only the explicit first-hub path may use this proof. Inspect local state,
-    registrations, the gateway listener, and every discovered container daemon
-    before allowing source installation to precede gateway bootstrap.
+    A synchronized deploy can retain the exact successor source and venv while
+    still having no installed deployment identity or OpenShell gateway.  The
+    phase-1 restore contract is the existing authority for that topology: its
+    digest is supplied by the controller, and it binds the nested daemon
+    contract prepared immediately before quiescence.
     """
-    if os.environ.get("MAC_DEPLOY_FIRST_HUB_BOOTSTRAP") != "1":
+    raw_path = os.environ.get("MAC_PHASE1_RESTORE_CONTRACT_PATH", "").strip()
+    expected_digest = os.environ.get(
+        "MAC_PHASE1_RESTORE_CONTRACT_SHA256", ""
+    ).strip()
+    if not raw_path and not expected_digest:
+        return False
+    if not raw_path or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None:
+        raise QuiescenceFailure("phase-1 prepared-gateway authority is incomplete")
+    expected_path = mac_home / (
+        "phase1-cohort-restore-contract-%s.json" % generation
+    )
+    path = Path(raw_path)
+    if path != expected_path:
+        raise QuiescenceFailure("phase-1 prepared-gateway authority path differs")
+    outer_raw = read_private_text(path).encode("utf-8")
+    if hashlib.sha256(outer_raw).hexdigest() != expected_digest:
+        raise QuiescenceFailure("phase-1 prepared-gateway authority digest differs")
+    try:
+        outer = json.loads(outer_raw)
+    except (TypeError, ValueError):
+        raise QuiescenceFailure("phase-1 prepared-gateway authority is malformed")
+    if (
+        not isinstance(outer, dict)
+        or outer.get("schema") != "mac.phase1_cohort_restore_contract.v1"
+        or outer.get("status") != "prepared"
+        or outer.get("generation") != generation
+        or outer.get("revision") != revision
+        or outer.get("rollback_capable") is not True
+        or outer.get("rollback_ineligible_reason") is not None
+    ):
+        raise QuiescenceFailure("phase-1 prepared-gateway authority differs")
+
+    nested = outer.get("daemon_restore_contract")
+    nested_path = mac_home / (
+        "daemon-resource-restore-contract-%s.json" % generation
+    )
+    if (
+        not isinstance(nested, dict)
+        or nested.get("path") != str(nested_path)
+        or re.fullmatch(r"[0-9a-f]{64}", str(nested.get("sha256") or "")) is None
+    ):
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon authority differs")
+    nested_raw = read_private_text(nested_path).encode("utf-8")
+    if hashlib.sha256(nested_raw).hexdigest() != nested["sha256"]:
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon digest differs")
+    try:
+        daemon = json.loads(nested_raw)
+    except (TypeError, ValueError):
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon authority is malformed")
+    openclaw = daemon.get("openclaw") if isinstance(daemon, dict) else None
+    if (
+        not isinstance(daemon, dict)
+        or daemon.get("schema") != "mac.daemon_resource_restore_contract.v1"
+        or daemon.get("generation") != generation
+        or daemon.get("revision") != revision
+        or daemon.get("container_runtimes") != runtime_identities(runtimes)
+        or not isinstance(openclaw, dict)
+        or openclaw.get("sandbox") is not None
+        or openclaw.get("prior_state") != "not_managed"
+        or openclaw.get("reviewed_openshell_cli") is not None
+    ):
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon topology differs")
+
+    for directory in (mac_home / "src" / "mac", mac_home / "venv"):
+        try:
+            metadata = directory.lstat()
+        except OSError:
+            raise QuiescenceFailure("retained successor artifacts are incomplete")
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o022
+        ):
+            raise QuiescenceFailure("retained successor artifacts are unsafe")
+    for marker in (mac_home / "mac.env", mac_home / "deployed-source-revision"):
+        if marker.exists() or marker.is_symlink():
+            raise QuiescenceFailure("retained successor has an installed identity")
+    return True
+
+
+def prove_prepared_cli_without_gateway(runtimes):
+    """Recognize reviewed CLI preparation, never an unavailable gateway.
+
+    The one-use first-hub path requires a completely absent source generation.
+    Synchronized retain-forward repair instead requires the digest-bound
+    phase-1 authority above.  Both paths still inspect every gateway surface.
+    """
+    first_hub = os.environ.get("MAC_DEPLOY_FIRST_HUB_BOOTSTRAP") == "1"
+    phase1_repair = False if first_hub else prove_phase1_prepared_cli_authority(runtimes)
+    if not first_hub and not phase1_repair:
         return False
     if not openshell_ever_installed():
         return False
@@ -7352,8 +7446,6 @@ def prove_prepared_cli_without_gateway(runtimes):
     reviewed_openshell_cli_summary()
     home = Path(os.environ["HOME"])
     state_paths = [
-        mac_home / "src" / "mac",
-        mac_home / "venv",
         mac_home / "mac.env",
         mac_home / "deployed-source-revision",
         home / ".config/systemd/user/openshell-gateway.service",
@@ -7367,13 +7459,15 @@ def prove_prepared_cli_without_gateway(runtimes):
         state_paths.append(home / default / "openshell")
         if os.environ.get(variable):
             state_paths.append(Path(os.environ[variable]) / "openshell")
+    if first_hub:
+        state_paths.extend((mac_home / "src" / "mac", mac_home / "venv"))
     for path in state_paths:
         try:
             path.lstat()
         except FileNotFoundError:
             continue
         except OSError:
-            raise QuiescenceFailure("cannot inspect first-hub OpenShell runtime state")
+            raise QuiescenceFailure("cannot inspect prepared OpenShell runtime state")
         return False
     if resolve_sandbox_name() is not None:
         return False
@@ -7384,23 +7478,23 @@ def prove_prepared_cli_without_gateway(runtimes):
         [str(target), "gateway", "list", "--output", "json"], env=openshell_env()
     )
     if registrations.timed_out or registrations.returncode != 0:
-        raise QuiescenceFailure("first-hub OpenShell gateway registration inventory failed")
+        raise QuiescenceFailure("prepared OpenShell gateway registration inventory failed")
     try:
         values = json.loads(registrations.stdout)
     except (ValueError, TypeError):
-        raise QuiescenceFailure("first-hub OpenShell gateway registrations are malformed")
+        raise QuiescenceFailure("prepared OpenShell gateway registrations are malformed")
     if values != []:
-        raise QuiescenceFailure("first-hub OpenShell gateway registrations are not empty")
+        raise QuiescenceFailure("prepared OpenShell gateway registrations are not empty")
     try:
         with socket.create_connection(("127.0.0.1", 17670), timeout=min(1, remaining_time())):
-            raise QuiescenceFailure("first-hub OpenShell gateway listener already exists")
+            raise QuiescenceFailure("prepared OpenShell gateway listener already exists")
     except ConnectionRefusedError:
         pass
     except OSError:
-        raise QuiescenceFailure("cannot prove first-hub OpenShell gateway listener absent")
+        raise QuiescenceFailure("cannot prove prepared OpenShell gateway listener absent")
     for runtime in runtimes:
         if list_managed_openshell_ids(runtime, all_states=True):
-            raise QuiescenceFailure("first-hub OpenShell-managed containers already exist")
+            raise QuiescenceFailure("prepared OpenShell-managed containers already exist")
     return True
 
 
