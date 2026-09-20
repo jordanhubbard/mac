@@ -6701,7 +6701,7 @@ if value.get("schema")!="mac.fleet_machine_onboarding_status.v1" or value.get("i
 if value.get("status")=="eligible":
     if not isinstance(checks,dict) or not checks or any(item is not True for item in checks.values()):
         raise SystemExit("phase-zero pristine eligibility status is invalid")
-elif value.get("status")=="refreshable":
+elif value.get("status") in {"refreshable","repairable"}:
     receipt=value.get("receipt")
     if (
         not isinstance(receipt,dict)
@@ -6711,6 +6711,8 @@ elif value.get("status")=="refreshable":
         or receipt.get("services_started") is not False
         or not isinstance(receipt.get("generation"),str)
         or not isinstance(receipt.get("source_revision"),str)
+        or receipt.get("venv_mode_repair_required")
+            != (value.get("status")=="repairable")
     ):
         raise SystemExit("phase-zero refresh eligibility status is invalid")
 else:
@@ -6919,7 +6921,7 @@ prepare_fungible_machine_onboarding_worker() (
   local archive_sha256
   local remote_prefix remote_helper remote_archive remote_assets remote_identity
   local remote_placeholder ssh_parts=() ssh_args=() ssh_target item last_index
-  local prepare_command commit_command prepare_receipt commit_receipt
+  local prepare_command commit_command repair_command prepare_receipt commit_receipt repair_receipt
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
   supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"
@@ -6944,24 +6946,67 @@ receipt=value.get("receipt") if isinstance(value.get("receipt"),dict) else {}
 print(receipt.get("generation") or "")
 print(receipt.get("source_revision") or "")
 print(receipt.get("route_identity_sha256") or "")
+print("1" if receipt.get("venv_mode_repair_required") is True else "0")
 PY
 )
   classification_status="${classification_values[0]:-}"
-  if [ "$classification_status" = refreshable ]; then
+  if [ "$classification_status" = refreshable ] \
+      || [ "$classification_status" = repairable ]; then
     generation="${classification_values[1]:-}"
     source_revision="${classification_values[2]:-}"
     [ "${classification_values[3]:-}" = "$route_sha256" ] || {
       echo "ERROR: ${agent}: refreshable onboarding receipt lost its route binding" >&2
       return 1
     }
+    if [ "$classification_status" = repairable ]; then
+      [ "${classification_values[4]:-}" = 1 ] || {
+        echo "ERROR: ${agent}: repairable onboarding receipt omitted its mode repair binding" >&2
+        return 1
+      }
+      while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+      last_index=$((${#ssh_parts[@]} - 1))
+      ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+      repair_receipt="$TMPDIR_LOCAL/machine-onboarding-mode-repair-${agent_id}.json"
+      repair_command="python3 - repair-mode --agent $(shell_quote "$agent") --route-identity-sha256 $(shell_quote "$route_sha256") --supervisor $(shell_quote "$supervisor")"
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
+        "${ssh_args[@]}" "$ssh_target" "$repair_command" \
+        < "$MACHINE_ONBOARDING_HELPER" > "$repair_receipt"
+      chmod 0600 "$repair_receipt"
+      "$PYTHON_BIN" - "$repair_receipt" "$agent" "$generation" \
+        "$source_revision" "$route_sha256" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if (
+    value.get("agent")!=sys.argv[2]
+    or value.get("generation")!=sys.argv[3]
+    or value.get("source_revision")!=sys.argv[4]
+    or value.get("route_identity_sha256")!=sys.argv[5]
+    or value.get("services_started") is not False
+    or value.get("venv_mode_repair_required") is not False
+    or value.get("venv_mode_repaired") is not True
+):
+    raise SystemExit("phase-zero venv mode repair receipt is invalid")
+PY
+      echo "==> ${agent}: normalized exact receipt-bound phase-zero venv root from 0775 to 0755"
+    else
+      [ "${classification_values[4]:-}" = 0 ] || {
+        echo "ERROR: ${agent}: refreshable onboarding receipt unexpectedly requires mode repair" >&2
+        return 1
+      }
+    fi
     register_fungible_onboarding_placeholder \
       "$agent" "$hub_agent" "$fleet_name" "$capabilities" \
       "$generation" "$source_revision" "$route_sha256" >/dev/null
-    echo "==> ${agent}: published phase-zero baseline re-registered without host mutation; placeholder remains draining"
+    if [ "$classification_status" = repairable ]; then
+      echo "==> ${agent}: repaired phase-zero baseline re-registered; placeholder remains draining"
+    else
+      echo "==> ${agent}: published phase-zero baseline re-registered without host mutation; placeholder remains draining"
+    fi
     return 0
   fi
   [ "$classification_status" = eligible ] || {
-    echo "ERROR: ${agent}: phase-zero classification is neither pristine nor refreshable" >&2
+    echo "ERROR: ${agent}: phase-zero classification is neither pristine, refreshable, nor repairable" >&2
     return 1
   }
   generation="$(worker_generation_for_agent "$agent")"

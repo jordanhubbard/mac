@@ -348,6 +348,7 @@ def test_published_baseline_inspection_is_idempotent_and_host_read_only(
         "source_revision": "1" * 40,
         "route_identity_sha256": receipt["route_identity_sha256"],
         "services_started": False,
+        "venv_mode_repair_required": False,
     }
     assert _tree_fingerprint(layout.home) == before
 
@@ -387,6 +388,55 @@ def test_published_baseline_refresh_rejects_mismatched_or_deployed_state(
             agent=agent,
             route_identity_sha256=route_sha256,
         )
+
+
+def test_published_baseline_refresh_rejects_world_writable_venv(module, tmp_path, monkeypatch):
+    layout, receipt = _publish_fake_baseline(module, tmp_path, monkeypatch)
+    layout.venv.chmod(0o777)
+
+    with pytest.raises(module.OnboardingError, match="owner-controlled directory"):
+        module.inspect(
+            layout,
+            supervisor="supervisord",
+            agent="worker4",
+            route_identity_sha256=receipt["route_identity_sha256"],
+        )
+
+
+def test_exact_published_0775_venv_repairs_only_its_root_mode(module, tmp_path, monkeypatch):
+    layout, receipt = _publish_fake_baseline(module, tmp_path, monkeypatch)
+    layout.venv.chmod(0o775)
+    before = {item[0]: item for item in _tree_fingerprint(layout.home) if item[0] != ".mac/venv"}
+
+    classified = module.inspect(
+        layout,
+        supervisor="supervisord",
+        agent="worker4",
+        route_identity_sha256=receipt["route_identity_sha256"],
+    )
+    repaired = module.repair_published_venv_mode(
+        layout,
+        "supervisord",
+        agent="worker4",
+        route_identity_sha256=receipt["route_identity_sha256"],
+    )
+    after = {item[0]: item for item in _tree_fingerprint(layout.home) if item[0] != ".mac/venv"}
+
+    assert classified["status"] == "repairable"
+    assert classified["receipt"]["venv_mode_repair_required"] is True
+    assert stat.S_IMODE(layout.venv.stat().st_mode) == 0o755
+    assert repaired["venv_mode_repair_required"] is False
+    assert repaired["venv_mode_repaired"] is True
+    assert after == before
+    assert (
+        module.inspect(
+            layout,
+            supervisor="supervisord",
+            agent="worker4",
+            route_identity_sha256=receipt["route_identity_sha256"],
+        )["status"]
+        == "refreshable"
+    )
 
 
 @pytest.fixture
@@ -610,6 +660,7 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
     assert receipt["barrier"] == {"status": "draining", "health_status": "degraded"}
     assert layout.source.is_dir() and not layout.source.is_symlink()
     assert layout.venv.is_dir() and not layout.venv.is_symlink()
+    assert stat.S_IMODE(layout.venv.stat().st_mode) == 0o755
     assert layout.mac_bin.readlink() == layout.venv / "bin" / "mac"
     assert layout.gh_bin.is_symlink()
     assert stat.S_IMODE(layout.receipt.stat().st_mode) == 0o600
@@ -771,12 +822,13 @@ def test_controller_refresh_path_returns_before_any_host_payload_upload():
     worker = text.split("prepare_fungible_machine_onboarding_worker() (", 1)[1].split(
         "\n)\n\nprepare_fungible_machine_onboarding()", 1
     )[0]
-    refresh = worker.split('if [ "$classification_status" = refreshable ]; then', 1)[1].split(
+    refresh = worker.split('if [ "$classification_status" = refreshable ]', 1)[1].split(
         "return 0", 1
     )[0]
     assert "register_fungible_onboarding_placeholder" in refresh
     assert "source_revision" in refresh
     assert "route_sha256" in refresh
+    assert "repair-mode" in refresh
     assert "pinned_remote_" not in refresh
     assert "prepare_command" not in refresh
     assert "commit_command" not in refresh
