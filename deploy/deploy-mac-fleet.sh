@@ -9827,7 +9827,12 @@ restart_remote_mac_agent_under_epoch() {
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   case "$supervisor" in
     systemd)
-      command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); fi"
+      # A retained successor may have reached quiescence before phase two
+      # installed its worker unit.  Recovery still has to prove that exact
+      # unit is absent; only then is its stop barrier already satisfied.
+      # Activation continues to require a loaded unit, and inspection errors
+      # or ambiguous states remain fatal.
+      command="unit=$(shell_quote "${fleet_name}-agent.service"); if [ \"\$(id -u)\" -eq 0 ]; then systemctl_prefix=; else systemctl_prefix='sudo -n'; fi; load_state=\$(\$systemctl_prefix systemctl show \"\$unit\" --property=LoadState --value) || exit 1; case \"\$load_state\" in loaded) ;; not-found) if [ $(shell_quote "$manager_action") = stop ]; then exit 0; fi; echo \"exact systemd worker unit is absent: \$unit\" >&2; exit 1 ;; *) echo \"exact systemd worker unit has invalid LoadState: \$unit: \$load_state\" >&2; exit 1 ;; esac; \$systemctl_prefix systemctl $(shell_quote "$manager_action") \"\$unit\""
       ;;
     launchd)
       # Recovery can stop a worker before phase two ever created its retained
