@@ -14393,6 +14393,20 @@ PY
   log "WARNING: mac-agent not yet registered with hub ${check_url} (tunnel may not be established yet)"
 }
 
+verify_or_defer_hub_registration() {
+  if truthy "$DEFER_AGENT_RESTART"; then
+    # The outer fleet controller deliberately keeps the agent stopped until it
+    # has reconciled this installer's post manifest. It then starts the agent
+    # under the deployment barrier and requires a fresh hub heartbeat before
+    # releasing that barrier. Requiring registration here would deadlock that
+    # handoff: the stopped agent cannot register, and a failed installer never
+    # writes the post manifest that authorizes the outer restart.
+    log "deferring hub registration verification until post-manifest agent restart"
+    return 0
+  fi
+  verify_hub_registration
+}
+
 verify_selected_gateway_supervisor_health() {
   local output="$LOG_DIR/gateway-readiness.json"
   "$PY" - "$SUPERVISOR_KIND" "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" "$FLEET_NAME" \
@@ -14954,7 +14968,7 @@ if data.get("warnings"):
         print("startup warning: %s" % warning)
 PY
 
-verify_hub_registration
+verify_or_defer_hub_registration
 case "$(printf '%s' "$DEFER_CLEAR_DRAIN" | tr 'A-Z' 'a-z')" in
   1|true|yes|on) log "keeping drain state until post-deploy OpenShell validation completes" ;;
   *) clear_mac_agent_drain_after_deploy ;;

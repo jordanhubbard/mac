@@ -2028,7 +2028,7 @@ def test_remote_restart_helper_keeps_then_releases_the_deployment_barrier():
 
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     main = node.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
-    verify_pos = main.index("verify_hub_registration")
+    verify_pos = main.index("verify_or_defer_hub_registration")
     defer_pos = main.index("keeping drain state until post-deploy", verify_pos)
     post_manifest_pos = main.index('write_deploy_manifest "post"', defer_pos)
     assert verify_pos < defer_pos < post_manifest_pos
@@ -2216,7 +2216,7 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     bootstrap = main.index("bootstrap_enabled_openshell\n", venv)
     service_install = main.index('case "$SUPERVISOR_KIND" in', bootstrap)
     runtime_proof = main.index("verify_managed_openshell_runtime\n", service_install)
-    registration = main.index("verify_hub_registration\n", runtime_proof)
+    registration = main.index("verify_or_defer_hub_registration\n", runtime_proof)
     clear_drain = main.index("clear_mac_agent_drain_after_deploy", registration)
     post_manifest = main.index('write_deploy_manifest "post"', clear_drain)
 
@@ -2331,6 +2331,46 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
     assert stop < bootstrap
     assert "launchctl " not in service_control
     assert "$(( SECONDS" not in service_control
+
+
+def test_deferred_restart_hands_registration_proof_to_outer_controller(tmp_path: Path):
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    function = node.split("verify_or_defer_hub_registration() {", 1)[1].split(
+        "\n}\n\nverify_selected_gateway_supervisor_health()", 1
+    )[0]
+    function = "verify_or_defer_hub_registration() {" + function + "\n}"
+    calls = tmp_path / "registration-calls"
+    harness = "\n".join(
+        [
+            "set -euo pipefail",
+            'truthy() { case "${1:-}" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }',
+            'log() { printf "%s\\n" "$*" >&2; }',
+            'verify_hub_registration() { printf "called\\n" >> "$CALLS"; }',
+            function,
+            "verify_or_defer_hub_registration",
+        ]
+    )
+
+    deferred = subprocess.run(
+        ["bash", "-c", harness],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "CALLS": str(calls), "DEFER_AGENT_RESTART": "1"},
+    )
+    assert deferred.returncode == 0, deferred.stderr
+    assert "deferring hub registration verification" in deferred.stderr
+    assert not calls.exists()
+
+    direct = subprocess.run(
+        ["bash", "-c", harness],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "CALLS": str(calls), "DEFER_AGENT_RESTART": "0"},
+    )
+    assert direct.returncode == 0, direct.stderr
+    assert calls.read_text(encoding="utf-8") == "called\n"
 
 
 def test_deployment_preserves_operator_holds_and_clears_only_its_own():
