@@ -4348,6 +4348,7 @@ if phase == "first-hub-release":
             and release_health_ready(row, resources)
             and row.get("current_task_id") is None
             and not bool(row.get("dispatch_hold"))
+            and resources.get("deployment_generation") == generation
             and not active_work()
         ):
             print(json.dumps({"agent_id": agent_id, "last_seen_at": row["last_seen_at"]}))
