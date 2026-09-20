@@ -782,6 +782,17 @@ def test_controller_refresh_path_returns_before_any_host_payload_upload():
     assert "commit_command" not in refresh
 
 
+def test_controller_binds_route_identity_before_all_host_refresh_classification():
+    text = DEPLOY.read_text(encoding="utf-8")
+    operation = text.split("prepare_fungible_machine_onboarding() {", 1)[1].split("\n}", 1)[0]
+    assert operation.index("bind_precohort_routes") < operation.index(
+        "classify_fungible_machine_onboarding"
+    )
+    assert operation.index("classify_fungible_machine_onboarding") < operation.index(
+        "prepare_fungible_machine_onboarding_worker"
+    )
+
+
 def test_controller_counts_zero_preparation_modes_without_pipefail_exit():
     text = DEPLOY.read_text(encoding="utf-8")
     counter = text.split("preparation_mode_count=$((", 1)[1].split("))", 1)[0]
