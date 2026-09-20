@@ -4297,6 +4297,65 @@ def cas_hold(reason, *, expected_hold, expected_reason=None):
     return bool(payload.get("changed")), payload["agent"]
 
 
+if phase == "first-hub-prepare":
+    if agent_row(missing_ok=True) is not None:
+        raise RuntimeError("first-hub activation found a pre-existing worker")
+    print(json.dumps({"exists": False}, sort_keys=True))
+    raise SystemExit(0)
+
+if phase == "first-hub-verify":
+    if not generation:
+        raise RuntimeError("first-hub activation lacks a generation")
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
+    first_seen = None
+    while time.monotonic() < deadline:
+        row = agent_row(missing_ok=True)
+        if row is not None:
+            resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+            seen = parse_seen(row.get("last_seen_at"))
+            valid = (
+                seen is not None
+                and row.get("status") == "draining"
+                and row.get("health_status") == "degraded"
+                and row.get("current_task_id") is None
+                and not bool(row.get("dispatch_hold"))
+                and resources.get("deployment_generation") == generation
+            )
+            if valid and first_seen is None:
+                first_seen = seen
+            elif valid and seen > first_seen:
+                print(json.dumps({"agent_id": agent_id, "last_seen_at": row["last_seen_at"]}))
+                raise SystemExit(0)
+        time.sleep(2)
+    raise RuntimeError(
+        "first-hub worker failed registration and fresh generation heartbeat proof"
+    )
+
+if phase == "first-hub-release":
+    if not generation or not baseline_text:
+        raise RuntimeError("first-hub release lacks generation or heartbeat baseline")
+    baseline = parse_seen(baseline_text)
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
+    while time.monotonic() < deadline:
+        row = agent_row()
+        resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+        seen = parse_seen(row.get("last_seen_at"))
+        if (
+            seen is not None
+            and baseline is not None
+            and seen > baseline
+            and row.get("status") == "idle"
+            and release_health_ready(row, resources)
+            and row.get("current_task_id") is None
+            and not bool(row.get("dispatch_hold"))
+            and not active_work()
+        ):
+            print(json.dumps({"agent_id": agent_id, "last_seen_at": row["last_seen_at"]}))
+            raise SystemExit(0)
+        time.sleep(2)
+    raise RuntimeError("first-hub worker failed post-barrier idle heartbeat proof")
+
+
 if phase == "legacy-bootstrap":
     if authorized_prior_reason:
         raise RuntimeError("legacy CAS bootstrap rejects dispatch-hold adoption")
@@ -8507,6 +8566,7 @@ set_remote_mac_agent_service() {
   local release_mode="${5:-keep}" release_policy="${6:-authenticated}"
   local expected_principal_id="${7:-}" release_commit_mode="${8:-immediate}"
   local require_report_executor="${9:-0}"
+  local first_hub_activation="${10:-0}"
   local agent_id state deployment_id hold_reason prior_owned gate_result owns_hold release_result hold_cleared
   local agent_existed adopted_from_reason require_owned_after_prepare new_agent=0
   local generation="" baseline_seen="" release_baseline="" require_authenticated=1
@@ -8517,17 +8577,32 @@ set_remote_mac_agent_service() {
   expected_deployment_id="$(deployment_id_for_agent "$agent")"
   service_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
   assert_remote_deployment_lock "$agent" "$expected_deployment_id"
-  state="$(remote_deployment_hold_state "$agent")"
-  deployment_id="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("deployment_id") or "")')"
-  hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
-  prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
-  agent_existed="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("agent_existed", True) else "0")')"
-  adopted_from_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("adopted_from_reason") or "")')"
-  require_owned_after_prepare="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("require_owned_after_prepare") else "0")')"
-  [ -n "$deployment_id" ] && [ -n "$hold_reason" ] || {
-    echo "==> ${agent}: missing durable deployment hold state" >&2
-    return 1
-  }
+  case "$first_hub_activation" in 0|1) ;; *) return 2 ;; esac
+  if [ "$first_hub_activation" = 1 ]; then
+    [ "${FIRST_HUB_BOOTSTRAP:-0}" = 1 ] && [ "$action" = restart ] \
+      && [ "$release_mode" = keep ] || {
+      echo "==> ${agent}: first-hub activation is restricted to its post-manifest restart" >&2
+      return 1
+    }
+    deployment_id="$expected_deployment_id"
+    hold_reason=""
+    prior_owned=0
+    agent_existed=0
+    adopted_from_reason=""
+    require_owned_after_prepare=0
+  else
+    state="$(remote_deployment_hold_state "$agent")"
+    deployment_id="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("deployment_id") or "")')"
+    hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
+    prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+    agent_existed="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("agent_existed", True) else "0")')"
+    adopted_from_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("adopted_from_reason") or "")')"
+    require_owned_after_prepare="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("require_owned_after_prepare") else "0")')"
+    [ -n "$deployment_id" ] && [ -n "$hold_reason" ] || {
+      echo "==> ${agent}: missing durable deployment hold state" >&2
+      return 1
+    }
+  fi
   if [ "$deployment_id" != "$expected_deployment_id" ]; then
     echo "==> ${agent}: deployment state fence belongs to $deployment_id, expected $expected_deployment_id" >&2
     return 1
@@ -8539,12 +8614,16 @@ set_remote_mac_agent_service() {
 
   if [ "$action" = restart ]; then
     generation="$(worker_generation_for_agent "$agent")"
-    gate_result="$(hub_agent_restart_gate prepare "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" "$([ "$agent_existed" = 0 ] && printf 1 || printf 0)" 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
-    baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
-    owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
-    new_agent="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("0" if json.load(sys.stdin).get("exists") else "1")')"
-    write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" "$adopted_from_reason" "$require_owned_after_prepare"
-    prior_owned="$owns_hold"
+    if [ "$first_hub_activation" = 1 ]; then
+      hub_agent_restart_gate first-hub-prepare "$agent_id" "$generation" >/dev/null
+    else
+      gate_result="$(hub_agent_restart_gate prepare "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" "$([ "$agent_existed" = 0 ] && printf 1 || printf 0)" 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
+      baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
+      owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+      new_agent="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("0" if json.load(sys.stdin).get("exists") else "1")')"
+      write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" "$adopted_from_reason" "$require_owned_after_prepare"
+      prior_owned="$owns_hold"
+    fi
   elif [ "$action" = release ]; then
     generation="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
       "$(remote_deployment_fenced_exec "$expected_deployment_id" 0 sh -c 'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; printf "%s" "${MAC_WORKER_DEPLOY_GENERATION:?}"')")"
@@ -8809,6 +8888,25 @@ esac
 REMOTE
 
   if [ "$action" = restart ]; then
+    if [ "$first_hub_activation" = 1 ]; then
+      gate_result="$(hub_agent_restart_gate first-hub-verify "$agent_id" "$generation")"
+      baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("last_seen_at") or "")')"
+      ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+        "MAC_DEPLOY_RESTART_GENERATION=$(shell_quote "$generation") $service_fence" <<'REMOTE_FIRST_HUB_RELEASE'
+set -euo pipefail
+generation="${MAC_DEPLOY_RESTART_GENERATION:?}"
+barrier="$HOME/.mac/deploy-start-barrier"
+[ -f "$barrier" ] && [ ! -L "$barrier" ] \
+  && [ "$(cat "$barrier")" = "$generation" ] || {
+  echo "first-hub deployment barrier is missing or belongs to another generation" >&2
+  exit 1
+}
+rm -f "$barrier"
+REMOTE_FIRST_HUB_RELEASE
+      hub_agent_restart_gate first-hub-release "$agent_id" "$generation" "$baseline_seen" >/dev/null
+      echo "==> ${agent}: first-hub worker registered and advanced beyond its generation barrier"
+      return 0
+    fi
     if [ "$new_agent" = 1 ]; then
       gate_result="$(hub_agent_restart_gate prepare-new "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" 0 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
       baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
@@ -8922,6 +9020,16 @@ REMOTE_RELEASE
       echo "==> ${agent}: process barrier released after exact idle credential proof; pre-existing operator dispatch hold preserved"
     fi
   fi
+}
+
+activate_first_hub_agent_after_manifest() {
+  local agent="$1" supervisor="$2" fleet_name="$3"
+  [ "${FIRST_HUB_BOOTSTRAP:-0}" = 1 ] || {
+    echo "ERROR: ${agent}: first-hub activation requires explicit bootstrap mode" >&2
+    return 1
+  }
+  set_remote_mac_agent_service \
+    "$agent" "$supervisor" "$fleet_name" restart keep authenticated "" immediate 0 1
 }
 
 validate_router_topology_spec() {
@@ -9556,7 +9664,9 @@ PY
   else
     echo "==> ${agent}: restarting mac-agent after post-manifest reconciliation"
   fi
-  if [ "$node_action" = apply-phase2 ]; then
+  if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    activate_first_hub_agent_after_manifest "$agent" "$supervisor" "$fleet_name"
+  elif [ "$node_action" = apply-phase2 ]; then
     restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name"
   else
     set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep

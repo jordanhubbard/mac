@@ -1015,6 +1015,53 @@ def test_first_hub_bootstrap_takes_no_hub_dependent_arm():
     assert first.index("acquire_remote_deployment_lock") < first.index("deploy_host")
 
 
+def test_first_hub_post_manifest_activation_is_fenced_without_a_fabricated_hold():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "\n}\n\nactivate_first_hub_agent_after_manifest", 1
+    )[0]
+    wrapper = deploy.split("activate_first_hub_agent_after_manifest() {", 1)[1].split(
+        "\n}\n\nvalidate_router_topology_spec", 1
+    )[0]
+    deploy_host = deploy.split("deploy_host() {", 1)[1].split("\n}\n\nrestart_remote", 1)[0]
+    gate = deploy.split("hub_agent_restart_gate() {", 1)[1].split(
+        "\n}\n\nremote_deployment_hold_state", 1
+    )[0]
+
+    assert '${FIRST_HUB_BOOTSTRAP:-0}" = 1' in wrapper
+    assert "set_remote_mac_agent_service" in wrapper
+    assert wrapper.rstrip().endswith('restart keep authenticated "" immediate 0 1')
+    assert 'if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then' in deploy_host
+    assert "activate_first_hub_agent_after_manifest" in deploy_host
+
+    first_hub_state = service.split('if [ "$first_hub_activation" = 1 ]; then', 1)[1].split(
+        "\n  else", 1
+    )[0]
+    assert "remote_deployment_hold_state" not in first_hub_state
+    assert "write_remote_deployment_hold_state" not in first_hub_state
+    assert "first-hub-prepare" in service
+    verify = service.index("first-hub-verify")
+    remove_barrier = service.index('rm -f "$barrier"', verify)
+    release = service.index("first-hub-release", remove_barrier)
+    assert verify < remove_barrier < release
+    assert "missing durable deployment hold state" in service
+
+    for phase in ("first-hub-prepare", "first-hub-verify", "first-hub-release"):
+        assert f'phase == "{phase}"' in gate
+    assert "first-hub activation found a pre-existing worker" in gate
+    assert 'resources.get("deployment_generation") == generation' in gate
+    assert 'not bool(row.get("dispatch_hold"))' in gate
+    assert "seen > first_seen" in gate
+    assert "seen > baseline" in gate
+    assert "release_health_ready(row, resources)" in gate
+
+    first = _first_hub_bootstrap_source()
+    deploy_call = first.index("deploy_host")
+    authority = first.index("hub_epoch_client_read", deploy_call)
+    finalize = first.index("finalize_remote_deployment_release", authority)
+    assert deploy_call < authority < finalize
+
+
 def test_first_hub_bootstrap_recovery_restores_the_sealed_prior_absent_state():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recover = deploy.split("recover_first_hub_bootstrap_failure() {", 1)[1].split("\n}\n", 1)[0]
@@ -1194,9 +1241,9 @@ def test_hub_agent_restart_gate_poll_ceiling_is_configurable_not_hardcoded():
     # report-executor proof" every time, with no way to grant it more time.
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "min(timeout, 300.0)" not in deploy
-    # 3 poll loops (prepare-new/verify/arm-release) plus 1 explanatory
-    # comment naming the pattern.
-    assert deploy.count("min(timeout, gate_max_wait)") == 4
+    # 5 poll loops (first-hub verify/release plus prepare-new/verify/arm-release)
+    # plus 1 explanatory comment naming the pattern.
+    assert deploy.count("min(timeout, gate_max_wait)") == 6
     assert (
         'gate_max_wait = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_MAX_WAIT") or "300"))'
         in deploy
