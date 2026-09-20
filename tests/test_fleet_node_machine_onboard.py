@@ -834,6 +834,20 @@ def test_controller_refresh_path_returns_before_any_host_payload_upload():
     assert "commit_command" not in refresh
 
 
+def test_controller_mode_repair_streams_helper_to_remote_python_stdin():
+    text = DEPLOY.read_text(encoding="utf-8")
+    worker = text.split("prepare_fungible_machine_onboarding_worker() (", 1)[1].split(
+        "\n)\n\nprepare_fungible_machine_onboarding()", 1
+    )[0]
+    repair = worker.split('repair_command="python3 - repair-mode', 1)[1].split(
+        'echo "==> ${agent}: normalized exact receipt-bound', 1
+    )[0]
+
+    assert 'ssh -o BatchMode=yes -o ConnectTimeout=10' in repair
+    assert 'ssh -n ' not in repair
+    assert '< "$MACHINE_ONBOARDING_HELPER" > "$repair_receipt"' in repair
+
+
 def test_controller_binds_route_identity_before_all_host_refresh_classification():
     text = DEPLOY.read_text(encoding="utf-8")
     operation = text.split("prepare_fungible_machine_onboarding() {", 1)[1].split("\n}", 1)[0]

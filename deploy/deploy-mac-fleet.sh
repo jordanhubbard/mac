@@ -6968,7 +6968,7 @@ PY
       ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
       repair_receipt="$TMPDIR_LOCAL/machine-onboarding-mode-repair-${agent_id}.json"
       repair_command="python3 - repair-mode --agent $(shell_quote "$agent") --route-identity-sha256 $(shell_quote "$route_sha256") --supervisor $(shell_quote "$supervisor")"
-      ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      ssh -o BatchMode=yes -o ConnectTimeout=10 \
         -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
         "${ssh_args[@]}" "$ssh_target" "$repair_command" \
         < "$MACHINE_ONBOARDING_HELPER" > "$repair_receipt"
