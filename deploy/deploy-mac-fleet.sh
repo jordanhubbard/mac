@@ -7052,8 +7052,8 @@ PY
 
 prepare_fungible_machine_onboarding() {
   local selected_specs_file="$1" hub_agent="$2" spec
-  classify_fungible_machine_onboarding "$selected_specs_file"
   bind_precohort_routes "$selected_specs_file" "$hub_agent"
+  classify_fungible_machine_onboarding "$selected_specs_file"
   echo "==> fleet: preparing fungible rollback baselines without starting services"
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
