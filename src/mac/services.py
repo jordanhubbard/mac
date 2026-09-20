@@ -1969,6 +1969,7 @@ def _build_onboarding_description(url: str, repo_name: str) -> str:
             "  Include the full environment contract JSON in your evidence.",
             "",
             "Deliverables — report all of these in your evidence (evidence_type=investigation):",
+            "  In mac-evidence.json, place the report under operator_result and include a substantive operator_result.summary (or result, findings, or artifacts). Descriptive subkeys alone are not accepted by the evidence contract.",
             "  1. A concise summary of what the project does and its architecture (languages, frameworks, key modules, entry points), grounded in README.md/AGENTS.md/PLAN.md where present.",
             "  2. How to build it and run its tests, inferred from the repo's own manifests/CI and README — not guessed.",
             "  3. The environment contract (mac.environment_contract.v1) derived from static analysis of the checkout.",

@@ -250,6 +250,8 @@ def test_repository_contract_section_onboarding_when_checkout_present():
     assert ".mac/project.yaml" in section
     assert "$MAC_TASK_REPO_WORKTREE" in section
     assert "does not publish a branch or PR" in section
+    assert "operator_result.summary" in section
+    assert "Descriptive subkeys alone are not accepted" in section
 
 
 def test_repository_contract_section_shows_existing_contract():
