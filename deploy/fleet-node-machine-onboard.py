@@ -361,7 +361,9 @@ def validate_pristine(layout: Layout, supervisor: str) -> dict[str, Any]:
     }
 
 
-def _owner_directory(path: Path, description: str) -> None:
+def _owner_directory(
+    path: Path, description: str, *, allow_exact_group_write_repair: bool = False
+) -> bool:
     try:
         metadata = path.lstat()
     except FileNotFoundError as exc:
@@ -370,9 +372,14 @@ def _owner_directory(path: Path, description: str) -> None:
         not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
         or metadata.st_uid != os.getuid()
-        or stat.S_IMODE(metadata.st_mode) & 0o022
     ):
         raise OnboardingError(f"{description} is not an owner-controlled directory")
+    mode = stat.S_IMODE(metadata.st_mode)
+    if mode & 0o022:
+        if allow_exact_group_write_repair and mode == 0o775:
+            return True
+        raise OnboardingError(f"{description} is not an owner-controlled directory")
+    return False
 
 
 def _regular_executable(path: Path, description: str) -> Path:
@@ -392,6 +399,7 @@ def validate_published_baseline(
     *,
     agent: str,
     route_identity_sha256: str,
+    allow_venv_mode_repair: bool = False,
 ) -> dict[str, Any]:
     """Prove an existing phase-zero baseline is safe for registration-only refresh."""
 
@@ -431,7 +439,11 @@ def validate_published_baseline(
         raise OnboardingError("published onboarding baseline has a service process")
 
     _owner_directory(layout.source, "published onboarding source")
-    _owner_directory(layout.venv, "published onboarding venv")
+    venv_mode_repair_required = _owner_directory(
+        layout.venv,
+        "published onboarding venv",
+        allow_exact_group_write_repair=allow_venv_mode_repair,
+    )
     paths = receipt.get("paths")
     if not isinstance(paths, dict):
         raise OnboardingError("published onboarding receipt paths are invalid")
@@ -488,7 +500,53 @@ def validate_published_baseline(
         "agent": agent,
         "agent_id": expected_agent_id,
         "services_started": False,
+        "venv_mode_repair_required": venv_mode_repair_required,
     }
+
+
+def repair_published_venv_mode(
+    layout: Layout,
+    supervisor: str,
+    *,
+    agent: str,
+    route_identity_sha256: str,
+) -> dict[str, Any]:
+    """Normalize only the exact receipt-bound 0775 venv root to 0755."""
+
+    with onboarding_lock(layout):
+        receipt = validate_published_baseline(
+            layout,
+            supervisor,
+            agent=agent,
+            route_identity_sha256=route_identity_sha256,
+            allow_venv_mode_repair=True,
+        )
+        if receipt.get("venv_mode_repair_required") is not True:
+            raise OnboardingError("published onboarding venv does not require mode repair")
+        descriptor = os.open(
+            layout.venv,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o775
+            ):
+                raise OnboardingError("published onboarding venv changed before mode repair")
+            os.fchmod(descriptor, 0o755)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        repaired = validate_published_baseline(
+            layout,
+            supervisor,
+            agent=agent,
+            route_identity_sha256=route_identity_sha256,
+        )
+        repaired["venv_mode_repaired"] = True
+        return repaired
 
 
 def validate_route_identity(path: Path) -> tuple[dict[str, Any], str]:
@@ -903,6 +961,10 @@ def commit(
             _rewrite_venv_prefix(staged_venv, layout.venv)
             _publish_path(staged_source, layout.source, created)
             _publish_path(staged_venv, layout.venv, created)
+            # uv creates the staged venv under the remote login's umask. HORDE
+            # uses 0002, but a published executable runtime must not remain
+            # group-writable after it becomes the durable rollback baseline.
+            os.chmod(layout.venv, 0o755)
             _publish_path(staged_uv, final_uv, created)
             links = (
                 (
@@ -976,16 +1038,20 @@ def inspect(
             raise OnboardingError(
                 "published onboarding inspection requires agent and route identity"
             )
+        receipt = validate_published_baseline(
+            layout,
+            supervisor,
+            agent=agent,
+            route_identity_sha256=route_identity_sha256,
+            allow_venv_mode_repair=True,
+        )
         return {
             "schema": STATUS_SCHEMA,
-            "status": "refreshable",
-            "instance_kind": "fungible",
-            "receipt": validate_published_baseline(
-                layout,
-                supervisor,
-                agent=agent,
-                route_identity_sha256=route_identity_sha256,
+            "status": (
+                "repairable" if receipt.get("venv_mode_repair_required") is True else "refreshable"
             ),
+            "instance_kind": "fungible",
+            "receipt": receipt,
         }
     return {
         "schema": STATUS_SCHEMA,
@@ -999,7 +1065,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prepare a pristine fungible node for typed MAC deployment"
     )
-    parser.add_argument("action", choices=("inspect", "prepare", "commit"))
+    parser.add_argument("action", choices=("inspect", "prepare", "commit", "repair-mode"))
     parser.add_argument("--home", default=str(Path.home()))
     parser.add_argument("--mac-home")
     parser.add_argument("--generation")
@@ -1032,6 +1098,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = inspect(
                 layout,
                 supervisor=args.supervisor,
+                agent=args.agent,
+                route_identity_sha256=args.route_identity_sha256,
+            )
+        elif args.action == "repair-mode":
+            _required(args, "agent", "route-identity-sha256")
+            payload = repair_published_venv_mode(
+                layout,
+                args.supervisor,
                 agent=args.agent,
                 route_identity_sha256=args.route_identity_sha256,
             )
