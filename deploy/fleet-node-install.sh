@@ -7339,6 +7339,82 @@ def openshell_ever_installed():
     return openshell.exists() or openshell.is_symlink()
 
 
+def prove_retained_attestation_recovery_env(path):
+    """Accept only the fail-closed env left by retain-forward key recovery."""
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise QuiescenceFailure("retained successor identity is unreadable")
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or not 1 <= before.st_size <= 1024 * 1024
+        ):
+            raise QuiescenceFailure("retained successor identity is untrusted")
+        raw = bytearray()
+        while len(raw) < before.st_size:
+            chunk = os.read(descriptor, min(65536, before.st_size - len(raw)))
+            if not chunk:
+                raise QuiescenceFailure("retained successor identity changed while reading")
+            raw.extend(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise QuiescenceFailure("retained successor identity changed while reading")
+    finally:
+        os.close(descriptor)
+    try:
+        text = bytes(raw).decode("utf-8", errors="strict")
+    except UnicodeError:
+        raise QuiescenceFailure("retained successor identity is undecodable")
+
+    values = {}
+    safe_value = re.compile(r"^[A-Za-z0-9_./:@=,+%-]*$")
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            tokens = shlex.split(line, comments=False, posix=True)
+        except ValueError:
+            raise QuiescenceFailure("retained successor identity is malformed")
+        if len(tokens) != 1 or "=" not in tokens[0]:
+            raise QuiescenceFailure("retained successor identity is malformed")
+        key, value = tokens[0].split("=", 1)
+        if key in values:
+            raise QuiescenceFailure("retained successor identity is ambiguous")
+        # mac.deploy_env.render_env is the only accepted producer.  Requiring
+        # its canonical shell spelling rejects substitutions and metacharacters
+        # that shlex can parse but a later service shell would execute.
+        rendered = value if safe_value.fullmatch(value) else shlex.quote(value)
+        if line != "%s=%s" % (key, rendered):
+            raise QuiescenceFailure("retained successor identity is non-canonical")
+        values[key] = value
+
+    if set(values) != {"MAC_ATTESTATION_KEY", "MAC_STARTUP_CLEAR_HOLD"}:
+        raise QuiescenceFailure("retained successor has an installed identity")
+    attestation_key = values["MAC_ATTESTATION_KEY"]
+    if len(attestation_key) < 32 or any(character.isspace() for character in attestation_key):
+        raise QuiescenceFailure("retained successor attestation identity is invalid")
+    if values["MAC_STARTUP_CLEAR_HOLD"] != "0":
+        raise QuiescenceFailure("retained successor dispatch hold policy is invalid")
+
+
 def prove_phase1_prepared_cli_authority(runtimes):
     """Validate the controller-bound retained-successor exception.
 
@@ -7423,9 +7499,12 @@ def prove_phase1_prepared_cli_authority(runtimes):
             or metadata.st_mode & 0o022
         ):
             raise QuiescenceFailure("retained successor artifacts are unsafe")
-    for marker in (mac_home / "mac.env", mac_home / "deployed-source-revision"):
-        if marker.exists() or marker.is_symlink():
-            raise QuiescenceFailure("retained successor has an installed identity")
+    deployed_revision = mac_home / "deployed-source-revision"
+    if deployed_revision.exists() or deployed_revision.is_symlink():
+        raise QuiescenceFailure("retained successor has an installed identity")
+    env_file = mac_home / "mac.env"
+    if env_file.exists() or env_file.is_symlink():
+        prove_retained_attestation_recovery_env(env_file)
     return True
 
 
@@ -7446,7 +7525,6 @@ def prove_prepared_cli_without_gateway(runtimes):
     reviewed_openshell_cli_summary()
     home = Path(os.environ["HOME"])
     state_paths = [
-        mac_home / "mac.env",
         mac_home / "deployed-source-revision",
         home / ".config/systemd/user/openshell-gateway.service",
         Path("/etc/supervisor/conf.d/openshell-gateway.conf"),
@@ -7460,7 +7538,9 @@ def prove_prepared_cli_without_gateway(runtimes):
         if os.environ.get(variable):
             state_paths.append(Path(os.environ[variable]) / "openshell")
     if first_hub:
-        state_paths.extend((mac_home / "src" / "mac", mac_home / "venv"))
+        state_paths.extend(
+            (mac_home / "mac.env", mac_home / "src" / "mac", mac_home / "venv")
+        )
     for path in state_paths:
         try:
             path.lstat()
