@@ -2433,6 +2433,11 @@ PY
 
 reconcile_remote_deploy() {
   local agent="$1" _display_target="$2" clear_repo_update_blocker="${3:-0}"
+  local phase1_required="${4:-1}"
+  case "$phase1_required" in
+    0|1) ;;
+    *) echo "ERROR: ${agent}: invalid phase-1 reconciliation requirement: $phase1_required" >&2; return 2 ;;
+  esac
   # Routing is deliberately resolved again by agent name, but only against the
   # immutable invocation snapshot.  The raw target is retained for the public
   # function contract/log context and can no longer redirect reconciliation.
@@ -2453,13 +2458,14 @@ reconcile_remote_deploy() {
       sleep "$_sleep_interval"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GENERATION_EXPECTED=$(shell_quote "$deployment_id") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") $fence_exec" <<'REMOTE'
+      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GENERATION_EXPECTED=$(shell_quote "$deployment_id") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") MAC_DEPLOY_PHASE1_REQUIRED=$(shell_quote "$phase1_required") $fence_exec" <<'REMOTE'
 set -euo pipefail
 agent="${MAC_DEPLOY_AGENT:?}"
 deploy_ts="${MAC_DEPLOY_TS:?}"
 expected_rev="${MAC_DEPLOY_GIT_REV:?}"
 expected_generation="${MAC_DEPLOY_GENERATION_EXPECTED:?}"
 clear_repo_update_blocker="${MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER:-0}"
+phase1_required="${MAC_DEPLOY_PHASE1_REQUIRED:?}"
 mac_home="${MAC_HOME:-$HOME/.mac}"
 log_dir="$mac_home/logs"
 manifest="$log_dir/deploy-manifest-${deploy_ts}-post.json"
@@ -2512,7 +2518,7 @@ if [ -e "$mac_home/src/mac/.git" ]; then
     exit 1
   fi
 fi
-"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" "$expected_generation" <<'PY'
+"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" "$expected_generation" "$phase1_required" <<'PY'
 import json
 import sys
 (
@@ -2522,7 +2528,11 @@ import sys
     expected_ts,
     expected_rev,
     expected_generation,
+    phase1_required_raw,
 ) = sys.argv[1:]
+if phase1_required_raw not in {"0", "1"}:
+    raise SystemExit("remote reconciliation failed: invalid phase-1 requirement")
+phase1_required = phase1_required_raw == "1"
 quiescence_summaries = []
 gateway_summaries = []
 phase1_summaries = []
@@ -2576,24 +2586,29 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
         if isinstance(phase1, dict)
         else None
     )
-    if (
-        not isinstance(phase1, dict)
-        or phase1.get("schema")
-        != "mac.phase1_cohort_quiescence_manifest.v1"
-        or phase1.get("status") != "proved"
-        or phase1.get("generation") != expected_generation
-        or phase1.get("revision") != expected_rev
-        or not isinstance(phase1.get("sha256"), str)
-        or len(phase1["sha256"]) != 64
-        or not isinstance(phase1.get("supervisor"), dict)
-        or not isinstance(phase1_daemon, dict)
-        or phase1_daemon.get("schema")
-        != "mac.daemon_resource_quiescence.v1"
-        or phase1_daemon.get("proof_phase") != "pre_source"
-        or not isinstance(phase1_daemon.get("sha256"), str)
-        or len(phase1_daemon["sha256"]) != 64
-        or not isinstance(phase1_daemon.get("function_block_sha256"), str)
-        or len(phase1_daemon["function_block_sha256"]) != 64
+    phase1_proved = (
+        isinstance(phase1, dict)
+        and phase1.get("schema") == "mac.phase1_cohort_quiescence_manifest.v1"
+        and phase1.get("status") == "proved"
+        and phase1.get("generation") == expected_generation
+        and phase1.get("revision") == expected_rev
+        and isinstance(phase1.get("sha256"), str)
+        and len(phase1["sha256"]) == 64
+        and isinstance(phase1.get("supervisor"), dict)
+        and isinstance(phase1_daemon, dict)
+        and phase1_daemon.get("schema") == "mac.daemon_resource_quiescence.v1"
+        and phase1_daemon.get("proof_phase") == "pre_source"
+        and isinstance(phase1_daemon.get("sha256"), str)
+        and len(phase1_daemon["sha256"]) == 64
+        and isinstance(phase1_daemon.get("function_block_sha256"), str)
+        and len(phase1_daemon["function_block_sha256"]) == 64
+    )
+    phase1_not_required = phase1 == {
+        "schema": "mac.phase1_cohort_quiescence_manifest.v1",
+        "status": "not_required",
+    }
+    if (phase1_required and not phase1_proved) or (
+        not phase1_required and not phase1_not_required
     ):
         raise SystemExit(
             "remote reconciliation failed: %s has invalid phase-1 evidence" % label
@@ -2602,20 +2617,18 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
     media = data.get("media_runtime_readiness")
     media_resources = media.get("resources") if isinstance(media, dict) else None
     media_manager = media.get("manager") if isinstance(media, dict) else None
-    if (
-        not isinstance(media, dict)
-        or media.get("schema")
-        != "mac.media_runtime_readiness_manifest.v1"
-        or media.get("status")
-        not in {"proved", "not_applicable"}
-        or media_manager not in {"systemd", "launchd", "supervisord"}
-        or not isinstance(media.get("sha256"), str)
-        or len(media["sha256"]) != 64
-        or not isinstance(media.get("source_contract_sha256"), str)
-        or len(media["source_contract_sha256"]) != 64
-        or not isinstance(media_resources, list)
-        or media_manager != (phase1.get("supervisor") or {}).get("manager")
-        or (
+    media_proved = (
+        isinstance(media, dict)
+        and media.get("schema") == "mac.media_runtime_readiness_manifest.v1"
+        and media.get("status") in {"proved", "not_applicable"}
+        and media_manager in {"systemd", "launchd", "supervisord"}
+        and isinstance(media.get("sha256"), str)
+        and len(media["sha256"]) == 64
+        and isinstance(media.get("source_contract_sha256"), str)
+        and len(media["source_contract_sha256"]) == 64
+        and isinstance(media_resources, list)
+        and media_manager == (phase1.get("supervisor") or {}).get("manager")
+        and not (
             media_manager == "systemd"
             and (
                 media.get("status") != "proved"
@@ -2631,10 +2644,17 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
                 )
             )
         )
-        or (
+        and not (
             media_manager != "systemd"
             and (media.get("status") != "not_applicable" or media_resources)
         )
+    )
+    media_not_required = media == {
+        "schema": "mac.media_runtime_readiness_manifest.v1",
+        "status": "not_required",
+    }
+    if (phase1_required and not media_proved) or (
+        not phase1_required and not media_not_required
     ):
         raise SystemExit(
             "remote reconciliation failed: %s has invalid media runtime readiness"
@@ -8992,6 +9012,7 @@ deploy_host() {
     *) echo "ERROR: ${node_action}: unsupported deploy-host node action" >&2; return 2 ;;
   esac
   local remote_stage_root="" staged_manifest="" staged_manifest_digest=""
+  local phase1_required=1
   local staged_verifier="" typed_staged_bundle=0
   local reviewed_openshell_version reviewed_openshell_asset_sha
   local reviewed_openshell_cli_sha reviewed_openshell_receipt_sha
@@ -9204,6 +9225,7 @@ PY
   # own help text), so it never writes the phase1-cohort-quiescence receipt
   # this flag makes fleet-node-install.sh require.
   if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    phase1_required=0
     add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 0
   else
     add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
@@ -9511,7 +9533,7 @@ PY
       return 0
     fi
     echo "==> ${agent}: validating remote post-deploy manifest"
-    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
+    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested" "$phase1_required"; then
       echo "==> ${agent}: remote deploy returned success but post manifest validation failed" >&2
       return 1
     fi
@@ -9522,7 +9544,7 @@ PY
       return 1
     fi
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
-    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
+    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested" "$phase1_required"; then
       echo "==> ${agent}: remote deploy failed and no valid post manifest was published" >&2
       return 1
     fi

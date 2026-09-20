@@ -2240,7 +2240,8 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     reconcile = deploy_host.index('reconcile_remote_deploy "$agent" "$target"')
     assert reconcile < deploy_host.index(restart, reconcile)
     failed_reconcile = (
-        'if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then'
+        'if ! reconcile_remote_deploy "$agent" "$target" '
+        '"$openshell_disable_requested" "$phase1_required"; then'
     )
     assert failed_reconcile in deploy_host
     failure_block = deploy_host.split(failed_reconcile, 1)[1].split("fi", 1)[0]

@@ -303,6 +303,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime input sha256. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
+| `MAC_DEPLOY_PHASE1_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy phase1 required. |
 | `MAC_DEPLOY_POSTGRES_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy postgres bind addr. |
 | `MAC_DEPLOY_POSTGRES_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy postgres data dir. |
 | `MAC_DEPLOY_POSTGRES_DB` | str | consumer-defined | deployment | Deployment setting: deploy postgres db. |
