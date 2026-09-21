@@ -8,7 +8,7 @@ Source under investigation: `7f3bbd12a0badb4f4812749bd682476ed85bb3ce`.
 
 A deployment of the 50-worker `ovswarm` fleet failed because MAC turns bounded, recoverable node defects into a fleet-wide stop and then makes recovery depend on a long sequence of individually reliable operations. Worker-local identity drift was the trigger, not the central root cause.
 
-Two different drift shapes exposed the same architectural problem. An earlier recovery found worker2 without `~/.mac/mac.env`; the old startup-hold writer silently did nothing, after which attestation recovery created an incomplete environment. That defect is fixed in `7f3bbd12`. The next rollout reached worker50, which lacked `~/.mac/deployed-source-revision` but retained a full installed `mac.env`. The strict retained-successor classifier rejected that inconsistent identity, correctly failing closed at the node boundary but only after the controller had serially quiesced nearly the whole fleet.
+Two different drift shapes exposed the same architectural problem. An earlier recovery found an early-cohort worker without `~/.mac/mac.env`; the old startup-hold writer silently did nothing, after which attestation recovery created an incomplete environment. That defect is fixed in `7f3bbd12`. The next rollout reached the final cohort worker, which lacked `~/.mac/deployed-source-revision` but retained a full installed `mac.env`. The strict retained-successor classifier rejected that inconsistent identity, correctly failing closed at the node boundary but only after the controller had serially quiesced nearly the whole fleet.
 
 The long serialized quiescence and reverse-recovery paths then interacted with the hub's one-hour default fungible-agent TTL. Workers intentionally stopped by the deployment could not heartbeat, while expiry knows about task leases but not deployment-epoch membership. Rows needed by recovery could therefore be tombstoned as if their hosts had departed. Finally, one transient SSH connection timeout to the hub stopped the serialized recovery pass. MAC correctly retained the journal and dispatch holds, but the fleet remained globally unavailable.
 
@@ -31,7 +31,7 @@ The operational facts come from the live controller output and retained recovery
 
 The exact wall-clock timestamps remain in the deployment logs and journal; this sequence records only facts established in the live operation and source.
 
-1. A retained recovery pass encountered worker2 without `~/.mac/mac.env`.
+1. A retained recovery pass encountered an early-cohort worker without `~/.mac/mac.env`.
 2. The then-current startup-hold setter returned success without writing `MAC_STARTUP_CLEAR_HOLD=0` when the file was absent.
 3. Missing-key recovery created `mac.env` with only `MAC_ATTESTATION_KEY`. The retained-successor identity contract rejected the incomplete environment.
 4. The hold writer was corrected, tested, and incorporated into source `7f3bbd12`.
@@ -71,13 +71,13 @@ The protocol makes exactness global where it should make exactness local:
 
 Each rule is defensible in isolation. Together, on a flaky network and a 50-node fleet, they create a liveness death spiral: conservative stop increases elapsed time; elapsed time triggers liveness expiry; expiry removes identities required for recovery; recovery becomes longer and more fragile; one transient failure preserves the global stop.
 
-The primary root cause is therefore over-strict global coupling without bounded-progress, isolation, or availability invariants. Worker2's absent environment and worker50's marker/environment drift were initiating conditions.
+The primary root cause is therefore over-strict global coupling without bounded-progress, isolation, or availability invariants. The early-cohort worker's absent environment and the final cohort worker's marker/environment drift were initiating conditions.
 
 ## Violated invariants
 
 ### Recovery hold precedes recovery identity
 
-Before attestation recovery may create or update `mac.env`, the node must durably carry `MAC_STARTUP_CLEAR_HOLD=0`. The old absent-file behavior violated this invariant on worker2.
+Before attestation recovery may create or update `mac.env`, the node must durably carry `MAC_STARTUP_CLEAR_HOLD=0`. The old absent-file behavior violated this invariant on the early-cohort worker.
 
 `7f3bbd12` fixes it in `deploy/deploy-mac-fleet.sh:7985-8119`. `retain_remote_generation_for_forward_repair` invokes the setter before attestation reconciliation (`14423-14436`). The regression at `tests/test_deploy_attestation_recovery.py:72-95` executes the production shell setter and real attestation installer, proving the final environment contains exactly the two recovery keys. Preservation and symlink rejection are covered at `98-130`.
 
@@ -122,7 +122,7 @@ This invariant held. The controller left the durable journal non-terminal and re
 - The typed cohort journal preserved exact recovery authority across controller death and network failure.
 - Dispatch holds remained in place, preventing ambiguous workers from taking new work.
 - Phase-1 restore contracts retained enough generation-bound evidence for diagnosis and replay.
-- `7f3bbd12` corrected the worker2 absent-environment defect with atomic owner-private writes and production-level tests.
+- `7f3bbd12` corrected the early-cohort absent-environment defect with atomic owner-private writes and production-level tests.
 - The installed static-hub classifier correctly keeps coherent installed nodes out of the partial-successor exception.
 - Read-only preparation, prerequisite proof, staging, and later immutable phases already have a reusable bounded-fan-out primitive.
 
@@ -186,7 +186,7 @@ The incident may be closed only when all applicable criteria are evidenced; a gr
 
 ### Identity classification and repair
 
-- An integration test reproduces worker2's absent environment and proves the hold exists before key installation.
+- An integration test reproduces the early-cohort worker's absent environment and proves the hold exists before key installation.
 - An integration test reproduces worker50's absent marker plus full installed environment and fails during read-only preflight, before hub epoch open or any service stop.
 - Positive repair tests accept only mutually agreeing signed/journal-bound evidence and emit the exact canonical marker.
 - Negative tests reject stale revision, wrong generation, unsigned evidence, unsafe file types/modes/owners, extra recovery keys, and concurrent artifact changes.

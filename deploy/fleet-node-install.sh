@@ -1162,6 +1162,26 @@ wait_for_hub_reverse_tunnel() {
   return 0
 }
 
+verify_or_defer_hub_health() {
+  local output="$LOG_DIR/health.json" deploy_health_url
+  if control_plane_enabled; then
+    curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$output"
+    return 0
+  fi
+  if [ "${DEPLOY_DIRECT_HUB:-0}" = "1" ]; then
+    deploy_health_url="$HUB_URL"
+  elif truthy "${DEFER_AGENT_RESTART:-0}"; then
+    # The tunnel is owned by the stopped worker lifecycle.  Its exact health
+    # proof moves to the outer controller's post-restart heartbeat/release gate.
+    rm -f "$output"
+    log "deferring tunnel-routed hub health until post-manifest agent restart"
+    return 0
+  else
+    deploy_health_url="$MAC_HUB_URL"
+  fi
+  curl -fsS "$deploy_health_url/health" > "$output"
+}
+
 remove_managed_github_review_key_config() {
   local config_file="$1"
   [ -f "$config_file" ] || return 0
@@ -15088,14 +15108,19 @@ fi
 
 log "verifying hub health and local executor startup report"
 if control_plane_enabled; then
-  curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$LOG_DIR/health.json"
+  verify_or_defer_hub_health
   curl -fsS --config - \
     "http://127.0.0.1:$MAC_PORT/startup/hermes" \
     > "$LOG_DIR/startup-hermes.json" <<CURL
 header = "Authorization: Bearer $MAC_API_TOKEN"
 CURL
 else
-  curl -fsS "$MAC_HUB_URL/health" > "$LOG_DIR/health.json"
+  # A typed phase-2 deploy deliberately keeps the worker agent (and therefore
+  # its localhost reverse tunnel) stopped until the post manifest has been
+  # reconciled by the outer controller.  When prerequisite inspection already
+  # proved a direct hub route, use that configured route here instead of
+  # deadlocking on MAC_HUB_URL's stopped 127.0.0.1:18789 tunnel.
+  verify_or_defer_hub_health
   "$VENV/bin/python" - "$LOG_DIR/startup-hermes.json" <<'PY'
 import json
 import sys

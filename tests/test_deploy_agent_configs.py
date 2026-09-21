@@ -1067,7 +1067,7 @@ def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
     assert "MAC_DATABASE_URL" not in spoke_env
     assert "retire_spoke_local_control_plane_database()" in script
     assert "refusing to strand them" in script
-    assert 'curl -fsS "$MAC_HUB_URL/health"' in script
+    assert 'curl -fsS "$deploy_health_url/health"' in script
 
 
 def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):

@@ -660,6 +660,7 @@
     "name": "MAC_ATTESTATION_KEY",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "src/mac/deployment_attestation.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_sandbox.py",
@@ -13043,6 +13044,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
