@@ -1196,7 +1196,30 @@ def test_retained_successor_with_bad_phase1_authority_fails_closed(tmp_path: Pat
     assert not run.marker.exists()
 
 
-def test_retained_successor_with_installed_identity_fails_closed(tmp_path: Path) -> None:
+def test_installed_static_hub_uses_ordinary_disabled_openshell_quiescence(
+    tmp_path: Path,
+) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        openshell_mode="nonzero",
+        phase1_retained_successor=True,
+        existing_paths=(".mac/deployed-source-revision",),
+        retained_mac_env=_attestation_recovery_env(
+            extra=("MAC_API_TOKEN=installed-api-identity\nMAC_WORKER_DEPLOY_GENERATION=42\n")
+        ),
+        extra_env={"MAC_DEPLOY_OPENSHELL_ENABLED": "0"},
+    )
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_task_sandboxes"].get("inventory_source") != (
+        "proved_uninitialized_gateway"
+    )
+    assert not any(line.startswith("openshell:") for line in _call_lines(run))
+
+
+def test_installed_identity_cannot_use_partial_successor_exception(
+    tmp_path: Path,
+) -> None:
     run = _run_quiescence(
         tmp_path,
         sandbox_source="none",
@@ -1204,9 +1227,10 @@ def test_retained_successor_with_installed_identity_fails_closed(tmp_path: Path)
         phase1_retained_successor=True,
         existing_paths=(".mac/deployed-source-revision",),
         retained_mac_env=_attestation_recovery_env(),
+        extra_env={"MAC_DEPLOY_OPENSHELL_ENABLED": "1"},
     )
     assert run.result.returncode != 0
-    assert "retained successor has an installed identity" in run.result.stderr
+    assert "OpenShell sandbox inventory failed" in run.result.stderr
     assert not run.marker.exists()
 
 
