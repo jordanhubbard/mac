@@ -7995,40 +7995,125 @@ set_remote_mac_startup_hold_policy() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
     "MAC_DEPLOY_STARTUP_CLEAR_HOLD=$(shell_quote "$value") $fence_exec <<'PY'
+import fcntl
 import os
+import stat
 import tempfile
 from pathlib import Path
 
 path = Path.home() / '.mac' / 'mac.env'
-if path.exists():
-    # Avoid importing the not-yet-deployed mac package: preserve all existing
-    # assignments and replace/append only this simple numeric policy value.
-    lines = path.read_text(encoding='utf-8').splitlines()
-    key = 'MAC_STARTUP_CLEAR_HOLD'
-    replacement = key + '=' + os.environ['MAC_DEPLOY_STARTUP_CLEAR_HOLD']
-    updated = []
-    replaced = False
-    for line in lines:
-        if line.startswith(key + '=') or line.startswith('export ' + key + '='):
-            if not replaced:
-                updated.append(replacement)
-                replaced = True
-        else:
-            updated.append(line)
-    if not replaced:
-        updated.append(replacement)
-    fd, raw = tempfile.mkstemp(prefix=path.name + '.', dir=str(path.parent))
-    tmp = Path(raw)
+parent = path.parent
+parent_metadata = os.lstat(parent)
+if (
+    not stat.S_ISDIR(parent_metadata.st_mode)
+    or stat.S_ISLNK(parent_metadata.st_mode)
+    or parent_metadata.st_uid != os.getuid()
+    or stat.S_IMODE(parent_metadata.st_mode) & 0o077
+):
+    raise SystemExit('mac environment directory is unsafe')
+value = os.environ['MAC_DEPLOY_STARTUP_CLEAR_HOLD']
+if value not in {'0', '1'}:
+    raise SystemExit('startup hold policy must be numeric boolean')
+lock_path = path.with_name(path.name + '.lock')
+lock_flags = (
+    os.O_RDWR
+    | os.O_CREAT
+    | getattr(os, 'O_CLOEXEC', 0)
+    | getattr(os, 'O_NOFOLLOW', 0)
+)
+lock_descriptor = os.open(lock_path, lock_flags, 0o600)
+try:
+    lock_metadata = os.fstat(lock_descriptor)
+    if (
+        not stat.S_ISREG(lock_metadata.st_mode)
+        or lock_metadata.st_uid != os.getuid()
+        or lock_metadata.st_nlink != 1
+        or stat.S_IMODE(lock_metadata.st_mode) & 0o077
+    ):
+        raise SystemExit('mac environment lock is unsafe')
+    fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            stream.write('\\n'.join(updated) + '\\n')
-        tmp.chmod(0o600)
-        os.replace(tmp, path)
-    finally:
         try:
-            tmp.unlink()
+            before = os.lstat(path)
         except FileNotFoundError:
-            pass
+            lines = []
+        else:
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or stat.S_ISLNK(before.st_mode)
+                or before.st_uid != os.getuid()
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) & 0o077
+                or before.st_size > 1024 * 1024
+            ):
+                raise SystemExit('mac environment is unsafe')
+            def identity(metadata):
+                return (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    metadata.st_nlink,
+                    metadata.st_size,
+                    metadata.st_mtime_ns,
+                    metadata.st_ctime_ns,
+                )
+            descriptor = os.open(
+                path,
+                os.O_RDONLY
+                | getattr(os, 'O_CLOEXEC', 0)
+                | getattr(os, 'O_NOFOLLOW', 0),
+            )
+            try:
+                opened = os.fstat(descriptor)
+                if identity(before) != identity(opened):
+                    raise SystemExit('mac environment changed while opening')
+                raw = os.read(descriptor, opened.st_size + 1)
+                after = os.fstat(descriptor)
+                if len(raw) != opened.st_size or identity(opened) != identity(after):
+                    raise SystemExit('mac environment changed while reading')
+            finally:
+                os.close(descriptor)
+            try:
+                lines = raw.decode('utf-8').splitlines()
+            except UnicodeDecodeError as exc:
+                raise SystemExit('mac environment is unreadable') from exc
+        # Avoid importing the not-yet-deployed mac package: preserve all existing
+        # assignments and replace/append only this simple numeric policy value.
+        key = 'MAC_STARTUP_CLEAR_HOLD'
+        replacement = key + '=' + value
+        updated = []
+        replaced = False
+        for line in lines:
+            if line.startswith(key + '=') or line.startswith('export ' + key + '='):
+                if not replaced:
+                    updated.append(replacement)
+                    replaced = True
+            else:
+                updated.append(line)
+        if not replaced:
+            updated.append(replacement)
+        descriptor, raw_path = tempfile.mkstemp(prefix=path.name + '.', dir=str(parent))
+        tmp = Path(raw_path)
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                stream.write('\\n'.join(updated) + '\\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            tmp.chmod(0o600)
+            os.replace(tmp, path)
+            directory_descriptor = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+finally:
+    os.close(lock_descriptor)
 PY"
 }
 

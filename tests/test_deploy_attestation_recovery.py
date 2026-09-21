@@ -15,6 +15,11 @@ import threading
 import pytest
 
 from mac.deploy_env import read_env_file
+from mac.deployment_attestation import (
+    _atomic_private_json,
+    install_recovery_manifest,
+    recovery_manifest,
+)
 from mac.services import sign_verification_manifest
 
 
@@ -26,6 +31,104 @@ def _shell_function(source, name, next_name, *, subshell=False):
     start = f"{name}() {opening}"
     body = source.split(start, 1)[1].split(f"\n{closing}\n\n{next_name}", 1)[0]
     return start + body + f"\n{closing}\n"
+
+
+def _run_startup_hold_policy(tmp_path, *, value="0"):
+    source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
+    function = _shell_function(
+        source,
+        "set_remote_mac_startup_hold_policy",
+        "phase1_restore_contract_file_for_agent",
+    )
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, mode=0o700, exist_ok=True)
+    stubs = r"""
+deployment_id_for_agent() { printf '%s' recovery-deployment; }
+ssh_target_args() { printf 'fixture-host\0'; }
+shell_quote() { printf '%q' "$1"; }
+remote_deployment_fenced_exec() { shift 2; printf '%q ' "$@"; }
+ssh() {
+  local command="${!#}"
+  bash -c "$command"
+}
+"""
+    script = (
+        "set -u\n"
+        + function
+        + stubs
+        + f"\nset_remote_mac_startup_hold_policy node {value} deployment\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        env={**os.environ, "HOME": str(home)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result, mac_home / "mac.env"
+
+
+def test_absent_startup_hold_env_survives_attestation_install_with_exact_recovery_keys(tmp_path):
+    result, env_file = _run_startup_hold_policy(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8") == "MAC_STARTUP_CLEAR_HOLD=0\n"
+    assert os.stat(env_file).st_mode & 0o077 == 0
+
+    manifest_path = env_file.parent / "recovery.json"
+    _atomic_private_json(
+        manifest_path,
+        recovery_manifest("agent_node", "deployment", "recovered-key-" + "x" * 48),
+    )
+    receipt = install_recovery_manifest(
+        manifest_path,
+        env_file,
+        expected_agent_id="agent_node",
+        expected_deployment_id="deployment",
+    )
+
+    assert receipt["installed"] is True
+    assert read_env_file(env_file) == {
+        "MAC_ATTESTATION_KEY": "recovered-key-" + "x" * 48,
+        "MAC_STARTUP_CLEAR_HOLD": "0",
+    }
+
+
+def test_startup_hold_policy_preserves_assignments_and_replaces_duplicate_policy(tmp_path):
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, mode=0o700)
+    env_file = mac_home / "mac.env"
+    env_file.write_text(
+        "# retained\nOTHER=value\nexport MAC_STARTUP_CLEAR_HOLD=1\nMAC_STARTUP_CLEAR_HOLD=1\n",
+        encoding="utf-8",
+    )
+    env_file.chmod(0o600)
+
+    result, observed = _run_startup_hold_policy(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert observed == env_file
+    assert env_file.read_text(encoding="utf-8") == (
+        "# retained\nOTHER=value\nMAC_STARTUP_CLEAR_HOLD=0\n"
+    )
+
+
+def test_startup_hold_policy_rejects_a_symlinked_environment(tmp_path):
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, mode=0o700)
+    target = tmp_path / "outside.env"
+    target.write_text("OUTSIDE=unchanged\n", encoding="utf-8")
+    (mac_home / "mac.env").symlink_to(target)
+
+    result, env_file = _run_startup_hold_policy(tmp_path)
+
+    assert result.returncode != 0
+    assert "mac environment is unsafe" in result.stderr
+    assert env_file.is_symlink()
+    assert target.read_text(encoding="utf-8") == "OUTSIDE=unchanged\n"
 
 
 def _run_recovery(
