@@ -7516,7 +7516,20 @@ def prove_prepared_cli_without_gateway(runtimes):
     phase-1 authority above.  Both paths still inspect every gateway surface.
     """
     first_hub = os.environ.get("MAC_DEPLOY_FIRST_HUB_BOOTSTRAP") == "1"
-    phase1_repair = False if first_hub else prove_phase1_prepared_cli_authority(runtimes)
+    # The phase-1 contract exists for every cohort participant, including a
+    # fully installed static hub.  Its presence alone therefore cannot select
+    # the retained *partial-successor* exception.  An installed deployment
+    # follows ordinary daemon quiescence, where the explicit OpenShell policy
+    # decides whether a retired gateway needs inventory.  Keep the strict
+    # identity checks inside the exception for genuinely uninstalled retained
+    # successors.
+    deployed_revision = mac_home / "deployed-source-revision"
+    installed_deployment = deployed_revision.exists() or deployed_revision.is_symlink()
+    phase1_repair = (
+        False
+        if first_hub or installed_deployment
+        else prove_phase1_prepared_cli_authority(runtimes)
+    )
     if not first_hub and not phase1_repair:
         return False
     if not openshell_ever_installed():
