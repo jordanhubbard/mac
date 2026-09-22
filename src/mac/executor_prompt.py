@@ -244,7 +244,7 @@ def run_with_stall_watchdog(
     as a failed check with a diagnosable reason.
 
     Defaults: MAC_TEST_STALL_TIMEOUT (300s) / MAC_WORKER_REPOSITORY_TEST_TIMEOUT
-    (1800s).
+    (7200s).
     """
     import signal
 
@@ -261,7 +261,7 @@ def run_with_stall_watchdog(
     hard = (
         hard_timeout
         if hard_timeout is not None
-        else _env_float("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", 1800.0)
+        else _env_float("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", 7200.0)
     )
 
     # The streaming runner: this one has a stall timeout, so an inherited stdin
@@ -764,13 +764,13 @@ def _repository_bootstrap_timeout() -> float:
         resolve_env_chain(
             "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", "MAC_WORKER_REPOSITORY_TEST_TIMEOUT"
         )
-        or "1800"
+        or "7200"
     )
     try:
         value = float(raw)
-        return value if value > 0 else 1800.0
+        return value if value > 0 else 7200.0
     except ValueError:
-        return 600.0
+        return 7200.0
 
 
 def _run_repository_bootstrap_if_needed(

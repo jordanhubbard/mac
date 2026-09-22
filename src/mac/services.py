@@ -2702,12 +2702,12 @@ def verify_unpublished_repository(
         budget = float(
             timeout_seconds
             if timeout_seconds is not None
-            else os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800")
+            else os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "7200")
         )
     except ValueError:
-        budget = 1800.0
+        budget = 7200.0
     if not math.isfinite(budget) or budget <= 0:
-        budget = 1800.0
+        budget = 7200.0
     deadline = time.monotonic() + budget
 
     def remaining() -> float:

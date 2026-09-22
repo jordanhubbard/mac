@@ -875,11 +875,11 @@ def orchestrate() -> int:
     bootstrap_creates_raw = os.environ.get("MAC_REPO_BOOTSTRAP_CREATES", "")
     declared_outputs = [item.strip() for item in bootstrap_creates_raw.splitlines() if item.strip()]
     allowed_outputs = _normalized_output_paths(bootstrap_creates_raw)
-    timeout_raw = os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800")
+    timeout_raw = os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "7200")
     try:
-        timeout = max(1.0, float(timeout_raw or "1800"))
+        timeout = max(1.0, float(timeout_raw or "7200"))
     except ValueError:
-        timeout = 1800.0
+        timeout = 7200.0
 
     directory_flags = (
         os.O_RDONLY

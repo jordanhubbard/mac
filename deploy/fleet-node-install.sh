@@ -13659,7 +13659,7 @@ KillMode=mixed
 KillSignal=SIGTERM
 # A worker may need to withdraw an OpenShell task sandbox and publish its
 # terminal evidence before the supervisor escalates to SIGKILL.
-TimeoutStopSec=600
+TimeoutStopSec=3600
 LimitNOFILE=65536
 LimitCORE=infinity
 StandardOutput=journal
@@ -14365,7 +14365,7 @@ install_darwin_agent_service() {
   <key>KeepAlive</key><true/>
   <!-- Allow the worker to withdraw its OpenShell task sandbox and publish
        terminal evidence before launchd escalates the stop. -->
-  <key>ExitTimeOut</key><integer>600</integer>
+  <key>ExitTimeOut</key><integer>3600</integer>
   <key>AbandonProcessGroup</key><false/>
   <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>SoftResourceLimits</key>

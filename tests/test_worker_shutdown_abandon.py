@@ -222,12 +222,12 @@ def test_abandonment_is_a_no_op_when_no_assignment_is_held(tmp_path: Path):
 
 def test_default_grace_fits_inside_the_units_stop_timeout(tmp_path: Path):
     # The whole point of the deadline is to release BEFORE systemd's SIGKILL.
-    # mac-agent-service ships TimeoutStopSec=600 with KillMode=mixed, so a
+    # mac-agent-service ships TimeoutStopSec=3600 with KillMode=mixed, so a
     # default at or above that would abandon nothing.
     unit = Path(__file__).resolve().parents[1] / "deploy" / "fleet-node-install.sh"
     text = unit.read_text(encoding="utf-8")
-    assert "TimeoutStopSec=600" in text
-    assert 0 < DEFAULT_SHUTDOWN_GRACE_SECONDS < 600
+    assert "TimeoutStopSec=3600" in text
+    assert 0 < DEFAULT_SHUTDOWN_GRACE_SECONDS < 3600
 
     worker = MacWorker(
         object(),  # type: ignore[arg-type]

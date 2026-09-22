@@ -777,6 +777,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_BUILD_LOCK_WAIT_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell build lock wait seconds. |
 | `MAC_OPENSHELL_CHILD` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell child. |
 | `MAC_OPENSHELL_CREATE_ARGS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell create args. |
+| `MAC_OPENSHELL_DELETE_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell delete timeout. |
 | `MAC_OPENSHELL_DOCKER_BIN` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell docker bin. |
 | `MAC_OPENSHELL_ENV_PASSTHROUGH` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell env passthrough. |
 | `MAC_OPENSHELL_EVENTS_FILE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell events file. |
@@ -807,6 +808,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox name. |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell stale after seconds. |
 | `MAC_OPENSHELL_TASK_EGRESS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell task egress. |
+| `MAC_OPENSHELL_TRANSFER_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell transfer timeout. |
 | `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell upload codex auth. |
 | `MAC_OPENSHELL_VERIFICATION_START_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell verification start timeout. |
 | `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
@@ -1231,6 +1233,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Worker setting: worker deploy generation. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |
+| `MAC_WORKER_EXECUTOR_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker executor timeout. |
 | `MAC_WORKER_HEARTBEAT_INTERVAL` | int | consumer-defined | worker | Worker setting: worker heartbeat interval. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |
 | `MAC_WORKER_HOSTNAME` | str | consumer-defined | worker | Worker setting: worker hostname. |

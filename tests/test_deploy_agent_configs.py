@@ -870,9 +870,9 @@ def test_agent_services_allow_full_openshell_task_withdrawal():
     assert "SuccessExitStatus=143 SIGTERM" in linux
     assert "KillMode=mixed" in linux
     assert "KillSignal=SIGTERM" in linux
-    assert "TimeoutStopSec=600" in linux
+    assert "TimeoutStopSec=3600" in linux
     assert "TimeoutStopSec=30" not in linux
-    assert "<key>ExitTimeOut</key><integer>600</integer>" in darwin
+    assert "<key>ExitTimeOut</key><integer>3600</integer>" in darwin
     assert "<key>ExitTimeOut</key><integer>30</integer>" not in darwin
     assert "<key>AbandonProcessGroup</key><false/>" in darwin
 

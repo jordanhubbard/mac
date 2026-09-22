@@ -5137,6 +5137,7 @@
     "name": "MAC_EXECUTOR_AGENT_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/services.py"
     ],
@@ -9216,6 +9217,18 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell delete timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_DELETE_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell docker bin.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_DOCKER_BIN",
@@ -9599,6 +9612,18 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell transfer timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_TRANSFER_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell upload codex auth.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_UPLOAD_CODEX_AUTH",
@@ -9616,6 +9641,7 @@
     "name": "MAC_OPENSHELL_VERIFICATION_START_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py"
     ],
     "type": "int"
@@ -12974,6 +13000,7 @@
     "name": "MAC_SELF_UPDATE_GIT_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "int"
@@ -14677,6 +14704,18 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker executor timeout.",
+    "family": "worker",
+    "name": "MAC_WORKER_EXECUTOR_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker heartbeat interval.",
     "family": "worker",
     "name": "MAC_WORKER_HEARTBEAT_INTERVAL",
@@ -14797,6 +14836,7 @@
     "name": "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py"
     ],
@@ -14809,6 +14849,7 @@
     "name": "MAC_WORKER_REPOSITORY_TEST_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",

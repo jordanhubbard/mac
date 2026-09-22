@@ -314,6 +314,27 @@ def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path)
     assert "MAC_CLIENT_PRINCIPALS_FILE" not in spoke
 
 
+def test_large_repository_timeouts_are_generous_and_preserve_overrides(tmp_path):
+    defaults = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
+    expected = {
+        "MAC_SELF_UPDATE_GIT_TIMEOUT": "1800",
+        "MAC_OPENSHELL_TRANSFER_TIMEOUT": "1800",
+        "MAC_OPENSHELL_DELETE_TIMEOUT": "600",
+        "MAC_OPENSHELL_VERIFICATION_START_TIMEOUT": "600",
+        "MAC_EXECUTOR_AGENT_TIMEOUT": "7200",
+        "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT": "7200",
+        "MAC_WORKER_REPOSITORY_TEST_TIMEOUT": "7200",
+        "MAC_WORKER_EXECUTOR_TIMEOUT": "21600",
+    }
+    for name, value in expected.items():
+        assert defaults[name] == value
+
+    existing = {name: "12345" for name in expected}
+    preserved = deploy_env.build_mac_env(existing, _cfg(tmp_path), environ={})
+    for name, value in existing.items():
+        assert preserved[name] == value
+
+
 def test_hub_verify_uses_the_deployment_approved_runtime_image(tmp_path):
     runtime = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
 
