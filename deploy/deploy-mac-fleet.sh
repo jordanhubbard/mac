@@ -188,15 +188,6 @@ PREPARE_NETWORK_PREREQUISITES=0
 PREPARE_FUNGIBLE_ONBOARDING=0
 PREFLIGHT_ONLY=0
 QUALIFICATION_RECEIPT=""
-WORKER_CREDENTIAL_MODE="${MAC_DEPLOY_WORKER_CREDENTIAL_MODE:-current}"
-case "$WORKER_CREDENTIAL_MODE" in
-  current|pending) ;;
-  *)
-    echo "ERROR: MAC_DEPLOY_WORKER_CREDENTIAL_MODE must be current or pending" >&2
-    exit 2
-    ;;
-esac
-readonly WORKER_CREDENTIAL_MODE
 # Names the one node whose hub route this run is allowed to prove after the
 # deploy instead of before it: the fleet's own hub agent, on a machine that has
 # never been deployed. Empty for every other run. Set only by
@@ -13401,17 +13392,24 @@ finally: os.close(fd)
 sys.argv=[path]+sys.argv[3:]
 namespace={"__name__":"__main__","__file__":path}
 exec(compile(raw,path,"exec"),namespace)'
-  result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")")"
+    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")")"; then
+    echo "ERROR: ${agent}: current worker credential validation failed" >&2
+    return 1
+  fi
   printf '%s\n' "$result" > "$manifest"
   chmod 0600 "$manifest"
-  "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
+  if ! "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 if value.get("schema") != "mac.worker_credential_current.v1" or value.get("status") != "valid" or value.get("agent_id") != sys.argv[2] or not value.get("principal_id"):
     raise SystemExit("current worker credential validation is invalid")
 PY
+  then
+    echo "ERROR: ${agent}: current worker credential receipt is invalid" >&2
+    return 1
+  fi
   echo "==> ${agent}: existing authenticated worker credential validated"
 )
 
@@ -13554,21 +13552,17 @@ build_and_open_hub_epoch() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     fleet_name="${fields[23]:-mac}"; capabilities="${fields[10]:-}"
-    if [ "$WORKER_CREDENTIAL_MODE" = "pending" ]; then
-      issue_pending_worker_credential "$agent" "$hub_agent" "$fleet_name" "$capabilities"
-    else
-      validate_current_worker_credential "$agent" "$hub_agent"
-    fi
+    validate_current_worker_credential "$agent" "$hub_agent" || return 1
     create_attestation_candidate "$agent"
     state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
     hub_epoch_client_read "$hub_agent" "$state" participant-state --agent-id "$agent_id"
   done < "$selected_specs_file"
   "$PYTHON_BIN" - "$selected_specs_file" "$TMPDIR_LOCAL/fleet-cohort.json" "$TMPDIR_LOCAL" "$material" \
     "$COHORT_EPOCH_ID" "$GIT_REV" "$REQUIRE_RELEASE_ALL_SELECTED" \
-    "$SUCCESSOR_HOLD_REASON" "$WORKER_CREDENTIAL_MODE" <<'PY'
+    "$SUCCESSOR_HOLD_REASON" <<'PY'
 import json,os,sys,tempfile
 from pathlib import Path
-selected,cohort_raw,root_raw,output_raw,epoch,source,require_all,successor,credential_mode=sys.argv[1:]
+selected,cohort_raw,root_raw,output_raw,epoch,source,require_all,successor=sys.argv[1:]
 root=Path(root_raw); agents=[]
 cohort={item["stable_id"]:item for item in json.load(open(cohort_raw,encoding="utf-8"))}
 for line in Path(selected).read_text(encoding="utf-8").splitlines():
@@ -13584,7 +13578,7 @@ for line in Path(selected).read_text(encoding="utf-8").splitlines():
         "deployment_id":bound["deployment_id"],
         "participant_state":state,
         "principal_id":manifest["principal_id"],
-        "principal_mode":credential_mode,
+        "principal_mode":"current",
         "attestation_candidate_key":candidate["key"],
         "report_executor_action":"revoke",
         "report_executor_attestation":None,
@@ -16885,9 +16879,6 @@ typed_phase2_apply_worker() {
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
     "$(node_route_identity_sha256 "$agent")" || return 1
-  if [ "$WORKER_CREDENTIAL_MODE" = "pending" ]; then
-    install_pending_worker_credential "$agent" "$supervisor" "$fleet_name" || return 1
-  fi
   install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name" || return 1
   collect_typed_release_ready_evidence "$spec" || return 1
   evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
