@@ -1855,7 +1855,10 @@ SSH identity paths, credentials, or operational host topology.</p>
 <p>The host configuration supplies <code>base_image</code>, <code>base_sha256</code>, <code>firmware_code</code>,
 <code>firmware_code_sha256</code>, <code>firmware_vars</code>, <code>firmware_vars_sha256</code>, and <code>workspace</code>.
 Optional <code>memory_mib</code>, <code>cpus</code>, and <code>max_timeout_seconds</code> bound execution. Defaults
-are 16 GiB and eight CPUs; hard limits are 32 GiB, twelve CPUs, and two hours.
+are 16 GiB and eight CPUs; hard resource limits are 32 GiB and twelve CPUs.
+The default time ceiling is two hours, configurable with <code>max_timeout_seconds</code>.
+Align that ceiling with the controller's <code>MAC_HUB_VERIFY_TIMEOUT</code> before rollout;
+requests exceeding the configured ceiling are rejected before execution.
 Install the reviewed standalone <code>src/mac/vm_verifier_host.py</code> on that host.</p>
 <p>The controller configuration supplies the same base and firmware digest pins,
 <code>ssh_target</code>, <code>ssh_identity</code>, <code>ssh_known_hosts</code>, <code>remote_runner</code>, and
@@ -1864,7 +1867,9 @@ an independently enrolled host key. Host-key checking is mandatory and agent
 forwarding is disabled.</p>
 <h2 id="execution-and-evidence">Execution and evidence<a class="headerlink" href="#execution-and-evidence" title="Permanent link">&para;</a></h2>
 <p>The controller stages the exact repository commit using the existing hub source
-preparation path and streams its archive to the host. Each request gets a fresh
+preparation path and streams its archive to the host. Publication gates route by
+the canonical repository URL while staging the local projected merge and checking
+its exact commit and expected merged tree. Each request gets a fresh
 copy-on-write disk, UEFI variables, SSH management keys, and cloud-init seed.
 There are no host filesystem mounts. QEMU user networking is restricted, with
 only a loopback management SSH forward. The host serializes reviews with a lock.</p>
