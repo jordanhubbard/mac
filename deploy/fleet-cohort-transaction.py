@@ -224,6 +224,7 @@ HUB_RECEIPT_AGENT_KEYS = frozenset(
         "report_executor_action",
     }
 )
+HUB_RECEIPT_AGENT_KEYS_WITH_PRINCIPAL_MODE = HUB_RECEIPT_AGENT_KEYS | {"principal_mode"}
 ENDPOINT_IDENTITY_KEYS = frozenset({"schema", "adapter", "authority", "observation"})
 SSH_AUTHORITY_KEYS = frozenset({"ssh_host_key_sha256", "instance_id_kind", "instance_id_sha256"})
 SSH_HUB_AUTHORITY_KEYS = SSH_AUTHORITY_KEYS | {"durable_store_uuid_sha256"}
@@ -2122,8 +2123,16 @@ def _hub_receipt_evidence(
     observed_agents: dict[str, str] = {}
     ownership: list[dict[str, Any]] = []
     for item in agents:
-        if not isinstance(item, dict) or frozenset(item) != HUB_RECEIPT_AGENT_KEYS:
+        if not isinstance(item, dict) or frozenset(item) not in {
+            HUB_RECEIPT_AGENT_KEYS,
+            HUB_RECEIPT_AGENT_KEYS_WITH_PRINCIPAL_MODE,
+        }:
             raise JournalError("invalid_evidence", "hub receipt agent schema is not exact")
+        if "principal_mode" in item and item["principal_mode"] not in {
+            "current",
+            "pending",
+        }:
+            raise JournalError("invalid_evidence", "hub receipt principal mode is invalid")
         agent_id = item["agent_id"]
         if not isinstance(agent_id, str) or agent_id in observed_agents:
             raise JournalError("invalid_evidence", "hub receipt agent id is invalid")
