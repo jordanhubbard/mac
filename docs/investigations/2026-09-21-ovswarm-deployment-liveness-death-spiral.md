@@ -1,6 +1,6 @@
 # Ovswarm deployment liveness death spiral RCCA, 2026-09-21
 
-Status: recovery incomplete at the evidence cutoff. The durable cohort journal and dispatch holds remain authoritative. This report does not claim that the fleet is recovered, release-qualified, or serving work.
+Status: fleet recovery complete; release qualification incomplete. Six independent lanes of eight workers, plus the exceptional `ovswarm-worker2` and static hub `ovswarm-worker49` paths, reached terminal deployment state. Direct checks of every registered target proved the exact deployed source and active worker service, and Puck subsequently drove all 50 workers concurrently on pinned canary tasks. The deterministic 300-task campaign and its review/oracle gate were still running at this report's latest evidence cutoff.
 
 Source under investigation: `2944aebb4e900a28c553d1860abf7c2b9671b06a` plus the retained deployment journal for that revision.
 
@@ -16,12 +16,12 @@ The architectural correction is not to weaken identity, attestation, filesystem,
 
 ## Evidence basis
 
-The operational facts come from the live controller output and retained recovery evidence: the named workers, worker50's exact rejection, the hub SSH timeout, and the final statement that cohort recovery remained incomplete with journal and holds retained. The mechanism and line references come from the exact `7f3bbd12` source and its tests. Conclusions about causality are limited to where those two bodies of evidence agree. This document does not infer successful recovery from process liveness, a partial node count, or the existence of a journal.
+The operational facts come from the live controller output and retained recovery evidence: the named workers, `ovswarm-worker50`'s exact rejection, the hub SSH timeout, and the final statement that cohort recovery remained incomplete with journal and holds retained. The mechanism and line references come from the exact `7f3bbd12` source and its tests. Conclusions about causality are limited to where those two bodies of evidence agree. This document does not infer successful recovery from process liveness, a partial node count, or the existence of a journal.
 
 ## Impact
 
 - The requested 50-worker rollout did not converge.
-- The deployment stopped at worker50's phase-1 quiescence with `retained successor has an installed identity`.
+- The deployment stopped at `ovswarm-worker50`'s phase-1 quiescence with `retained successor has an installed identity`.
 - Reverse recovery later stopped on `Connection to 10.57.228.137 port 22 timed out`.
 - The cohort journal remained non-terminal and deployment/dispatch holds remained in place. Work could not safely be released.
 - Earlier long-running attempts also allowed fungible worker rows needed by recovery to age past their liveness TTL and be tombstoned.
@@ -36,14 +36,14 @@ The exact wall-clock timestamps remain in the deployment logs and journal; this 
 3. Missing-key recovery created `mac.env` with only `MAC_ATTESTATION_KEY`. The retained-successor identity contract rejected the incomplete environment.
 4. The hold writer was corrected, tested, and incorporated into source `7f3bbd12`.
 5. A new 50-worker typed rollout from `7f3bbd12` began. Read-only preparation and staging used bounded fan-out, while service quiescence remained cohort-ordered and serial.
-6. Workers before worker50 were quiesced. Worker50 then failed phase-1 quiescence with `retained successor has an installed identity`.
-7. Inspection established the trigger shape: worker50 had no `~/.mac/deployed-source-revision` but did have a full installed `~/.mac/mac.env`.
+6. Workers before `ovswarm-worker50` were quiesced. `ovswarm-worker50` then failed phase-1 quiescence with `retained successor has an installed identity`.
+7. Inspection established the trigger shape: `ovswarm-worker50` had no `~/.mac/deployed-source-revision` but did have a full installed `~/.mac/mac.env`.
 8. The controller entered retain-forward recovery. Recovery processed candidates serially.
 9. During these long stopped intervals, the hub's fungible-agent expiry policy could tombstone workers silent for its default 3,600-second TTL because deployment-epoch participation is not an expiry exemption.
 10. A later recovery operation made a direct SSH connection to the hub at `10.57.228.137`; one connection attempt timed out.
 11. Recovery returned failure before the journal could record every node as recovered. The journal and holds were retained for adoption by the next controller.
-12. The hub and worker1 were upgraded to `2944aebb`; worker1 passed the complete release-readiness proof with a direct runtime hub URL.
-13. Worker2 installed the same revision but could not authenticate: the one-hour TTL had tombstoned its registry identity while the epoch remained open, so its newly installed bearer was rejected as unknown.
+12. The hub and `ovswarm-worker1` were upgraded to `2944aebb`; `ovswarm-worker1` passed the complete release-readiness proof with a direct runtime hub URL.
+13. `ovswarm-worker2` installed the same revision but could not authenticate: the one-hour TTL had tombstoned its registry identity while the epoch remained open, so its newly installed bearer was rejected as unknown.
 14. Recovery first returned HTTP 404 because abort tried to lock participant rows already deleted by TTL. Re-registering those exact installed identities under superseding operator holds advanced recovery.
 15. Recovery then rejected the changed principal set even for workers that had never installed their candidate credential. That exactness protected no node-side identity and made TTL cleanup a permanent global lock.
 
@@ -51,7 +51,7 @@ The exact wall-clock timestamps remain in the deployment logs and journal; this 
 
 ### Immediate trigger
 
-Worker50 presented contradictory installed-state evidence:
+`ovswarm-worker50` presented contradictory installed-state evidence:
 
 - `~/.mac/deployed-source-revision`: absent;
 - `~/.mac/mac.env`: present and carrying full installed identity, not the two-key recovery-only form;
@@ -59,7 +59,7 @@ Worker50 presented contradictory installed-state evidence:
 
 At `deploy/fleet-node-install.sh:7511-7533`, `prove_prepared_cli_without_gateway` uses existence of `deployed-source-revision` as the discriminator between an installed deployment and a retained partial successor. With the marker absent, it calls `prove_phase1_prepared_cli_authority` (`7418-7508`). That proof permits an environment only when the key set is exactly `MAC_ATTESTATION_KEY` and `MAC_STARTUP_CLEAR_HOLD`, with a valid key and hold clearing disabled (`7342-7414`). A full installed environment therefore produces the observed error.
 
-This rejection is preferable to treating an ambiguous identity as trusted. The defect is that contradictory evidence was discovered at worker50, after cohort-wide mutation, and had no bounded repair or quarantine path.
+This rejection is preferable to treating an ambiguous identity as trusted. The defect is that contradictory evidence was discovered at `ovswarm-worker50`, after cohort-wide mutation, and had no bounded repair or quarantine path.
 
 ### Architectural root cause
 
@@ -87,7 +87,7 @@ Before attestation recovery may create or update `mac.env`, the node must durabl
 
 ### Installed identity is coherent before mutation
 
-The revision marker, environment identity class, installed source and venv, generation/barrier, and signed deployment manifests must describe one state before the hub epoch opens. Worker50 violated this invariant, but MAC did not diagnose it until phase-1 quiescence.
+The revision marker, environment identity class, installed source and venv, generation/barrier, and signed deployment manifests must describe one state before the hub epoch opens. `ovswarm-worker50` violated this invariant, but MAC did not diagnose it until phase-1 quiescence.
 
 The installed-static-hub correction already included in `7f3bbd12` handles the coherent case where `deployed-source-revision` exists (`tests/test_fleet_node_daemon_quiescence.py:1199-1238`). It deliberately does not authorize marker-absent/full-environment drift.
 
@@ -140,6 +140,14 @@ Generated state remains exact: one canonical `mac.env` rendering, one revision-m
 
 ## Fixed and open
 
+### Recovered in the live fleet
+
+- The stuck epoch was recovered and terminally finalized. Recovery required restoring tombstoned participant rows under superseding holds and teaching abort to accept principal drift for participants whose candidate credential was never installed.
+- The corrected source `1154f2ada5e770b3a38d1493ca8ff050f04e94b0` was deployed in six independent eight-node lanes, with separately fenced handling for `ovswarm-worker2` and the static hub `ovswarm-worker49`.
+- All 50 registered targets independently reported that exact source revision and an active `ovswarm-agent.service`; the hub reported 50 healthy, unheld workers plus the operator and reviewer.
+- Puck used its explicit `ovswarm` profile to register the human and repository bridge, stage and release the canary tasks, dispatch work, and query results. At peak, all 50 distinct workers simultaneously owned running tasks.
+- Recovery is not release qualification. The deployed runtime image did not have a verified tested-tag alias, the full contract suite still had four failures, nested GPU CDI acceptance failed, and the 300-task oracle campaign had not yet completed at the cutoff.
+
 ### Fixed in `7f3bbd12`
 
 - An absent `mac.env` is atomically created with startup hold clearing disabled.
@@ -150,7 +158,7 @@ Generated state remains exact: one canonical `mac.env` rendering, one revision-m
 
 ### Still open
 
-- Worker50's marker-absent/full-environment state has no pre-mutation classification or authenticated repair.
+- `ovswarm-worker50`'s marker-absent/full-environment state has no pre-mutation classification or authenticated repair.
 - Invalid nodes cannot be quarantined independently while an explicitly approved healthy cohort remains available.
 - Quiescence and recovery have fleet-size-linear remote critical paths.
 - Fungible expiry is unaware of active deployment-epoch membership.
@@ -165,7 +173,7 @@ Generated state remains exact: one canonical `mac.env` rendering, one revision-m
 
 ### P0 — required before another 50-node all-selected rollout
 
-1. **Add an all-node identity-coherence preflight.** Before hub epoch open or the first service stop, classify the revision marker, environment class, source/venv, generation barrier, and signed manifests for every selected node. Report exact contradictions. Quarantine worker50-shaped nodes before mutation.
+1. **Add an all-node identity-coherence preflight.** Before hub epoch open or the first service stop, classify the revision marker, environment class, source/venv, generation barrier, and signed manifests for every selected node. Report exact contradictions. Quarantine `ovswarm-worker50`-shaped nodes before mutation.
 2. **Add authenticated marker repair, not classifier relaxation.** Reconstruct a missing `deployed-source-revision` only when journal-bound or signed deployment manifests agree on the exact revision and generation. Write it atomically under the deployment fence. Extra keys must remain forbidden in a true recovery-only environment.
 3. **Pin live epoch members against expiry.** Record a durable deployment-epoch membership lease in the hub. `expire_ephemeral_agents` must skip an exact active member until the epoch is terminal, while continuing to tombstone unrelated silent fungible agents.
 4. **Retry idempotent recovery transport.** Add bounded exponential backoff for hub and node SSH operations whose operation ID, endpoint identity, and deployment lock make replay safe. Revalidate route identity and fence before every attempt. Endpoint changes remain a hard stop.
@@ -174,9 +182,23 @@ Generated state remains exact: one canonical `mac.env` rendering, one revision-m
 7. **Move every artifact fetch before quiescence.** The stopped phase may consume only locally verified immutable artifacts. Any network fetch after service stop is a protocol defect.
 8. **Use one authoritative hub-route artifact.** Selection, generated runtime configuration, readiness proof, and recovery must consume the same signed route decision; remove independent localhost/direct rewrites.
 
+### Replacement plan — compatibility is explicitly not a constraint
+
+The incident showed that incremental compatibility with the all-fleet transaction preserves the wrong abstraction. Replace it instead of extending it:
+
+1. **Delete heartbeat-driven identity deletion.** TTL changes durable workers to `offline`; only an explicit fenced decommission may delete dispatch identity. Reject decommission while an epoch, hold, journal, task, or lease references the worker.
+2. **Delete credential rotation from software deployment.** Deployment validates the current credential. Rotation becomes a separate per-node state machine with old/new overlap until the successor heartbeat is proved.
+3. **Delete ambient route discovery after planning.** Freeze one signed, hashed route bundle from the fleet registry and require every subprocess and receipt in the epoch to name its digest.
+4. **Delete post-quiescence network dependencies.** Pre-stage a content-addressed capsule containing source, toolchains, wheels, runtime images, helpers, service definitions, and recovery material. After the barrier, outbound DNS, download, and connect attempts are protocol violations.
+5. **Delete the all-50 serial controller path.** Run idempotent per-node state machines in parallel lanes of at most eight. A failed lane stays held; successful lanes commit independently. One slow node may block only its lane.
+6. **Make storage health an admission gate.** Require write, rename, file-fsync, directory-fsync, free-space, and provider-health probes before staging. Fence non-returning storage without synchronously pinning controller exit or unrelated lanes.
+7. **Make fault convergence the release gate.** Require 100 randomized 50-node runs covering TTL expiry, route swaps, stale authority, expired credentials, missing artifacts, controller death, and non-returning storage. Every run must converge to either an unchanged authenticating prior generation or a fully proved successor per lane. Then require live 8-, 24-, and 50-worker canaries with distinct-worker completion evidence.
+
+These are breaking control-plane changes. Old deployment journals and worker records should be migrated once into the new typed forms or explicitly quarantined; the new controller should not retain dual execution paths indefinitely.
+
 ### P1 — remove the fleet-size liveness amplifier
 
-1. **Use bounded rolling cohorts with an availability floor.** For 50 workers, default to batches no larger than five and keep at least 45 healthy, eligible workers until the next batch is proven. An all-50 qualification may require every batch eventually, but it must not require all 50 to be down together.
+1. **Use bounded rolling lanes with an availability floor.** For 50 workers, default to lanes no larger than eight and keep at least 42 healthy, eligible workers until the next lane is proven. An all-50 qualification may require every lane eventually, but it must not require all 50 to be down together.
 2. **Decouple WAL ordering from remote serialization.** Durably arm a batch of per-node intents, perform fenced remote operations concurrently with bounded fan-out, then serialize or batch-CAS completion records. Apply the same design to reverse recovery.
 3. **Make quarantine explicit.** A node with incoherent but contained local state becomes `deployment_quarantined`, remains dispatch-held, and receives a typed repair plan. Its defect must not silently shrink an all-selected acceptance denominator, but it also must not stop healthy nodes from serving.
 4. **Enforce a duration budget.** Before mutation, compare cohort size and phase bounds with ephemeral TTLs, credential lifetimes, hold leases, and availability policy. Refuse an unsafe plan or reduce its batch size.
@@ -197,7 +219,7 @@ The incident may be closed only when all applicable criteria are evidenced; a gr
 ### Identity classification and repair
 
 - An integration test reproduces the early-cohort worker's absent environment and proves the hold exists before key installation.
-- An integration test reproduces worker50's absent marker plus full installed environment and fails during read-only preflight, before hub epoch open or any service stop.
+- An integration test reproduces `ovswarm-worker50`'s absent marker plus full installed environment and fails during read-only preflight, before hub epoch open or any service stop.
 - Positive repair tests accept only mutually agreeing signed/journal-bound evidence and emit the exact canonical marker.
 - Negative tests reject stale revision, wrong generation, unsigned evidence, unsafe file types/modes/owners, extra recovery keys, and concurrent artifact changes.
 
