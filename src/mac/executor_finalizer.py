@@ -2075,7 +2075,7 @@ def write_fallback_evidence_manifest(
     (never a fake repo_change/test, no synthetic passing check), so a
     proof-requiring task with no real evidence fails the verification gate
     honestly instead of auto-publishing chatter."""
-    if result.returncode != 0 or isinstance(review_context, dict):
+    if isinstance(review_context, dict):
         return
     if task_is_repo_coupled(task):
         return
@@ -2099,6 +2099,20 @@ def write_fallback_evidence_manifest(
         },
         "task": {"id": task.get("id"), "title": task.get("title"), "project": task.get("project")},
     }
+    if result.returncode != 0:
+        # A provider or harness can fail during teardown after emitting the
+        # complete deliverable. Preserve that output only when the task's
+        # deterministic, typed acceptance contract proves the exact result.
+        # Generic prose and optional/advisory acceptance never qualify.
+        from mac.semantic_acceptance import evaluate_acceptance
+
+        acceptance = evaluate_acceptance(task.get("metadata"), manifest)
+        if acceptance.get("required") is not True or acceptance.get("status") != "pass":
+            return
+        manifest["late_exit_candidate"] = {
+            "schema": "mac.late_exit_candidate.v1",
+            "original_returncode": result.returncode,
+        }
     recovery_log = _load_harness_recovery_log(task_workspace)
     if recovery_log:
         manifest["recovery"] = recovery_log

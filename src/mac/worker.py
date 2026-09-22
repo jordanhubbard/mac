@@ -104,6 +104,7 @@ from mac.repository_contract import (
 )
 from mac.repository_access_env import read_only_repository_content_digest
 from mac.persistence_redaction import redact_for_persistence
+from mac.semantic_acceptance import evaluate_acceptance
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -508,6 +509,65 @@ class WorkerExecution:
     @property
     def succeeded(self) -> bool:
         return self.returncode == 0
+
+
+def _salvage_accepted_late_exit(
+    task: JsonDict,
+    task_dir: Path,
+    execution: WorkerExecution,
+) -> tuple[WorkerExecution, Optional[JsonDict]]:
+    """Promote a late nonzero exit only when typed acceptance already passes.
+
+    Some harnesses can exit nonzero after writing their complete deliverable.
+    The process return code remains useful diagnostic evidence, but it must not
+    discard a deterministically accepted result. Conversely, ordinary output
+    or a merely well-shaped manifest is never enough to turn failure into
+    success: salvage is available only to tasks with a required acceptance
+    contract whose verifier passes against the exact manifest we will sign.
+    """
+
+    if execution.succeeded:
+        return execution, None
+    manifest_path = task_dir / "mac-evidence.json"
+    if not manifest_path.exists():
+        # Subprocess-backed executors normally call this before returning, but
+        # direct/custom executors share the same salvage contract. The fallback
+        # itself writes only when typed acceptance passes.
+        from mac.executor_finalizer import write_fallback_evidence_manifest
+
+        write_fallback_evidence_manifest(task_dir, task, execution, None)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return execution, None
+    if not isinstance(manifest, dict):
+        return execution, None
+    if (
+        str(manifest.get("schema") or "").strip() != VERIFICATION_SCHEMA
+        or str(manifest.get("status") or "").strip().lower() != "complete"
+        or not str(manifest.get("evidence_type") or "").strip()
+    ):
+        return execution, None
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    acceptance = evaluate_acceptance(metadata, manifest)
+    if acceptance.get("required") is not True or acceptance.get("status") != "pass":
+        return execution, acceptance
+    original_returncode = execution.returncode
+    salvage = {
+        "schema": "mac.late_exit_salvage.v1",
+        "original_returncode": original_returncode,
+        "acceptance": acceptance,
+    }
+    return (
+        WorkerExecution(
+            returncode=0,
+            summary=execution.summary,
+            stdout=execution.stdout,
+            stderr=execution.stderr,
+            metadata={**execution.metadata, "late_exit_salvage": salvage},
+        ),
+        acceptance,
+    )
 
 
 def _redact_worker_execution(execution: WorkerExecution) -> WorkerExecution:
@@ -1893,14 +1953,32 @@ class MacWorker(
                 if _b_recovered:
                     started = time.monotonic()
                     execution = self._execute_task(task, lease, task_dir)
+            recorded_execution, late_exit_acceptance = _salvage_accepted_late_exit(
+                task,
+                task_dir,
+                execution,
+            )
+            if late_exit_acceptance is not None:
+                self._observe_log(
+                    "worker.execution.late_exit_acceptance",
+                    level=("info" if late_exit_acceptance.get("status") == "pass" else "warning"),
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={
+                        "original_returncode": execution.returncode,
+                        "required": late_exit_acceptance.get("required"),
+                        "status": late_exit_acceptance.get("status"),
+                        "problems": late_exit_acceptance.get("problems") or [],
+                    },
+                )
             evidence = self._record_execution(
                 task_id,
                 task_dir,
-                execution,
+                recorded_execution,
                 lease_id=lease_id,
                 attempt_state=attempt_state,
             )
-            if execution.succeeded:
+            if recorded_execution.succeeded:
                 evidence_metadata = ensure_json_object(evidence.get("metadata"))
                 manifest = ensure_json_object(evidence_metadata.get("verification"))
                 evidence_type = str(manifest.get("evidence_type") or "").strip().lower()
@@ -2041,7 +2119,7 @@ class MacWorker(
                     evidence = self._record_execution(
                         task_id,
                         task_dir,
-                        execution,
+                        recorded_execution,
                         lease_id=lease_id,
                         attempt_state=attempt_state,
                     )
