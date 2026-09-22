@@ -350,6 +350,7 @@ class JudgementProcess:
                 self._check_high_token_without_publication,
                 self._check_failed_dependency_deadlocks,
                 self._check_stuck_reviewing,
+                self._check_hub_reviewer_attestation_key,
                 self._check_semantic_reviewer_still_assigned,
                 self._check_excessive_reviewing_population,
                 self._check_too_many_gates,
@@ -528,6 +529,29 @@ class JudgementProcess:
                 )
             )
         return findings
+
+    def _check_hub_reviewer_attestation_key(self) -> List[Finding]:
+        """Surface review-signing readiness without exposing key material."""
+
+        checker = getattr(self.control_plane, "hub_reviewer_attestation_key_status", None)
+        if not callable(checker):
+            return []
+        try:
+            status = checker()
+        except Exception:  # noqa: BLE001 - no registered virtual reviewer yet.
+            return []
+        if status.get("ready") is True and status.get("state") == "decryptable":
+            return []
+        agent_id = str(status.get("agent_id") or "")
+        state = str(status.get("state") or "unknown")
+        return [
+            Finding(
+                kind="hub_reviewer_attestation_key_unhealthy",
+                agent_id=agent_id,
+                summary="virtual hub reviewer signing key is %s" % state,
+                detail=dict(status),
+            )
+        ]
 
     def _check_semantic_reviewer_still_assigned(self) -> List[Finding]:
         findings: List[Finding] = []
