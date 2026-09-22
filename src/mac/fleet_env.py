@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
@@ -167,12 +169,37 @@ def parse_env_file(path: Path) -> Dict[str, str]:
 
 
 def _render_assignment(key: str, value: str, *, export: bool = False) -> str:
-    """Render a ``KEY=value`` line, double-quoting values that need it."""
+    """Render a shell-safe assignment from a raw, unquoted value.
+
+    ``shlex.quote`` deliberately uses single-quote concatenation for embedded
+    apostrophes.  Unlike double quotes, that representation cannot expand
+    variables, execute substitutions, or reinterpret backslashes when the env
+    file is sourced by a POSIX shell.
+    """
+    if "\x00" in value or "\n" in value or "\r" in value:
+        raise ValueError("environment values must not contain NUL or newlines")
     prefix = "export " if export else ""
-    if value == "" or re.search(r"[\s\"'$`\\#]", value):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return '%s%s="%s"' % (prefix, key, escaped)
-    return "%s%s=%s" % (prefix, key, value)
+    return "%s%s=%s" % (prefix, key, shlex.quote(value))
+
+
+def _atomic_write_private(path: Path, content: str) -> None:
+    """Atomically replace ``path`` with owner-only UTF-8 content."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_temp_path = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
+    temp_path = Path(raw_temp_path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.chmod(0o600)
+        os.replace(str(temp_path), str(path))
+    except BaseException:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def set_env_key(path: Path, key: str, value: str, *, backup: bool = True) -> bool:
@@ -180,8 +207,10 @@ def set_env_key(path: Path, key: str, value: str, *, backup: bool = True) -> boo
 
     Replaces the first existing assignment for ``key`` in place (keeping an
     ``export`` prefix if present) or appends it when absent; the rest of the
-    file is preserved byte-for-byte. Values containing whitespace or shell
-    metacharacters are double-quoted. Creates the file (mode 0600) if missing.
+    file is preserved byte-for-byte. The caller supplies a raw value; it is
+    quoted exactly once so every shell metacharacter remains literal when the
+    file is sourced. NUL and newline-containing values are rejected. Creates
+    the file (mode 0600) if missing and replaces it atomically.
     When ``backup`` is set and the file already exists, a timestamped copy is
     written next to it before the change. Returns True iff the file changed.
     """
@@ -211,12 +240,7 @@ def set_env_key(path: Path, key: str, value: str, *, backup: bool = True) -> boo
             backup_path.chmod(0o600)
         except OSError:
             pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(new_text, encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    _atomic_write_private(path, new_text)
     return True
 
 
@@ -276,12 +300,7 @@ def migrate_env_file(
         "# Added by `mac admin config migrate-env-namespace --fleet %s` (mac-g55y)" % fleet
     )
     for new_key, new_value in added.items():
-        # Quote values containing spaces or shell meta chars.
-        if re.search(r"[\s\"'$`\\]", new_value):
-            escaped = new_value.replace("\\", "\\\\").replace('"', '\\"')
-            lines.append('%s="%s"' % (new_key, escaped))
-        else:
-            lines.append("%s=%s" % (new_key, new_value))
+        lines.append(_render_assignment(new_key, new_value))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return added, kept
 
