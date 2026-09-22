@@ -869,6 +869,7 @@ def _read_only_report_executor_attestation(
         from mac.executor_sandbox import (
             _kernel_has_landlock,
             _managed_openshell_runtime_image_ref,
+            _runtime_executor_config_sha256,
             _read_only_report_environment_passthrough_valid,
             _read_only_report_extra_create_argv,
             _resolve_openshell_policy,
@@ -934,6 +935,16 @@ def _read_only_report_executor_attestation(
             os.environ.get("MAC_SELF_UPDATE_REPO") or str(_default_self_update_repo())
         ).strip()
         source_root, source_bundle_sha256 = nofollow_source_bundle_digest(source_candidate)
+        # Bind the claim to the exact process generation and effective sandbox
+        # create configuration.  The value is secret-free (only a digest is
+        # published) and changes on service restart, source replacement, or any
+        # create-argument/image change, so a cached startup report cannot be
+        # mistaken for proof about the new worker process.
+        runtime_config_sha256 = _runtime_executor_config_sha256(
+            runtime_image_ref=runtime_image_ref,
+            source_bundle_sha256=source_bundle_sha256,
+            host_install=host_install,
+        )
         if sys.platform.startswith("linux") and _kernel_has_landlock():
             platform = "linux"
             isolation_posture = REPORT_REPOSITORY_LINUX_POSTURE
@@ -961,6 +972,7 @@ def _read_only_report_executor_attestation(
         executor_script_sha256=executor_script_sha256,
         source_root=source_root,
         source_bundle_sha256=source_bundle_sha256,
+        runtime_config_sha256=runtime_config_sha256,
     )
 
 
@@ -979,6 +991,7 @@ _REPORT_EXECUTOR_APPROVAL_ENV = {
     "executor_script_sha256": "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
     "source_root": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
     "source_bundle_sha256": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+    "runtime_config_sha256": "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256",
 }
 _REPORT_EXECUTOR_RUNTIME_PATH_ENV = {
     "python_path": "MAC_TASK_EXECUTOR_PYTHON",
@@ -5618,6 +5631,15 @@ class MacWorker(
                 serialized_context,
                 task=task_payload,
             )
+        executor = getattr(self, "executor", None)
+        executor_argv = list(executor.argv) if isinstance(executor, SubprocessExecutor) else []
+        runtime_attestation = _read_only_report_executor_attestation(executor_argv)
+        if runtime_attestation is not None:
+            # Evidence and fleet inventory must describe the same process-local
+            # runtime.  This is recomputed rather than copied from hub resources,
+            # so a stale cached registration document cannot contaminate the
+            # task's signed result.
+            manifest["executor_runtime_attestation"] = runtime_attestation
         metadata = redact_for_persistence(metadata)
         metadata["verification"] = self._sign_verification_manifest(
             redact_for_persistence(manifest)

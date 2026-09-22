@@ -11042,6 +11042,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: report executor approved runtime config sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: report executor approved runtime image ref.",
     "family": "core",
     "name": "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF",
@@ -14741,6 +14753,18 @@
       "src/mac/deploy_env.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker process revision.",
+    "family": "worker",
+    "name": "MAC_WORKER_PROCESS_REVISION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

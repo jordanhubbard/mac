@@ -932,6 +932,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPORT_EXECUTOR_APPROVED_POLICY_SHA256` | str | consumer-defined | core | Core setting: report executor approved policy sha256. |
 | `MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH` | str | consumer-defined | core | Core setting: report executor approved python path. |
 | `MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256` | str | consumer-defined | core | Core setting: report executor approved python sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256` | str | consumer-defined | core | Core setting: report executor approved runtime config sha256. |
 | `MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF` | str | consumer-defined | core | Core setting: report executor approved runtime image ref. |
 | `MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256` | str | consumer-defined | core | Core setting: report executor approved source bundle sha256. |
 | `MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT` | str | consumer-defined | core | Core setting: report executor approved source root. |
@@ -1236,6 +1237,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_MODE` | str | consumer-defined | worker | Worker setting: worker mode. |
 | `MAC_WORKER_PERSONA_ID` | str | consumer-defined | worker | Worker setting: worker persona id. |
 | `MAC_WORKER_POLL_INTERVAL` | int | consumer-defined | worker | Worker setting: worker poll interval. |
+| `MAC_WORKER_PROCESS_REVISION` | str | consumer-defined | worker | Worker setting: worker process revision. |
 | `MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker repository bootstrap timeout. |
 | `MAC_WORKER_REPOSITORY_TEST_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker repository test timeout. |
 | `MAC_WORKER_REQUIRED_METADATA` | bool | consumer-defined | worker | Worker setting: worker required metadata. |

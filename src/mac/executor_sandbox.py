@@ -2256,8 +2256,66 @@ _MANAGED_OPENSHELL_RUNTIME_REF_RE = _re.compile(
 )
 
 
+def _runtime_executor_config_sha256(
+    *, runtime_image_ref: str, source_bundle_sha256: str, host_install: bool = False
+) -> str:
+    """Digest the effective process-local sandbox contract.
+
+    The service wrapper rotates ``MAC_WORKER_PROCESS_REVISION`` on every start.
+    Including it prevents a startup report cached by the hub from surviving a
+    worker restart even when the image and source happen to be unchanged.
+    """
+
+    create_argv = [] if host_install else _openshell_extra_create_argv()
+    payload = {
+        "create_argv": create_argv,
+        "process_revision": os.environ.get("MAC_WORKER_PROCESS_REVISION") or "unversioned",
+        "runtime_image_ref": runtime_image_ref,
+        "source_bundle_sha256": source_bundle_sha256,
+    }
+    return (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
+
+
 def _managed_openshell_runtime_image_ref() -> str:
-    """Return the deployment-pinned OpenShell image, or fail closed."""
+    """Return the immutable image the worker will actually pass to OpenShell.
+
+    ``MAC_OPENSHELL_CREATE_ARGS`` is the execution authority for ordinary task
+    sandboxes.  The older implementation attested only the sidecar
+    ``runtime-image-ref`` file, so changing ``--from`` could make tasks run one
+    image while the worker continued advertising another.  Prefer the effective
+    create argument and retain the file only as a backwards-compatible fallback
+    for deployments which do not spell out ``--from``.
+    """
+
+    create_argv = _openshell_extra_create_argv()
+    configured_refs: List[str] = []
+    index = 0
+    while index < len(create_argv):
+        token = create_argv[index]
+        if token == "--from":
+            if index + 1 >= len(create_argv):
+                raise RuntimeError("MAC_OPENSHELL_CREATE_ARGS --from requires a value")
+            configured_refs.append(create_argv[index + 1])
+            index += 2
+            continue
+        if token.startswith("--from="):
+            configured_refs.append(token.partition("=")[2])
+        index += 1
+    if len(configured_refs) > 1:
+        raise ValueError("MAC_OPENSHELL_CREATE_ARGS contains duplicate --from arguments")
+    if configured_refs:
+        image_ref = configured_refs[0]
+        if not _MANAGED_OPENSHELL_RUNTIME_REF_RE.fullmatch(image_ref):
+            raise RuntimeError(
+                "read-only repository reports require MAC_OPENSHELL_CREATE_ARGS "
+                "to select the immutable mac-openshell-runtime@sha256 image"
+            )
+        return image_ref
 
     mac_home = mac_paths.mac_home()
     path = Path(
@@ -2294,6 +2352,7 @@ def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None
     expected_script_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256")
     expected_source_root = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT")
     expected_source_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256")
+    expected_runtime_config_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256")
     # macOS nodes are host installs: no image, no policy, no OpenShell binary
     # exists to be approved, so those four fields are legitimately empty and
     # must not be present. Everything that still exists stays digest-bound.
@@ -2307,6 +2366,7 @@ def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None
         expected_script_digest,
         expected_source_root,
         expected_source_digest,
+        expected_runtime_config_digest,
     ]
     container_fields = (
         expected_runtime,
@@ -2357,6 +2417,15 @@ def _assert_approved_read_only_report_runtime(*, runtime_image_ref: str) -> None
     source_root, source_digest = nofollow_source_bundle_digest(source_candidate)
     if source_root != expected_source_root or source_digest != expected_source_digest:
         raise RuntimeError("read-only repository report MAC source differs from hub approval")
+    runtime_config_digest = _runtime_executor_config_sha256(
+        runtime_image_ref=runtime_image_ref,
+        source_bundle_sha256=source_digest,
+        host_install=host_install,
+    )
+    if runtime_config_digest != expected_runtime_config_digest:
+        raise RuntimeError(
+            "read-only repository report process/create configuration differs from hub approval"
+        )
     if sys.platform.startswith("linux"):
         if (
             expected_platform != "linux"
@@ -5804,6 +5873,7 @@ def _invoke_agent(
                 "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
                 "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
                 "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+                "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_CONFIG_SHA256",
             )
         )
     )

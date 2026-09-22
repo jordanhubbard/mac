@@ -451,7 +451,7 @@ def report_boundary_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("MAC_OPENSHELL_KEEP", raising=False)
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX_NAME", raising=False)
     monkeypatch.delenv("MAC_EXECUTOR_BACKEND", raising=False)
-    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from mutable-local-tag")
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from " + _RUNTIME_REF)
     # These boundary tests describe the *containerized* Linux runtime, which is
     # now the only platform that has one. Pin the platform so the suite asserts
     # the same thing on a macOS developer machine (where the node itself would
@@ -625,6 +625,7 @@ def _marker_resources(attestation):
             "executor_script_sha256",
             "source_root",
             "source_bundle_sha256",
+            "runtime_config_sha256",
         )
     }
     return {
@@ -830,9 +831,95 @@ def test_report_boundary_rejects_policy_name_upload_and_driver_overrides(
 ):
     executor, _policy = report_boundary_env
     monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", create_args)
-    with pytest.raises(ValueError, match="forbid|duplicate"):
+    with pytest.raises((ValueError, RuntimeError), match="forbid|duplicate|immutable"):
         sandbox._read_only_report_extra_create_argv(require_approval=False)
     assert worker._read_only_report_executor_attestation([str(executor)]) is None
+
+
+def test_attestation_uses_effective_create_image_not_stale_sidecar(
+    report_boundary_env, monkeypatch
+):
+    executor, _policy = report_boundary_env
+    replacement = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "8" * 64
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from " + replacement)
+
+    attestation = worker._read_only_report_executor_attestation([str(executor)])
+
+    assert attestation is not None
+    assert attestation["runtime_image_ref"] == replacement
+    assert sandbox._read_only_report_extra_create_argv(require_approval=False)[:2] == [
+        "--from",
+        replacement,
+    ]
+
+
+def test_restart_rotates_runtime_config_revision(report_boundary_env, monkeypatch):
+    executor, _policy = report_boundary_env
+    monkeypatch.setenv("MAC_WORKER_PROCESS_REVISION", "process-a")
+    before = worker._read_only_report_executor_attestation([str(executor)])
+    monkeypatch.setenv("MAC_WORKER_PROCESS_REVISION", "process-b")
+    after = worker._read_only_report_executor_attestation([str(executor)])
+
+    assert before is not None and after is not None
+    assert before["runtime_image_ref"] == after["runtime_image_ref"]
+    assert before["source_bundle_sha256"] == after["source_bundle_sha256"]
+    assert before["runtime_config_sha256"] != after["runtime_config_sha256"]
+
+
+def test_stale_cached_startup_and_approval_do_not_survive_config_change():
+    cp = ControlPlane.in_memory()
+    admitted = _agent(cp, "stale-runtime-config", ["ops"], attested=True)
+    seeded = dict(admitted.resources)
+    seeded["startup_self_test"] = {
+        "schema": "mac.agent_startup_self_test.v1",
+        "timestamp": "2026-09-22T00:00:00Z",
+        "status": "passed",
+        "agent_id": admitted.id,
+        "checks": {
+            "openshell_executor_config": True,
+            "report_repository_executor_attestation": True,
+        },
+        "report_repository_executor_attestation": _attestation(),
+        "blocking_problems": [],
+    }
+    old = cp.update_agent(admitted.id, resources=seeded, actor="test-admin")
+    resources = dict(old.resources)
+    resources.pop("startup_self_test")
+    changed = dict(resources[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY])
+    changed["runtime_config_sha256"] = "sha256:" + "9" * 64
+    resources[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] = changed
+
+    refreshed = cp.heartbeat_agent(admitted.id, status="idle", resources=resources)
+
+    assert refreshed.resources["startup_self_test"] == old.resources["startup_self_test"]
+    assert refreshed.resources[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] == changed
+    assert REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY not in refreshed.resources
+
+
+def test_task_evidence_records_same_runtime_attestation_as_worker_resource(tmp_path, monkeypatch):
+    expected = _attestation()
+    mac_worker = worker.MacWorker(
+        object(),
+        "agent_runtime_evidence",
+        tmp_path,
+        worker.SubprocessExecutor(["/approved/mac-task-executor"]),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_read_only_report_executor_attestation",
+        lambda _argv: dict(expected),
+    )
+
+    metadata = mac_worker._execution_metadata(
+        tmp_path,
+        worker.WorkerExecution(
+            0,
+            "done",
+            metadata={"verification": {"status": "complete", "evidence_type": "operator_result"}},
+        ),
+    )
+
+    assert metadata["verification"]["executor_runtime_attestation"] == expected
 
 
 def test_report_boundary_rejects_fixed_sandbox_name(

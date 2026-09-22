@@ -391,6 +391,7 @@ class FleetReleaseEpochService:
                 "executor_script_sha256",
                 "source_root",
                 "source_bundle_sha256",
+                "runtime_config_sha256",
             )
         }
         reconstructed = dict(projection)
@@ -1613,6 +1614,7 @@ class FleetReleaseEpochService:
                 executor_script_sha256=str(attestation["executor_script_sha256"]),
                 source_root=str(attestation["source_root"]),
                 source_bundle_sha256=str(attestation["source_bundle_sha256"]),
+                runtime_config_sha256=str(attestation["runtime_config_sha256"]),
             )
             resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
             resources = self.control_plane._project_report_repository_executor_marker(resources)
