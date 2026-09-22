@@ -302,6 +302,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy openshell required. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime input sha256. |
+| `MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256` | str | consumer-defined | deployment | SHA-256 identity of the controller's frozen operator fleet registry. Forwarded only with `MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY=1` and rechecked at the node mutation boundary. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
 | `MAC_DEPLOY_PHASE1_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy phase1 required. |
 | `MAC_DEPLOY_POSTGRES_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy postgres bind addr. |
@@ -319,6 +320,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_PREREQUISITE_HELPER_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite helper sha256. |
 | `MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite max age seconds. |
 | `MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite phase budget seconds. |
+| `MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY` | bool | 0 | deployment | Controller-owned deployment flag. Set to `1` only when the target's existing fleet registry exactly matches the frozen operator registry; the node installer then preserves that multi-fleet file and fails closed if its digest changes. |
 | `MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy publication barrier wait seconds. |
 | `MAC_DEPLOY_QDRANT_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant bind addr. |
 | `MAC_DEPLOY_QDRANT_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant data dir. |

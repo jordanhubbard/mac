@@ -88,6 +88,7 @@ BOOL_MARKERS = (
     "_RECONCILE_",
     "_REJECT_",
     "_PREFER_",
+    "_PRESERVE_",
 )
 BOOL_SUFFIXES = ("_OK", "_GC", "_INSTALL", "_MANAGE", "_TRUSTED", "_FATAL")
 INT_SUFFIXES = (
@@ -120,6 +121,7 @@ CONSUMER_DEFAULTS = {
     # deploy/fleet-node-install.sh reads ``${MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0}``,
     # so the non-fatal default is the installer's, not an invented one.
     "MAC_DEPLOY_GATEWAY_PROBE_FATAL": "0",
+    "MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY": "0",
     "MAC_OPENCLAW_READY_LOG_TIMEOUT": "20",
 }
 # Descriptions an operator cannot derive from the variable name. The generated
@@ -170,6 +172,16 @@ CURATED_DESCRIPTIONS = {
         "mac-agent and none of them consult chat, so a node that cannot post is "
         "degraded for conversation and fully capable of work. Set it for a deploy "
         "whose purpose is to prove the chat surface."
+    ),
+    "MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY": (
+        "Controller-owned deployment flag. Set to `1` only when the target's existing "
+        "fleet registry exactly matches the frozen operator registry; the node installer "
+        "then preserves that multi-fleet file and fails closed if its digest changes."
+    ),
+    "MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256": (
+        "SHA-256 identity of the controller's frozen operator fleet registry. Forwarded "
+        "only with `MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY=1` and rechecked at the "
+        "node mutation boundary."
     ),
     "MAC_NETWORK_PROVIDER": (
         "Fleet overlay: `tailscale`, `headscale`, or `none`. When `tailscale` "

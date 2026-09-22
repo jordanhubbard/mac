@@ -9398,6 +9398,21 @@ deploy_host() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
 
+  # A hub may run on the same host and HOME as the operator.  In that case the
+  # node-local registry is the frozen multi-fleet operator registry itself, not
+  # disposable generated node state.  Detect that exact identity before any
+  # install mutation and ask the node installer to preserve it.  The installer
+  # rechecks the digest at the mutation boundary and fails closed if it changed.
+  local operator_registry_sha256 remote_registry_sha256 preserve_operator_registry=0
+  operator_registry_sha256="$(sha256_file "$FLEET_REGISTRY_CONFIG")"
+  remote_registry_sha256="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    'p="$HOME/.mac/fleets.yaml"; if [ -f "$p" ] && [ ! -L "$p" ]; then python3 -c '\''import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())'\'' "$p"; fi' \
+    2>/dev/null || true)"
+  if [ "$remote_registry_sha256" = "$operator_registry_sha256" ]; then
+    preserve_operator_registry=1
+  fi
+
   # Establish the durable hub-side dispatch barrier before any target-side
   # personality, source, runtime, or service mutation. The node-local drain is
   # defense in depth; this outer gate also works when the worker cannot reach
@@ -9536,6 +9551,10 @@ PY
   add_remote_env MAC_DEPLOY_OS "$os"
   add_remote_env MAC_DEPLOY_ARCHIVE "$remote_archive"
   add_remote_env MAC_DEPLOY_FLEET_REGISTRY_FILE "$remote_registry"
+  add_remote_env MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY "$preserve_operator_registry"
+  if [ "$preserve_operator_registry" = 1 ]; then
+    add_remote_env MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256 "$operator_registry_sha256"
+  fi
   add_remote_env MAC_DEPLOY_CONFIGURED_AGENT_IDS "$CONFIGURED_AGENT_IDS"
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"

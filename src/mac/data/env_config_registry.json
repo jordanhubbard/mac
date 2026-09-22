@@ -3578,6 +3578,18 @@
   },
   {
     "default": null,
+    "description": "SHA-256 identity of the controller's frozen operator fleet registry. Forwarded only with `MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY=1` and rechecked at the node mutation boundary.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy os.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OS",
@@ -3768,6 +3780,18 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "int"
+  },
+  {
+    "default": "0",
+    "description": "Controller-owned deployment flag. Set to `1` only when the target's existing fleet registry exactly matches the frozen operator registry; the node installer then preserves that multi-fleet file and fails closed if its digest changes.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
   },
   {
     "default": null,
