@@ -2262,15 +2262,15 @@ def test_typed_deploy_proves_pending_identity_before_atomic_hub_commit():
     apply_worker = deploy.split("typed_phase2_apply_worker() {", 1)[1].split(
         "\n}\n\ntyped_finalize_worker", 1
     )[0]
-    install = apply_worker.index("install_pending_worker_credential")
-    candidate = apply_worker.index("install_and_prove_attestation_candidate", install)
+    assert "install_pending_worker_credential" not in apply_worker
+    candidate = apply_worker.index("install_and_prove_attestation_candidate")
     readiness = apply_worker.index("collect_typed_release_ready_evidence", candidate)
-    assert install < candidate < readiness
+    assert candidate < readiness
     apply_handoff = typed.index('typed_phase2_apply_worker "$spec"')
     prepared = typed.index("cohort_journal_mutate prepared", apply_handoff)
     commit = typed.index("prove_and_commit_hub_epoch", prepared)
     finalize = typed.index("cohort_journal_mutate finalize-start", commit)
-    assert install < candidate < readiness < prepared < commit < finalize
+    assert candidate < readiness < prepared < commit < finalize
     commit_start = prove.index("cohort_journal_mutate commit-start")
     commit_request = prove.index("hub_epoch_client_request", commit_start)
     commit_receipt = prove.index("cohort_journal_mutate commit", commit_request)

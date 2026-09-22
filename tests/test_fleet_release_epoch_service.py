@@ -448,6 +448,75 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
 
 
+def test_deploy_preserves_current_credential_across_commit_and_abort(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    current = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    generation = "generation-without-credential-rotation"
+    epoch_id = "epoch-current-credential"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                current,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    # The successor source/runtime may change while the same bearer continues
+    # to authenticate. Credential validation must not classify that as a key
+    # failure or demand a new principal.
+    _observe(
+        cp,
+        current,
+        tmp_path / "agent_alpha-old.env",
+        generation=generation,
+        seen_at=APPLIED_SEEN,
+    )
+    proof = _proof_item(
+        current,
+        None,
+        candidate_key=None,
+        epoch_id=epoch_id,
+        generation=generation,
+    )
+    with pytest.raises(ValidationError, match="cannot carry an install receipt"):
+        changed = dict(proof)
+        changed["install_receipt"] = {"schema": "unexpected-rotation"}
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [changed])
+    cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
+    cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
+    assert (
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])["status"]
+        == "committed"
+    )
+    assert [(row["id"], row["state"]) for row in lifecycle.list(agent_id="agent_alpha")] == [
+        (current.record["id"], "active")
+    ]
+
+    second = cp.fleet_release_epochs.open_epoch(
+        "epoch-current-credential-abort",
+        [
+            _prepare_item(
+                current,
+                generation="generation-aborted",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    cp.fleet_release_epochs.abort(
+        "epoch-current-credential-abort",
+        second["identity_sha256"],
+        reason="injected successor deployment failure",
+    )
+    assert [(row["id"], row["state"]) for row in lifecycle.list(agent_id="agent_alpha")] == [
+        (current.record["id"], "active")
+    ]
+
+
 def test_open_epoch_pins_fungible_participant_against_ttl_expiry(tmp_path: Path) -> None:
     cp = _plane(tmp_path / "mac.db")
     _bootstrap_active(cp, "agent_alpha", tmp_path)
