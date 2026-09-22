@@ -4848,6 +4848,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy worker credential mode.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy worker credential retries.",
     "family": "deployment",
     "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES",

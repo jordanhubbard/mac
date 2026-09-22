@@ -188,6 +188,15 @@ PREPARE_NETWORK_PREREQUISITES=0
 PREPARE_FUNGIBLE_ONBOARDING=0
 PREFLIGHT_ONLY=0
 QUALIFICATION_RECEIPT=""
+WORKER_CREDENTIAL_MODE="${MAC_DEPLOY_WORKER_CREDENTIAL_MODE:-current}"
+case "$WORKER_CREDENTIAL_MODE" in
+  current|pending) ;;
+  *)
+    echo "ERROR: MAC_DEPLOY_WORKER_CREDENTIAL_MODE must be current or pending" >&2
+    exit 2
+    ;;
+esac
+readonly WORKER_CREDENTIAL_MODE
 # Names the one node whose hub route this run is allowed to prove after the
 # deploy instead of before it: the fleet's own hub agent, on a machine that has
 # never been deployed. Empty for every other run. Set only by
@@ -13545,17 +13554,21 @@ build_and_open_hub_epoch() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     fleet_name="${fields[23]:-mac}"; capabilities="${fields[10]:-}"
-    validate_current_worker_credential "$agent" "$hub_agent"
+    if [ "$WORKER_CREDENTIAL_MODE" = "pending" ]; then
+      issue_pending_worker_credential "$agent" "$hub_agent" "$fleet_name" "$capabilities"
+    else
+      validate_current_worker_credential "$agent" "$hub_agent"
+    fi
     create_attestation_candidate "$agent"
     state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
     hub_epoch_client_read "$hub_agent" "$state" participant-state --agent-id "$agent_id"
   done < "$selected_specs_file"
   "$PYTHON_BIN" - "$selected_specs_file" "$TMPDIR_LOCAL/fleet-cohort.json" "$TMPDIR_LOCAL" "$material" \
     "$COHORT_EPOCH_ID" "$GIT_REV" "$REQUIRE_RELEASE_ALL_SELECTED" \
-    "$SUCCESSOR_HOLD_REASON" <<'PY'
+    "$SUCCESSOR_HOLD_REASON" "$WORKER_CREDENTIAL_MODE" <<'PY'
 import json,os,sys,tempfile
 from pathlib import Path
-selected,cohort_raw,root_raw,output_raw,epoch,source,require_all,successor=sys.argv[1:]
+selected,cohort_raw,root_raw,output_raw,epoch,source,require_all,successor,credential_mode=sys.argv[1:]
 root=Path(root_raw); agents=[]
 cohort={item["stable_id"]:item for item in json.load(open(cohort_raw,encoding="utf-8"))}
 for line in Path(selected).read_text(encoding="utf-8").splitlines():
@@ -13571,7 +13584,7 @@ for line in Path(selected).read_text(encoding="utf-8").splitlines():
         "deployment_id":bound["deployment_id"],
         "participant_state":state,
         "principal_id":manifest["principal_id"],
-        "principal_mode":"current",
+        "principal_mode":credential_mode,
         "attestation_candidate_key":candidate["key"],
         "report_executor_action":"revoke",
         "report_executor_attestation":None,
@@ -13598,12 +13611,12 @@ PY
   persist_hub_epoch_recovery_request "$hub_agent" "$request" open
   cohort_journal_mutate hub-open-start "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-open-start "$DEPLOY_CONTROLLER_NONCE" \
-    --open-plan-file "$plan" >/dev/null
+    --open-plan-file "$plan" >/dev/null || return 1
   hub_epoch_client_open_with_retry "$hub_agent" "$request" "$receipt" \
-    open --epoch "$COHORT_EPOCH_ID"
+    open --epoch "$COHORT_EPOCH_ID" || return 1
   cohort_journal_mutate hub-opened "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-opened "$DEPLOY_CONTROLLER_NONCE" \
-    --evidence-file "$receipt" >/dev/null
+    --evidence-file "$receipt" >/dev/null || return 1
   remove_hub_epoch_recovery_request "$hub_agent" "$COHORT_EPOCH_ID" open
   echo "==> fleet: existing principals, holds, and candidate keys staged atomically"
 }
@@ -16872,6 +16885,9 @@ typed_phase2_apply_worker() {
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
     "$(node_route_identity_sha256 "$agent")" || return 1
+  if [ "$WORKER_CREDENTIAL_MODE" = "pending" ]; then
+    install_pending_worker_credential "$agent" "$supervisor" "$fleet_name" || return 1
+  fi
   install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name" || return 1
   collect_typed_release_ready_evidence "$spec" || return 1
   evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"

@@ -411,6 +411,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy worker credential agent id. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT` | str | consumer-defined | deployment | Deployment setting: deploy worker credential fingerprint. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_ID` | str | consumer-defined | deployment | Deployment setting: deploy worker credential id. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_MODE` | str | consumer-defined | deployment | Deployment setting: deploy worker credential mode. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy worker credential retries. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_RETRY_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy worker credential retry seconds. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_RUNTIME_DIGEST` | str | consumer-defined | deployment | Deployment setting: deploy worker credential runtime digest. |
