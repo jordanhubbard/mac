@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 
 import pytest
 
@@ -44,8 +46,84 @@ def test_set_env_key_preserves_export_prefix(tmp_path):
 def test_set_env_key_quotes_json_values(tmp_path):
     env = tmp_path / ".env"
     set_env_key(env, "MAC_API_TOKENS", '{"t":["admin"]}', backup=False)
-    # JSON has quotes/braces -> must be double-quoted to survive sourcing.
-    assert env.read_text() == 'MAC_API_TOKENS="{\\"t\\":[\\"admin\\"]}"\n'
+    assert env.read_text() == 'MAC_API_TOKENS=\'{"t":["admin"]}\'\n'
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "plain",
+        "with space",
+        "with\ttab",
+        'double"quote',
+        "single'quote",
+        "'raw quote characters are data'",
+        "$HOME",
+        "$(touch should-not-exist)",
+        "`touch should-not-exist`",
+        r"back\\slash",
+        "#comment",
+        "pipe|command",
+        "semi;command",
+        "background&command",
+        "redirect<input",
+        "redirect>output",
+        "(subshell)",
+        "*?[glob]",
+        "brace{one,two}",
+        "bang!history",
+    ],
+)
+def test_set_env_key_round_trips_shell_metacharacters_through_bash(tmp_path, value):
+    env = tmp_path / "mac.env"
+    marker = tmp_path / "should-not-exist"
+    set_env_key(env, "ROUND_TRIP", value, backup=False)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -eu; source "$1"; printf "%s\\0" "$ROUND_TRIP"',
+            "bash",
+            str(env),
+        ],
+        check=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+
+    assert completed.stdout == value.encode() + b"\x00"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("value", ["line one\nline two", "line one\rline two", "nul\x00byte"])
+def test_set_env_key_rejects_values_that_cannot_be_one_assignment(tmp_path, value):
+    env = tmp_path / ".env"
+    env.write_text("KEEP=original\n")
+
+    with pytest.raises(ValueError, match="NUL or newlines"):
+        set_env_key(env, "K", value, backup=False)
+
+    assert env.read_text() == "KEEP=original\n"
+
+
+def test_set_env_key_writes_with_atomic_replace(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("K=old\n")
+    replaced = []
+    real_replace = os.replace
+
+    def recording_replace(source, destination):
+        replaced.append((source, destination))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+    set_env_key(env, "K", "new", backup=False)
+
+    assert len(replaced) == 1
+    assert replaced[0][1] == str(env)
+    assert env.read_text() == "K=new\n"
 
 
 def test_set_env_key_writes_backup_on_change(tmp_path):

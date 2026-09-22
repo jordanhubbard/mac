@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,29 @@ def test_migrate_env_file_is_idempotent(tmp_path: Path):
     # But a new fleet adds a new scoped key.
     added3, _ = fleet_env.migrate_env_file(env_path, "jordanh-hub")
     assert "MAC_API_TOKEN__JORDANH_HUB" in added3
+
+
+def test_migrate_env_file_uses_shell_safe_renderer_for_scoped_value(tmp_path: Path):
+    env_path = tmp_path / ".env"
+    value = "token|with;operators&$(touch should-not-exist)"
+    env_path.write_text("MAC_API_TOKEN='%s'\n" % value)
+
+    fleet_env.migrate_env_file(env_path, "rocky")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -eu; source "$1"; printf "%s\\0" "$MAC_API_TOKEN__ROCKY"',
+            "bash",
+            str(env_path),
+        ],
+        check=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert completed.stdout == value.encode() + b"\x00"
+    assert not (tmp_path / "should-not-exist").exists()
 
 
 def test_two_fleets_in_one_env_file_do_not_collide(tmp_path: Path):
