@@ -541,6 +541,44 @@ class Scenario:
         return payload
 
 
+def test_fifty_node_rolling_cutover_never_has_more_than_one_node_unavailable(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path, node_count=50)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    unavailable_states = {
+        "quiesce_started",
+        "quiesced",
+        "phase2_armed",
+        "phase2_started",
+    }
+
+    for index, node in enumerate(scenario.nodes):
+        transitions = (
+            ("quiesce-start", None),
+            ("quiesced", scenario.evidence(f"quiesced-{index}")),
+            ("phase2-armed", scenario.evidence(f"phase2-{index}")),
+            ("phase2-start", None),
+            ("prepared", scenario.evidence(f"prepared-{index}")),
+        )
+        for command, evidence in transitions:
+            scenario.call(command, node=node, evidence_file=evidence)
+            unavailable = [
+                current
+                for current in scenario.journal["cohort"]
+                if current["state"] in unavailable_states
+            ]
+            assert len(unavailable) <= 1
+            if unavailable:
+                assert unavailable[0]["name"] == node["name"]
+        assert all(
+            current["state"] == ("prepared" if position <= index else "phase1_armed")
+            for position, current in enumerate(scenario.journal["cohort"])
+        )
+
+
 def recovery(scenario: Scenario, *, policy: str = "retain-forward") -> dict[str, Any]:
     _result, payload = run_cli(
         scenario.directory,

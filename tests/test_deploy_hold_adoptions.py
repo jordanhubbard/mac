@@ -570,6 +570,7 @@ def test_remote_ssh_heredocs_keep_stdin_open():
         "REMOTE_FIRST_HUB_PREREQUISITES",
         "REMOTE_LEGACY_PREREQUISITES",
         "REMOTE",
+        "REMOTE_FIRST_HUB_RELEASE",
         "REMOTE_RELEASE",
         "HUBSCRIPT",
         "REMOTE_ATTESTATION_RECOVERY",

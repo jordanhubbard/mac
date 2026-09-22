@@ -685,6 +685,64 @@ def test_typed_cohort_orders_receipts_before_mutation_and_commit_before_finalize
     assert "prepare-start" not in main
 
 
+def _run_preflight_probe_for_home(home: Path) -> subprocess.CompletedProcess[str]:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    source = deploy.split("preflight_probe_helper_source() {\n  cat <<'PY'\n", 1)[1].split(
+        "\nPY\n}", 1
+    )[0]
+    source = source.replace("home = Path.home()", f"home = Path({str(home)!r})", 1)
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            source,
+            "worker50",
+            "agent_worker50",
+            "generation-50",
+            "a" * 40,
+            "darwin",
+            "launchd",
+            "",
+            "0",
+            "none",
+            "",
+            "0",
+            "",
+            "0",
+            "",
+            "0",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_read_only_preflight_rejects_managed_node_without_deployed_revision(tmp_path):
+    (tmp_path / ".local" / "bin").mkdir(parents=True)
+    mac_bin = tmp_path / ".local" / "bin" / "mac"
+    mac_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mac_bin.chmod(0o755)
+    (tmp_path / ".mac" / "venv" / "bin").mkdir(parents=True)
+    python_bin = tmp_path / ".mac" / "venv" / "bin" / "python"
+    python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python_bin.chmod(0o755)
+    (tmp_path / ".mac" / "mac.env").write_text("MAC_FLEET_NAME=test\n", encoding="utf-8")
+
+    result = _run_preflight_probe_for_home(tmp_path)
+
+    assert result.returncode != 0
+    payload = json.loads(result.stdout)
+    assert payload["read_only"] is True
+    assert payload["agent"] == "worker50"
+    assert payload["checks"]["deployed_identity_consistent"] is False
+
+    (tmp_path / ".mac" / "deployed-source-revision").write_text("a" * 40 + "\n")
+    repaired = _run_preflight_probe_for_home(tmp_path)
+    repaired_payload = json.loads(repaired.stdout)
+    assert repaired_payload["checks"]["deployed_identity_consistent"] is True
+
+
 def test_bounded_node_workers_cannot_consume_the_controller_spec_stream(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     bounded = (
@@ -1400,9 +1458,9 @@ def _run_typed_service_prerequisite(provider: str, *urls: str) -> subprocess.Com
     builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
         "\n}\n\nprerequisite_bundle_digests", 1
     )[0]
-    definitions = "def truthy" + builder.split("def truthy", 1)[1].split(
-        "\nhome = Path.home()", 1
-    )[0]
+    definitions = (
+        "def truthy" + builder.split("def truthy", 1)[1].split("\nhome = Path.home()", 1)[0]
+    )
     script = "\n".join(
         [
             "import hashlib, ipaddress, os, stat, urllib.parse",
@@ -4856,11 +4914,54 @@ def test_retain_forward_recovery_reconciles_attestation_authority_after_release(
         < aborted_node
     )
 
-    for call_site in (
-        'recover_cohort_node \\\n      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
-        'recover_cohort_node \\\n        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
-    ):
-        assert call_site in deploy
+    assert (
+        'run_journal_bound_recovery_with_retry "cohort-node" recover_cohort_node \\\n'
+        '        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"' in deploy
+    )
+
+
+def test_journal_bound_recovery_retries_transient_failure_and_stops_at_bound(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    retry = (
+        "run_journal_bound_recovery_with_retry() {"
+        + deploy.split("run_journal_bound_recovery_with_retry() {", 1)[1].split(
+            "\n}\n\ndiscard_unopened_epoch_pending_credentials", 1
+        )[0]
+        + "\n}"
+    )
+    counter = tmp_path / "attempts"
+    snippet = f"""set -euo pipefail
+MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS=3
+MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS=0
+sleep() {{ :; }}
+flaky() {{
+  local value=0
+  [ ! -s {shlex.quote(str(counter))} ] || value=$(cat {shlex.quote(str(counter))})
+  value=$((value + 1))
+  printf '%s\n' "$value" > {shlex.quote(str(counter))}
+  [ "$value" -ge 3 ]
+}}
+{retry}
+run_journal_bound_recovery_with_retry worker50 flaky exact-journal exact-fence
+test "$(cat {shlex.quote(str(counter))})" = 3
+rm -f {shlex.quote(str(counter))}
+MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS=2
+never() {{
+  local value=0
+  [ ! -s {shlex.quote(str(counter))} ] || value=$(cat {shlex.quote(str(counter))})
+  printf '%s\n' "$((value + 1))" > {shlex.quote(str(counter))}
+  return 1
+}}
+if run_journal_bound_recovery_with_retry worker50 never exact-journal exact-fence; then
+  exit 90
+fi
+test "$(cat {shlex.quote(str(counter))})" = 2
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "succeeded on attempt 3/3" in result.stdout
+    assert "failed after 2/2 attempts" in result.stderr
 
 
 def test_phase1_recovery_replays_retained_helper_and_reviewed_cli_identity(tmp_path):

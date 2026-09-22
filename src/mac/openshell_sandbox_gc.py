@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -72,7 +73,34 @@ def _process_identity(pid: int) -> Tuple[str, str]:
         # comm may contain spaces and parentheses, so split only after its final ')'.
         start_time = stat[stat.rfind(")") + 2 :].split()[19]
     except (OSError, IndexError):
-        return "unknown", ""
+        # macOS has no procfs. Its boot timestamp plus the process start time
+        # provides the same PID-reuse fence. Hash the command output so label
+        # values are compact, whitespace-free, and reveal no host metadata.
+        try:
+            boot = subprocess.run(
+                ["/usr/sbin/sysctl", "-n", "kern.boottime"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            started = subprocess.run(
+                ["/bin/ps", "-o", "lstart=", "-p", str(pid)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "unknown", ""
+        if boot.returncode != 0 or started.returncode != 0:
+            return "unknown", ""
+        boot_raw = boot.stdout.strip()
+        started_raw = started.stdout.strip()
+        if not boot_raw or not started_raw:
+            return "unknown", ""
+        boot_id = hashlib.sha256(boot_raw.encode()).hexdigest()
+        start_time = hashlib.sha256(started_raw.encode()).hexdigest()
     if not boot_id or not start_time:
         return "unknown", ""
     return "present", "%s:%s" % (boot_id, start_time)

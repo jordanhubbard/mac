@@ -448,6 +448,39 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
 
 
+def test_open_epoch_pins_fungible_participant_against_ttl_expiry(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    cp.store.execute(
+        "UPDATE agents SET instance_kind = 'fungible', last_seen_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", "agent_alpha"),
+    )
+    opened = cp.fleet_release_epochs.open_epoch(
+        "epoch-ttl-pin",
+        [
+            _prepare_item(
+                pending,
+                generation="generation-ttl-pin",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+
+    assert cp.expire_ephemeral_agents() == []
+    assert cp.get_agent("agent_alpha").deleted_at is None
+
+    cp.fleet_release_epochs.abort(
+        "epoch-ttl-pin",
+        opened["identity_sha256"],
+        reason="test completed",
+    )
+    expired = cp.expire_ephemeral_agents()
+    assert [agent.id for agent in expired] == ["agent_alpha"]
+    assert cp.get_agent("agent_alpha").deleted_at is not None
+
+
 def test_open_rejects_same_reason_hold_reacquired_after_review(
     tmp_path: Path,
 ) -> None:

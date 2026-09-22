@@ -84,7 +84,7 @@ def test_deploy_health_route_selection_preserves_tunnel_fallback(tmp_path: Path)
                 "-c",
                 "\n".join(
                     [
-                        "truthy() { [ \"$1\" = 1 ]; }",
+                        'truthy() { [ "$1" = 1 ]; }',
                         "control_plane_enabled() { return 1; }",
                         "log() { printf '%s\\n' \"$*\" >&2; }",
                         "curl() { printf '%s\\n' \"$2\"; }",

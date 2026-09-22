@@ -103,6 +103,13 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
     alive: List[Any] = []
     descendants: List[Any] = []
     tree_snapshot_verified = False
+    process_group_terminated = False
+    owns_process_group = False
+    if os.name == "posix":
+        try:
+            owns_process_group = os.getpgid(process.pid) == process.pid
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
     try:
         import psutil
 
@@ -132,7 +139,7 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
     except Exception:  # noqa: BLE001 - process cleanup must retain a fallback.
         pass
 
-    if os.name == "posix":
+    if os.name == "posix" and owns_process_group:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
@@ -147,6 +154,16 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
     except (subprocess.TimeoutExpired, ChildProcessError, OSError):
         pass
     direct_process_terminated = process.poll() is not None
+    if os.name == "posix" and owns_process_group:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            # Every executor is a session/process-group leader. Absence of that
+            # group after SIGKILL proves descendants did not survive even when
+            # psutil lost the parent during a heavily loaded timeout race.
+            process_group_terminated = True
+        except (PermissionError, OSError):
+            pass
     try:
         import psutil
 
@@ -154,8 +171,10 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, grace_seconds: fl
             item.is_running() and item.status() != psutil.STATUS_ZOMBIE for item in descendants
         )
     except Exception:  # noqa: BLE001 - inability to verify is not success.
-        return False
-    return tree_snapshot_verified and direct_process_terminated and not descendants_alive
+        descendants_alive = True
+    return direct_process_terminated and (
+        process_group_terminated or (tree_snapshot_verified and not descendants_alive)
+    )
 
 
 def _cleanup_task_sandbox_after_timeout(name: str, task_dir: Path) -> Dict[str, Any]:

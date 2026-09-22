@@ -3877,6 +3877,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy recovery max attempts.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy recovery policy.",
     "family": "deployment",
     "name": "MAC_DEPLOY_RECOVERY_POLICY",
@@ -3887,6 +3898,17 @@
       "deploy/fleet-node-substrate-adopt.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy recovery retry base seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,

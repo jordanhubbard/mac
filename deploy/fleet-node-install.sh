@@ -6934,7 +6934,8 @@ EOF
       FAKE_PODMAN_STATE FAKE_CHILD_PID FAKE_OPENSHELL_MODE \
       FAKE_STOP_WRAPPER_MODE FAKE_DOCKER_MODE FAKE_PODMAN_MODE \
       FAKE_SANDBOX_NAME FAKE_SECRET FAKE_GATE_CAPTURE \
-      FAKE_STALE_SANDBOXES FAKE_LIVE_DRAIN_LISTS; do
+      FAKE_STALE_SANDBOXES FAKE_LIVE_DRAIN_LISTS \
+      FAKE_GATEWAY_PORT FAKE_LIVE_PID; do
       env_value="${!env_name-}"
       [ -z "$env_value" ] || gate_env+=("$env_name=$env_value")
     done
@@ -7331,6 +7332,8 @@ test_child_environment = (
     "FAKE_GATE_CAPTURE",
     "FAKE_STALE_SANDBOXES",
     "FAKE_LIVE_DRAIN_LISTS",
+    "FAKE_GATEWAY_PORT",
+    "FAKE_LIVE_PID",
 )
 
 
@@ -7599,7 +7602,12 @@ def prove_prepared_cli_without_gateway(runtimes):
     if values != []:
         raise QuiescenceFailure("prepared OpenShell gateway registrations are not empty")
     try:
-        with socket.create_connection(("127.0.0.1", 17670), timeout=min(1, remaining_time())):
+        gateway_port = 17670
+        if os.environ.get("MAC_DEPLOY_DAEMON_TEST_MODE") == "1":
+            gateway_port = int(os.environ.get("FAKE_GATEWAY_PORT", gateway_port))
+        with socket.create_connection(
+            ("127.0.0.1", gateway_port), timeout=min(1, remaining_time())
+        ):
             raise QuiescenceFailure("prepared OpenShell gateway listener already exists")
     except ConnectionRefusedError:
         pass
@@ -7802,6 +7810,11 @@ def sandbox_process_identity(pid):
 
 
 def sandbox_pid_is_alive(pid):
+    if (
+        os.environ.get("MAC_DEPLOY_DAEMON_TEST_MODE") == "1"
+        and str(pid) == os.environ.get("FAKE_LIVE_PID", "")
+    ):
+        return True
     return sandbox_process_identity(pid)[0] == "present"
 
 

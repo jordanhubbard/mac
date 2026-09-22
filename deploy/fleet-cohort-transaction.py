@@ -2976,10 +2976,13 @@ def command_quiesce_start(
             raise JournalError("invalid_transition", "quiesce start requires phase1 arm")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
-        if any(item["state"] != "quiesced" for item in earlier) or any(
+        if any(item["state"] not in {"quiesced", "prepared"} for item in earlier) or any(
             item["state"] != "phase1_armed" for item in later
         ):
-            raise JournalError("invalid_transition", "nodes must quiesce in cohort order")
+            raise JournalError(
+                "invalid_transition",
+                "nodes must roll forward one prepared member at a time",
+            )
         node["state"] = "quiesce_started"
         _refresh_phase(journal)
         return True
@@ -3033,10 +3036,13 @@ def command_phase2_armed(directory: JournalDirectory, args: argparse.Namespace) 
             raise JournalError("invalid_transition", "phase2 arm requires quiescence")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
-        if any(item["state"] != "phase2_armed" for item in earlier) or any(
-            item["state"] != "quiesced" for item in later
+        if any(item["state"] not in {"phase2_armed", "prepared"} for item in earlier) or any(
+            item["state"] not in {"quiesced", "phase1_armed"} for item in later
         ):
-            raise JournalError("invalid_transition", "phase2 arms must follow cohort order")
+            raise JournalError(
+                "invalid_transition",
+                "phase2 arm must preserve the rolling availability boundary",
+            )
         node["rollback_intent_sha256"] = intent_digest
         node["finalizer_sha256"] = finalizer_digest
         node["phase2_arm_evidence"] = evidence_record
@@ -3069,9 +3075,12 @@ def command_phase2_start(directory: JournalDirectory, args: argparse.Namespace) 
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "prepared" for item in earlier) or any(
-            item["state"] != "phase2_armed" for item in later
+            item["state"] not in {"phase2_armed", "phase1_armed"} for item in later
         ):
-            raise JournalError("invalid_transition", "nodes must deploy in cohort order")
+            raise JournalError(
+                "invalid_transition",
+                "nodes must deploy one prepared member at a time",
+            )
         node["state"] = "phase2_started"
         _refresh_phase(journal)
         return True

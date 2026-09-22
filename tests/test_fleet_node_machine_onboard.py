@@ -843,8 +843,8 @@ def test_controller_mode_repair_streams_helper_to_remote_python_stdin():
         'echo "==> ${agent}: normalized exact receipt-bound', 1
     )[0]
 
-    assert 'ssh -o BatchMode=yes -o ConnectTimeout=10' in repair
-    assert 'ssh -n ' not in repair
+    assert "ssh -o BatchMode=yes -o ConnectTimeout=10" in repair
+    assert "ssh -n " not in repair
     assert '< "$MACHINE_ONBOARDING_HELPER" > "$repair_receipt"' in repair
 
 

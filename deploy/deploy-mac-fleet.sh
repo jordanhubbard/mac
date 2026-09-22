@@ -11713,6 +11713,7 @@ github_cli = next(
 )
 venv_python = mac_home / "venv" / "bin" / "python"
 mac_env = mac_home / "mac.env"
+deployed_revision = mac_home / "deployed-source-revision"
 truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
 # The managed OpenShell runtime is a Linux container runtime (ADR 0015). A
 # darwin node is a host install with no container runtime, so it never requires
@@ -11858,6 +11859,18 @@ checks = {
     # The vendored Hermes runtime was removed upstream (#377); there is no
     # hermes runtime on disk to require, and its absence is the healthy state.
     "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
+    # A managed environment without its deployed revision is neither a fresh
+    # node nor a trustworthy deployed node. Detect this worker50-shaped torn
+    # identity during the read-only qualification, before any service stop.
+    "deployed_identity_consistent": (
+        not mac_env.exists()
+        or (
+            mac_env.is_file()
+            and not mac_env.is_symlink()
+            and deployed_revision.is_file()
+            and not deployed_revision.is_symlink()
+        )
+    ),
     "openshell_container_runtime_if_required": (not openshell_runtime_required) or docker_engine_ready,
     "qdrant_if_required": service_ready(qdrant_url, qdrant_required),
     "firecrawl_if_required": service_ready(firecrawl_url, firecrawl_required),
@@ -15150,6 +15163,44 @@ PY
   echo "==> ${agent}: committed generation finalization recovered"
 }
 
+run_journal_bound_recovery_with_retry() {
+  # Recovery callbacks are safe to replay because every remote mutation is
+  # fenced by the journal's exact deployment id and every journal mutation has
+  # a stable operation id. Bound transport retries so a single SSH flap is
+  # recovered automatically without turning an identity or policy failure into
+  # an unbounded fleet controller hang.
+  local label="$1" callback="$2"
+  shift 2
+  local max_attempts="${MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS:-3}"
+  local base_seconds="${MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS:-1}"
+  local attempt delay
+  case "$max_attempts" in
+    ''|*[!0-9]*|0) max_attempts=3 ;;
+  esac
+  case "$base_seconds" in
+    ''|*[!0-9]*) base_seconds=1 ;;
+  esac
+  [ "$max_attempts" -le 10 ] || max_attempts=10
+  [ "$base_seconds" -le 30 ] || base_seconds=30
+  attempt=1
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if "$callback" "$@"; then
+      if [ "$attempt" -gt 1 ]; then
+        echo "==> ${label}: journal-bound recovery succeeded on attempt ${attempt}/${max_attempts}"
+      fi
+      return 0
+    fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "ERROR: ${label}: journal-bound recovery failed after ${attempt}/${max_attempts} attempts" >&2
+      return 1
+    fi
+    delay=$((base_seconds * (2 ** (attempt - 1))))
+    echo "WARN: ${label}: journal-bound recovery attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 discard_unopened_epoch_pending_credentials() {
   local hub_agent="$1" status_file="$2" epoch_id="$3" agent agent_id remote_manifest command
   local records_file="$TMPDIR_LOCAL/recovery-pending-credential-agents.txt"
@@ -15416,7 +15467,7 @@ PY
     fi
     while IFS= read -r candidate_b64; do
       [ -n "$candidate_b64" ] || continue
-      if ! recover_cohort_node \
+      if ! run_journal_bound_recovery_with_retry "cohort-node" recover_cohort_node \
         "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"; then
         return 1
       fi
@@ -15453,7 +15504,7 @@ PY
   fi
   while IFS= read -r candidate_b64; do
     [ -n "$candidate_b64" ] || continue
-    if ! recover_committed_cohort_node \
+    if ! run_journal_bound_recovery_with_retry "committed-cohort-node" recover_committed_cohort_node \
       "$epoch_id" "$owner_nonce" "$hub_agent" "$candidate_b64"; then
       return 1
     fi
@@ -16670,11 +16721,11 @@ run_typed_cohort() {
   # before the first phase-1 service quiescence mutates any worker.
   assert_cohort_prerequisites_proven "$selected_specs_file" || return 1
 
-  echo "==> fleet: quiescing the exact cohort under hub epoch ownership"
-  # The journal deliberately makes quiescence a cohort-ordered handoff: each
-  # node's durable intent, remote proof, and completion must be published before
-  # the next node may start. Read-only preparation and later immutable apply
-  # phases remain parallel barriers; this service-stop transition is serialized.
+  echo "==> fleet: rolling the exact cohort under hub epoch ownership"
+  # Preserve serving capacity by completing one node's quiesce, rollback arm,
+  # immutable apply, and prepared proof before stopping the next node. The
+  # journal enforces earlier=prepared and later=phase1_armed at every boundary,
+  # so controller death cannot silently widen the unavailable set.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
@@ -16685,7 +16736,7 @@ run_typed_cohort() {
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: quiesce started (cohort order)"
+    echo "==> ${agent}: rolling quiesce started"
     if ! typed_quiesce_worker "$spec"; then
       return 1
     fi
@@ -16695,18 +16746,13 @@ run_typed_cohort() {
       --evidence-file "$TMPDIR_LOCAL/phase1-ready-${agent_id}.json" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: quiesce proved (cohort order)"
-  done < "$selected_specs_file"
+    echo "==> ${agent}: rolling quiesce proved"
 
-  echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"
-  run_bounded_node_phase "$selected_specs_file" phase2-arm \
-    typed_phase2_arm_worker "$hub_token" "$hub_tunnel_pubkey" \
-    "$github_review_key_b64" || return 1
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
+    echo "==> ${agent}: installing immutable finalizer and arming rollback"
+    if ! typed_phase2_arm_worker "$spec" "$hub_token" "$hub_tunnel_pubkey" \
+      "$github_review_key_b64"; then
+      return 1
+    fi
     mapfile -t phase2_arm_values < <("$PYTHON_BIN" - \
       "$TMPDIR_LOCAL/phase2-arm-${agent_id}.json" <<'PY'
 import json,sys
@@ -16727,23 +16773,13 @@ PY
       --rollback-intent-sha256 "$phase2_digest" \
       --finalizer-sha256 "$finalizer_digest" \
       --evidence-file "$TMPDIR_LOCAL/phase2-arm-${agent_id}.json" >/dev/null
-  done < "$selected_specs_file"
 
-  echo "==> fleet: applying and proving the held cohort"
-  # Deployment is a cohort-ordered handoff for the same reason as quiescence:
-  # one node must publish its prepared proof before the next node can start.
-  # This is the canary boundary; preparation and phase-2 arming remain parallel.
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
     if ! cohort_journal_mutate phase2-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase2-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: phase-2 apply started (cohort order)"
+    echo "==> ${agent}: rolling phase-2 apply started"
     if ! typed_phase2_apply_worker "$spec" "$hub_agent" "$hub_token" \
       "$hub_tunnel_pubkey" "$github_review_key_b64"; then
       return 1
@@ -16759,7 +16795,7 @@ PY
       --evidence-file "$evidence" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: phase-2 apply proved (cohort order)"
+    echo "==> ${agent}: rolling phase-2 apply proved; availability boundary advanced"
   done < "$selected_specs_file"
 
   prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"

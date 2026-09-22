@@ -538,9 +538,16 @@ def snapshot_sandbox_control_processes() -> dict[int, str]:
     for pid in sandbox_cgroup_candidates():
         start = _proc_start_time(pid)
         if start is None:
-            if Path("/proc", str(pid)).exists():
-                raise VerificationError("could not identify trusted sandbox process %d" % pid)
-            continue
+            # The peer may have exited between the cgroup scan and identity
+            # read. Distinguish that race portably; Path('/proc') is not a
+            # liveness authority on macOS and silently trusted live peers there.
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                pass
+            raise VerificationError("could not identify trusted sandbox process %d" % pid)
         result[pid] = start
     return result
 

@@ -337,14 +337,12 @@ def linux_repository_verifier(monkeypatch, tmp_path):
     contract tests exercise production OpenShell argv and unavailable gateways.
     """
     import subprocess
-    import sys
     import tempfile
     from pathlib import Path
 
     from mac import services
 
     def run(_remote, _branch, head, command, bootstrap="", **kwargs):
-        assert sys.platform == "linux", "repository test execution belongs on Linux"
         with tempfile.TemporaryDirectory(dir=tmp_path) as directory:
             target = Path(directory) / "repo"
             clone = subprocess.run(

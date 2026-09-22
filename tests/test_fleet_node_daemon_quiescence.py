@@ -535,6 +535,7 @@ def _run_quiescence(
     retained_mac_env: str | None = None,
     retained_mac_env_mode: int = 0o600,
     retained_mac_env_symlink: bool = False,
+    gateway_port: int | None = None,
 ) -> QuiescenceRun:
     home = tmp_path / "home"
     mac_home = home / ".mac"
@@ -763,6 +764,8 @@ print(hashlib.sha256(outer.read_bytes()).hexdigest())
         "FAKE_PODMAN_MODE": podman_mode,
         "FAKE_SANDBOX_NAME": SANDBOX,
         "FAKE_SECRET": SECRET,
+        "FAKE_GATEWAY_PORT": str(gateway_port or _unused_tcp_port()),
+        "FAKE_LIVE_PID": str(os.getpid()),
         "MAC_DEPLOY_DAEMON_TEST_MODE": "1",
         # Production defaults remain conservative. Keep this guard much smaller
         # than production while allowing a cold Python fake CLI to start under
@@ -807,6 +810,12 @@ print(hashlib.sha256(outer.read_bytes()).hexdigest())
         podman_state=podman_state,
         child_pid=child_pid,
     )
+
+
+def _unused_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
 
 
 def _shell_quote(value: str) -> str:
@@ -1307,15 +1316,14 @@ def test_first_hub_refuses_existing_openshell_containers(tmp_path: Path, running
 @pytest.mark.process_e2e
 def test_first_hub_refuses_unregistered_gateway_listener(tmp_path: Path) -> None:
     with socket.socket() as listener:
-        try:
-            listener.bind(("127.0.0.1", 17670))
-        except OSError:
-            pytest.skip("OpenShell gateway port already occupied")
+        listener.bind(("127.0.0.1", 0))
         listener.listen()
+        gateway_port = int(listener.getsockname()[1])
         run = _run_quiescence(
             tmp_path,
             sandbox_source="none",
             extra_env={"MAC_DEPLOY_FIRST_HUB_BOOTSTRAP": "1"},
+            gateway_port=gateway_port,
         )
     assert run.result.returncode != 0
     assert "prepared OpenShell gateway listener already exists" in run.result.stderr

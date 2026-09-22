@@ -1199,8 +1199,14 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     )[0]
     assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in arm_worker
     assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in apply_worker
-    assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' in typed
+    # Rolling cutover arms and applies one node inside the same loop, preserving
+    # the fleet availability floor instead of stopping the whole cohort.
+    assert 'typed_phase2_arm_worker "$spec"' in typed
     assert 'typed_phase2_apply_worker "$spec"' in typed
+    assert typed.index('typed_phase2_arm_worker "$spec"') < typed.index(
+        'typed_phase2_apply_worker "$spec"'
+    )
+    assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' not in typed
     assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' not in typed
     assert 'run_bounded_node_phase "$selected_specs_file" prerequisites' in typed
     prerequisite_worker = script.split("typed_prerequisite_worker() {", 1)[1].split(
