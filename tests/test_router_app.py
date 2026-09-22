@@ -867,7 +867,164 @@ def test_wildcard_ladder_failfast_when_providers_down_does_not_walk_models():
     proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2", "m3"))
     status, body = proxy.complete("/chat/completions", {"model": "*"})
     assert status == 503 and body["error"]["type"] == "all_providers_unavailable"
-    assert "m2" not in calls and "m3" not in calls  # dead providers -> don't walk the ladder
+    assert calls == ["m1", "m1"]  # both providers once; neither is retried for later models
+
+
+def test_wildcard_ladder_continues_after_first_candidate_provider_outage():
+    observed = []
+    r = ProviderRouter(
+        [
+            Provider("gptoss", "http://gptoss/v1", priority=0, models=("m1",)),
+            Provider("qwen", "http://qwen/v1", priority=1, models=("m2",)),
+        ],
+        failure_threshold=3,
+    )
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append((provider.name, payload["model"], timeout))
+        if provider.name == "gptoss":
+            return 503, {"error": {"type": "upstream_unavailable"}}
+        return 200, {"model": "m2", "ok": True}
+
+    proxy = ProviderProxy(
+        r,
+        fwd,
+        wildcard_models=("m1", "m2"),
+        route_observer=observed.append,
+        timeout=7.0,
+    )
+    status, body = proxy.complete(
+        "/chat/completions",
+        {"model": "*"},
+        route_context={"agent_id": "agent_1", "task_id": "task_1"},
+    )
+
+    assert status == 200 and body["model"] == "m2"
+    assert calls == [("gptoss", "m1", 7.0), ("qwen", "m2", 7.0)]
+    assert observed == [
+        {
+            "schema": "mac.llm_route.v1",
+            "path": "/chat/completions",
+            "stream": False,
+            "requested_model": "*",
+            "resolved_model": "m2",
+            "provider": "qwen",
+            "status_code": 200,
+            "outcome": "success",
+            "duration_ms": observed[0]["duration_ms"],
+            "attempts": [
+                {
+                    "provider": "gptoss",
+                    "model": "m1",
+                    "status": 503,
+                    "outcome": "provider_failure",
+                },
+                {"provider": "qwen", "model": "m2", "status": 200, "outcome": "answered"},
+            ],
+            "agent_id": "agent_1",
+            "task_id": "task_1",
+            "response_model": "m2",
+        }
+    ]
+
+
+def test_wildcard_ladder_all_candidates_fail_with_typed_evidence():
+    observed = []
+    r = ProviderRouter(
+        [
+            Provider("first", "http://first/v1", models=("m1",)),
+            Provider("second", "http://second/v1", models=("m2",)),
+        ],
+        failure_threshold=3,
+    )
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append((provider.name, payload["model"]))
+        return (
+            (None, {"error": "timeout"})
+            if provider.name == "first"
+            else (502, {"error": "bad gateway"})
+        )
+
+    proxy = ProviderProxy(r, fwd, wildcard_models=("m1", "m2"), route_observer=observed.append)
+    status, body = proxy.complete(
+        "/responses",
+        {"model": "*"},
+        route_context={"request_id": "req_1", "lease_id": "lease_1"},
+    )
+
+    assert status == 503
+    assert calls == [("first", "m1"), ("second", "m2")]
+    assert body["error"] == {
+        "message": "no provider could serve model=m2",
+        "type": "all_providers_unavailable",
+        "attempts": [
+            {"provider": "first", "model": "m1", "status": None},
+            {"provider": "second", "model": "m2", "status": 502},
+        ],
+    }
+    assert observed[0]["requested_model"] == "*"
+    assert observed[0]["resolved_model"] == "m2"
+    assert observed[0]["outcome"] == "all_providers_unavailable"
+    assert observed[0]["request_id"] == "req_1"
+    assert observed[0]["lease_id"] == "lease_1"
+    assert [a["outcome"] for a in observed[0]["attempts"]] == [
+        "provider_failure",
+        "provider_failure",
+    ]
+
+
+def test_explicit_model_provider_outage_does_not_substitute_wildcard_candidate():
+    r = ProviderRouter(
+        [
+            Provider("explicit", "http://explicit/v1", models=("wanted",)),
+            Provider("fallback", "http://fallback/v1", models=("m2",)),
+        ],
+        failure_threshold=3,
+    )
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        calls.append((provider.name, payload["model"]))
+        return 503, {"error": "down"}
+
+    status, body = ProviderProxy(r, fwd, wildcard_models=("m1", "m2")).complete(
+        "/chat/completions", {"model": "wanted"}
+    )
+
+    assert status == 503 and body["error"]["type"] == "all_providers_unavailable"
+    assert calls == [("explicit", "wanted")]
+
+
+def test_timeout_and_error_mix_is_bounded_and_has_no_duplicate_attempts():
+    r = ProviderRouter(
+        [
+            Provider("timeout", "http://timeout/v1", priority=0, models=("m1",)),
+            Provider("error", "http://error/v1", priority=1, models=("m1",)),
+            Provider("healthy", "http://healthy/v1", priority=2, models=("m2",)),
+        ],
+        failure_threshold=5,
+    )
+    calls = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        route = (provider.name, payload["model"])
+        calls.append(route)
+        return {
+            "timeout": (None, {"error": "timeout"}),
+            "error": (429, {"error": "rate limited"}),
+            "healthy": (200, {"model": "m2"}),
+        }[provider.name]
+
+    status, body = ProviderProxy(r, fwd, wildcard_models=("m1", "m2")).complete(
+        "/chat/completions", {"model": "*"}
+    )
+
+    assert status == 200 and body["model"] == "m2"
+    assert calls == [("timeout", "m1"), ("error", "m1"), ("healthy", "m2")]
+    assert len(calls) == len(set(calls))
 
 
 def test_build_proxy_reads_wildcard_models():
