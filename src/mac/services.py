@@ -23,7 +23,9 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -2143,6 +2145,9 @@ def _semantic_reviewer_enabled(environ: Optional[Mapping[str, str]] = None) -> b
 
 
 HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA = "mac.hub_review_verifier.v1"
+HUB_REVIEWER_KEY_RESOURCE_KEY = "hub_reviewer_attestation_key"
+HUB_REVIEWER_KEY_STATUS_SCHEMA = "mac.hub_reviewer_attestation_key_status.v1"
+HUB_REVIEWER_KEY_RECOVERY_LIMIT = 3
 DEFAULT_HUB_REVIEWER_AGENT_NAME = "hub-reviewer"
 DEFAULT_HUB_REVIEWER_AGENT_ID = "agent_hub-reviewer"
 DEFAULT_HUB_REVIEWER_MACHINE_ID = "machine_operator_review"
@@ -2154,6 +2159,20 @@ REVIEWER_INDEPENDENCE_REASONS = frozenset(
         "reviewer_same_persona",
     }
 )
+
+
+class AgentAttestationKeyState(str, Enum):
+    ABSENT = "absent"
+    DECRYPTABLE = "decryptable"
+    UNDECRYPTABLE = "undecryptable"
+
+
+@dataclass(frozen=True)
+class AgentAttestationKeyStatus:
+    """Typed, internal result of inspecting one encrypted agent key."""
+
+    state: AgentAttestationKeyState
+    key: Optional[str] = None
 
 
 def sign_verification_manifest(key: str, manifest: Dict[str, Any]) -> str:
@@ -3449,6 +3468,16 @@ class ControlPlane:
             merged["startup_self_test"] = existing["startup_self_test"]
         if "openshell_required" in existing:
             merged["openshell_required"] = existing["openshell_required"]
+        # Hub reviewer key readiness is controller-owned.  A worker may not
+        # claim that an unreadable signing key is healthy, and routine virtual
+        # agent re-registration must not erase the controller's diagnosis.
+        merged.pop(HUB_REVIEWER_KEY_RESOURCE_KEY, None)
+        reviewer_key_status = existing.get(HUB_REVIEWER_KEY_RESOURCE_KEY)
+        if (
+            isinstance(reviewer_key_status, Mapping)
+            and reviewer_key_status.get("schema") == HUB_REVIEWER_KEY_STATUS_SCHEMA
+        ):
+            merged[HUB_REVIEWER_KEY_RESOURCE_KEY] = dict(reviewer_key_status)
         merged.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         existing_approval = existing.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
         if valid_read_only_report_repository_executor_approval(existing_approval):
@@ -15517,17 +15546,258 @@ class ControlPlane:
         )
         return agent
 
-    def _agent_attestation_key(self, agent_id: str) -> Optional[str]:
-        """Decrypted HMAC key for an agent, or None if the row predates
-        the attestation-key column."""
-        row = self.store.query_one(
-            "SELECT attestation_key_ciphertext FROM agents WHERE id = ?", (agent_id,)
-        )
-        if row is None or not row["attestation_key_ciphertext"]:
-            return None
+    def _inspect_agent_attestation_key(
+        self, agent_id: str, *, conn: Any = None
+    ) -> AgentAttestationKeyStatus:
+        """Distinguish absence from ciphertext this hub cannot decrypt."""
+
+        if conn is None:
+            row = self.store.query_one(
+                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?", (agent_id,)
+            )
+        else:
+            row = conn.execute(
+                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("agent not found: %s" % agent_id)
+        ciphertext = row["attestation_key_ciphertext"]
+        if not ciphertext:
+            return AgentAttestationKeyStatus(AgentAttestationKeyState.ABSENT)
         try:
-            return self.secrets._decrypt(row["attestation_key_ciphertext"])
-        except Exception:  # noqa: BLE001 - corrupt or rotated key shouldn't crash review
+            key = self.secrets._decrypt(ciphertext)
+        except Exception:  # noqa: BLE001 - the state is surfaced, not swallowed.
+            return AgentAttestationKeyStatus(AgentAttestationKeyState.UNDECRYPTABLE)
+        return AgentAttestationKeyStatus(AgentAttestationKeyState.DECRYPTABLE, key)
+
+    def _agent_attestation_key(self, agent_id: str) -> Optional[str]:
+        """Decrypted HMAC key, preserving the historical optional contract."""
+
+        try:
+            return self._inspect_agent_attestation_key(agent_id).key
+        except NotFoundError:
+            return None
+
+    def hub_reviewer_attestation_key_status(
+        self, agent_id: str = DEFAULT_HUB_REVIEWER_AGENT_ID
+    ) -> Dict[str, Any]:
+        """Secret-free readiness for the virtual reviewer's signing authority."""
+
+        inspected = self._inspect_agent_attestation_key(agent_id)
+        agent = self.get_agent(agent_id)
+        persisted = ensure_json_object(
+            ensure_json_object(agent.resources).get(HUB_REVIEWER_KEY_RESOURCE_KEY)
+        )
+        return {
+            "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+            "agent_id": agent_id,
+            "state": inspected.state.value,
+            "ready": inspected.state is AgentAttestationKeyState.DECRYPTABLE,
+            "recovery_attempts": int(persisted.get("recovery_attempts") or 0),
+            "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+            **(
+                {"last_recovered_at": persisted["last_recovered_at"]}
+                if persisted.get("last_recovered_at")
+                else {}
+            ),
+            **(
+                {"last_failure_at": persisted["last_failure_at"]}
+                if persisted.get("last_failure_at")
+                else {}
+            ),
+        }
+
+    def ensure_hub_reviewer_attestation_key(
+        self,
+        agent_id: str = DEFAULT_HUB_REVIEWER_AGENT_ID,
+        *,
+        actor: str = "default-review-workflow",
+    ) -> str:
+        """Return a usable virtual-reviewer key, repairing it at most three times.
+
+        The hub is both owner and consumer of this virtual identity, so there
+        is no host-side secret to coordinate. Recovery is a local, fenced
+        replacement. It never exports the key, performs one attempt per call,
+        and persists success and failure across process restarts.
+        """
+
+        agent = self.get_agent(agent_id)
+        if not self._agent_is_virtual(agent_id) or not self._agent_is_hub_review_verifier(agent):
+            raise ValidationError("attestation self-heal is limited to the virtual hub reviewer")
+
+        now = utcnow()
+        result_key: Optional[str] = None
+        failure: Optional[str] = None
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
+            resources = ensure_json_object(json_loads(row["resources"], {}))
+            persisted = ensure_json_object(resources.get(HUB_REVIEWER_KEY_RESOURCE_KEY))
+            inspected = self._inspect_agent_attestation_key(agent_id, conn=conn)
+            attempts = int(persisted.get("recovery_attempts") or 0)
+
+            if inspected.state is AgentAttestationKeyState.DECRYPTABLE:
+                result_key = inspected.key
+                desired = {
+                    **persisted,
+                    "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                    "state": AgentAttestationKeyState.DECRYPTABLE.value,
+                    "ready": True,
+                    "recovery_attempts": attempts,
+                    "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                }
+                if desired != persisted:
+                    resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = desired
+                    conn.execute(
+                        "UPDATE agents SET resources = ?, health_status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (json_dumps(resources), HealthStatus.HEALTHY.value, now, agent_id),
+                    )
+            elif attempts >= HUB_REVIEWER_KEY_RECOVERY_LIMIT:
+                failure = "virtual reviewer attestation key recovery exhausted"
+                first_exhausted_report = persisted.get("recovery_exhausted") is not True
+                resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = {
+                    **persisted,
+                    "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                    "state": inspected.state.value,
+                    "ready": False,
+                    "recovery_attempts": attempts,
+                    "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                    "recovery_exhausted": True,
+                }
+                conn.execute(
+                    "UPDATE agents SET resources = ?, health_status = ?, updated_at = ? WHERE id = ?",
+                    (json_dumps(resources), HealthStatus.UNHEALTHY.value, now, agent_id),
+                )
+                if first_exhausted_report:
+                    self._record_agent_lifecycle_event(
+                        conn,
+                        agent_id,
+                        "agent.virtual_reviewer_attestation_key.recovery_exhausted",
+                        actor,
+                        {
+                            "agent_id": agent_id,
+                            "state": inspected.state.value,
+                            "attempts": attempts,
+                            "limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        },
+                        now,
+                    )
+            else:
+                attempts += 1
+                try:
+                    candidate = _generate_attestation_key()
+                    encrypted = self.secrets._encrypt(candidate)
+                except Exception as exc:  # noqa: BLE001 - persist bounded failure state.
+                    failure = (
+                        "virtual reviewer attestation key recovery failed: %s" % type(exc).__name__
+                    )
+                    resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = {
+                        "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                        "state": inspected.state.value,
+                        "ready": False,
+                        "recovery_attempts": attempts,
+                        "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        "last_failure_at": now,
+                    }
+                    conn.execute(
+                        "UPDATE agents SET resources = ?, health_status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (json_dumps(resources), HealthStatus.UNHEALTHY.value, now, agent_id),
+                    )
+                    self._record_agent_lifecycle_event(
+                        conn,
+                        agent_id,
+                        "agent.virtual_reviewer_attestation_key.recovery_failed",
+                        actor,
+                        {
+                            "agent_id": agent_id,
+                            "previous_state": inspected.state.value,
+                            "attempt": attempts,
+                            "limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                            "error_type": type(exc).__name__,
+                        },
+                        now,
+                    )
+                else:
+                    result_key = candidate
+                    resources[HUB_REVIEWER_KEY_RESOURCE_KEY] = {
+                        "schema": HUB_REVIEWER_KEY_STATUS_SCHEMA,
+                        "state": AgentAttestationKeyState.DECRYPTABLE.value,
+                        "ready": True,
+                        "recovery_attempts": attempts,
+                        "recovery_limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        "last_recovered_at": now,
+                        "recovered_from": inspected.state.value,
+                    }
+                    # Keep prior/history generations intact. A malformed
+                    # current ciphertext does not prove older ciphertext is
+                    # unusable, and retained signatures still need it.
+                    conn.execute(
+                        """
+                        UPDATE agents
+                        SET attestation_key_ciphertext = ?,
+                            attestation_key_rotated_at = ?,
+                            resources = ?, health_status = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            encrypted,
+                            now,
+                            json_dumps(resources),
+                            HealthStatus.HEALTHY.value,
+                            now,
+                            agent_id,
+                        ),
+                    )
+                    self._record_agent_lifecycle_event(
+                        conn,
+                        agent_id,
+                        "agent.virtual_reviewer_attestation_key.recovered",
+                        actor,
+                        {
+                            "agent_id": agent_id,
+                            "previous_state": inspected.state.value,
+                            "attempt": attempts,
+                            "limit": HUB_REVIEWER_KEY_RECOVERY_LIMIT,
+                        },
+                        now,
+                    )
+        if failure is not None:
+            raise ValidationError(failure)
+        if result_key is None:
+            raise ValidationError("virtual reviewer attestation key is unavailable")
+        return result_key
+
+    def _reviewer_attestation_key_for_signing(
+        self, reviewer_agent_id: str, *, actor: str
+    ) -> Optional[str]:
+        try:
+            reviewer = self.get_agent(reviewer_agent_id)
+        except NotFoundError:
+            return None
+        if not (
+            self._agent_is_virtual(reviewer_agent_id)
+            and self._agent_is_hub_review_verifier(reviewer)
+        ):
+            return self._agent_attestation_key(reviewer_agent_id)
+        try:
+            return self.ensure_hub_reviewer_attestation_key(reviewer_agent_id, actor=actor)
+        except (MACError, RuntimeError) as exc:
+            self.observability.record_log(
+                "workflow.default_review.hub_reviewer_key_unhealthy",
+                level="error",
+                layer="control_plane",
+                source="default-review-workflow",
+                subject_type="agent",
+                subject_id=reviewer_agent_id,
+                detail={"actor": actor, "error": str(exc)[:300]},
+            )
             return None
 
     def _agent_attestation_prev_key(self, agent_id: str) -> Optional[str]:
@@ -28329,7 +28599,7 @@ class ControlPlane:
         info = self._hub_verify_repo_info(task, executor_evidence)
         if info is None:
             return None
-        key = self._agent_attestation_key(review.reviewer_agent_id)
+        key = self._reviewer_attestation_key_for_signing(review.reviewer_agent_id, actor=actor)
         if not key:
             return None
         existing = self._existing_hub_review_verification_evidence(
@@ -29431,7 +29701,7 @@ class ControlPlane:
         is gone, so the hub-reviewer attests that the executor evidence
         already satisfied the verification contract.
         """
-        key = self._agent_attestation_key(review.reviewer_agent_id)
+        key = self._reviewer_attestation_key_for_signing(review.reviewer_agent_id, actor=actor)
         if key is None:
             return None
         executor_manifest = ensure_json_object(
@@ -29534,7 +29804,7 @@ class ControlPlane:
                 trusted=True,
                 machine_id=machine_id,
             )
-            return self.register_agent(
+            reviewer = self.register_agent(
                 machine.id,
                 name,
                 capabilities=["review"],
@@ -29549,6 +29819,19 @@ class ControlPlane:
                 agent_id=agent_id,
                 actor=actor,
             )
+            try:
+                self.ensure_hub_reviewer_attestation_key(reviewer.id, actor=actor)
+            except ValidationError as exc:
+                self.observability.record_log(
+                    "workflow.default_review.hub_reviewer_key_unhealthy",
+                    level="error",
+                    layer="control_plane",
+                    source="default-review-workflow",
+                    subject_type="agent",
+                    subject_id=reviewer.id,
+                    detail={"actor": actor, "error": str(exc)[:300]},
+                )
+            return self.get_agent(reviewer.id)
         except Exception as exc:  # noqa: BLE001 - verifier setup must not break review sweeps.
             self.observability.record_log(
                 "workflow.default_review.hub_reviewer_register_failed",
