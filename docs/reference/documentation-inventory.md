@@ -231,6 +231,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`scientific-optimizer.md`](../scientific-optimizer.md) | Autonomous scientific optimizer |
 | supplemental reference | [`secrets-management-guide.md`](../secrets-management-guide.md) | Secrets Management Guide |
 | supplemental reference | [`security/openshell-0.0.72-compatibility-review.mdx`](../security/openshell-0.0.72-compatibility-review.mdx) | OpenShell 0.0.72 Compatibility Review |
+| supplemental reference | [`self-hosted-inference-providers.md`](../self-hosted-inference-providers.md) | Self-hosted inference providers |
 | runbook | [`soul-preservation-runbook.md`](../soul-preservation-runbook.md) | Soul Preservation Runbook |
 | supplemental reference | [`structured-task-bodies.md`](../structured-task-bodies.md) | Structured task bodies: actions on a Component |
 | historical archive | [`superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) | Autonomous Project Routing and Review/Fix Loop Implementation Plan |

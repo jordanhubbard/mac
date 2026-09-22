@@ -575,6 +575,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_IMAGE_SOURCE_SHA_FILE` | str | consumer-defined | core | Core setting: image source sha file. |
 | `MAC_IMAGE_TAG` | str | consumer-defined | core | Core setting: image tag. |
 | `MAC_IMPACT_MAP_CHECKED` | str | consumer-defined | core | Core setting: impact map checked. |
+| `MAC_INFERENCE_PROVIDERS_CONFIG` | str | consumer-defined | core | Core setting: inference providers config. |
+| `MAC_INFERENCE_PROVIDERS_DIR` | str | consumer-defined | core | Core setting: inference providers dir. |
 | `MAC_JOURNAL_AGENT` | str | consumer-defined | core | Core setting: journal agent. |
 | `MAC_JOURNAL_BACKUP_HOOK` | str | consumer-defined | core | Core setting: journal backup hook. |
 | `MAC_JOURNAL_DATE` | str | consumer-defined | core | Core setting: journal date. |

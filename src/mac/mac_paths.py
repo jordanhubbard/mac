@@ -42,6 +42,8 @@ __all__ = [
     "script_jobs_output_dir",
     "legacy_gateway_scripts_dir",
     "plugin_dir",
+    "inference_providers_config",
+    "inference_providers_dir",
 ]
 
 
@@ -128,6 +130,16 @@ def backups_dir() -> Path:
 def archive_dir() -> Path:
     """Ledger archive: ``$MAC_HOME/archive``."""
     return mac_home() / "archive"
+
+
+def inference_providers_config() -> Path:
+    """Home-scoped desired state for self-hosted inference providers."""
+    return _env_path("MAC_INFERENCE_PROVIDERS_CONFIG") or (mac_home() / "inference-providers.json")
+
+
+def inference_providers_dir() -> Path:
+    """Persistent caches and receipts owned by self-hosted providers."""
+    return _env_path("MAC_INFERENCE_PROVIDERS_DIR") or (mac_home() / "inference-providers")
 
 
 def openclaw_home() -> Path:
