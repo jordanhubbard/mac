@@ -1105,6 +1105,7 @@ _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
 
 _HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
     "hub verifier resource profile unavailable",
+    "hub verification is unavailable: dedicated vm",
     # cursor-agent's stream transport, the observed cause
     "ssh exited with status",
     "connection reset by peer",
@@ -2240,24 +2241,36 @@ def run_repository_contract_test_in_openshell(
         auth_url, auth_env = str(local_repository.resolve()), {}
     else:
         auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
+    from .vm_verifier import configured_vm_verifier, run_staged_vm_verification
+
+    try:
+        vm_config = configured_vm_verifier(remote_url)
+    except (OSError, ValueError) as exc:
+        return 1, f"hub verification is unavailable: dedicated VM configuration: {exc}"
+    if vm_config is not None and prepared_report is not None:
+        return 1, "hub verification is unavailable: dedicated VM report attestation is unsupported"
     openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
     image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
-    if not image:
+    if vm_config is None and not image:
         return 1, (
             "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE must name "
             "the deployment-approved immutable OpenShell runtime image"
         )
-    if not re.fullmatch(r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image):
+    if vm_config is None and not re.fullmatch(
+        r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}", image
+    ):
         return 1, (
             "hub verification is unavailable: MAC_HUB_VERIFY_IMAGE is not "
             "the immutable repository-owned OpenShell runtime image"
         )
     try:
-        profile_args, profile_env, profile_preflight = verifier_resource_profile()
+        profile_args, profile_env, profile_preflight = (
+            verifier_resource_profile() if vm_config is None else ([], [], "")
+        )
     except ValueError as exc:
         return 1, str(exc)
     policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
-    if local_repository is not None and not policy:
+    if vm_config is None and local_repository is not None and not policy:
         return 1, "pre-push verification unavailable: MAC_OPENSHELL_POLICY is required"
     if prepared_report is not None:
         from .trusted_artifact import nofollow_regular_file_identity
@@ -2287,7 +2300,7 @@ def run_repository_contract_test_in_openshell(
         timeout = 1200.0
     if timeout_seconds is not None:
         timeout = max(1.0, float(timeout_seconds))
-    if _truthy_env("MAC_OPENSHELL_GC"):
+    if vm_config is None and _truthy_env("MAC_OPENSHELL_GC"):
         try:
             from mac.openshell_sandbox_gc import reconcile_stale_sandboxes
 
@@ -2427,6 +2440,29 @@ def run_repository_contract_test_in_openshell(
             return 1, "hub verify tar failed: %s" % ((tar.stderr or tar.stdout or "").strip())[
                 -800:
             ]
+        if vm_config is not None:
+            tree = subprocess.run(
+                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD^{tree}"],
+                capture_output=True,
+                text=True,
+                timeout=bounded_timeout(30),
+                check=False,
+            )
+            if tree.returncode or not _GIT_SHA_RE.fullmatch(tree.stdout.strip()):
+                return 1, "hub verification is unavailable: dedicated VM source tree unresolved"
+            if expected_tree_sha and tree.stdout.strip() != expected_tree_sha:
+                return 1, "hub verification is unavailable: dedicated VM source tree mismatch"
+            return run_staged_vm_verification(
+                vm_config,
+                tmp / "repo.tgz",
+                remote_url=remote_url,
+                head_sha=head_sha,
+                tree_sha=tree.stdout.strip(),
+                test_command=test_command or "scripts/run-contract-tests.sh",
+                bootstrap_command=bootstrap_command,
+                timeout_seconds=bounded_timeout(timeout),
+                verifier_identity=verifier_identity,
+            )
         subprocess.run(
             [openshell, "sandbox", "delete", name],
             capture_output=True,
@@ -2742,7 +2778,7 @@ def verify_unpublished_repository(
         if identity.get("execution_attempted"):
             result.update(
                 status="pass" if rc == 0 else "fail",
-                execution_environment="openshell_sandbox",
+                execution_environment=identity.get("execution_environment", "openshell_sandbox"),
                 executed_head_sha=head,
                 executed_tree_sha=tree,
             )
@@ -28522,6 +28558,8 @@ class ControlPlane:
             if report_access
             else {}
         )
+        if not report_access and os.environ.get("MAC_HUB_VERIFY_VM_CONFIG"):
+            report_options["verifier_identity"] = verifier_identity
         try:
             returncode, output = self._hub_verify_run_contract_test(
                 info["remote_url"],
@@ -28664,6 +28702,9 @@ class ControlPlane:
             manifest["repository_access"] = dict(report_access)
             manifest["verifier_runtime"] = verifier_identity
             manifest["tests"][0]["execution_environment"] = "openshell_sandbox"
+        elif verifier_identity.get("execution_environment") == "dedicated_kvm":
+            manifest["verifier_runtime"] = dict(verifier_identity)
+            manifest["tests"][0]["execution_environment"] = "dedicated_kvm"
         if verdict == "rejected":
             # Lead with the command and its exit status. The excerpt that
             # follows is thousands of lines of mostly-PASSING output -- a

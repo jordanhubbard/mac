@@ -123,6 +123,7 @@ CONSUMER_DEFAULTS = {
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_HUB_VERIFY_VM_CONFIG": "Private controller configuration for explicitly allowlisted repositories verified in disposable dedicated KVM guests; other repositories retain OpenShell verification.",
     "MAC_HUB_VERIFY_PROFILE": (
         "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "
         "driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB "
