@@ -557,6 +557,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_VERIFY_PROFILE` | str | default | hub | Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
+| `MAC_HUB_VERIFY_VM_CONFIG` | str | consumer-defined | hub | Private controller configuration for explicitly allowlisted repositories verified in disposable dedicated KVM guests; other repositories retain OpenShell verification. |
 | `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |
 | `MAC_HUMAN_USERNAME` | str | consumer-defined | core | Core setting: human username. |
 | `MAC_IDE_HANDOFF_FILE` | str | consumer-defined | core | Core setting: ide handoff file. |

@@ -6637,6 +6637,18 @@
   },
   {
     "default": null,
+    "description": "Private controller configuration for explicitly allowlisted repositories verified in disposable dedicated KVM guests; other repositories retain OpenShell verification.",
+    "family": "hub",
+    "name": "MAC_HUB_VERIFY_VM_CONFIG",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py",
+      "src/mac/vm_verifier.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: human.",
     "family": "core",
     "name": "MAC_HUMAN",
