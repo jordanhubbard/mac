@@ -27293,7 +27293,7 @@ class ControlPlane:
         )
 
     def _task_dispatch_held(self, task: Task) -> bool:
-        """True when a task is explicitly held from autonomous dispatch (staged).
+        """True when a task is staged or inside a bounded retry backoff.
 
         Set via metadata ``no_dispatch: true`` (e.g. ``mac task create
         --no-dispatch``) so a backlog — a freshly-onboarded project's tickets,
@@ -27303,7 +27303,18 @@ class ControlPlane:
         (``mac task claim`` / ``mac task start``). This is the first-class
         replacement for abusing a sentinel ``required_capabilities`` value.
         """
-        return bool(ensure_json_object(task.metadata).get("no_dispatch"))
+        metadata = ensure_json_object(task.metadata)
+        if metadata.get("no_dispatch"):
+            return True
+        semantic_retry = ensure_json_object(metadata.get("semantic_retry"))
+        not_before = str(semantic_retry.get("not_before") or "").strip()
+        if not_before and semantic_retry.get("status") == "scheduled":
+            try:
+                return parse_time(utcnow()) < parse_time(not_before)
+            except (TypeError, ValueError):
+                # Corrupt controller metadata must not strand useful work.
+                return False
+        return False
 
     def _project_dispatch_paused(self, project: Optional[str]) -> bool:
         """True when the task's project is explicitly dispatch-PAUSED.
@@ -30018,9 +30029,7 @@ class ControlPlane:
                 "executor_evidence_id": executor_evidence.id,
                 "verdict_evidence_id": evidence.id,
                 "reason": (
-                    "semantic_reviewer_removed"
-                    if acceptance_pass
-                    else "semantic_acceptance_failed"
+                    "semantic_reviewer_removed" if acceptance_pass else "semantic_acceptance_failed"
                 ),
             },
             actor,

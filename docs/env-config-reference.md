@@ -1095,6 +1095,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SELF_UPDATE_GIT_TIMEOUT` | int | consumer-defined | core | Core setting: self update git timeout. |
 | `MAC_SELF_UPDATE_REPO` | str | consumer-defined | core | Core setting: self update repo. |
 | `MAC_SELF_UPDATE_SERVICE_TIMEOUT` | int | consumer-defined | core | Core setting: self update service timeout. |
+| `MAC_SEMANTIC_RETRY_BASE_SECONDS` | int | 15 | semantic-retry | Semantic Retry setting: semantic retry base seconds. |
+| `MAC_SEMANTIC_RETRY_CAP_SECONDS` | int | 300 | semantic-retry | Semantic Retry setting: semantic retry cap seconds. |
 | `MAC_SERVICE_NAME` | str | consumer-defined | core | Core setting: service name. |
 | `MAC_SERVICE_NOFILE_LIMIT` | int | consumer-defined | core | Core setting: service nofile limit. |
 | `MAC_SERVICE_ROLE_OPS` | str | consumer-defined | core | Core setting: service role ops. |

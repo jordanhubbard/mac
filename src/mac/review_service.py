@@ -16,8 +16,11 @@ emits the matching observability events, and idles the owning agent.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
@@ -43,6 +46,10 @@ from mac.models import (
 from mac.messaging_service import MessagingService
 from mac.review_failure_classifier import classify_review_failure
 from mac.observability_service import ObservabilityService
+from mac.semantic_acceptance import (
+    ACCEPTANCE_RESULT_SCHEMA,
+    FAILURE_SEMANTIC_WORK,
+)
 
 
 def _state_value(state: Any) -> str:
@@ -155,6 +162,109 @@ def manifest_llm_provider(manifest: Any) -> str:
         if provider in segments:
             return provider
     return _FAMILY_PROVIDER.get(manifest_llm_family(manifest), "")
+
+
+def _semantic_retry_delay_seconds(
+    task_id: str,
+    attempt_count: int,
+    evidence_id: str,
+    *,
+    base_seconds: Optional[int] = None,
+    cap_seconds: Optional[int] = None,
+) -> int:
+    """Return bounded deterministic jitter for a semantic work retry.
+
+    Determinism makes a replay produce the same receipt, while hashing task
+    identity prevents a fleet-wide rejection burst from becoming a synchronized
+    retry herd.
+    """
+    base = max(
+        1,
+        int(
+            base_seconds
+            if base_seconds is not None
+            else os.environ.get("MAC_SEMANTIC_RETRY_BASE_SECONDS", "15")
+        ),
+    )
+    cap = max(
+        base,
+        int(
+            cap_seconds
+            if cap_seconds is not None
+            else os.environ.get("MAC_SEMANTIC_RETRY_CAP_SECONDS", "300")
+        ),
+    )
+    window = min(cap, base * (2 ** max(0, int(attempt_count or 1) - 1)))
+    floor = max(1, window // 2)
+    span = max(1, window - floor + 1)
+    seed = "%s:%s:%s" % (task_id, int(attempt_count or 0), evidence_id)
+    jitter = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16], 16) % span
+    return min(cap, floor + jitter)
+
+
+def _semantic_retry_not_before(now: str, delay_seconds: int) -> str:
+    parsed = datetime.fromisoformat(str(now).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (parsed + timedelta(seconds=max(0, int(delay_seconds)))).isoformat(
+        timespec="microseconds"
+    )
+
+
+def _configured_semantic_retry_routes(metadata: Dict[str, Any]) -> List[Dict[str, str]]:
+    retry = metadata.get("semantic_retry")
+    retry = retry if isinstance(retry, dict) else {}
+    raw = retry.get("routes")
+    if not isinstance(raw, list):
+        raw = metadata.get("model_candidates")
+    if not isinstance(raw, list):
+        raw = metadata.get("retry_models")
+    if not isinstance(raw, list):
+        try:
+            from mac.model_selection import selected_models
+
+            raw = selected_models()
+        except Exception:  # noqa: BLE001 - absence of a ladder must not block retry.
+            raw = []
+    routes: List[Dict[str, str]] = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            model = str(item.get("model") or "").strip()
+            provider = str(item.get("provider") or "").strip().lower()
+        else:
+            model = str(item or "").strip()
+            provider = ""
+        if not model:
+            continue
+        if not provider:
+            provider = manifest_llm_provider({"llm_model": model})
+        route = {"model": model, "provider": provider}
+        if route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _select_semantic_retry_route(
+    metadata: Dict[str, Any],
+    failed_routes: List[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    """Select a model-addressable alternate, preferring a new provider."""
+    failed_pairs = {
+        (str(item.get("provider") or "").lower(), str(item.get("model") or ""))
+        for item in failed_routes
+    }
+    failed_models = {model for _provider, model in failed_pairs if model}
+    candidates = [
+        route
+        for route in _configured_semantic_retry_routes(metadata)
+        if route["model"] not in failed_models
+        and (route["provider"], route["model"]) not in failed_pairs
+    ]
+    if not candidates:
+        return None
+    failed_providers = {provider for provider, _model in failed_pairs if provider}
+    candidates.sort(key=lambda route: 1 if route.get("provider") in failed_providers else 0)
+    return candidates[0]
 
 
 def review_diversity_requirements(task: Any) -> Dict[str, bool]:
@@ -462,10 +572,19 @@ class ReviewService:
             raise ValidationError("review is already completed with a different decision")
         if status_value == ReviewStatus.APPROVED.value and evidence_id is None:
             raise ValidationError("approving a review requires an evidence_id")
+        decision_manifest: Dict[str, Any] = {}
         if evidence_id is not None:
             evidence = self._get_evidence(evidence_id)
             if evidence.task_id != review.task_id:
                 raise ValidationError("review evidence must belong to reviewed task")
+            raw_decision_manifest = (
+                evidence.metadata.get("verification")
+                if isinstance(evidence.metadata, dict)
+                else None
+            )
+            decision_manifest = (
+                raw_decision_manifest if isinstance(raw_decision_manifest, dict) else {}
+            )
             # mac-5u1f: an APPROVED review must point at a real signed
             # review_verdict authored by the reviewer, not at any
             # task-attached evidence (which would let the executor's
@@ -556,6 +675,7 @@ class ReviewService:
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
         refund_attempt = False
+        semantic_retry_update: Optional[Dict[str, Any]] = None
         if status_value in {
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,
@@ -603,6 +723,148 @@ class ReviewService:
                 "review_failure_is_infrastructure": classification.is_infrastructure,
                 "review_infrastructure_failure_count": infrastructure_failures,
             }
+            acceptance = ensure_json_object(decision_manifest.get("acceptance"))
+            acceptance_rejection = (
+                acceptance.get("schema") == ACCEPTANCE_RESULT_SCHEMA
+                and acceptance.get("required") is True
+                and acceptance.get("status") == "fail"
+            )
+            if acceptance_rejection and self._find_verdict_evidence is not None:
+                reviewed_evidence_id = str(
+                    decision_manifest.get("reviewed_evidence_id") or ""
+                ).strip()
+                current_target = self.current_review_target_evidence_id(review.task_id)
+                verdict, _problems = self._find_verdict_evidence(
+                    review.task_id,
+                    reviewer_agent_id,
+                    executor_evidence_id=reviewed_evidence_id,
+                    verdict_evidence_id=evidence_id,
+                    not_before=review.created_at,
+                )
+                acceptance_rejection = bool(
+                    reviewed_evidence_id
+                    and reviewed_evidence_id == current_target
+                    and verdict is not None
+                )
+            if acceptance_rejection:
+                failure_class = str(acceptance.get("failure_class") or "").strip()
+                metadata = ensure_json_object(reviewed_task.metadata)
+                existing_retry = ensure_json_object(metadata.get("semantic_retry"))
+                failed_routes = [
+                    {
+                        "provider": str(item.get("provider") or "").strip().lower(),
+                        "model": str(item.get("model") or "").strip(),
+                    }
+                    for item in existing_retry.get("failed_routes", [])
+                    if isinstance(item, dict) and str(item.get("model") or "").strip()
+                ]
+                executor_evidence_id = str(
+                    decision_manifest.get("reviewed_evidence_id") or ""
+                ).strip()
+                executor_manifest: Dict[str, Any] = {}
+                if executor_evidence_id:
+                    executor_evidence = self._get_evidence(executor_evidence_id)
+                    raw_executor_manifest = (
+                        executor_evidence.metadata.get("verification")
+                        if isinstance(executor_evidence.metadata, dict)
+                        else None
+                    )
+                    if isinstance(raw_executor_manifest, dict):
+                        executor_manifest = raw_executor_manifest
+                failed_route = {
+                    "provider": manifest_llm_provider(executor_manifest),
+                    "model": manifest_llm_model(executor_manifest),
+                }
+                if failed_route["model"] and failed_route not in failed_routes:
+                    failed_routes.append(failed_route)
+                attempts = list(existing_retry.get("attempts") or [])
+                attempt_record: Dict[str, Any] = {
+                    "attempt_count": reviewed_task.attempt_count,
+                    "executor_evidence_id": executor_evidence_id,
+                    "verdict_evidence_id": evidence_id,
+                    "review_id": review_id,
+                    "failure_class": failure_class,
+                    "problems": [str(item)[:500] for item in acceptance.get("problems", [])][:10],
+                    "failed_route": failed_route,
+                    "recorded_at": now,
+                }
+                attempts.append(attempt_record)
+                semantic_retry_update = dict(existing_retry)
+                semantic_retry_update.update(
+                    {
+                        "schema": "mac.semantic_retry.v1",
+                        "failed_routes": failed_routes,
+                        "attempts": attempts[-max(1, int(reviewed_task.max_attempts)) :],
+                        "last_failure_class": failure_class,
+                    }
+                )
+                if failure_class == FAILURE_SEMANTIC_WORK:
+                    refund_attempt = False
+                    exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
+                    if exhausted:
+                        transition_target = TaskState.NEEDS_REVIEW.value
+                        semantic_retry_update.pop("not_before", None)
+                        semantic_retry_update["status"] = "exhausted"
+                        transition_detail = {
+                            "review_id": review_id,
+                            "review_status": status_value,
+                            "reason": "semantic retry budget exhausted",
+                            "semantic_failure_class": failure_class,
+                            "executor_evidence_id": executor_evidence_id,
+                            "verdict_evidence_id": evidence_id,
+                            "attempt_count": reviewed_task.attempt_count,
+                            "max_attempts": reviewed_task.max_attempts,
+                            "manual_review_required": True,
+                        }
+                    else:
+                        delay_seconds = _semantic_retry_delay_seconds(
+                            reviewed_task.id,
+                            reviewed_task.attempt_count,
+                            str(evidence_id or executor_evidence_id),
+                        )
+                        not_before = _semantic_retry_not_before(now, delay_seconds)
+                        alternate = _select_semantic_retry_route(metadata, failed_routes)
+                        semantic_retry_update.update(
+                            {
+                                "status": "scheduled",
+                                "not_before": not_before,
+                                "delay_seconds": delay_seconds,
+                                "next_attempt": reviewed_task.attempt_count + 1,
+                                "selected_route": alternate,
+                            }
+                        )
+                        transition_target = TaskState.OPEN.value
+                        transition_detail = {
+                            "review_id": review_id,
+                            "review_status": status_value,
+                            "reason": "bounded semantic work retry",
+                            "semantic_failure_class": failure_class,
+                            "executor_evidence_id": executor_evidence_id,
+                            "verdict_evidence_id": evidence_id,
+                            "attempt_count": reviewed_task.attempt_count,
+                            "max_attempts": reviewed_task.max_attempts,
+                            "retry_not_before": not_before,
+                            "retry_delay_seconds": delay_seconds,
+                            "failed_route": failed_route,
+                            "selected_route": alternate,
+                        }
+                else:
+                    # Verifier absence/version drift and malformed contracts are
+                    # operator defects.  Park immediately without burning more
+                    # model attempts or publishing the rejected candidate.
+                    refund_attempt = False
+                    transition_target = TaskState.NEEDS_REVIEW.value
+                    semantic_retry_update.pop("not_before", None)
+                    semantic_retry_update["status"] = "operator_repair_required"
+                    transition_detail = {
+                        "review_id": review_id,
+                        "review_status": status_value,
+                        "reason": "semantic acceptance operator defect",
+                        "semantic_failure_class": failure_class,
+                        "executor_evidence_id": executor_evidence_id,
+                        "verdict_evidence_id": evidence_id,
+                        "manual_review_required": True,
+                    }
             if refund_attempt:
                 # Name the refund in the transition detail so the ledger shows
                 # why this rejection did not cost the task an attempt.
@@ -647,23 +909,33 @@ class ReviewService:
             )
             if changed.rowcount != 1:
                 raise ValidationError("review state changed during submission; retry")
-            if rejected_feedback is not None:
-                metadata = dict(task_for_feedback.metadata)
+            if rejected_feedback is not None or semantic_retry_update is not None:
+                metadata = dict(
+                    task_for_feedback.metadata
+                    if task_for_feedback is not None
+                    else reviewed_task.metadata
+                )
                 block = (
                     metadata.get("review_feedback")
                     if isinstance(metadata.get("review_feedback"), dict)
                     else {}
                 )
-                history = list(block.get("history") or [])
-                latest = block.get("latest")
-                if isinstance(latest, dict):
-                    history.insert(0, latest)
-                metadata["review_feedback"] = self._bounded_review_feedback_block(
-                    rejected_feedback,
-                    history,
-                )
+                if rejected_feedback is not None:
+                    history = list(block.get("history") or [])
+                    latest = block.get("latest")
+                    if isinstance(latest, dict):
+                        history.insert(0, latest)
+                    metadata["review_feedback"] = self._bounded_review_feedback_block(
+                        rejected_feedback,
+                        history,
+                    )
                 if refund_attempt:
                     metadata["review_infrastructure_failure_count"] = infrastructure_failures
+                if semantic_retry_update is not None:
+                    metadata["semantic_retry"] = semantic_retry_update
+                    selected_route = semantic_retry_update.get("selected_route")
+                    if isinstance(selected_route, dict) and selected_route.get("model"):
+                        metadata["model"] = str(selected_route["model"])
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),

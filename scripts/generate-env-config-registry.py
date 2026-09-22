@@ -34,6 +34,7 @@ SOURCE_ROOTS = (ROOT / "src/mac", ROOT / "deploy", ROOT / "scripts")
 SOURCE_SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".toml", ".conf", ".service"}
 
 FAMILIES = (
+    ("MAC_SEMANTIC_RETRY_", "semantic-retry"),
     ("MAC_SCIENTIFIC_OPTIMIZER_", "scientific-optimizer"),
     ("MAC_REPOSITORY_REF_RECONCILER_", "repository-lifecycle"),
     ("MAC_CODING_ROUTE_", "coding-route-ladder"),
@@ -110,6 +111,8 @@ INT_SUFFIXES = (
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 CONSUMER_DEFAULTS = {
+    "MAC_SEMANTIC_RETRY_BASE_SECONDS": "15",
+    "MAC_SEMANTIC_RETRY_CAP_SECONDS": "300",
     "MAC_HUB_VERIFY_PROFILE": "default",
     # The contract runner deliberately bounds its default. Operators may still
     # request ``auto`` or another explicit worker count for a qualified host.

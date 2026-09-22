@@ -779,6 +779,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.REVIEWING.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.NEEDS_REVIEW.value,
         TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
