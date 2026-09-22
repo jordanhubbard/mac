@@ -3183,9 +3183,22 @@ def command_abort_start(directory: JournalDirectory, args: argparse.Namespace) -
             "retain-forward" if args.recovery_action == "retain_forward" else "rollback"
         )
         candidates = _recovery_candidates(journal, requested_policy)
-        if not candidates or candidates[0]["agent_name"] != node["name"]:
-            raise JournalError("invalid_transition", "nodes must recover in reverse mutation order")
-        action = candidates[0]["recovery_action"]
+        candidate_index = next(
+            (
+                index
+                for index, candidate in enumerate(candidates)
+                if candidate["agent_name"] == node["name"]
+            ),
+            None,
+        )
+        if candidate_index is None or any(
+            candidate["state"] != "aborting" for candidate in candidates[:candidate_index]
+        ):
+            raise JournalError(
+                "invalid_transition",
+                "recovery intents must be armed in reverse mutation order",
+            )
+        action = candidates[candidate_index]["recovery_action"]
         if args.recovery_action is not None and args.recovery_action != action:
             raise JournalError(
                 "evidence_binding_conflict",
@@ -3580,10 +3593,12 @@ def command_finalize_start(
             raise JournalError("invalid_transition", "node cannot begin finalization")
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
-        if any(item["state"] != "finalized" for item in earlier) or any(
+        if any(item["state"] not in {"finalizing", "finalized"} for item in earlier) or any(
             item["state"] != "prepared" for item in later
         ):
-            raise JournalError("invalid_transition", "nodes must finalize in exact cohort order")
+            raise JournalError(
+                "invalid_transition", "finalization intents must be armed in exact cohort order"
+            )
         node["state"] = "finalizing"
         _refresh_phase(journal)
         return True

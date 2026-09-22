@@ -737,4 +737,6 @@ ssh() { bash -c "${!#}"; }
     )
     expected_success = action == "stop" and exact_absence
     assert (result.returncode == 0) is expected_success, result.stderr
-    assert calls.read_text().splitlines() == [f"{action if action != 'activate' else 'start'} fleet-agent"]
+    assert calls.read_text().splitlines() == [
+        f"{action if action != 'activate' else 'start'} fleet-agent"
+    ]

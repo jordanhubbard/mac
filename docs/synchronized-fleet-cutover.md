@@ -189,10 +189,11 @@ locks, rollback-journal contracts, holds, the atomic hub commit, and
 fail-closed recovery are unchanged and remain serialized where the safety proof
 requires it.
 
-The fan-out width is `MAC_DEPLOY_NODE_PARALLELISM` (default `4`, accepted range
-`1`-`32`). Set it to `1` to force the original strictly serial behavior; raise
-it to shorten wall time on a wider cohort when the controller host and mesh have
-headroom. The scheduler launches each node operation in its own child with a
+The fan-out width is `MAC_DEPLOY_NODE_PARALLELISM` (default `32`, accepted range
+`1`-`64`). Set it to `1` to force strictly serial behavior; lower it when the
+controller host or mesh is constrained. The default lets a 50-node
+preallocated cohort complete independent work in two waves without creating an
+unbounded process or SSH-session population. The scheduler launches each node operation in its own child with a
 distinct log, never exceeds the configured width, waits for every attempted
 node, and reaps a child that dies before publishing its atomic status (for
 example a `SIGKILL`) by synthesizing a controller failure rather than polling a
@@ -202,6 +203,15 @@ evidence, and each per-node failure persists a durable, secret-safe artifact
 before the transient working directory is wiped. A first failure stops
 scheduling new work but never abandons siblings that are already in flight; the
 barrier is only crossed when every reaped node passed.
+
+Abort cleanup and committed-generation recovery use the same bound, but always
+aggregate every candidate instead of stopping admission after the first
+failure. The controller serially records all per-node recovery intents first,
+runs only the independently fenced remote work in parallel, and then serially
+publishes each successful node's evidence through the journal compare-and-swap.
+Thus a slow or unreachable node no longer serializes cleanup of the other 49,
+while per-node deployment locks, stable operation IDs, deterministic error
+reporting, and the terminal cohort transition retain their original ordering.
 
 Each immutable archive and helper bundle is pre-staged **once per node by
 digest** and then reused for both arm and apply. The controller uploads the

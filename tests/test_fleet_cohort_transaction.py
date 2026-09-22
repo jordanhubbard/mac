@@ -784,6 +784,34 @@ def test_forward_lifecycle_is_durable_secret_free_and_requires_finalization(
     assert recovery(scenario)["recovery_required"] is False
 
 
+def test_finalization_intents_batch_in_cohort_order_before_parallel_cleanup(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path, node_count=3)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    scenario.deploy()
+    scenario.prove_hub()
+    scenario.begin_commit()
+    scenario.commit_hub()
+
+    for node in scenario.nodes:
+        scenario.call("finalize-start", node=node)
+    assert [node["state"] for node in scenario.journal["cohort"]] == ["finalizing"] * 3
+
+    for node in reversed(scenario.nodes):
+        scenario.call(
+            "finalized-node",
+            node=node,
+            evidence_file=scenario.evidence(f"parallel-finalized-{node['name']}"),
+        )
+    scenario.call("finalize")
+    assert scenario.journal["state"] == "finalized"
+
+
 def test_phase1_intents_can_be_batched_before_parallel_preparation(
     tmp_path: Path,
 ) -> None:
@@ -1088,6 +1116,37 @@ def test_explicit_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
         "phase1_restore",
     ]
     assert recovery(scenario, policy="rollback")["recovery_required"] is False
+
+
+def test_recovery_intents_batch_in_reverse_order_before_parallel_node_work(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path, node_count=3)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    for node in scenario.nodes:
+        scenario.call("phase2-start", node=node)
+        scenario.call(
+            "prepared", node=node, evidence_file=scenario.evidence(f"prepared-{node['name']}")
+        )
+    scenario.call("hub-aborted", evidence_file=scenario.hub_receipt("aborted"))
+
+    reverse_nodes = list(reversed(scenario.nodes))
+    for node in reverse_nodes:
+        scenario.call("abort-start", node=node, recovery_action="phase2_rollback")
+    assert [node["state"] for node in scenario.journal["cohort"]] == ["aborting"] * 3
+
+    for node in scenario.nodes:
+        scenario.call(
+            "aborted-node",
+            node=node,
+            evidence_file=scenario.evidence(f"aborted-{node['name']}"),
+        )
+    scenario.call("abort")
+    assert scenario.journal["state"] == "aborted"
 
 
 @pytest.mark.parametrize(
