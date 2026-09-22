@@ -251,6 +251,30 @@ def test_redeploy_preserves_validated_existing_bound_worker_credential(tmp_path)
     assert values["MAC_WORKER_CREDENTIAL_FINGERPRINT"] == "0123456789ab"
 
 
+def test_redeploy_repairs_stale_compatibility_label_on_complete_bound_credential(
+    tmp_path,
+) -> None:
+    cfg = _cfg(tmp_path, agent="spoke", manager="hub")
+    existing = {
+        "MAC_API_TOKEN": "node-local-control-token",
+        "MAC_SECRET_KEY": "s" * 32,
+        "MAC_WORKER_TOKEN": "authenticated-bound-worker-token",
+        "MAC_WORKER_IDENTITY_MODE": "compatibility",
+        "MAC_WORKER_CREDENTIAL_ID": "worker-spoke-v13",
+        "MAC_WORKER_CREDENTIAL_VERSION": "13",
+        "MAC_WORKER_CREDENTIAL_AGENT_ID": "agent_spoke",
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT": "abcdef012345",
+        "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": "b" * 40,
+        "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": "runtime-digest",
+    }
+
+    values = deploy_env.build_mac_env(existing, cfg, environ={})
+
+    assert values["MAC_WORKER_TOKEN"] == "authenticated-bound-worker-token"
+    assert values["MAC_WORKER_IDENTITY_MODE"] == "bound"
+    assert values["MAC_WORKER_CREDENTIAL_ID"] == "worker-spoke-v13"
+
+
 def test_incomplete_worker_credential_stays_explicitly_in_compatibility_mode(tmp_path) -> None:
     cfg = _cfg(tmp_path, agent="spoke", manager="hub")
     cfg = deploy_env.DeployEnvConfig(

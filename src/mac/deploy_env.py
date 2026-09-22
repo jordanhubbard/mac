@@ -531,7 +531,6 @@ def _worker_token(cfg: DeployEnvConfig, values: Mapping[str, str]) -> str:
     # New credential material, when supplied explicitly, still wins above.
     if (
         not cfg.identity.is_hub
-        and values.get("MAC_WORKER_IDENTITY_MODE") == "bound"
         and values.get("MAC_WORKER_TOKEN")
         and all(
             values.get(key)
@@ -575,8 +574,8 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
     if (
         not worker.token
         and not any(credential_values.values())
-        and values.get("MAC_WORKER_IDENTITY_MODE") == "bound"
         and values.get("MAC_WORKER_TOKEN")
+        and all(str(values.get(key) or "") for key in credential_values)
     ):
         credential_values = {key: str(values.get(key) or "") for key in credential_values}
     if all(
