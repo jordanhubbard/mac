@@ -6304,14 +6304,21 @@ class MacWorker(
             ):
                 return
             self._last_coding_route_probe_at = now
-            self._coding_route_report = {
-                "schema": "mac.coding_agent.verification.v1",
-                "agent": "",
-                "verified": False,
-                "checked_at": _utcnow(),
-                "failure_class": "pending",
-            }
-            self._coding_route_report_dirty = True
+            # A refresh is not a route failure.  Keep the last completed proof
+            # visible while its replacement runs; otherwise every scheduled
+            # refresh briefly publishes every configured CLI as ``unverified``
+            # and the hub rejects code tasks from a healthy worker.  Only a
+            # worker with no completed probe yet needs the explicit pending
+            # report.
+            if not self._coding_route_report:
+                self._coding_route_report = {
+                    "schema": "mac.coding_agent.verification.v1",
+                    "agent": "",
+                    "verified": False,
+                    "checked_at": _utcnow(),
+                    "failure_class": "pending",
+                }
+                self._coding_route_report_dirty = True
             thread = threading.Thread(
                 target=self._probe_coding_route,
                 name="mac-coding-route-probe-%s" % self.agent_id,
