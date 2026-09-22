@@ -6842,6 +6842,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: inference providers config.",
+    "family": "core",
+    "name": "MAC_INFERENCE_PROVIDERS_CONFIG",
+    "retired": false,
+    "sources": [
+      "src/mac/mac_paths.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: inference providers dir.",
+    "family": "core",
+    "name": "MAC_INFERENCE_PROVIDERS_DIR",
+    "retired": false,
+    "sources": [
+      "src/mac/mac_paths.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: journal agent.",
     "family": "core",
     "name": "MAC_JOURNAL_AGENT",
@@ -12129,6 +12151,7 @@
       "src/mac/api.py",
       "src/mac/deploy_env.py",
       "src/mac/fleet_setup.py",
+      "src/mac/inference_provider.py",
       "src/mac/media_routing.py",
       "src/mac/provider_router.py",
       "src/mac/providers.py",
