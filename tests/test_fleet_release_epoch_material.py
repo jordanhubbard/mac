@@ -41,6 +41,7 @@ def open_material() -> dict:
                     "expected_hold_at": None,
                 },
                 "principal_id": "principal-one",
+                "principal_mode": "pending",
                 "attestation_candidate_key": "candidate-" + ("x" * 40),
                 "report_executor_action": "revoke",
                 "report_executor_attestation": None,
@@ -57,7 +58,9 @@ def test_open_separates_secret_request_from_journal_plan() -> None:
     assert "principal-one" not in encoded_plan
     assert "candidate-" in encoded_request
     assert request["participants"][0]["principal_id"] == "principal-one"
+    assert request["participants"][0]["principal_mode"] == "pending"
     assert plan["agents"][0]["deployment_id"] == "deployment-one"
+    assert plan["agents"][0]["principal_mode"] == "pending"
 
 
 def test_open_rejects_hold_and_report_action_ambiguity() -> None:
@@ -68,6 +71,10 @@ def test_open_rejects_hold_and_report_action_ambiguity() -> None:
     changed = open_material()
     changed["agents"][0]["report_executor_action"] = "approve"
     with pytest.raises(material.MaterialError, match="attestation"):
+        material.build_open(changed)
+    changed = open_material()
+    changed["agents"][0]["principal_mode"] = "automatic"
+    with pytest.raises(material.MaterialError, match="explicitly select"):
         material.build_open(changed)
 
 

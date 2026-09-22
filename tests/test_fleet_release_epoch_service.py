@@ -247,6 +247,7 @@ def _prepare_item(
     expected_hold_at: str | None = None,
     report_action: str = "preserve",
     report_attestation: dict | None = None,
+    principal_mode: str = "pending",
 ) -> dict:
     return {
         "agent_id": pending.record["agent_id"],
@@ -256,6 +257,7 @@ def _prepare_item(
         "generation": generation,
         "baseline_seen": baseline_seen,
         "principal_id": pending.record["id"],
+        "principal_mode": principal_mode,
         "attestation_candidate": ({"key": candidate_key} if candidate_key is not None else None),
         "report_executor_action": report_action,
         "report_executor_attestation": report_attestation,
@@ -334,6 +336,7 @@ def test_heartbeat_ttl_pins_epoch_identity_until_explicit_quarantine_release(
             )
         ],
     )
+    assert opened["agents"][0]["principal_mode"] == "pending"
     stale = (parse_time(utcnow()) - timedelta(hours=2)).isoformat(timespec="microseconds")
     cp.store.execute(
         "UPDATE agents SET last_seen_at = ? WHERE id = ?",
@@ -558,9 +561,11 @@ def test_deploy_preserves_current_credential_across_commit_and_abort(tmp_path: P
                 generation=generation,
                 baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
                 candidate_key=None,
+                principal_mode="current",
             )
         ],
     )
+    assert opened["agents"][0]["principal_mode"] == "current"
     # The successor source/runtime may change while the same bearer continues
     # to authenticate. Credential validation must not classify that as a key
     # failure or demand a new principal.
@@ -600,6 +605,7 @@ def test_deploy_preserves_current_credential_across_commit_and_abort(tmp_path: P
                 generation="generation-aborted",
                 baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
                 candidate_key=None,
+                principal_mode="current",
             )
         ],
     )
@@ -611,6 +617,76 @@ def test_deploy_preserves_current_credential_across_commit_and_abort(tmp_path: P
     assert [(row["id"], row["state"]) for row in lifecycle.list(agent_id="agent_alpha")] == [
         (current.record["id"], "active")
     ]
+
+
+def test_current_principal_mode_fails_closed_on_authenticated_heartbeat_identity(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    current = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    row = cp.store.query_one("SELECT resources FROM agents WHERE id = ?", ("agent_alpha",))
+    resources = json.loads(row["resources"])
+    resources.pop("worker_credential_authenticated")
+    cp.store.execute(
+        "UPDATE agents SET resources = ? WHERE id = ?",
+        (json.dumps(resources), "agent_alpha"),
+    )
+
+    with pytest.raises(
+        ValidationError, match="current worker credential lacks authenticated heartbeat proof"
+    ):
+        cp.fleet_release_epochs.open_epoch(
+            "epoch-current-heartbeat-mismatch",
+            [
+                _prepare_item(
+                    current,
+                    generation="generation-current-heartbeat-mismatch",
+                    baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                    candidate_key=None,
+                    principal_mode="current",
+                )
+            ],
+        )
+
+    assert (
+        cp.store.query_one(
+            "SELECT epoch_id FROM fleet_release_epochs WHERE epoch_id = ?",
+            ("epoch-current-heartbeat-mismatch",),
+        )
+        is None
+    )
+    assert WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")[0]["state"] == (
+        "active"
+    )
+
+
+def test_principal_mode_never_falls_back_between_current_and_pending(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    current = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    current_as_pending = _prepare_item(
+        current,
+        generation="generation-explicit-pending",
+        baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+        candidate_key=None,
+    )
+    current_as_pending["principal_mode"] = "pending"
+    with pytest.raises(ValidationError, match="requires an unexpired pending principal"):
+        cp.fleet_release_epochs.open_epoch(
+            "epoch-explicit-pending-with-current", [current_as_pending]
+        )
+
+    pending = _issue(cp, "agent_alpha")
+    pending_as_current = _prepare_item(
+        pending,
+        generation="generation-explicit-current",
+        baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+        candidate_key=None,
+    )
+    pending_as_current["principal_mode"] = "current"
+    with pytest.raises(ValidationError, match="current worker principal is not active"):
+        cp.fleet_release_epochs.open_epoch(
+            "epoch-explicit-current-with-pending", [pending_as_current]
+        )
 
 
 def test_open_epoch_pins_fungible_participant_against_ttl_expiry(tmp_path: Path) -> None:
