@@ -60,6 +60,12 @@ def test_model_filtering_skips_providers_that_dont_serve_it():
     assert r.select("dall-e").name == "img"  # img wins by priority for its model
 
 
+def test_request_local_exclusion_selects_another_eligible_provider():
+    r, _ = _router()
+    assert r.select(exclude={"primary"}).name == "secondary"
+    assert r.status()["primary"]["state"] == "closed"
+
+
 def test_breaker_opens_after_threshold_and_fails_over():
     r, _ = _router(failure_threshold=2)
     r.record_failure("primary")

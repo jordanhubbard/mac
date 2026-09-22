@@ -484,6 +484,13 @@ class ProviderProxy:
         last_provider = ""
         retried_401 = False  # per-request: at most one transient-401 retry
         route_attempts = []
+        # A provider-health failure applies to the route for the lifetime of
+        # this request, not merely to one model candidate.  Keep it out of all
+        # later selections even when its global breaker threshold is greater
+        # than one.  Model-level 404/422 responses do not enter this set: the
+        # provider is healthy and may legitimately serve the next candidate.
+        failed_providers = set()
+        failure_attempts = []
         for idx, model in enumerate(candidates):
             is_last = idx == len(candidates) - 1
             outgoing = _ensure_max_tokens_floor(
@@ -491,17 +498,26 @@ class ProviderProxy:
             )
             attempts = []
             provider_answered = False
-            # Bounded: one try per provider (+1 so a half-open probe can be
-            # re-selected after another provider is tried).
-            for _ in range(len(self._router.provider_names()) + 1):
-                provider = self._router.select(model)
+            attempted_providers = set()
+            # Bounded: each provider/model route is attempted at most once.
+            # A provider that failed at transport/provider level is excluded
+            # for the remainder of this request, across model candidates.
+            for _ in range(len(self._router.provider_names())):
+                provider = self._router.select(
+                    model,
+                    exclude=failed_providers | attempted_providers,
+                )
                 if provider is None:
                     break
+                attempted_providers.add(provider.name)
                 status, obj = forward(provider, path, outgoing, timeout=timeout)
                 route_attempts.append({"provider": provider.name, "model": model, "status": status})
                 if _is_provider_failure(status):
                     self._router.record_failure(provider.name)
-                    attempts.append({"provider": provider.name, "status": status})
+                    failed_providers.add(provider.name)
+                    failure = {"provider": provider.name, "model": model, "status": status}
+                    attempts.append(failure)
+                    failure_attempts.append(failure)
                     route_attempts[-1]["outcome"] = "provider_failure"
                     logger.info(
                         "route model=%s provider=%s status=%s failover",
@@ -538,7 +554,10 @@ class ProviderProxy:
                     )
                     if _is_provider_failure(status):
                         self._router.record_failure(provider.name)
-                        attempts.append({"provider": provider.name, "status": status})
+                        failed_providers.add(provider.name)
+                        failure = {"provider": provider.name, "model": model, "status": status}
+                        attempts.append(failure)
+                        failure_attempts.append(failure)
                         route_attempts[-1]["outcome"] = "provider_failure_after_retry"
                         logger.info(
                             "route model=%s provider=%s status=%s failover",
@@ -565,10 +584,12 @@ class ProviderProxy:
                     attempts=route_attempts,
                 )
             if not provider_answered:
-                # Every eligible provider failed or is open for this model. The
-                # same providers serve the other models, so fail fast rather than
-                # walk the rest of the ladder against dead providers.
-                body = self._failfast_body(model, attempts)
+                # Every eligible provider failed or is open for this candidate.
+                # A wildcard ladder can bind later models to different providers,
+                # so continue without retrying any provider that already failed.
+                if not is_last:
+                    continue
+                body = self._failfast_body(model, failure_attempts)
                 return self._observed_return(
                     503,
                     body,

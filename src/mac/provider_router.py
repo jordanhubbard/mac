@@ -30,7 +30,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import AbstractSet, Callable, Dict, List, Optional, Tuple
 
 __all__ = ["BreakerState", "Provider", "ProviderRouter", "AllProvidersDownError"]
 
@@ -122,12 +122,25 @@ class ProviderRouter:
             return False
         return True  # CLOSED
 
-    def select(self, model: str = "*") -> Optional[Provider]:
+    def select(
+        self,
+        model: str = "*",
+        *,
+        exclude: Optional[AbstractSet[str]] = None,
+    ) -> Optional[Provider]:
         """Return the preferred eligible provider for ``model``, or None when
-        every eligible provider is open (fail-fast — never hang)."""
+        every eligible provider is open (fail-fast — never hang).
+
+        ``exclude`` is request-local routing state.  It lets a caller walk the
+        provider set exactly once without mutating global breaker state merely
+        to make progress to the next provider.
+        """
+        excluded = exclude or frozenset()
         with self._lock:
             for provider in self._order:
                 if not provider.enabled:
+                    continue
+                if provider.name in excluded:
                     continue
                 if not self._serves(provider, model):
                     continue
