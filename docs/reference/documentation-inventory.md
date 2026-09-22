@@ -158,6 +158,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`coding-route-ladder.md`](../coding-route-ladder.md) | The coding-route ladder |
 | supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis and autonomous repair |
 | supplemental reference | [`dashboard-connection.md`](../dashboard-connection.md) | Dashboard Connection Contract |
+| supplemental reference | [`dedicated-vm-verifier.md`](../dedicated-vm-verifier.md) | Dedicated VM repository verification |
 | supplemental reference | [`deploy-prerequisite-vs-phase1-audit.md`](../deploy-prerequisite-vs-phase1-audit.md) | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | [`dispatch-priority-bias-audit.md`](../dispatch-priority-bias-audit.md) | Dispatch priority bias ordering audit |
 | supplemental reference | [`dream-repair-slack-lineage.md`](../dream-repair-slack-lineage.md) | Ground truth: dream finding `dreamrepair:4becfa8d` (slack failure_pattern) |
