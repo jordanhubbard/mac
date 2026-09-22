@@ -2433,6 +2433,11 @@ PY
 
 reconcile_remote_deploy() {
   local agent="$1" _display_target="$2" clear_repo_update_blocker="${3:-0}"
+  local phase1_required="${4:-1}"
+  case "$phase1_required" in
+    0|1) ;;
+    *) echo "ERROR: ${agent}: invalid phase-1 reconciliation requirement: $phase1_required" >&2; return 2 ;;
+  esac
   # Routing is deliberately resolved again by agent name, but only against the
   # immutable invocation snapshot.  The raw target is retained for the public
   # function contract/log context and can no longer redirect reconciliation.
@@ -2453,13 +2458,14 @@ reconcile_remote_deploy() {
       sleep "$_sleep_interval"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GENERATION_EXPECTED=$(shell_quote "$deployment_id") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") $fence_exec" <<'REMOTE'
+      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GENERATION_EXPECTED=$(shell_quote "$deployment_id") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") MAC_DEPLOY_PHASE1_REQUIRED=$(shell_quote "$phase1_required") $fence_exec" <<'REMOTE'
 set -euo pipefail
 agent="${MAC_DEPLOY_AGENT:?}"
 deploy_ts="${MAC_DEPLOY_TS:?}"
 expected_rev="${MAC_DEPLOY_GIT_REV:?}"
 expected_generation="${MAC_DEPLOY_GENERATION_EXPECTED:?}"
 clear_repo_update_blocker="${MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER:-0}"
+phase1_required="${MAC_DEPLOY_PHASE1_REQUIRED:?}"
 mac_home="${MAC_HOME:-$HOME/.mac}"
 log_dir="$mac_home/logs"
 manifest="$log_dir/deploy-manifest-${deploy_ts}-post.json"
@@ -2512,7 +2518,7 @@ if [ -e "$mac_home/src/mac/.git" ]; then
     exit 1
   fi
 fi
-"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" "$expected_generation" <<'PY'
+"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" "$expected_generation" "$phase1_required" <<'PY'
 import json
 import sys
 (
@@ -2522,7 +2528,11 @@ import sys
     expected_ts,
     expected_rev,
     expected_generation,
+    phase1_required_raw,
 ) = sys.argv[1:]
+if phase1_required_raw not in {"0", "1"}:
+    raise SystemExit("remote reconciliation failed: invalid phase-1 requirement")
+phase1_required = phase1_required_raw == "1"
 quiescence_summaries = []
 gateway_summaries = []
 phase1_summaries = []
@@ -2576,24 +2586,29 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
         if isinstance(phase1, dict)
         else None
     )
-    if (
-        not isinstance(phase1, dict)
-        or phase1.get("schema")
-        != "mac.phase1_cohort_quiescence_manifest.v1"
-        or phase1.get("status") != "proved"
-        or phase1.get("generation") != expected_generation
-        or phase1.get("revision") != expected_rev
-        or not isinstance(phase1.get("sha256"), str)
-        or len(phase1["sha256"]) != 64
-        or not isinstance(phase1.get("supervisor"), dict)
-        or not isinstance(phase1_daemon, dict)
-        or phase1_daemon.get("schema")
-        != "mac.daemon_resource_quiescence.v1"
-        or phase1_daemon.get("proof_phase") != "pre_source"
-        or not isinstance(phase1_daemon.get("sha256"), str)
-        or len(phase1_daemon["sha256"]) != 64
-        or not isinstance(phase1_daemon.get("function_block_sha256"), str)
-        or len(phase1_daemon["function_block_sha256"]) != 64
+    phase1_proved = (
+        isinstance(phase1, dict)
+        and phase1.get("schema") == "mac.phase1_cohort_quiescence_manifest.v1"
+        and phase1.get("status") == "proved"
+        and phase1.get("generation") == expected_generation
+        and phase1.get("revision") == expected_rev
+        and isinstance(phase1.get("sha256"), str)
+        and len(phase1["sha256"]) == 64
+        and isinstance(phase1.get("supervisor"), dict)
+        and isinstance(phase1_daemon, dict)
+        and phase1_daemon.get("schema") == "mac.daemon_resource_quiescence.v1"
+        and phase1_daemon.get("proof_phase") == "pre_source"
+        and isinstance(phase1_daemon.get("sha256"), str)
+        and len(phase1_daemon["sha256"]) == 64
+        and isinstance(phase1_daemon.get("function_block_sha256"), str)
+        and len(phase1_daemon["function_block_sha256"]) == 64
+    )
+    phase1_not_required = phase1 == {
+        "schema": "mac.phase1_cohort_quiescence_manifest.v1",
+        "status": "not_required",
+    }
+    if (phase1_required and not phase1_proved) or (
+        not phase1_required and not phase1_not_required
     ):
         raise SystemExit(
             "remote reconciliation failed: %s has invalid phase-1 evidence" % label
@@ -2602,20 +2617,18 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
     media = data.get("media_runtime_readiness")
     media_resources = media.get("resources") if isinstance(media, dict) else None
     media_manager = media.get("manager") if isinstance(media, dict) else None
-    if (
-        not isinstance(media, dict)
-        or media.get("schema")
-        != "mac.media_runtime_readiness_manifest.v1"
-        or media.get("status")
-        not in {"proved", "not_applicable"}
-        or media_manager not in {"systemd", "launchd", "supervisord"}
-        or not isinstance(media.get("sha256"), str)
-        or len(media["sha256"]) != 64
-        or not isinstance(media.get("source_contract_sha256"), str)
-        or len(media["source_contract_sha256"]) != 64
-        or not isinstance(media_resources, list)
-        or media_manager != (phase1.get("supervisor") or {}).get("manager")
-        or (
+    media_proved = (
+        isinstance(media, dict)
+        and media.get("schema") == "mac.media_runtime_readiness_manifest.v1"
+        and media.get("status") in {"proved", "not_applicable"}
+        and media_manager in {"systemd", "launchd", "supervisord"}
+        and isinstance(media.get("sha256"), str)
+        and len(media["sha256"]) == 64
+        and isinstance(media.get("source_contract_sha256"), str)
+        and len(media["source_contract_sha256"]) == 64
+        and isinstance(media_resources, list)
+        and media_manager == (phase1.get("supervisor") or {}).get("manager")
+        and not (
             media_manager == "systemd"
             and (
                 media.get("status") != "proved"
@@ -2631,10 +2644,17 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
                 )
             )
         )
-        or (
+        and not (
             media_manager != "systemd"
             and (media.get("status") != "not_applicable" or media_resources)
         )
+    )
+    media_not_required = media == {
+        "schema": "mac.media_runtime_readiness_manifest.v1",
+        "status": "not_required",
+    }
+    if (phase1_required and not media_proved) or (
+        not phase1_required and not media_not_required
     ):
         raise SystemExit(
             "remote reconciliation failed: %s has invalid media runtime readiness"
@@ -4275,6 +4295,66 @@ def cas_hold(reason, *, expected_hold, expected_reason=None):
     if not isinstance(payload, dict) or not isinstance(payload.get("agent"), dict):
         raise RuntimeError("dispatch hold CAS returned an invalid response")
     return bool(payload.get("changed")), payload["agent"]
+
+
+if phase == "first-hub-prepare":
+    if agent_row(missing_ok=True) is not None:
+        raise RuntimeError("first-hub activation found a pre-existing worker")
+    print(json.dumps({"exists": False}, sort_keys=True))
+    raise SystemExit(0)
+
+if phase == "first-hub-verify":
+    if not generation:
+        raise RuntimeError("first-hub activation lacks a generation")
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
+    first_seen = None
+    while time.monotonic() < deadline:
+        row = agent_row(missing_ok=True)
+        if row is not None:
+            resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+            seen = parse_seen(row.get("last_seen_at"))
+            valid = (
+                seen is not None
+                and row.get("status") == "draining"
+                and row.get("health_status") == "degraded"
+                and row.get("current_task_id") is None
+                and not bool(row.get("dispatch_hold"))
+                and resources.get("deployment_generation") == generation
+            )
+            if valid and first_seen is None:
+                first_seen = seen
+            elif valid and seen > first_seen:
+                print(json.dumps({"agent_id": agent_id, "last_seen_at": row["last_seen_at"]}))
+                raise SystemExit(0)
+        time.sleep(2)
+    raise RuntimeError(
+        "first-hub worker failed registration and fresh generation heartbeat proof"
+    )
+
+if phase == "first-hub-release":
+    if not generation or not baseline_text:
+        raise RuntimeError("first-hub release lacks generation or heartbeat baseline")
+    baseline = parse_seen(baseline_text)
+    deadline = time.monotonic() + min(timeout, gate_max_wait)
+    while time.monotonic() < deadline:
+        row = agent_row()
+        resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+        seen = parse_seen(row.get("last_seen_at"))
+        if (
+            seen is not None
+            and baseline is not None
+            and seen > baseline
+            and row.get("status") == "idle"
+            and release_health_ready(row, resources)
+            and row.get("current_task_id") is None
+            and not bool(row.get("dispatch_hold"))
+            and resources.get("deployment_generation") == generation
+            and not active_work()
+        ):
+            print(json.dumps({"agent_id": agent_id, "last_seen_at": row["last_seen_at"]}))
+            raise SystemExit(0)
+        time.sleep(2)
+    raise RuntimeError("first-hub worker failed post-barrier idle heartbeat proof")
 
 
 if phase == "legacy-bootstrap":
@@ -6577,6 +6657,7 @@ prepare_network_prerequisites() {
 
 classify_fungible_machine_onboarding() {
   local selected_specs_file="$1" spec fields=() agent supervisor instance_kind
+  local route_identity route_sha256
   local ssh_parts=() ssh_args=() ssh_target item last_index command output
   local failed=0
   [ -r "$MACHINE_ONBOARDING_HELPER" ] || {
@@ -6598,7 +6679,9 @@ classify_fungible_machine_onboarding() {
     while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
     last_index=$((${#ssh_parts[@]} - 1))
     ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
-    command="python3 - inspect --supervisor $(shell_quote "$supervisor")"
+    route_identity="$(node_route_identity_file "$agent")"
+    route_sha256="$(sha256_file "$route_identity")"
+    command="python3 - inspect --supervisor $(shell_quote "$supervisor") --agent $(shell_quote "$agent") --route-identity-sha256 $(shell_quote "$route_sha256")"
     output="$TMPDIR_LOCAL/machine-onboarding-inspect-$(stable_worker_agent_id "$agent").json"
     if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
       -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
@@ -6609,18 +6692,30 @@ classify_fungible_machine_onboarding() {
       continue
     fi
     chmod 0600 "$output"
-    if ! "$PYTHON_BIN" - "$output" <<'PY'
+    if ! "$PYTHON_BIN" - "$output" "$agent" "$route_sha256" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 checks=value.get("checks")
-if (
-    value.get("schema")!="mac.fleet_machine_onboarding_status.v1"
-    or value.get("status")!="eligible"
-    or value.get("instance_kind")!="fungible"
-    or not isinstance(checks,dict)
-    or not checks
-    or any(item is not True for item in checks.values())
-):
+if value.get("schema")!="mac.fleet_machine_onboarding_status.v1" or value.get("instance_kind")!="fungible":
+    raise SystemExit("phase-zero eligibility status is invalid")
+if value.get("status")=="eligible":
+    if not isinstance(checks,dict) or not checks or any(item is not True for item in checks.values()):
+        raise SystemExit("phase-zero pristine eligibility status is invalid")
+elif value.get("status") in {"refreshable","repairable"}:
+    receipt=value.get("receipt")
+    if (
+        not isinstance(receipt,dict)
+        or receipt.get("agent")!=sys.argv[2]
+        or receipt.get("agent_id")!="agent_"+__import__("re").sub(r"[^A-Za-z0-9_.-]+","_",sys.argv[2].lower()).strip("_")
+        or receipt.get("route_identity_sha256")!=sys.argv[3]
+        or receipt.get("services_started") is not False
+        or not isinstance(receipt.get("generation"),str)
+        or not isinstance(receipt.get("source_revision"),str)
+        or receipt.get("venv_mode_repair_required")
+            != (value.get("status")=="repairable")
+    ):
+        raise SystemExit("phase-zero refresh eligibility status is invalid")
+else:
     raise SystemExit("phase-zero eligibility status is invalid")
 PY
     then
@@ -6638,7 +6733,7 @@ register_fungible_onboarding_placeholder() (
   set -euo pipefail
   umask 077
   local agent="$1" hub_agent="$2" fleet_name="$3" capabilities="$4"
-  local generation="$5" route_sha256="$6"
+  local generation="$5" source_revision="$6" route_sha256="$7"
   local agent_id request output remote_request command
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
   agent_id="$(stable_worker_agent_id "$agent")"
@@ -6646,7 +6741,7 @@ register_fungible_onboarding_placeholder() (
   output="$TMPDIR_LOCAL/machine-onboarding-placeholder-${agent_id}.json"
   remote_request="/tmp/mac-machine-onboarding-register-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
   "$PYTHON_BIN" - "$request" "$agent" "$agent_id" "$fleet_name" \
-    "$capabilities" "$generation" "$GIT_REV" "$route_sha256" <<'PY'
+    "$capabilities" "$generation" "$source_revision" "$route_sha256" <<'PY'
 import json,os,re,sys,tempfile
 from pathlib import Path
 output_raw,agent,agent_id,fleet,capabilities,generation,revision,route=sys.argv[1:]
@@ -6711,7 +6806,7 @@ PY
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" "$command" > "$output" <<'PY'
-import json,os,sys,urllib.request
+import json,os,sys,urllib.error,urllib.request
 
 path=sys.argv[1]
 request_value=json.load(open(path,encoding="utf-8"))
@@ -6728,20 +6823,35 @@ def call(method,route,body=None):
         value=json.load(response)
     return value
 
+def optional_agent(agent_id):
+    try:
+        return call("GET","/agents/"+agent_id)
+    except urllib.error.HTTPError as error:
+        if error.code==404:
+            return None
+        raise
+
 rows=call("GET","/agents")
 if not isinstance(rows,list):
     raise SystemExit("hub agent registry response is invalid")
 same_name=[row for row in rows if isinstance(row,dict) and row.get("name")==agent_body["name"]]
-same_id=[row for row in rows if isinstance(row,dict) and row.get("id")==agent_body["agent_id"]]
-for row in same_name+same_id:
+existing=optional_agent(agent_body["agent_id"])
+for row in same_name+([existing] if isinstance(existing,dict) else []):
     if (
         row.get("id")!=agent_body["agent_id"]
         or row.get("name")!=agent_body["name"]
+        or row.get("machine_id")!=machine_body["machine_id"]
         or row.get("instance_kind")!="fungible"
-        or row.get("status")!="draining"
-        or row.get("health_status")!="degraded"
         or row.get("current_task_id") is not None
-        or row.get("deleted_at") is not None
+        or (row.get("resources") or {}).get("machine_onboarding")
+            != agent_body["resources"]["machine_onboarding"]
+        or (
+            row.get("deleted_at") is None
+            and (
+                row.get("status")!="draining"
+                or row.get("health_status")!="degraded"
+            )
+        )
     ):
         raise SystemExit("existing agent identity is not the exact failed-prephase fungible placeholder")
 machine=call("POST","/machines",machine_body)
@@ -6779,7 +6889,7 @@ print(json.dumps({
 PY
   chmod 0600 "$output"
   "$PYTHON_BIN" - "$output" "$agent" "$agent_id" "$generation" \
-    "$GIT_REV" "$route_sha256" <<'PY'
+    "$source_revision" "$route_sha256" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 expected={
@@ -6806,11 +6916,12 @@ prepare_fungible_machine_onboarding_worker() (
   set -euo pipefail
   umask 077
   local spec="$1" hub_agent="$2" fields=() agent agent_id supervisor fleet_name
-  local capabilities generation route_identity route_sha256 placeholder
+  local capabilities generation source_revision route_identity route_sha256 placeholder
+  local classification classification_status classification_values=()
   local archive_sha256
   local remote_prefix remote_helper remote_archive remote_assets remote_identity
   local remote_placeholder ssh_parts=() ssh_args=() ssh_target item last_index
-  local prepare_command commit_command prepare_receipt commit_receipt
+  local prepare_command commit_command repair_command prepare_receipt commit_receipt repair_receipt
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
   supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"
@@ -6819,7 +6930,6 @@ prepare_fungible_machine_onboarding_worker() (
     echo "ERROR: ${agent}: phase-zero onboarding refuses a static fleet record" >&2
     return 1
   }
-  generation="$(worker_generation_for_agent "$agent")"
   route_identity="$(node_route_identity_file "$agent")"
   route_sha256="$("$PYTHON_BIN" - "$route_identity" <<'PY'
 import hashlib,json,sys
@@ -6827,6 +6937,80 @@ value=json.load(open(sys.argv[1],encoding="utf-8"))
 print(hashlib.sha256((json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode()).hexdigest())
 PY
 )"
+  classification="$TMPDIR_LOCAL/machine-onboarding-inspect-${agent_id}.json"
+  mapfile -t classification_values < <("$PYTHON_BIN" - "$classification" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+print(value.get("status") or "")
+receipt=value.get("receipt") if isinstance(value.get("receipt"),dict) else {}
+print(receipt.get("generation") or "")
+print(receipt.get("source_revision") or "")
+print(receipt.get("route_identity_sha256") or "")
+print("1" if receipt.get("venv_mode_repair_required") is True else "0")
+PY
+)
+  classification_status="${classification_values[0]:-}"
+  if [ "$classification_status" = refreshable ] \
+      || [ "$classification_status" = repairable ]; then
+    generation="${classification_values[1]:-}"
+    source_revision="${classification_values[2]:-}"
+    [ "${classification_values[3]:-}" = "$route_sha256" ] || {
+      echo "ERROR: ${agent}: refreshable onboarding receipt lost its route binding" >&2
+      return 1
+    }
+    if [ "$classification_status" = repairable ]; then
+      [ "${classification_values[4]:-}" = 1 ] || {
+        echo "ERROR: ${agent}: repairable onboarding receipt omitted its mode repair binding" >&2
+        return 1
+      }
+      while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+      last_index=$((${#ssh_parts[@]} - 1))
+      ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+      repair_receipt="$TMPDIR_LOCAL/machine-onboarding-mode-repair-${agent_id}.json"
+      repair_command="python3 - repair-mode --agent $(shell_quote "$agent") --route-identity-sha256 $(shell_quote "$route_sha256") --supervisor $(shell_quote "$supervisor")"
+      ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
+        "${ssh_args[@]}" "$ssh_target" "$repair_command" \
+        < "$MACHINE_ONBOARDING_HELPER" > "$repair_receipt"
+      chmod 0600 "$repair_receipt"
+      "$PYTHON_BIN" - "$repair_receipt" "$agent" "$generation" \
+        "$source_revision" "$route_sha256" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if (
+    value.get("agent")!=sys.argv[2]
+    or value.get("generation")!=sys.argv[3]
+    or value.get("source_revision")!=sys.argv[4]
+    or value.get("route_identity_sha256")!=sys.argv[5]
+    or value.get("services_started") is not False
+    or value.get("venv_mode_repair_required") is not False
+    or value.get("venv_mode_repaired") is not True
+):
+    raise SystemExit("phase-zero venv mode repair receipt is invalid")
+PY
+      echo "==> ${agent}: normalized exact receipt-bound phase-zero venv root from 0775 to 0755"
+    else
+      [ "${classification_values[4]:-}" = 0 ] || {
+        echo "ERROR: ${agent}: refreshable onboarding receipt unexpectedly requires mode repair" >&2
+        return 1
+      }
+    fi
+    register_fungible_onboarding_placeholder \
+      "$agent" "$hub_agent" "$fleet_name" "$capabilities" \
+      "$generation" "$source_revision" "$route_sha256" >/dev/null
+    if [ "$classification_status" = repairable ]; then
+      echo "==> ${agent}: repaired phase-zero baseline re-registered; placeholder remains draining"
+    else
+      echo "==> ${agent}: published phase-zero baseline re-registered without host mutation; placeholder remains draining"
+    fi
+    return 0
+  fi
+  [ "$classification_status" = eligible ] || {
+    echo "ERROR: ${agent}: phase-zero classification is neither pristine, refreshable, nor repairable" >&2
+    return 1
+  }
+  generation="$(worker_generation_for_agent "$agent")"
+  source_revision="$GIT_REV"
   archive_sha256="$(sha256_file "$ARCHIVE")"
   remote_prefix="/tmp/mac-machine-onboarding-${agent_id}-${DEPLOY_CONTROLLER_NONCE}"
   remote_helper="${remote_prefix}.py"
@@ -6856,12 +7040,12 @@ for path in sys.argv[1:]:
   pinned_remote_verified_upload "$agent" "$ARCHIVE" "$remote_archive"
   pinned_remote_private_upload "$agent" "$REVIEWED_TOOL_ASSETS_SOURCE" "$remote_assets"
   pinned_remote_private_upload "$agent" "$route_identity" "$remote_identity"
-  prepare_command="python3 $(shell_quote "$remote_helper") prepare --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$GIT_REV") --supervisor $(shell_quote "$supervisor") --archive $(shell_quote "$remote_archive") --reviewed-assets $(shell_quote "$remote_assets") --route-identity $(shell_quote "$remote_identity")"
+  prepare_command="python3 $(shell_quote "$remote_helper") prepare --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$source_revision") --supervisor $(shell_quote "$supervisor") --archive $(shell_quote "$remote_archive") --reviewed-assets $(shell_quote "$remote_assets") --route-identity $(shell_quote "$remote_identity")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" "$prepare_command" > "$prepare_receipt"
   chmod 0600 "$prepare_receipt"
-  "$PYTHON_BIN" - "$prepare_receipt" "$agent" "$generation" "$GIT_REV" \
+  "$PYTHON_BIN" - "$prepare_receipt" "$agent" "$generation" "$source_revision" \
     "$route_sha256" "$archive_sha256" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
@@ -6879,14 +7063,15 @@ if (
     raise SystemExit("remote phase-zero stage receipt is invalid")
 PY
   placeholder="$(register_fungible_onboarding_placeholder \
-    "$agent" "$hub_agent" "$fleet_name" "$capabilities" "$generation" "$route_sha256")"
+    "$agent" "$hub_agent" "$fleet_name" "$capabilities" \
+    "$generation" "$source_revision" "$route_sha256")"
   pinned_remote_private_upload "$agent" "$placeholder" "$remote_placeholder"
-  commit_command="python3 $(shell_quote "$remote_helper") commit --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$GIT_REV") --supervisor $(shell_quote "$supervisor") --placeholder $(shell_quote "$remote_placeholder")"
+  commit_command="python3 $(shell_quote "$remote_helper") commit --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$source_revision") --supervisor $(shell_quote "$supervisor") --placeholder $(shell_quote "$remote_placeholder")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" "$commit_command" > "$commit_receipt"
   chmod 0600 "$commit_receipt"
-  "$PYTHON_BIN" - "$commit_receipt" "$agent" "$generation" "$GIT_REV" \
+  "$PYTHON_BIN" - "$commit_receipt" "$agent" "$generation" "$source_revision" \
     "$route_sha256" <<'PY'
 import json,os,stat,sys
 path=sys.argv[1]; metadata=os.lstat(path); value=json.load(open(path,encoding="utf-8"))
@@ -6912,8 +7097,8 @@ PY
 
 prepare_fungible_machine_onboarding() {
   local selected_specs_file="$1" hub_agent="$2" spec
-  classify_fungible_machine_onboarding "$selected_specs_file"
   bind_precohort_routes "$selected_specs_file" "$hub_agent"
+  classify_fungible_machine_onboarding "$selected_specs_file"
   echo "==> fleet: preparing fungible rollback baselines without starting services"
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
@@ -7251,13 +7436,17 @@ def service_check(name, url, required, state_root):
         provider = os.environ["MAC_PREREQ_NETWORK_PROVIDER"]
         local = hostname in {"127.0.0.1", "::1", "localhost"}
         managed_mesh = False
-        if provider in {"tailscale", "headscale"}:
-            try:
-                ipaddress.ip_address(hostname)
-            except ValueError:
-                managed_mesh = hostname.endswith((".ts.net", ".svc.cluster.local"))
-            else:
-                managed_mesh = managed_mesh_address(hostname)
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            # In-cluster DNS and RFC1918/CGNAT/ULA addresses are also the
+            # reviewed direct-private route for provider=none fleets.  Only a
+            # tailnet-owned DNS suffix depends on a mesh provider declaration.
+            managed_mesh = hostname.endswith(".svc.cluster.local") or (
+                provider in {"tailscale", "headscale"} and hostname.endswith(".ts.net")
+            )
+        else:
+            managed_mesh = managed_mesh_address(hostname)
         if (
             parsed.scheme not in {"http", "https"}
             or not hostname
@@ -7806,40 +7995,125 @@ set_remote_mac_startup_hold_policy() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
     "MAC_DEPLOY_STARTUP_CLEAR_HOLD=$(shell_quote "$value") $fence_exec <<'PY'
+import fcntl
 import os
+import stat
 import tempfile
 from pathlib import Path
 
 path = Path.home() / '.mac' / 'mac.env'
-if path.exists():
-    # Avoid importing the not-yet-deployed mac package: preserve all existing
-    # assignments and replace/append only this simple numeric policy value.
-    lines = path.read_text(encoding='utf-8').splitlines()
-    key = 'MAC_STARTUP_CLEAR_HOLD'
-    replacement = key + '=' + os.environ['MAC_DEPLOY_STARTUP_CLEAR_HOLD']
-    updated = []
-    replaced = False
-    for line in lines:
-        if line.startswith(key + '=') or line.startswith('export ' + key + '='):
-            if not replaced:
-                updated.append(replacement)
-                replaced = True
-        else:
-            updated.append(line)
-    if not replaced:
-        updated.append(replacement)
-    fd, raw = tempfile.mkstemp(prefix=path.name + '.', dir=str(path.parent))
-    tmp = Path(raw)
+parent = path.parent
+parent_metadata = os.lstat(parent)
+if (
+    not stat.S_ISDIR(parent_metadata.st_mode)
+    or stat.S_ISLNK(parent_metadata.st_mode)
+    or parent_metadata.st_uid != os.getuid()
+    or stat.S_IMODE(parent_metadata.st_mode) & 0o077
+):
+    raise SystemExit('mac environment directory is unsafe')
+value = os.environ['MAC_DEPLOY_STARTUP_CLEAR_HOLD']
+if value not in {'0', '1'}:
+    raise SystemExit('startup hold policy must be numeric boolean')
+lock_path = path.with_name(path.name + '.lock')
+lock_flags = (
+    os.O_RDWR
+    | os.O_CREAT
+    | getattr(os, 'O_CLOEXEC', 0)
+    | getattr(os, 'O_NOFOLLOW', 0)
+)
+lock_descriptor = os.open(lock_path, lock_flags, 0o600)
+try:
+    lock_metadata = os.fstat(lock_descriptor)
+    if (
+        not stat.S_ISREG(lock_metadata.st_mode)
+        or lock_metadata.st_uid != os.getuid()
+        or lock_metadata.st_nlink != 1
+        or stat.S_IMODE(lock_metadata.st_mode) & 0o077
+    ):
+        raise SystemExit('mac environment lock is unsafe')
+    fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            stream.write('\\n'.join(updated) + '\\n')
-        tmp.chmod(0o600)
-        os.replace(tmp, path)
-    finally:
         try:
-            tmp.unlink()
+            before = os.lstat(path)
         except FileNotFoundError:
-            pass
+            lines = []
+        else:
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or stat.S_ISLNK(before.st_mode)
+                or before.st_uid != os.getuid()
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) & 0o077
+                or before.st_size > 1024 * 1024
+            ):
+                raise SystemExit('mac environment is unsafe')
+            def identity(metadata):
+                return (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    metadata.st_nlink,
+                    metadata.st_size,
+                    metadata.st_mtime_ns,
+                    metadata.st_ctime_ns,
+                )
+            descriptor = os.open(
+                path,
+                os.O_RDONLY
+                | getattr(os, 'O_CLOEXEC', 0)
+                | getattr(os, 'O_NOFOLLOW', 0),
+            )
+            try:
+                opened = os.fstat(descriptor)
+                if identity(before) != identity(opened):
+                    raise SystemExit('mac environment changed while opening')
+                raw = os.read(descriptor, opened.st_size + 1)
+                after = os.fstat(descriptor)
+                if len(raw) != opened.st_size or identity(opened) != identity(after):
+                    raise SystemExit('mac environment changed while reading')
+            finally:
+                os.close(descriptor)
+            try:
+                lines = raw.decode('utf-8').splitlines()
+            except UnicodeDecodeError as exc:
+                raise SystemExit('mac environment is unreadable') from exc
+        # Avoid importing the not-yet-deployed mac package: preserve all existing
+        # assignments and replace/append only this simple numeric policy value.
+        key = 'MAC_STARTUP_CLEAR_HOLD'
+        replacement = key + '=' + value
+        updated = []
+        replaced = False
+        for line in lines:
+            if line.startswith(key + '=') or line.startswith('export ' + key + '='):
+                if not replaced:
+                    updated.append(replacement)
+                    replaced = True
+            else:
+                updated.append(line)
+        if not replaced:
+            updated.append(replacement)
+        descriptor, raw_path = tempfile.mkstemp(prefix=path.name + '.', dir=str(parent))
+        tmp = Path(raw_path)
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                stream.write('\\n'.join(updated) + '\\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            tmp.chmod(0o600)
+            os.replace(tmp, path)
+            directory_descriptor = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+finally:
+    os.close(lock_descriptor)
 PY"
 }
 
@@ -8487,6 +8761,7 @@ set_remote_mac_agent_service() {
   local release_mode="${5:-keep}" release_policy="${6:-authenticated}"
   local expected_principal_id="${7:-}" release_commit_mode="${8:-immediate}"
   local require_report_executor="${9:-0}"
+  local first_hub_activation="${10:-0}"
   local agent_id state deployment_id hold_reason prior_owned gate_result owns_hold release_result hold_cleared
   local agent_existed adopted_from_reason require_owned_after_prepare new_agent=0
   local generation="" baseline_seen="" release_baseline="" require_authenticated=1
@@ -8497,17 +8772,32 @@ set_remote_mac_agent_service() {
   expected_deployment_id="$(deployment_id_for_agent "$agent")"
   service_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
   assert_remote_deployment_lock "$agent" "$expected_deployment_id"
-  state="$(remote_deployment_hold_state "$agent")"
-  deployment_id="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("deployment_id") or "")')"
-  hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
-  prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
-  agent_existed="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("agent_existed", True) else "0")')"
-  adopted_from_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("adopted_from_reason") or "")')"
-  require_owned_after_prepare="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("require_owned_after_prepare") else "0")')"
-  [ -n "$deployment_id" ] && [ -n "$hold_reason" ] || {
-    echo "==> ${agent}: missing durable deployment hold state" >&2
-    return 1
-  }
+  case "$first_hub_activation" in 0|1) ;; *) return 2 ;; esac
+  if [ "$first_hub_activation" = 1 ]; then
+    [ "${FIRST_HUB_BOOTSTRAP:-0}" = 1 ] && [ "$action" = restart ] \
+      && [ "$release_mode" = keep ] || {
+      echo "==> ${agent}: first-hub activation is restricted to its post-manifest restart" >&2
+      return 1
+    }
+    deployment_id="$expected_deployment_id"
+    hold_reason=""
+    prior_owned=0
+    agent_existed=0
+    adopted_from_reason=""
+    require_owned_after_prepare=0
+  else
+    state="$(remote_deployment_hold_state "$agent")"
+    deployment_id="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("deployment_id") or "")')"
+    hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
+    prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+    agent_existed="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("agent_existed", True) else "0")')"
+    adopted_from_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("adopted_from_reason") or "")')"
+    require_owned_after_prepare="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("require_owned_after_prepare") else "0")')"
+    [ -n "$deployment_id" ] && [ -n "$hold_reason" ] || {
+      echo "==> ${agent}: missing durable deployment hold state" >&2
+      return 1
+    }
+  fi
   if [ "$deployment_id" != "$expected_deployment_id" ]; then
     echo "==> ${agent}: deployment state fence belongs to $deployment_id, expected $expected_deployment_id" >&2
     return 1
@@ -8519,12 +8809,16 @@ set_remote_mac_agent_service() {
 
   if [ "$action" = restart ]; then
     generation="$(worker_generation_for_agent "$agent")"
-    gate_result="$(hub_agent_restart_gate prepare "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" "$([ "$agent_existed" = 0 ] && printf 1 || printf 0)" 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
-    baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
-    owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
-    new_agent="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("0" if json.load(sys.stdin).get("exists") else "1")')"
-    write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" "$adopted_from_reason" "$require_owned_after_prepare"
-    prior_owned="$owns_hold"
+    if [ "$first_hub_activation" = 1 ]; then
+      hub_agent_restart_gate first-hub-prepare "$agent_id" "$generation" >/dev/null
+    else
+      gate_result="$(hub_agent_restart_gate prepare "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" "$([ "$agent_existed" = 0 ] && printf 1 || printf 0)" 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
+      baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
+      owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+      new_agent="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("0" if json.load(sys.stdin).get("exists") else "1")')"
+      write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" "$adopted_from_reason" "$require_owned_after_prepare"
+      prior_owned="$owns_hold"
+    fi
   elif [ "$action" = release ]; then
     generation="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
       "$(remote_deployment_fenced_exec "$expected_deployment_id" 0 sh -c 'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; printf "%s" "${MAC_WORKER_DEPLOY_GENERATION:?}"')")"
@@ -8733,17 +9027,24 @@ case "$supervisor" in
   systemd)
     unit="${MAC_DEPLOY_FLEET_NAME:?}-agent.service"
     if [ "$action" = restart ] || [ "$action" = stop ]; then
-      if [ "$(systemd_worker_property "$unit" LoadState)" != loaded ]; then
+      load_state="$(systemd_worker_property "$unit" LoadState)"
+      if [ "$load_state" = not-found ] && [ "$action" = stop ]; then
+        # A retained partial successor can legitimately precede worker-unit
+        # installation. Recovery's stop operation is already satisfied in that
+        # exact state; restart must still reject it below.
+        echo "exact systemd worker unit is absent and already stopped: $unit" >&2
+      elif [ "$load_state" != loaded ]; then
         echo "exact systemd worker unit is not loaded: $unit" >&2
         exit 1
-      fi
-      run_fleet_systemctl stop "$unit" >/dev/null
-      active_state="$(systemd_worker_property "$unit" ActiveState)"
-      sub_state="$(systemd_worker_property "$unit" SubState)"
-      main_pid="$(systemd_worker_property "$unit" MainPID)"
-      if [ "$active_state" != inactive ] || [ "$sub_state" != dead ] || [ "$main_pid" != 0 ]; then
-        echo "exact systemd worker did not become inactive/dead with pid 0: $unit" >&2
-        exit 1
+      else
+        run_fleet_systemctl stop "$unit" >/dev/null
+        active_state="$(systemd_worker_property "$unit" ActiveState)"
+        sub_state="$(systemd_worker_property "$unit" SubState)"
+        main_pid="$(systemd_worker_property "$unit" MainPID)"
+        if [ "$active_state" != inactive ] || [ "$sub_state" != dead ] || [ "$main_pid" != 0 ]; then
+          echo "exact systemd worker did not become inactive/dead with pid 0: $unit" >&2
+          exit 1
+        fi
       fi
     fi
     if [ "$action" = restart ]; then
@@ -8789,6 +9090,25 @@ esac
 REMOTE
 
   if [ "$action" = restart ]; then
+    if [ "$first_hub_activation" = 1 ]; then
+      gate_result="$(hub_agent_restart_gate first-hub-verify "$agent_id" "$generation")"
+      baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("last_seen_at") or "")')"
+      ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+        "MAC_DEPLOY_RESTART_GENERATION=$(shell_quote "$generation") $service_fence" <<'REMOTE_FIRST_HUB_RELEASE'
+set -euo pipefail
+generation="${MAC_DEPLOY_RESTART_GENERATION:?}"
+barrier="$HOME/.mac/deploy-start-barrier"
+[ -f "$barrier" ] && [ ! -L "$barrier" ] \
+  && [ "$(cat "$barrier")" = "$generation" ] || {
+  echo "first-hub deployment barrier is missing or belongs to another generation" >&2
+  exit 1
+}
+rm -f "$barrier"
+REMOTE_FIRST_HUB_RELEASE
+      hub_agent_restart_gate first-hub-release "$agent_id" "$generation" "$baseline_seen" >/dev/null
+      echo "==> ${agent}: first-hub worker registered and advanced beyond its generation barrier"
+      return 0
+    fi
     if [ "$new_agent" = 1 ]; then
       gate_result="$(hub_agent_restart_gate prepare-new "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" 0 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
       baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
@@ -8904,6 +9224,16 @@ REMOTE_RELEASE
   fi
 }
 
+activate_first_hub_agent_after_manifest() {
+  local agent="$1" supervisor="$2" fleet_name="$3"
+  [ "${FIRST_HUB_BOOTSTRAP:-0}" = 1 ] || {
+    echo "ERROR: ${agent}: first-hub activation requires explicit bootstrap mode" >&2
+    return 1
+  }
+  set_remote_mac_agent_service \
+    "$agent" "$supervisor" "$fleet_name" restart keep authenticated "" immediate 0 1
+}
+
 validate_router_topology_spec() {
   # Local, read-only preflight. Run before tunnels, archive copies, or remote
   # service/source mutation so an incomplete inproc topology cannot replace a
@@ -8992,6 +9322,7 @@ deploy_host() {
     *) echo "ERROR: ${node_action}: unsupported deploy-host node action" >&2; return 2 ;;
   esac
   local remote_stage_root="" staged_manifest="" staged_manifest_digest=""
+  local phase1_required=1
   local staged_verifier="" typed_staged_bundle=0
   local reviewed_openshell_version reviewed_openshell_asset_sha
   local reviewed_openshell_cli_sha reviewed_openshell_receipt_sha
@@ -9204,6 +9535,7 @@ PY
   # own help text), so it never writes the phase1-cohort-quiescence receipt
   # this flag makes fleet-node-install.sh require.
   if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    phase1_required=0
     add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 0
   else
     add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
@@ -9511,7 +9843,7 @@ PY
       return 0
     fi
     echo "==> ${agent}: validating remote post-deploy manifest"
-    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
+    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested" "$phase1_required"; then
       echo "==> ${agent}: remote deploy returned success but post manifest validation failed" >&2
       return 1
     fi
@@ -9522,7 +9854,7 @@ PY
       return 1
     fi
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
-    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
+    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested" "$phase1_required"; then
       echo "==> ${agent}: remote deploy failed and no valid post manifest was published" >&2
       return 1
     fi
@@ -9534,7 +9866,9 @@ PY
   else
     echo "==> ${agent}: restarting mac-agent after post-manifest reconciliation"
   fi
-  if [ "$node_action" = apply-phase2 ]; then
+  if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    activate_first_hub_agent_after_manifest "$agent" "$supervisor" "$fleet_name"
+  elif [ "$node_action" = apply-phase2 ]; then
     restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name"
   else
     set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep
@@ -9578,7 +9912,12 @@ restart_remote_mac_agent_under_epoch() {
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   case "$supervisor" in
     systemd)
-      command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); fi"
+      # A retained successor may have reached quiescence before phase two
+      # installed its worker unit.  Recovery still has to prove that exact
+      # unit is absent; only then is its stop barrier already satisfied.
+      # Activation continues to require a loaded unit, and inspection errors
+      # or ambiguous states remain fatal.
+      command="unit=$(shell_quote "${fleet_name}-agent.service"); if [ \"\$(id -u)\" -eq 0 ]; then systemctl_prefix=; else systemctl_prefix='sudo -n'; fi; load_state=\$(\$systemctl_prefix systemctl show \"\$unit\" --property=LoadState --value) || exit 1; case \"\$load_state\" in loaded) ;; not-found) if [ $(shell_quote "$manager_action") = stop ]; then exit 0; fi; echo \"exact systemd worker unit is absent: \$unit\" >&2; exit 1 ;; *) echo \"exact systemd worker unit has invalid LoadState: \$unit: \$load_state\" >&2; exit 1 ;; esac; \$systemctl_prefix systemctl $(shell_quote "$manager_action") \"\$unit\""
       ;;
     launchd)
       # Recovery can stop a worker before phase two ever created its retained
@@ -11374,6 +11713,7 @@ github_cli = next(
 )
 venv_python = mac_home / "venv" / "bin" / "python"
 mac_env = mac_home / "mac.env"
+deployed_revision = mac_home / "deployed-source-revision"
 truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
 # The managed OpenShell runtime is a Linux container runtime (ADR 0015). A
 # darwin node is a host install with no container runtime, so it never requires
@@ -11519,6 +11859,18 @@ checks = {
     # The vendored Hermes runtime was removed upstream (#377); there is no
     # hermes runtime on disk to require, and its absence is the healthy state.
     "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
+    # A managed environment without its deployed revision is neither a fresh
+    # node nor a trustworthy deployed node. Detect this worker50-shaped torn
+    # identity during the read-only qualification, before any service stop.
+    "deployed_identity_consistent": (
+        not mac_env.exists()
+        or (
+            mac_env.is_file()
+            and not mac_env.is_symlink()
+            and deployed_revision.is_file()
+            and not deployed_revision.is_symlink()
+        )
+    ),
     "openshell_container_runtime_if_required": (not openshell_runtime_required) or docker_engine_ready,
     "qdrant_if_required": service_ready(qdrant_url, qdrant_required),
     "firecrawl_if_required": service_ready(firecrawl_url, firecrawl_required),
@@ -14811,6 +15163,44 @@ PY
   echo "==> ${agent}: committed generation finalization recovered"
 }
 
+run_journal_bound_recovery_with_retry() {
+  # Recovery callbacks are safe to replay because every remote mutation is
+  # fenced by the journal's exact deployment id and every journal mutation has
+  # a stable operation id. Bound transport retries so a single SSH flap is
+  # recovered automatically without turning an identity or policy failure into
+  # an unbounded fleet controller hang.
+  local label="$1" callback="$2"
+  shift 2
+  local max_attempts="${MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS:-3}"
+  local base_seconds="${MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS:-1}"
+  local attempt delay
+  case "$max_attempts" in
+    ''|*[!0-9]*|0) max_attempts=3 ;;
+  esac
+  case "$base_seconds" in
+    ''|*[!0-9]*) base_seconds=1 ;;
+  esac
+  [ "$max_attempts" -le 10 ] || max_attempts=10
+  [ "$base_seconds" -le 30 ] || base_seconds=30
+  attempt=1
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if "$callback" "$@"; then
+      if [ "$attempt" -gt 1 ]; then
+        echo "==> ${label}: journal-bound recovery succeeded on attempt ${attempt}/${max_attempts}"
+      fi
+      return 0
+    fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "ERROR: ${label}: journal-bound recovery failed after ${attempt}/${max_attempts} attempts" >&2
+      return 1
+    fi
+    delay=$((base_seconds * (2 ** (attempt - 1))))
+    echo "WARN: ${label}: journal-bound recovery attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 discard_unopened_epoch_pending_credentials() {
   local hub_agent="$1" status_file="$2" epoch_id="$3" agent agent_id remote_manifest command
   local records_file="$TMPDIR_LOCAL/recovery-pending-credential-agents.txt"
@@ -15077,7 +15467,7 @@ PY
     fi
     while IFS= read -r candidate_b64; do
       [ -n "$candidate_b64" ] || continue
-      if ! recover_cohort_node \
+      if ! run_journal_bound_recovery_with_retry "cohort-node" recover_cohort_node \
         "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"; then
         return 1
       fi
@@ -15114,7 +15504,7 @@ PY
   fi
   while IFS= read -r candidate_b64; do
     [ -n "$candidate_b64" ] || continue
-    if ! recover_committed_cohort_node \
+    if ! run_journal_bound_recovery_with_retry "committed-cohort-node" recover_committed_cohort_node \
       "$epoch_id" "$owner_nonce" "$hub_agent" "$candidate_b64"; then
       return 1
     fi
@@ -16331,11 +16721,11 @@ run_typed_cohort() {
   # before the first phase-1 service quiescence mutates any worker.
   assert_cohort_prerequisites_proven "$selected_specs_file" || return 1
 
-  echo "==> fleet: quiescing the exact cohort under hub epoch ownership"
-  # The journal deliberately makes quiescence a cohort-ordered handoff: each
-  # node's durable intent, remote proof, and completion must be published before
-  # the next node may start. Read-only preparation and later immutable apply
-  # phases remain parallel barriers; this service-stop transition is serialized.
+  echo "==> fleet: rolling the exact cohort under hub epoch ownership"
+  # Preserve serving capacity by completing one node's quiesce, rollback arm,
+  # immutable apply, and prepared proof before stopping the next node. The
+  # journal enforces earlier=prepared and later=phase1_armed at every boundary,
+  # so controller death cannot silently widen the unavailable set.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
@@ -16346,7 +16736,7 @@ run_typed_cohort() {
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: quiesce started (cohort order)"
+    echo "==> ${agent}: rolling quiesce started"
     if ! typed_quiesce_worker "$spec"; then
       return 1
     fi
@@ -16356,18 +16746,13 @@ run_typed_cohort() {
       --evidence-file "$TMPDIR_LOCAL/phase1-ready-${agent_id}.json" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: quiesce proved (cohort order)"
-  done < "$selected_specs_file"
+    echo "==> ${agent}: rolling quiesce proved"
 
-  echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"
-  run_bounded_node_phase "$selected_specs_file" phase2-arm \
-    typed_phase2_arm_worker "$hub_token" "$hub_tunnel_pubkey" \
-    "$github_review_key_b64" || return 1
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
+    echo "==> ${agent}: installing immutable finalizer and arming rollback"
+    if ! typed_phase2_arm_worker "$spec" "$hub_token" "$hub_tunnel_pubkey" \
+      "$github_review_key_b64"; then
+      return 1
+    fi
     mapfile -t phase2_arm_values < <("$PYTHON_BIN" - \
       "$TMPDIR_LOCAL/phase2-arm-${agent_id}.json" <<'PY'
 import json,sys
@@ -16388,23 +16773,13 @@ PY
       --rollback-intent-sha256 "$phase2_digest" \
       --finalizer-sha256 "$finalizer_digest" \
       --evidence-file "$TMPDIR_LOCAL/phase2-arm-${agent_id}.json" >/dev/null
-  done < "$selected_specs_file"
 
-  echo "==> fleet: applying and proving the held cohort"
-  # Deployment is a cohort-ordered handoff for the same reason as quiescence:
-  # one node must publish its prepared proof before the next node can start.
-  # This is the canary boundary; preparation and phase-2 arming remain parallel.
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
     if ! cohort_journal_mutate phase2-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase2-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: phase-2 apply started (cohort order)"
+    echo "==> ${agent}: rolling phase-2 apply started"
     if ! typed_phase2_apply_worker "$spec" "$hub_agent" "$hub_token" \
       "$hub_tunnel_pubkey" "$github_review_key_b64"; then
       return 1
@@ -16420,7 +16795,7 @@ PY
       --evidence-file "$evidence" >/dev/null; then
       return 1
     fi
-    echo "==> ${agent}: phase-2 apply proved (cohort order)"
+    echo "==> ${agent}: rolling phase-2 apply proved; availability boundary advanced"
   done < "$selected_specs_file"
 
   prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"

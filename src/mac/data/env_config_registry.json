@@ -660,6 +660,7 @@
     "name": "MAC_ATTESTATION_KEY",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "src/mac/deployment_attestation.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_sandbox.py",
@@ -2349,7 +2350,8 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -3588,6 +3590,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy phase1 required.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PHASE1_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy postgres bind addr.",
     "family": "deployment",
     "name": "MAC_DEPLOY_POSTGRES_BIND_ADDR",
@@ -3864,6 +3877,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy recovery max attempts.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy recovery policy.",
     "family": "deployment",
     "name": "MAC_DEPLOY_RECOVERY_POLICY",
@@ -3874,6 +3898,17 @@
       "deploy/fleet-node-substrate-adopt.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy recovery retry base seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -10087,6 +10122,7 @@
     "name": "MAC_PHASE1_RESTORE_CONTRACT_PATH",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/fleet-node-phase1-quiesce.sh"
     ],
     "type": "str"
@@ -13043,6 +13079,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],

@@ -448,6 +448,39 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
 
 
+def test_open_epoch_pins_fungible_participant_against_ttl_expiry(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    cp.store.execute(
+        "UPDATE agents SET instance_kind = 'fungible', last_seen_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", "agent_alpha"),
+    )
+    opened = cp.fleet_release_epochs.open_epoch(
+        "epoch-ttl-pin",
+        [
+            _prepare_item(
+                pending,
+                generation="generation-ttl-pin",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+
+    assert cp.expire_ephemeral_agents() == []
+    assert cp.get_agent("agent_alpha").deleted_at is None
+
+    cp.fleet_release_epochs.abort(
+        "epoch-ttl-pin",
+        opened["identity_sha256"],
+        reason="test completed",
+    )
+    expired = cp.expire_ephemeral_agents()
+    assert [agent.id for agent in expired] == ["agent_alpha"]
+    assert cp.get_agent("agent_alpha").deleted_at is not None
+
+
 def test_open_rejects_same_reason_hold_reacquired_after_review(
     tmp_path: Path,
 ) -> None:
@@ -837,6 +870,82 @@ def test_abort_retain_installed_preserves_proven_predecessor_projection(
         )
         == aborted
     )
+
+
+def test_abort_accepts_principal_loss_for_uninstalled_participant(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    old = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-abort-uninstalled-principal-loss"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation="generation-uninstalled-principal-loss",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    cp.store.execute(
+        "UPDATE worker_credentials SET state = 'revoked', revoked_at = ? WHERE id IN (?, ?)",
+        (utcnow(), old.record["id"], pending.record["id"]),
+    )
+
+    aborted = cp.fleet_release_epochs.abort(
+        epoch_id,
+        opened["identity_sha256"],
+        reason="TTL cleanup retired untouched participant credentials",
+    )
+
+    assert aborted["status"] == "aborted"
+    assert cp.get_agent("agent_alpha").dispatch_hold is True
+
+
+def test_abort_rejects_principal_loss_for_installed_participant(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-abort-installed-principal-loss"
+    generation = "generation-installed-principal-loss"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    receipt = _apply_pending(cp, pending, tmp_path, generation=generation)
+    cp.fleet_release_epochs.prove(
+        epoch_id,
+        opened["identity_sha256"],
+        [
+            _proof_item(
+                pending,
+                receipt,
+                candidate_key=None,
+                epoch_id=epoch_id,
+                generation=generation,
+            )
+        ],
+    )
+    cp.store.execute(
+        "UPDATE worker_credentials SET state = 'revoked', revoked_at = ? WHERE id = ?",
+        (utcnow(), pending.record["id"]),
+    )
+
+    with pytest.raises(ValidationError, match="principal set changed"):
+        cp.fleet_release_epochs.abort(
+            epoch_id,
+            opened["identity_sha256"],
+            reason="installed credential continuity must remain exact",
+            disposition="retain_installed",
+        )
 
 
 def test_abort_rejects_unknown_disposition(tmp_path: Path) -> None:

@@ -137,6 +137,21 @@ def _no_live_task_repository_identity(monkeypatch):
             monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_report_executor_approval(monkeypatch):
+    """Do not let host approval or a preceding test select a report lane.
+
+    Worker startup intentionally projects an approved executor into the
+    process environment.  That state is daemon-scoped in production but must
+    not cross pytest case boundaries, especially when xdist reuses a worker.
+    Tests of native/deferred report verification opt in explicitly.
+    """
+    for name in list(os.environ):
+        if name.startswith("MAC_REPORT_EXECUTOR_APPROVED_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
+
+
 # ----------------------------------------------------------------------
 # Live-Postgres fixtures (K8s Phase 3.6).
 #
@@ -337,14 +352,12 @@ def linux_repository_verifier(monkeypatch, tmp_path):
     contract tests exercise production OpenShell argv and unavailable gateways.
     """
     import subprocess
-    import sys
     import tempfile
     from pathlib import Path
 
     from mac import services
 
     def run(_remote, _branch, head, command, bootstrap="", **kwargs):
-        assert sys.platform == "linux", "repository test execution belongs on Linux"
         with tempfile.TemporaryDirectory(dir=tmp_path) as directory:
             target = Path(directory) / "repo"
             clone = subprocess.run(

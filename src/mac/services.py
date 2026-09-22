@@ -1970,6 +1970,7 @@ def _build_onboarding_description(url: str, repo_name: str) -> str:
             "  Include the full environment contract JSON in your evidence.",
             "",
             "Deliverables — report all of these in your evidence (evidence_type=investigation):",
+            "  In mac-evidence.json, place the report under operator_result and include a substantive operator_result.summary (or result, findings, or artifacts). Descriptive subkeys alone are not accepted by the evidence contract.",
             "  1. A concise summary of what the project does and its architecture (languages, frameworks, key modules, entry points), grounded in README.md/AGENTS.md/PLAN.md where present.",
             "  2. How to build it and run its tests, inferred from the repo's own manifests/CI and README — not guessed.",
             "  3. The environment contract (mac.environment_contract.v1) derived from static analysis of the checkout.",
@@ -18806,9 +18807,12 @@ class ControlPlane:
         """Tombstone ephemeral agents whose heartbeat lease has lapsed.
 
         Skips agents holding an active task lease (lease expiry reclaims the
-        task first; the agent is swept on a later tick). Open bus streams the
-        departed agent left behind are closed so waiting peers see a terminal
-        status rather than an open stream that will never append again.
+        task first; the agent is swept on a later tick) or participating in an
+        open fleet release epoch. Deployment deliberately stops those workers,
+        so heartbeat silence is not evidence that their hosts departed. Open
+        bus streams the departed agent left behind are closed so waiting peers
+        see a terminal status rather than an open stream that will never append
+        again.
         """
         now = utcnow()
         expired: List[Agent] = []
@@ -18822,6 +18826,23 @@ class ControlPlane:
             if parse_time(now) < deadline:
                 continue
             if self._agent_has_active_lease(agent.id):
+                continue
+            if (
+                self.store.query_one(
+                    """
+                SELECT 1
+                FROM fleet_release_epoch_agents AS member
+                JOIN fleet_release_epochs AS epoch
+                  ON epoch.epoch_id = member.epoch_id
+                WHERE member.agent_id = ?
+                  AND member.open_state = 1
+                  AND epoch.state IN ('open', 'proved')
+                LIMIT 1
+                """,
+                    (agent.id,),
+                )
+                is not None
+            ):
                 continue
             self.store.execute(
                 """

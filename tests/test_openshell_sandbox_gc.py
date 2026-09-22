@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from mac.openshell_sandbox_gc import (
+    _process_identity,
     reconcile_stale_sandboxes,
     stale_sandbox_candidates,
 )
 
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def test_current_process_has_stable_reuse_safe_identity():
+    first = _process_identity(os.getpid())
+    second = _process_identity(os.getpid())
+
+    assert first == second
+    assert first[0] == "present"
+    assert first[1].count(":") == 1
+    assert all(first[1].split(":"))
 
 
 def _sandbox(name: str, *, age_hours: int = 48, labels=None, phase="Ready"):

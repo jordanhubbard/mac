@@ -490,6 +490,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
                     "  2. Infer the supported platforms, the required toolchain commands, the bootstrap/setup command, and the canonical test command — only from what the repo actually declares; do not invent commands.",
                     "  3. Author a repository contract at .mac/project.yaml in the checkout using schema mac.repository_contract.v1 with keys: schema, project, platforms, toolchain.required_commands, bootstrap.command, test.command, evidence.required.",
                     "This onboarding run produces a local analysis artifact and does not publish a branch or PR. Include the full .mac/project.yaml content and your architecture summary + prioritized backlog in the evidence (evidence_type=investigation).",
+                    "In $MAC_TASK_WORKSPACE/mac-evidence.json, place that report under operator_result and include a substantive operator_result.summary (or result, findings, or artifacts). Descriptive subkeys alone are not accepted by the evidence contract.",
                 ]
             )
         return (

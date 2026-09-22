@@ -971,6 +971,17 @@ def build_mac_env(
         )
     _ensure_secret_values(values)
     values.update(_path_values(cfg, _gateway_home(cfg, existing, env)))
+    # The fleet controller sets this only after prerequisite inspection has
+    # proved the configured hub route from the exact spoke.  Keep the runtime
+    # on that same route.  Falling back to the network=none localhost tunnel
+    # here makes a successfully deployed worker restart-loop when no tunnel was
+    # installed precisely because the direct route was selected.
+    if (
+        not cfg.identity.is_hub
+        and _enabled(str(env.get("MAC_DEPLOY_DIRECT_HUB") or ""))
+        and cfg.control.hub_url
+    ):
+        values["MAC_HUB_URL"] = cfg.control.hub_url.rstrip("/")
     finder = lookup or lookup_tailscale_ipv4
     tailscale_ip = finder(environ=env)
     if not tailscale_ip:

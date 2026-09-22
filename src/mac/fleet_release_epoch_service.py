@@ -1844,9 +1844,18 @@ class FleetReleaseEpochService:
             now = utcnow()
             for participant in participants:
                 agent_id = str(participant["agent_id"])
-                if self._live_principals(conn, agent_id) != self._expected_live_principals(
-                    participant
-                ):
+                live_principals = self._live_principals(conn, agent_id)
+                expected_live_principals = self._expected_live_principals(participant)
+                principal_drift_tolerated = live_principals != expected_live_principals
+                # Heartbeat TTL cleanup may retire an agent and its credentials
+                # while a controller still owns an open deployment epoch.  An
+                # uninstalled successor has never reached the node, so exact
+                # principal continuity protects no runtime identity during
+                # abort.  Keep the strict CAS for installed credentials, but
+                # accept drift for untouched participants under the already
+                # verified dispatch hold.  A following deployment will issue a
+                # fresh exact credential instead of trying to reconstruct one.
+                if principal_drift_tolerated and agent_id in installed_agents:
                     raise ValidationError("worker principal set changed after fleet release open")
                 prior_claims = list(json_loads(participant["prior_active_service_claim_ids"], []))
                 for claim_id in prior_claims:
@@ -1869,7 +1878,7 @@ class FleetReleaseEpochService:
                     agent_id in installed_agents
                     and disposition_value == ABORT_DISPOSITION_RETAIN_INSTALLED
                 )
-                if not retained_installed:
+                if not retained_installed and str(participant["principal_id"]) in live_principals:
                     try:
                         self.credentials.discard_pending_in_transaction(
                             conn,
@@ -1934,6 +1943,7 @@ class FleetReleaseEpochService:
                         ),
                         "disposition": disposition_value,
                         "retained_installed_pending": retained_installed,
+                        "principal_drift_tolerated": principal_drift_tolerated,
                     },
                     now,
                 )

@@ -15,6 +15,11 @@ import threading
 import pytest
 
 from mac.deploy_env import read_env_file
+from mac.deployment_attestation import (
+    _atomic_private_json,
+    install_recovery_manifest,
+    recovery_manifest,
+)
 from mac.services import sign_verification_manifest
 
 
@@ -28,6 +33,104 @@ def _shell_function(source, name, next_name, *, subshell=False):
     return start + body + f"\n{closing}\n"
 
 
+def _run_startup_hold_policy(tmp_path, *, value="0"):
+    source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
+    function = _shell_function(
+        source,
+        "set_remote_mac_startup_hold_policy",
+        "phase1_restore_contract_file_for_agent",
+    )
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, mode=0o700, exist_ok=True)
+    stubs = r"""
+deployment_id_for_agent() { printf '%s' recovery-deployment; }
+ssh_target_args() { printf 'fixture-host\0'; }
+shell_quote() { printf '%q' "$1"; }
+remote_deployment_fenced_exec() { shift 2; printf '%q ' "$@"; }
+ssh() {
+  local command="${!#}"
+  bash -c "$command"
+}
+"""
+    script = (
+        "set -u\n"
+        + function
+        + stubs
+        + f"\nset_remote_mac_startup_hold_policy node {value} deployment\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        env={**os.environ, "HOME": str(home)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result, mac_home / "mac.env"
+
+
+def test_absent_startup_hold_env_survives_attestation_install_with_exact_recovery_keys(tmp_path):
+    result, env_file = _run_startup_hold_policy(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert env_file.read_text(encoding="utf-8") == "MAC_STARTUP_CLEAR_HOLD=0\n"
+    assert os.stat(env_file).st_mode & 0o077 == 0
+
+    manifest_path = env_file.parent / "recovery.json"
+    _atomic_private_json(
+        manifest_path,
+        recovery_manifest("agent_node", "deployment", "recovered-key-" + "x" * 48),
+    )
+    receipt = install_recovery_manifest(
+        manifest_path,
+        env_file,
+        expected_agent_id="agent_node",
+        expected_deployment_id="deployment",
+    )
+
+    assert receipt["installed"] is True
+    assert read_env_file(env_file) == {
+        "MAC_ATTESTATION_KEY": "recovered-key-" + "x" * 48,
+        "MAC_STARTUP_CLEAR_HOLD": "0",
+    }
+
+
+def test_startup_hold_policy_preserves_assignments_and_replaces_duplicate_policy(tmp_path):
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, mode=0o700)
+    env_file = mac_home / "mac.env"
+    env_file.write_text(
+        "# retained\nOTHER=value\nexport MAC_STARTUP_CLEAR_HOLD=1\nMAC_STARTUP_CLEAR_HOLD=1\n",
+        encoding="utf-8",
+    )
+    env_file.chmod(0o600)
+
+    result, observed = _run_startup_hold_policy(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert observed == env_file
+    assert env_file.read_text(encoding="utf-8") == (
+        "# retained\nOTHER=value\nMAC_STARTUP_CLEAR_HOLD=0\n"
+    )
+
+
+def test_startup_hold_policy_rejects_a_symlinked_environment(tmp_path):
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    mac_home.mkdir(parents=True, mode=0o700)
+    target = tmp_path / "outside.env"
+    target.write_text("OUTSIDE=unchanged\n", encoding="utf-8")
+    (mac_home / "mac.env").symlink_to(target)
+
+    result, env_file = _run_startup_hold_policy(tmp_path)
+
+    assert result.returncode != 0
+    assert "mac environment is unsafe" in result.stderr
+    assert env_file.is_symlink()
+    assert target.read_text(encoding="utf-8") == "OUTSIDE=unchanged\n"
+
+
 def _run_recovery(
     tmp_path,
     *,
@@ -38,6 +141,7 @@ def _run_recovery(
     proof_fault="",
     commit_length=40,
     recovery_from_state="quiesced",
+    unit_load_state="loaded",
 ):
     source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
     names = (
@@ -133,6 +237,7 @@ def _run_recovery(
     service.write_text(
         "#!/bin/sh\n"
         'case "$1" in\n'
+        ' show) printf "%s\\n" "$UNIT_LOAD_STATE" ;;\n'
         ' stop) printf "service stop\\n" >> "$CALLS"; '
         '[ "$FAILURE" != stop ] || exit 73; printf stopped > "$WORKER" ;;\n'
         ' restart) printf "restart\\n" >> "$CALLS"; printf running > "$WORKER" ;;\n'
@@ -277,6 +382,7 @@ ssh() {
         "STAGED": str(staged),
         "WORKER": str(worker),
         "FAILURE": failure,
+        "UNIT_LOAD_STATE": unit_load_state,
     }
     try:
         result = subprocess.run(
@@ -386,6 +492,22 @@ def test_post_quiescence_retention_stops_and_proves_worker_before_completion(tmp
     assert observed["state"]["verified"] == [False, True]
 
 
+def test_post_quiescence_retention_accepts_exactly_absent_systemd_worker(tmp_path):
+    observed = _run_recovery(
+        tmp_path,
+        recovery_from_state="quiesce_started",
+        unit_load_state="not-found",
+    )
+    assert observed["result"].returncode == 0, observed["result"].stderr
+    assert observed["worker"] == "running"
+    assert observed["calls"] == [
+        "journal abort-start",
+        "install",
+        "journal aborted-node",
+    ]
+    assert observed["state"]["verified"] == [False, True]
+
+
 @pytest.mark.parametrize("failure", ["stop", "upload", "install", "second-proof"])
 def test_retained_recovery_does_not_report_success_after_boundary_failure(tmp_path, failure):
     observed = _run_recovery(tmp_path, failure=failure)
@@ -424,7 +546,10 @@ def test_epoch_worker_lifecycle_uses_only_the_selected_supervisor(
     calls = tmp_path / "calls"
     for name in ["systemctl", "supervisorctl"]:
         command = bin_dir / name
-        command.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n')
+        command.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n'
+            'if [ "$1" = show ]; then printf "loaded\\n"; fi\n'
+        )
         command.chmod(0o700)
     sudo = bin_dir / "sudo"
     sudo.write_text('#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n')
@@ -496,4 +621,65 @@ ssh() { bash -c "${!#}"; }
         verb = "start" if action == "activate" else action
         unit = "fleet-agent.service" if supervisor == "systemd" else "fleet-agent"
         expected = [f"{verb} {unit}"]
+        if supervisor == "systemd":
+            expected.insert(0, f"show {unit} --property=LoadState --value")
     assert calls.read_text().splitlines() == expected
+
+
+@pytest.mark.parametrize("action", ["activate", "restart", "stop"])
+@pytest.mark.parametrize(
+    ("load_state", "show_rc"),
+    [("not-found", 0), ("masked", 0), ("", 0), ("loaded", 71)],
+)
+def test_epoch_systemd_lifecycle_fails_closed_except_absent_stop(
+    tmp_path, action, load_state, show_rc
+):
+    source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
+    function = _shell_function(source, "restart_remote_mac_agent_under_epoch", "hub_target")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n'
+        'if [ "$1" = show ]; then printf "%s\\n" "$LOAD_STATE"; exit "$SHOW_RC"; fi\n'
+        "exit 0\n"
+    )
+    systemctl.chmod(0o700)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n')
+    sudo.chmod(0o700)
+    stubs = r"""
+deployment_id_for_agent() { printf recovery-deployment; }
+assert_remote_deployment_lock() { :; }
+phase1_resolved_supervisor_for_agent() { printf systemd; }
+ssh_target_args() { printf 'fixture-host\0'; }
+shell_quote() { printf '%q' "$1"; }
+remote_deployment_fenced_exec() { shift 2; printf '%q ' "$@"; }
+ssh() { bash -c "${!#}"; }
+"""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "set -eu\nTS=fixture\n"
+            + function
+            + stubs
+            + f"\nrestart_remote_mac_agent_under_epoch node systemd fleet {action}",
+        ],
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+            "CALLS": str(calls),
+            "LOAD_STATE": load_state,
+            "SHOW_RC": str(show_rc),
+        },
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    expected_success = action == "stop" and load_state == "not-found" and show_rc == 0
+    assert (result.returncode == 0) is expected_success, result.stderr
+    observed = calls.read_text().splitlines()
+    assert observed == ["show fleet-agent.service --property=LoadState --value"]

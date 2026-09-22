@@ -38,7 +38,7 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
         "cohort_journal_mutate quiesce-start",
         'typed_quiesce_worker "$spec"',
         "cohort_journal_mutate quiesced",
-        'run_bounded_node_phase "$selected_specs_file" phase2-arm',
+        'typed_phase2_arm_worker "$spec"',
         "cohort_journal_mutate phase2-armed",
         "cohort_journal_mutate phase2-start",
         'typed_phase2_apply_worker "$spec"',
@@ -50,22 +50,17 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     )
     positions = [typed.index(value) for value in ordered]
     assert positions == sorted(positions)
-    quiescence = typed.split(
-        'echo "==> fleet: quiescing the exact cohort under hub epoch ownership"', 1
-    )[1].split(
-        'echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"',
-        1,
-    )[0]
-    assert quiescence.count("while IFS= read -r spec; do") == 1
-    assert 'run_bounded_node_phase "$selected_specs_file" quiesce' not in quiescence
-
-    phase2_apply = typed.split('echo "==> fleet: applying and proving the held cohort"', 1)[
-        1
-    ].split("prove_and_commit_hub_epoch", 1)[0]
+    phase2_apply = typed.split(
+        'echo "==> fleet: rolling the exact cohort under hub epoch ownership"', 1
+    )[1].split("prove_and_commit_hub_epoch", 1)[0]
     assert phase2_apply.count("while IFS= read -r spec; do") == 1
+    assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' not in phase2_apply
     assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' not in phase2_apply
     assert (
-        phase2_apply.index("cohort_journal_mutate phase2-start")
+        phase2_apply.index("cohort_journal_mutate quiesce-start")
+        < phase2_apply.index('typed_quiesce_worker "$spec"')
+        < phase2_apply.index('typed_phase2_arm_worker "$spec"')
+        < phase2_apply.index("cohort_journal_mutate phase2-start")
         < phase2_apply.index('typed_phase2_apply_worker "$spec"')
         < phase2_apply.index("cohort_journal_mutate prepared")
     )

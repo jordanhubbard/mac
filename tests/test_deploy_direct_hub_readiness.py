@@ -61,6 +61,71 @@ def test_direct_hub_guard_returns_without_polling() -> None:
     assert "skipping reverse-tunnel wait" in result.stdout
 
 
+def test_stopped_spoke_uses_proven_direct_route_for_deploy_health() -> None:
+    text = _script()
+    start = text.index('log "verifying hub health and local executor startup report"')
+    end = text.index('"$PY" - "$LOG_DIR/startup-hermes.json"', start)
+    block = text[start:end]
+
+    assert block.count("verify_or_defer_hub_health") == 2
+    assert 'curl -fsS "$MAC_HUB_URL/health"' not in block
+
+
+def test_deploy_health_route_selection_preserves_tunnel_fallback(tmp_path: Path) -> None:
+    function = _function("verify_or_defer_hub_health")
+
+    def select(direct: str, deferred: str) -> subprocess.CompletedProcess[str]:
+        log_dir = tmp_path / (direct + deferred)
+        log_dir.mkdir()
+        (log_dir / "health.json").write_text("stale\n", encoding="utf-8")
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "\n".join(
+                    [
+                        'truthy() { [ "$1" = 1 ]; }',
+                        "control_plane_enabled() { return 1; }",
+                        "log() { printf '%s\\n' \"$*\" >&2; }",
+                        "curl() { printf '%s\\n' \"$2\"; }",
+                        'DEPLOY_DIRECT_HUB="$1"',
+                        'DEFER_AGENT_RESTART="$2"',
+                        'HUB_URL="http://10.57.228.137:8789"',
+                        'MAC_HUB_URL="http://127.0.0.1:18789"',
+                        f'LOG_DIR="{log_dir}"',
+                        function,
+                        "verify_or_defer_hub_health",
+                    ]
+                ),
+                "select",
+                direct,
+                deferred,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result
+
+    direct = select("1", "1")
+    assert direct.returncode == 0, direct.stderr
+    assert (tmp_path / "11" / "health.json").read_text(encoding="utf-8").strip() == (
+        "http://10.57.228.137:8789/health"
+    )
+
+    legacy = select("0", "0")
+    assert legacy.returncode == 0, legacy.stderr
+    assert (tmp_path / "00" / "health.json").read_text(encoding="utf-8").strip() == (
+        "http://127.0.0.1:18789/health"
+    )
+
+    deferred = select("0", "1")
+    assert deferred.returncode == 0, deferred.stderr
+    assert deferred.stdout == ""
+    assert "deferring tunnel-routed hub health" in deferred.stderr
+    assert not (tmp_path / "01" / "health.json").exists()
+
+
 def test_hub_database_maintenance_explicitly_selects_local_authority() -> None:
     function = _function("mac_authority")
     assert '"$VENV/bin/mac" --local-authority --db "$dsn" "$@"' in function

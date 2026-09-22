@@ -1162,6 +1162,26 @@ wait_for_hub_reverse_tunnel() {
   return 0
 }
 
+verify_or_defer_hub_health() {
+  local output="$LOG_DIR/health.json" deploy_health_url
+  if control_plane_enabled; then
+    curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$output"
+    return 0
+  fi
+  if [ "${DEPLOY_DIRECT_HUB:-0}" = "1" ]; then
+    deploy_health_url="$HUB_URL"
+  elif truthy "${DEFER_AGENT_RESTART:-0}"; then
+    # The tunnel is owned by the stopped worker lifecycle.  Its exact health
+    # proof moves to the outer controller's post-restart heartbeat/release gate.
+    rm -f "$output"
+    log "deferring tunnel-routed hub health until post-manifest agent restart"
+    return 0
+  else
+    deploy_health_url="$MAC_HUB_URL"
+  fi
+  curl -fsS "$deploy_health_url/health" > "$output"
+}
+
 remove_managed_github_review_key_config() {
   local config_file="$1"
   [ -f "$config_file" ] || return 0
@@ -5813,7 +5833,14 @@ def private_bytes(path: str) -> bytes:
             or before.st_size > 4 * 1024 * 1024
         ):
             raise SystemExit("existing phase-2 rollback intent is not private and bounded")
-        raw = os.read(descriptor, before.st_size + 1)
+        raw = bytearray()
+        while len(raw) < before.st_size:
+            chunk = os.read(descriptor, min(64 * 1024, before.st_size - len(raw)))
+            if not chunk:
+                raise SystemExit("sealed auxiliary rollback artifact was truncated")
+            raw.extend(chunk)
+        if os.read(descriptor, 1):
+            raise SystemExit("sealed auxiliary rollback artifact grew while reading")
         after = os.fstat(descriptor)
         if len(raw) != before.st_size or (
             before.st_dev,
@@ -6889,6 +6916,8 @@ EOF
     MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256 \
     MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256 \
     MAC_DEPLOY_FIRST_HUB_BOOTSTRAP \
+    MAC_PHASE1_RESTORE_CONTRACT_PATH \
+    MAC_PHASE1_RESTORE_CONTRACT_SHA256 \
     MAC_DEPLOY_OPENSHELL_ENABLED \
     MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS \
     MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS; do
@@ -6905,7 +6934,8 @@ EOF
       FAKE_PODMAN_STATE FAKE_CHILD_PID FAKE_OPENSHELL_MODE \
       FAKE_STOP_WRAPPER_MODE FAKE_DOCKER_MODE FAKE_PODMAN_MODE \
       FAKE_SANDBOX_NAME FAKE_SECRET FAKE_GATE_CAPTURE \
-      FAKE_STALE_SANDBOXES FAKE_LIVE_DRAIN_LISTS; do
+      FAKE_STALE_SANDBOXES FAKE_LIVE_DRAIN_LISTS \
+      FAKE_GATEWAY_PORT FAKE_LIVE_PID; do
       env_value="${!env_name-}"
       [ -z "$env_value" ] || gate_env+=("$env_name=$env_value")
     done
@@ -7302,6 +7332,8 @@ test_child_environment = (
     "FAKE_GATE_CAPTURE",
     "FAKE_STALE_SANDBOXES",
     "FAKE_LIVE_DRAIN_LISTS",
+    "FAKE_GATEWAY_PORT",
+    "FAKE_LIVE_PID",
 )
 
 
@@ -7330,14 +7362,198 @@ def openshell_ever_installed():
     return openshell.exists() or openshell.is_symlink()
 
 
-def prove_prepared_cli_without_gateway(runtimes):
-    """Recognize phase-zero CLI preparation, never an unavailable gateway.
+def prove_retained_attestation_recovery_env(path):
+    """Accept only the fail-closed env left by retain-forward key recovery."""
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise QuiescenceFailure("retained successor identity is unreadable")
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or not 1 <= before.st_size <= 1024 * 1024
+        ):
+            raise QuiescenceFailure("retained successor identity is untrusted")
+        raw = bytearray()
+        while len(raw) < before.st_size:
+            chunk = os.read(descriptor, min(65536, before.st_size - len(raw)))
+            if not chunk:
+                raise QuiescenceFailure("retained successor identity changed while reading")
+            raw.extend(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise QuiescenceFailure("retained successor identity changed while reading")
+    finally:
+        os.close(descriptor)
+    try:
+        text = bytes(raw).decode("utf-8", errors="strict")
+    except UnicodeError:
+        raise QuiescenceFailure("retained successor identity is undecodable")
 
-    Only the explicit first-hub path may use this proof. Inspect local state,
-    registrations, the gateway listener, and every discovered container daemon
-    before allowing source installation to precede gateway bootstrap.
+    values = {}
+    safe_value = re.compile(r"^[A-Za-z0-9_./:@=,+%-]*$")
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            tokens = shlex.split(line, comments=False, posix=True)
+        except ValueError:
+            raise QuiescenceFailure("retained successor identity is malformed")
+        if len(tokens) != 1 or "=" not in tokens[0]:
+            raise QuiescenceFailure("retained successor identity is malformed")
+        key, value = tokens[0].split("=", 1)
+        if key in values:
+            raise QuiescenceFailure("retained successor identity is ambiguous")
+        # mac.deploy_env.render_env is the only accepted producer.  Requiring
+        # its canonical shell spelling rejects substitutions and metacharacters
+        # that shlex can parse but a later service shell would execute.
+        rendered = value if safe_value.fullmatch(value) else shlex.quote(value)
+        if line != "%s=%s" % (key, rendered):
+            raise QuiescenceFailure("retained successor identity is non-canonical")
+        values[key] = value
+
+    if set(values) != {"MAC_ATTESTATION_KEY", "MAC_STARTUP_CLEAR_HOLD"}:
+        raise QuiescenceFailure("retained successor has an installed identity")
+    attestation_key = values["MAC_ATTESTATION_KEY"]
+    if len(attestation_key) < 32 or any(character.isspace() for character in attestation_key):
+        raise QuiescenceFailure("retained successor attestation identity is invalid")
+    if values["MAC_STARTUP_CLEAR_HOLD"] != "0":
+        raise QuiescenceFailure("retained successor dispatch hold policy is invalid")
+
+
+def prove_phase1_prepared_cli_authority(runtimes):
+    """Validate the controller-bound retained-successor exception.
+
+    A synchronized deploy can retain the exact successor source and venv while
+    still having no installed deployment identity or OpenShell gateway.  The
+    phase-1 restore contract is the existing authority for that topology: its
+    digest is supplied by the controller, and it binds the nested daemon
+    contract prepared immediately before quiescence.
     """
-    if os.environ.get("MAC_DEPLOY_FIRST_HUB_BOOTSTRAP") != "1":
+    raw_path = os.environ.get("MAC_PHASE1_RESTORE_CONTRACT_PATH", "").strip()
+    expected_digest = os.environ.get(
+        "MAC_PHASE1_RESTORE_CONTRACT_SHA256", ""
+    ).strip()
+    if not raw_path and not expected_digest:
+        return False
+    if not raw_path or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None:
+        raise QuiescenceFailure("phase-1 prepared-gateway authority is incomplete")
+    expected_path = mac_home / (
+        "phase1-cohort-restore-contract-%s.json" % generation
+    )
+    path = Path(raw_path)
+    if path != expected_path:
+        raise QuiescenceFailure("phase-1 prepared-gateway authority path differs")
+    outer_raw = read_private_text(path).encode("utf-8")
+    if hashlib.sha256(outer_raw).hexdigest() != expected_digest:
+        raise QuiescenceFailure("phase-1 prepared-gateway authority digest differs")
+    try:
+        outer = json.loads(outer_raw)
+    except (TypeError, ValueError):
+        raise QuiescenceFailure("phase-1 prepared-gateway authority is malformed")
+    if (
+        not isinstance(outer, dict)
+        or outer.get("schema") != "mac.phase1_cohort_restore_contract.v1"
+        or outer.get("status") != "prepared"
+        or outer.get("generation") != generation
+        or outer.get("revision") != revision
+        or outer.get("rollback_capable") is not True
+        or outer.get("rollback_ineligible_reason") is not None
+    ):
+        raise QuiescenceFailure("phase-1 prepared-gateway authority differs")
+
+    nested = outer.get("daemon_restore_contract")
+    nested_path = mac_home / (
+        "daemon-resource-restore-contract-%s.json" % generation
+    )
+    if (
+        not isinstance(nested, dict)
+        or nested.get("path") != str(nested_path)
+        or re.fullmatch(r"[0-9a-f]{64}", str(nested.get("sha256") or "")) is None
+    ):
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon authority differs")
+    nested_raw = read_private_text(nested_path).encode("utf-8")
+    if hashlib.sha256(nested_raw).hexdigest() != nested["sha256"]:
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon digest differs")
+    try:
+        daemon = json.loads(nested_raw)
+    except (TypeError, ValueError):
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon authority is malformed")
+    openclaw = daemon.get("openclaw") if isinstance(daemon, dict) else None
+    if (
+        not isinstance(daemon, dict)
+        or daemon.get("schema") != "mac.daemon_resource_restore_contract.v1"
+        or daemon.get("generation") != generation
+        or daemon.get("revision") != revision
+        or daemon.get("container_runtimes") != runtime_identities(runtimes)
+        or not isinstance(openclaw, dict)
+        or openclaw.get("sandbox") is not None
+        or openclaw.get("prior_state") != "not_managed"
+        or openclaw.get("reviewed_openshell_cli") is not None
+    ):
+        raise QuiescenceFailure("phase-1 prepared-gateway daemon topology differs")
+
+    for directory in (mac_home / "src" / "mac", mac_home / "venv"):
+        try:
+            metadata = directory.lstat()
+        except OSError:
+            raise QuiescenceFailure("retained successor artifacts are incomplete")
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o022
+        ):
+            raise QuiescenceFailure("retained successor artifacts are unsafe")
+    deployed_revision = mac_home / "deployed-source-revision"
+    if deployed_revision.exists() or deployed_revision.is_symlink():
+        raise QuiescenceFailure("retained successor has an installed identity")
+    env_file = mac_home / "mac.env"
+    if env_file.exists() or env_file.is_symlink():
+        prove_retained_attestation_recovery_env(env_file)
+    return True
+
+
+def prove_prepared_cli_without_gateway(runtimes):
+    """Recognize reviewed CLI preparation, never an unavailable gateway.
+
+    The one-use first-hub path requires a completely absent source generation.
+    Synchronized retain-forward repair instead requires the digest-bound
+    phase-1 authority above.  Both paths still inspect every gateway surface.
+    """
+    first_hub = os.environ.get("MAC_DEPLOY_FIRST_HUB_BOOTSTRAP") == "1"
+    # The phase-1 contract exists for every cohort participant, including a
+    # fully installed static hub.  Its presence alone therefore cannot select
+    # the retained *partial-successor* exception.  An installed deployment
+    # follows ordinary daemon quiescence, where the explicit OpenShell policy
+    # decides whether a retired gateway needs inventory.  Keep the strict
+    # identity checks inside the exception for genuinely uninstalled retained
+    # successors.
+    deployed_revision = mac_home / "deployed-source-revision"
+    installed_deployment = deployed_revision.exists() or deployed_revision.is_symlink()
+    phase1_repair = (
+        False
+        if first_hub or installed_deployment
+        else prove_phase1_prepared_cli_authority(runtimes)
+    )
+    if not first_hub and not phase1_repair:
         return False
     if not openshell_ever_installed():
         return False
@@ -7345,9 +7561,6 @@ def prove_prepared_cli_without_gateway(runtimes):
     reviewed_openshell_cli_summary()
     home = Path(os.environ["HOME"])
     state_paths = [
-        mac_home / "src" / "mac",
-        mac_home / "venv",
-        mac_home / "mac.env",
         mac_home / "deployed-source-revision",
         home / ".config/systemd/user/openshell-gateway.service",
         Path("/etc/supervisor/conf.d/openshell-gateway.conf"),
@@ -7360,13 +7573,17 @@ def prove_prepared_cli_without_gateway(runtimes):
         state_paths.append(home / default / "openshell")
         if os.environ.get(variable):
             state_paths.append(Path(os.environ[variable]) / "openshell")
+    if first_hub:
+        state_paths.extend(
+            (mac_home / "mac.env", mac_home / "src" / "mac", mac_home / "venv")
+        )
     for path in state_paths:
         try:
             path.lstat()
         except FileNotFoundError:
             continue
         except OSError:
-            raise QuiescenceFailure("cannot inspect first-hub OpenShell runtime state")
+            raise QuiescenceFailure("cannot inspect prepared OpenShell runtime state")
         return False
     if resolve_sandbox_name() is not None:
         return False
@@ -7377,23 +7594,28 @@ def prove_prepared_cli_without_gateway(runtimes):
         [str(target), "gateway", "list", "--output", "json"], env=openshell_env()
     )
     if registrations.timed_out or registrations.returncode != 0:
-        raise QuiescenceFailure("first-hub OpenShell gateway registration inventory failed")
+        raise QuiescenceFailure("prepared OpenShell gateway registration inventory failed")
     try:
         values = json.loads(registrations.stdout)
     except (ValueError, TypeError):
-        raise QuiescenceFailure("first-hub OpenShell gateway registrations are malformed")
+        raise QuiescenceFailure("prepared OpenShell gateway registrations are malformed")
     if values != []:
-        raise QuiescenceFailure("first-hub OpenShell gateway registrations are not empty")
+        raise QuiescenceFailure("prepared OpenShell gateway registrations are not empty")
     try:
-        with socket.create_connection(("127.0.0.1", 17670), timeout=min(1, remaining_time())):
-            raise QuiescenceFailure("first-hub OpenShell gateway listener already exists")
+        gateway_port = 17670
+        if os.environ.get("MAC_DEPLOY_DAEMON_TEST_MODE") == "1":
+            gateway_port = int(os.environ.get("FAKE_GATEWAY_PORT", gateway_port))
+        with socket.create_connection(
+            ("127.0.0.1", gateway_port), timeout=min(1, remaining_time())
+        ):
+            raise QuiescenceFailure("prepared OpenShell gateway listener already exists")
     except ConnectionRefusedError:
         pass
     except OSError:
-        raise QuiescenceFailure("cannot prove first-hub OpenShell gateway listener absent")
+        raise QuiescenceFailure("cannot prove prepared OpenShell gateway listener absent")
     for runtime in runtimes:
         if list_managed_openshell_ids(runtime, all_states=True):
-            raise QuiescenceFailure("first-hub OpenShell-managed containers already exist")
+            raise QuiescenceFailure("prepared OpenShell-managed containers already exist")
     return True
 
 
@@ -7588,6 +7810,11 @@ def sandbox_process_identity(pid):
 
 
 def sandbox_pid_is_alive(pid):
+    if (
+        os.environ.get("MAC_DEPLOY_DAEMON_TEST_MODE") == "1"
+        and str(pid) == os.environ.get("FAKE_LIVE_PID", "")
+    ):
+        return True
     return sandbox_process_identity(pid)[0] == "present"
 
 
@@ -12311,6 +12538,127 @@ handle_failed_openclaw_successor() {
   fi
 }
 
+sealed_auxiliary_rollback_artifact_was_absent() {
+  local path="$1" mode="${2:-user}" state=""
+  [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] || return 1
+  case "$mode" in
+    user|system) ;;
+    *) return 1 ;;
+  esac
+  # apply-phase2 is a separate process from arm-phase2, so its in-memory
+  # ROLLBACK_AUX_ARTIFACT_* arrays are deliberately empty.  The exact arrays
+  # were embedded in the rollback program before the private intent bound that
+  # program by digest.  Revalidate both sealed files, then read (never source)
+  # the declarations to distinguish an authenticated prior absence from
+  # missing rollback provenance.
+  verify_existing_phase2_sealed_state >/dev/null || return 1
+  verify_phase2_rollback_intent sealed-replay >/dev/null || return 1
+  state="$({
+    MAC_ROLLBACK_INTENT="$ROLLBACK_INTENT" \
+    MAC_ROLLBACK_SCRIPT="$ROLLBACK_SCRIPT" \
+      "$PY" - "$path" "$mode" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+
+def private_bytes(path: str, expected_mode: int, limit: int) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or stat.S_IMODE(before.st_mode) != expected_mode
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > limit
+        ):
+            raise SystemExit("sealed auxiliary rollback artifact is unsafe")
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(raw) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise SystemExit("sealed auxiliary rollback artifact changed while reading")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+query_path, query_mode = sys.argv[1:]
+if not re.fullmatch(r"[A-Za-z0-9_./:+-]+", query_path):
+    raise SystemExit("auxiliary rollback query path is unsafe")
+if query_mode not in {"user", "system"}:
+    raise SystemExit("auxiliary rollback query mode is invalid")
+
+intent_raw = private_bytes(os.environ["MAC_ROLLBACK_INTENT"], 0o600, 4 * 1024 * 1024)
+script_raw = private_bytes(os.environ["MAC_ROLLBACK_SCRIPT"], 0o700, 2 * 1024 * 1024)
+try:
+    intent = json.loads(intent_raw)
+except (TypeError, ValueError):
+    raise SystemExit("sealed auxiliary rollback intent is malformed")
+rollback = intent.get("rollback") if isinstance(intent, dict) else None
+if not isinstance(rollback, dict):
+    raise SystemExit("sealed auxiliary rollback intent has no rollback binding")
+if rollback.get("path") != os.environ["MAC_ROLLBACK_SCRIPT"]:
+    raise SystemExit("sealed auxiliary rollback path differs")
+if rollback.get("sha256") != hashlib.sha256(script_raw).hexdigest():
+    raise SystemExit("sealed auxiliary rollback digest differs")
+
+try:
+    script = script_raw.decode("utf-8")
+except UnicodeDecodeError:
+    raise SystemExit("sealed auxiliary rollback program is not UTF-8")
+
+declarations: dict[str, dict[int, str]] = {}
+for name in ("PATHS", "EXISTED", "MODES"):
+    matches: dict[int, str] = {}
+    pattern = re.compile(
+        rf"^ROLLBACK_AUX_ARTIFACT_{name}\[([0-9]+)\]=([^\r\n]+)$",
+        re.MULTILINE,
+    )
+    for match in pattern.finditer(script):
+        index = int(match.group(1))
+        if index in matches:
+            raise SystemExit("duplicate sealed auxiliary rollback declaration")
+        matches[index] = match.group(2)
+    declarations[name] = matches
+
+indices = [
+    index
+    for index, value in declarations["PATHS"].items()
+    if value == query_path
+]
+if len(indices) != 1:
+    raise SystemExit("sealed auxiliary rollback path is missing or duplicated")
+index = indices[0]
+if declarations["MODES"].get(index) != query_mode:
+    raise SystemExit("sealed auxiliary rollback mode differs")
+existed = declarations["EXISTED"].get(index)
+if existed not in {"0", "1"}:
+    raise SystemExit("sealed auxiliary rollback existence state is invalid")
+print("prior-absent" if existed == "0" else "prior-present")
+PY
+  } 2>/dev/null)" || return 1
+  [ "$state" = prior-absent ]
+}
+
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
   local unit_staging="$LOG_DIR/${MAC_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
@@ -12321,7 +12669,8 @@ install_linux_service() {
     write_rollback_script
   fi
   if control_plane_enabled; then
-    if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_UNIT_BACKUP" ]; then
+    if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_UNIT_BACKUP" ] \
+        && ! sealed_auxiliary_rollback_artifact_was_absent "$unit" system; then
       die "cannot mutate the control-plane unit without a prior-generation backup"
     fi
     MAC_UNIT_MUTATED=1
@@ -13255,7 +13604,8 @@ install_linux_agent_service() {
     snapshot_rollback_file "$unit" "$MAC_AGENT_UNIT_BACKUP" system
     write_rollback_script
   fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_AGENT_UNIT_BACKUP" ]; then
+  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_AGENT_UNIT_BACKUP" ] \
+      && ! sealed_auxiliary_rollback_artifact_was_absent "$unit" system; then
     die "cannot mutate the agent unit without a prior-generation backup"
   fi
   MAC_AGENT_UNIT_MUTATED=1
@@ -14263,6 +14613,20 @@ PY
   log "WARNING: mac-agent not yet registered with hub ${check_url} (tunnel may not be established yet)"
 }
 
+verify_or_defer_hub_registration() {
+  if truthy "$DEFER_AGENT_RESTART"; then
+    # The outer fleet controller deliberately keeps the agent stopped until it
+    # has reconciled this installer's post manifest. It then starts the agent
+    # under the deployment barrier and requires a fresh hub heartbeat before
+    # releasing that barrier. Requiring registration here would deadlock that
+    # handoff: the stopped agent cannot register, and a failed installer never
+    # writes the post manifest that authorizes the outer restart.
+    log "deferring hub registration verification until post-manifest agent restart"
+    return 0
+  fi
+  verify_hub_registration
+}
+
 verify_selected_gateway_supervisor_health() {
   local output="$LOG_DIR/gateway-readiness.json"
   "$PY" - "$SUPERVISOR_KIND" "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" "$FLEET_NAME" \
@@ -14757,14 +15121,19 @@ fi
 
 log "verifying hub health and local executor startup report"
 if control_plane_enabled; then
-  curl -fsS "http://127.0.0.1:$MAC_PORT/health" > "$LOG_DIR/health.json"
+  verify_or_defer_hub_health
   curl -fsS --config - \
     "http://127.0.0.1:$MAC_PORT/startup/hermes" \
     > "$LOG_DIR/startup-hermes.json" <<CURL
 header = "Authorization: Bearer $MAC_API_TOKEN"
 CURL
 else
-  curl -fsS "$MAC_HUB_URL/health" > "$LOG_DIR/health.json"
+  # A typed phase-2 deploy deliberately keeps the worker agent (and therefore
+  # its localhost reverse tunnel) stopped until the post manifest has been
+  # reconciled by the outer controller.  When prerequisite inspection already
+  # proved a direct hub route, use that configured route here instead of
+  # deadlocking on MAC_HUB_URL's stopped 127.0.0.1:18789 tunnel.
+  verify_or_defer_hub_health
   "$VENV/bin/python" - "$LOG_DIR/startup-hermes.json" <<'PY'
 import json
 import sys
@@ -14824,7 +15193,7 @@ if data.get("warnings"):
         print("startup warning: %s" % warning)
 PY
 
-verify_hub_registration
+verify_or_defer_hub_registration
 case "$(printf '%s' "$DEFER_CLEAR_DRAIN" | tr 'A-Z' 'a-z')" in
   1|true|yes|on) log "keeping drain state until post-deploy OpenShell validation completes" ;;
   *) clear_mac_agent_drain_after_deploy ;;

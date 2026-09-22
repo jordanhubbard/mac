@@ -1067,7 +1067,7 @@ def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
     assert "MAC_DATABASE_URL" not in spoke_env
     assert "retire_spoke_local_control_plane_database()" in script
     assert "refusing to strand them" in script
-    assert 'curl -fsS "$MAC_HUB_URL/health"' in script
+    assert 'curl -fsS "$deploy_health_url/health"' in script
 
 
 def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
@@ -1199,8 +1199,14 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     )[0]
     assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in arm_worker
     assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in apply_worker
-    assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' in typed
+    # Rolling cutover arms and applies one node inside the same loop, preserving
+    # the fleet availability floor instead of stopping the whole cohort.
+    assert 'typed_phase2_arm_worker "$spec"' in typed
     assert 'typed_phase2_apply_worker "$spec"' in typed
+    assert typed.index('typed_phase2_arm_worker "$spec"') < typed.index(
+        'typed_phase2_apply_worker "$spec"'
+    )
+    assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' not in typed
     assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' not in typed
     assert 'run_bounded_node_phase "$selected_specs_file" prerequisites' in typed
     prerequisite_worker = script.split("typed_prerequisite_worker() {", 1)[1].split(
@@ -1980,6 +1986,17 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
         ),
         environ={},
     )
+    direct_nonmesh_spoke_env = build_mac_env(
+        {},
+        deploy_env_config(
+            tmp_path,
+            agent="spoke",
+            hub_agent="hub",
+            hub_url="http://private-hub.example:8789/",
+            network_provider="none",
+        ),
+        environ={"MAC_DEPLOY_DIRECT_HUB": "1"},
+    )
 
     assert 'network_provider = text_field(network.get("provider"))' in script
     assert "network.provider must be tailscale, headscale, or none" in script
@@ -2007,6 +2024,7 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     assert hub_env["MAC_HUB_URL"] == "http://127.0.0.1:8789"
     assert mesh_spoke_env["MAC_HUB_URL"] == "http://mesh-hub.example:8789"
     assert tunnel_spoke_env["MAC_HUB_URL"] == "http://127.0.0.1:18789"
+    assert direct_nonmesh_spoke_env["MAC_HUB_URL"] == "http://private-hub.example:8789"
     assert (
         '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]' in script
     )
@@ -2509,6 +2527,7 @@ def _run_reconcile_remote_deploy(
     deploy_ts="20260707T182907Z",
     deploy_rev="a" * 40,
     clear_repo_update_blocker=False,
+    phase1_required=True,
 ):
     script = deploy_script_text()
     function_text = (
@@ -2554,7 +2573,7 @@ ssh() {{
 }}
 {fence_function}
 {function_text}
-reconcile_remote_deploy rocky fake-target {int(clear_repo_update_blocker)}
+reconcile_remote_deploy rocky fake-target {int(clear_repo_update_blocker)} {int(phase1_required)}
 """
     env = {
         **os.environ,
@@ -2628,7 +2647,7 @@ def test_remote_deploy_reconciliation_rejects_media_readiness_divergence(tmp_pat
     assert "manifest media runtime readiness diverged" in result.stderr
 
 
-def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
+def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev, *, phase1_required=True):
     mac_home = tmp_path / ".mac"
     log_dir = mac_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -2723,6 +2742,15 @@ def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
         "manager": "systemd",
         "resources": media_resources,
     }
+    if not phase1_required:
+        phase1 = {
+            "schema": "mac.phase1_cohort_quiescence_manifest.v1",
+            "status": "not_required",
+        }
+        media = {
+            "schema": "mac.media_runtime_readiness_manifest.v1",
+            "status": "not_required",
+        }
     manifest = {
         "stage": "post",
         "agent": "rocky",
@@ -2739,6 +2767,82 @@ def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
     (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
     (mac_home / "deployed-source-revision").write_text(deploy_rev + "\n", encoding="utf-8")
     return mac_home
+
+
+def test_first_hub_reconciliation_accepts_exact_not_required_evidence(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "1" * 40
+    _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev, phase1_required=False)
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path,
+        deploy_ts=deploy_ts,
+        deploy_rev=deploy_rev,
+        phase1_required=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_upgrade_reconciliation_rejects_not_required_evidence(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "2" * 40
+    _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev, phase1_required=False)
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev, phase1_required=True
+    )
+
+    assert result.returncode != 0
+    assert "invalid phase-1 evidence" in result.stderr
+
+
+def test_first_hub_reconciliation_rejects_nonexact_not_required_evidence(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "3" * 40
+    mac_home = _write_reconciliation_evidence(
+        tmp_path, deploy_ts, deploy_rev, phase1_required=False
+    )
+    for name in (
+        f"deploy-manifest-{deploy_ts}-post.json",
+        "deploy-manifest-latest.json",
+    ):
+        path = mac_home / "logs" / name
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["phase1_cohort_quiescence"]["generation"] = "unexpected"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path,
+        deploy_ts=deploy_ts,
+        deploy_rev=deploy_rev,
+        phase1_required=False,
+    )
+
+    assert result.returncode != 0
+    assert "invalid phase-1 evidence" in result.stderr
+
+
+def test_first_hub_reconciliation_rejects_mixed_media_requirement(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "4" * 40
+    mac_home = _write_reconciliation_evidence(
+        tmp_path, deploy_ts, deploy_rev, phase1_required=False
+    )
+    latest_path = mac_home / "logs" / "deploy-manifest-latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["media_runtime_readiness"]["status"] = "proved"
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path,
+        deploy_ts=deploy_ts,
+        deploy_rev=deploy_rev,
+        phase1_required=False,
+    )
+
+    assert result.returncode != 0
+    assert "invalid media runtime readiness" in result.stderr
 
 
 def test_remote_deploy_reconciliation_clears_holds_only_after_exact_revision(tmp_path):
@@ -2824,7 +2928,7 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     assert 'echo "==> ${agent}: validating remote post-deploy manifest"' in deploy_host_tail
     assert (
         'if ! reconcile_remote_deploy "$agent" "$target" '
-        '"$openshell_disable_requested"; then' in deploy_host_tail
+        '"$openshell_disable_requested" "$phase1_required"; then' in deploy_host_tail
     )
     assert "remote deploy returned success but post manifest validation failed" in deploy_host_tail
     assert (

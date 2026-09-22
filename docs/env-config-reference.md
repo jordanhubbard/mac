@@ -303,6 +303,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime input sha256. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
+| `MAC_DEPLOY_PHASE1_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy phase1 required. |
 | `MAC_DEPLOY_POSTGRES_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy postgres bind addr. |
 | `MAC_DEPLOY_POSTGRES_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy postgres data dir. |
 | `MAC_DEPLOY_POSTGRES_DB` | str | consumer-defined | deployment | Deployment setting: deploy postgres db. |
@@ -327,7 +328,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_QDRANT_PORT` | int | consumer-defined | deployment | Deployment setting: deploy qdrant port. |
 | `MAC_DEPLOY_QDRANT_URL` | str | consumer-defined | deployment | Deployment setting: deploy qdrant url. |
 | `MAC_DEPLOY_RECONCILE_MAX_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy reconcile max retries. |
+| `MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS` | int | consumer-defined | deployment | Deployment setting: deploy recovery max attempts. |
 | `MAC_DEPLOY_RECOVERY_POLICY` | str | consumer-defined | deployment | Deployment setting: deploy recovery policy. |
+| `MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy recovery retry base seconds. |
 | `MAC_DEPLOY_RELEASE_COMMIT_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy release commit retries. |
 | `MAC_DEPLOY_RELEASE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy release generation. |
 | `MAC_DEPLOY_RELEASE_PLAN_B64` | str | consumer-defined | deployment | Deployment setting: deploy release plan b64. |

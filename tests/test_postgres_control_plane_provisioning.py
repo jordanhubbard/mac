@@ -220,6 +220,60 @@ def test_get_env_key_does_not_die_on_a_first_run_with_no_password_yet() -> None:
     assert result.stdout.strip() == "ok:[]"
 
 
+def test_get_env_key_reads_an_existing_protected_env_through_privilege_boundary(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "postgres.env"
+    env_file.write_text("POSTGRES_PASSWORD=existing-volume-authority\n", encoding="utf-8")
+    env_file.chmod(0)
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            # Model passwordless sudo without requiring elevated privileges in
+            # the test process. The fixture is owner-unreadable, so reaching
+            # this function proves get_env_key chose its protected-file path.
+            'maybe_sudo() { chmod 600 "$PROTECTED_ENV"; "$@"; }',
+            _extract_function(INSTALL_SCRIPT, "get_env_key"),
+            'value="$(get_env_key "$PROTECTED_ENV" POSTGRES_PASSWORD)"',
+            'printf "value:[%s]\\n" "$value"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "PROTECTED_ENV": str(env_file)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "value:[existing-volume-authority]"
+    assert result.stderr == ""
+
+
+def test_get_env_key_fails_closed_when_protected_env_cannot_be_read(tmp_path: Path) -> None:
+    env_file = tmp_path / "postgres.env"
+    env_file.write_text("POSTGRES_PASSWORD=must-not-be-replaced\n", encoding="utf-8")
+    env_file.chmod(0)
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            "maybe_sudo() { return 1; }",
+            _extract_function(INSTALL_SCRIPT, "get_env_key"),
+            'get_env_key "$PROTECTED_ENV" POSTGRES_PASSWORD',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "PROTECTED_ENV": str(env_file)},
+    )
+    assert result.returncode != 0
+    assert "could not read existing protected environment file" in result.stderr
+    assert "must-not-be-replaced" not in result.stdout + result.stderr
+
+
 def _extract_function(path: Path, name: str) -> str:
     match = re.search(
         r"^%s\(\) \{\n.*?^}$" % re.escape(name),

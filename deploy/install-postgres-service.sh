@@ -228,16 +228,32 @@ set_env_key() {
 }
 
 get_env_key() {
-  local file="$1" key="$2"
+  local file="$1" key="$2" value=""
   [ -f "$file" ] || return 0
-  # grep exits 1 on no match (the normal, expected case on a first-ever run,
-  # before any password has been written yet) -- under set -o pipefail that
-  # failure propagates through the pipeline and this function's return
-  # status, and `var="$(get_env_key ...)"` at the call site is a bare
-  # command-substitution assignment, which set -e treats as fatal. Swallow
-  # the no-match case explicitly so "not found yet" behaves as "empty", not
-  # as a silent script abort.
-  grep "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true
+  # Linux service env files are deliberately installed root-owned and 0600.
+  # A retry therefore cannot read ENV_DEST as the deploy user even though the
+  # first run's password is the authority baked into the persistent volume.
+  # Read that existing file through the same privilege boundary used to write
+  # it. Capture stdout directly into a shell variable: neither the command nor
+  # diagnostics contain the secret value.
+  if [ -r "$file" ]; then
+    value="$(awk -v key="$key" '
+      index($0, key "=") == 1 { value = substr($0, length(key) + 2); found = 1 }
+      END { if (found) print value }
+    ' "$file")" || {
+      echo "[postgres] ERROR: could not read existing environment file: $file" >&2
+      return 1
+    }
+  else
+    value="$(maybe_sudo awk -v key="$key" '
+      index($0, key "=") == 1 { value = substr($0, length(key) + 2); found = 1 }
+      END { if (found) print value }
+    ' "$file")" || {
+      echo "[postgres] ERROR: could not read existing protected environment file: $file" >&2
+      return 1
+    }
+  fi
+  printf '%s\n' "$value"
 }
 
 # The database volume bakes in whatever password created it -- restarting

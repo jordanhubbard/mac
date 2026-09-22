@@ -375,7 +375,9 @@ def test_outer_coordinator_never_prompts_for_launchd_definition_privilege():
     assert 'sudo -n grep -Fqx "$marker_line" "$plist"' in deploy
 
 
-def _run_outer_linux_worker_manager(tmp_path, supervisor, *, stop_fails=False):
+def _run_outer_linux_worker_manager(
+    tmp_path, supervisor, *, action="restart", stop_fails=False, systemd_load="loaded"
+):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
         "validate_router_topology_spec() {", 1
@@ -440,7 +442,7 @@ case "$1" in
     property=${3#--property=}
     state=$(cat "$FAKE_MANAGER_STATE")
     case "$property" in
-      LoadState) printf 'loaded\n' ;;
+      LoadState) printf '%s\n' "$FAKE_SYSTEMD_LOAD" ;;
       ActiveState) [ "$state" = active ] && printf 'active\n' || printf 'inactive\n' ;;
       SubState) [ "$state" = active ] && printf 'running\n' || printf 'dead\n' ;;
       MainPID) [ "$state" = active ] && printf '4321\n' || printf '0\n' ;;
@@ -463,7 +465,7 @@ esac
         [
             "bash",
             "-c",
-            'set -euo pipefail\naction=restart\nsupervisor="$1"\n' + manager,
+            f'set -euo pipefail\naction={action}\nsupervisor="$1"\n' + manager,
             "outer-manager",
             supervisor,
         ],
@@ -481,6 +483,7 @@ esac
             "FAKE_MANAGER_STATE": str(state),
             "FAKE_MANAGER_CALLS": str(calls),
             "FAKE_STOP_FAIL": "1" if stop_fails else "0",
+            "FAKE_SYSTEMD_LOAD": systemd_load,
         },
         check=False,
         capture_output=True,
@@ -504,6 +507,22 @@ def test_outer_linux_worker_manager_runtime_is_exact_and_fail_closed(tmp_path):
         failed_calls = failed_calls_path.read_text(encoding="utf-8").splitlines()
         assert any(call.startswith("stop mac-agent") for call in failed_calls)
         assert not any(call.startswith("start mac-agent") for call in failed_calls)
+
+
+def test_outer_systemd_stop_accepts_an_exact_absent_worker_unit(tmp_path):
+    stopped, calls_path = _run_outer_linux_worker_manager(
+        tmp_path, "systemd", action="stop", systemd_load="not-found"
+    )
+    assert stopped.returncode == 0, stopped.stderr
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    assert calls == ["show mac-agent.service --property=LoadState --value"]
+
+    restarted, restart_calls_path = _run_outer_linux_worker_manager(
+        tmp_path / "restart", "systemd", action="restart", systemd_load="not-found"
+    )
+    assert restarted.returncode != 0
+    restart_calls = restart_calls_path.read_text(encoding="utf-8").splitlines()
+    assert restart_calls == ["show mac-agent.service --property=LoadState --value"]
 
 
 def test_failed_release_compensation_is_required_bounded_and_never_success():
@@ -664,6 +683,64 @@ def test_typed_cohort_orders_receipts_before_mutation_and_commit_before_finalize
     assert positions[-1] < typed.rindex('cohort_journal_mutate finalize "$COHORT')
     assert "phase1-proved" not in main
     assert "prepare-start" not in main
+
+
+def _run_preflight_probe_for_home(home: Path) -> subprocess.CompletedProcess[str]:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    source = deploy.split("preflight_probe_helper_source() {\n  cat <<'PY'\n", 1)[1].split(
+        "\nPY\n}", 1
+    )[0]
+    source = source.replace("home = Path.home()", f"home = Path({str(home)!r})", 1)
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            source,
+            "worker50",
+            "agent_worker50",
+            "generation-50",
+            "a" * 40,
+            "darwin",
+            "launchd",
+            "",
+            "0",
+            "none",
+            "",
+            "0",
+            "",
+            "0",
+            "",
+            "0",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_read_only_preflight_rejects_managed_node_without_deployed_revision(tmp_path):
+    (tmp_path / ".local" / "bin").mkdir(parents=True)
+    mac_bin = tmp_path / ".local" / "bin" / "mac"
+    mac_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mac_bin.chmod(0o755)
+    (tmp_path / ".mac" / "venv" / "bin").mkdir(parents=True)
+    python_bin = tmp_path / ".mac" / "venv" / "bin" / "python"
+    python_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python_bin.chmod(0o755)
+    (tmp_path / ".mac" / "mac.env").write_text("MAC_FLEET_NAME=test\n", encoding="utf-8")
+
+    result = _run_preflight_probe_for_home(tmp_path)
+
+    assert result.returncode != 0
+    payload = json.loads(result.stdout)
+    assert payload["read_only"] is True
+    assert payload["agent"] == "worker50"
+    assert payload["checks"]["deployed_identity_consistent"] is False
+
+    (tmp_path / ".mac" / "deployed-source-revision").write_text("a" * 40 + "\n")
+    repaired = _run_preflight_probe_for_home(tmp_path)
+    repaired_payload = json.loads(repaired.stdout)
+    assert repaired_payload["checks"]["deployed_identity_consistent"] is True
 
 
 def test_bounded_node_workers_cannot_consume_the_controller_spec_stream(tmp_path):
@@ -1015,6 +1092,53 @@ def test_first_hub_bootstrap_takes_no_hub_dependent_arm():
     assert first.index("acquire_remote_deployment_lock") < first.index("deploy_host")
 
 
+def test_first_hub_post_manifest_activation_is_fenced_without_a_fabricated_hold():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "\n}\n\nactivate_first_hub_agent_after_manifest", 1
+    )[0]
+    wrapper = deploy.split("activate_first_hub_agent_after_manifest() {", 1)[1].split(
+        "\n}\n\nvalidate_router_topology_spec", 1
+    )[0]
+    deploy_host = deploy.split("deploy_host() {", 1)[1].split("\n}\n\nrestart_remote", 1)[0]
+    gate = deploy.split("hub_agent_restart_gate() {", 1)[1].split(
+        "\n}\n\nremote_deployment_hold_state", 1
+    )[0]
+
+    assert '${FIRST_HUB_BOOTSTRAP:-0}" = 1' in wrapper
+    assert "set_remote_mac_agent_service" in wrapper
+    assert wrapper.rstrip().endswith('restart keep authenticated "" immediate 0 1')
+    assert 'if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then' in deploy_host
+    assert "activate_first_hub_agent_after_manifest" in deploy_host
+
+    first_hub_state = service.split('if [ "$first_hub_activation" = 1 ]; then', 1)[1].split(
+        "\n  else", 1
+    )[0]
+    assert "remote_deployment_hold_state" not in first_hub_state
+    assert "write_remote_deployment_hold_state" not in first_hub_state
+    assert "first-hub-prepare" in service
+    verify = service.index("first-hub-verify")
+    remove_barrier = service.index('rm -f "$barrier"', verify)
+    release = service.index("first-hub-release", remove_barrier)
+    assert verify < remove_barrier < release
+    assert "missing durable deployment hold state" in service
+
+    for phase in ("first-hub-prepare", "first-hub-verify", "first-hub-release"):
+        assert f'phase == "{phase}"' in gate
+    assert "first-hub activation found a pre-existing worker" in gate
+    assert 'resources.get("deployment_generation") == generation' in gate
+    assert 'not bool(row.get("dispatch_hold"))' in gate
+    assert "seen > first_seen" in gate
+    assert "seen > baseline" in gate
+    assert "release_health_ready(row, resources)" in gate
+
+    first = _first_hub_bootstrap_source()
+    deploy_call = first.index("deploy_host")
+    authority = first.index("hub_epoch_client_read", deploy_call)
+    finalize = first.index("finalize_remote_deployment_release", authority)
+    assert deploy_call < authority < finalize
+
+
 def test_first_hub_bootstrap_recovery_restores_the_sealed_prior_absent_state():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recover = deploy.split("recover_first_hub_bootstrap_failure() {", 1)[1].split("\n}\n", 1)[0]
@@ -1194,9 +1318,9 @@ def test_hub_agent_restart_gate_poll_ceiling_is_configurable_not_hardcoded():
     # report-executor proof" every time, with no way to grant it more time.
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert "min(timeout, 300.0)" not in deploy
-    # 3 poll loops (prepare-new/verify/arm-release) plus 1 explanatory
-    # comment naming the pattern.
-    assert deploy.count("min(timeout, gate_max_wait)") == 4
+    # 5 poll loops (first-hub verify/release plus prepare-new/verify/arm-release)
+    # plus 1 explanatory comment naming the pattern.
+    assert deploy.count("min(timeout, gate_max_wait)") == 6
     assert (
         'gate_max_wait = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_MAX_WAIT") or "300"))'
         in deploy
@@ -1322,11 +1446,65 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     assert 'mac_home / "bin" / "git"' in builder
     assert builder.index('mac_home / "bin" / "git"') < builder.index('shutil.which("git")')
     assert "MAC_PREREQ_NETWORK_PROVIDER=" in builder
-    assert 'provider in {"tailscale", "headscale"}' in builder
+    assert 'provider in {"tailscale", "headscale"} and hostname.endswith(".ts.net")' in builder
     assert 'ipaddress.ip_network("100.64.0.0/10")' in builder
-    assert 'hostname.endswith((".ts.net", ".svc.cluster.local"))' in builder
+    assert 'hostname.endswith(".svc.cluster.local")' in builder
     assert "parsed.username is not None" in builder
     assert "parsed.query" in builder
+
+
+def _run_typed_service_prerequisite(provider: str, *urls: str) -> subprocess.CompletedProcess:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
+        "\n}\n\nprerequisite_bundle_digests", 1
+    )[0]
+    definitions = (
+        "def truthy" + builder.split("def truthy", 1)[1].split("\nhome = Path.home()", 1)[0]
+    )
+    script = "\n".join(
+        [
+            "import hashlib, ipaddress, os, stat, urllib.parse",
+            "from pathlib import Path",
+            definitions,
+            'os.environ["MAC_PREREQ_NETWORK_PROVIDER"] = %r' % provider,
+            *(
+                'print(service_check("route-hub", %r, "1", Path("."))["host"])' % url
+                for url in urls
+            ),
+        ]
+    )
+    return subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+
+
+def test_typed_service_prerequisite_accepts_direct_private_routes_without_mesh_provider():
+    result = _run_typed_service_prerequisite(
+        "none",
+        "http://10.57.228.137:8789",
+        "http://hub.ns.svc.cluster.local:8789",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["10.57.228.137", "hub.ns.svc.cluster.local"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "url", "accepted"),
+    [
+        ("none", "http://8.8.8.8:8789", False),
+        ("tailscale", "http://100.72.16.110:8789", True),
+        ("headscale", "http://[fd7a:115c:a1e0::1]:8789", True),
+        ("tailscale", "https://hub.example.ts.net:8789", True),
+        ("none", "https://hub.example.ts.net:8789", False),
+    ],
+)
+def test_typed_service_prerequisite_keeps_public_and_mesh_boundaries(
+    provider: str, url: str, accepted: bool
+):
+    result = _run_typed_service_prerequisite(provider, url)
+
+    assert (result.returncode == 0) is accepted
 
 
 def test_typed_route_receipt_proves_hub_reachability_without_prior_mac_env():
@@ -2028,7 +2206,7 @@ def test_remote_restart_helper_keeps_then_releases_the_deployment_barrier():
 
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     main = node.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
-    verify_pos = main.index("verify_hub_registration")
+    verify_pos = main.index("verify_or_defer_hub_registration")
     defer_pos = main.index("keeping drain state until post-deploy", verify_pos)
     post_manifest_pos = main.index('write_deploy_manifest "post"', defer_pos)
     assert verify_pos < defer_pos < post_manifest_pos
@@ -2216,7 +2394,7 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     bootstrap = main.index("bootstrap_enabled_openshell\n", venv)
     service_install = main.index('case "$SUPERVISOR_KIND" in', bootstrap)
     runtime_proof = main.index("verify_managed_openshell_runtime\n", service_install)
-    registration = main.index("verify_hub_registration\n", runtime_proof)
+    registration = main.index("verify_or_defer_hub_registration\n", runtime_proof)
     clear_drain = main.index("clear_mac_agent_drain_after_deploy", registration)
     post_manifest = main.index('write_deploy_manifest "post"', clear_drain)
 
@@ -2240,7 +2418,8 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     reconcile = deploy_host.index('reconcile_remote_deploy "$agent" "$target"')
     assert reconcile < deploy_host.index(restart, reconcile)
     failed_reconcile = (
-        'if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then'
+        'if ! reconcile_remote_deploy "$agent" "$target" '
+        '"$openshell_disable_requested" "$phase1_required"; then'
     )
     assert failed_reconcile in deploy_host
     failure_block = deploy_host.split(failed_reconcile, 1)[1].split("fi", 1)[0]
@@ -2331,6 +2510,46 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
     assert stop < bootstrap
     assert "launchctl " not in service_control
     assert "$(( SECONDS" not in service_control
+
+
+def test_deferred_restart_hands_registration_proof_to_outer_controller(tmp_path: Path):
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    function = node.split("verify_or_defer_hub_registration() {", 1)[1].split(
+        "\n}\n\nverify_selected_gateway_supervisor_health()", 1
+    )[0]
+    function = "verify_or_defer_hub_registration() {" + function + "\n}"
+    calls = tmp_path / "registration-calls"
+    harness = "\n".join(
+        [
+            "set -euo pipefail",
+            'truthy() { case "${1:-}" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac; }',
+            'log() { printf "%s\\n" "$*" >&2; }',
+            'verify_hub_registration() { printf "called\\n" >> "$CALLS"; }',
+            function,
+            "verify_or_defer_hub_registration",
+        ]
+    )
+
+    deferred = subprocess.run(
+        ["bash", "-c", harness],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "CALLS": str(calls), "DEFER_AGENT_RESTART": "1"},
+    )
+    assert deferred.returncode == 0, deferred.stderr
+    assert "deferring hub registration verification" in deferred.stderr
+    assert not calls.exists()
+
+    direct = subprocess.run(
+        ["bash", "-c", harness],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/bin:/bin", "CALLS": str(calls), "DEFER_AGENT_RESTART": "0"},
+    )
+    assert direct.returncode == 0, direct.stderr
+    assert calls.read_text(encoding="utf-8") == "called\n"
 
 
 def test_deployment_preserves_operator_holds_and_clears_only_its_own():
@@ -4695,11 +4914,54 @@ def test_retain_forward_recovery_reconciles_attestation_authority_after_release(
         < aborted_node
     )
 
-    for call_site in (
-        'recover_cohort_node \\\n      "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
-        'recover_cohort_node \\\n        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"',
-    ):
-        assert call_site in deploy
+    assert (
+        'run_journal_bound_recovery_with_retry "cohort-node" recover_cohort_node \\\n'
+        '        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"' in deploy
+    )
+
+
+def test_journal_bound_recovery_retries_transient_failure_and_stops_at_bound(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    retry = (
+        "run_journal_bound_recovery_with_retry() {"
+        + deploy.split("run_journal_bound_recovery_with_retry() {", 1)[1].split(
+            "\n}\n\ndiscard_unopened_epoch_pending_credentials", 1
+        )[0]
+        + "\n}"
+    )
+    counter = tmp_path / "attempts"
+    snippet = f"""set -euo pipefail
+MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS=3
+MAC_DEPLOY_RECOVERY_RETRY_BASE_SECONDS=0
+sleep() {{ :; }}
+flaky() {{
+  local value=0
+  [ ! -s {shlex.quote(str(counter))} ] || value=$(cat {shlex.quote(str(counter))})
+  value=$((value + 1))
+  printf '%s\n' "$value" > {shlex.quote(str(counter))}
+  [ "$value" -ge 3 ]
+}}
+{retry}
+run_journal_bound_recovery_with_retry worker50 flaky exact-journal exact-fence
+test "$(cat {shlex.quote(str(counter))})" = 3
+rm -f {shlex.quote(str(counter))}
+MAC_DEPLOY_RECOVERY_MAX_ATTEMPTS=2
+never() {{
+  local value=0
+  [ ! -s {shlex.quote(str(counter))} ] || value=$(cat {shlex.quote(str(counter))})
+  printf '%s\n' "$((value + 1))" > {shlex.quote(str(counter))}
+  return 1
+}}
+if run_journal_bound_recovery_with_retry worker50 never exact-journal exact-fence; then
+  exit 90
+fi
+test "$(cat {shlex.quote(str(counter))})" = 2
+"""
+    result = subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "succeeded on attempt 3/3" in result.stdout
+    assert "failed after 2/2 attempts" in result.stderr
 
 
 def test_phase1_recovery_replays_retained_helper_and_reviewed_cli_identity(tmp_path):

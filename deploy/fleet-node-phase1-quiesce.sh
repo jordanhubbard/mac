@@ -1336,9 +1336,18 @@ def systemd_state(prefix: list[str], systemctl: str, unit: str) -> str:
     return str(systemd_snapshot(prefix, systemctl, unit)["state"])
 
 
-def systemd_enabled_state(prefix: list[str], systemctl: str, unit: str) -> str:
+def systemd_enabled_state(
+    prefix: list[str], systemctl: str, unit: str, *, unit_state: str
+) -> str:
     result = run_bounded(prefix + [systemctl, "is-enabled", unit])
     value = (result.stdout or "").strip()
+    # systemd's absent-unit contract varies by release. Some versions print
+    # ``not-found`` and return 4; Ubuntu 24.04 may return 1 with empty stdout
+    # and put the diagnostic on stderr. Accept that form only after the
+    # independent ``systemctl show`` snapshot has already proved this exact
+    # unit absent. Installed units retain the strict output contract below.
+    if value == "" and result.returncode == 1 and unit_state == "absent":
+        return "not-found"
     allowed = {"enabled", "disabled", "masked", "static", "indirect", "not-found"}
     if value not in allowed:
         raise QuiescenceFailure("systemd enablement inspection failed")
@@ -1366,7 +1375,9 @@ def inspect_systemd() -> tuple[dict[str, object], list[str], str, list[str]]:
             "name": unit,
             "prior_state": state,
             "state": state,
-            "enabled_state": systemd_enabled_state(prefix, systemctl, unit),
+            "enabled_state": systemd_enabled_state(
+                prefix, systemctl, unit, unit_state=state
+            ),
         }
         for unit, state in prior_states
     ]
@@ -1379,7 +1390,9 @@ def inspect_systemd() -> tuple[dict[str, object], list[str], str, list[str]]:
                     "name": unit,
                     "prior_state": state,
                     "state": state,
-                    "enabled_state": systemd_enabled_state(prefix, systemctl, unit),
+                    "enabled_state": systemd_enabled_state(
+                        prefix, systemctl, unit, unit_state=state
+                    ),
                 }
                 for unit, state in media_states
             ],
@@ -1664,7 +1677,9 @@ def resume_systemd_media(expected: dict[str, object]) -> dict[str, object]:
                 raise QuiescenceFailure("media restore contract has an invalid resource")
             unit = str(item.get("name") or "")
             current = systemd_snapshot(prefix, systemctl, unit)
-            enabled = systemd_enabled_state(prefix, systemctl, unit)
+            enabled = systemd_enabled_state(
+                prefix, systemctl, unit, unit_state=str(current.get("state") or "")
+            )
             if (
                 current.get("state") != item.get("prior_state")
                 or enabled != item.get("enabled_state")
