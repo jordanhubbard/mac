@@ -1,0 +1,2411 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Ovswarm deployment liveness death spiral RCCA, 2026-09-21 - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ovswarm-deployment-liveness-death-spiral-rcca-2026-09-21" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Ovswarm deployment liveness death spiral RCCA, 2026-09-21
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/01-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    System Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/02-getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/03-advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/04-ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/05-developer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python-baseline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Baseline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans and Task DAGs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repository-cicd-monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#executive-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executive summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-basis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence basis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Impact
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#timeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trigger-versus-root-cause" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger versus root cause
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Trigger versus root cause">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immediate-trigger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immediate trigger
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architectural-root-cause" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural root cause
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#violated-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Violated invariants
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Violated invariants">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recovery-hold-precedes-recovery-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery hold precedes recovery identity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#installed-identity-is-coherent-before-mutation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installed identity is coherent before mutation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deployment-epoch-membership-outranks-ordinary-heartbeat-expiry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment-epoch membership outranks ordinary heartbeat expiry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fleet-operations-have-bounded-blast-radius-and-duration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet operations have bounded blast radius and duration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retryable-transport-failure-does-not-become-protocol-failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retryable transport failure does not become protocol failure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incomplete-recovery-remains-fail-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incomplete recovery remains fail closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contributing-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contributing factors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-worked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What worked
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#postel-like-tolerance-without-weaker-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Postel-like tolerance without weaker security
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed-and-open" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed and open
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fixed and open">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recovered-in-the-live-fleet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovered in the live fleet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-in-7f3bbd12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed in 7f3bbd12
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#still-open" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Still open
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#corrective-and-preventive-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Corrective and preventive actions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Corrective and preventive actions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p0-required-before-another-50-node-all-selected-rollout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0 — required before another 50-node all-selected rollout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replacement-plan-compatibility-is-explicitly-not-a-constraint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replacement plan — compatibility is explicitly not a constraint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1-remove-the-fleet-size-liveness-amplifier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1 — remove the fleet-size liveness amplifier
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-and-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation and exit criteria
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validation and exit criteria">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-fleet-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current-fleet recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identity-classification-and-repair" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity classification and repair
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#liveness-and-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Liveness and availability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retry-and-idempotency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retry and idempotency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope-and-non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope and non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/investigations/2026-09-21-ovswarm-deployment-liveness-death-spiral.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="ovswarm-deployment-liveness-death-spiral-rcca-2026-09-21">Ovswarm deployment liveness death spiral RCCA, 2026-09-21<a class="headerlink" href="#ovswarm-deployment-liveness-death-spiral-rcca-2026-09-21" title="Permanent link">&para;</a></h1>
+<p>Status: fleet recovery complete; release qualification incomplete. Six independent lanes of eight workers, plus the exceptional worker-2 and static hub worker-49 paths, reached terminal deployment state. Direct checks of every registered target proved the exact deployed source and active worker service, and the trusted client host subsequently drove all 50 workers concurrently on pinned canary tasks. The deterministic 300-task campaign and its review/oracle gate were still running at this report's latest evidence cutoff.</p>
+<p>Source under investigation: <code>2944aebb4e900a28c553d1860abf7c2b9671b06a</code> plus the retained deployment journal for that revision.</p>
+<h2 id="executive-summary">Executive summary<a class="headerlink" href="#executive-summary" title="Permanent link">&para;</a></h2>
+<p>A deployment of the 50-worker <code>ovswarm</code> fleet failed because MAC turns bounded, recoverable node defects into a fleet-wide stop and then makes recovery depend on a long sequence of individually reliable operations. Worker-local identity drift was the trigger, not the central root cause.</p>
+<p>Two different drift shapes exposed the same architectural problem. An earlier recovery found an early-cohort worker without <code>~/.mac/mac.env</code>; the old startup-hold writer silently did nothing, after which attestation recovery created an incomplete environment. That defect is fixed in <code>7f3bbd12</code>. The next rollout reached the final cohort worker, which lacked <code>~/.mac/deployed-source-revision</code> but retained a full installed <code>mac.env</code>. The strict retained-successor classifier rejected that inconsistent identity, correctly failing closed at the node boundary but only after the controller had serially quiesced nearly the whole fleet.</p>
+<p>The long serialized quiescence and reverse-recovery paths then interacted with the hub's one-hour default fungible-agent TTL. Workers intentionally stopped by the deployment could not heartbeat, while expiry knows about task leases but not deployment-epoch membership. Rows needed by recovery could therefore be tombstoned as if their hosts had departed. Finally, one transient SSH connection timeout to the hub stopped the serialized recovery pass. MAC correctly retained the journal and dispatch holds, but the fleet remained globally unavailable.</p>
+<p>The architectural correction is not to weaken identity, attestation, filesystem, or epoch fences. It is to move tolerance and isolation to the right boundaries: accept and classify safe historical input, generate one exact canonical state, quarantine incoherent nodes before mutation, deploy in bounded rolling cohorts with an availability floor, pin active epoch members against liveness expiry, and retry idempotent journal-bound operations. Safety without bounded progress is not a complete safety property on flaky infrastructure.</p>
+<h2 id="evidence-basis">Evidence basis<a class="headerlink" href="#evidence-basis" title="Permanent link">&para;</a></h2>
+<p>The operational facts come from the live controller output and retained recovery evidence: the named workers, worker-50's exact rejection, the hub SSH timeout, and the final statement that cohort recovery remained incomplete with journal and holds retained. The mechanism and line references come from the exact <code>7f3bbd12</code> source and its tests. Conclusions about causality are limited to where those two bodies of evidence agree. This document does not infer successful recovery from process liveness, a partial node count, or the existence of a journal.</p>
+<h2 id="impact">Impact<a class="headerlink" href="#impact" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The requested 50-worker rollout did not converge.</li>
+<li>The deployment stopped at worker-50's phase-1 quiescence with <code>retained successor has an installed identity</code>.</li>
+<li>Reverse recovery later stopped on <code>Connection to 10.57.228.137 port 22 timed out</code>.</li>
+<li>The cohort journal remained non-terminal and deployment/dispatch holds remained in place. Work could not safely be released.</li>
+<li>Earlier long-running attempts also allowed fungible worker rows needed by recovery to age past their liveness TTL and be tombstoned.</li>
+<li>No data-loss or unsafe-dispatch claim is supported by the evidence. The fail-closed journal and holds prevented an ambiguous fleet from accepting work.</li>
+</ul>
+<h2 id="timeline">Timeline<a class="headerlink" href="#timeline" title="Permanent link">&para;</a></h2>
+<p>The exact wall-clock timestamps remain in the deployment logs and journal; this sequence records only facts established in the live operation and source.</p>
+<ol>
+<li>A retained recovery pass encountered an early-cohort worker without <code>~/.mac/mac.env</code>.</li>
+<li>The then-current startup-hold setter returned success without writing <code>MAC_STARTUP_CLEAR_HOLD=0</code> when the file was absent.</li>
+<li>Missing-key recovery created <code>mac.env</code> with only <code>MAC_ATTESTATION_KEY</code>. The retained-successor identity contract rejected the incomplete environment.</li>
+<li>The hold writer was corrected, tested, and incorporated into source <code>7f3bbd12</code>.</li>
+<li>A new 50-worker typed rollout from <code>7f3bbd12</code> began. Read-only preparation and staging used bounded fan-out, while service quiescence remained cohort-ordered and serial.</li>
+<li>Workers before worker-50 were quiesced. Worker-50 then failed phase-1 quiescence with <code>retained successor has an installed identity</code>.</li>
+<li>Inspection established the trigger shape: worker-50 had no <code>~/.mac/deployed-source-revision</code> but did have a full installed <code>~/.mac/mac.env</code>.</li>
+<li>The controller entered retain-forward recovery. Recovery processed candidates serially.</li>
+<li>During these long stopped intervals, the hub's fungible-agent expiry policy could tombstone workers silent for its default 3,600-second TTL because deployment-epoch participation is not an expiry exemption.</li>
+<li>A later recovery operation made a direct SSH connection to the hub at <code>10.57.228.137</code>; one connection attempt timed out.</li>
+<li>Recovery returned failure before the journal could record every node as recovered. The journal and holds were retained for adoption by the next controller.</li>
+<li>The hub and worker-1 were upgraded to <code>2944aebb</code>; worker-1 passed the complete release-readiness proof with a direct runtime hub URL.</li>
+<li>Worker-2 installed the same revision but could not authenticate: the one-hour TTL had tombstoned its registry identity while the epoch remained open, so its newly installed bearer was rejected as unknown.</li>
+<li>Recovery first returned HTTP 404 because abort tried to lock participant rows already deleted by TTL. Re-registering those exact installed identities under superseding operator holds advanced recovery.</li>
+<li>Recovery then rejected the changed principal set even for workers that had never installed their candidate credential. That exactness protected no node-side identity and made TTL cleanup a permanent global lock.</li>
+</ol>
+<h2 id="trigger-versus-root-cause">Trigger versus root cause<a class="headerlink" href="#trigger-versus-root-cause" title="Permanent link">&para;</a></h2>
+<h3 id="immediate-trigger">Immediate trigger<a class="headerlink" href="#immediate-trigger" title="Permanent link">&para;</a></h3>
+<p>Worker-50 presented contradictory installed-state evidence:</p>
+<ul>
+<li><code>~/.mac/deployed-source-revision</code>: absent;</li>
+<li><code>~/.mac/mac.env</code>: present and carrying full installed identity, not the two-key recovery-only form;</li>
+<li>phase-1 retained-successor authority: present, making the partial-successor path otherwise eligible.</li>
+</ul>
+<p>At <code>deploy/fleet-node-install.sh:7511-7533</code>, <code>prove_prepared_cli_without_gateway</code> uses existence of <code>deployed-source-revision</code> as the discriminator between an installed deployment and a retained partial successor. With the marker absent, it calls <code>prove_phase1_prepared_cli_authority</code> (<code>7418-7508</code>). That proof permits an environment only when the key set is exactly <code>MAC_ATTESTATION_KEY</code> and <code>MAC_STARTUP_CLEAR_HOLD</code>, with a valid key and hold clearing disabled (<code>7342-7414</code>). A full installed environment therefore produces the observed error.</p>
+<p>This rejection is preferable to treating an ambiguous identity as trusted. The defect is that contradictory evidence was discovered at worker-50, after cohort-wide mutation, and had no bounded repair or quarantine path.</p>
+<h3 id="architectural-root-cause">Architectural root cause<a class="headerlink" href="#architectural-root-cause" title="Permanent link">&para;</a></h3>
+<p>MAC couples the safety fate and recovery liveness of the entire selected fleet to every individual node and every individual transport operation.</p>
+<p>The protocol makes exactness global where it should make exactness local:</p>
+<ul>
+<li>one node's historical marker drift stops a cohort after other nodes have already stopped;</li>
+<li>recovery walks every candidate serially, so elapsed time and transient-failure probability grow with fleet size;</li>
+<li>a stopped worker's inability to heartbeat is interpreted by an independent TTL subsystem as host departure;</li>
+<li>a single retryable SSH failure stops recovery and leaves all deployment-owned holds in force;</li>
+<li>there is no availability budget limiting how many otherwise healthy workers may be quiesced before the next proof point.</li>
+</ul>
+<p>Each rule is defensible in isolation. Together, on a flaky network and a 50-node fleet, they create a liveness death spiral: conservative stop increases elapsed time; elapsed time triggers liveness expiry; expiry removes identities required for recovery; recovery becomes longer and more fragile; one transient failure preserves the global stop.</p>
+<p>The primary root cause is therefore over-strict global coupling without bounded-progress, isolation, or availability invariants. The early-cohort worker's absent environment and the final cohort worker's marker/environment drift were initiating conditions.</p>
+<h2 id="violated-invariants">Violated invariants<a class="headerlink" href="#violated-invariants" title="Permanent link">&para;</a></h2>
+<h3 id="recovery-hold-precedes-recovery-identity">Recovery hold precedes recovery identity<a class="headerlink" href="#recovery-hold-precedes-recovery-identity" title="Permanent link">&para;</a></h3>
+<p>Before attestation recovery may create or update <code>mac.env</code>, the node must durably carry <code>MAC_STARTUP_CLEAR_HOLD=0</code>. The old absent-file behavior violated this invariant on the early-cohort worker.</p>
+<p><code>7f3bbd12</code> fixes it in <code>deploy/deploy-mac-fleet.sh:7985-8119</code>. <code>retain_remote_generation_for_forward_repair</code> invokes the setter before attestation reconciliation (<code>14423-14436</code>). The regression at <code>tests/test_deploy_attestation_recovery.py:72-95</code> executes the production shell setter and real attestation installer, proving the final environment contains exactly the two recovery keys. Preservation and symlink rejection are covered at <code>98-130</code>.</p>
+<h3 id="installed-identity-is-coherent-before-mutation">Installed identity is coherent before mutation<a class="headerlink" href="#installed-identity-is-coherent-before-mutation" title="Permanent link">&para;</a></h3>
+<p>The revision marker, environment identity class, installed source and venv, generation/barrier, and signed deployment manifests must describe one state before the hub epoch opens. Worker-50 violated this invariant, but MAC did not diagnose it until phase-1 quiescence.</p>
+<p>The installed-static-hub correction already included in <code>7f3bbd12</code> handles the coherent case where <code>deployed-source-revision</code> exists (<code>tests/test_fleet_node_daemon_quiescence.py:1199-1238</code>). It deliberately does not authorize marker-absent/full-environment drift.</p>
+<h3 id="deployment-epoch-membership-outranks-ordinary-heartbeat-expiry">Deployment-epoch membership outranks ordinary heartbeat expiry<a class="headerlink" href="#deployment-epoch-membership-outranks-ordinary-heartbeat-expiry" title="Permanent link">&para;</a></h3>
+<p>A worker intentionally stopped inside a live deployment epoch is not evidence of a departed host. It must remain addressable until the epoch is terminal or an explicit fenced action removes it.</p>
+<p>The current expiry policy gives fungible agents a default TTL of 3,600 seconds (<code>src/mac/services.py:18714-18745</code>). <code>expire_ephemeral_agents</code> skips an active task lease, but not a deployment epoch or deployment-owned hold, before tombstoning the row through <code>hub-ephemeral-expiry</code> (<code>18770-18808</code>).</p>
+<h3 id="fleet-operations-have-bounded-blast-radius-and-duration">Fleet operations have bounded blast radius and duration<a class="headerlink" href="#fleet-operations-have-bounded-blast-radius-and-duration" title="Permanent link">&para;</a></h3>
+<p>Read-only preparation and immutable staging use <code>run_bounded_node_phase</code> with bounded fan-out (<code>deploy/deploy-mac-fleet.sh:11524-11610</code>). Service quiescence is explicitly serialized (<code>16669-16698</code>), as is retain-forward recovery (<code>15417-15426</code>). The maximum unavailability and recovery time therefore scale linearly with fleet size and can exceed the TTL that governs the same workers.</p>
+<h3 id="retryable-transport-failure-does-not-become-protocol-failure">Retryable transport failure does not become protocol failure<a class="headerlink" href="#retryable-transport-failure-does-not-become-protocol-failure" title="Permanent link">&para;</a></h3>
+<p>Recovery operations are journal-bound and designed to be replayed, but attestation reconciliation uses multiple direct <code>ssh</code> calls with a ten-second connect timeout and immediate error propagation (<code>deploy/deploy-mac-fleet.sh:12534-12776</code>). <code>recover_cohort_node</code> returns before its <code>aborted-node</code> transition when one of those calls fails (<code>14582-14775</code>). A transient connection failure therefore stops the entire pass.</p>
+<h3 id="incomplete-recovery-remains-fail-closed">Incomplete recovery remains fail closed<a class="headerlink" href="#incomplete-recovery-remains-fail-closed" title="Permanent link">&para;</a></h3>
+<p>This invariant held. The controller left the durable journal non-terminal and retained dispatch holds. <code>recover_incomplete_cohort_transaction_before_deploy</code> discovers and adopts a dead controller's exact journal revision before replay (<code>15617-15677</code>). A later normal typed deployment can resume it; there is no supported recovery-only CLI mode.</p>
+<h2 id="contributing-factors">Contributing factors<a class="headerlink" href="#contributing-factors" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A single marker is overloaded as the installed-versus-partial-successor discriminator even when other installed identity is present.</li>
+<li>Identity coherence is checked inside the mutating phase instead of across every selected node in the read-only preflight barrier.</li>
+<li>The all-selected release contract correctly prevents a partial success from being called complete, but there is no separate per-node quarantine outcome that preserves healthy serving capacity.</li>
+<li>Journal mutations are sequential and remote recovery is performed in the same loop, coupling durable ordering to network latency.</li>
+<li>The liveness sweeper and deployment controller do not share an explicit epoch-membership lease.</li>
+<li>The one-hour fungible TTL is reasonable for unattended capacity cleanup but is not compared with worst-case deployment and recovery duration.</li>
+<li>Direct SSH defaults are fail-fast but have no bounded retry for operations whose journal operation IDs and deployment fences make replay safe.</li>
+<li>The failure text <code>retained successor has an installed identity</code> identifies the strict contract violation but not the contradictory artifacts or safe remediation.</li>
+</ul>
+<h2 id="what-worked">What worked<a class="headerlink" href="#what-worked" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Filesystem, attestation, and identity checks failed closed. The response did not weaken modes, ownership, no-symlink rules, exact key sets, signatures, or deployment fencing.</li>
+<li>The typed cohort journal preserved exact recovery authority across controller death and network failure.</li>
+<li>Dispatch holds remained in place, preventing ambiguous workers from taking new work.</li>
+<li>Phase-1 restore contracts retained enough generation-bound evidence for diagnosis and replay.</li>
+<li><code>7f3bbd12</code> corrected the early-cohort absent-environment defect with atomic owner-private writes and production-level tests.</li>
+<li>The installed static-hub classifier correctly keeps coherent installed nodes out of the partial-successor exception.</li>
+<li>Read-only preparation, prerequisite proof, staging, and later immutable phases already have a reusable bounded-fan-out primitive.</li>
+</ul>
+<h2 id="postel-like-tolerance-without-weaker-security">Postel-like tolerance without weaker security<a class="headerlink" href="#postel-like-tolerance-without-weaker-security" title="Permanent link">&para;</a></h2>
+<p>The controller should be liberal in the safe historical forms it can <em>recognize</em>, and conservative in the one state it <em>emits</em>. This is narrower than accepting arbitrary environment syntax or guessing identity.</p>
+<p>Input tolerance may include known prior canonical environment layouts, a missing redundant marker when authenticated generation-bound manifests independently prove its exact value, and explicitly versioned historical receipts. A read-only decoder should classify and normalize these forms into a typed internal state. Ambiguous, unowned, writable, symlinked, multiply linked, unbounded, unsigned, or conflicting artifacts must still fail closed.</p>
+<p>Generated state remains exact: one canonical <code>mac.env</code> rendering, one revision-marker format, owner-only regular files, atomic replacement, fsync, exact schemas, exact epoch and generation binding, and no secret-bearing diagnostics. Tolerance belongs before the trust decision; canonicalization belongs behind an authenticated repair fence. Postel-like handling must not mean sourcing unknown shell, accepting extra recovery keys, or inferring a revision from an untrusted checkout.</p>
+<h2 id="fixed-and-open">Fixed and open<a class="headerlink" href="#fixed-and-open" title="Permanent link">&para;</a></h2>
+<h3 id="recovered-in-the-live-fleet">Recovered in the live fleet<a class="headerlink" href="#recovered-in-the-live-fleet" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The stuck epoch was recovered and terminally finalized. Recovery required restoring tombstoned participant rows under superseding holds and teaching abort to accept principal drift for participants whose candidate credential was never installed.</li>
+<li>The corrected source <code>1154f2ada5e770b3a38d1493ca8ff050f04e94b0</code> was deployed in six independent eight-node lanes, with separately fenced handling for worker-2 and the static hub worker-49.</li>
+<li>All 50 registered targets independently reported that exact source revision and an active <code>ovswarm-agent.service</code>; the hub reported 50 healthy, unheld workers plus the operator and reviewer.</li>
+<li>The trusted client host used its explicit fleet profile to register the human and repository bridge, stage and release the canary tasks, dispatch work, and query results. At peak, all 50 distinct workers simultaneously owned running tasks.</li>
+<li>Recovery is not release qualification. The deployed runtime image did not have a verified tested-tag alias, the full contract suite still had four failures, nested GPU CDI acceptance failed, and the 300-task oracle campaign had not yet completed at the cutoff.</li>
+</ul>
+<h3 id="fixed-in-7f3bbd12">Fixed in <code>7f3bbd12</code><a class="headerlink" href="#fixed-in-7f3bbd12" title="Permanent link">&para;</a></h3>
+<ul>
+<li>An absent <code>mac.env</code> is atomically created with startup hold clearing disabled.</li>
+<li>Existing assignments are preserved while duplicate startup-hold assignments are reduced to one canonical value.</li>
+<li>Unsafe parent, file, lock, or symlink paths fail closed.</li>
+<li>Real attestation installation preserves the exact recovery hold and attestation keys.</li>
+<li>A coherent installed static hub with a deployed-revision marker uses ordinary quiescence rather than the partial-successor exception.</li>
+</ul>
+<h3 id="still-open">Still open<a class="headerlink" href="#still-open" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Worker-50's marker-absent/full-environment state has no pre-mutation classification or authenticated repair.</li>
+<li>Invalid nodes cannot be quarantined independently while an explicitly approved healthy cohort remains available.</li>
+<li>Quiescence and recovery have fleet-size-linear remote critical paths.</li>
+<li>Fungible expiry is unaware of active deployment-epoch membership.</li>
+<li>Journal-idempotent SSH operations do not retry bounded transient failures.</li>
+<li>There is no preflight comparison between worst-case operation duration and liveness/credential budgets.</li>
+<li>Error evidence does not name the exact contradictory identity surfaces.</li>
+<li>The controller can prove a direct hub route and still generate a worker runtime that points at a stopped localhost tunnel. <code>2944aebb</code> fixes that observed divergence, but the duplicate route authorities remain architectural debt.</li>
+<li>Artifact fetches and OpenShell installation still occur after service quiescence, extending the stopped window with avoidable network work.</li>
+<li>Recovery cannot tolerate registry/principal loss for untouched epoch participants even when an exact superseding hold prevents dispatch.</li>
+</ul>
+<h2 id="corrective-and-preventive-actions">Corrective and preventive actions<a class="headerlink" href="#corrective-and-preventive-actions" title="Permanent link">&para;</a></h2>
+<h3 id="p0-required-before-another-50-node-all-selected-rollout">P0 — required before another 50-node all-selected rollout<a class="headerlink" href="#p0-required-before-another-50-node-all-selected-rollout" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Add an all-node identity-coherence preflight.</strong> Before hub epoch open or the first service stop, classify the revision marker, environment class, source/venv, generation barrier, and signed manifests for every selected node. Report exact contradictions. Quarantine worker-50-shaped nodes before mutation.</li>
+<li><strong>Add authenticated marker repair, not classifier relaxation.</strong> Reconstruct a missing <code>deployed-source-revision</code> only when journal-bound or signed deployment manifests agree on the exact revision and generation. Write it atomically under the deployment fence. Extra keys must remain forbidden in a true recovery-only environment.</li>
+<li><strong>Pin live epoch members against expiry.</strong> Record a durable deployment-epoch membership lease in the hub. <code>expire_ephemeral_agents</code> must skip an exact active member until the epoch is terminal, while continuing to tombstone unrelated silent fungible agents.</li>
+<li><strong>Retry idempotent recovery transport.</strong> Add bounded exponential backoff for hub and node SSH operations whose operation ID, endpoint identity, and deployment lock make replay safe. Revalidate route identity and fence before every attempt. Endpoint changes remain a hard stop.</li>
+<li><strong>Recover and prove the current epoch before release.</strong> Adopt the retained journal through the normal typed deployment entry point, reach a terminal journal state, account for every retained hold, and independently verify all registered workers before any canary release.</li>
+<li><strong>Make abort monotonic for untouched participants.</strong> If a candidate credential was never installed, registry cleanup may remove or revoke its hub-side principals without blocking epoch abort. Installed credentials retain exact continuity checks. Superseding holds and absence of active claims remain mandatory.</li>
+<li><strong>Move every artifact fetch before quiescence.</strong> The stopped phase may consume only locally verified immutable artifacts. Any network fetch after service stop is a protocol defect.</li>
+<li><strong>Use one authoritative hub-route artifact.</strong> Selection, generated runtime configuration, readiness proof, and recovery must consume the same signed route decision; remove independent localhost/direct rewrites.</li>
+</ol>
+<h3 id="replacement-plan-compatibility-is-explicitly-not-a-constraint">Replacement plan — compatibility is explicitly not a constraint<a class="headerlink" href="#replacement-plan-compatibility-is-explicitly-not-a-constraint" title="Permanent link">&para;</a></h3>
+<p>The incident showed that incremental compatibility with the all-fleet transaction preserves the wrong abstraction. Replace it instead of extending it:</p>
+<ol>
+<li><strong>Delete heartbeat-driven identity deletion.</strong> TTL changes durable workers to <code>offline</code>; only an explicit fenced decommission may delete dispatch identity. Reject decommission while an epoch, hold, journal, task, or lease references the worker.</li>
+<li><strong>Delete credential rotation from software deployment.</strong> Deployment validates the current credential. Rotation becomes a separate per-node state machine with old/new overlap until the successor heartbeat is proved.</li>
+<li><strong>Delete ambient route discovery after planning.</strong> Freeze one signed, hashed route bundle from the fleet registry and require every subprocess and receipt in the epoch to name its digest.</li>
+<li><strong>Delete post-quiescence network dependencies.</strong> Pre-stage a content-addressed capsule containing source, toolchains, wheels, runtime images, helpers, service definitions, and recovery material. After the barrier, outbound DNS, download, and connect attempts are protocol violations.</li>
+<li><strong>Delete the all-50 serial controller path.</strong> Run idempotent per-node state machines in parallel lanes of at most eight. A failed lane stays held; successful lanes commit independently. One slow node may block only its lane.</li>
+<li><strong>Make storage health an admission gate.</strong> Require write, rename, file-fsync, directory-fsync, free-space, and provider-health probes before staging. Fence non-returning storage without synchronously pinning controller exit or unrelated lanes.</li>
+<li><strong>Make fault convergence the release gate.</strong> Require 100 randomized 50-node runs covering TTL expiry, route swaps, stale authority, expired credentials, missing artifacts, controller death, and non-returning storage. Every run must converge to either an unchanged authenticating prior generation or a fully proved successor per lane. Then require live 8-, 24-, and 50-worker canaries with distinct-worker completion evidence.</li>
+</ol>
+<p>These are breaking control-plane changes. Old deployment journals and worker records should be migrated once into the new typed forms or explicitly quarantined; the new controller should not retain dual execution paths indefinitely.</p>
+<h3 id="p1-remove-the-fleet-size-liveness-amplifier">P1 — remove the fleet-size liveness amplifier<a class="headerlink" href="#p1-remove-the-fleet-size-liveness-amplifier" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Use bounded rolling lanes with an availability floor.</strong> For 50 workers, default to lanes no larger than eight and keep at least 42 healthy, eligible workers until the next lane is proven. An all-50 qualification may require every lane eventually, but it must not require all 50 to be down together.</li>
+<li><strong>Decouple WAL ordering from remote serialization.</strong> Durably arm a batch of per-node intents, perform fenced remote operations concurrently with bounded fan-out, then serialize or batch-CAS completion records. Apply the same design to reverse recovery.</li>
+<li><strong>Make quarantine explicit.</strong> A node with incoherent but contained local state becomes <code>deployment_quarantined</code>, remains dispatch-held, and receives a typed repair plan. Its defect must not silently shrink an all-selected acceptance denominator, but it also must not stop healthy nodes from serving.</li>
+<li><strong>Enforce a duration budget.</strong> Before mutation, compare cohort size and phase bounds with ephemeral TTLs, credential lifetimes, hold leases, and availability policy. Refuse an unsafe plan or reduce its batch size.</li>
+<li><strong>Add fleet-scale fault tests and telemetry.</strong> Exercise 50-node delayed operations, marker drift, TTL advancement, controller death, and transient SSH loss. Emit per-batch availability, oldest heartbeat, epoch-pin age, recovery progress, retries, quarantines, and estimated time remaining.</li>
+</ol>
+<h2 id="validation-and-exit-criteria">Validation and exit criteria<a class="headerlink" href="#validation-and-exit-criteria" title="Permanent link">&para;</a></h2>
+<p>The incident may be closed only when all applicable criteria are evidenced; a green unit test or a terminal journal alone is insufficient.</p>
+<h3 id="current-fleet-recovery">Current-fleet recovery<a class="headerlink" href="#current-fleet-recovery" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The retained journal is adopted by one controller and reaches a terminal state without manual database edits.</li>
+<li>Every journal-pinned agent identity is present or is restored through an explicit journal-bound resurrection path; no required row remains tombstoned.</li>
+<li>Every deployment-owned hold, successor hold, and pre-existing operator hold is accounted for. Only the intended holds are released.</li>
+<li>All 50 registered targets resolve from the frozen fleet registry and independently prove the expected source revision, deployment generation, service health, and attestation identity.</li>
+<li>One held canary completes before staged release of the wider canary campaign. Release qualification still requires the separately defined all-50 participation evidence.</li>
+</ul>
+<h3 id="identity-classification-and-repair">Identity classification and repair<a class="headerlink" href="#identity-classification-and-repair" title="Permanent link">&para;</a></h3>
+<ul>
+<li>An integration test reproduces the early-cohort worker's absent environment and proves the hold exists before key installation.</li>
+<li>An integration test reproduces worker-50's absent marker plus full installed environment and fails during read-only preflight, before hub epoch open or any service stop.</li>
+<li>Positive repair tests accept only mutually agreeing signed/journal-bound evidence and emit the exact canonical marker.</li>
+<li>Negative tests reject stale revision, wrong generation, unsigned evidence, unsafe file types/modes/owners, extra recovery keys, and concurrent artifact changes.</li>
+</ul>
+<h3 id="liveness-and-availability">Liveness and availability<a class="headerlink" href="#liveness-and-availability" title="Permanent link">&para;</a></h3>
+<ul>
+<li>With virtual time advanced beyond 3,600 seconds, an active epoch member remains registered while an unrelated silent fungible agent expires normally.</li>
+<li>A 50-worker deployment never has more than the configured batch size unavailable and maintains the configured availability floor at every observable checkpoint.</li>
+<li>Quiescence and recovery wall time are bounded by batch phase limits rather than <code>worker_count × per-node timeout</code>.</li>
+<li>Killing the controller after intent, after remote mutation, and before completion publication converges through journal adoption without duplicate mutation.</li>
+</ul>
+<h3 id="retry-and-idempotency">Retry and idempotency<a class="headerlink" href="#retry-and-idempotency" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A first-attempt hub SSH timeout followed by recovery succeeds without rotating a key twice, releasing a hold twice, or publishing duplicate journal transitions.</li>
+<li>Exhausted retries leave the same journal and hold authority intact and provide the exact next replay command and failed endpoint identity.</li>
+<li>An endpoint identity change during retry fails closed and cannot reuse the prior node's authority.</li>
+</ul>
+<h2 id="scope-and-non-goals">Scope and non-goals<a class="headerlink" href="#scope-and-non-goals" title="Permanent link">&para;</a></h2>
+<p>This RCCA does not recommend removing the typed cohort journal, exact attestation-key contracts, owner-only filesystem checks, endpoint identity, deployment locks, signed evidence, all-selected acceptance semantics, or dispatch holds. Those controls limited the damage.</p>
+<p>It recommends changing their composition. Per-node defects should be contained per node; global acceptance should remain honest; rolling service availability should be a first-class invariant; and journal-bound recovery should make bounded forward progress despite ordinary transient infrastructure failure.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
