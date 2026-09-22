@@ -2204,10 +2204,11 @@ confined to the independent remote work; endpoint identity binding, per-node
 locks, rollback-journal contracts, holds, the atomic hub commit, and
 fail-closed recovery are unchanged and remain serialized where the safety proof
 requires it.</p>
-<p>The fan-out width is <code>MAC_DEPLOY_NODE_PARALLELISM</code> (default <code>4</code>, accepted range
-<code>1</code>-<code>32</code>). Set it to <code>1</code> to force the original strictly serial behavior; raise
-it to shorten wall time on a wider cohort when the controller host and mesh have
-headroom. The scheduler launches each node operation in its own child with a
+<p>The fan-out width is <code>MAC_DEPLOY_NODE_PARALLELISM</code> (default <code>32</code>, accepted range
+<code>1</code>-<code>64</code>). Set it to <code>1</code> to force strictly serial behavior; lower it when the
+controller host or mesh is constrained. The default lets a 50-node
+preallocated cohort complete independent work in two waves without creating an
+unbounded process or SSH-session population. The scheduler launches each node operation in its own child with a
 distinct log, never exceeds the configured width, waits for every attempted
 node, and reaps a child that dies before publishing its atomic status (for
 example a <code>SIGKILL</code>) by synthesizing a controller failure rather than polling a
@@ -2217,6 +2218,14 @@ evidence, and each per-node failure persists a durable, secret-safe artifact
 before the transient working directory is wiped. A first failure stops
 scheduling new work but never abandons siblings that are already in flight; the
 barrier is only crossed when every reaped node passed.</p>
+<p>Abort cleanup and committed-generation recovery use the same bound, but always
+aggregate every candidate instead of stopping admission after the first
+failure. The controller serially records all per-node recovery intents first,
+runs only the independently fenced remote work in parallel, and then serially
+publishes each successful node's evidence through the journal compare-and-swap.
+Thus a slow or unreachable node no longer serializes cleanup of the other 49,
+while per-node deployment locks, stable operation IDs, deterministic error
+reporting, and the terminal cohort transition retain their original ordering.</p>
 <p>Each immutable archive and helper bundle is pre-staged <strong>once per node by
 digest</strong> and then reused for both arm and apply. The controller uploads the
 bundle a single time, records its size and SHA-256 in an owner-private manifest,
