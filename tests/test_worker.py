@@ -40,9 +40,11 @@ from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
 from mac.worker import (
+    CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS,
     MacWorker,
     SubprocessExecutor,
     WorkerExecution,
+    _coding_route_probe_delay,
     _detect_command_inventory,
     _openshell_containerfile_changed,
     build_parser,
@@ -3589,6 +3591,74 @@ def test_worker_keeps_completed_coding_route_proof_visible_during_refresh(
         release.set()
         assert worker._coding_route_probe_thread is not None
         worker._coding_route_probe_thread.join(timeout=1)
+
+
+def test_fifty_workers_stagger_their_first_coding_route_probe(tmp_path: Path, monkeypatch):
+    """A fleet restart must not turn into fifty simultaneous provider calls."""
+    now = 10_000.0
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    workers = [
+        MacWorker(
+            object(),  # type: ignore[arg-type]
+            "agent_ovswarm_worker_%02d" % index,
+            tmp_path / ("worker-%02d" % index),
+            lambda _task, _directory: WorkerExecution(0, "unused"),
+        )
+        for index in range(1, 51)
+    ]
+
+    for worker in workers:
+        worker._maybe_start_coding_route_probe()
+
+    offsets = [worker._next_coding_route_probe_at - now for worker in workers]
+    assert all(worker._coding_route_probe_thread is None for worker in workers)
+    assert len(set(offsets)) == 50
+    assert min(offsets) >= 0
+    assert max(offsets) <= CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS
+    assert max(offsets) - min(offsets) > 45
+
+
+def test_fifty_failed_workers_back_off_without_reforming_a_herd(monkeypatch):
+    """Long provider outages spread retries even after the backoff reaches its cap."""
+    monkeypatch.delenv("MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS", raising=False)
+    agent_ids = ["agent_ovswarm_worker_%02d" % index for index in range(1, 51)]
+    generations = [
+        [
+            _coding_route_probe_delay(
+                agent_id,
+                verified=False,
+                consecutive_failures=failure_count,
+            )
+            for agent_id in agent_ids
+        ]
+        for failure_count in range(1, 9)
+    ]
+
+    for delays in generations:
+        assert len(set(delays)) == 50
+        assert max(delays) > min(delays)
+        assert max(delays) <= 3600
+    for previous, current in zip(generations[:5], generations[1:6]):
+        assert min(current) > max(previous)
+    # Once capped, stable phase remains instead of every worker collapsing
+    # onto exactly the same one-hour boundary.
+    assert max(generations[-1]) - min(generations[-1]) > 500
+
+
+def test_successful_route_refreshes_remain_staggered(monkeypatch):
+    monkeypatch.delenv("MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS", raising=False)
+    delays = [
+        _coding_route_probe_delay(
+            "agent_ovswarm_worker_%02d" % index,
+            verified=True,
+            consecutive_failures=0,
+        )
+        for index in range(1, 51)
+    ]
+
+    assert len(set(delays)) == 50
+    assert min(delays) >= 600
+    assert max(delays) <= 720
 
 
 def test_worker_verifies_darwin_host_route_without_openshell(
