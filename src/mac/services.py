@@ -22286,6 +22286,7 @@ class ControlPlane:
                     }
                 )
             else:
+                publication_verifier_identity: Dict[str, Any] = {}
                 publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
                 if publication_test_runner is None:
                     # The projected-merge gate reuses the hub_verify sandbox
@@ -22301,8 +22302,17 @@ class ControlPlane:
                     def publication_test_runner(
                         repo_dir: str, branch: str, head_sha: str, command: str
                     ) -> Tuple[int, str]:
+                        # Select isolation by canonical identity, not the temporary
+                        # checkout path; the projected commit may not exist remotely.
                         return run_contract_test(
-                            repo_dir, branch, head_sha, command, publication_bootstrap_command
+                            clone_url,
+                            branch,
+                            head_sha,
+                            command,
+                            publication_bootstrap_command,
+                            local_repository=Path(repo_dir),
+                            expected_tree_sha=gate.merged_tree_sha,
+                            verifier_identity=publication_verifier_identity,
                         )
 
                 contract_gate = validate_projected_merge_contract(
@@ -22313,7 +22323,17 @@ class ControlPlane:
                     test_runner=publication_test_runner,
                     merge_gate=gate,
                 )
-                commands.append({"name": "publication_contract_gate", **contract_gate.to_dict()})
+                commands.append(
+                    {
+                        "name": "publication_contract_gate",
+                        **contract_gate.to_dict(),
+                        **(
+                            {"verifier_runtime": publication_verifier_identity}
+                            if publication_verifier_identity
+                            else {}
+                        ),
+                    }
+                )
                 if not contract_gate.passed:
                     diagnosis = contract_gate.error or contract_gate.output_tail
                     if queue is not None and queue_entry_id:
@@ -28214,11 +28234,24 @@ class ControlPlane:
         *,
         prepared_report: Optional[Mapping[str, Any]] = None,
         verifier_identity: Optional[Dict[str, Any]] = None,
+        local_repository: Optional[Path] = None,
+        expected_tree_sha: str = "",
     ) -> Tuple[int, str]:
-        """Independently verify the pushed branch on the Linux gateway."""
+        """Independently verify pushed or projected source in its configured isolation."""
         runner = getattr(self, "_hub_verify_runner", None)
         if runner is not None:
-            return runner(remote_url, branch, head_sha, test_command)
+            return runner(
+                str(local_repository) if local_repository is not None else remote_url,
+                branch,
+                head_sha,
+                test_command,
+            )
+        source_options: Dict[str, Any] = {}
+        if local_repository is not None:
+            source_options = {
+                "local_repository": local_repository,
+                "expected_tree_sha": expected_tree_sha,
+            }
         return run_repository_contract_test_in_openshell(
             remote_url,
             branch,
@@ -28227,6 +28260,7 @@ class ControlPlane:
             bootstrap_command,
             prepared_report=prepared_report,
             verifier_identity=verifier_identity,
+            **source_options,
         )
 
     def _run_hub_review_verification(

@@ -39,7 +39,10 @@ SSH identity paths, credentials, or operational host topology.
 The host configuration supplies `base_image`, `base_sha256`, `firmware_code`,
 `firmware_code_sha256`, `firmware_vars`, `firmware_vars_sha256`, and `workspace`.
 Optional `memory_mib`, `cpus`, and `max_timeout_seconds` bound execution. Defaults
-are 16 GiB and eight CPUs; hard limits are 32 GiB, twelve CPUs, and two hours.
+are 16 GiB and eight CPUs; hard resource limits are 32 GiB and twelve CPUs.
+The default time ceiling is two hours, configurable with `max_timeout_seconds`.
+Align that ceiling with the controller's `MAC_HUB_VERIFY_TIMEOUT` before rollout;
+requests exceeding the configured ceiling are rejected before execution.
 Install the reviewed standalone `src/mac/vm_verifier_host.py` on that host.
 
 The controller configuration supplies the same base and firmware digest pins,
@@ -51,7 +54,9 @@ forwarding is disabled.
 ## Execution and evidence
 
 The controller stages the exact repository commit using the existing hub source
-preparation path and streams its archive to the host. Each request gets a fresh
+preparation path and streams its archive to the host. Publication gates route by
+the canonical repository URL while staging the local projected merge and checking
+its exact commit and expected merged tree. Each request gets a fresh
 copy-on-write disk, UEFI variables, SSH management keys, and cloud-init seed.
 There are no host filesystem mounts. QEMU user networking is restricted, with
 only a loopback management SSH forward. The host serializes reviews with a lock.
