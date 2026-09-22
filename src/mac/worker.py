@@ -198,6 +198,20 @@ DEFAULT_COMMAND_INVENTORY_NAMES = (
 DEFAULT_COMMAND_INVENTORY_MAX = 10000
 DEFAULT_COMMAND_INVENTORY_INTERVAL_SECONDS = 300.0
 
+# Route probes execute a real provider request. Fifty workers restarted at the
+# same time used to make that request immediately and then repeat it on the
+# same 60-second boundary after every failure. That traffic is enough to keep a
+# recovering provider's circuit breaker open indefinitely. Keep the policy
+# local to the worker (there is no hub round-trip on this failure path), but
+# give every agent a stable phase and make repeated failures progressively
+# quieter.
+CODING_ROUTE_PROBE_SUCCESS_INTERVAL_SECONDS = 600.0
+CODING_ROUTE_PROBE_FAILURE_INTERVAL_SECONDS = 60.0
+CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS = 60.0
+CODING_ROUTE_PROBE_MAX_FAILURE_BACKOFF_SECONDS = 3600.0
+CODING_ROUTE_PROBE_JITTER_FRACTION = 0.20
+CODING_ROUTE_PROBE_MAX_FAILURE_EXPONENT = 10
+
 
 def _validate_git_remote_url(value: str) -> str:
     return validate_git_remote_url(value)
@@ -225,6 +239,65 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _coding_route_probe_phase(agent_id: str) -> float:
+    """Return a stable agent-specific value in the half-open range [0, 1).
+
+    Python's built-in hash is deliberately process-randomized, which would
+    re-form a herd after every fleet restart. A digest keeps each worker in the
+    same phase without shared state or runtime randomness.
+    """
+
+    digest = hashlib.sha256(agent_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") / float(1 << 64)
+
+
+def _coding_route_probe_delay(
+    agent_id: str,
+    *,
+    verified: bool,
+    consecutive_failures: int,
+) -> float:
+    """Return the next completed-probe delay for one worker.
+
+    The existing interval override remains authoritative for the base cadence.
+    Failed probes back off exponentially and cap at one hour. A stable positive
+    jitter keeps workers that happen to finish together from retrying together.
+    """
+
+    default_interval = (
+        CODING_ROUTE_PROBE_SUCCESS_INTERVAL_SECONDS
+        if verified
+        else CODING_ROUTE_PROBE_FAILURE_INTERVAL_SECONDS
+    )
+    base = max(
+        1.0,
+        _env_float("MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS", default_interval),
+    )
+    if verified:
+        bounded = base
+        cap = base * (1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION)
+    else:
+        exponent = min(
+            max(0, int(consecutive_failures) - 1),
+            CODING_ROUTE_PROBE_MAX_FAILURE_EXPONENT,
+        )
+        cap = max(
+            base * (1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION),
+            CODING_ROUTE_PROBE_MAX_FAILURE_BACKOFF_SECONDS,
+        )
+        # Leave room below the hard cap for the per-agent phase. Otherwise all
+        # workers converge on exactly ``cap`` after a long outage and recreate
+        # the herd at the point where the provider is most fragile.
+        bounded = min(
+            cap / (1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION),
+            base * (2**exponent),
+        )
+    jittered = bounded * (
+        1.0 + CODING_ROUTE_PROBE_JITTER_FRACTION * _coding_route_probe_phase(agent_id)
+    )
+    return min(cap, jittered)
 
 
 #: Bounded retry for a fenced-write conflict on a state-mutating API call
@@ -1161,6 +1234,9 @@ class MacWorker(
         self._coding_route_report: JsonDict = {}
         self._coding_route_report_dirty = True
         self._last_coding_route_probe_at = 0.0
+        self._next_coding_route_probe_at = 0.0
+        self._coding_route_probe_initial_stagger_set = False
+        self._coding_route_probe_consecutive_failures = 0
         # Workspace GC (task_02ebb6c4): prune completed-task worktrees on every
         # worker so an unbounded backlog never fills the disk and silently
         # breaks the coding-route probe. Runs off the poll thread.
@@ -6289,19 +6365,15 @@ class MacWorker(
                 and self._coding_route_probe_thread.is_alive()
             ):
                 return
-            verified = self._coding_route_report.get("verified") is True
-            # Successful executor-side proofs cache for five minutes. Probe on
-            # a ten-minute cadence so every scheduled success refresh is live,
-            # never a cached proof followed by another full sleep interval.
-            default_interval = 600.0 if verified else 60.0
-            interval = _env_float(
-                "MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS",
-                default_interval,
-            )
             now = time.monotonic()
-            if self._last_coding_route_probe_at and now - self._last_coding_route_probe_at < max(
-                1.0, interval
-            ):
+            if not self._coding_route_probe_initial_stagger_set:
+                self._coding_route_probe_initial_stagger_set = True
+                if not self._coding_route_report:
+                    self._next_coding_route_probe_at = now + (
+                        CODING_ROUTE_PROBE_INITIAL_SPREAD_SECONDS
+                        * _coding_route_probe_phase(self.agent_id)
+                    )
+            if now < self._next_coding_route_probe_at:
                 return
             self._last_coding_route_probe_at = now
             # A refresh is not a route failure.  Keep the last completed proof
@@ -6421,6 +6493,16 @@ class MacWorker(
         with self._coding_route_probe_lock:
             self._coding_route_report = dict(report)
             self._coding_route_report_dirty = True
+            verified = report.get("verified") is True
+            if verified:
+                self._coding_route_probe_consecutive_failures = 0
+            else:
+                self._coding_route_probe_consecutive_failures += 1
+            self._next_coding_route_probe_at = time.monotonic() + _coding_route_probe_delay(
+                self.agent_id,
+                verified=verified,
+                consecutive_failures=self._coding_route_probe_consecutive_failures,
+            )
 
     def _observe_metric(
         self,
