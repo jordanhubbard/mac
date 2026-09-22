@@ -189,6 +189,7 @@ from mac.models import (
     utcnow,
     WorkflowDraft,
 )
+
 from mac.repository_hygiene import (
     AUTO_CLEANUP_DISPOSITIONS,
     repository_ref_lifecycle_for_transition,
@@ -334,6 +335,10 @@ MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
 DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
 AUTO_QUARANTINE_REASON = "auto_quarantine:consecutive_expiries_no_telemetry"
+DEPLOYMENT_AVAILABILITY_RESOURCE_KEY = "deployment_availability"
+DEPLOYMENT_AVAILABILITY_SCHEMA = "mac.deployment_availability.v1"
+DEPLOYMENT_UNAVAILABLE = "deployment_unavailable"
+DEPLOYMENT_QUARANTINED = "deployment_quarantined"
 BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 BREAK_GLASS_EXECUTION_BOUNDARY = "host"
 BREAK_GLASS_MIN_TTL_SECONDS = 60
@@ -3478,6 +3483,14 @@ class ControlPlane:
             and reviewer_key_status.get("schema") == HUB_REVIEWER_KEY_STATUS_SCHEMA
         ):
             merged[HUB_REVIEWER_KEY_RESOURCE_KEY] = dict(reviewer_key_status)
+        # Deployment availability is hub-owned epoch state. A worker cannot
+        # erase it with a fresh inventory or forge it before the epoch
+        # controller has observed the worker unavailable.
+        merged.pop(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY, None)
+        if DEPLOYMENT_AVAILABILITY_RESOURCE_KEY in existing:
+            merged[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = existing[
+                DEPLOYMENT_AVAILABILITY_RESOURCE_KEY
+            ]
         merged.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         existing_approval = existing.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
         if valid_read_only_report_repository_executor_approval(existing_approval):
@@ -3496,6 +3509,11 @@ class ControlPlane:
         """
 
         projected = ensure_json_object(requested)
+        projected.pop(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY, None)
+        if DEPLOYMENT_AVAILABILITY_RESOURCE_KEY in existing:
+            projected[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = existing[
+                DEPLOYMENT_AVAILABILITY_RESOURCE_KEY
+            ]
         requested_has_approval = REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in projected
         requested_approval = projected.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         projected.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
@@ -3543,7 +3561,12 @@ class ControlPlane:
         requested_health: Optional[str],
         resources: Dict[str, Any],
     ) -> Optional[str]:
-        if not self._startup_self_test_degrades_health(resources):
+        deployment = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
+        deployment_degraded = isinstance(deployment, dict) and deployment.get("state") in {
+            DEPLOYMENT_UNAVAILABLE,
+            DEPLOYMENT_QUARANTINED,
+        }
+        if not self._startup_self_test_degrades_health(resources) and not deployment_degraded:
             return requested_health
         if requested_health is None:
             return (
@@ -16678,6 +16701,14 @@ class ControlPlane:
             row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if row is None:
                 raise NotFoundError("agent not found: %s" % agent_id)
+            if changed.rowcount == 1:
+                self._adopt_deployment_quarantine_hold_in_transaction(
+                    conn,
+                    agent_id,
+                    hold_reason=reason,
+                    now=now,
+                )
+                row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(row)
             # Whether this caller acquired/replaced the hold or merely lost a
             # CAS to another hold owner, dispatch_hold implies zero active
@@ -16717,6 +16748,14 @@ class ControlPlane:
             row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if row is None:
                 raise NotFoundError("agent not found: %s" % agent_id)
+            if released.rowcount == 1:
+                self._release_deployment_quarantine_in_transaction(
+                    conn,
+                    agent_id,
+                    expected_hold_reason=reason,
+                    now=now,
+                )
+                row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(row)
         return released.rowcount == 1, agent
 
@@ -17267,6 +17306,12 @@ class ControlPlane:
                 "UPDATE agents SET dispatch_hold = 0, dispatch_hold_reason = NULL, dispatch_hold_at = NULL, updated_at = ? WHERE id = ?",
                 (now, agent_id),
             )
+            self._release_deployment_quarantine_in_transaction(
+                conn,
+                agent_id,
+                expected_hold_reason=None,
+                now=now,
+            )
         agent = self.get_agent(agent_id)
         self.agentbus_broadcast.publish_system("agent.resumed.v1", payload={"agent_id": agent_id})
         return agent
@@ -17315,6 +17360,11 @@ class ControlPlane:
             agent_row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(agent_row)
             if not agent.deleted_at:
+                # Epoch membership is a durable identity pin. This check is
+                # made after acquiring the same agent-row fence used by epoch
+                # open, so deletion cannot revoke a cohort's credentials via
+                # a stale pre-check race.
+                self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
                 active_lease = conn.execute(
                     """
                     SELECT 1 FROM leases l
@@ -19097,22 +19147,19 @@ class ControlPlane:
                 continue
             if self._agent_has_active_lease(agent.id):
                 continue
-            if (
-                self.store.query_one(
-                    """
-                SELECT 1
-                FROM fleet_release_epoch_agents AS member
-                JOIN fleet_release_epochs AS epoch
-                  ON epoch.epoch_id = member.epoch_id
-                WHERE member.agent_id = ?
-                  AND member.open_state = 1
-                  AND epoch.state IN ('open', 'proved')
-                LIMIT 1
-                """,
-                    (agent.id,),
-                )
-                is not None
-            ):
+            if self._mark_epoch_member_deployment_unavailable(agent, ttl=ttl, now=now):
+                continue
+            try:
+                self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
+            except ValidationError as exc:
+                # Epoch open and expiry share the agent-row fence. If the
+                # epoch won after candidate selection, re-project the reserved
+                # identity instead of failing the whole hub tick.
+                if "reserved by an open fleet release epoch" not in str(exc):
+                    raise
+                refreshed = self.get_agent(agent.id)
+                if not self._mark_epoch_member_deployment_unavailable(refreshed, ttl=ttl, now=now):
+                    raise
                 continue
             self.store.execute(
                 """
@@ -19128,7 +19175,6 @@ class ControlPlane:
                     AgentBusStreamStatus.OPEN.value,
                 ),
             )
-            self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
             self.record_log(
                 "agent.ephemeral.expired",
                 layer="control_plane",
@@ -19143,6 +19189,171 @@ class ControlPlane:
             )
             expired.append(self.get_agent(agent.id))
         return expired
+
+    def _mark_epoch_member_deployment_unavailable(
+        self,
+        agent: Agent,
+        *,
+        ttl: int,
+        now: str,
+    ) -> bool:
+        """Retain a stale release participant and expose its deployment state."""
+
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
+                (agent.id,),
+            )
+            if locked.rowcount != 1:
+                return False
+            row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent.id,)).fetchone()
+            resources = ensure_json_object(json_loads(row["resources"], {}))
+            previous = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
+            membership = None
+            if (
+                isinstance(previous, dict)
+                and previous.get("schema") == DEPLOYMENT_AVAILABILITY_SCHEMA
+                and previous.get("state") == DEPLOYMENT_QUARANTINED
+                and previous.get("hold_reason") == row["dispatch_hold_reason"]
+            ):
+                membership = conn.execute(
+                    """
+                    SELECT p.epoch_id, p.epoch_hold_reason, p.open_state, e.state
+                    FROM fleet_release_epoch_agents p
+                    JOIN fleet_release_epochs e ON e.epoch_id = p.epoch_id
+                    WHERE p.agent_id = ? AND p.epoch_id = ? AND e.state = 'aborted'
+                    """,
+                    (agent.id, previous.get("epoch_id")),
+                ).fetchone()
+            if membership is None:
+                membership = conn.execute(
+                    """
+                    SELECT p.epoch_id, p.epoch_hold_reason, p.open_state, e.state
+                    FROM fleet_release_epoch_agents p
+                    JOIN fleet_release_epochs e ON e.epoch_id = p.epoch_id
+                    WHERE p.agent_id = ?
+                      AND (
+                        (p.open_state = 1 AND e.state IN ('open', 'proved'))
+                        OR (e.state = 'aborted' AND p.epoch_hold_reason = ?)
+                      )
+                    ORDER BY p.created_at DESC, p.epoch_id DESC
+                    LIMIT 1
+                    """,
+                    (agent.id, row["dispatch_hold_reason"]),
+                ).fetchone()
+            if membership is None:
+                return False
+            state = (
+                DEPLOYMENT_UNAVAILABLE
+                if int(membership["open_state"] or 0) == 1
+                else DEPLOYMENT_QUARANTINED
+            )
+            same_projection = bool(
+                isinstance(previous, dict)
+                and previous.get("schema") == DEPLOYMENT_AVAILABILITY_SCHEMA
+                and previous.get("state") == state
+                and previous.get("epoch_id") == membership["epoch_id"]
+            )
+            marker = (
+                previous
+                if same_projection
+                else {
+                    "schema": DEPLOYMENT_AVAILABILITY_SCHEMA,
+                    "state": state,
+                    "epoch_id": str(membership["epoch_id"]),
+                    "reason": "heartbeat_ttl_expired",
+                    "observed_at": now,
+                    "last_seen_at": agent.last_seen_at,
+                    "ttl_seconds": ttl,
+                    "hold_reason": row["dispatch_hold_reason"],
+                }
+            )
+            resources[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = marker
+            conn.execute(
+                "UPDATE agents SET status = ?, health_status = ?, "
+                "current_task_id = NULL, resources = ?, updated_at = ? WHERE id = ?",
+                (
+                    AgentStatus.OFFLINE.value,
+                    HealthStatus.DEGRADED.value,
+                    json_dumps(resources),
+                    now,
+                    agent.id,
+                ),
+            )
+            if not same_projection:
+                self._record_agent_lifecycle_event(
+                    conn,
+                    agent.id,
+                    "agent.fleet_release_epoch.%s" % state,
+                    "hub-ephemeral-expiry",
+                    dict(marker),
+                    now,
+                )
+        return True
+
+    def _release_deployment_quarantine_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        *,
+        expected_hold_reason: Optional[str],
+        now: str,
+    ) -> None:
+        row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        if row is None:
+            return
+        resources = ensure_json_object(json_loads(row["resources"], {}))
+        marker = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
+        if not isinstance(marker, dict) or marker.get("state") != DEPLOYMENT_QUARANTINED:
+            return
+        if expected_hold_reason is not None and marker.get("hold_reason") != expected_hold_reason:
+            return
+        resources.pop(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY, None)
+        conn.execute(
+            "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(resources), now, agent_id),
+        )
+        self._record_agent_lifecycle_event(
+            conn,
+            agent_id,
+            "agent.fleet_release_epoch.deployment_quarantine_released",
+            "human",
+            {
+                "agent_id": agent_id,
+                "epoch_id": marker.get("epoch_id"),
+                "hold_reason": marker.get("hold_reason"),
+            },
+            now,
+        )
+
+    def _adopt_deployment_quarantine_hold_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        *,
+        hold_reason: str,
+        now: str,
+    ) -> None:
+        """Keep a quarantined identity pinned when a newer hold supersedes it."""
+
+        row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        if row is None:
+            return
+        resources = ensure_json_object(json_loads(row["resources"], {}))
+        marker = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
+        if not isinstance(marker, dict) or marker.get("state") != DEPLOYMENT_QUARANTINED:
+            return
+        if marker.get("hold_reason") == hold_reason:
+            return
+        resources[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = {
+            **marker,
+            "hold_reason": hold_reason,
+            "hold_adopted_at": now,
+        }
+        conn.execute(
+            "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(resources), now, agent_id),
+        )
 
     def deregister_agent(
         self,

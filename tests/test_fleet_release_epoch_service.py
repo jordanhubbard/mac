@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import timedelta
 from pathlib import Path
 import threading
 
@@ -24,6 +25,7 @@ from mac.models import (
     read_only_report_repository_executor_approval,
     read_only_report_repository_executor_attestation,
     read_only_report_repository_executor_resource,
+    parse_time,
     utcnow,
 )
 from mac.services import ControlPlane, sign_verification_manifest
@@ -312,6 +314,100 @@ def _proof_item(
     }
 
 
+def test_heartbeat_ttl_pins_epoch_identity_until_explicit_quarantine_release(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    cp.update_agent("agent_alpha", instance_kind="fungible")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    baseline = cp.get_agent("agent_alpha").last_seen_at
+    epoch_id = "epoch-ttl-identity-pin"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation="generation-next",
+                baseline_seen=baseline,
+                candidate_key=None,
+            )
+        ],
+    )
+    stale = (parse_time(utcnow()) - timedelta(hours=2)).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
+        (stale, "agent_alpha"),
+    )
+
+    assert cp.expire_ephemeral_agents() == []
+    retained = cp.get_agent("agent_alpha")
+    assert retained.deleted_at is None
+    assert retained.status == "offline"
+    assert retained.health_status == "degraded"
+    marker = retained.resources["deployment_availability"]
+    assert marker == {
+        "schema": "mac.deployment_availability.v1",
+        "state": "deployment_unavailable",
+        "epoch_id": epoch_id,
+        "reason": "heartbeat_ttl_expired",
+        "observed_at": marker["observed_at"],
+        "last_seen_at": stale,
+        "ttl_seconds": cp.FUNGIBLE_DEFAULT_TTL_SECONDS,
+        "hold_reason": opened["agents"][0]["epoch_hold_reason"],
+    }
+    with pytest.raises(ValidationError, match="reserved by an open fleet release epoch"):
+        cp.delete_agent("agent_alpha")
+
+    # A worker inventory refresh cannot forge away hub-owned deployment state,
+    # nor can it report healthy while the epoch still owns the outage.
+    heartbeating = cp.heartbeat_agent(
+        "agent_alpha",
+        status="idle",
+        health_status="healthy",
+        resources={"capacity": 1},
+    )
+    assert heartbeating.resources["deployment_availability"] == marker
+    assert heartbeating.health_status == "degraded"
+
+    cp.fleet_release_epochs.abort(
+        epoch_id,
+        opened["identity_sha256"],
+        reason="worker unavailable during release",
+    )
+    quarantined = cp.get_agent("agent_alpha")
+    quarantine = quarantined.resources["deployment_availability"]
+    assert quarantine["state"] == "deployment_quarantined"
+    assert quarantine["hold_reason"] == quarantined.dispatch_hold_reason
+
+    replaced, quarantined = cp.acquire_agent_dispatch_hold(
+        "agent_alpha",
+        "operator: inspect unavailable release member",
+        expected_dispatch_hold=True,
+        expected_reason=quarantined.dispatch_hold_reason,
+    )
+    assert replaced is True
+    assert (
+        quarantined.resources["deployment_availability"]["hold_reason"]
+        == quarantined.dispatch_hold_reason
+    )
+
+    cp.store.execute(
+        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
+        (stale, "agent_alpha"),
+    )
+    assert cp.expire_ephemeral_agents() == []
+    assert cp.get_agent("agent_alpha").deleted_at is None
+
+    released, _agent = cp.release_agent_dispatch_hold(
+        "agent_alpha", quarantined.dispatch_hold_reason
+    )
+    assert released is True
+    assert "deployment_availability" not in cp.get_agent("agent_alpha").resources
+    assert [item.id for item in cp.expire_ephemeral_agents()] == ["agent_alpha"]
+    assert cp.get_agent("agent_alpha").deleted_at is not None
+
+
 def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> None:
     cp = _plane(tmp_path / "mac.db")
     old = _bootstrap_active(cp, "agent_alpha", tmp_path)
@@ -545,6 +641,13 @@ def test_open_epoch_pins_fungible_participant_against_ttl_expiry(tmp_path: Path)
         opened["identity_sha256"],
         reason="test completed",
     )
+    # Abort explicitly quarantines an unavailable participant.  Merely ending
+    # the epoch is not authority for the TTL sweeper to destroy its identity.
+    assert cp.expire_ephemeral_agents() == []
+    quarantined = cp.get_agent("agent_alpha")
+    assert quarantined.resources["deployment_availability"]["state"] == ("deployment_quarantined")
+    released, _ = cp.release_agent_dispatch_hold("agent_alpha", quarantined.dispatch_hold_reason)
+    assert released is True
     expired = cp.expire_ephemeral_agents()
     assert [agent.id for agent in expired] == ["agent_alpha"]
     assert cp.get_agent("agent_alpha").deleted_at is not None

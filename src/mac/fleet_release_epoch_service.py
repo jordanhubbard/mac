@@ -1632,6 +1632,63 @@ class FleetReleaseEpochService:
         )
         self.control_plane._record_agent_lifecycle_event(conn, agent_id, event, actor, detail, now)
 
+    def _transition_deployment_availability(
+        self,
+        conn: Any,
+        *,
+        agent_id: str,
+        epoch_id: str,
+        state: Optional[str],
+        actor: str,
+        now: str,
+    ) -> None:
+        """Release or quarantine a TTL-pinned participant explicitly."""
+
+        row = conn.execute(
+            "SELECT resources, dispatch_hold_reason FROM agents WHERE id = ?",
+            (agent_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError("agent not found: %s" % agent_id)
+        resources = ensure_json_object(json_loads(row["resources"], {}))
+        marker = resources.get("deployment_availability")
+        if (
+            not isinstance(marker, dict)
+            or marker.get("schema") != "mac.deployment_availability.v1"
+            or marker.get("epoch_id") != epoch_id
+        ):
+            return
+        if state is None:
+            resources.pop("deployment_availability", None)
+            event_type = "agent.fleet_release_epoch.deployment_released"
+            detail = {
+                "agent_id": agent_id,
+                "epoch_id": epoch_id,
+                "previous_state": marker.get("state"),
+            }
+        else:
+            marker = {
+                **marker,
+                "state": state,
+                "quarantined_at": now,
+                "hold_reason": row["dispatch_hold_reason"],
+            }
+            resources["deployment_availability"] = marker
+            event_type = "agent.fleet_release_epoch.deployment_quarantined"
+            detail = dict(marker)
+        conn.execute(
+            "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(resources), now, agent_id),
+        )
+        self.control_plane._record_agent_lifecycle_event(
+            conn,
+            agent_id,
+            event_type,
+            actor,
+            detail,
+            now,
+        )
+
     def commit(
         self,
         epoch_id: str,
@@ -1773,6 +1830,14 @@ class FleetReleaseEpochService:
                         "updated_at = ? WHERE id = ?",
                         (successor, now, now, agent_id),
                     )
+                self._transition_deployment_availability(
+                    conn,
+                    agent_id=agent_id,
+                    epoch_id=epoch_id,
+                    state=None,
+                    actor=actor_value,
+                    now=now,
+                )
                 self.control_plane._record_agent_lifecycle_event(
                     conn,
                     agent_id,
@@ -2001,6 +2066,14 @@ class FleetReleaseEpochService:
                             agent_id,
                         ),
                     )
+                self._transition_deployment_availability(
+                    conn,
+                    agent_id=agent_id,
+                    epoch_id=epoch_id,
+                    state="deployment_quarantined",
+                    actor=actor_value,
+                    now=now,
+                )
                 self.control_plane._record_agent_lifecycle_event(
                     conn,
                     agent_id,
