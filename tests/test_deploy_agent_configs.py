@@ -1980,6 +1980,17 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
         ),
         environ={},
     )
+    direct_nonmesh_spoke_env = build_mac_env(
+        {},
+        deploy_env_config(
+            tmp_path,
+            agent="spoke",
+            hub_agent="hub",
+            hub_url="http://private-hub.example:8789/",
+            network_provider="none",
+        ),
+        environ={"MAC_DEPLOY_DIRECT_HUB": "1"},
+    )
 
     assert 'network_provider = text_field(network.get("provider"))' in script
     assert "network.provider must be tailscale, headscale, or none" in script
@@ -2007,6 +2018,7 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     assert hub_env["MAC_HUB_URL"] == "http://127.0.0.1:8789"
     assert mesh_spoke_env["MAC_HUB_URL"] == "http://mesh-hub.example:8789"
     assert tunnel_spoke_env["MAC_HUB_URL"] == "http://127.0.0.1:18789"
+    assert direct_nonmesh_spoke_env["MAC_HUB_URL"] == "http://private-hub.example:8789"
     assert (
         '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]' in script
     )
