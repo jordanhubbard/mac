@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
+import platform
 import re
 import subprocess
 import time
@@ -51,59 +52,110 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _process_identity(pid: int) -> Tuple[str, str]:
-    """Return (state, identity) for a PID without treating EPERM as liveness.
-
-    Linux's boot id plus proc start time is stable for one process incarnation,
-    unlike a PID. ``state`` is present, absent, or unknown; callers must fail
-    closed on unknown.
-    """
-
+def _probe_pid(pid: int, *, kill: Callable[[int, int], None] = os.kill) -> str:
+    """Return present, absent, or unknown without confusing EPERM with absence."""
     if pid <= 0:
-        return "absent", ""
+        return "absent"
     try:
-        os.kill(pid, 0)
+        kill(pid, 0)
     except ProcessLookupError:
-        return "absent", ""
+        return "absent"
     except PermissionError:
-        return "unknown", ""
+        return "unknown"
+    return "present"
+
+
+def _linux_process_identity(
+    pid: int,
+    *,
+    proc_root: str = "/proc",
+    kill: Callable[[int, int], None] = os.kill,
+) -> Tuple[str, str]:
+    """Return Linux boot-id plus proc start ticks for one PID incarnation."""
+
+    state = _probe_pid(pid, kill=kill)
+    if state != "present":
+        return state, ""
     try:
-        boot_id = open("/proc/sys/kernel/random/boot_id", encoding="ascii").read().strip()
-        stat = open("/proc/%d/stat" % pid, encoding="ascii").read()
+        with open(os.path.join(proc_root, "sys/kernel/random/boot_id"), encoding="ascii") as handle:
+            boot_id = handle.read().strip()
+        with open(os.path.join(proc_root, str(pid), "stat"), encoding="ascii") as handle:
+            stat = handle.read()
         # comm may contain spaces and parentheses, so split only after its final ')'.
         start_time = stat[stat.rfind(")") + 2 :].split()[19]
     except (OSError, IndexError):
-        # macOS has no procfs. Its boot timestamp plus the process start time
-        # provides the same PID-reuse fence. Hash the command output so label
-        # values are compact, whitespace-free, and reveal no host metadata.
-        try:
-            boot = subprocess.run(
-                ["/usr/sbin/sysctl", "-n", "kern.boottime"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            started = subprocess.run(
-                ["/bin/ps", "-o", "lstart=", "-p", str(pid)],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return "unknown", ""
-        if boot.returncode != 0 or started.returncode != 0:
-            return "unknown", ""
-        boot_raw = boot.stdout.strip()
-        started_raw = started.stdout.strip()
-        if not boot_raw or not started_raw:
-            return "unknown", ""
-        boot_id = hashlib.sha256(boot_raw.encode()).hexdigest()
-        start_time = hashlib.sha256(started_raw.encode()).hexdigest()
+        # The process may have exited between the liveness probe and /proc reads.
+        # Prove that transition when possible; every other failure is unknown.
+        if _probe_pid(pid, kill=kill) == "absent":
+            return "absent", ""
+        return "unknown", ""
     if not boot_id or not start_time:
         return "unknown", ""
     return "present", "%s:%s" % (boot_id, start_time)
+
+
+def _identity_digest(prefix: str, value: str) -> str:
+    return "%s-%s" % (prefix, hashlib.sha256(value.encode("utf-8")).hexdigest())
+
+
+def _darwin_process_identity(
+    pid: int,
+    *,
+    kill: Callable[[int, int], None] = os.kill,
+    run: Callable[..., Any] = subprocess.run,
+) -> Tuple[str, str]:
+    """Return a bounded Darwin boot/start identity using stable OS interfaces.
+
+    Darwin has no procfs. ``sysctl kern.boottime`` identifies the boot and
+    ``ps lstart`` identifies the process incarnation. Commands are bounded and
+    their output is digested before it becomes an OpenShell label.
+    """
+
+    state = _probe_pid(pid, kill=kill)
+    if state != "present":
+        return state, ""
+    try:
+        boot = run(
+            ["/usr/sbin/sysctl", "-n", "kern.boottime"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        started = run(
+            ["/bin/ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ("absent", "") if _probe_pid(pid, kill=kill) == "absent" else ("unknown", "")
+    boot_value = str(boot.stdout or "").strip() if boot.returncode == 0 else ""
+    start_value = str(started.stdout or "").strip() if started.returncode == 0 else ""
+    if not boot_value or not start_value:
+        return ("absent", "") if _probe_pid(pid, kill=kill) == "absent" else ("unknown", "")
+    return (
+        "present",
+        "%s:%s" % (_identity_digest("darwin", boot_value), _identity_digest("start", start_value)),
+    )
+
+
+def _process_identity(pid: int, *, system_name: Optional[str] = None) -> Tuple[str, str]:
+    """Return a portable process-incarnation identity.
+
+    ``state`` is ``present``, ``absent``, or ``unknown``. Unknown is a normal,
+    explicit result: creators may continue with conservative labels and reapers
+    must preserve a live or ambiguous owner.
+    """
+
+    system = (system_name or platform.system()).strip().lower()
+    if system == "linux":
+        return _linux_process_identity(pid)
+    if system == "darwin":
+        return _darwin_process_identity(pid)
+    state = _probe_pid(pid)
+    return ("absent", "") if state == "absent" else ("unknown", "")
 
 
 def stale_sandbox_candidates(

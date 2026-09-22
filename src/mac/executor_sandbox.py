@@ -1022,7 +1022,12 @@ def _sandbox_identity_labels() -> List[str]:
     return labels
 
 
-def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
+def _sandbox_label_argv(
+    kind: str,
+    *,
+    keep: bool = False,
+    process_identity: Optional[Callable[[int], Tuple[str, str]]] = None,
+) -> List[str]:
     # Repository sandboxes carry the only copy of sandbox-local clean commits
     # until harvest creates a durable host bundle. Mark them protected from the
     # stale/dead-PID/lease reapers even when the operator did not request debug
@@ -1038,11 +1043,8 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
     from .openshell_sandbox_gc import _process_identity
 
     pid = os.getpid()
-    state, identity = _process_identity(pid)
-    if state != "present" or ":" not in identity:
-        raise RuntimeError("cannot establish OpenShell creator process identity")
-    boot_id, pid_start = identity.split(":", 1)
-    return [
+    state, identity = (process_identity or _process_identity)(pid)
+    labels = [
         "--label",
         "mac.owner=mac",
         "--label",
@@ -1050,12 +1052,22 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
         "--label",
         "mac.pid=%d" % pid,
         "--label",
-        "mac.pid.start=%s" % pid_start,
-        "--label",
-        "mac.boot.id=%s" % boot_id,
+        "mac.pid.identity=%s" % ("verified" if state == "present" else state),
         "--label",
         "mac.keep=%s" % ("true" if keep or repository_wip_guard else "false"),
-    ] + _sandbox_identity_labels()
+    ]
+    # Process identity strengthens PID reuse detection, but its temporary
+    # unavailability must not prevent unrelated sandbox creation. Omitting the
+    # pair makes the reaper preserve any live/reused PID, which is fail-closed.
+    if state == "present" and ":" in identity:
+        boot_id, pid_start = identity.split(":", 1)
+        labels += [
+            "--label",
+            "mac.pid.start=%s" % pid_start,
+            "--label",
+            "mac.boot.id=%s" % boot_id,
+        ]
+    return labels + _sandbox_identity_labels()
 
 
 def _sandbox_gc_best_effort() -> None:
