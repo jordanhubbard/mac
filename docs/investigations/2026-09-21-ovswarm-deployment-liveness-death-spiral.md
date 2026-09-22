@@ -2,7 +2,7 @@
 
 Status: recovery incomplete at the evidence cutoff. The durable cohort journal and dispatch holds remain authoritative. This report does not claim that the fleet is recovered, release-qualified, or serving work.
 
-Source under investigation: `7f3bbd12a0badb4f4812749bd682476ed85bb3ce`.
+Source under investigation: `2944aebb4e900a28c553d1860abf7c2b9671b06a` plus the retained deployment journal for that revision.
 
 ## Executive summary
 
@@ -42,6 +42,10 @@ The exact wall-clock timestamps remain in the deployment logs and journal; this 
 9. During these long stopped intervals, the hub's fungible-agent expiry policy could tombstone workers silent for its default 3,600-second TTL because deployment-epoch participation is not an expiry exemption.
 10. A later recovery operation made a direct SSH connection to the hub at `10.57.228.137`; one connection attempt timed out.
 11. Recovery returned failure before the journal could record every node as recovered. The journal and holds were retained for adoption by the next controller.
+12. The hub and worker1 were upgraded to `2944aebb`; worker1 passed the complete release-readiness proof with a direct runtime hub URL.
+13. Worker2 installed the same revision but could not authenticate: the one-hour TTL had tombstoned its registry identity while the epoch remained open, so its newly installed bearer was rejected as unknown.
+14. Recovery first returned HTTP 404 because abort tried to lock participant rows already deleted by TTL. Re-registering those exact installed identities under superseding operator holds advanced recovery.
+15. Recovery then rejected the changed principal set even for workers that had never installed their candidate credential. That exactness protected no node-side identity and made TTL cleanup a permanent global lock.
 
 ## Trigger versus root cause
 
@@ -153,6 +157,9 @@ Generated state remains exact: one canonical `mac.env` rendering, one revision-m
 - Journal-idempotent SSH operations do not retry bounded transient failures.
 - There is no preflight comparison between worst-case operation duration and liveness/credential budgets.
 - Error evidence does not name the exact contradictory identity surfaces.
+- The controller can prove a direct hub route and still generate a worker runtime that points at a stopped localhost tunnel. `2944aebb` fixes that observed divergence, but the duplicate route authorities remain architectural debt.
+- Artifact fetches and OpenShell installation still occur after service quiescence, extending the stopped window with avoidable network work.
+- Recovery cannot tolerate registry/principal loss for untouched epoch participants even when an exact superseding hold prevents dispatch.
 
 ## Corrective and preventive actions
 
@@ -163,6 +170,9 @@ Generated state remains exact: one canonical `mac.env` rendering, one revision-m
 3. **Pin live epoch members against expiry.** Record a durable deployment-epoch membership lease in the hub. `expire_ephemeral_agents` must skip an exact active member until the epoch is terminal, while continuing to tombstone unrelated silent fungible agents.
 4. **Retry idempotent recovery transport.** Add bounded exponential backoff for hub and node SSH operations whose operation ID, endpoint identity, and deployment lock make replay safe. Revalidate route identity and fence before every attempt. Endpoint changes remain a hard stop.
 5. **Recover and prove the current epoch before release.** Adopt the retained journal through the normal typed deployment entry point, reach a terminal journal state, account for every retained hold, and independently verify all registered workers before any canary release.
+6. **Make abort monotonic for untouched participants.** If a candidate credential was never installed, registry cleanup may remove or revoke its hub-side principals without blocking epoch abort. Installed credentials retain exact continuity checks. Superseding holds and absence of active claims remain mandatory.
+7. **Move every artifact fetch before quiescence.** The stopped phase may consume only locally verified immutable artifacts. Any network fetch after service stop is a protocol defect.
+8. **Use one authoritative hub-route artifact.** Selection, generated runtime configuration, readiness proof, and recovery must consume the same signed route decision; remove independent localhost/direct rewrites.
 
 ### P1 — remove the fleet-size liveness amplifier
 
