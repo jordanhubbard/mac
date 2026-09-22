@@ -3544,6 +3544,53 @@ def test_worker_publishes_matching_sandbox_route_verification(
     assert "secret-not-reported" not in json.dumps(resources)
 
 
+def test_worker_keeps_completed_coding_route_proof_visible_during_refresh(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A scheduled refresh must not advertise a healthy route as absent."""
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("worker-host")
+    agent = cp.register_agent(machine.id, "worker", resources={})
+    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    completed = {
+        "schema": "mac.coding_agent.verifications.v1",
+        "agent": "codex",
+        "verified": True,
+        "checked_at": "2026-09-22T00:00:00+00:00",
+        "failure_class": "",
+        "reports": {
+            "codex": {
+                "schema": "mac.coding_agent.verification.v1",
+                "agent": "codex",
+                "verified": True,
+                "returncode": 0,
+            }
+        },
+    }
+    worker._coding_route_report = completed
+    worker._coding_route_report_dirty = False
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_refresh():
+        started.set()
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(worker, "_probe_coding_route", blocked_refresh)
+    worker._maybe_start_coding_route_probe()
+    assert started.wait(timeout=1)
+    try:
+        assert worker._coding_route_report == completed
+        assert worker._coding_route_report_dirty is False
+    finally:
+        release.set()
+        assert worker._coding_route_probe_thread is not None
+        worker._coding_route_probe_thread.join(timeout=1)
+
+
 def test_worker_verifies_darwin_host_route_without_openshell(
     tmp_path: Path,
     monkeypatch,
