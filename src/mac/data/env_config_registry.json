@@ -12946,6 +12946,28 @@
     "type": "int"
   },
   {
+    "default": "15",
+    "description": "Semantic Retry setting: semantic retry base seconds.",
+    "family": "semantic-retry",
+    "name": "MAC_SEMANTIC_RETRY_BASE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/review_service.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": "300",
+    "description": "Semantic Retry setting: semantic retry cap seconds.",
+    "family": "semantic-retry",
+    "name": "MAC_SEMANTIC_RETRY_CAP_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/review_service.py"
+    ],
+    "type": "int"
+  },
+  {
     "default": null,
     "description": "Core setting: service name.",
     "family": "core",

@@ -22,6 +22,10 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 ACCEPTANCE_SCHEMA = "mac.acceptance_check.v1"
 ACCEPTANCE_RESULT_SCHEMA = "mac.acceptance_result.v1"
+FAILURE_NONE = "none"
+FAILURE_SEMANTIC_WORK = "semantic_work_failure"
+FAILURE_CONFIGURATION = "acceptance_configuration_invalid"
+FAILURE_VERIFIER_UNAVAILABLE = "verifier_unavailable"
 VERIFIER_ID = "mac.canonical_json_sha256.v1"
 _CANARY_MARKER = "MAC_" + "CANARY_RESULT="
 _VERIFIER_CONTRACT = (
@@ -198,6 +202,46 @@ def _schema_problems(value: Any, schema: Any, path: str) -> List[str]:
     return problems
 
 
+def _schema_configuration_problems(schema: Any, path: str) -> List[str]:
+    """Return defects in a verifier's declared schema, not in its input.
+
+    A malformed acceptance contract is an operator defect.  Keeping this
+    separate from ``_schema_problems`` prevents a bad schema from looking like
+    executor work that another model should retry.
+    """
+    if not isinstance(schema, Mapping):
+        return ["%s schema must be an object" % path]
+    problems: List[str] = []
+    expected_type = schema.get("type")
+    if expected_type is not None and str(expected_type) not in {
+        "object",
+        "array",
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "null",
+    }:
+        problems.append("%s schema has unsupported type %s" % (path, expected_type))
+    if "enum" in schema and not isinstance(schema.get("enum"), list):
+        problems.append("%s schema.enum must be a list" % path)
+    if schema.get("pattern") is not None:
+        try:
+            re.compile(str(schema["pattern"]))
+        except re.error:
+            problems.append("%s schema pattern is invalid" % path)
+    required = schema.get("required", [])
+    if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+        problems.append("%s schema.required must be a string list" % path)
+    properties = schema.get("properties", {})
+    if not isinstance(properties, Mapping):
+        problems.append("%s schema.properties must be an object" % path)
+    else:
+        for key, child in properties.items():
+            problems.extend(_schema_configuration_problems(child, "%s.%s" % (path, key)))
+    return problems
+
+
 def evaluate_acceptance(metadata: Any, executor_manifest: Any) -> Dict[str, Any]:
     """Evaluate semantic acceptance and return a deterministic signed payload."""
     required, contract = acceptance_contract(metadata)
@@ -205,19 +249,23 @@ def evaluate_acceptance(metadata: Any, executor_manifest: Any) -> Dict[str, Any]
         "schema": ACCEPTANCE_RESULT_SCHEMA,
         "required": required,
         "status": "not_required" if not required else "fail",
+        "failure_class": FAILURE_NONE,
         "problems": [],
     }
     if not required:
         return base
     if contract is None:
+        base["failure_class"] = FAILURE_CONFIGURATION
         base["problems"] = ["mandatory acceptance_check is absent"]
         return base
     base["contract_digest"] = canonical_digest(contract)
     if contract.get("schema") != ACCEPTANCE_SCHEMA:
+        base["failure_class"] = FAILURE_CONFIGURATION
         base["problems"] = ["acceptance_check schema mismatch"]
         return base
     verifier = contract.get("verifier")
     if not isinstance(verifier, Mapping):
+        base["failure_class"] = FAILURE_CONFIGURATION
         base["problems"] = ["acceptance verifier is absent"]
         return base
     base["verifier"] = {"id": verifier.get("id"), "digest": verifier.get("digest")}
@@ -227,15 +275,30 @@ def evaluate_acceptance(metadata: Any, executor_manifest: Any) -> Dict[str, Any]
     }
     verifier_id = str(verifier.get("id") or "")
     if known_verifiers.get(verifier_id) != verifier.get("digest"):
+        base["failure_class"] = FAILURE_VERIFIER_UNAVAILABLE
         base["problems"] = ["acceptance verifier is unavailable or its version drifted"]
         return base
     input_spec = contract.get("input")
     if not isinstance(input_spec, Mapping) or input_spec.get("source") != "executor_manifest":
+        base["failure_class"] = FAILURE_CONFIGURATION
         base["problems"] = ["acceptance input source must be executor_manifest"]
+        return base
+    contract_problems = _schema_configuration_problems(
+        contract.get("input_schema"), "input"
+    ) + _schema_configuration_problems(contract.get("output_schema"), "output")
+    expected = contract.get("expected_output")
+    if not contract_problems:
+        contract_problems.extend(
+            _schema_problems(expected, contract.get("output_schema"), "expected_output")
+        )
+    if contract_problems:
+        base["failure_class"] = FAILURE_CONFIGURATION
+        base["problems"] = contract_problems
         return base
     pointer = str(input_spec.get("pointer") or "")
     present, value = _pointer(executor_manifest, pointer)
     if not present:
+        base["failure_class"] = FAILURE_SEMANTIC_WORK
         base["problems"] = ["acceptance input is absent at %s" % pointer]
         return base
     problems = _schema_problems(value, contract.get("input_schema"), "input")
@@ -272,8 +335,6 @@ def evaluate_acceptance(metadata: Any, executor_manifest: Any) -> Dict[str, Any]
     else:
         actual_output = {"digest": canonical_digest(value)}
     problems.extend(_schema_problems(actual_output, contract.get("output_schema"), "output"))
-    expected = contract.get("expected_output")
-    problems.extend(_schema_problems(expected, contract.get("output_schema"), "expected_output"))
     base["input_digest"] = canonical_digest(value)
     base["actual_output"] = actual_output
     base["expected_output"] = expected
@@ -281,6 +342,7 @@ def evaluate_acceptance(metadata: Any, executor_manifest: Any) -> Dict[str, Any]
         problems.append("acceptance output does not equal expected_output")
     base["problems"] = problems
     base["status"] = "pass" if not problems else "fail"
+    base["failure_class"] = FAILURE_NONE if not problems else FAILURE_SEMANTIC_WORK
     return base
 
 
