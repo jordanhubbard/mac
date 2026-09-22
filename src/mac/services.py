@@ -73,6 +73,7 @@ from mac.repository_contract import (
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
+from mac.semantic_acceptance import acceptance_result_problems, evaluate_acceptance
 from mac.task_dependencies import (
     dependency_cycle_path,
     lock_dependency_nodes,
@@ -29536,6 +29537,33 @@ class ControlPlane:
                     "verdict %s cannot resolve executor verification manifest" % evidence.id
                 )
                 continue
+            if str(manifest.get("verdict") or "").strip().lower() == "approved":
+                replayed_acceptance = evaluate_acceptance(
+                    reviewed_task.metadata,
+                    executor_manifest,
+                )
+                if replayed_acceptance.get("required"):
+                    semantic_problems = acceptance_result_problems(
+                        replayed_acceptance,
+                        manifest.get("acceptance"),
+                    )
+                    if semantic_problems:
+                        problems.extend(
+                            "verdict %s %s" % (evidence.id, problem)
+                            for problem in semantic_problems
+                        )
+                        continue
+                    review_status = manifest.get("review_status")
+                    if (
+                        not isinstance(review_status, dict)
+                        or review_status.get("structural") != "pass"
+                        or review_status.get("semantic") != "pass"
+                    ):
+                        problems.append(
+                            "verdict %s must expose passing structural and semantic review status"
+                            % evidence.id
+                        )
+                        continue
             if self._read_only_report_needs_hub_verify(reviewed_task, executor_evidence):
                 info = self._hub_verify_repo_info(reviewed_task, executor_evidence)
                 tests = manifest.get("tests")
@@ -29919,6 +29947,9 @@ class ControlPlane:
             ensure_json_object(executor_evidence.metadata).get("verification")
         )
         repo = ensure_json_object(executor_manifest.get("repo"))
+        acceptance = evaluate_acceptance(task.metadata, executor_manifest)
+        acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
+        verdict = "approved" if acceptance_pass else "rejected"
         digest = str(executor_manifest.get("worktree_digest") or "").strip()
         if not digest.startswith("sha256:"):
             digest = "sha256:%s" % hashlib.sha256(executor_evidence.id.encode()).hexdigest()
@@ -29926,7 +29957,7 @@ class ControlPlane:
             "schema": VERIFICATION_SCHEMA,
             "status": "complete",
             "evidence_type": "review_verdict",
-            "verdict": "approved",
+            "verdict": verdict,
             "review_id": review.id,
             "reviewed_evidence_id": executor_evidence.id,
             "worktree_digest": digest,
@@ -29938,14 +29969,27 @@ class ControlPlane:
                 "provider": "hub",
             },
             "summary": (
-                "semantic reviewer removed; executor evidence satisfied the verification contract"
+                "semantic reviewer removed; structural and task acceptance contracts passed"
+                if acceptance_pass
+                else "task semantic acceptance failed: %s"
+                % "; ".join(str(problem) for problem in acceptance.get("problems", []))
             ),
+            "review_status": {
+                "structural": "pass",
+                "semantic": "pass" if acceptance_pass else "fail",
+            },
+            "acceptance": acceptance,
             "checks": [
                 {
                     "name": "executor_evidence_contract",
                     "returncode": 0,
                     "status": "pass",
-                }
+                },
+                {
+                    "name": "task_acceptance",
+                    "returncode": 0 if acceptance_pass else 1,
+                    "status": "pass" if acceptance_pass else "fail",
+                },
             ],
             "signed_by": review.reviewer_agent_id,
         }
@@ -29956,20 +30000,28 @@ class ControlPlane:
             task.id,
             "review",
             "mac://review-verdict/%s" % review.id,
-            "semantic reviewer removed; executor evidence approved",
+            "semantic reviewer removed; executor evidence %s" % verdict,
             review.reviewer_agent_id,
             metadata={"returncode": 0, "verification": manifest},
         )
         self._record_default_review_observation(
             task.id,
-            "workflow.default_review.approved",
-            "info",
+            (
+                "workflow.default_review.approved"
+                if acceptance_pass
+                else "workflow.default_review.semantic_acceptance_failed"
+            ),
+            "info" if acceptance_pass else "warning",
             {
                 "review_id": review.id,
                 "reviewer_agent_id": review.reviewer_agent_id,
                 "executor_evidence_id": executor_evidence.id,
                 "verdict_evidence_id": evidence.id,
-                "reason": "semantic_reviewer_removed",
+                "reason": (
+                    "semantic_reviewer_removed"
+                    if acceptance_pass
+                    else "semantic_acceptance_failed"
+                ),
             },
             actor,
         )

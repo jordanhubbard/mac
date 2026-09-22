@@ -76,6 +76,7 @@ from mac.models import (
     metadata_declares_report_deliverable,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.semantic_acceptance import evaluate_acceptance
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
@@ -1936,11 +1937,10 @@ def run_deterministic_review_verdict(
     elif repo_review:
         independent_problem = "exact review checkout is unavailable"
 
-    verdict = (
-        "approved"
-        if semantic_valid and semantic_verdict == "approved" and independent_pass
-        else "rejected"
-    )
+    acceptance = evaluate_acceptance(task.get("metadata"), exec_verification)
+    acceptance_pass = acceptance.get("status") in {"pass", "not_required"}
+    semantic_pass = semantic_valid and semantic_verdict == "approved" and acceptance_pass
+    verdict = "approved" if semantic_pass and independent_pass else "rejected"
     digest_head = str(exec_access.get("base_sha") or "") if read_only_report_review else exec_head
     digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode(
         "utf-8"
@@ -1955,6 +1955,11 @@ def run_deterministic_review_verdict(
         "evidence_type": "review_verdict",
         "verdict": verdict,
         "semantic_verdict": semantic_verdict or "invalid",
+        "review_status": {
+            "structural": "pass" if independent_pass else "fail",
+            "semantic": "pass" if semantic_pass else "fail",
+        },
+        "acceptance": acceptance,
         "result": "review_completed",
         "returncode": 0,
         "review_id": review_id,
@@ -1965,6 +1970,11 @@ def run_deterministic_review_verdict(
                 "name": "semantic_review",
                 "returncode": 0 if semantic_valid else 1,
                 "status": "pass" if semantic_valid else "fail",
+            },
+            {
+                "name": "task_acceptance",
+                "returncode": 0 if acceptance_pass else 1,
+                "status": "pass" if acceptance_pass else "fail",
             },
             *(
                 [
@@ -2012,6 +2022,10 @@ def run_deterministic_review_verdict(
             manifest["feedback"] = "review agent did not produce a valid semantic verdict"
         elif semantic_verdict == "rejected":
             manifest["feedback"] = "semantic reviewer rejected the executor result"
+        elif not acceptance_pass:
+            manifest["feedback"] = "task semantic acceptance failed: %s" % "; ".join(
+                str(problem) for problem in acceptance.get("problems", [])
+            )
         else:
             manifest["feedback"] = independent_problem or "independent verification failed"
     elif verdict == "rejected" and independent_problem and semantic_verdict == "approved":

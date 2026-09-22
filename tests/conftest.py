@@ -267,6 +267,9 @@ def submit_review_verdict(
     key = cp._agent_attestation_key(reviewer_agent_id)
     executor_evidence = cp.get_evidence(executor_evidence_id)
     executor_manifest = executor_evidence.metadata.get("verification") or {}
+    from mac.semantic_acceptance import evaluate_acceptance
+
+    acceptance = evaluate_acceptance(cp.get_task(task_id).metadata, executor_manifest)
     repo = dict(executor_manifest.get("repo") or {})
     manifest = {
         "schema": "mac.worker_evidence.v1",
@@ -284,6 +287,9 @@ def submit_review_verdict(
             "model": reviewer_llm_model,
         },
     }
+    if acceptance.get("required"):
+        manifest["acceptance"] = acceptance
+        manifest["review_status"] = {"structural": "pass", "semantic": "pass"}
     if feedback:
         manifest["feedback"] = feedback
     if summary:
