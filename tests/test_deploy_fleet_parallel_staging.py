@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -87,6 +88,126 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     assert "phase_status_files" in bounded
     assert '[ "$failed" -ne 0 ] && [ "$aggregate_failures" != 1 ]' in bounded
     assert 'while [ "$index" -lt "$total" ]' in bounded
+
+
+def test_parallelism_default_scales_to_a_fifty_node_preallocated_fleet() -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    assert 'NODE_PARALLELISM="${MAC_DEPLOY_NODE_PARALLELISM:-32}"' in source
+    assert source.count("MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 64") == 2
+    assert '[ "$NODE_PARALLELISM" -gt 64 ]' in source
+
+
+def test_recovery_parallelism_keeps_shared_journal_parent_owned() -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    recover = _function(source, "recover_cohort_node", "recover_active_cohort_transaction() {")
+    finalize = _function(
+        source, "recover_committed_cohort_node", "run_journal_bound_recovery_with_retry() {"
+    )
+    abort_coordinator = _function(
+        source, "parallel_recover_cohort_candidates", "parallel_finalize_cohort_candidates() {"
+    )
+    finalize_coordinator = _function(
+        source,
+        "parallel_finalize_cohort_candidates",
+        "discard_unopened_epoch_pending_credentials() {",
+    )
+
+    assert 'if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then' in recover
+    assert 'if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then' in finalize
+    wrappers = source.split("recover_cohort_candidate_worker() {", 1)[1].split(
+        "\nparallel_recover_cohort_candidates() {", 1
+    )[0]
+    assert wrappers.count("local RECOVERY_JOURNAL_PARENT_OWNED=1") == 2
+    assert (
+        abort_coordinator.index("cohort_journal_mutate abort-start")
+        < abort_coordinator.index("run_bounded_node_phase")
+        < abort_coordinator.index("cohort_journal_mutate aborted-node")
+    )
+    assert (
+        finalize_coordinator.index("cohort_journal_mutate finalize-start")
+        < finalize_coordinator.index("run_bounded_node_phase")
+        < finalize_coordinator.index("cohort_journal_mutate finalized-node")
+    )
+    assert "BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1" in abort_coordinator
+    assert "BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1" in finalize_coordinator
+
+
+def test_recovery_coordinator_runs_all_nodes_concurrently_and_aggregates_failures(
+    tmp_path: Path,
+) -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    bounded = _function(source, "run_bounded_node_phase", "preflight_probe_helper_source() {")
+    coordinator = _function(
+        source, "parallel_recover_cohort_candidates", "parallel_finalize_cohort_candidates() {"
+    )
+    candidates = tmp_path / "candidates"
+    rows = []
+    for agent in ("a", "b", "c"):
+        payload = {
+            "agent_name": agent,
+            "stable_id": f"agent_{agent}",
+            "generation": f"generation-{agent}",
+            "recovery_action": "cleanup_only",
+        }
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        rows.append(f"{agent}|{encoded}")
+    candidates.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    events = tmp_path / "events"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+NODE_PARALLELISM=3
+PYTHON_BIN={shlex.quote(sys.executable)}
+COHORT_JOURNAL_REVISION=0
+EVENTS={shlex.quote(str(events))}
+stable_worker_agent_id() {{ printf 'agent_%s\n' "$1"; }}
+persist_bounded_phase_failure_evidence() {{ :; }}
+cohort_journal_mutate() {{
+  printf 'journal %s %s\n' "$1" "${{8:-}}" >> "$EVENTS"
+  COHORT_JOURNAL_REVISION=$((COHORT_JOURNAL_REVISION + 1))
+}}
+recover_cohort_candidate_worker() {{
+  local agent="${{1%%|*}}"
+  printf 'start %s\n' "$agent" >> "$EVENTS"
+  sleep 0.10
+  if [ "$agent" = b ]; then
+    printf 'fail %s\n' "$agent" >> "$EVENTS"
+    return 7
+  fi
+  : > "$TMPDIR_LOCAL/cohort-recovery-agent_${{agent}}.json"
+  printf 'done %s\n' "$agent" >> "$EVENTS"
+}}
+{bounded}
+{coordinator}
+set +e
+parallel_recover_cohort_candidates "$1" epoch owner fleet hub >/dev/null 2>&1
+result=$?
+set -e
+printf '%s\n' "$result"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet, "recovery", str(candidates)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1"
+    lines = events.read_text(encoding="utf-8").splitlines()
+    starts = [line for line in lines if line.startswith("start ")]
+    assert set(starts) == {"start a", "start b", "start c"}
+    first_finish = min(lines.index("done a"), lines.index("fail b"), lines.index("done c"))
+    assert all(lines.index(value) < first_finish for value in starts)
+    abort_intents = [line for line in lines if line.startswith("journal abort-start")]
+    completions = [line for line in lines if line.startswith("journal aborted-node")]
+    assert len(abort_intents) == 3
+    assert len(completions) == 2
+    assert max(lines.index(value) for value in abort_intents) < min(
+        lines.index(value) for value in starts
+    )
+    assert min(lines.index(value) for value in completions) > max(
+        lines.index("done a"), lines.index("fail b"), lines.index("done c")
+    )
 
 
 def test_phase2_controller_rollback_uses_intent_before_optional_post_manifest(

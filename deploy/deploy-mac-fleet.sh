@@ -776,15 +776,15 @@ if ! PYTHON_BIN="$(resolve_python_bin)"; then
   echo "ERROR: Python $MAC_REVIEWED_PYTHON_VERSION is required; run uv python install before deploying" >&2
   exit 127
 fi
-NODE_PARALLELISM="${MAC_DEPLOY_NODE_PARALLELISM:-4}"
+NODE_PARALLELISM="${MAC_DEPLOY_NODE_PARALLELISM:-32}"
 case "$NODE_PARALLELISM" in
   ''|*[!0-9]*)
-    echo "ERROR: MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 32" >&2
+    echo "ERROR: MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 64" >&2
     exit 2
     ;;
 esac
-if [ "$NODE_PARALLELISM" -lt 1 ] || [ "$NODE_PARALLELISM" -gt 32 ]; then
-  echo "ERROR: MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 32" >&2
+if [ "$NODE_PARALLELISM" -lt 1 ] || [ "$NODE_PARALLELISM" -gt 64 ]; then
+  echo "ERROR: MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 64" >&2
   exit 2
 fi
 readonly NODE_PARALLELISM
@@ -14780,11 +14780,13 @@ PY
     cleanup_only|phase1_restore|phase2_rollback|retain_forward) ;;
     *) echo "ERROR: ${agent}: recovery probe returned an invalid action" >&2; return 1 ;;
   esac
-  if ! cohort_journal_mutate abort-start "$epoch_id" \
-    "$COHORT_JOURNAL_REVISION" "abort-start-${stable_id}" "$owner_nonce" \
-    --agent-name "$agent" --stable-id "$stable_id" \
-    --generation "$runtime_generation" --recovery-action "$action" >/dev/null; then
-    return 1
+  if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then
+    if ! cohort_journal_mutate abort-start "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "abort-start-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" \
+      --generation "$runtime_generation" --recovery-action "$action" >/dev/null; then
+      return 1
+    fi
   fi
   evidence="$TMPDIR_LOCAL/cohort-recovery-${stable_id}.json"
   case "$action" in
@@ -14891,16 +14893,22 @@ PY
       return 1
     fi
   fi
-  if ! cohort_journal_mutate aborted-node "$epoch_id" \
-    "$COHORT_JOURNAL_REVISION" "aborted-${stable_id}" "$owner_nonce" \
-    --agent-name "$agent" --stable-id "$stable_id" \
-    --generation "$runtime_generation" --evidence-file "$evidence" >/dev/null; then
-    return 1
+  if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then
+    if ! cohort_journal_mutate aborted-node "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "aborted-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" \
+      --generation "$runtime_generation" --evidence-file "$evidence" >/dev/null; then
+      return 1
+    fi
   fi
-  if [ "$action" = retain_forward ]; then
+  if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ] && [ "$action" = retain_forward ]; then
     echo "==> ${agent}: newest state retained under dispatch hold for roll-forward repair"
-  else
+  elif [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then
     echo "==> ${agent}: durable cohort recovery completed with ${action}"
+  elif [ "$action" = retain_forward ]; then
+    echo "==> ${agent}: newest state retained under dispatch hold; awaiting recovery journal publication"
+  else
+    echo "==> ${agent}: fenced cohort recovery work completed with ${action}; awaiting journal publication"
   fi
 }
 
@@ -15255,10 +15263,12 @@ PY
       return 1
     fi
   fi
-  if ! cohort_journal_mutate finalize-start "$epoch_id" \
-    "$COHORT_JOURNAL_REVISION" "finalize-start-${stable_id}" "$owner_nonce" \
-    --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" >/dev/null; then
-    return 1
+  if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then
+    if ! cohort_journal_mutate finalize-start "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "finalize-start-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" >/dev/null; then
+      return 1
+    fi
   fi
   evidence="$TMPDIR_LOCAL/recovered-finalize-${stable_id}.json"
   if ! run_remote_node_finalizer "$agent" "$fleet" "$generation" "$source_commit" \
@@ -15271,13 +15281,19 @@ PY
   if ! finalize_remote_deployment_release "$agent" "$deployment_id"; then
     return 1
   fi
-  if ! cohort_journal_mutate finalized-node "$epoch_id" \
-    "$COHORT_JOURNAL_REVISION" "finalized-${stable_id}" "$owner_nonce" \
-    --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" \
-    --evidence-file "$evidence" >/dev/null; then
-    return 1
+  if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then
+    if ! cohort_journal_mutate finalized-node "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "finalized-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" \
+      --evidence-file "$evidence" >/dev/null; then
+      return 1
+    fi
   fi
-  echo "==> ${agent}: committed generation finalization recovered"
+  if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" = 1 ]; then
+    echo "==> ${agent}: fenced committed-generation finalization completed; awaiting journal publication"
+  else
+    echo "==> ${agent}: committed generation finalization recovered"
+  fi
 }
 
 run_journal_bound_recovery_with_retry() {
@@ -15316,6 +15332,158 @@ run_journal_bound_recovery_with_retry() {
     sleep "$delay"
     attempt=$((attempt + 1))
   done
+}
+
+recover_cohort_candidate_worker() {
+  local spec="$1" epoch_id="$2" owner_nonce="$3" fleet_name="$4" hub_agent="$5"
+  local candidate_b64="${spec#*|}"
+  local RECOVERY_JOURNAL_PARENT_OWNED=1
+  run_journal_bound_recovery_with_retry "cohort-node-${spec%%|*}" \
+    recover_cohort_node "$epoch_id" "$owner_nonce" "$fleet_name" \
+    "$candidate_b64" "$hub_agent"
+}
+
+recover_committed_candidate_worker() {
+  local spec="$1" epoch_id="$2" owner_nonce="$3" hub_agent="$4"
+  local candidate_b64="${spec#*|}"
+  local RECOVERY_JOURNAL_PARENT_OWNED=1
+  run_journal_bound_recovery_with_retry "committed-cohort-node-${spec%%|*}" \
+    recover_committed_cohort_node "$epoch_id" "$owner_nonce" "$hub_agent" \
+    "$candidate_b64"
+}
+
+parallel_recover_cohort_candidates() {
+  # Recovery keeps the same parent-owned WAL shape as normal deployment:
+  # publish every per-node intent first, run only independently fenced remote
+  # work concurrently, then publish successful evidence in deterministic
+  # cohort order. No child mutates the shared journal revision.
+  local candidates_file="$1" epoch_id="$2" owner_nonce="$3" fleet_name="$4" hub_agent="$5"
+  local spec agent candidate_b64 fields stable_id generation action evidence status_path status
+  local worker_failed=0 journal_failed=0
+  local -a values=()
+  while IFS='|' read -r agent candidate_b64; do
+    [ -n "$agent" ] || continue
+    if ! fields="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
+import base64,json,sys
+value=json.loads(base64.b64decode(sys.argv[1]))
+print(value.get("stable_id") or "")
+print(value.get("generation") or "")
+print(value.get("recovery_action") or "")
+PY
+)"; then
+      return 1
+    fi
+    mapfile -t values <<<"$fields"
+    stable_id="${values[0]:-}"; generation="${values[1]:-}"; action="${values[2]:-}"
+    [ -n "$stable_id" ] && [ -n "$generation" ] && [ -n "$action" ] || return 1
+    if ! cohort_journal_mutate abort-start "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "abort-start-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" \
+      --generation "$generation" --recovery-action "$action" >/dev/null; then
+      return 1
+    fi
+  done < "$candidates_file"
+
+  if ! BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1 run_bounded_node_phase \
+    "$candidates_file" recovery-abort recover_cohort_candidate_worker \
+    "$epoch_id" "$owner_nonce" "$fleet_name" "$hub_agent"; then
+    worker_failed=1
+  fi
+
+  while IFS='|' read -r agent candidate_b64; do
+    [ -n "$agent" ] || continue
+    status_path="$TMPDIR_LOCAL/phase-recovery-abort-$(stable_worker_agent_id "$agent").status"
+    [ -s "$status_path" ] || continue
+    status="$(cat "$status_path")"
+    [ "$status" = 0 ] || continue
+    if ! fields="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
+import base64,json,sys
+value=json.loads(base64.b64decode(sys.argv[1]))
+print(value.get("stable_id") or "")
+print(value.get("generation") or "")
+PY
+)"; then
+      journal_failed=1
+      continue
+    fi
+    mapfile -t values <<<"$fields"
+    stable_id="${values[0]:-}"; generation="${values[1]:-}"
+    evidence="$TMPDIR_LOCAL/cohort-recovery-${stable_id}.json"
+    if ! cohort_journal_mutate aborted-node "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "aborted-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" \
+      --evidence-file "$evidence" >/dev/null; then
+      echo "ERROR: ${agent}: recovered node evidence could not be published to the cohort journal" >&2
+      journal_failed=1
+    else
+      echo "==> ${agent}: durable cohort recovery published"
+    fi
+  done < "$candidates_file"
+  [ "$worker_failed" -eq 0 ] && [ "$journal_failed" -eq 0 ]
+}
+
+parallel_finalize_cohort_candidates() {
+  local candidates_file="$1" epoch_id="$2" owner_nonce="$3" hub_agent="$4"
+  local agent candidate_b64 fields stable_id generation evidence status_path status
+  local worker_failed=0 journal_failed=0
+  local -a values=()
+  while IFS='|' read -r agent candidate_b64; do
+    [ -n "$agent" ] || continue
+    if ! fields="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
+import base64,json,sys
+value=json.loads(base64.b64decode(sys.argv[1]))
+print(value.get("stable_id") or "")
+print(value.get("generation") or "")
+PY
+)"; then
+      return 1
+    fi
+    mapfile -t values <<<"$fields"
+    stable_id="${values[0]:-}"; generation="${values[1]:-}"
+    [ -n "$stable_id" ] && [ -n "$generation" ] || return 1
+    if ! cohort_journal_mutate finalize-start "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "finalize-start-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" >/dev/null; then
+      return 1
+    fi
+  done < "$candidates_file"
+
+  if ! BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1 run_bounded_node_phase \
+    "$candidates_file" recovery-finalize recover_committed_candidate_worker \
+    "$epoch_id" "$owner_nonce" "$hub_agent"; then
+    worker_failed=1
+  fi
+
+  while IFS='|' read -r agent candidate_b64; do
+    [ -n "$agent" ] || continue
+    status_path="$TMPDIR_LOCAL/phase-recovery-finalize-$(stable_worker_agent_id "$agent").status"
+    [ -s "$status_path" ] || continue
+    status="$(cat "$status_path")"
+    [ "$status" = 0 ] || continue
+    if ! fields="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
+import base64,json,sys
+value=json.loads(base64.b64decode(sys.argv[1]))
+print(value.get("stable_id") or "")
+print(value.get("generation") or "")
+PY
+)"; then
+      journal_failed=1
+      continue
+    fi
+    mapfile -t values <<<"$fields"
+    stable_id="${values[0]:-}"; generation="${values[1]:-}"
+    evidence="$TMPDIR_LOCAL/recovered-finalize-${stable_id}.json"
+    if ! cohort_journal_mutate finalized-node "$epoch_id" \
+      "$COHORT_JOURNAL_REVISION" "finalized-${stable_id}" "$owner_nonce" \
+      --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" \
+      --evidence-file "$evidence" >/dev/null; then
+      echo "ERROR: ${agent}: finalized node evidence could not be published to the cohort journal" >&2
+      journal_failed=1
+    else
+      echo "==> ${agent}: committed generation finalization published"
+    fi
+  done < "$candidates_file"
+  [ "$worker_failed" -eq 0 ] && [ "$journal_failed" -eq 0 ]
 }
 
 discard_unopened_epoch_pending_credentials() {
@@ -15577,18 +15745,16 @@ by_name={item["name"]:item for item in status["journal"]["cohort"]}
 for candidate in recovery.get("candidates") or []:
     node=by_name[candidate["agent_name"]]
     value={**candidate,"os":node["os"],"supervisor":node["supervisor"]}
-    print(base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode())
+    encoded=base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode()
+    print("%s|%s"%(candidate["agent_name"],encoded))
 PY
     then
       return 1
     fi
-    while IFS= read -r candidate_b64; do
-      [ -n "$candidate_b64" ] || continue
-      if ! run_journal_bound_recovery_with_retry "cohort-node" recover_cohort_node \
-        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"; then
-        return 1
-      fi
-    done < "$candidates_file"
+    if ! parallel_recover_cohort_candidates "$candidates_file" "$epoch_id" \
+      "$owner_nonce" "$fleet_name" "$hub_agent"; then
+      return 1
+    fi
     if ! cohort_journal_mutate abort "$epoch_id" "$COHORT_JOURNAL_REVISION" \
       abort-recovered "$owner_nonce" >/dev/null; then
       return 1
@@ -15614,18 +15780,16 @@ PY
   if ! "$PYTHON_BIN" - "$recovery_file" > "$finalization_file" <<'PY'
 import base64,json,sys
 for value in json.load(open(sys.argv[1],encoding="utf-8")).get("finalization_candidates") or []:
-    print(base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode())
+    encoded=base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode()
+    print("%s|%s"%(value["agent_name"],encoded))
 PY
   then
     return 1
   fi
-  while IFS= read -r candidate_b64; do
-    [ -n "$candidate_b64" ] || continue
-    if ! run_journal_bound_recovery_with_retry "committed-cohort-node" recover_committed_cohort_node \
-      "$epoch_id" "$owner_nonce" "$hub_agent" "$candidate_b64"; then
-      return 1
-    fi
-  done < "$finalization_file"
+  if ! parallel_finalize_cohort_candidates "$finalization_file" "$epoch_id" \
+    "$owner_nonce" "$hub_agent"; then
+    return 1
+  fi
   if ! cohort_journal_mutate finalize "$epoch_id" "$COHORT_JOURNAL_REVISION" \
     finalize-recovered "$owner_nonce" >/dev/null; then
     return 1

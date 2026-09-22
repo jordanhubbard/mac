@@ -2229,8 +2229,8 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
     assert "activate) manager_action=start" in restart
     assert "restart) manager_action=restart" in restart
     assert 'systemctl $(shell_quote "$manager_action")' in restart
-    assert r'supervisorctl \"\$action\" \"\$program\"' in restart
-    assert r'\"\$program: ERROR (no such process)\"' in restart
+    assert r"supervisorctl \"\$action\" \"\$program\"" in restart
+    assert r"\"\$program: ERROR (no such process)\"" in restart
     assert 'domain=\\"gui/\\$(id -u)\\"' in restart
     assert "mac_launchd_stop_job_if_present" in restart
     assert "mac_launchd_bootstrap_job" in restart
@@ -2588,7 +2588,7 @@ def test_failed_typed_transaction_aborts_exact_epoch_before_node_retention():
 
     abort_hub = recovery.index("abort_hub_epoch_exact")
     journal_hub_abort = recovery.index("cohort_journal_mutate hub-aborted", abort_hub)
-    rollback_nodes = recovery.index("recover_cohort_node", journal_hub_abort)
+    rollback_nodes = recovery.index("parallel_recover_cohort_candidates", journal_hub_abort)
     journal_abort = recovery.index("cohort_journal_mutate abort", rollback_nodes)
     assert abort_hub < journal_hub_abort < rollback_nodes < journal_abort
     assert 'if [ "$direction" = rollback ] || [ "$direction" = retain_forward ]' in recovery
@@ -4865,8 +4865,15 @@ def test_typed_prepare_and_composite_rollback_are_journal_ordered():
     phase2 = recovery.index("rollback_remote_phase2_generation")
     phase1 = recovery.index("restore_remote_phase1_generation", phase2)
     composite = recovery.index("write_cohort_composite_rollback_evidence", phase1)
-    aborted = recovery.index("cohort_journal_mutate aborted-node", composite)
-    assert phase2 < phase1 < composite < aborted
+    assert phase2 < phase1 < composite
+    assert 'if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then' in recovery
+    coordinator = deploy.split("parallel_recover_cohort_candidates() {", 1)[1].split(
+        "\n}\n\nparallel_finalize_cohort_candidates", 1
+    )[0]
+    intent = coordinator.index("cohort_journal_mutate abort-start")
+    parallel = coordinator.index("run_bounded_node_phase", intent)
+    aborted = coordinator.index("cohort_journal_mutate aborted-node", parallel)
+    assert intent < parallel < aborted
 
 
 def test_retain_forward_recovery_reconciles_attestation_authority_after_release():
@@ -4905,20 +4912,15 @@ def test_retain_forward_recovery_reconciles_attestation_authority_after_release(
     reconcile_release = recovery.index(
         'release_remote_deployment_lock "$agent" "$reconcile_deployment_id"', reconcile_call
     )
-    aborted_node = recovery.index("cohort_journal_mutate aborted-node", reconcile_release)
-    assert (
-        release_lock
-        < reconcile_guard
-        < reconcile_acquire
-        < reconcile_call
-        < reconcile_release
-        < aborted_node
-    )
+    assert release_lock < reconcile_guard < reconcile_acquire < reconcile_call < reconcile_release
+    assert 'if [ "${RECOVERY_JOURNAL_PARENT_OWNED:-0}" != 1 ]; then' in recovery
 
-    assert (
-        'run_journal_bound_recovery_with_retry "cohort-node" recover_cohort_node \\\n'
-        '        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64" "$hub_agent"' in deploy
-    )
+    coordinator = deploy.split("parallel_recover_cohort_candidates() {", 1)[1].split(
+        "\n}\n\nparallel_finalize_cohort_candidates", 1
+    )[0]
+    assert "cohort_journal_mutate abort-start" in coordinator
+    assert "recover_cohort_candidate_worker" in coordinator
+    assert "cohort_journal_mutate aborted-node" in coordinator
 
 
 def test_journal_bound_recovery_retries_transient_failure_and_stops_at_bound(tmp_path):
