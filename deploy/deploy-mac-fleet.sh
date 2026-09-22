@@ -119,6 +119,7 @@ ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
 SANITIZED_FLEET_REGISTRY="${TMPDIR_LOCAL}/fleets.yaml"
 PHASE1_QUIESCE_HELPER="$ROOT/deploy/fleet-node-phase1-quiesce.sh"
 MACHINE_ONBOARDING_HELPER="$ROOT/deploy/fleet-node-machine-onboard.py"
+STAGED_WORKER_CREDENTIAL_VALIDATOR="$ROOT/deploy/validate-staged-worker-credential.py"
 COHORT_JOURNAL_HELPER="$ROOT/deploy/fleet-cohort-transaction.py"
 ENDPOINT_IDENTITY_HELPER="$ROOT/deploy/fleet-endpoint-identity.py"
 HUB_EPOCH_CLIENT="$ROOT/deploy/fleet-release-epoch-client.py"
@@ -814,6 +815,11 @@ COHORT_JOURNAL_DIR="${MAC_FLEET_COHORT_JOURNAL_DIR:-$HOME/.mac/fleet-cohort-tran
 COHORT_JOURNAL_ACTIVE=0
 COHORT_JOURNAL_REVISION=0
 COHORT_RECOVERY_RUNNING=0
+HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE=""
+HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER=""
+HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256=""
+HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256=""
+HUB_CREDENTIAL_VALIDATOR_AGENT=""
 # Set to the adopted epoch while a prior controller's incomplete transaction is
 # being replayed. A node failure during replay belongs to that epoch, not to
 # the fresh COHORT_EPOCH_ID this invocation would otherwise name.
@@ -838,6 +844,9 @@ cleanup_local_deployment() {
   local status=$? pid_file pid
   trap - EXIT
   set +e
+  if declare -F cleanup_hub_candidate_credential_validator >/dev/null 2>&1; then
+    cleanup_hub_candidate_credential_validator
+  fi
   if [ "$status" -ne 0 ] \
     && [ "$COHORT_JOURNAL_ACTIVE" = 1 ] \
     && [ "$COHORT_RECOVERY_RUNNING" != 1 ] \
@@ -2361,6 +2370,7 @@ assert_frozen_deployment_source() {
     deploy/fleet-cohort-transaction.py \
     deploy/fleet-node-install.sh \
     deploy/fleet-node-machine-onboard.py \
+    deploy/validate-staged-worker-credential.py \
     deploy/fleet-node-phase1-quiesce.sh \
     deploy/fleet-node-rollback-supervisor.py \
     deploy/lib/launchd-lifecycle.sh \
@@ -13274,13 +13284,63 @@ PY
   echo "==> ${agent}: pending worker principal ${principal} staged"
 )
 
+# Stage the exact candidate release on the hub independently of which nodes are
+# selected for this cohort. Credential validation is a hub database operation,
+# and the installed hub package may predate the validate-current verb. Both
+# files are uploaded with stable size+digest verification; the bootstrap
+# re-verifies the archive immediately before importing candidate MAC code.
+stage_hub_candidate_credential_validator() {
+  local hub_agent="$1" prefix
+  [ -f "$STAGED_WORKER_CREDENTIAL_VALIDATOR" ] || {
+    echo "ERROR: staged worker credential validator is unavailable" >&2
+    return 1
+  }
+  prefix="/tmp/mac-worker-credential-validator-${DEPLOY_CONTROLLER_NONCE}"
+  HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE="${prefix}.tar.gz"
+  HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER="${prefix}.py"
+  HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256="$(sha256_file "$ARCHIVE")"
+  HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256="$(sha256_file "$STAGED_WORKER_CREDENTIAL_VALIDATOR")"
+  HUB_CREDENTIAL_VALIDATOR_AGENT="$hub_agent"
+  pinned_remote_verified_upload "$hub_agent" "$ARCHIVE" \
+    "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE" || return 1
+  pinned_remote_verified_upload "$hub_agent" "$STAGED_WORKER_CREDENTIAL_VALIDATOR" \
+    "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER" || return 1
+  echo "==> ${hub_agent}: exact candidate credential validator staged and digest-verified"
+}
+
+cleanup_hub_candidate_credential_validator() {
+  local agent="${HUB_CREDENTIAL_VALIDATOR_AGENT:-}" archive helper cleanup_code
+  local ssh_parts=() ssh_args=() ssh_target item last_index
+  archive="${HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE:-}"
+  helper="${HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER:-}"
+  [ -n "$agent" ] && [ -n "$archive" ] && [ -n "$helper" ] || return 0
+  cleanup_code='import os,sys
+for path in sys.argv[1:]:
+    if not path.startswith("/tmp/mac-worker-credential-validator-"):
+        raise SystemExit("invalid credential validator cleanup path")
+    try: os.unlink(path)
+    except FileNotFoundError: pass'
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "python3 -c $(shell_quote "$cleanup_code") $(shell_quote "$archive") $(shell_quote "$helper")" \
+    >/dev/null 2>&1 || true
+  HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE=""
+  HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER=""
+  HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256=""
+  HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256=""
+  HUB_CREDENTIAL_VALIDATOR_AGENT=""
+}
+
 # Software deployment validates the credential that is already carrying the
 # worker heartbeat. It never issues, installs, or promotes a bearer. The
 # rotation commands above remain an independent, overlap-safe maintenance path.
 validate_current_worker_credential() (
   set -euo pipefail
   umask 077
-  local agent="$1" hub_agent="$2" agent_id result manifest
+  local agent="$1" hub_agent="$2" agent_id result manifest validator_loader
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
   agent_id="$(stable_worker_agent_id "$agent")"
   manifest="$(pending_worker_manifest_file "$agent")"
@@ -13288,9 +13348,34 @@ validate_current_worker_credential() (
   last_index=$((${#hub_ssh_parts[@]} - 1))
   hub_ssh_target="${hub_ssh_parts[$last_index]}"
   hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  [ -n "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE" ] \
+    && [ -n "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER" ] \
+    && [ -n "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256" ] \
+    && [ -n "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256" ] || {
+      echo "ERROR: exact candidate credential validator is not staged" >&2
+      return 1
+    }
+  validator_loader='import hashlib,os,stat,sys
+path,expected=sys.argv[1:3]
+fd=os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+try:
+ before=os.fstat(fd)
+ if not stat.S_ISREG(before.st_mode) or before.st_uid!=os.getuid() or before.st_nlink!=1 or stat.S_IMODE(before.st_mode)!=0o600: raise SystemExit("candidate validator helper is unsafe")
+ raw=bytearray()
+ while len(raw)<before.st_size:
+  chunk=os.read(fd,min(1024*1024,before.st_size-len(raw)))
+  if not chunk: break
+  raw.extend(chunk)
+ after=os.fstat(fd)
+ if len(raw)!=before.st_size or (before.st_dev,before.st_ino,before.st_nlink,before.st_size,before.st_mtime_ns,before.st_ctime_ns)!=(after.st_dev,after.st_ino,after.st_nlink,after.st_size,after.st_mtime_ns,after.st_ctime_ns): raise SystemExit("candidate validator helper changed while reading")
+ if hashlib.sha256(raw).hexdigest()!=expected: raise SystemExit("candidate validator helper digest differs")
+finally: os.close(fd)
+sys.argv=[path]+sys.argv[3:]
+namespace={"__name__":"__main__","__file__":path}
+exec(compile(raw,path,"exec"),namespace)'
   result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -m mac.worker_credentials validate-current --agent-id $(shell_quote "$agent_id")")"
+    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")")"
   printf '%s\n' "$result" > "$manifest"
   chmod 0600 "$manifest"
   "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
@@ -16746,7 +16831,9 @@ run_typed_cohort() {
   run_bounded_node_phase "$selected_specs_file" stage-bundle \
     typed_staging_worker || return 1
 
-  build_and_open_hub_epoch "$selected_specs_file" "$hub_agent"
+  stage_hub_candidate_credential_validator "$hub_agent" || return 1
+  build_and_open_hub_epoch "$selected_specs_file" "$hub_agent" || return 1
+  cleanup_hub_candidate_credential_validator
 
   # Fail closed: prove every deploy prerequisite for every selected node
   # before the first phase-1 service quiescence mutates any worker.
