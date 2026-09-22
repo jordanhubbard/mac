@@ -184,7 +184,7 @@ def _cohort_agents(raw: Any, *, prove: bool = False) -> list[dict[str, Any]]:
                 agent["prepared_evidence_sha256"], "prepared evidence digest"
             )
             receipt = agent["install_receipt"]
-            if (
+            if receipt is not None and (
                 not isinstance(receipt, dict)
                 or receipt.get("schema") != "mac.worker_credential_install_receipt.v1"
             ):

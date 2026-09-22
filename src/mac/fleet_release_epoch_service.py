@@ -406,6 +406,13 @@ class FleetReleaseEpochService:
         return sorted({str(value) for value in prior} | {str(participant["principal_id"])})
 
     @staticmethod
+    def _uses_current_principal(participant: Any) -> bool:
+        """Whether the epoch preserves an already-active credential."""
+
+        prior = {str(value) for value in json_loads(participant["prior_live_principal_ids"], [])}
+        return str(participant["principal_id"]) in prior
+
+    @staticmethod
     def _has_active_work(conn: Any, agent_id: str, agent_row: Any) -> bool:
         task = conn.execute(
             "SELECT id FROM tasks WHERE owner_agent_id = ? AND state IN (?, ?) LIMIT 1",
@@ -830,9 +837,21 @@ class FleetReleaseEpochService:
                         "fleet release open lost expected prior hold for %s" % agent_id
                     )
                 try:
-                    principal = self.credentials.stage_pending_in_transaction(
-                        conn, agent_id, item["principal_id"]
-                    )
+                    try:
+                        self.credentials.validate_current_in_transaction(
+                            conn, agent_id, item["principal_id"]
+                        )
+                        principal = conn.execute(
+                            "SELECT * FROM worker_credentials WHERE id = ?",
+                            (item["principal_id"],),
+                        ).fetchone()
+                        principal = _row(principal)
+                        principal_is_current = True
+                    except WorkerCredentialError:
+                        principal = self.credentials.stage_pending_in_transaction(
+                            conn, agent_id, item["principal_id"]
+                        )
+                        principal_is_current = False
                 except WorkerCredentialError as exc:
                     raise ValidationError(str(exc)) from exc
                 prior_claims = self._active_claims(conn, agent_id)
@@ -854,10 +873,13 @@ class FleetReleaseEpochService:
                     "prior_active_service_claim_ids": prior_claims,
                     "principal_version": int(principal["credential_version"]),
                     "principal_fingerprint": str(principal["token_fingerprint"]),
+                    # A selected active principal is pre-existing authority.
+                    # Keep it in the prior set so abort can never mistake it
+                    # for an epoch-owned pending credential and revoke it.
                     "prior_live_principal_ids": [
                         principal_id
                         for principal_id in live_principals
-                        if principal_id != str(item["principal_id"])
+                        if principal_is_current or principal_id != str(item["principal_id"])
                     ],
                     "prior_attestation_ciphertext_sha256": _sha256_text(
                         agent_row["attestation_key_ciphertext"]
@@ -1201,8 +1223,16 @@ class FleetReleaseEpochService:
             agent_id = str(participant["agent_id"])
             proof = proof_by_agent[agent_id]
             receipt = proof.get("install_receipt")
-            if not isinstance(receipt, Mapping):
-                raise ValidationError("worker install receipt is required")
+            if self._uses_current_principal(participant):
+                if receipt is not None:
+                    raise ValidationError(
+                        "current credential deployment cannot carry an install receipt"
+                    )
+                receipt_sha256 = None
+            else:
+                if not isinstance(receipt, Mapping):
+                    raise ValidationError("worker install receipt is required")
+                receipt_sha256 = _sha256_json(receipt)
             candidate_proof = proof.get("attestation_proof")
             if candidate_proof is not None and not isinstance(candidate_proof, Mapping):
                 raise ValidationError("attestation candidate proof is malformed")
@@ -1212,7 +1242,7 @@ class FleetReleaseEpochService:
             normalized.append(
                 {
                     "agent_id": agent_id,
-                    "install_receipt_sha256": _sha256_json(receipt),
+                    "install_receipt_sha256": receipt_sha256,
                     "attestation_proof_sha256": (
                         _sha256_json(candidate_proof) if candidate_proof is not None else None
                     ),
@@ -1299,20 +1329,33 @@ class FleetReleaseEpochService:
                 self._validate_report_authority_projection(participant, resources)
                 proof = proof_by_agent[agent_id]
                 receipt = proof.get("install_receipt")
-                if not isinstance(receipt, Mapping):
-                    raise ValidationError("worker install receipt is required")
                 try:
-                    self.credentials.validate_activation_in_transaction(
-                        conn,
-                        agent_id,
-                        str(participant["principal_id"]),
-                        receipt=receipt,
-                        expected_epoch_id=epoch_id,
-                        require_pending=True,
-                    )
+                    if self._uses_current_principal(participant):
+                        if receipt is not None:
+                            raise ValidationError(
+                                "current credential deployment cannot carry an install receipt"
+                            )
+                        self.credentials.validate_current_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            expected_epoch_id=epoch_id,
+                        )
+                        receipt_value = None
+                    else:
+                        if not isinstance(receipt, Mapping):
+                            raise ValidationError("worker install receipt is required")
+                        self.credentials.validate_activation_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            receipt=receipt,
+                            expected_epoch_id=epoch_id,
+                            require_pending=True,
+                        )
+                        receipt_value = json.loads(_canonical_json(receipt))
                 except WorkerCredentialError as exc:
                     raise ValidationError(str(exc)) from exc
-                receipt_value = json.loads(_canonical_json(receipt))
                 candidate_key = self._candidate_key(conn, epoch_id, participant)
                 candidate_proof = self._validate_candidate_proof(
                     epoch_id,
@@ -1326,7 +1369,9 @@ class FleetReleaseEpochService:
                 self._validate_report_approval(participant, resources, startup_value)
                 normalized = {
                     "agent_id": agent_id,
-                    "install_receipt_sha256": _sha256_json(receipt_value),
+                    "install_receipt_sha256": (
+                        _sha256_json(receipt_value) if receipt_value is not None else None
+                    ),
                     "attestation_proof_sha256": (
                         _sha256_json(candidate_proof) if candidate_proof is not None else None
                     ),
@@ -1359,8 +1404,12 @@ class FleetReleaseEpochService:
                     "report_executor_startup_timestamp = ? "
                     "WHERE epoch_id = ? AND agent_id = ? AND open_state = 1",
                     (
-                        _canonical_json(value["receipt"]),
-                        _sha256_json(value["receipt"]),
+                        (
+                            _canonical_json(value["receipt"])
+                            if value["receipt"] is not None
+                            else None
+                        ),
+                        (_sha256_json(value["receipt"]) if value["receipt"] is not None else None),
                         (
                             _canonical_json(value["candidate_proof"])
                             if value["candidate_proof"] is not None
@@ -1429,12 +1478,20 @@ class FleetReleaseEpochService:
                 resources = self._validate_node_readiness(conn, agent_row, participant)
                 self._validate_report_authority_projection(participant, resources)
                 try:
-                    readiness = self.credentials.validate_pending_readiness_in_transaction(
-                        conn,
-                        agent_id,
-                        str(participant["principal_id"]),
-                        expected_epoch_id=epoch_id,
-                    )
+                    if self._uses_current_principal(participant):
+                        readiness = self.credentials.validate_current_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            expected_epoch_id=epoch_id,
+                        )
+                    else:
+                        readiness = self.credentials.validate_pending_readiness_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            expected_epoch_id=epoch_id,
+                        )
                 except WorkerCredentialError as exc:
                     raise ValidationError(str(exc)) from exc
                 agents.append(
@@ -1469,18 +1526,33 @@ class FleetReleaseEpochService:
         ):
             raise ValidationError("attestation authority changed after fleet release open")
         self._validate_report_authority_projection(participant, resources)
-        receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
-        if _sha256_json(receipt) != participant["install_receipt_sha256"]:
-            raise TransitionError("staged worker install receipt is corrupt")
         try:
-            self.credentials.validate_activation_in_transaction(
-                conn,
-                agent_id,
-                str(participant["principal_id"]),
-                receipt=receipt,
-                expected_epoch_id=epoch_id,
-                require_pending=True,
-            )
+            if self._uses_current_principal(participant):
+                if (
+                    participant["install_receipt"] is not None
+                    or participant["install_receipt_sha256"] is not None
+                ):
+                    raise TransitionError(
+                        "current credential deployment contains rotation evidence"
+                    )
+                self.credentials.validate_current_in_transaction(
+                    conn,
+                    agent_id,
+                    str(participant["principal_id"]),
+                    expected_epoch_id=epoch_id,
+                )
+            else:
+                receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
+                if _sha256_json(receipt) != participant["install_receipt_sha256"]:
+                    raise TransitionError("staged worker install receipt is corrupt")
+                self.credentials.validate_activation_in_transaction(
+                    conn,
+                    agent_id,
+                    str(participant["principal_id"]),
+                    receipt=receipt,
+                    expected_epoch_id=epoch_id,
+                    require_pending=True,
+                )
         except WorkerCredentialError as exc:
             raise ValidationError(str(exc)) from exc
         candidate_key = self._candidate_key(conn, epoch_id, participant)
@@ -1608,19 +1680,20 @@ class FleetReleaseEpochService:
             now = utcnow()
             for participant in participants:
                 agent_id = str(participant["agent_id"])
-                receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
-                try:
-                    self.credentials.promote_in_transaction(
-                        conn,
-                        agent_id,
-                        str(participant["principal_id"]),
-                        receipt=receipt,
-                        actor=actor_value,
-                        expected_epoch_id=epoch_id,
-                        require_pending=True,
-                    )
-                except WorkerCredentialError as exc:
-                    raise ValidationError(str(exc)) from exc
+                if not self._uses_current_principal(participant):
+                    receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
+                    try:
+                        self.credentials.promote_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            receipt=receipt,
+                            actor=actor_value,
+                            expected_epoch_id=epoch_id,
+                            require_pending=True,
+                        )
+                    except WorkerCredentialError as exc:
+                        raise ValidationError(str(exc)) from exc
                 resources, candidate_key = validated[agent_id]
                 if candidate_key is not None:
                     conn.execute(
@@ -1878,7 +1951,11 @@ class FleetReleaseEpochService:
                     agent_id in installed_agents
                     and disposition_value == ABORT_DISPOSITION_RETAIN_INSTALLED
                 )
-                if not retained_installed and str(participant["principal_id"]) in live_principals:
+                if (
+                    not self._uses_current_principal(participant)
+                    and not retained_installed
+                    and str(participant["principal_id"]) in live_principals
+                ):
                     try:
                         self.credentials.discard_pending_in_transaction(
                             conn,

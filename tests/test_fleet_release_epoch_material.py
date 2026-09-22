@@ -116,6 +116,32 @@ def test_prove_and_release_bind_exact_prepared_cohort() -> None:
     assert commit_request == {"identity_sha256": IDENTITY}
 
 
+def test_prove_accepts_current_credential_without_rotation_receipt() -> None:
+    value = open_material()
+    agent = value["agents"][0]
+    prove_plan, prove_request = material.build_prove(
+        {
+            "schema": "mac.fleet_epoch_prove_material.v1",
+            "epoch_id": value["epoch_id"],
+            "source_commit": COMMIT,
+            "identity_sha256": IDENTITY,
+            "agents": [
+                {
+                    "agent_id": agent["agent_id"],
+                    "generation": agent["generation"],
+                    "deployment_id": agent["deployment_id"],
+                    "prepared_evidence_sha256": "d" * 64,
+                    "install_receipt": None,
+                    "attestation_proof": None,
+                    "report_executor_startup_timestamp": None,
+                }
+            ],
+        }
+    )
+    assert prove_plan["agents"][0]["prepared_evidence_sha256"] == "d" * 64
+    assert prove_request["proofs"][0]["install_receipt"] is None
+
+
 def test_cli_requires_private_material_and_writes_private_outputs(tmp_path: Path) -> None:
     private = tmp_path / "private"
     private.mkdir(mode=0o700)

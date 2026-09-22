@@ -13274,6 +13274,34 @@ PY
   echo "==> ${agent}: pending worker principal ${principal} staged"
 )
 
+# Software deployment validates the credential that is already carrying the
+# worker heartbeat. It never issues, installs, or promotes a bearer. The
+# rotation commands above remain an independent, overlap-safe maintenance path.
+validate_current_worker_credential() (
+  set -euo pipefail
+  umask 077
+  local agent="$1" hub_agent="$2" agent_id result manifest
+  local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
+  agent_id="$(stable_worker_agent_id "$agent")"
+  manifest="$(pending_worker_manifest_file "$agent")"
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -m mac.worker_credentials validate-current --agent-id $(shell_quote "$agent_id")")"
+  printf '%s\n' "$result" > "$manifest"
+  chmod 0600 "$manifest"
+  "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if value.get("schema") != "mac.worker_credential_current.v1" or value.get("status") != "valid" or value.get("agent_id") != sys.argv[2] or not value.get("principal_id"):
+    raise SystemExit("current worker credential validation is invalid")
+PY
+  echo "==> ${agent}: existing authenticated worker credential validated"
+)
+
 create_attestation_candidate() {
   local agent="$1" output
   output="$(attestation_candidate_file "$agent")"
@@ -13413,7 +13441,7 @@ build_and_open_hub_epoch() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     fleet_name="${fields[23]:-mac}"; capabilities="${fields[10]:-}"
-    issue_pending_worker_credential "$agent" "$hub_agent" "$fleet_name" "$capabilities"
+    validate_current_worker_credential "$agent" "$hub_agent"
     create_attestation_candidate "$agent"
     state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
     hub_epoch_client_read "$hub_agent" "$state" participant-state --agent-id "$agent_id"
@@ -13472,7 +13500,7 @@ PY
     "$COHORT_JOURNAL_REVISION" hub-opened "$DEPLOY_CONTROLLER_NONCE" \
     --evidence-file "$receipt" >/dev/null
   remove_hub_epoch_recovery_request "$hub_agent" "$COHORT_EPOCH_ID" open
-  echo "==> fleet: exact pending principals, holds, and candidate keys staged atomically"
+  echo "==> fleet: existing principals, holds, and candidate keys staged atomically"
 }
 
 prove_and_commit_hub_epoch() {
@@ -13502,7 +13530,7 @@ for line in Path(selected).read_text(encoding="utf-8").splitlines():
         "generation":bound["generation"],
         "deployment_id":bound["deployment_id"],
         "prepared_evidence_sha256":hashlib.sha256(prepared.read_bytes()).hexdigest(),
-        "install_receipt":json.load(open(root/("pending-worker-receipt-%s.json"%agent_id),encoding="utf-8")),
+        "install_receipt":None,
         "attestation_proof":json.load(open(root/("attestation-candidate-proof-%s.json"%agent_id),encoding="utf-8")),
         "report_executor_startup_timestamp":None,
     })
@@ -13520,7 +13548,7 @@ PY
     --request-out "$prove_request" >/dev/null
   hub_epoch_client_read "$hub_agent" "$readiness_receipt" readiness \
     --epoch "$COHORT_EPOCH_ID" --identity-sha256 "$identity"
-  echo "==> fleet: exact pending worker readiness verified before hub epoch proof"
+  echo "==> fleet: exact current worker credential readiness verified before hub epoch proof"
   persist_hub_epoch_recovery_request "$hub_agent" "$prove_request" prove
   cohort_journal_mutate hub-prove-start "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-prove-start "$DEPLOY_CONTROLLER_NONCE" \
@@ -16442,7 +16470,7 @@ REMOTE_TYPED_BARRIER_RELEASE
 }
 
 collect_typed_release_ready_evidence() {
-  # The hub epoch already owns the participant hold and pending identity. Build
+  # The hub epoch already owns the participant hold and validated identity. Build
   # the local prepared record from that exact open receipt instead of entering
   # the legacy per-node hold/release protocol a second time.
   local spec="$1" fields=() agent agent_id fleet_name deployment_id generation
@@ -16492,7 +16520,7 @@ if len(matches) != 1:
 participant = matches[0]
 principal_id = str(manifest.get("principal_id") or "")
 if (
-    manifest.get("schema") != "mac.worker_credential_install.v1"
+    manifest.get("schema") != "mac.worker_credential_current.v1"
     or manifest.get("agent_id") != agent_id
     or not principal_id
     or participant.get("principal_id") != principal_id
@@ -16532,7 +16560,7 @@ PY
     "$agent" "$deployment_id" "$generation" || return 1
   # Approval for the report-repository lane is intentionally staged only after
   # the atomic epoch commit. This pre-commit gate proves the base worker,
-  # generation and pending principal while the epoch-owned hub hold remains.
+  # generation and current principal while the epoch-owned hub hold remains.
   hub_agent_restart_gate arm "$agent_id" "$generation" "$baseline_seen" \
     "$hold_reason" 1 0 1 "$hold_reason" "$principal_id" "" 1 0 >/dev/null \
     || return 1
@@ -16575,7 +16603,6 @@ typed_phase2_apply_worker() {
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
     "$(node_route_identity_sha256 "$agent")" || return 1
-  install_pending_worker_credential "$agent" "$supervisor" "$fleet_name" || return 1
   install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name" || return 1
   collect_typed_release_ready_evidence "$spec" || return 1
   evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"

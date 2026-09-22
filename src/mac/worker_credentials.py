@@ -542,6 +542,72 @@ class WorkerCredentialLifecycle:
             "readiness": readiness,
         }
 
+    def validate_current_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        principal_id: Optional[str] = None,
+        *,
+        expected_epoch_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Validate the existing active credential without rotating it.
+
+        Software deployment needs authentication continuity, not a new bearer.
+        This check deliberately ignores source/runtime/package compatibility:
+        those are successor deployment facts and are proved by the deployment
+        epoch itself.  Conflating them with bearer validity made a source
+        failure look like credential failure and forced every deploy through a
+        destructive identity cut-over.
+        """
+
+        exact_agent = _validate_agent_id(agent_id)
+        self._assert_release_epoch_reservation(
+            conn, exact_agent, expected_epoch_id=expected_epoch_id
+        )
+        agent_row = conn.execute(
+            "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
+            (exact_agent,),
+        ).fetchone()
+        if agent_row is None:
+            raise WorkerCredentialError("worker agent does not exist")
+        if principal_id:
+            row = conn.execute(
+                "SELECT * FROM worker_credentials WHERE id = ? AND agent_id = ?",
+                (str(principal_id), exact_agent),
+            ).fetchone()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM worker_credentials WHERE agent_id = ? "
+                "AND state = 'active' ORDER BY credential_version DESC",
+                (exact_agent,),
+            ).fetchall()
+            if len(rows) != 1:
+                raise WorkerCredentialError("worker must have exactly one active credential")
+            row = rows[0]
+        if row is None:
+            raise WorkerCredentialError("active worker principal does not exist")
+        record = _record_from_row(row)
+        if record.get("state") != "active" or not _not_expired(record):
+            raise WorkerCredentialError("current worker principal is not active")
+        readiness = _credential_readiness(agent_row, record)
+        if not readiness["credential_bound"]:
+            raise WorkerCredentialError(
+                "current worker credential lacks authenticated heartbeat proof"
+            )
+        return {
+            "agent_id": exact_agent,
+            "principal_id": record["id"],
+            "credential_version": record["credential_version"],
+            "token_fingerprint": record["token_fingerprint"],
+            "readiness": readiness,
+        }
+
+    def validate_current(self, agent_id: str, principal_id: Optional[str] = None) -> Dict[str, Any]:
+        """Read-only public wrapper for deployment preflight."""
+
+        with self.store.transaction() as conn:
+            return self.validate_current_in_transaction(conn, agent_id, principal_id)
+
     def stage_pending_in_transaction(
         self,
         conn: Any,
@@ -1888,6 +1954,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="one-time issuance manifest; deleted only after verified activation",
     )
 
+    current = sub.add_parser("validate-current")
+    current.add_argument("--agent-id", required=True)
+    current.add_argument("--principal-id")
+
     revoke = sub.add_parser("revoke")
     revoke.add_argument("--agent-id", required=True)
 
@@ -2014,6 +2084,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "agent_id": result["agent_id"],
                     "principal_id": result["id"],
                     "token_fingerprint": result["token_fingerprint"],
+                }
+            )
+            return 0
+        if args.command == "validate-current":
+            current = authority().validate_current(args.agent_id, args.principal_id)
+            _safe_print(
+                {
+                    "schema": "mac.worker_credential_current.v1",
+                    "status": "valid",
+                    "agent_id": current["agent_id"],
+                    "principal_id": current["principal_id"],
+                    "worker_credential_version": current["credential_version"],
+                    "token_fingerprint": current["token_fingerprint"],
                 }
             )
             return 0

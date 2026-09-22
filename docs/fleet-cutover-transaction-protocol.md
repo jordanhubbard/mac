@@ -45,7 +45,9 @@ The initial inventory is:
 | Surface | Class and owner |
 | --- | --- |
 | Source, virtualenv, executables, runtime environment, service definitions, supervisor topology, managed gateway state | `transactional`, node participant |
-| Worker principals, attestation candidate, report-executor approval, identity policy revision | `commit_staged`, hub epoch authority |
+| Existing worker principal | `external`; deployment validates its authenticated heartbeat but never rotates it |
+| Worker-principal rotation | independent per-node maintenance transaction; pending and active overlap until successor proof |
+| Attestation candidate, report-executor approval, identity policy revision | `commit_staged`, hub epoch authority |
 | Dispatch holds, service-claim withdrawal, release marker | `commit_staged`, hub epoch authority |
 | Package installation, image pulls/caches, schema-compatible migrations | `monotonic_prerequisite`, onboarding or preflight |
 | Reverse tunnels, SSH authorization, shared Qdrant/Firecrawl/WebDAV services | separate infrastructure prerequisite unless represented by a typed transactional participant |
@@ -69,24 +71,27 @@ Open atomically, before any node mutation:
 - binds the ordered cohort and exact request digest;
 - snapshots each selected dispatch hold and reason;
 - claims one open epoch per agent;
-- binds an already issued but not yet installed pending worker principal without
-  superseding the old active principal;
+- binds the already-active, authenticated worker principal without changing its
+  state or coupling its validity to successor source/runtime readiness;
 - stages an attestation candidate without replacing the current key;
 - stages the desired report-executor approval and policy revision; and
 - returns only secret-free identities and digests.
 
-Pending worker principals may authenticate during preparation, but they are not
-promoted and old principals are not retired. Attestation candidates are proved
-directly while the current key remains authoritative. Open does not require a
-destination install receipt, authenticated successor heartbeat, or successor
-startup proof; requiring any of those would move node environment mutation
-ahead of the rollback-intent boundary.
+Worker-principal issuance, installation, and promotion are forbidden inside a
+software deployment epoch. Credential maintenance uses its own per-node
+issue/install/activate lifecycle: the pending bearer authenticates alongside
+the active bearer, and activation supersedes the predecessor only after the
+successor heartbeat is proved. Attestation candidates are proved directly while
+the current key remains authoritative. Open does not require a credential
+destination install receipt; receiving one on the current-principal path is a
+protocol violation.
 
 After a node's phase-2 rollback intent is armed and its successor is applied,
-prove accepts the complete cohort's exact install receipts, pending-principal
-heartbeats, candidate-key challenges, generation evidence, and report-executor
-startup evidence. It persists only secret-free proof material and advances the
-hub epoch from `open` to `proved`. Partial proof never authorizes commit.
+prove revalidates the unchanged active-principal heartbeat and accepts the
+complete cohort's candidate-key challenges, generation evidence, and
+report-executor startup evidence. It persists only secret-free proof material
+and advances the hub epoch from `open` to `proved`. Partial proof never
+authorizes commit.
 
 Commit is one database transaction. It revalidates the complete cohort,
 generation proofs, pending principals, attestation proofs, approvals, policy,
