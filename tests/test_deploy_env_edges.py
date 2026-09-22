@@ -223,6 +223,34 @@ def test_bound_worker_credential_never_falls_back_to_hub_admin_token(tmp_path) -
     assert values["MAC_WORKER_RUNNING_DIGEST"] == "runtime-digest"
 
 
+def test_redeploy_preserves_validated_existing_bound_worker_credential(tmp_path) -> None:
+    cfg = _cfg(tmp_path, agent="spoke", manager="hub")
+    existing = {
+        "MAC_API_TOKEN": "node-local-control-token",
+        "MAC_SECRET_KEY": "s" * 32,
+        "MAC_WORKER_TOKEN": "bound-worker-token",
+        "MAC_WORKER_IDENTITY_MODE": "bound",
+        "MAC_WORKER_CREDENTIAL_ID": "worker-spoke-v12",
+        "MAC_WORKER_CREDENTIAL_VERSION": "12",
+        "MAC_WORKER_CREDENTIAL_AGENT_ID": "agent_spoke",
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT": "0123456789ab",
+        "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": "a" * 40,
+        "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": "runtime-digest",
+    }
+
+    # The positional deploy contract still contains the compatibility hub
+    # token. It must not overwrite a bound credential that phase 1 validated.
+    values = deploy_env.build_mac_env(existing, cfg, environ={})
+
+    assert values["MAC_WORKER_TOKEN"] == "bound-worker-token"
+    assert values["MAC_WORKER_TOKEN"] != cfg.control.hub_token
+    assert values["MAC_WORKER_IDENTITY_MODE"] == "bound"
+    assert values["MAC_WORKER_CREDENTIAL_ID"] == "worker-spoke-v12"
+    assert values["MAC_WORKER_CREDENTIAL_VERSION"] == "12"
+    assert values["MAC_WORKER_CREDENTIAL_AGENT_ID"] == "agent_spoke"
+    assert values["MAC_WORKER_CREDENTIAL_FINGERPRINT"] == "0123456789ab"
+
+
 def test_incomplete_worker_credential_stays_explicitly_in_compatibility_mode(tmp_path) -> None:
     cfg = _cfg(tmp_path, agent="spoke", manager="hub")
     cfg = deploy_env.DeployEnvConfig(

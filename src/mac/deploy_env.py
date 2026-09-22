@@ -524,6 +524,26 @@ def _gateway_values(cfg: DeployEnvConfig) -> Dict[str, str]:
 def _worker_token(cfg: DeployEnvConfig, values: Mapping[str, str]) -> str:
     if cfg.worker.token:
         return cfg.worker.token
+    # A typed redeploy validates the node's already-installed bound credential
+    # before phase 2, but the legacy write-mac-env argument vector only carries
+    # the compatibility hub token.  Do not replace that validated per-worker
+    # bearer with the shared bootstrap/admin bearer while rewriting mac.env.
+    # New credential material, when supplied explicitly, still wins above.
+    if (
+        not cfg.identity.is_hub
+        and values.get("MAC_WORKER_IDENTITY_MODE") == "bound"
+        and values.get("MAC_WORKER_TOKEN")
+        and all(
+            values.get(key)
+            for key in (
+                "MAC_WORKER_CREDENTIAL_ID",
+                "MAC_WORKER_CREDENTIAL_VERSION",
+                "MAC_WORKER_CREDENTIAL_AGENT_ID",
+                "MAC_WORKER_CREDENTIAL_FINGERPRINT",
+            )
+        )
+    ):
+        return values["MAC_WORKER_TOKEN"]
     if cfg.worker.mode == "loop" and cfg.identity.is_hub:
         return values["MAC_API_TOKEN"]
     if cfg.control.hub_token:
@@ -552,6 +572,13 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
         "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": worker.credential_source_commit,
         "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": worker.credential_runtime_digest,
     }
+    if (
+        not worker.token
+        and not any(credential_values.values())
+        and values.get("MAC_WORKER_IDENTITY_MODE") == "bound"
+        and values.get("MAC_WORKER_TOKEN")
+    ):
+        credential_values = {key: str(values.get(key) or "") for key in credential_values}
     if all(
         credential_values[key]
         for key in (
