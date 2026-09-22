@@ -9938,7 +9938,11 @@ restart_remote_mac_agent_under_epoch() {
       fi
       ;;
     supervisord)
-      command="if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent"); else sudo -n supervisorctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent"); fi"
+      # A retained successor can fail before phase two installs its program,
+      # just as it can fail before installing a systemd unit.  For a stop-only
+      # recovery, accept only supervisord's exact missing-program response;
+      # all other inspection/control failures remain fatal.
+      command="program=$(shell_quote "${fleet_name}-agent"); action=$(shell_quote "$manager_action"); if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl_prefix=; else supervisorctl_prefix='sudo -n'; fi; output=\$(\$supervisorctl_prefix supervisorctl \"\$action\" \"\$program\" 2>&1) && status=0 || status=\$?; if [ \"\$status\" -eq 0 ]; then [ -n \"\$output\" ] && printf '%s\\n' \"\$output\"; exit 0; fi; if [ \"\$action\" = stop ] && [ \"\$output\" = \"\$program: ERROR (no such process)\" ]; then echo \"exact supervisord worker program is absent and already stopped: \$program\" >&2; exit 0; fi; printf '%s\\n' \"\$output\" >&2; exit \"\$status\""
       ;;
     *) echo "ERROR: ${agent}: unsupported typed supervisor ${supervisor}" >&2; return 1 ;;
   esac

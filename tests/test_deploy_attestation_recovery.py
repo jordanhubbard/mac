@@ -683,3 +683,58 @@ ssh() { bash -c "${!#}"; }
     assert (result.returncode == 0) is expected_success, result.stderr
     observed = calls.read_text().splitlines()
     assert observed == ["show fleet-agent.service --property=LoadState --value"]
+
+
+@pytest.mark.parametrize("action", ["activate", "restart", "stop"])
+@pytest.mark.parametrize("exact_absence", [False, True])
+def test_epoch_supervisord_lifecycle_accepts_only_exact_absent_stop(
+    tmp_path, action, exact_absence
+):
+    source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
+    function = _shell_function(source, "restart_remote_mac_agent_under_epoch", "hub_target")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    supervisorctl = bin_dir / "supervisorctl"
+    supervisorctl.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n'
+        'if [ "$EXACT_ABSENCE" = 1 ]; then '
+        'printf "fleet-agent: ERROR (no such process)\\n" >&2; exit 3; fi\n'
+        'printf "permission denied\\n" >&2\nexit 1\n'
+    )
+    supervisorctl.chmod(0o700)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n')
+    sudo.chmod(0o700)
+    stubs = r"""
+deployment_id_for_agent() { printf recovery-deployment; }
+assert_remote_deployment_lock() { :; }
+phase1_resolved_supervisor_for_agent() { printf supervisord; }
+ssh_target_args() { printf 'fixture-host\0'; }
+shell_quote() { printf '%q' "$1"; }
+remote_deployment_fenced_exec() { shift 2; printf '%q ' "$@"; }
+ssh() { bash -c "${!#}"; }
+"""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "set -eu\nTS=fixture\n"
+            + function
+            + stubs
+            + f"\nrestart_remote_mac_agent_under_epoch node supervisord fleet {action}",
+        ],
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+            "CALLS": str(calls),
+            "EXACT_ABSENCE": "1" if exact_absence else "0",
+        },
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    expected_success = action == "stop" and exact_absence
+    assert (result.returncode == 0) is expected_success, result.stderr
+    assert calls.read_text().splitlines() == [f"{action if action != 'activate' else 'start'} fleet-agent"]

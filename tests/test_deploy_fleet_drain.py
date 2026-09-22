@@ -2229,7 +2229,8 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
     assert "activate) manager_action=start" in restart
     assert "restart) manager_action=restart" in restart
     assert 'systemctl $(shell_quote "$manager_action")' in restart
-    assert 'supervisorctl $(shell_quote "$manager_action")' in restart
+    assert r'supervisorctl \"\$action\" \"\$program\"' in restart
+    assert r'\"\$program: ERROR (no such process)\"' in restart
     assert 'domain=\\"gui/\\$(id -u)\\"' in restart
     assert "mac_launchd_stop_job_if_present" in restart
     assert "mac_launchd_bootstrap_job" in restart
