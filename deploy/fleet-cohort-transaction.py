@@ -1892,6 +1892,7 @@ def _hub_plan(
                 "expected_dispatch_hold",
                 "expected_hold_reason",
                 "expected_hold_at",
+                "principal_mode",
             }
         )
     ownership: list[dict[str, Any]] = []
@@ -1912,6 +1913,11 @@ def _hub_plan(
             )
             values += (item["prepared_evidence_sha256"],)
         else:
+            if item["principal_mode"] not in {"current", "pending"}:
+                raise JournalError(
+                    "invalid_release_plan",
+                    "hub open principal mode must select current or pending",
+                )
             expected_hold = item["expected_dispatch_hold"]
             reason = item["expected_hold_reason"]
             held_at = item["expected_hold_at"]

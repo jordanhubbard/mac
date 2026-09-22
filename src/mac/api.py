@@ -1319,6 +1319,7 @@ class FleetReleaseEpochParticipantRequest(BaseModel):
     generation: str
     baseline_seen: str
     principal_id: str
+    principal_mode: Literal["current", "pending"]
     attestation_candidate: Optional[FleetReleaseAttestationCandidateRequest] = None
     report_executor_action: Literal["preserve", "approve", "revoke"] = "preserve"
     report_executor_attestation: Optional[Dict[str, Any]] = None

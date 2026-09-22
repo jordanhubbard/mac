@@ -253,6 +253,7 @@ def build_open(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, A
                 "deployment_id",
                 "participant_state",
                 "principal_id",
+                "principal_mode",
                 "attestation_candidate_key",
                 "report_executor_action",
                 "report_executor_attestation",
@@ -293,6 +294,9 @@ def build_open(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, A
             raise MaterialError("participant hold ownership is malformed")
         baseline = _text(state["baseline_seen"], "participant heartbeat baseline", 128)
         principal = _text(item["principal_id"], "principal id")
+        principal_mode = item["principal_mode"]
+        if principal_mode not in {"current", "pending"}:
+            raise MaterialError("principal mode must explicitly select current or pending")
         candidate = item["attestation_candidate_key"]
         if candidate is not None:
             candidate = _text(candidate, "attestation candidate", 8192)
@@ -314,6 +318,7 @@ def build_open(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, A
                 "expected_dispatch_hold": held,
                 "expected_hold_reason": reason,
                 "expected_hold_at": held_at,
+                "principal_mode": principal_mode,
             }
         )
         request_agents.append(
@@ -325,6 +330,7 @@ def build_open(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, A
                 "generation": generation,
                 "baseline_seen": baseline,
                 "principal_id": principal,
+                "principal_mode": principal_mode,
                 "attestation_candidate": ({"key": candidate} if candidate is not None else None),
                 "report_executor_action": action,
                 "report_executor_attestation": attestation,

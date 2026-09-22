@@ -235,6 +235,7 @@ class Scenario:
                             "expected_hold_at": None,
                         },
                         "principal_id": f"principal-{index}",
+                        "principal_mode": "pending",
                         "attestation_candidate_key": None,
                         "report_executor_action": "preserve",
                         "report_executor_attestation": None,

@@ -13552,6 +13552,7 @@ for line in Path(selected).read_text(encoding="utf-8").splitlines():
         "deployment_id":bound["deployment_id"],
         "participant_state":state,
         "principal_id":manifest["principal_id"],
+        "principal_mode":"current",
         "attestation_candidate_key":candidate["key"],
         "report_executor_action":"revoke",
         "report_executor_attestation":None,

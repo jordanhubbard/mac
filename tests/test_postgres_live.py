@@ -236,6 +236,7 @@ def test_postgres_fleet_release_open_is_unique_and_transactional(
             "generation": "postgres-open-generation",
             "baseline_seen": first_cp.get_agent(agent.id).last_seen_at,
             "principal_id": pending.record["id"],
+            "principal_mode": "pending",
             "attestation_candidate": None,
             "report_executor_action": "preserve",
             "report_executor_attestation": None,

@@ -496,6 +496,9 @@ class FleetReleaseEpochService:
             except (TypeError, ValueError) as exc:
                 raise ValidationError("baseline seen is invalid") from exc
             principal_id = _text(raw.get("principal_id"), "principal id")
+            principal_mode = str(raw.get("principal_mode") or "").strip()
+            if principal_mode not in {"current", "pending"}:
+                raise ValidationError("principal mode must explicitly select current or pending")
 
             candidate_key: Optional[str] = None
             candidate_fingerprint: Optional[str] = None
@@ -535,6 +538,7 @@ class FleetReleaseEpochService:
                     "generation": generation,
                     "baseline_seen": baseline_seen,
                     "principal_id": principal_id,
+                    "principal_mode": principal_mode,
                     "attestation_candidate_key": candidate_key,
                     "attestation_candidate_fingerprint": candidate_fingerprint,
                     "report_executor_action": report_action,
@@ -562,6 +566,7 @@ class FleetReleaseEpochService:
                         "generation",
                         "baseline_seen",
                         "principal_id",
+                        "principal_mode",
                         "attestation_candidate_fingerprint",
                         "report_executor_action",
                         "report_executor_attestation",
@@ -624,6 +629,9 @@ class FleetReleaseEpochService:
                     "epoch_hold_at": str(item["epoch_hold_at"]),
                     "generation": str(item["generation"]),
                     "principal_id": str(item["principal_id"]),
+                    "principal_mode": (
+                        "current" if self._uses_current_principal(item) else "pending"
+                    ),
                     "principal_version": int(item["principal_version"]),
                     "principal_fingerprint": str(item["principal_fingerprint"]),
                     "attestation_candidate_fingerprint": item["attestation_candidate_fingerprint"],
@@ -666,46 +674,55 @@ class FleetReleaseEpochService:
             "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? ORDER BY ordinal",
             (epoch["epoch_id"],),
         ).fetchall()
+        identity_agents = identity.get("agents")
+        explicit_principal_mode = bool(
+            isinstance(identity_agents, list)
+            and identity_agents
+            and all(
+                isinstance(item, Mapping) and "principal_mode" in item for item in identity_agents
+            )
+        )
         projected_agents: List[Dict[str, Any]] = []
         for participant in participants:
-            projected_agents.append(
-                {
-                    "agent_id": str(participant["agent_id"]),
-                    "expected_dispatch_hold": bool(participant["prior_dispatch_hold"]),
-                    "expected_hold_reason": participant["prior_hold_reason"],
-                    "expected_hold_at": participant["prior_hold_at"],
-                    "generation": str(participant["generation"]),
-                    "baseline_seen": str(participant["baseline_seen"]),
-                    "principal_id": str(participant["principal_id"]),
-                    "attestation_candidate_fingerprint": participant[
-                        "attestation_candidate_fingerprint"
-                    ],
-                    "report_executor_action": str(participant["report_executor_action"]),
-                    "report_executor_attestation": (
-                        ensure_json_object(
-                            json_loads(participant["report_executor_attestation"], {})
-                        )
-                        if participant["report_executor_attestation"] is not None
-                        else None
-                    ),
-                    "prior_hold_at": participant["prior_hold_at"],
-                    "epoch_hold_at": str(participant["epoch_hold_at"]),
-                    "prior_active_service_claim_ids": list(
-                        json_loads(participant["prior_active_service_claim_ids"], [])
-                    ),
-                    "principal_version": int(participant["principal_version"]),
-                    "principal_fingerprint": str(participant["principal_fingerprint"]),
-                    "prior_live_principal_ids": list(
-                        json_loads(participant["prior_live_principal_ids"], [])
-                    ),
-                    "prior_attestation_ciphertext_sha256": str(
-                        participant["prior_attestation_ciphertext_sha256"]
-                    ),
-                    "prior_report_executor_projection_sha256": str(
-                        participant["prior_report_executor_projection_sha256"]
-                    ),
-                }
-            )
+            projected = {
+                "agent_id": str(participant["agent_id"]),
+                "expected_dispatch_hold": bool(participant["prior_dispatch_hold"]),
+                "expected_hold_reason": participant["prior_hold_reason"],
+                "expected_hold_at": participant["prior_hold_at"],
+                "generation": str(participant["generation"]),
+                "baseline_seen": str(participant["baseline_seen"]),
+                "principal_id": str(participant["principal_id"]),
+                "attestation_candidate_fingerprint": participant[
+                    "attestation_candidate_fingerprint"
+                ],
+                "report_executor_action": str(participant["report_executor_action"]),
+                "report_executor_attestation": (
+                    ensure_json_object(json_loads(participant["report_executor_attestation"], {}))
+                    if participant["report_executor_attestation"] is not None
+                    else None
+                ),
+                "prior_hold_at": participant["prior_hold_at"],
+                "epoch_hold_at": str(participant["epoch_hold_at"]),
+                "prior_active_service_claim_ids": list(
+                    json_loads(participant["prior_active_service_claim_ids"], [])
+                ),
+                "principal_version": int(participant["principal_version"]),
+                "principal_fingerprint": str(participant["principal_fingerprint"]),
+                "prior_live_principal_ids": list(
+                    json_loads(participant["prior_live_principal_ids"], [])
+                ),
+                "prior_attestation_ciphertext_sha256": str(
+                    participant["prior_attestation_ciphertext_sha256"]
+                ),
+                "prior_report_executor_projection_sha256": str(
+                    participant["prior_report_executor_projection_sha256"]
+                ),
+            }
+            if explicit_principal_mode:
+                projected["principal_mode"] = (
+                    "current" if self._uses_current_principal(participant) else "pending"
+                )
+            projected_agents.append(projected)
         if identity.get("agents") != projected_agents:
             raise TransitionError("fleet release epoch participant identity storage is corrupt")
 
@@ -838,7 +855,7 @@ class FleetReleaseEpochService:
                         "fleet release open lost expected prior hold for %s" % agent_id
                     )
                 try:
-                    try:
+                    if item["principal_mode"] == "current":
                         self.credentials.validate_current_in_transaction(
                             conn, agent_id, item["principal_id"]
                         )
@@ -848,7 +865,7 @@ class FleetReleaseEpochService:
                         ).fetchone()
                         principal = _row(principal)
                         principal_is_current = True
-                    except WorkerCredentialError:
+                    else:
                         principal = self.credentials.stage_pending_in_transaction(
                             conn, agent_id, item["principal_id"]
                         )
