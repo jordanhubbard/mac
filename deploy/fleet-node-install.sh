@@ -12916,6 +12916,13 @@ unset mac_token_value mac_token_found mac_token_fleet mac_token_suffix mac_token
 : "${MAC_HUB_URL:?MAC_HUB_URL is required}"
 : "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"
 
+# One generation spans the startup self-test and the worker process that follows
+# it. Rotate on every service invocation so a hub-cached report from a previous
+# process can never authorize the replacement, even when source and image are
+# otherwise identical.
+MAC_WORKER_PROCESS_REVISION="$("$HOME/.mac/venv/bin/python" -c 'import uuid; print(uuid.uuid4().hex)')"
+export MAC_WORKER_PROCESS_REVISION
+
 agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"

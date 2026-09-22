@@ -8,6 +8,7 @@ shared across the control-plane services.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -217,6 +218,7 @@ def read_only_report_repository_executor_attestation(
     executor_script_sha256: str,
     source_root: str,
     source_bundle_sha256: str,
+    runtime_config_sha256: str = "",
 ) -> JsonDict:
     """Return the exact worker-side claim used to request hub admission.
 
@@ -225,6 +227,19 @@ def read_only_report_repository_executor_attestation(
     directly mint the marker that dispatch and review routing consume.
     """
 
+    if not runtime_config_sha256:
+        runtime_config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json_dumps(
+                    {
+                        "runtime_image_ref": runtime_image_ref,
+                        "policy_sha256": policy_sha256,
+                        "source_bundle_sha256": source_bundle_sha256,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+        )
     return {
         "schema": REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA,
         "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
@@ -244,6 +259,7 @@ def read_only_report_repository_executor_attestation(
         "executor_script_sha256": executor_script_sha256,
         "source_root": source_root,
         "source_bundle_sha256": source_bundle_sha256,
+        "runtime_config_sha256": runtime_config_sha256,
         "verified": True,
     }
 
@@ -272,6 +288,7 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
         "executor_script_sha256",
         "source_root",
         "source_bundle_sha256",
+        "runtime_config_sha256",
         "verified",
     }
     if set(value) != expected_keys:
@@ -295,6 +312,7 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
         "python_sha256",
         "executor_script_sha256",
         "source_bundle_sha256",
+        "runtime_config_sha256",
     ]
     path_keys = [
         "executor_path",
@@ -361,9 +379,23 @@ def read_only_report_repository_executor_approval(
     executor_script_sha256: str,
     source_root: str,
     source_bundle_sha256: str,
+    runtime_config_sha256: str = "",
 ) -> JsonDict:
     """Return the admin/deployment-owned tuple allowed to reach dispatch."""
 
+    if not runtime_config_sha256:
+        runtime_config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json_dumps(
+                    {
+                        "runtime_image_ref": runtime_image_ref,
+                        "policy_sha256": policy_sha256,
+                        "source_bundle_sha256": source_bundle_sha256,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+        )
     return {
         "schema": REPORT_REPOSITORY_EXECUTOR_APPROVAL_SCHEMA,
         "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
@@ -383,6 +415,7 @@ def read_only_report_repository_executor_approval(
         "executor_script_sha256": executor_script_sha256,
         "source_root": source_root,
         "source_bundle_sha256": source_bundle_sha256,
+        "runtime_config_sha256": runtime_config_sha256,
         "approved": True,
     }
 
@@ -410,6 +443,7 @@ def valid_read_only_report_repository_executor_approval(value: Any) -> bool:
         "executor_script_sha256",
         "source_root",
         "source_bundle_sha256",
+        "runtime_config_sha256",
         "approved",
     }
     if set(value) != expected_keys or value.get("approved") is not True:
@@ -448,6 +482,7 @@ def report_repository_executor_approval_matches_attestation(
             "executor_script_sha256",
             "source_root",
             "source_bundle_sha256",
+            "runtime_config_sha256",
         )
     )
 
@@ -468,9 +503,23 @@ def read_only_report_repository_executor_resource(
     executor_script_sha256: str,
     source_root: str,
     source_bundle_sha256: str,
+    runtime_config_sha256: str = "",
 ) -> JsonDict:
     """Return the exact controller-owned dispatch marker."""
 
+    if not runtime_config_sha256:
+        runtime_config_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json_dumps(
+                    {
+                        "runtime_image_ref": runtime_image_ref,
+                        "policy_sha256": policy_sha256,
+                        "source_bundle_sha256": source_bundle_sha256,
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+        )
     return {
         "schema": REPORT_REPOSITORY_EXECUTOR_SCHEMA,
         "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
@@ -490,6 +539,7 @@ def read_only_report_repository_executor_resource(
         "executor_script_sha256": executor_script_sha256,
         "source_root": source_root,
         "source_bundle_sha256": source_bundle_sha256,
+        "runtime_config_sha256": runtime_config_sha256,
         "verified": True,
     }
 
@@ -526,6 +576,7 @@ def agent_has_read_only_report_repository_executor(resources: Any) -> bool:
         "executor_script_sha256",
         "source_root",
         "source_bundle_sha256",
+        "runtime_config_sha256",
         "verified",
     }
     if set(marker) != expected_keys:
