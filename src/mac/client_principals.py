@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -135,6 +136,55 @@ def normalize_scopes(scopes: Optional[Iterable[str]], *, allow_elevated: bool = 
             "elevated scope(s) %s require --allow-elevated" % ", ".join(elevated)
         )
     return values
+
+
+#: Default client-credential lifetime. Thirty days, unchanged from when this
+#: was an argparse literal repeated at three issue sites.
+DEFAULT_CREDENTIAL_TTL_SECONDS = 30 * 24 * 60 * 60
+
+#: Floor/ceiling for the configured lifetime. The floor keeps a typo from
+#: minting a credential that expires before it can be installed; the ceiling
+#: keeps "never expires" from being expressible as a very large number.
+MIN_CREDENTIAL_TTL_SECONDS = 300
+MAX_CREDENTIAL_TTL_SECONDS = 10 * 365 * 24 * 60 * 60
+
+
+def configured_credential_ttl_seconds(
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
+    """Fleet-configured credential lifetime, in seconds.
+
+    The lifetime used to be a hardcoded argparse default repeated at three
+    issue sites, so a fleet's effective TTL was whatever the operator
+    remembered to type after `--expires-in`. Reading it from
+    ``MAC_CLIENT_CREDENTIAL_TTL_SECONDS`` makes it a fleet policy with one
+    place to set it. An unparseable or out-of-range value falls back to the
+    default rather than failing issuance: refusing to mint a credential is a
+    worse outcome than minting one with the standard lifetime.
+    """
+    env = os.environ if environ is None else environ
+    raw = str(env.get("MAC_CLIENT_CREDENTIAL_TTL_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_CREDENTIAL_TTL_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        _LOG.warning(
+            "MAC_CLIENT_CREDENTIAL_TTL_SECONDS=%r is not an integer; using %d",
+            raw,
+            DEFAULT_CREDENTIAL_TTL_SECONDS,
+        )
+        return DEFAULT_CREDENTIAL_TTL_SECONDS
+    if not MIN_CREDENTIAL_TTL_SECONDS <= value <= MAX_CREDENTIAL_TTL_SECONDS:
+        _LOG.warning(
+            "MAC_CLIENT_CREDENTIAL_TTL_SECONDS=%d outside [%d, %d]; using %d",
+            value,
+            MIN_CREDENTIAL_TTL_SECONDS,
+            MAX_CREDENTIAL_TTL_SECONDS,
+            DEFAULT_CREDENTIAL_TTL_SECONDS,
+        )
+        return DEFAULT_CREDENTIAL_TTL_SECONDS
+    return value
 
 
 def _token_hash(token: str) -> str:
@@ -615,6 +665,52 @@ def _active_mapping_from_registry(
     return result
 
 
+def _expiry_reason_from_registry(
+    registry: Mapping[str, Any], token_hash: str, *, now: Optional[datetime] = None
+) -> Optional[Dict[str, Any]]:
+    """Explain an authentication failure when, and only when, it is expiry.
+
+    `_active_mapping_from_registry` drops every inactive record, so a caller
+    holding a credential that merely lapsed is indistinguishable from one
+    presenting a forged token: both surface as "unknown bearer token". That
+    message names the wrong cause. The documented remedy for a 403 is token
+    *drift* (`mac admin fleet sync-token`), so an operator whose credential
+    simply aged out is sent to repair the wrong layer -- observed on
+    2026-09-23, when an expired hub-admin credential was first investigated as
+    drift.
+
+    Only expiry is reported, and only to a caller that already presented the
+    exact token, so this discloses nothing the caller does not hold. Revoked
+    and unknown credentials deliberately stay indistinguishable: telling the
+    bearer of a stolen token that it was revoked tells them the theft was
+    noticed.
+    """
+    instant = (now or _now()).astimezone(timezone.utc)
+    clients = registry.get("clients") if isinstance(registry, Mapping) else None
+    if not isinstance(clients, Mapping) or not token_hash.startswith("sha256:"):
+        return None
+    for record in clients.values():
+        if not isinstance(record, Mapping) or record.get("revoked_at"):
+            continue
+        registered = str(record.get("token_hash") or "")
+        if not registered.startswith("sha256:") or not hmac.compare_digest(
+            registered, token_hash
+        ):
+            continue
+        try:
+            expires_at = _parse_timestamp(record.get("expires_at"))
+        except ClientPrincipalError:
+            return None
+        if expires_at is None or expires_at > instant:
+            return None
+        return {
+            "reason": "expired",
+            "client_id": str(record.get("id") or "") or None,
+            "expires_at": _timestamp(expires_at),
+        }
+    return None
+
+
 class ClientPrincipalProvider:
     """Mtime-cached registry reader; expiry/revocation is evaluated per request."""
 
@@ -647,3 +743,16 @@ class ClientPrincipalProvider:
                         self._registry = {"schema": REGISTRY_SCHEMA, "clients": {}}
                 self._signature = signature
             return _active_mapping_from_registry(self._registry, now=now)
+
+    def explain_expired(
+        self, token: str, *, now: Optional[datetime] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Return expiry detail when `token` names a lapsed credential.
+
+        Consulted only after authentication has already failed, so it costs
+        nothing on the success path. Returns None for unknown, revoked, or
+        still-valid credentials -- see `_expiry_reason_from_registry`.
+        """
+        with self._lock:
+            registry = self._registry
+        return _expiry_reason_from_registry(registry, _token_hash(token), now=now)

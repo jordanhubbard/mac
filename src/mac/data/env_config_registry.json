@@ -1048,6 +1048,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: client credential ttl seconds.",
+    "family": "core",
+    "name": "MAC_CLIENT_CREDENTIAL_TTL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/client_principals.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Client Auth setting: client principals audit file.",
     "family": "client-auth",
     "name": "MAC_CLIENT_PRINCIPALS_AUDIT_FILE",
@@ -1536,6 +1547,17 @@
     "sources": [
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: credential renew at fraction.",
+    "family": "core",
+    "name": "MAC_CREDENTIAL_RENEW_AT_FRACTION",
+    "retired": false,
+    "sources": [
+      "src/mac/credential_renewal.py"
     ],
     "type": "str"
   },

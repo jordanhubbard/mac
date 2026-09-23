@@ -135,7 +135,7 @@ transaction or equivalent durable evidence.
   `unknown bearer token`. Credential lifetime is fleet-configured rather than a
   hardcoded argparse default. Design: `docs/peer-repair-design.md` §7.2, §8b
   (C1–C3). Observed 2026-09-23: three live principals already expired
-  (`jkh-ui`, `jordanh-cxwwhggjx0`, `jkh-yowza`) and `openclaw-fleet-upgrade`
+  (a UI client, a laptop, a workstation) and a fleet-upgrade principal
   within 26 hours, none reported anywhere.
 - [ ] Agents detect a hub they cannot reach and surface it locally, so the
   process that notices failure does not live exclusively on the process that

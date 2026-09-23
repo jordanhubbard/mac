@@ -1,8 +1,10 @@
 # Peer Repair: agents repairing agents
 
-- Status: **Proposed** (not accepted; no code written). The credential
-  survivability track (§7.2, §7.3, §8b) is carried on `docs/roadmap.md` under
-  *Operational autonomy*.
+- Status: **Peer repair (§1–§6): proposed**, not accepted, no code written.
+  **Credential survivability (§7.2, §7.3, §8b): implemented** — C1–C4 have
+  landed with tests; the roadmap items under *Operational autonomy* remain
+  unchecked until they meet the roadmap's completion rule (deployed fleet-wide
+  and verified against the live fleet).
 - Date: 2026-09-22, revised 2026-09-23
 - Scope: agent-to-agent repair (§1–§6), plus two observability tracks the
   investigation forced out (§7). Hub *failover* is surveyed and deliberately
@@ -13,12 +15,12 @@
 
 ## 1. Why this document exists
 
-On 2026-09-22 a fleet-wide deploy to `ovswarm` died mid-flight. It completed
+On 2026-09-22 a fleet-wide deploy to a 50-worker fleet died mid-flight. It completed
 Phase 1 prepare on the hub node at 13:28:26Z, then the deploy process
 vanished — no crash log, no later phase artifacts, no process on the host.
 At 14:00:04Z the fail-forward monitor gave up and wrote
 `fail-forward-20260922T131604Z.json` (`status: retained_for_forward_repair`,
-`rollback_performed: false`), and 49 of 53 `ovswarm` agents were left holding
+`rollback_performed: false`), and 49 of that fleet's 53 agents were left holding
 `dispatch_hold` with reason `"mac admin fleet roll-forward repair retained
 after 20260922T131604Z"`.
 
@@ -64,7 +66,7 @@ machinery is needed for that half.
 
 ## 3. Measured evidence that the existing loop does not repair anything
 
-Counted on the `rocky` hub, 2026-09-22, across all projects and all states:
+Counted on a live hub, 2026-09-22, across all projects and all states:
 
 | Self-heal tasks | Count |
 | --- | --- |
@@ -91,7 +93,7 @@ Each is independently verifiable and independently fixable.
 description=..., metadata=..., actor=...)`. It never sets
 `required_capabilities`. Confirmed on a live task
 (`task_4b2c41b9cf7a4a3b8366ba491c56a8c4`, "Self-heal: agent
-agent_jordanh-worker1 is heartbeating but degraded/offline"):
+agent worker-1 is heartbeating but degraded/offline"):
 `required_capabilities: None`.
 
 Consequence: a task whose content is "SSH to another host and restart its
@@ -121,18 +123,18 @@ The sibling check knows this hazard and avoids it. `_check_stuck_quarantine`
 The same reasoning was not applied to `_check_stale_deploy_hold`.
 
 This is currently **latent, not observed**: the only fleet that accumulated
-roll-forward holds (`ovswarm`) has self-healing disabled (see D3), so the
-deadlocked task was never filed. Enabling self-healing on `ovswarm` without
+roll-forward holds (the worker fleet) has self-healing disabled (see D3), so
+the deadlocked task was never filed. Enabling self-healing there without
 fixing this would produce 49 permanently undispatchable tasks.
 
 ### D3 — Self-healing is disabled on the fleet that needed it
 
 `self_healing.py:138` gates the entire sentinel on `MAC_SELF_HEAL_ENABLED`.
 
-- `rocky` hub `~/.mac/mac.env`: `MAC_SELF_HEAL_ENABLED=1`
-- `ovswarm` hub (`10.57.228.137`) `~/.mac/mac.env`: **not set**
+- hub A `~/.mac/mac.env`: `MAC_SELF_HEAL_ENABLED=1`
+- hub B (the 50-worker fleet) `~/.mac/mac.env`: **not set**
 
-Verified consequence: `mac --fleet ovswarm-hub task list --all --all-states`
+Verified consequence: `mac --fleet <fleet> task list --all --all-states`
 returns **zero** tasks whose title begins `Self-heal:`. The fleet that sat
 broken for three hours had no detector running at all.
 
@@ -221,7 +223,7 @@ should not be the one to diagnose itself even if it is briefly claimable.
 
 Nothing in the agent record expresses locality today. Add an optional
 `locality` string to the agent registration (source: `fleets.yaml` agent entry,
-alongside `target`/`os`), e.g. `ovswarm/10.57.228.0-24`, `rocky/tailnet`.
+alongside `target`/`os`), e.g. `fleet-b/10.0.0.0-24`, `fleet-a/tailnet`.
 
 Semantics are deliberately dumb: **string equality is "near", anything else is
 "far".** No topology model, no distance metric. A repair task for a subject
@@ -236,11 +238,11 @@ A repair task is filed with:
 
 ```
 metadata:
-  repair_subject_agent_id:  agent_ovswarm-worker7
-  repair_subject_locality:  ovswarm/10.57.228.0-24
+  repair_subject_agent_id:  agent_worker-7
+  repair_subject_locality:  fleet-b/10.0.0.0-24
   repair_preferred_until:   <filed_at + MAC_REPAIR_PREFERRED_WINDOW_SECONDS>
 required_capabilities: {"repair"}
-excluded_agent_ids: {agent_ovswarm-worker7}     # the subject itself
+excluded_agent_ids: {agent_worker-7}           # the subject itself
 ```
 
 Allocator behaviour, in `classify_requirement_eligibility` alongside the
@@ -375,7 +377,7 @@ because the failure time is *known in advance*.
 
 On 2026-09-23, mid-investigation, every `mac --profile hub-admin` call began
 failing. The cause was a client credential that had lapsed ten hours earlier:
-`jkh-hub-admin.v1`, issued `2026-08-24T09:24:24Z`, expired
+the hub-admin client credential, issued `2026-08-24T09:24:24Z`, expired
 `2026-09-23T09:24:24Z` — a routine 30-day lifetime (the shared default
 `expires_in = 30 * 24 * 60 * 60` on both enroll and renew, `cli.py:8056,8073`).
 Nothing warned beforehand. The admin path to the fleet simply went dead at a
@@ -412,16 +414,16 @@ Two defects, both cheap to fix:
    30-day default preserved), so a fleet can shorten it deliberately — which is
    only safe once §7.3 exists.
 
-This is not a one-off. Listing principals on the `rocky` hub on 2026-09-23
+This is not a one-off. Listing principals on a live hub on 2026-09-23
 shows the pattern is already widespread:
 
 | Client | `expires_at` | State on 2026-09-23 |
 | --- | --- | --- |
-| `jkh-ui` | 2026-08-26T20:56Z | **expired 28 days ago** |
-| `jordanh-cxwwhggjx0` | 2026-09-17T03:23Z | **expired 6 days ago** |
-| `jkh-yowza` | 2026-09-18T22:48Z | **expired 5 days ago** |
+| `client-ui` | 2026-08-26T20:56Z | **expired 28 days ago** |
+| `client-laptop` | 2026-09-17T03:23Z | **expired 6 days ago** |
+| `client-workstation` | 2026-09-18T22:48Z | **expired 5 days ago** |
 | `openclaw-fleet-upgrade` | 2026-09-24T22:30Z | **expires in ~26 hours** |
-| `jkh-hub-admin` | 2026-10-23T20:17Z | renewed during this investigation |
+| `hub-admin` | 2026-10-23T20:17Z | renewed during this investigation |
 
 Three credentials are already dead and one — belonging to a *fleet upgrade*
 principal — lapses tomorrow. None of this is reported anywhere; it is visible
@@ -490,7 +492,7 @@ Phased so each phase is independently landable and independently valuable.
 Every phase must keep `scripts/run-contract-tests.sh` green.
 
 **Phase 0 — stop the bleeding (no code).**
-Set `MAC_SELF_HEAL_ENABLED=1` on the `ovswarm` hub (D3). Do **not** do this
+Set `MAC_SELF_HEAL_ENABLED=1` on any hub where it is unset (D3). Do **not** do this
 before Phase 1 lands, or D2 will file 49 undispatchable tasks.
 
 **Phase 1 — D2, the deadlock.**
@@ -568,6 +570,34 @@ C1–C3 are small and independently useful. **C4 is the one that actually remove
 the failure mode**, and the one that makes short TTLs adoptable instead of
 something operators defend against by setting them enormous.
 
+**Implementation status (2026-09-23): C1–C4 landed**, covered by
+`tests/test_credential_survivability.py` and
+`tests/cli/test_cli_client.py::test_client_renew_if_due_cli_reports_profiles`.
+
+- C1 — `client_principals._expiry_reason_from_registry` plus
+  `ClientPrincipalProvider.explain_expired`, surfaced through
+  `api._authorize_request`. Revoked and unknown credentials stay
+  indistinguishable by design.
+- C2 — the `credential-expiry` diagnostic. It *warns* rather than errors,
+  matching every sibling expiry/staleness check in that framework:
+  `summarize` treats any `error` as "report not ok", which is reserved for a
+  check that could not run at all.
+- C3 — `client_principals.configured_credential_ttl_seconds`, consumed by all
+  three `--expires-in` defaults via `cli._default_credential_ttl_seconds`.
+- C4 — `mac.credential_renewal`, exposed as `mac admin client renew-if-due`
+  (idempotent, timer-safe, `--dry-run`). Renewal runs the hub-local
+  `mac admin client renew` over the fleet's SSH route — resolved from
+  `fleets.yaml`, the definitive source of a fleet's hub coordinates — and
+  installs the manifest atomically under a per-profile lock. The manifest
+  carries a secret, so it travels over the SSH pipe and is never written to a
+  temporary file, echoed, or returned to the caller.
+
+**Deliberately not built: a token-authenticated self-renewal API route.** It
+would let a leaked credential renew itself indefinitely, converting a
+time-boxed compromise into an unbounded one. Requiring the SSH trust root —
+the same channel that minted the credential — leaves a leaked bearer token
+bounded by its expiry exactly as it is today.
+
 ## 9. Alternatives considered
 
 **A real election over agentbus (the literal premise).** Rejected in §5.1: it
@@ -612,21 +642,21 @@ is why it is a task for an agent and not a timer.
 
 ## Appendix: reproducing the evidence
 
-```bash
-# §3 — self-heal outcomes on rocky
-mac --profile hub-admin task list --all --all-states --json \
+```console
+# §3 — self-heal outcomes on a hub
+mac task list --all --all-states --json \
   | python3 -c "import json,sys;from collections import Counter; \
       ts=json.load(sys.stdin); \
       sh=[t for t in ts if 'Self-heal' in str(t.get('title',''))]; \
       print(len(sh), Counter(t['state'] for t in sh).most_common())"
 
-# §D3 — detector disabled on ovswarm, enabled on rocky
-ssh horde@10.57.228.137 'grep MAC_SELF_HEAL_ENABLED ~/.mac/mac.env || echo NOT SET'
-grep MAC_SELF_HEAL_ENABLED ~/.mac/mac.env
+# §D3 — compare the flag across each fleet's hub
+ssh <user>@<hub-host> 'grep MAC_SELF_HEAL_ENABLED ~/.mac/mac.env || echo NOT SET'
+grep MAC_SELF_HEAL_ENABLED ~/.mac/mac.env  # on each hub
 
 # §1 — the incident record
-ssh horde@10.57.228.137 'cat ~/.mac/logs/fail-forward-20260922T131604Z.json'
-mac --profile ovswarm --fleet ovswarm-hub admin diagnostics --check stale-dispatch-hold
+ssh <user>@<hub-host> 'cat ~/.mac/logs/fail-forward-<deploy-ts>.json'
+mac --fleet <fleet> admin diagnostics --check stale-dispatch-hold
 
 # §7.2 — credential expiries are visible on demand but never surfaced,
 # and no diagnostics check covers them

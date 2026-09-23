@@ -2478,6 +2478,7 @@ def _authorize_request(
     path: str,
     authorization: Optional[str],
     auth_tokens: Mapping[str, TokenPrincipal],
+    explain_expired: Optional[Callable[[str], Optional[Mapping[str, Any]]]] = None,
 ) -> Optional[TokenPrincipal]:
     required = _required_scope(method, path)
     if required is None or not auth_tokens:
@@ -2487,6 +2488,19 @@ def _authorize_request(
     token = authorization.removeprefix("Bearer ").strip()
     principal = _resolve_principal(token, auth_tokens)
     if principal is None:
+        # Name expiry when that is the actual cause. "unknown bearer token" is
+        # true but useless here: the documented remedy for a 403 is token
+        # drift (`mac admin fleet sync-token`), which repairs nothing when the
+        # credential simply aged out and the fix is `mac admin client renew`.
+        detail = explain_expired(token) if explain_expired is not None else None
+        if detail:
+            client_id = detail.get("client_id") or "client"
+            raise AuthorizationError(
+                "expired bearer token: credential %s expired at %s; "
+                "renew it with `mac admin client renew %s` (this is expiry, "
+                "not token drift -- `mac admin fleet sync-token` will not fix it)"
+                % (client_id, detail.get("expires_at"), client_id)
+            )
         raise AuthorizationError("unknown bearer token")
     if not principal.has_scope(required):
         raise AuthorizationError("token lacks required scope: %s" % required)
@@ -4846,6 +4860,11 @@ def create_app(
                 request.url.path,
                 request.headers.get("authorization"),
                 auth_tokens_for_request,
+                explain_expired=(
+                    client_principals.explain_expired
+                    if client_principals is not None and not public_route
+                    else None
+                ),
             )
             if principal is not None:
                 principal = replace(
