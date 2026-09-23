@@ -1,12 +1,15 @@
 # Peer Repair: agents repairing agents
 
-- Status: **Proposed** (not accepted; no code written)
-- Date: 2026-09-22
-- Scope: agent-to-agent repair. Hub failover is surveyed in §7 and
-  deliberately **not** proposed — it conflicts with an existing accepted
-  decision, and that conflict is the finding, not an oversight.
-- Related: `docs/hub-availability.md`, ADR 0013 (authoritative hub allocator),
-  ADR 0014 (visibility is not a dispatch gate)
+- Status: **Proposed** (not accepted; no code written). The credential
+  survivability track (§7.2, §7.3, §8b) is carried on `docs/roadmap.md` under
+  *Operational autonomy*.
+- Date: 2026-09-22, revised 2026-09-23
+- Scope: agent-to-agent repair (§1–§6), plus two observability tracks the
+  investigation forced out (§7). Hub *failover* is surveyed and deliberately
+  **not** proposed — it conflicts with an existing accepted decision, and that
+  conflict is the finding, not an oversight.
+- Related: `docs/hub-availability.md`, `docs/roadmap.md`, ADR 0013
+  (authoritative hub allocator), ADR 0014 (visibility is not a dispatch gate)
 
 ## 1. Why this document exists
 
@@ -352,15 +355,134 @@ a managed Postgres failover that owns the fence). Only once fencing exists does
 "who promotes" become a question worth answering, and by then Postgres-managed
 failover likely answers it.
 
-There is, however, an unblocked and strictly-additive piece worth doing:
+There are, however, two unblocked and strictly-additive pieces worth doing.
+Both are pure observability: they change no authority and require no fencing.
 
-**The watcher must not live only on the watched.** `self_healing` and every
+### 7.1 The watcher must not live only on the watched
+
+`self_healing` and every
 `diagnostics.py` check run hub-side. When the hub dies, the thing that notices
 death dies with it. Agents should run a minimal outbound liveness check against
 the hub and, on sustained failure, emit a local operator notification
-(and a bus event once reachable again). That is pure observability — it changes
-no authority, requires no fencing, and would have surfaced the 2026-09-22
+(and a bus event once reachable again). That would have surfaced the 2026-09-22
 incident in minutes. It should be specified separately from this document.
+
+### 7.2 Foreseeable expiries are unmonitored, and the error misdirects
+
+The same
+"nothing was watching" shape shows up in a place that needs no consensus at all,
+because the failure time is *known in advance*.
+
+On 2026-09-23, mid-investigation, every `mac --profile hub-admin` call began
+failing. The cause was a client credential that had lapsed ten hours earlier:
+`jkh-hub-admin.v1`, issued `2026-08-24T09:24:24Z`, expired
+`2026-09-23T09:24:24Z` — a routine 30-day lifetime (the shared default
+`expires_in = 30 * 24 * 60 * 60` on both enroll and renew, `cli.py:8056,8073`).
+Nothing warned beforehand. The admin path to the fleet simply went dead at a
+timestamp that had been known for a month.
+
+Two defects, both cheap to fix:
+
+1. **No check exists.** `diagnostics.py` uses `expires_at` only for task leases
+   (`expired-active-leases`, `diagnostics.py:233`). No check covers client
+   credential expiry, so `mac admin diagnostics` reports a clean bill of health
+   while the credential that runs it is hours from lapsing. A
+   `credential-expiry` check warning at, say, T-7d is a near-exact clone of the
+   existing lease check.
+
+2. **The error names the wrong cause.** `client_principals.py:595` *skips*
+   expired records while resolving a token (`continue`), so an expired
+   credential never matches and the caller falls through to
+   `api.py:2490` → `AuthorizationError("unknown bearer token")`. An expired
+   credential is therefore indistinguishable from a forged or unknown one at
+   the API surface. That message points an operator at token *drift* — the
+   documented cause of 403s, with `mac admin fleet sync-token` as its
+   remedy (`cli.py:10588`) — when the actual fix is `mac admin client renew`.
+   Live consequence: the first response to this outage was to investigate token
+   drift and inspect `sync-token`, which was the wrong repair path entirely.
+   Distinguishing "expired at `<ts>`" from "unknown" costs one branch and is
+   not a secret-disclosure risk: the caller already holds the token.
+
+3. **The lifetime is a hardcoded literal, not a fleet setting.** All three
+   issue paths bake in `30 * 24 * 60 * 60` as an argparse default
+   (`cli.py:8005,8056,8073`). It is overridable only per-invocation with
+   `--expires-in <seconds>`, which means the fleet's effective credential
+   lifetime is "whatever the operator remembered to type". It should be a
+   configured fleet policy (`MAC_CLIENT_CREDENTIAL_TTL_SECONDS`, with the
+   30-day default preserved), so a fleet can shorten it deliberately — which is
+   only safe once §7.3 exists.
+
+This is not a one-off. Listing principals on the `rocky` hub on 2026-09-23
+shows the pattern is already widespread:
+
+| Client | `expires_at` | State on 2026-09-23 |
+| --- | --- | --- |
+| `jkh-ui` | 2026-08-26T20:56Z | **expired 28 days ago** |
+| `jordanh-cxwwhggjx0` | 2026-09-17T03:23Z | **expired 6 days ago** |
+| `jkh-yowza` | 2026-09-18T22:48Z | **expired 5 days ago** |
+| `openclaw-fleet-upgrade` | 2026-09-24T22:30Z | **expires in ~26 hours** |
+| `jkh-hub-admin` | 2026-10-23T20:17Z | renewed during this investigation |
+
+Three credentials are already dead and one — belonging to a *fleet upgrade*
+principal — lapses tomorrow. None of this is reported anywhere; it is visible
+only by running `mac admin client list` and reading the timestamps by eye.
+
+### 7.3 Rotation must be a renegotiation, not a cliff
+
+The deeper defect is not the missing warning. It is that **expiry is treated as
+an event that happens *to* the participants rather than something they
+cooperatively manage.**
+
+A hub and its workers hold a live, mutually-authenticated relationship. Both
+sides know the credential's `expires_at` — it is in the principal record on one
+side and the client profile on the other. There is no reason for that
+relationship to end abruptly at a timestamp both parties can read in advance.
+The correct behaviour is for the two to **renegotiate a fresh token well before
+the current one lapses**, while the existing credential is still valid and the
+channel still authenticates. Rotation should be a handshake over a working
+connection, not a cliff that both sides walk off simultaneously.
+
+Going deaf on rotation has a specific and corrosive second-order cost: **it
+teaches operators to set effectively infinite lifetimes in self-defence.** If a
+credential that expires is a credential that silently severs the fleet, then
+every finite TTL is an outage waiting for a date, and the rational operator
+response is to make the number enormous. The security property that expiry
+exists to provide is then lost entirely — not because anyone decided short
+credentials were wrong, but because the mechanism punished using them. Short
+TTLs are only adoptable if renewal is automatic and invisible.
+
+This also bounds the value of §7.2's warning. A T-7d alert is a fallback for
+when renegotiation has failed; it is not the fix. A system that merely *warns*
+before severing itself is still a system that severs itself.
+
+**Required behaviour:**
+
+- Each side tracks `expires_at` and begins renegotiation at a configurable
+  fraction of remaining lifetime (proposed: `MAC_CREDENTIAL_RENEW_AT_FRACTION`,
+  default `0.5` — halfway through the TTL, giving an equal span of retries
+  before any hard failure).
+- Renewal is authenticated by the *current, still-valid* credential. No
+  out-of-band re-enrolment, no operator, no SSH.
+- Renewal is idempotent and safe to retry: a worker that renews twice, or races
+  a peer, converges on one valid credential rather than invalidating itself.
+- The new credential is installed atomically — the mechanism already exists
+  (`mac admin client profile install` writes via a backup-and-swap, observed
+  emitting `"backup": ".../clients/backups/hub-admin.<ts>"`).
+- A renegotiation that fails is loud **while the old credential still works** —
+  that is the entire point of starting at 50% rather than at expiry.
+- Hard expiry remains enforced. This changes *when the conversation about
+  renewal happens*, not whether credentials expire.
+
+**Explicit non-goal:** never-expiring credentials. The purpose of automatic
+renegotiation is to make *short* lifetimes practical, which is the opposite of
+the infinite-TTL workaround that the current cliff behaviour encourages.
+
+This matters to the wider argument. A fleet that intends to repair itself
+cannot be blind to the scheduled, arithmetically-predictable failures of its own
+control path — and an error message that names the wrong cause will misdirect a
+repairing *agent* exactly as reliably as it misdirected a human here. A fleet
+that cannot keep its own credentials alive cannot be trusted to keep its agents
+alive.
 
 ## 8. Implementation plan
 
@@ -403,6 +525,48 @@ Emit `mac.agent.peer_message.v1` on repair start. No blocking, no new schema.
 
 Phases 1–3 deliver most of the value and touch one file plus tests. Phase 4 is
 the only one that changes the agent record shape and the allocator.
+
+### 8b. Credential survivability track (§7.2 / §7.3)
+
+Independent of the peer-repair phases above; may land in parallel. Ordered so
+each step is safe on its own.
+
+**C1 — Name the real cause.** Distinguish expired from unknown at the API
+boundary: `client_principals.py:595` currently `continue`s past an expired
+record, so the caller sees `api.py:2490` `"unknown bearer token"`. Return a
+distinct error identifying expiry and the `expires_at` instant, and point the
+remedy at `mac admin client renew` rather than letting the operator infer token
+drift and reach for `mac admin fleet sync-token`.
+*Test:* an expired credential produces an expiry-specific error, not the
+unknown-token error.
+
+**C2 — Report expiries.** Add a `credential-expiry` check to
+`diagnostics.py`, warning at a configurable horizon (default 7 days) and
+erroring once expired. Near-clone of `expired-active-leases`
+(`diagnostics.py:233`).
+*Test:* a principal expiring inside the horizon warns; an expired one errors;
+a healthy one is silent.
+
+**C3 — Make the lifetime a fleet setting.** Replace the hardcoded
+`30 * 24 * 60 * 60` argparse defaults (`cli.py:8005,8056,8073`) with
+`MAC_CLIENT_CREDENTIAL_TTL_SECONDS`, preserving 30 days as the default.
+`--expires-in` continues to override per invocation.
+*Test:* the env var changes the issued lifetime; absent it, 30 days; the flag
+still wins over both.
+
+**C4 — Renegotiate before the cliff.** The substantive item: hub and workers
+refresh the session credential at `MAC_CREDENTIAL_RENEW_AT_FRACTION` (default
+`0.5`) of its lifetime, authenticated by the still-valid credential, installed
+atomically, idempotent under retry and races, and loud on failure while the old
+credential still works.
+*Tests:* a client past the fraction renews unattended and keeps serving across
+the boundary; a renewal failure is reported while the old credential is still
+valid; concurrent renewals converge on one valid credential; hard expiry is
+still enforced for a client that never renews.
+
+C1–C3 are small and independently useful. **C4 is the one that actually removes
+the failure mode**, and the one that makes short TTLs adoptable instead of
+something operators defend against by setting them enormous.
 
 ## 9. Alternatives considered
 
@@ -463,4 +627,11 @@ grep MAC_SELF_HEAL_ENABLED ~/.mac/mac.env
 # §1 — the incident record
 ssh horde@10.57.228.137 'cat ~/.mac/logs/fail-forward-20260922T131604Z.json'
 mac --profile ovswarm --fleet ovswarm-hub admin diagnostics --check stale-dispatch-hold
+
+# §7.2 — credential expiries are visible on demand but never surfaced,
+# and no diagnostics check covers them
+mac admin client list | python3 -c "import json,sys; \
+  [print(c['id'], c['expires_at']) for c in json.load(sys.stdin)]"
+mac admin diagnostics | python3 -c "import json,sys; \
+  print([c for c in json.load(sys.stdin)['checks'] if 'cred' in c] or 'no credential check')"
 ```
