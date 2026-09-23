@@ -111,3 +111,25 @@ def test_client_profile_cli_and_fleet_ssh_spec(tmp_path, monkeypatch):
         str(fleets),
     )
     assert rc == 0 and spec["target"] == "ops@hub.example"
+
+
+def test_client_renew_if_due_cli_reports_profiles(tmp_path, monkeypatch):
+    """`client renew-if-due` is the timer-safe entry point for C4 renewal.
+
+    A host with no installed profiles must exit cleanly with an empty report
+    rather than erroring: the command runs unattended on a schedule, so "there
+    is nothing to renew" is a normal outcome, not a failure.
+    """
+    monkeypatch.setenv("MAC_HOME", str(tmp_path / ".mac"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MAC_CLIENT_PROFILES_DIR", raising=False)
+    monkeypatch.delenv("MAC_CLIENT_CREDENTIALS_DIR", raising=False)
+
+    rc, report, _ = _run(tmp_path, "admin", "client", "renew-if-due", "--dry-run")
+
+    assert rc == 0
+    assert report["schema"] == "mac.credential_renewal.report.v1"
+    assert report["profiles"] == []
+    # The renewal point is a configured fraction of the credential lifetime,
+    # not a fixed lead time.
+    assert 0 < report["renew_at_fraction"] < 1
