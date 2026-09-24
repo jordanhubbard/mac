@@ -122,6 +122,25 @@ transaction or equivalent durable evidence.
 - [ ] Fleet configuration and credential environment files are written
   atomically and preserve real line boundaries, permissions, and scoped token
   names across retries.
+- [ ] Hub and workers renegotiate their session credentials before expiry,
+  authenticated by the still-valid credential, rather than going mutually deaf
+  at the expiry instant. Renewal is unattended, idempotent under retry and
+  races, installed atomically, and loud on failure while the old credential
+  still works. Hard expiry stays enforced; the goal is to make short lifetimes
+  practical instead of pushing operators toward effectively infinite ones in
+  self-defence. Design: `docs/peer-repair-design.md` §7.3, §8b (C4).
+- [ ] Credential expiry is a reported condition, not a silent cliff: a
+  `credential-expiry` diagnostics check warns ahead of a configurable horizon,
+  and an expired credential reports itself as expired rather than as an
+  `unknown bearer token`. Credential lifetime is fleet-configured rather than a
+  hardcoded argparse default. Design: `docs/peer-repair-design.md` §7.2, §8b
+  (C1–C3). Observed 2026-09-23: three live principals already expired
+  (a UI client, a laptop, a workstation) and a fleet-upgrade principal
+  within 26 hours, none reported anywhere.
+- [ ] Agents detect a hub they cannot reach and surface it locally, so the
+  process that notices failure does not live exclusively on the process that
+  failed. Observability only — no authority change, no automatic failover
+  (see `docs/hub-availability.md`). Design: `docs/peer-repair-design.md` §7.1.
 - [ ] Dream-cycle analysis uses a current authoritative data source and produces
   useful, deduplicated output. This is a nice-to-have and must not block core
   autonomous-work or fleet-upgrade milestones.

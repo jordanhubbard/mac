@@ -258,6 +258,115 @@ def _expired_active_leases(control_plane: Any) -> List[Finding]:
     ]
 
 
+#: How long before a client credential lapses that "credential-expiry" starts
+#: warning. Credentials are issued for 30 days by default, so a week gives an
+#: operator several working days to renew before the credential severs their
+#: access. An already-expired credential is an error, not a warning: whatever
+#: used it has been locked out since that instant.
+CREDENTIAL_EXPIRY_WARN_SECONDS = 7 * 24 * 60 * 60
+
+
+@register(
+    "credential-expiry",
+    "client credentials that have lapsed or are about to",
+)
+def _credential_expiry(
+    control_plane: Any, warn_within_seconds: int = CREDENTIAL_EXPIRY_WARN_SECONDS
+) -> List[Finding]:
+    """Report credential expiry before it severs the fleet's control path.
+
+    Nothing else watches this. `expired-active-leases` covers task leases;
+    client credentials had no check at all, so on 2026-09-23 the hub-admin
+    credential lapsed mid-session with no warning, and a listing showed three
+    principals already dead and a fleet-upgrade principal due to expire inside
+    26 hours -- none of it reported anywhere.
+
+    This is a fallback, not the fix: a system that only *warns* before
+    severing itself still severs itself. Automatic renegotiation before expiry
+    is the actual remedy (docs/peer-repair-design.md, §7.3).
+    """
+    from datetime import datetime, timezone
+
+    from mac.client_principals import ClientPrincipalStore, default_registry_path
+
+    path = default_registry_path()
+    if not path.exists():
+        return [
+            Finding("credential-expiry", "ok", "no client-principal registry on this host")
+        ]
+    try:
+        registry = ClientPrincipalStore(path).read()
+    except Exception as exc:  # noqa: BLE001 - an unreadable registry is a finding, not a crash
+        return [
+            Finding(
+                "credential-expiry",
+                "warn",
+                "client-principal registry could not be read: %s" % exc,
+                {"registry_path": str(path)},
+            )
+        ]
+
+    now = datetime.now(timezone.utc)
+    expired: List[Dict[str, Any]] = []
+    expiring: List[Dict[str, Any]] = []
+    clients = registry.get("clients") or {}
+    for record in clients.values() if isinstance(clients, dict) else []:
+        if not isinstance(record, dict) or record.get("revoked_at"):
+            continue
+        raw = str(record.get("expires_at") or "")
+        try:
+            expires_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        remaining = (expires_at - now).total_seconds()
+        entry = {
+            "client_id": record.get("id"),
+            "expires_at": raw,
+            "remaining_seconds": int(remaining),
+        }
+        if remaining <= 0:
+            expired.append(entry)
+        elif remaining <= warn_within_seconds:
+            expiring.append(entry)
+
+    if not expired and not expiring:
+        return [Finding("credential-expiry", "ok", "no client credential is near expiry")]
+
+    detail: Dict[str, Any] = {
+        "warn_within_seconds": warn_within_seconds,
+        "remediation": "renew with `mac admin client renew <client_id>`",
+    }
+    if expired:
+        detail["expired"] = sorted(expired, key=lambda e: e["remaining_seconds"])
+    if expiring:
+        detail["expiring"] = sorted(expiring, key=lambda e: e["remaining_seconds"])
+    if expired:
+        return [
+            Finding(
+                "credential-expiry",
+                "warn",
+                "%d client credential(s) have expired%s"
+                % (
+                    len(expired),
+                    "; %d more expire within %d day(s)"
+                    % (len(expiring), warn_within_seconds // 86400)
+                    if expiring
+                    else "",
+                ),
+                detail,
+            )
+        ]
+    return [
+        Finding(
+            "credential-expiry",
+            "warn",
+            "%d client credential(s) expire within %d day(s)"
+            % (len(expiring), warn_within_seconds // 86400),
+            detail,
+        )
+    ]
+
+
 #: How many ``state='failed'`` tasks are tolerated before "failed-tasks" warns.
 #: Default 0 so any failed task surfaces a warning; raise it to suppress a known
 #: baseline of historical failures.

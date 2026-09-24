@@ -88,6 +88,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CICD_MONITOR_PENDING_RETRY_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor pending retry seconds. |
 | `MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS` | str | consumer-defined | core | Core setting: cicd monitor post publication delay hours. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
+| `MAC_CLIENT_CREDENTIAL_TTL_SECONDS` | int | consumer-defined | core | Core setting: client credential ttl seconds. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
 | `MAC_CLIENT_PRINCIPALS_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals file. |
 | `MAC_CLIENT_PROFILES_DIR` | str | consumer-defined | core | Core setting: client profiles dir. |
@@ -131,6 +132,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CRASH_CORE_MAX_BYTES` | int | consumer-defined | core | Core setting: crash core max bytes. |
 | `MAC_CRASH_CORE_RETAIN_COUNT` | int | consumer-defined | core | Core setting: crash core retain count. |
 | `MAC_CRASH_SPOOL_DIR` | str | consumer-defined | core | Core setting: crash spool dir. |
+| `MAC_CREDENTIAL_RENEW_AT_FRACTION` | str | consumer-defined | core | Core setting: credential renew at fraction. |
 | `MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: curiosity review cooldown seconds. |
 | `MAC_CURIOSITY_REVIEW_ENABLED` | bool | consumer-defined | core | Core setting: curiosity review enabled. |
 | `MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: curiosity review initial delay seconds. |

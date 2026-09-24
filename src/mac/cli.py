@@ -1284,6 +1284,37 @@ def cmd_client_renew(args: argparse.Namespace) -> None:
     _print(enrollment_manifest(issued))
 
 
+def cmd_client_renew_if_due(args: argparse.Namespace) -> None:
+    """Renew this host's client credentials before they lapse.
+
+    Idempotent and safe to run on a timer (launchd/systemd/cron): a profile
+    that has not reached its renewal point is a no-op. Renewal authenticates
+    over the SSH trust root that minted the credential, so a leaked bearer
+    token still cannot extend itself -- see mac.credential_renewal.
+    """
+    from mac.credential_renewal import CredentialRenewalError, renew_due_profiles
+
+    try:
+        report = renew_due_profiles(
+            profile_names=args.renew_profiles,
+            force=args.force,
+            dry_run=args.dry_run,
+            fleets_config=args.fleets_config,
+        )
+    except CredentialRenewalError as exc:
+        raise MACError(str(exc)) from exc
+    _print(report)
+    failed = int(report["counts"].get("error", 0))
+    if failed:
+        # Loud while the current credential still works: that is the whole
+        # reason renewal starts at half-life instead of at expiry.
+        print(
+            "mac: %d credential renewal(s) failed; the current credential still "
+            "authenticates but will lapse at its expiry" % failed,
+            file=sys.stderr,
+        )
+
+
 def cmd_client_revoke(args: argparse.Namespace) -> None:
     """Revoke a registered client principal."""
     from mac.client_principals import ClientPrincipalError, ClientPrincipalStore
@@ -7793,6 +7824,19 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _default_credential_ttl_seconds() -> int:
+    """Fleet-configured credential lifetime for the `--expires-in` defaults.
+
+    Three issue paths (`login`, `client enroll`, `client renew`) each carried
+    their own `30 * 24 * 60 * 60` literal, so the fleet's effective credential
+    lifetime was whatever the operator remembered to type. They now share one
+    configured policy; `--expires-in` still overrides per invocation.
+    """
+    from mac.client_principals import configured_credential_ttl_seconds
+
+    return configured_credential_ttl_seconds()
+
+
 def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=func)
 
@@ -8002,7 +8046,7 @@ def build_parser() -> argparse.ArgumentParser:
     login_parser.add_argument("--name")
     login_parser.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
     login_parser.add_argument("--capabilities")
-    login_parser.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    login_parser.add_argument("--expires-in", type=int, default=_default_credential_ttl_seconds())
     login_parser.add_argument("--local-port", type=int)
     login_parser.add_argument("--remote-host", default="127.0.0.1")
     login_parser.add_argument("--remote-port", type=int)
@@ -8053,7 +8097,7 @@ def build_parser() -> argparse.ArgumentParser:
     client_enroll.add_argument("--fleet", dest="fleet_name", default="")
     client_enroll.add_argument("--profile", dest="profile_name")
     client_enroll.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
-    client_enroll.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    client_enroll.add_argument("--expires-in", type=int, default=_default_credential_ttl_seconds())
     client_enroll.add_argument("--api-url", default="http://127.0.0.1:8789")
     client_enroll.add_argument("--host-key-fingerprint")
     client_enroll.add_argument("--host-ca")
@@ -8070,10 +8114,29 @@ def build_parser() -> argparse.ArgumentParser:
         "renew", help="hub-local: rotate one client's token and expiry"
     )
     client_renew.add_argument("client_id")
-    client_renew.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    client_renew.add_argument("--expires-in", type=int, default=_default_credential_ttl_seconds())
     client_renew.add_argument("--registry")
     client_renew.add_argument("--actor", default="ssh-operator")
     _set(cmd_client_renew, client_renew)
+
+    client_renew_due = client.add_parser(
+        "renew-if-due",
+        help="renew this host's client credential(s) before expiry, over SSH",
+    )
+    client_renew_due.add_argument(
+        "--profile",
+        dest="renew_profiles",
+        action="append",
+        help="profile name; repeatable. Default: every installed profile.",
+    )
+    client_renew_due.add_argument(
+        "--force", action="store_true", help="renew even if the renewal point has not passed"
+    )
+    client_renew_due.add_argument(
+        "--dry-run", action="store_true", help="report what would be renewed, moving no secret"
+    )
+    client_renew_due.add_argument("--fleets-config", help="path to fleets.yaml")
+    _set(cmd_client_renew_if_due, client_renew_due)
 
     client_revoke = client.add_parser(
         "revoke", help="hub-local: immediately revoke one client credential"

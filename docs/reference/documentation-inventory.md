@@ -205,6 +205,7 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`openshell-nemo-relay-e2e.md`](../openshell-nemo-relay-e2e.md) | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | [`openshell-nemo-relay-integration.md`](../openshell-nemo-relay-integration.md) | OpenShell + NeMo Relay integration |
 | supplemental reference | [`openshell-sandbox.md`](../openshell-sandbox.md) | Running Hermes under the OpenShell sandbox |
+| supplemental reference | [`peer-repair-design.md`](../peer-repair-design.md) | Peer Repair: agents repairing agents |
 | supplemental reference | [`presentations/agentfabric-overview/README.md`](../presentations/agentfabric-overview/README.md) | AgentFabric overview — authoring package |
 | supplemental reference | [`presentations/agentfabric-overview/SKILL.md`](../presentations/agentfabric-overview/SKILL.md) | AgentFabric overview presentation |
 | supplemental reference | [`presentations/agentfabric-overview/current-deliverables.md`](../presentations/agentfabric-overview/current-deliverables.md) | Current deliverables — AgentFabric overview |
