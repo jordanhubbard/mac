@@ -60,6 +60,37 @@ long-stop path that is not epoch-tagged reproduces the original failure exactly.
 The last rollout succeeded, but one success on a mechanism that failed fifteen
 times is not evidence of convergence.
 
+### The cost of the current state, measured
+
+The decisive fact is not the incident. It is what the fleet has produced since.
+
+Fleet-authored commits on trunk, by month:
+
+| Month | Fleet-authored commits |
+| --- | --- |
+| 2026-06 | 14 |
+| **2026-07** | **737** |
+| 2026-08 | 15 |
+| 2026-09 | 27 |
+
+That is a ~98% collapse after July, and the composition matters more than the
+count. **Every fleet-authored commit since 2026-09-14 is the fleet repairing its
+own deployment machinery** — onboarding evidence, retained successors,
+attestation recovery, hub bootstrap, hold environments, route preservation, and
+the RCCA itself. None is product work. Before that run there is a twenty-day
+silence (2026-08-25 to 2026-09-14).
+
+The ledger cannot corroborate throughput either: **zero of 2,265 tasks in
+`completed` state carry a `completed_at` timestamp**, so no completion date can
+be established from the ledger at all. The terminal-state distribution is 5,243
+`cancelled`, 2,868 `failed`, 2,265 `completed` — more than twice as much
+cancelled as completed.
+
+A fleet of fifty workers has therefore spent roughly two months producing
+documentation about why it cannot deploy. Any assessment of this decision that
+treats the current transaction as a working system to be protected is measuring
+against a baseline that does not exist.
+
 ## Decision
 
 **The all-fleet deployment transaction is replaced rather than extended.
@@ -111,26 +142,66 @@ unsigned, or conflicting artifacts continue to fail closed.
   variable the entire incident turned on.
 - Rollouts become *diagnosable before* mutation: contradictory node identity is
   classified in a read-only preflight rather than discovered at the first stop.
-- Cost: this is a rewrite of a path that currently works in the common case.
-  Capabilities disappear — deployment can no longer rotate credentials, and
+- Cost: capabilities disappear. Deployment can no longer rotate credentials, and
   nothing may resolve a route after planning. Callers relying on either must move
   to the replacement state machines.
 - Cost: pre-staging a full capsule raises the storage and bandwidth cost of every
   deployment, and moves failures earlier, where they are cheaper but more
   frequent.
-- Risk: replacing a transaction that has recently been stabilised may reintroduce
-  defects the targeted fixes closed. The replacement must land behind the same
-  contract gates, and the existing fixes stay in force until their behaviour is
-  subsumed.
+
+### On the risk of doing this
+
+The obvious objection is that replacing a deployment transaction risks breaking
+it. That objection assumes a working baseline, and the measured throughput above
+shows there is not one. **Regression risk is bounded by current output, and
+current output is approximately zero.** A fleet that has produced no product work
+in two months cannot be made materially less productive by a rewrite; the
+downside is engineering effort, not lost delivery.
+
+The symmetric cost is rarely written down, so it is written down here: **not
+doing this preserves a known, continuing loss.** The status quo has already cost
+one fifty-worker fleet its entire productive output since July, and it requires an
+operator for every rollout. Declining to act is not the conservative choice. It is
+a choice to keep paying that, indefinitely, in exchange for avoiding a risk to
+throughput that does not currently exist.
+
+The genuine risks are narrower and worth stating precisely:
+
+- The targeted fixes already landed (`#873`, `#875`, `#886`, the journal-bound
+  retry helper) encode real, hard-won knowledge about specific failure modes. The
+  replacement must subsume that behaviour rather than discard it, and those fixes
+  stay in force until it demonstrably does.
+- The replacement must land behind the same contract gates. Nothing here licenses
+  weaker verification.
+- A rewrite can restore throughput and still be wrong about *why* it failed. The
+  P0 preflight work matters independently, because it is what converts a silent
+  late failure into an early diagnosable one.
 
 ## Alternatives considered
 
-**Continue incremental hardening.** Rejected on the evidence above: fifteen
-failures across three days while fixes were being shipped one commit at a time,
-by the mechanism being fixed. Each fix was correct and none addressed the
-coupling that made a single node's drift a fleet-wide outage. The RCCA states it
-directly — incremental compatibility with the all-fleet transaction preserves the
-wrong abstraction.
+**Continue incremental hardening.** Rejected, and this is the alternative with
+the most evidence against it, because it is not hypothetical — it is what has
+been happening.
+
+Every fleet-authored commit since 2026-09-14 is an increment of exactly this
+strategy: `Require valid onboarding operator evidence`, `Preserve onboarding
+repair helper stdin`, `Accept retained attestation recovery identity`, `Make
+retained epoch stop tolerate absent unit`, `Bootstrap retained recovery hold
+environment`, `Quiesce installed static hubs normally`, `Repair retained
+first-install fleet successors`. Each is a correct fix for a real defect. The
+strategy has now been run for six weeks, has consumed essentially the fleet's
+entire recent output, and has produced no product work — only more deployment
+repair.
+
+Fifteen of those increments were themselves delivered by the failing mechanism
+and failed in delivery. None addressed the coupling that makes one node's drift a
+fleet-wide outage, because that coupling is the design, not a defect within it.
+The RCCA states the conclusion directly: incremental compatibility with the
+all-fleet transaction preserves the wrong abstraction.
+
+The question is not whether the next increment would also be correct. It would
+be. The question is whether a sequence of correct increments is converging, and
+the throughput data says it is not.
 
 **Weaken the identity and attestation fences so fewer nodes fail closed.**
 Rejected, and worth recording as rejected: it would trade a liveness problem for
