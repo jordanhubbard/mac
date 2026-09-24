@@ -49,6 +49,7 @@ marked `historical archive` and must not be read as current behaviour.
 | architecture decision | [`adr/0032-cli-session-hooks-not-tmux.md`](../adr/0032-cli-session-hooks-not-tmux.md) | ADR 0032: CLI sessions use each harness's hooks, not tmux, for recording and AgentBus injection |
 | architecture decision | [`adr/0033-local-continuation-hub-supervision.md`](../adr/0033-local-continuation-hub-supervision.md) | ADR 0033: Agents continue locally under independent hub supervision |
 | architecture decision | [`adr/0034-project-mission-control.md`](../adr/0034-project-mission-control.md) | ADR 0034 - Project Mission Control is an additional observe view, not the IDE |
+| architecture decision | [`adr/0035-replace-the-all-fleet-deployment-transaction.md`](../adr/0035-replace-the-all-fleet-deployment-transaction.md) | ADR 0035: The all-fleet deployment transaction is replaced, not extended |
 | supplemental reference | [`agent-lifecycle-proof.md`](../agent-lifecycle-proof.md) | Agent Lifecycle Proof |
 | historical archive | [`archive/field-notes/assessment-2026-08-02.md`](../archive/field-notes/assessment-2026-08-02.md) | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | [`archive/field-notes/assessment-task-1b6783.md`](../archive/field-notes/assessment-task-1b6783.md) | Assessment: task_1b67831356c347c3a91d782982f47d1c |
