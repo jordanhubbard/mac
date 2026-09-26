@@ -28356,14 +28356,34 @@ class ControlPlane:
         manifest: JsonDict,
         evidence_type: str,
     ) -> List[str]:
-        if (
-            evidence_type == "investigation"
-            and declared_non_repository_outcome_evidence_type(task.metadata) != "investigation"
-        ):
+        declared_outcome = declared_non_repository_outcome_evidence_type(task.metadata)
+        if evidence_type == "investigation" and declared_outcome != "investigation":
             return [
                 "investigation evidence requires an operator-authored "
                 "investigation execution contract"
             ]
+        if declared_outcome and evidence_type != declared_outcome:
+            # Mirror of the coercion the worker already applies to its own
+            # pre-submit checks (worker.py, "Coerce rather than reject").
+            # The worker corrects the type locally but still SUBMITS the
+            # manifest its executor wrote, so the hub re-validated a
+            # repo-coupled claim at face value and the two halves disagreed.
+            #
+            # Observed live 2026-09-25 on the kit onboarding task: the task
+            # declares evidence_type=investigation with
+            # repository_required=False and instructs "do NOT push or open a
+            # pull request", the executor defaulted to repo_change because it
+            # made a local commit, and RepoChangeValidator then demanded
+            # pushed=true/pr_url -- exactly what the task forbade. The agent
+            # did the work correctly and was refused by the gate for obeying
+            # its instructions; three attempts burned on an unsatisfiable
+            # contract.
+            #
+            # The task's declared contract is the operator's authoritative
+            # intent. An agent cannot unilaterally impose a stricter
+            # requirement than the one it was given, so decode the evidence
+            # with the declared type rather than the claimed one.
+            evidence_type = declared_outcome
         problems = validate_evidence_type(
             evidence_type,
             manifest,
