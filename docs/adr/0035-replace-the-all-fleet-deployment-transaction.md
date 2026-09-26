@@ -80,11 +80,18 @@ attestation recovery, hub bootstrap, hold environments, route preservation, and
 the RCCA itself. None is product work. Before that run there is a twenty-day
 silence (2026-08-25 to 2026-09-14).
 
-The ledger cannot corroborate throughput either: **zero of 2,265 tasks in
-`completed` state carry a `completed_at` timestamp**, so no completion date can
-be established from the ledger at all. The terminal-state distribution is 5,243
-`cancelled`, 2,868 `failed`, 2,265 `completed` — more than twice as much
-cancelled as completed.
+The ledger's terminal-state distribution points the same way: 5,243 `cancelled`,
+2,868 `failed`, 2,265 `completed` — more than twice as much work cancelled as
+completed.
+
+> **Correction (2026-09-24).** The first version of this section also claimed
+> that "zero of 2,265 tasks in `completed` state carry a `completed_at`
+> timestamp". **That claim was false and is withdrawn.** It came from reading
+> `mac task list --json`, whose rows omit the `completed_at` field entirely;
+> `mac task show` returns it populated. The error does not affect the decision,
+> which rests on the commit-history collapse above — independently verifiable
+> from git and not from the ledger — but a decision record must not carry a
+> measurement it cannot support.
 
 A fleet of fifty workers has therefore spent roughly two months producing
 documentation about why it cannot deploy. Any assessment of this decision that
