@@ -1806,7 +1806,7 @@ def _gate_log(message):
     sys.stderr.write("[gate] %s\n" % message)
     sys.stderr.flush()
 
-def _effective_timeout(names, fallback=1800.0):
+def _effective_timeout(names, fallback=7200.0):
     """Resolve a timeout AND say where it came from.
 
     Reporting the source is the point. MAC_WORKER_REPOSITORY_TEST_TIMEOUT was
@@ -2631,6 +2631,24 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
         return False, str(exc)
 
 
+def _openshell_transfer_timeout() -> float:
+    """Budget large repository uploads/downloads without weakening probes."""
+
+    try:
+        return max(1.0, float(env_str("MAC_OPENSHELL_TRANSFER_TIMEOUT") or "1800"))
+    except ValueError:
+        return 1800.0
+
+
+def _openshell_delete_timeout() -> float:
+    """Allow large sandbox filesystems to retire before declaring a leak."""
+
+    try:
+        return max(1.0, float(env_str("MAC_OPENSHELL_DELETE_TIMEOUT") or "600"))
+    except ValueError:
+        return 600.0
+
+
 def _verifier_output_excerpt(stdout_file, stderr_file, *, limit: int = 600) -> str:
     """A bounded excerpt of what the verifier actually said.
 
@@ -2769,10 +2787,10 @@ def _sandbox_run_repository_verification_exec(
     legitimately long test without shortening the latter's budget.
     """
     try:
-        start_timeout = float(env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "120")
+        start_timeout = float(env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "600")
     except ValueError:
-        start_timeout = 120.0
-    start_timeout = max(0.05, min(start_timeout, 300.0))
+        start_timeout = 600.0
+    start_timeout = max(0.05, min(start_timeout, 1800.0))
     argv = [
         _openshell_bin(),
         "sandbox",
@@ -3697,9 +3715,9 @@ def _sandbox_run_read_only_repository_verification(
     trusted = workspace / _TRUSTED_READ_ONLY_VERIFICATION_FILE
     trusted.unlink(missing_ok=True)
     try:
-        timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "1800")
+        timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "7200")
     except ValueError:
-        timeout = 1800.0
+        timeout = 7200.0
     timeout = max(1.0, timeout)
     created = False
     downloaded = False
@@ -3902,7 +3920,7 @@ def _sandbox_run_repository_verification(
     sandbox_script = "%s/%s" % (sub, script_path.name)
     ok, msg = _sandbox_step(
         ["upload", name, str(script_path), sandbox_script],
-        timeout=120.0,
+        timeout=_openshell_transfer_timeout(),
     )
     if not ok:
         sys.stderr.write(
@@ -3916,9 +3934,9 @@ def _sandbox_run_repository_verification(
             attempt_count=0,
         )
     try:
-        timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "1800")
+        timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "7200")
     except ValueError:
-        timeout = 1800.0
+        timeout = 7200.0
     verification: Optional[_SandboxRepositoryVerificationResult] = None
     for attempt in range(1, 3):
         import uuid
@@ -4114,7 +4132,10 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
         dir=temp_parent,
     ) as tmp:
         download_root = Path(tmp)
-        ok, msg = _sandbox_step(["download", name, sub, str(download_root)], timeout=300.0)
+        ok, msg = _sandbox_step(
+            ["download", name, sub, str(download_root)],
+            timeout=_openshell_transfer_timeout(),
+        )
         if ok:
             try:
                 _merge_sandbox_download_tree(download_root, workspace)
@@ -4127,7 +4148,7 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
 
 
 def _sandbox_delete(name: str) -> bool:
-    ok, msg = _sandbox_step(["delete", name], timeout=120.0)
+    ok, msg = _sandbox_step(["delete", name], timeout=_openshell_delete_timeout())
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox delete failed (possible leak): %s\n" % msg)
     return ok
@@ -6008,14 +6029,14 @@ def _invoke_agent(
 
 def _agent_timeout() -> Optional[float]:
     """Bound a single agent run so a wedged TokenHub turn can't hang the loop
-    forever. Default 900s; set MAC_EXECUTOR_AGENT_TIMEOUT=0 to disable."""
+    forever. Default 7200s; set MAC_EXECUTOR_AGENT_TIMEOUT=0 to disable."""
     raw = env_str("MAC_EXECUTOR_AGENT_TIMEOUT")
     if not raw:
-        return 900.0
+        return 7200.0
     try:
         val = float(raw)
     except ValueError:
-        return 900.0
+        return 7200.0
     return val if val > 0 else None
 
 

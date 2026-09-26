@@ -9398,6 +9398,21 @@ deploy_host() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
 
+  # A hub may run on the same host and HOME as the operator.  In that case the
+  # node-local registry is the frozen multi-fleet operator registry itself, not
+  # disposable generated node state.  Detect that exact identity before any
+  # install mutation and ask the node installer to preserve it.  The installer
+  # rechecks the digest at the mutation boundary and fails closed if it changed.
+  local operator_registry_sha256 remote_registry_sha256 preserve_operator_registry=0
+  operator_registry_sha256="$(sha256_file "$FLEET_REGISTRY_CONFIG")"
+  remote_registry_sha256="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    'p="$HOME/.mac/fleets.yaml"; if [ -f "$p" ] && [ ! -L "$p" ]; then python3 -c '\''import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())'\'' "$p"; fi' \
+    2>/dev/null || true)"
+  if [ "$remote_registry_sha256" = "$operator_registry_sha256" ]; then
+    preserve_operator_registry=1
+  fi
+
   # Establish the durable hub-side dispatch barrier before any target-side
   # personality, source, runtime, or service mutation. The node-local drain is
   # defense in depth; this outer gate also works when the worker cannot reach
@@ -9536,6 +9551,10 @@ PY
   add_remote_env MAC_DEPLOY_OS "$os"
   add_remote_env MAC_DEPLOY_ARCHIVE "$remote_archive"
   add_remote_env MAC_DEPLOY_FLEET_REGISTRY_FILE "$remote_registry"
+  add_remote_env MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY "$preserve_operator_registry"
+  if [ "$preserve_operator_registry" = 1 ]; then
+    add_remote_env MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256 "$operator_registry_sha256"
+  fi
   add_remote_env MAC_DEPLOY_CONFIGURED_AGENT_IDS "$CONFIGURED_AGENT_IDS"
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"
@@ -13373,17 +13392,24 @@ finally: os.close(fd)
 sys.argv=[path]+sys.argv[3:]
 namespace={"__name__":"__main__","__file__":path}
 exec(compile(raw,path,"exec"),namespace)'
-  result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")")"
+    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")")"; then
+    echo "ERROR: ${agent}: current worker credential validation failed" >&2
+    return 1
+  fi
   printf '%s\n' "$result" > "$manifest"
   chmod 0600 "$manifest"
-  "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
+  if ! "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 if value.get("schema") != "mac.worker_credential_current.v1" or value.get("status") != "valid" or value.get("agent_id") != sys.argv[2] or not value.get("principal_id"):
     raise SystemExit("current worker credential validation is invalid")
 PY
+  then
+    echo "ERROR: ${agent}: current worker credential receipt is invalid" >&2
+    return 1
+  fi
   echo "==> ${agent}: existing authenticated worker credential validated"
 )
 
@@ -13526,7 +13552,7 @@ build_and_open_hub_epoch() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     fleet_name="${fields[23]:-mac}"; capabilities="${fields[10]:-}"
-    validate_current_worker_credential "$agent" "$hub_agent"
+    validate_current_worker_credential "$agent" "$hub_agent" || return 1
     create_attestation_candidate "$agent"
     state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
     hub_epoch_client_read "$hub_agent" "$state" participant-state --agent-id "$agent_id"
@@ -13579,12 +13605,12 @@ PY
   persist_hub_epoch_recovery_request "$hub_agent" "$request" open
   cohort_journal_mutate hub-open-start "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-open-start "$DEPLOY_CONTROLLER_NONCE" \
-    --open-plan-file "$plan" >/dev/null
+    --open-plan-file "$plan" >/dev/null || return 1
   hub_epoch_client_open_with_retry "$hub_agent" "$request" "$receipt" \
-    open --epoch "$COHORT_EPOCH_ID"
+    open --epoch "$COHORT_EPOCH_ID" || return 1
   cohort_journal_mutate hub-opened "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-opened "$DEPLOY_CONTROLLER_NONCE" \
-    --evidence-file "$receipt" >/dev/null
+    --evidence-file "$receipt" >/dev/null || return 1
   remove_hub_epoch_recovery_request "$hub_agent" "$COHORT_EPOCH_ID" open
   echo "==> fleet: existing principals, holds, and candidate keys staged atomically"
 }

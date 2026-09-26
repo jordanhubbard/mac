@@ -223,6 +223,58 @@ def test_bound_worker_credential_never_falls_back_to_hub_admin_token(tmp_path) -
     assert values["MAC_WORKER_RUNNING_DIGEST"] == "runtime-digest"
 
 
+def test_redeploy_preserves_validated_existing_bound_worker_credential(tmp_path) -> None:
+    cfg = _cfg(tmp_path, agent="spoke", manager="hub")
+    existing = {
+        "MAC_API_TOKEN": "node-local-control-token",
+        "MAC_SECRET_KEY": "s" * 32,
+        "MAC_WORKER_TOKEN": "bound-worker-token",
+        "MAC_WORKER_IDENTITY_MODE": "bound",
+        "MAC_WORKER_CREDENTIAL_ID": "worker-spoke-v12",
+        "MAC_WORKER_CREDENTIAL_VERSION": "12",
+        "MAC_WORKER_CREDENTIAL_AGENT_ID": "agent_spoke",
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT": "0123456789ab",
+        "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": "a" * 40,
+        "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": "runtime-digest",
+    }
+
+    # The positional deploy contract still contains the compatibility hub
+    # token. It must not overwrite a bound credential that phase 1 validated.
+    values = deploy_env.build_mac_env(existing, cfg, environ={})
+
+    assert values["MAC_WORKER_TOKEN"] == "bound-worker-token"
+    assert values["MAC_WORKER_TOKEN"] != cfg.control.hub_token
+    assert values["MAC_WORKER_IDENTITY_MODE"] == "bound"
+    assert values["MAC_WORKER_CREDENTIAL_ID"] == "worker-spoke-v12"
+    assert values["MAC_WORKER_CREDENTIAL_VERSION"] == "12"
+    assert values["MAC_WORKER_CREDENTIAL_AGENT_ID"] == "agent_spoke"
+    assert values["MAC_WORKER_CREDENTIAL_FINGERPRINT"] == "0123456789ab"
+
+
+def test_redeploy_repairs_stale_compatibility_label_on_complete_bound_credential(
+    tmp_path,
+) -> None:
+    cfg = _cfg(tmp_path, agent="spoke", manager="hub")
+    existing = {
+        "MAC_API_TOKEN": "node-local-control-token",
+        "MAC_SECRET_KEY": "s" * 32,
+        "MAC_WORKER_TOKEN": "authenticated-bound-worker-token",
+        "MAC_WORKER_IDENTITY_MODE": "compatibility",
+        "MAC_WORKER_CREDENTIAL_ID": "worker-spoke-v13",
+        "MAC_WORKER_CREDENTIAL_VERSION": "13",
+        "MAC_WORKER_CREDENTIAL_AGENT_ID": "agent_spoke",
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT": "abcdef012345",
+        "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": "b" * 40,
+        "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": "runtime-digest",
+    }
+
+    values = deploy_env.build_mac_env(existing, cfg, environ={})
+
+    assert values["MAC_WORKER_TOKEN"] == "authenticated-bound-worker-token"
+    assert values["MAC_WORKER_IDENTITY_MODE"] == "bound"
+    assert values["MAC_WORKER_CREDENTIAL_ID"] == "worker-spoke-v13"
+
+
 def test_incomplete_worker_credential_stays_explicitly_in_compatibility_mode(tmp_path) -> None:
     cfg = _cfg(tmp_path, agent="spoke", manager="hub")
     cfg = deploy_env.DeployEnvConfig(
@@ -312,6 +364,27 @@ def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path)
     assert "MAC_DB" not in spoke
     assert "MAC_DATABASE_URL" not in spoke
     assert "MAC_CLIENT_PRINCIPALS_FILE" not in spoke
+
+
+def test_large_repository_timeouts_are_generous_and_preserve_overrides(tmp_path):
+    defaults = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
+    expected = {
+        "MAC_SELF_UPDATE_GIT_TIMEOUT": "1800",
+        "MAC_OPENSHELL_TRANSFER_TIMEOUT": "1800",
+        "MAC_OPENSHELL_DELETE_TIMEOUT": "600",
+        "MAC_OPENSHELL_VERIFICATION_START_TIMEOUT": "600",
+        "MAC_EXECUTOR_AGENT_TIMEOUT": "7200",
+        "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT": "7200",
+        "MAC_WORKER_REPOSITORY_TEST_TIMEOUT": "7200",
+        "MAC_WORKER_EXECUTOR_TIMEOUT": "21600",
+    }
+    for name, value in expected.items():
+        assert defaults[name] == value
+
+    existing = {name: "12345" for name in expected}
+    preserved = deploy_env.build_mac_env(existing, _cfg(tmp_path), environ={})
+    for name, value in existing.items():
+        assert preserved[name] == value
 
 
 def test_hub_verify_uses_the_deployment_approved_runtime_image(tmp_path):

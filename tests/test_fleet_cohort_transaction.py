@@ -1548,6 +1548,59 @@ def test_auxiliary_plan_tamper_is_detected_on_status(tmp_path: Path) -> None:
     }
 
 
+def test_pre_principal_mode_open_plan_remains_recoverable(tmp_path: Path) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    plan = scenario.hub_open_plan()
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    for agent in payload["agents"]:
+        agent.pop("principal_mode")
+    write_json(plan, payload)
+
+    scenario.call("hub-open-start", open_plan=plan)
+    scenario.call("hub-opened", evidence_file=scenario.hub_receipt("open"))
+
+    _result, status = run_cli(
+        scenario.directory,
+        "status",
+        "--epoch",
+        EPOCH,
+    )
+    assert status["journal"]["hub_state"] == "open"
+
+
+def test_hub_receipt_accepts_explicit_principal_mode(tmp_path: Path) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.call("hub-open-start", open_plan=scenario.hub_open_plan())
+    receipt = scenario.hub_receipt("open")
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    for agent in payload["agents"]:
+        agent["principal_mode"] = "pending"
+    write_json(receipt, payload)
+
+    scenario.call("hub-opened", evidence_file=receipt)
+
+    _result, status = run_cli(scenario.directory, "status", "--epoch", EPOCH)
+    assert status["journal"]["hub_state"] == "open"
+
+
+def test_hub_receipt_rejects_invalid_principal_mode(tmp_path: Path) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.call("hub-open-start", open_plan=scenario.hub_open_plan())
+    receipt = scenario.hub_receipt("open")
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["agents"][0]["principal_mode"] = "automatic"
+    write_json(receipt, payload)
+
+    rejected = scenario.call("hub-opened", evidence_file=receipt, check=False)
+    assert rejected["error"]["code"] == "invalid_evidence"
+
+
 def test_invalid_transition_order_fails_closed(tmp_path: Path) -> None:
     scenario = Scenario(tmp_path)
     node = scenario.nodes[0]

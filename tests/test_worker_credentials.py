@@ -728,6 +728,7 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     assert "validate_current_worker_credential" in hub_open
     assert "issue_pending_worker_credential" not in hub_open
     assert '"principal_mode":"current"' in hub_open
+    assert 'open --epoch "$COHORT_EPOCH_ID" || return 1' in hub_open
     apply_phase = 'typed_phase2_apply_worker "$spec"'
     assert "install_pending_worker_credential" not in apply_worker
     assert typed.index("build_and_open_hub_epoch") < typed.index(apply_phase)

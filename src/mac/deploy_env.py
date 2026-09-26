@@ -524,6 +524,25 @@ def _gateway_values(cfg: DeployEnvConfig) -> Dict[str, str]:
 def _worker_token(cfg: DeployEnvConfig, values: Mapping[str, str]) -> str:
     if cfg.worker.token:
         return cfg.worker.token
+    # A typed redeploy validates the node's already-installed bound credential
+    # before phase 2, but the legacy write-mac-env argument vector only carries
+    # the compatibility hub token.  Do not replace that validated per-worker
+    # bearer with the shared bootstrap/admin bearer while rewriting mac.env.
+    # New credential material, when supplied explicitly, still wins above.
+    if (
+        not cfg.identity.is_hub
+        and values.get("MAC_WORKER_TOKEN")
+        and all(
+            values.get(key)
+            for key in (
+                "MAC_WORKER_CREDENTIAL_ID",
+                "MAC_WORKER_CREDENTIAL_VERSION",
+                "MAC_WORKER_CREDENTIAL_AGENT_ID",
+                "MAC_WORKER_CREDENTIAL_FINGERPRINT",
+            )
+        )
+    ):
+        return values["MAC_WORKER_TOKEN"]
     if cfg.worker.mode == "loop" and cfg.identity.is_hub:
         return values["MAC_API_TOKEN"]
     if cfg.control.hub_token:
@@ -552,6 +571,13 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
         "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": worker.credential_source_commit,
         "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": worker.credential_runtime_digest,
     }
+    if (
+        not worker.token
+        and not any(credential_values.values())
+        and values.get("MAC_WORKER_TOKEN")
+        and all(str(values.get(key) or "") for key in credential_values)
+    ):
+        credential_values = {key: str(values.get(key) or "") for key in credential_values}
     if all(
         credential_values[key]
         for key in (
@@ -1162,6 +1188,18 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
     values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
     values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-task-executor"))
+    # Large repositories can spend tens of minutes in clone, OpenShell transfer,
+    # bootstrap, and verification. These are anti-hang ceilings, not health
+    # detection intervals; keep the latter short while giving progressing work
+    # enough time to finish. setdefault preserves every operator override.
+    values.setdefault("MAC_SELF_UPDATE_GIT_TIMEOUT", "1800")
+    values.setdefault("MAC_OPENSHELL_TRANSFER_TIMEOUT", "1800")
+    values.setdefault("MAC_OPENSHELL_DELETE_TIMEOUT", "600")
+    values.setdefault("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT", "600")
+    values.setdefault("MAC_EXECUTOR_AGENT_TIMEOUT", "7200")
+    values.setdefault("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", "7200")
+    values.setdefault("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "7200")
+    values.setdefault("MAC_WORKER_EXECUTOR_TIMEOUT", "21600")
     # Registration resolves this venv launcher to the current base interpreter,
     # execute-probes it, and sends that exact file identity to the hub for
     # approval. Do not copy the interpreter into the venv: Homebrew Python

@@ -1523,12 +1523,13 @@ def test_validate_git_remote_url_rejects_argv_smuggling():
             _validate_git_remote_url(hostile)
 
 
-def test_worker_cli_has_default_executor_timeout():
+def test_worker_cli_has_default_executor_timeout(monkeypatch):
     """mac-ehch: without a default --timeout, a wedged executor keeps
     renewing its lease forever because the renew thread only stops when
     subprocess.run returns. Confirm the CLI default is now finite."""
     from mac.worker import build_parser
 
+    monkeypatch.delenv("MAC_WORKER_EXECUTOR_TIMEOUT", raising=False)
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -1542,10 +1543,11 @@ def test_worker_cli_has_default_executor_timeout():
             "/bin/true",
         ]
     )
-    assert args.timeout is not None
-    assert 60 <= args.timeout <= 24 * 3600, (
-        f"default --timeout {args.timeout} outside the reasonable 1m–24h window"
-    )
+    assert args.timeout == 21600.0
+
+    monkeypatch.setenv("MAC_WORKER_EXECUTOR_TIMEOUT", "28800")
+    overridden = build_parser().parse_args(["--agent-id", "agent_test"])
+    assert overridden.timeout == 28800.0
 
 
 def test_validate_git_ref_rejects_flags_and_meta_chars():

@@ -348,13 +348,13 @@ def _post_with_fenced_write_retry(
 #: How long after the first SIGTERM/SIGINT the worker keeps letting the current
 #: task run before it actively abandons the assignment (releases the lease and
 #: goes offline). Tuned to the unit that runs it: ``mac-agent-service`` sets
-#: ``KillMode=mixed`` / ``TimeoutStopSec=600``, so at 600s systemd SIGKILLs the
+#: ``KillMode=mixed`` / ``TimeoutStopSec=3600``, so at 3600s systemd SIGKILLs the
 #: whole cgroup — the lease would then stay ACTIVE for the rest of
-#: ``lease_seconds`` (900s) with nobody left to release it. 540s preserves the
+#: ``lease_seconds`` (900s) with nobody left to release it. 3300s preserves the
 #: existing "let the task finish" drain for anything shorter while guaranteeing
-#: the release happens with a minute of headroom before the kill. A second
+#: the release happens with five minutes of headroom before the kill. A second
 #: signal abandons immediately; ``MAC_WORKER_SHUTDOWN_GRACE_SECONDS`` overrides.
-DEFAULT_SHUTDOWN_GRACE_SECONDS = 540.0
+DEFAULT_SHUTDOWN_GRACE_SECONDS = 3300.0
 
 
 #: Ceiling on how long this worker will hold itself out of dispatch waiting
@@ -8713,9 +8713,9 @@ def _repository_new_file_finalize_message(paths: List[str]) -> str:
 
 def _run_git(repo: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
     try:
-        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))
+        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "1800"))
     except ValueError:
-        timeout = 120.0
+        timeout = 1800.0
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
@@ -9071,9 +9071,9 @@ def _run_git_in(cwd: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
     + capture behaviour so the K8s clone path is testable via the
     same monkeypatch surface."""
     try:
-        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "120"))
+        timeout = float(os.environ.get("MAC_SELF_UPDATE_GIT_TIMEOUT", "1800"))
     except ValueError:
-        timeout = 120.0
+        timeout = 1800.0
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd),
@@ -9487,12 +9487,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--workspace", default=".mac-agent-workspaces")
     parser.add_argument("--lease-seconds", type=int, default=900)
-    # mac-ehch: hard-cap executor runtime so a wedged subprocess can't
-    # keep renewing its lease forever. One hour is well above the median
-    # claim duration in production and below the point where a stuck
-    # task should be visible to operators. Override with --timeout if a
-    # longer-running task is genuinely needed.
-    parser.add_argument("--timeout", type=float, default=3600.0)
+    # Keep one enclosing anti-hang bound, but leave enough headroom for a large
+    # checkout/upload, a two-hour agent turn, repository bootstrap/tests, and
+    # the final harvest. Progress remains visible through lease renewal and
+    # telemetry; this is a last-resort kill switch, not a liveness detector.
+    try:
+        executor_timeout = float(os.environ.get("MAC_WORKER_EXECUTOR_TIMEOUT", "21600"))
+    except ValueError:
+        executor_timeout = 21600.0
+    parser.add_argument("--timeout", type=float, default=executor_timeout)
     parser.add_argument(
         "--allowed-projects",
         default=os.environ.get("MAC_WORKER_ALLOWED_PROJECTS", ""),
