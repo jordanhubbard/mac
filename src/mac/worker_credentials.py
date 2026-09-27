@@ -581,6 +581,13 @@ class WorkerCredentialLifecycle:
                 "AND state = 'active' ORDER BY credential_version DESC",
                 (exact_agent,),
             ).fetchall()
+            if not rows:
+                # A worker that has never completed a deploy has no credential
+                # at all. That is the first-deploy bootstrap case, not an
+                # ambiguous-identity case, and the controller has to be able to
+                # tell them apart: one is repaired by provisioning the initial
+                # bound credential, the other by revoking the extras.
+                raise WorkerCredentialError("worker has no active credential")
             if len(rows) != 1:
                 raise WorkerCredentialError("worker must have exactly one active credential")
             row = rows[0]

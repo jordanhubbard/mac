@@ -770,6 +770,19 @@ def test_fleet_deploy_rolling_cohort_loop_does_not_read_stdin() -> None:
     )
 
 
+def test_absent_and_ambiguous_worker_credentials_are_distinguishable() -> None:
+    """Zero credentials is the first-deploy case; two is an identity fault.
+
+    The controller repairs them differently -- one by provisioning the initial
+    credential, the other by revoking the extras -- so they cannot share one
+    "exactly one active credential" message.
+    """
+    cp = _plane(ephemeral_dsn())
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    with pytest.raises(WorkerCredentialError, match="has no active credential"):
+        lifecycle.validate_current("agent_alpha")
+
+
 def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
     tmp_path: Path,
 ) -> None:

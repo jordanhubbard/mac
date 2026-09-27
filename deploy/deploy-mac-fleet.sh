@@ -820,6 +820,11 @@ HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER=""
 HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256=""
 HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256=""
 HUB_CREDENTIAL_VALIDATOR_AGENT=""
+# validate_current_worker_credential returns this instead of 1 when the hub
+# reports the worker has no credential at all. That is the first-deploy case,
+# repaired by provisioning the initial bound credential, so it has to stay
+# distinguishable from every other validation failure.
+NO_CURRENT_WORKER_CREDENTIAL=97
 # Set to the adopted epoch while a prior controller's incomplete transaction is
 # being replayed. A node failure during replay belongs to that epoch, not to
 # the fresh COHORT_EPOCH_ID this invocation would otherwise name.
@@ -13373,17 +13378,44 @@ finally: os.close(fd)
 sys.argv=[path]+sys.argv[3:]
 namespace={"__name__":"__main__","__file__":path}
 exec(compile(raw,path,"exec"),namespace)'
+  # The hub validator writes its receipt to stdout and its typed failure to
+  # stderr. Capture both and check the exit status explicitly: this function is
+  # reached through `build_and_open_hub_epoch ... || return 1`, and an AND-OR
+  # list disables errexit for everything it calls, so neither the ssh failure
+  # nor the receipt check below can be left to `set -e`. Before this was
+  # explicit, a hub that refused the credential produced an empty receipt, a
+  # JSONDecodeError on the bare newline, and then the success line anyway --
+  # the deploy went on to fail four steps later at `quiesce requires open hub
+  # epoch`, naming neither the worker nor the credential.
+  local status=0 diagnostic="${manifest}.stderr"
+  rm -f "$diagnostic"
   result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")")"
+    "set -e; set -a; . \"\$HOME/.mac/mac.env\"; set +a; \"\$HOME/.mac/venv/bin/python\" -c $(shell_quote "$validator_loader") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_HELPER") $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_HELPER_SHA256") --archive $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_REMOTE_ARCHIVE") --archive-sha256 $(shell_quote "$HUB_CREDENTIAL_VALIDATOR_ARCHIVE_SHA256") --python \"\$HOME/.mac/venv/bin/python\" --agent-id $(shell_quote "$agent_id")" \
+    2>"$diagnostic")" || status=$?
+  if [ "$status" != 0 ] || [ -z "$result" ]; then
+    if grep -q 'worker has no active credential' "$diagnostic" 2>/dev/null; then
+      rm -f "$diagnostic"
+      return "$NO_CURRENT_WORKER_CREDENTIAL"
+    fi
+    echo "ERROR: ${agent}: hub refused the current worker credential" >&2
+    sed 's/^/    /' "$diagnostic" >&2 2>/dev/null || true
+    rm -f "$diagnostic"
+    return 1
+  fi
+  rm -f "$diagnostic"
   printf '%s\n' "$result" > "$manifest"
   chmod 0600 "$manifest"
-  "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
+  if ! "$PYTHON_BIN" - "$manifest" "$agent_id" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 if value.get("schema") != "mac.worker_credential_current.v1" or value.get("status") != "valid" or value.get("agent_id") != sys.argv[2] or not value.get("principal_id"):
     raise SystemExit("current worker credential validation is invalid")
 PY
+  then
+    echo "ERROR: ${agent}: current worker credential receipt is not an exact valid receipt" >&2
+    return 1
+  fi
   echo "==> ${agent}: existing authenticated worker credential validated"
 )
 
@@ -13526,7 +13558,7 @@ build_and_open_hub_epoch() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     fleet_name="${fields[23]:-mac}"; capabilities="${fields[10]:-}"
-    validate_current_worker_credential "$agent" "$hub_agent"
+    validate_current_worker_credential "$agent" "$hub_agent" || return 1
     create_attestation_candidate "$agent"
     state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
     hub_epoch_client_read "$hub_agent" "$state" participant-state --agent-id "$agent_id"
