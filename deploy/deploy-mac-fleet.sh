@@ -17097,7 +17097,18 @@ run_typed_cohort() {
   # immutable apply, and prepared proof before stopping the next node. The
   # journal enforces earlier=prepared and later=phase1_armed at every boundary,
   # so controller death cannot silently widen the unavailable set.
-  while IFS= read -r spec; do
+  #
+  # Collect the cohort before iterating rather than holding the spec file open
+  # as the loop's stdin. This body runs remote work for a whole node -- quiesce,
+  # apply, attestation, credential install -- and anything in that tree that
+  # reads stdin consumes the remaining specs, silently ending the loop after the
+  # first node. That left the later nodes unapplied and surfaced only as a
+  # missing release-ready evidence file for the second agent.
+  local phase2_specs=() phase2_spec
+  while IFS= read -r phase2_spec; do
+    [ -n "$phase2_spec" ] && phase2_specs+=("$phase2_spec")
+  done < "$selected_specs_file"
+  for spec in "${phase2_specs[@]}"; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
@@ -17167,7 +17178,7 @@ PY
       return 1
     fi
     echo "==> ${agent}: rolling phase-2 apply proved; availability boundary advanced"
-  done < "$selected_specs_file"
+  done
 
   prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"
   cleanup_committed_hub_relay "$hub_agent" "$selected_specs_file"
