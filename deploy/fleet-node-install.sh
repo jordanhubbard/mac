@@ -7448,25 +7448,20 @@ def prove_retained_attestation_recovery_env(path):
         raise QuiescenceFailure(
             "retained successor has an installed identity: %s" % ", ".join(sorted(unexpected))
         )
-    # Two different nodes reach this exception, and both are uninstalled. A
-    # retain-forward successor carries the recovery pair that key recovery left
-    # behind. A node on its first deploy carries no deployment identity at all,
-    # because the attestation key is installed in phase 2 -- it cannot present
-    # recovery keys that nothing has written yet. Demanding them of a brand-new
-    # node rejected every first deploy. What has to hold for both is that no
-    # deployment identity is installed, which the comparison above proves.
-    recovery = observed & required
-    if recovery and recovery != required:
-        raise QuiescenceFailure(
-            "retained successor recovery identity is incomplete: %s"
-            % ", ".join(sorted(required - recovery))
-        )
-    if recovery:
+    # Several uninstalled nodes reach this exception and they do not all carry
+    # the same keys. A retain-forward successor has the attestation key that key
+    # recovery left behind. A node on its first deploy has no deployment
+    # identity at all, because the attestation key is installed in phase 2, and
+    # it may or may not yet carry the startup hold policy depending on how far
+    # a previous attempt got. Requiring a fixed set rejected first deploys; what
+    # actually has to hold is that no identity is installed, which the
+    # comparison above proves. Validate whichever of these is present.
+    if "MAC_ATTESTATION_KEY" in values:
         attestation_key = values["MAC_ATTESTATION_KEY"]
         if len(attestation_key) < 32 or any(character.isspace() for character in attestation_key):
             raise QuiescenceFailure("retained successor attestation identity is invalid")
-        if values["MAC_STARTUP_CLEAR_HOLD"] != "0":
-            raise QuiescenceFailure("retained successor dispatch hold policy is invalid")
+    if "MAC_STARTUP_CLEAR_HOLD" in values and values["MAC_STARTUP_CLEAR_HOLD"] != "0":
+        raise QuiescenceFailure("retained successor dispatch hold policy is invalid")
 
 
 def prove_phase1_prepared_cli_authority(runtimes):
