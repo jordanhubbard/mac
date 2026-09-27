@@ -13679,12 +13679,18 @@ for line in Path(selected).read_text(encoding="utf-8").splitlines():
     name=line.split("|",1)[0]; agent_id="agent_"+re.sub(r"[^A-Za-z0-9_.-]+","_",name.lower()).strip("_")
     prepared=root/("release-ready-%s.json"%agent_id)
     bound=cohort[agent_id]
+    # An epoch-owned pending credential is promoted at commit from the receipt
+    # the node produced when it installed it, so that receipt has to travel with
+    # the proof. A participant that kept its already-active credential installs
+    # nothing and carries an empty receipt.
+    receipt_path=root/("pending-worker-receipt-%s.json"%agent_id)
+    install_receipt=json.load(open(receipt_path,encoding="utf-8")) if receipt_path.is_file() else None
     agents.append({
         "agent_id":agent_id,
         "generation":bound["generation"],
         "deployment_id":bound["deployment_id"],
         "prepared_evidence_sha256":hashlib.sha256(prepared.read_bytes()).hexdigest(),
-        "install_receipt":None,
+        "install_receipt":install_receipt,
         "attestation_proof":json.load(open(root/("attestation-candidate-proof-%s.json"%agent_id),encoding="utf-8")),
         "report_executor_startup_timestamp":None,
     })
