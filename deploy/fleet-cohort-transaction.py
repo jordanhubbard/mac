@@ -218,6 +218,12 @@ HUB_RECEIPT_AGENT_KEYS = frozenset(
         "epoch_hold_at",
         "generation",
         "principal_id",
+        # The hub reports which principal the epoch bound for each participant:
+        # "current" preserves an already-active credential, "pending" is an
+        # epoch-owned credential it will promote at commit. The receipt has
+        # carried this since the hub gained an explicit principal mode, so a
+        # controller that omits it here rejects every receipt such a hub emits.
+        "principal_mode",
         "principal_version",
         "principal_fingerprint",
         "attestation_candidate_fingerprint",
