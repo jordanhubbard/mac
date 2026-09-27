@@ -13217,6 +13217,22 @@ pending_worker_manifest_file() {
     "$TMPDIR_LOCAL" "$(stable_worker_agent_id "$1")"
 }
 
+worker_uses_pending_credential() {
+  # True when this epoch opened against an epoch-owned pending credential
+  # rather than preserving an already-active one. The manifest schema is the
+  # record: a validation receipt is a current credential, an install manifest
+  # is a pending one that still has to reach the node before the hub can prove
+  # readiness and promote it.
+  local manifest
+  manifest="$(pending_worker_manifest_file "$1")"
+  [ -s "$manifest" ] || return 1
+  "$PYTHON_BIN" - "$manifest" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+raise SystemExit(0 if value.get("schema")=="mac.worker_credential_install.v1" else 1)
+PY
+}
+
 pending_worker_remote_manifest_path() {
   local agent="$1" epoch_id="${2:-$COHORT_EPOCH_ID}" digest
   digest="$("$PYTHON_BIN" -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$epoch_id")"
@@ -13553,12 +13569,26 @@ build_and_open_hub_epoch() {
   local request="$TMPDIR_LOCAL/hub-open-request.json"
   local receipt="$TMPDIR_LOCAL/hub-open-receipt.json"
   local spec fields=() agent agent_id fleet_name capabilities state candidate manifest
+  local credential_status
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     fleet_name="${fields[23]:-mac}"; capabilities="${fields[10]:-}"
-    validate_current_worker_credential "$agent" "$hub_agent" || return 1
+    credential_status=0
+    validate_current_worker_credential "$agent" "$hub_agent" || credential_status=$?
+    if [ "$credential_status" = "$NO_CURRENT_WORKER_CREDENTIAL" ]; then
+      # First deploy of this worker: there is no bound credential to preserve,
+      # so open the epoch against an epoch-owned pending principal instead of
+      # demanding one that cannot exist yet. The node cannot prove an
+      # authenticated heartbeat at this point -- its agent service is not
+      # installed until phase 2 -- so the credential stays pending here,
+      # install_pending_worker_credential puts it on the node during phase 2,
+      # and the hub promotes it to active at commit.
+      issue_pending_worker_credential "$agent" "$hub_agent" "$fleet_name" "$capabilities" || return 1
+    elif [ "$credential_status" != 0 ]; then
+      return 1
+    fi
     create_attestation_candidate "$agent"
     state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
     hub_epoch_client_read "$hub_agent" "$state" participant-state --agent-id "$agent_id"
@@ -13578,13 +13608,19 @@ for line in Path(selected).read_text(encoding="utf-8").splitlines():
     manifest=json.load(open(root/("pending-worker-%s.json"%agent_id),encoding="utf-8"))
     candidate=json.load(open(root/("attestation-candidate-%s.json"%agent_id),encoding="utf-8"))
     bound=cohort[agent_id]
+    # The manifest schema records which credential this epoch is opening
+    # against. A validation receipt means an already-active credential the
+    # epoch preserves; an install manifest means an epoch-owned pending
+    # credential issued for a worker that had none, which the hub promotes at
+    # commit once phase 2 has installed it and the node has proved readiness.
+    mode="pending" if manifest.get("schema")=="mac.worker_credential_install.v1" else "current"
     agents.append({
         "agent_id":agent_id,
         "generation":bound["generation"],
         "deployment_id":bound["deployment_id"],
         "participant_state":state,
         "principal_id":manifest["principal_id"],
-        "principal_mode":"current",
+        "principal_mode":mode,
         "attestation_candidate_key":candidate["key"],
         "report_executor_action":"revoke",
         "report_executor_attestation":None,
@@ -16885,6 +16921,13 @@ typed_phase2_apply_worker() {
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
     "$(node_route_identity_sha256 "$agent")" || return 1
+  if worker_uses_pending_credential "$agent"; then
+    # apply-phase2 has just installed the runtime and the agent service, so the
+    # node can finally hold a credential and heartbeat with it. Put the pending
+    # credential on it now; the hub promotes it at commit, after the node has
+    # proved readiness against it.
+    install_pending_worker_credential "$agent" "$supervisor" "$fleet_name" || return 1
+  fi
   install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name" || return 1
   collect_typed_release_ready_evidence "$spec" || return 1
   evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
