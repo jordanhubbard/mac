@@ -380,18 +380,21 @@ def build_prove(material: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, 
             for item in agents
         ],
     }
-    request = {
-        "identity_sha256": identity,
-        "proofs": [
-            {
-                "agent_id": item["agent_id"],
-                "install_receipt": item["install_receipt"],
-                "attestation_proof": item["attestation_proof"],
-                "report_executor_startup_timestamp": item["report_executor_startup_timestamp"],
-            }
-            for item in agents
-        ],
-    }
+    proofs: list[dict[str, Any]] = []
+    for item in agents:
+        proof = {
+            "agent_id": item["agent_id"],
+            "attestation_proof": item["attestation_proof"],
+            "report_executor_startup_timestamp": item["report_executor_startup_timestamp"],
+        }
+        # The hub declares install_receipt as an object with an empty default,
+        # not as a nullable field, so a participant that installed nothing has to
+        # omit the key rather than send null. Sending null failed the request
+        # schema outright and the deploy reported only "HTTP 422".
+        if item["install_receipt"] is not None:
+            proof["install_receipt"] = item["install_receipt"]
+        proofs.append(proof)
+    request = {"identity_sha256": identity, "proofs": proofs}
     return plan, request
 
 
