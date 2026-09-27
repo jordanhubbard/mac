@@ -7429,8 +7429,33 @@ def prove_retained_attestation_recovery_env(path):
             raise QuiescenceFailure("retained successor identity is non-canonical")
         values[key] = value
 
-    if set(values) != {"MAC_ATTESTATION_KEY", "MAC_STARTUP_CLEAR_HOLD"}:
-        raise QuiescenceFailure("retained successor has an installed identity")
+    # A node that has completed --prepare-network-prerequisites carries the mesh
+    # routing facts that step writes, so requiring the recovery keys and nothing
+    # else rejected every node that followed the deploy's own instructions. These
+    # are addresses and a mode, not authority: the preauth key and every other
+    # credential stay rejected by the exhaustive comparison below.
+    required = {"MAC_ATTESTATION_KEY", "MAC_STARTUP_CLEAR_HOLD"}
+    mesh_routing = {
+        "MAC_TAILSCALE_HOSTNAME",
+        "MAC_TAILSCALE_HTTP_PROXY",
+        "MAC_TAILSCALE_IP",
+        "MAC_TAILSCALE_NETWORKING_MODE",
+        "MAC_TAILSCALE_SOCKS",
+    }
+    observed = set(values)
+    missing = required - observed
+    if missing:
+        # Distinct from an installed identity. The old message named the opposite
+        # condition and sent the reader looking for state that was never there.
+        raise QuiescenceFailure(
+            "retained successor recovery identity is incomplete: %s"
+            % ", ".join(sorted(missing))
+        )
+    unexpected = observed - required - mesh_routing
+    if unexpected:
+        raise QuiescenceFailure(
+            "retained successor has an installed identity: %s" % ", ".join(sorted(unexpected))
+        )
     attestation_key = values["MAC_ATTESTATION_KEY"]
     if len(attestation_key) < 32 or any(character.isspace() for character in attestation_key):
         raise QuiescenceFailure("retained successor attestation identity is invalid")
