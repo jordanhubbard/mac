@@ -783,6 +783,29 @@ def test_fleet_deploy_rolling_cohort_loop_does_not_read_stdin() -> None:
     )
 
 
+def test_first_deploy_credential_path_is_reachable() -> None:
+    """The functions that give a new worker its first credential must be called.
+
+    issue_pending_worker_credential and install_pending_worker_credential were
+    defined and never called, and because every other credential path in the
+    deploy derives from an already-active principal, a worker that never got
+    them could not be deployed at all: hub epoch open failed and the deploy
+    reported the unrelated-looking "quiesce requires open hub epoch" four steps
+    later. A definition with no call site is the shape of that regression.
+    """
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    for name in ("issue_pending_worker_credential", "install_pending_worker_credential"):
+        calls = [
+            line.strip()
+            for line in script.splitlines()
+            if name in line
+            and not line.lstrip().startswith("#")
+            and not line.startswith(f"{name}() ")
+        ]
+        assert calls, f"{name} is defined but never called"
+
+
 def test_absent_and_ambiguous_worker_credentials_are_distinguishable() -> None:
     """Zero credentials is the first-deploy case; two is an identity fault.
 
