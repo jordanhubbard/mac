@@ -16837,8 +16837,15 @@ if len(matches) != 1:
     raise SystemExit("typed release readiness lacks one exact hub participant")
 participant = matches[0]
 principal_id = str(manifest.get("principal_id") or "")
+# A preserved active credential arrives as a validation receipt and an
+# epoch-owned pending credential as an install manifest. Both name the exact
+# principal this epoch opened against, which is what the participant check
+# below proves; the schema only says which of the two cases this worker is in.
 if (
-    manifest.get("schema") != "mac.worker_credential_current.v1"
+    manifest.get("schema") not in (
+        "mac.worker_credential_current.v1",
+        "mac.worker_credential_install.v1",
+    )
     or manifest.get("agent_id") != agent_id
     or not principal_id
     or participant.get("principal_id") != principal_id
