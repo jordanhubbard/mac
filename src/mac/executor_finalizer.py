@@ -1122,10 +1122,10 @@ def _finalizer_phase_timeout(phase: str) -> float:
         return _repository_bootstrap_timeout()
     if phase == "contract_tests":
         try:
-            value = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or 1800.0)
-            return value if value > 0 else 1800.0
+            value = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or 7200.0)
+            return value if value > 0 else 7200.0
         except ValueError:
-            return 1800.0
+            return 7200.0
     return _FINALIZER_PHASE_DEFAULTS.get(phase, 600.0)
 
 

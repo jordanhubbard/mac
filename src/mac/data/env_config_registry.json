@@ -3600,6 +3600,18 @@
   },
   {
     "default": null,
+    "description": "SHA-256 identity of the controller's frozen operator fleet registry. Forwarded only with `MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY=1` and rechecked at the node mutation boundary.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy os.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OS",
@@ -3790,6 +3802,18 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "int"
+  },
+  {
+    "default": "0",
+    "description": "Controller-owned deployment flag. Set to `1` only when the target's existing fleet registry exactly matches the frozen operator registry; the node installer then preserves that multi-fleet file and fails closed if its digest changes.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
   },
   {
     "default": null,
@@ -5135,6 +5159,7 @@
     "name": "MAC_EXECUTOR_AGENT_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/services.py"
     ],
@@ -9214,6 +9239,18 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell delete timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_DELETE_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell docker bin.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_DOCKER_BIN",
@@ -9597,6 +9634,18 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell transfer timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_TRANSFER_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell upload codex auth.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_UPLOAD_CODEX_AUTH",
@@ -9614,6 +9663,7 @@
     "name": "MAC_OPENSHELL_VERIFICATION_START_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py"
     ],
     "type": "int"
@@ -12972,6 +13022,7 @@
     "name": "MAC_SELF_UPDATE_GIT_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "int"
@@ -14675,6 +14726,18 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker executor timeout.",
+    "family": "worker",
+    "name": "MAC_WORKER_EXECUTOR_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker heartbeat interval.",
     "family": "worker",
     "name": "MAC_WORKER_HEARTBEAT_INTERVAL",
@@ -14795,6 +14858,7 @@
     "name": "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py"
     ],
@@ -14807,6 +14871,7 @@
     "name": "MAC_WORKER_REPOSITORY_TEST_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",

@@ -551,10 +551,68 @@ def test_fleet_deploy_distributes_registry_and_reconciles_configured_membership(
 
     assert "fleet_config_query sanitized-registry" in script
     assert "MAC_DEPLOY_FLEET_REGISTRY_FILE" in script
+    assert "MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY" in script
+    assert "MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256" in script
+    assert 'remote_registry_sha256="$(ssh -n' in script
     assert 'cp -f "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"' in script
     assert "fleet_config_query configured-agent-ids" in script
     assert "MAC_DEPLOY_CONFIGURED_AGENT_IDS" in script
     assert "registered_configured_agent_ids" in script
+
+
+def test_node_installer_preserves_exact_operator_multifleet_registry(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    function = _deploy_function(installer, "install_fleet_registry", "python_bin")
+    mac_home = tmp_path / ".mac"
+    mac_home.mkdir()
+    existing = mac_home / "fleets.yaml"
+    existing.write_text("fleets:\n  rocky: {}\n  ovswarm-hub: {}\n", encoding="utf-8")
+    incoming = tmp_path / "incoming.yaml"
+    incoming.write_text("fleets:\n  rocky: {}\n", encoding="utf-8")
+    digest = hashlib.sha256(existing.read_bytes()).hexdigest()
+    script = f"""set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+FLEET_REGISTRY_FILE={shlex.quote(str(incoming))}
+PRESERVE_OPERATOR_FLEET_REGISTRY=1
+OPERATOR_FLEET_REGISTRY_SHA256={digest}
+PY={shlex.quote(sys.executable)}
+log() {{ :; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{function}
+install_fleet_registry
+"""
+    result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert existing.read_text(encoding="utf-8") == "fleets:\n  rocky: {}\n  ovswarm-hub: {}\n"
+    assert not incoming.exists()
+
+
+def test_node_installer_refuses_changed_operator_registry(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    function = _deploy_function(installer, "install_fleet_registry", "python_bin")
+    mac_home = tmp_path / ".mac"
+    mac_home.mkdir()
+    existing = mac_home / "fleets.yaml"
+    existing.write_text("fleets:\n  rocky: {}\n  ovswarm-hub: {}\n", encoding="utf-8")
+    incoming = tmp_path / "incoming.yaml"
+    incoming.write_text("fleets:\n  rocky: {}\n", encoding="utf-8")
+    stale_digest = hashlib.sha256(b"older operator registry\n").hexdigest()
+    script = f"""set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+FLEET_REGISTRY_FILE={shlex.quote(str(incoming))}
+PRESERVE_OPERATOR_FLEET_REGISTRY=1
+OPERATOR_FLEET_REGISTRY_SHA256={stale_digest}
+PY={shlex.quote(sys.executable)}
+log() {{ :; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{function}
+install_fleet_registry
+"""
+    result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=False)
+    assert result.returncode != 0
+    assert "changed after deployment snapshot" in result.stderr
+    assert existing.read_text(encoding="utf-8") == "fleets:\n  rocky: {}\n  ovswarm-hub: {}\n"
+    assert incoming.exists()
 
 
 def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
@@ -812,9 +870,9 @@ def test_agent_services_allow_full_openshell_task_withdrawal():
     assert "SuccessExitStatus=143 SIGTERM" in linux
     assert "KillMode=mixed" in linux
     assert "KillSignal=SIGTERM" in linux
-    assert "TimeoutStopSec=600" in linux
+    assert "TimeoutStopSec=3600" in linux
     assert "TimeoutStopSec=30" not in linux
-    assert "<key>ExitTimeOut</key><integer>600</integer>" in darwin
+    assert "<key>ExitTimeOut</key><integer>3600</integer>" in darwin
     assert "<key>ExitTimeOut</key><integer>30</integer>" not in darwin
     assert "<key>AbandonProcessGroup</key><false/>" in darwin
 

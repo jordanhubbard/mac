@@ -224,6 +224,7 @@ HUB_RECEIPT_AGENT_KEYS = frozenset(
         "report_executor_action",
     }
 )
+HUB_RECEIPT_AGENT_KEYS_WITH_PRINCIPAL_MODE = HUB_RECEIPT_AGENT_KEYS | {"principal_mode"}
 ENDPOINT_IDENTITY_KEYS = frozenset({"schema", "adapter", "authority", "observation"})
 SSH_AUTHORITY_KEYS = frozenset({"ssh_host_key_sha256", "instance_id_kind", "instance_id_sha256"})
 SSH_HUB_AUTHORITY_KEYS = SSH_AUTHORITY_KEYS | {"durable_store_uuid_sha256"}
@@ -1884,6 +1885,7 @@ def _hub_plan(
         expected[node["stable_id"]] = values
     observed: dict[str, tuple[Any, ...]] = {}
     agent_keys = {"agent_id", "generation", "deployment_id"}
+    legacy_open_agent_keys: set[str] | None = None
     if phase == "prove":
         agent_keys.add("prepared_evidence_sha256")
     else:
@@ -1895,9 +1897,23 @@ def _hub_plan(
                 "principal_mode",
             }
         )
+        # ``principal_mode`` was added to the v1 open intent without a schema
+        # version bump.  Durable, already-terminal journals written by the
+        # preceding release therefore have an otherwise exact v1 shape that
+        # lacks this field.  Deployment recovery scans those journals before
+        # opening a new epoch, so rejecting that historical shape makes the
+        # fleet impossible to upgrade in place.  Accept only the one exact
+        # predecessor shape; all other missing or additional fields still fail
+        # closed.
+        legacy_open_agent_keys = set(agent_keys)
+        legacy_open_agent_keys.remove("principal_mode")
     ownership: list[dict[str, Any]] = []
     for item in agents:
-        if not isinstance(item, dict) or frozenset(item) != frozenset(agent_keys):
+        item_keys = frozenset(item) if isinstance(item, dict) else frozenset()
+        if not isinstance(item, dict) or (
+            item_keys != frozenset(agent_keys)
+            and item_keys != frozenset(legacy_open_agent_keys or ())
+        ):
             raise JournalError("invalid_release_plan", f"hub {phase} agent schema is not exact")
         agent_id = item["agent_id"]
         if not isinstance(agent_id, str) or agent_id in observed:
@@ -1913,7 +1929,10 @@ def _hub_plan(
             )
             values += (item["prepared_evidence_sha256"],)
         else:
-            if item["principal_mode"] not in {"current", "pending"}:
+            if "principal_mode" in item and item["principal_mode"] not in {
+                "current",
+                "pending",
+            }:
                 raise JournalError(
                     "invalid_release_plan",
                     "hub open principal mode must select current or pending",
@@ -2104,8 +2123,16 @@ def _hub_receipt_evidence(
     observed_agents: dict[str, str] = {}
     ownership: list[dict[str, Any]] = []
     for item in agents:
-        if not isinstance(item, dict) or frozenset(item) != HUB_RECEIPT_AGENT_KEYS:
+        if not isinstance(item, dict) or frozenset(item) not in {
+            HUB_RECEIPT_AGENT_KEYS,
+            HUB_RECEIPT_AGENT_KEYS_WITH_PRINCIPAL_MODE,
+        }:
             raise JournalError("invalid_evidence", "hub receipt agent schema is not exact")
+        if "principal_mode" in item and item["principal_mode"] not in {
+            "current",
+            "pending",
+        }:
+            raise JournalError("invalid_evidence", "hub receipt principal mode is invalid")
         agent_id = item["agent_id"]
         if not isinstance(agent_id, str) or agent_id in observed_agents:
             raise JournalError("invalid_evidence", "hub receipt agent id is invalid")

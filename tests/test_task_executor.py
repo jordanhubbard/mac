@@ -1898,11 +1898,23 @@ def test_classify_outcome_failure_when_no_evidence(tmp_path):
 
 def test_agent_timeout_default_and_override(monkeypatch):
     monkeypatch.delenv("MAC_EXECUTOR_AGENT_TIMEOUT", raising=False)
-    assert te._agent_timeout() == 900.0
+    assert te._agent_timeout() == 7200.0
     monkeypatch.setenv("MAC_EXECUTOR_AGENT_TIMEOUT", "120")
     assert te._agent_timeout() == 120.0
     monkeypatch.setenv("MAC_EXECUTOR_AGENT_TIMEOUT", "0")  # disable the bound
     assert te._agent_timeout() is None
+
+
+def test_large_openshell_lifecycle_timeout_defaults_and_overrides(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_TRANSFER_TIMEOUT", raising=False)
+    monkeypatch.delenv("MAC_OPENSHELL_DELETE_TIMEOUT", raising=False)
+    assert te._openshell_transfer_timeout() == 1800.0
+    assert te._openshell_delete_timeout() == 600.0
+
+    monkeypatch.setenv("MAC_OPENSHELL_TRANSFER_TIMEOUT", "2400")
+    monkeypatch.setenv("MAC_OPENSHELL_DELETE_TIMEOUT", "900")
+    assert te._openshell_transfer_timeout() == 2400.0
+    assert te._openshell_delete_timeout() == 900.0
 
 
 def test_manifest_is_complete(tmp_path):

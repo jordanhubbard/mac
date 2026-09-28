@@ -534,8 +534,8 @@ def test_run_git_timeout_fallbacks(monkeypatch, tmp_path) -> None:
     )
     worker._run_git(tmp_path, ["status"])
     worker._run_git_in(tmp_path, ["clone", "x"])
-    assert calls[0][1]["timeout"] == 120.0
-    assert calls[1][1]["timeout"] == 120.0
+    assert calls[0][1]["timeout"] == 1800.0
+    assert calls[1][1]["timeout"] == 1800.0
 
 
 # ---------------------------------------------------------------------------

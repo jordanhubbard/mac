@@ -587,7 +587,22 @@ def test_deploy_preserves_current_credential_across_commit_and_abort(tmp_path: P
         changed = dict(proof)
         changed["install_receipt"] = {"schema": "unexpected-rotation"}
         cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [changed])
-    cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={"admin": ["admin"]},
+        )
+    )
+    proved = client.post(
+        f"/agents/dispatch-hold/epochs/{epoch_id}/prove",
+        headers={"Authorization": "Bearer admin"},
+        json={"identity_sha256": opened["identity_sha256"], "proofs": [proof]},
+    )
+    assert proved.status_code == 200
+    assert proved.json()["status"] == "proved"
+    assert cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof]) == (
+        proved.json()
+    )
     cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
     assert (
         cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])["status"]

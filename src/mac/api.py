@@ -1343,7 +1343,11 @@ class FleetReleaseAttestationProofRequest(BaseModel):
 
 class FleetReleaseEpochParticipantProofRequest(BaseModel):
     agent_id: str
-    install_receipt: Dict[str, Any] = Field(default_factory=dict)
+    # An epoch that deliberately reuses its already-active bound principal has
+    # no install receipt. The service distinguishes that case from a pending
+    # credential rollout and requires None; rejecting null here makes the
+    # valid current-principal path unreachable with HTTP 422.
+    install_receipt: Optional[Dict[str, Any]] = None
     attestation_proof: Optional[FleetReleaseAttestationProofRequest] = None
     report_executor_startup_timestamp: Optional[str] = None
 

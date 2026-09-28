@@ -7,6 +7,8 @@ FLEET_NAME="${MAC_DEPLOY_FLEET_NAME:-mac}"
 OS_KIND="${MAC_DEPLOY_OS:?}"
 ARCHIVE="${MAC_DEPLOY_ARCHIVE:?}"
 FLEET_REGISTRY_FILE="${MAC_DEPLOY_FLEET_REGISTRY_FILE:-}"
+PRESERVE_OPERATOR_FLEET_REGISTRY="${MAC_DEPLOY_PRESERVE_OPERATOR_FLEET_REGISTRY:-0}"
+OPERATOR_FLEET_REGISTRY_SHA256="${MAC_DEPLOY_OPERATOR_FLEET_REGISTRY_SHA256:-}"
 CONFIGURED_AGENT_IDS="${MAC_DEPLOY_CONFIGURED_AGENT_IDS:-}"
 DEPLOY_TS="${MAC_DEPLOY_TS:?}"
 DEPLOY_REV="${MAC_DEPLOY_GIT_REV:?}"
@@ -652,6 +654,26 @@ onboarded_command_path() {
 install_fleet_registry() {
   if [ -n "$FLEET_REGISTRY_FILE" ] && [ -f "$FLEET_REGISTRY_FILE" ]; then
     mkdir -p "$MAC_HOME"
+    if [ "$PRESERVE_OPERATOR_FLEET_REGISTRY" = 1 ]; then
+      [[ "$OPERATOR_FLEET_REGISTRY_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+        || die "operator fleet registry preservation lacks a valid frozen digest"
+      [ -f "$MAC_HOME/fleets.yaml" ] && [ ! -L "$MAC_HOME/fleets.yaml" ] \
+        || die "operator fleet registry changed before preservation"
+      local current_registry_sha256
+      current_registry_sha256="$("$PY" - "$MAC_HOME/fleets.yaml" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    print(hashlib.sha256(stream.read()).hexdigest())
+PY
+)" || die "could not verify operator fleet registry before preservation"
+      [ "$current_registry_sha256" = "$OPERATOR_FLEET_REGISTRY_SHA256" ] \
+        || die "operator fleet registry changed after deployment snapshot; refusing to overwrite it"
+      rm -f "$FLEET_REGISTRY_FILE"
+      log "preserved operator fleet registry at $MAC_HOME/fleets.yaml"
+      return 0
+    fi
     cp -f "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"
     chmod 0644 "$MAC_HOME/fleets.yaml"
     rm -f "$FLEET_REGISTRY_FILE"
@@ -13637,7 +13659,7 @@ KillMode=mixed
 KillSignal=SIGTERM
 # A worker may need to withdraw an OpenShell task sandbox and publish its
 # terminal evidence before the supervisor escalates to SIGKILL.
-TimeoutStopSec=600
+TimeoutStopSec=3600
 LimitNOFILE=65536
 LimitCORE=infinity
 StandardOutput=journal
@@ -14343,7 +14365,7 @@ install_darwin_agent_service() {
   <key>KeepAlive</key><true/>
   <!-- Allow the worker to withdraw its OpenShell task sandbox and publish
        terminal evidence before launchd escalates the stop. -->
-  <key>ExitTimeOut</key><integer>600</integer>
+  <key>ExitTimeOut</key><integer>3600</integer>
   <key>AbandonProcessGroup</key><false/>
   <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>SoftResourceLimits</key>

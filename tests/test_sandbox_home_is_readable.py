@@ -113,5 +113,5 @@ def test_the_verifier_start_budget_is_not_45_seconds():
 
     source = inspect.getsource(_sandbox_run_repository_verification_exec)
 
-    assert '"120"' in source
+    assert '"600"' in source
     assert "45" not in source.split("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT")[1][:200]
