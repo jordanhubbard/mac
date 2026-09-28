@@ -54,7 +54,15 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     phase2_apply = typed.split(
         'echo "==> fleet: rolling the exact cohort under hub epoch ownership"', 1
     )[1].split("prove_and_commit_hub_epoch", 1)[0]
-    assert phase2_apply.count("while IFS= read -r spec; do") == 1
+    # Exactly one in-line loop still walks the cohort here, but it iterates an
+    # array populated before the loop starts rather than reading the specs file
+    # through the loop's own stdin: a node's remote work (an `ssh` without its
+    # own redirection) would otherwise drain the remaining spec lines and the
+    # rolling phase would silently stop after the first node. The stdin-safety
+    # contract itself lives in
+    # tests/test_worker_credentials.py::test_fleet_deploy_rolling_cohort_loop_does_not_read_stdin.
+    assert phase2_apply.count('for spec in "${rolling_cohort_specs[@]}"; do') == 1
+    assert "while IFS= read -r spec; do" not in phase2_apply
     assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' not in phase2_apply
     assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' not in phase2_apply
     assert (
