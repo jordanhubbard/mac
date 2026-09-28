@@ -1553,6 +1553,29 @@ print(digest.hexdigest())
 PY
 }
 
+# GNU and BSD stat spell "byte count" differently, and the usual
+# ``stat -f %z "$f" 2>/dev/null || stat -c %s "$f"`` fallback is not portable in
+# the direction operators assume: GNU stat reads ``-f`` as "filesystem status",
+# prints a multi-line filesystem report for the file on *stdout*, and only then
+# exits nonzero, so the fallback appends the real byte count to that report and
+# the caller captures both. Read the size through the controller Python runtime
+# instead, so exactly one integer reaches the remote staging contract on every
+# platform. ``os.lstat`` keeps the local probe no-follow: a symlink is not a
+# regular file and is refused rather than measured through.
+file_byte_size() {
+  "$PYTHON_BIN" - "$1" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+value = os.lstat(path)
+if not stat.S_ISREG(value.st_mode):
+    raise SystemExit("not a regular file: %s" % path)
+print(value.st_size)
+PY
+}
+
 # Resolve every operator-side SSH call through the Python contract used by
 # the CLI and desktop bridge. Output is NUL-delimited so paths containing spaces
 # remain argv-safe. ``-F /dev/null`` prevents ambient ~/.ssh/config from
@@ -12364,7 +12387,7 @@ stage_remote_file_once_exact() {
   local expected_sha expected_size state command item
   local ssh_parts=() ssh_args=() ssh_target last_index
   expected_sha="$(sha256_file "$source")"
-  expected_size="$(stat -f %z "$source" 2>/dev/null || stat -c %s "$source")"
+  expected_size="$(file_byte_size "$source")"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
