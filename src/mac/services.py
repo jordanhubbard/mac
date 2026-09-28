@@ -340,6 +340,14 @@ DEPLOYMENT_AVAILABILITY_RESOURCE_KEY = "deployment_availability"
 DEPLOYMENT_AVAILABILITY_SCHEMA = "mac.deployment_availability.v1"
 DEPLOYMENT_UNAVAILABLE = "deployment_unavailable"
 DEPLOYMENT_QUARANTINED = "deployment_quarantined"
+# The two shapes a deploy's own dispatch hold takes: the epoch hold from
+# FleetReleaseEpochService._epoch_hold_reason, and the per-deployment hold
+# deploy_host places on every node it touches. A worker wearing either was
+# stopped by a deploy rather than by its host going away.
+DEPLOYMENT_HOLD_REASON_PREFIXES = (
+    "mac:fleet-release:",
+    "mac admin fleet deployment ",
+)
 BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 BREAK_GLASS_EXECUTION_BOUNDARY = "host"
 BREAK_GLASS_MIN_TTL_SECONDS = 60
@@ -19152,6 +19160,18 @@ class ControlPlane:
                 continue
             if self._mark_epoch_member_deployment_unavailable(agent, ttl=ttl, now=now):
                 continue
+            if self._agent_held_by_deployment(agent):
+                # Retained for roll-forward repair. The projection above binds an
+                # aborted epoch to the agent by exact hold-reason string, which
+                # drifts the moment a second epoch holds the same worker, an
+                # operator touches the hold, or the deploy's own per-node hold
+                # replaces the epoch one -- and then this reaper deletes a node a
+                # deploy deliberately stopped. That is unrecoverable:
+                # phase-zero refuses a node carrying a deployed revision and the
+                # deploy refuses a worker with no agent row, so the host can only
+                # be destroyed and rebuilt. Silence under a release hold is not
+                # evidence the host departed, whatever the reason string says.
+                continue
             try:
                 self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
             except ValidationError as exc:
@@ -30899,6 +30919,14 @@ class ControlPlane:
             "UPDATE agents SET status = ?, current_task_id = ?, updated_at = ? WHERE id = ?",
             (status, current_task_id, now, agent_id),
         )
+
+    def _agent_held_by_deployment(self, agent: Agent) -> bool:
+        """Whether a deploy is holding this worker down rather than its host leaving."""
+
+        if not agent.dispatch_hold:
+            return False
+        reason = str(agent.dispatch_hold_reason or "")
+        return reason.startswith(DEPLOYMENT_HOLD_REASON_PREFIXES)
 
     def _agent_has_active_lease(self, agent_id: str) -> bool:
         row = self.store.query_one(
