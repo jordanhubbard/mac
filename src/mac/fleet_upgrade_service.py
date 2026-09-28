@@ -7,8 +7,10 @@ import json
 import os
 import platform
 import pwd
+import re
 import subprocess
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, Optional
@@ -52,10 +54,12 @@ class FleetUpgradeService:
             or os.environ.get("MAC_SOURCE_ROOT")
             or Path(__file__).resolve().parents[2]
         )
+        self.repository = repository
         self.source_gate = source_gate or SourceReleaseGate(repository)
         self.mac_home = mac_paths.mac_home()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._last_auto_check = 0.0
 
     def start(self) -> None:
         if os.environ.get("MAC_HUB_SELF_UPGRADE_ENABLED", "1").strip().lower() in {
@@ -93,6 +97,14 @@ class FleetUpgradeService:
             """
         )
         if row is None:
+            requested = self.request_auto_upgrade_if_behind()
+            if requested is not None:
+                return {
+                    "schema": UPGRADE_SCHEMA,
+                    "resumed": len(resumed),
+                    "action": "auto_requested",
+                    "upgrade_id": str(requested.get("id") or ""),
+                }
             return {"schema": UPGRADE_SCHEMA, "resumed": len(resumed), "action": "idle"}
         upgrade_id = str(row["id"])
         state = str(row["state"])
@@ -140,6 +152,117 @@ class FleetUpgradeService:
             "action": "advanced",
             "upgrade_id": upgrade_id,
         }
+
+    @staticmethod
+    def _flag(name: str, default: str = "1") -> bool:
+        return os.environ.get(name, default).strip().lower() not in {"0", "false", "no", "off"}
+
+    def running_source_commit(self) -> str:
+        """The commit this hub is actually serving."""
+
+        commit = (os.environ.get("MAC_SOURCE_COMMIT") or "").strip()
+        if re.fullmatch(r"[0-9a-f]{40}", commit):
+            return commit
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(self.repository), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        head = result.stdout.strip()
+        return head if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else ""
+
+    def branch_head_commit(self, branch: str, remote: str = "origin") -> str:
+        """The newest commit on the upgrade branch, without staging it."""
+
+        if not branch or branch.startswith("-"):
+            return ""
+        try:
+            fetch = subprocess.run(
+                ["git", "-C", str(self.repository), "fetch", "--quiet", remote, branch],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            if fetch.returncode != 0:
+                return ""
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(self.repository),
+                    "rev-parse",
+                    "refs/remotes/%s/%s" % (remote, branch),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        head = result.stdout.strip()
+        return head if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else ""
+
+    def request_auto_upgrade_if_behind(self) -> Optional[JsonDict]:
+        """Open an upgrade when the hub is behind its branch, with no operator present.
+
+        Everything needed to carry a fleet forward already existed -- request,
+        stage, arm, swap, and the controller loop that advances them -- except
+        the one step that notices the fleet is behind. Without it an upgrade only
+        ever happened when a human remembered to ask, so the fleet drifted: this
+        hub was eighteen commits behind its own deploy protocol before anyone
+        looked, and the last two upgrade requests were made by hand a month
+        earlier.
+
+        Staleness is therefore treated as the failure, and rolling forward as the
+        remedy. The request is idempotent on the target commit, so a tick that
+        runs every few seconds opens one upgrade per commit and never a second.
+        The gates downstream are unchanged: staging still proves the branch head
+        passed its required checks before anything is applied.
+        """
+
+        if not self._flag("MAC_HUB_AUTO_UPGRADE_ENABLED"):
+            return None
+        interval = max(60.0, float(os.environ.get("MAC_HUB_AUTO_UPGRADE_INTERVAL_SECONDS", "900")))
+        now = time.monotonic()
+        if self._last_auto_check and now - self._last_auto_check < interval:
+            return None
+        self._last_auto_check = now
+
+        fleet_id = (os.environ.get("MAC_HUB_AUTO_UPGRADE_FLEET_ID") or "").strip()
+        human_id = (os.environ.get("MAC_HUB_AUTO_UPGRADE_HUMAN_ID") or "").strip()
+        if not fleet_id or not human_id:
+            # Refuse to guess an owner. An upgrade is attributable work, and a
+            # request with a fabricated requester would be a lie in the ledger.
+            return None
+
+        branch = os.environ.get("MAC_HUB_UPGRADE_BRANCH", "main")
+        running = self.running_source_commit()
+        target = self.branch_head_commit(branch)
+        if not running or not target or running == target:
+            return None
+
+        try:
+            return self.request(
+                fleet_id=fleet_id,
+                requested_by_human=human_id,
+                requested_by_principal="hub-upgrade-controller",
+                idempotency_key="auto-upgrade:%s:%s" % (fleet_id, target),
+                target_policy="approved-current",
+                reason="automatic roll-forward: %s is behind %s/%s at %s"
+                % (running[:12], "origin", branch, target[:12]),
+            )
+        except (ValidationError, NotFoundError, TransitionError):
+            # A reused key means this commit already has its upgrade; anything
+            # else is recorded by the caller's own failure path. Never let the
+            # controller loop die on a detection attempt.
+            return None
 
     def _run(self) -> None:
         while not self._stop_event.is_set():

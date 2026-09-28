@@ -331,3 +331,81 @@ def test_cohort_abort_returns_digest_bound_hub_rollback_when_policy_requires(
 
     assert aborted["state"] == "hub_rollback_required"
     assert aborted["supervisor"]["argv"][-1] == armed["handoff_digest"]
+
+
+def _auto_env(monkeypatch, *, fleet_id: str, human_id: str, **extra: str) -> None:
+    monkeypatch.setenv("MAC_HUB_AUTO_UPGRADE_FLEET_ID", fleet_id)
+    monkeypatch.setenv("MAC_HUB_AUTO_UPGRADE_HUMAN_ID", human_id)
+    monkeypatch.setenv("MAC_HUB_AUTO_UPGRADE_INTERVAL_SECONDS", "60")
+    monkeypatch.delenv("MAC_HUB_AUTO_UPGRADE_ENABLED", raising=False)
+    for key, value in extra.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_hub_behind_its_branch_requests_its_own_upgrade(tmp_path: Path, monkeypatch) -> None:
+    """Staleness is the failure; rolling forward is the remedy.
+
+    Every gate needed to carry a fleet forward already existed except the step
+    that notices the fleet is behind, so an upgrade only happened when a human
+    remembered to ask. The controller opens it instead.
+    """
+    cp, human, fleet, _worker = _fixture(tmp_path)[:4]
+    service = cp.fleet_upgrades
+    _auto_env(monkeypatch, fleet_id=fleet.id, human_id=human.id)
+    monkeypatch.setattr(service, "running_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(service, "branch_head_commit", lambda *a, **k: "b" * 40)
+
+    opened = service.request_auto_upgrade_if_behind()
+
+    assert opened is not None
+    assert opened["target_policy"] == "approved-current"
+    assert "b" * 12 in opened["reason"]
+
+
+def test_hub_level_with_its_branch_requests_nothing(tmp_path: Path, monkeypatch) -> None:
+    cp, human, fleet, _worker = _fixture(tmp_path)[:4]
+    service = cp.fleet_upgrades
+    _auto_env(monkeypatch, fleet_id=fleet.id, human_id=human.id)
+    monkeypatch.setattr(service, "running_source_commit", lambda: "c" * 40)
+    monkeypatch.setattr(service, "branch_head_commit", lambda *a, **k: "c" * 40)
+
+    assert service.request_auto_upgrade_if_behind() is None
+
+
+def test_auto_upgrade_opens_one_request_per_commit(tmp_path: Path, monkeypatch) -> None:
+    """A loop that ticks every few seconds must not open an upgrade every tick."""
+    cp, human, fleet, _worker = _fixture(tmp_path)[:4]
+    service = cp.fleet_upgrades
+    _auto_env(monkeypatch, fleet_id=fleet.id, human_id=human.id)
+    monkeypatch.setattr(service, "running_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(service, "branch_head_commit", lambda *a, **k: "b" * 40)
+
+    first = service.request_auto_upgrade_if_behind()
+    service._last_auto_check = 0.0  # defeat only the rate limiter, not idempotency
+    second = service.request_auto_upgrade_if_behind()
+
+    assert first is not None
+    assert second is None or second["id"] == first["id"]
+
+
+def test_auto_upgrade_refuses_to_invent_a_requester(tmp_path: Path, monkeypatch) -> None:
+    """An upgrade is attributable work; a fabricated requester would be a lie."""
+    cp, _human, _fleet, _worker = _fixture(tmp_path)[:4]
+    service = cp.fleet_upgrades
+    monkeypatch.delenv("MAC_HUB_AUTO_UPGRADE_FLEET_ID", raising=False)
+    monkeypatch.delenv("MAC_HUB_AUTO_UPGRADE_HUMAN_ID", raising=False)
+    monkeypatch.setattr(service, "running_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(service, "branch_head_commit", lambda *a, **k: "b" * 40)
+
+    assert service.request_auto_upgrade_if_behind() is None
+
+
+def test_auto_upgrade_can_be_switched_off(tmp_path: Path, monkeypatch) -> None:
+    cp, human, fleet, _worker = _fixture(tmp_path)[:4]
+    service = cp.fleet_upgrades
+    _auto_env(monkeypatch, fleet_id=fleet.id, human_id=human.id)
+    monkeypatch.setenv("MAC_HUB_AUTO_UPGRADE_ENABLED", "0")
+    monkeypatch.setattr(service, "running_source_commit", lambda: "a" * 40)
+    monkeypatch.setattr(service, "branch_head_commit", lambda *a, **k: "b" * 40)
+
+    assert service.request_auto_upgrade_if_behind() is None
