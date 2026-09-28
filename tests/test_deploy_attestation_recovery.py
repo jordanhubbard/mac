@@ -21,9 +21,19 @@ from mac.deployment_attestation import (
     recovery_manifest,
 )
 from mac.services import sign_verification_manifest
+from tests.test_fleet_cohort_transaction import Scenario, recovery as journal_recovery
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# The durable journal states that can only be reached AFTER
+# install_and_prove_attestation_candidate has already replaced the node's
+# MAC_ATTESTATION_KEY, and before the hub epoch's prove/commit has made that
+# candidate authoritative. A controller crash anywhere in this window is the
+# exact fault that produced the observed node/hub authority divergence: the
+# node keeps the installed candidate, while the hub abort discards the pending
+# candidate row and leaves the predecessor key registered.
+CANDIDATE_INSTALLED_STATES = ("phase2_started", "prepared")
 
 
 def _shell_function(source, name, next_name, *, subshell=False):
@@ -142,6 +152,7 @@ def _run_recovery(
     commit_length=40,
     recovery_from_state="quiesced",
     unit_load_state="loaded",
+    journal_candidate=None,
 ):
     source = (ROOT / "deploy/deploy-mac-fleet.sh").read_text()
     names = (
@@ -287,23 +298,34 @@ def _run_recovery(
         "MAC_API_TOKEN=fixture-admin\nMAC_WORKER_TOKEN=discarded-pending-worker\n"
     )
     env_file.chmod(0o600)
-    candidate = base64.b64encode(
-        json.dumps(
+    candidate_fields = {
+        "agent_name": agent,
+        "stable_id": "agent_" + agent,
+        "generation": f"generation-{ordinal}",
+        "deployment_id": "aborted-deployment",
+        "deploy_ts": "fixture",
+        "source_commit": "d" * commit_length,
+        "os": "linux",
+        "supervisor": "auto",
+        "recovery_action": "retain_forward",
+        "recovery_from_state": recovery_from_state,
+        "restore_contract_sha256": contract_digest,
+    }
+    if journal_candidate is not None:
+        # Drive the shell from a candidate the real cohort journal planned.
+        # source_commit and restore_contract_sha256 stay fixture-owned because
+        # both are checked against the durable phase-1 contract this fixture
+        # actually wrote on disk; substituting the journal's placeholders would
+        # disable exactly the binding under test rather than strengthen it.
+        candidate_fields.update(
             {
-                "agent_name": agent,
-                "stable_id": "agent_" + agent,
-                "generation": f"generation-{ordinal}",
-                "deployment_id": "aborted-deployment",
-                "deploy_ts": "fixture",
-                "source_commit": "d" * commit_length,
-                "os": "linux",
-                "supervisor": "auto",
-                "recovery_action": "retain_forward",
-                "recovery_from_state": recovery_from_state,
-                "restore_contract_sha256": contract_digest,
+                key: journal_candidate[key]
+                for key in candidate_fields
+                if key in journal_candidate
+                and key not in {"source_commit", "restore_contract_sha256"}
             }
-        ).encode()
-    ).decode()
+        )
+    candidate = base64.b64encode(json.dumps(candidate_fields).encode()).decode()
     # Only transport, supervisor commands and journal writes are replaced.
     # The composed recovery, phase-one proof resolver and service-control
     # shell run together, as do private-file checks, key installation and signed
@@ -530,6 +552,134 @@ def test_failed_retention_prerequisite_cannot_advance_recovery(tmp_path, failure
     assert observed["state"]["verified"] == []
     assert observed["worker"] == "running"
     assert observed["hold"] == "existing operator hold"
+
+
+@pytest.mark.parametrize("ordinal", range(3))
+@pytest.mark.parametrize("phase", CANDIDATE_INSTALLED_STATES)
+def test_crash_after_candidate_install_converges_authority_for_every_ordinal(
+    tmp_path, ordinal, phase
+):
+    # The controller died after install_and_prove_attestation_candidate replaced
+    # the node key and before the epoch's prove/commit could register it, so the
+    # hub abort left the predecessor key authoritative. Recovery must detect the
+    # divergence rather than retain the orphaned candidate forward.
+    observed = _run_recovery(tmp_path, ordinal=ordinal, recovery_from_state=phase, key_valid=False)
+
+    assert observed["result"].returncode == 0, observed["result"].stderr
+    assert observed["state"]["verified"] == [False, True]
+    assert observed["state"]["rotations"] == 1
+    # Exactly one authority survives: what the node signs with is what the hub
+    # has registered. No split authority is permitted out of this recovery.
+    assert observed["env"]["MAC_ATTESTATION_KEY"] == observed["state"]["key"]
+    assert observed["calls"] == [
+        "journal abort-start",
+        "service stop",
+        "install",
+        "journal aborted-node",
+    ]
+    assert observed["worker"] == "stopped"
+    assert "restart" not in observed["calls"]
+    assert observed["hold"] == "existing operator hold"
+    barrier = observed["home"] / "deploy-start-barrier"
+    assert barrier.read_text().strip() == f"generation-{ordinal}"
+    assert not list((observed["home"] / "attestation-recovery").glob("*.json"))
+
+
+@pytest.mark.parametrize("ordinal", range(3))
+@pytest.mark.parametrize("phase", CANDIDATE_INSTALLED_STATES)
+def test_crash_after_candidate_install_keeps_an_already_authoritative_key(tmp_path, ordinal, phase):
+    # The mirror case: the installed candidate is already what the hub has
+    # registered. Reconciliation proves that before acting, so it must not
+    # rotate a working key -- verification is the gate, not the phase label.
+    observed = _run_recovery(tmp_path, ordinal=ordinal, recovery_from_state=phase, key_valid=True)
+
+    assert observed["result"].returncode == 0, observed["result"].stderr
+    assert observed["state"]["verified"] == [True]
+    assert observed["state"]["rotations"] == 0
+    assert observed["env"]["MAC_ATTESTATION_KEY"] == observed["state"]["key"]
+    assert "install" not in observed["calls"]
+    assert observed["calls"] == ["journal abort-start", "service stop", "journal aborted-node"]
+    assert observed["worker"] == "stopped"
+
+
+@pytest.mark.parametrize("ordinal", range(3))
+@pytest.mark.parametrize("phase", CANDIDATE_INSTALLED_STATES)
+@pytest.mark.parametrize("failure", ["install", "second-proof"])
+def test_crash_window_fault_never_reports_a_reconciled_node(tmp_path, ordinal, phase, failure):
+    # A second crash during the repair itself is the dangerous case: a node
+    # still holding the discarded candidate must never be journaled as aborted,
+    # because that would retire the epoch while authority is still split.
+    # Only the two attestation-boundary faults are swept per ordinal here; the
+    # transport and service-control faults are phase- and ordinal-independent
+    # and are covered by the boundary-failure test above.
+    observed = _run_recovery(tmp_path, ordinal=ordinal, recovery_from_state=phase, failure=failure)
+
+    assert observed["result"].returncode != 0
+    assert "journal aborted-node" not in observed["calls"]
+    assert "restart" not in observed["calls"]
+    assert observed["worker"] == "stopped"
+    if failure == "install":
+        assert True not in observed["state"]["verified"]
+
+
+def test_aborted_epoch_reconciles_every_cohort_ordinal_from_the_real_journal_plan(tmp_path):
+    # End to end over the reported incident: the real cohort journal plans the
+    # recovery, and the real recovery shell executes each planned candidate
+    # against a real hub attestation boundary.
+    journal_root = tmp_path / "journal-fixture"
+    journal_root.mkdir()
+    scenario = Scenario(journal_root, node_count=3)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    # Two nodes were proved; the rolling cutover was inside the third node's
+    # phase-2 apply -- past its candidate install -- when the hub epoch aborted.
+    for node in scenario.nodes[:2]:
+        scenario.call("phase2-start", node=node)
+        scenario.call(
+            "prepared",
+            node=node,
+            evidence_file=scenario.evidence(f"prepared-{node['name']}"),
+        )
+    scenario.call("phase2-start", node=scenario.nodes[2])
+    scenario.call("hub-aborted", evidence_file=scenario.hub_receipt("aborted"))
+
+    plan = journal_recovery(scenario)
+    assert plan["direction"] == "retain_forward"
+    candidates = plan["candidates"]
+    assert [item["agent_name"] for item in candidates] == ["node-2", "node-1", "node-0"]
+    assert [item["recovery_from_state"] for item in candidates] == [
+        "phase2_started",
+        "prepared",
+        "prepared",
+    ]
+
+    for candidate in candidates:
+        ordinal = int(candidate["agent_name"].rsplit("-", 1)[1])
+        observed = _run_recovery(
+            tmp_path / f"recover-{ordinal}",
+            ordinal=ordinal,
+            recovery_from_state=candidate["recovery_from_state"],
+            journal_candidate=candidate,
+        )
+        assert observed["result"].returncode == 0, observed["result"].stderr
+        assert observed["state"]["verified"][-1] is True
+        assert observed["env"]["MAC_ATTESTATION_KEY"] == observed["state"]["key"]
+        assert observed["worker"] == "stopped"
+        node = scenario.nodes[ordinal]
+        scenario.call("abort-start", node=node, recovery_action="retain_forward")
+        scenario.call(
+            "aborted-node",
+            node=node,
+            evidence_file=scenario.evidence(f"retained-{node['name']}"),
+        )
+
+    scenario.call("abort")
+    assert scenario.journal["state"] == "aborted"
+    assert [node["abort_kind"] for node in scenario.journal["cohort"]] == ["retain_forward"] * 3
+    assert journal_recovery(scenario)["recovery_required"] is False
 
 
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
