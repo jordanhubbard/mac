@@ -17009,7 +17009,18 @@ run_typed_cohort() {
   # immutable apply, and prepared proof before stopping the next node. The
   # journal enforces earlier=prepared and later=phase1_armed at every boundary,
   # so controller death cannot silently widen the unavailable set.
-  while IFS= read -r spec; do
+  #
+  # The cohort is read into an array before iterating, rather than binding
+  # the loop's own stdin to the specs file, because the loop body performs a
+  # full node's worth of remote work, and any command in that tree that
+  # inherits and reads local stdin (e.g. an `ssh` invocation without its own
+  # redirection) would otherwise silently drain the remaining spec lines from
+  # the loop's iteration source, exiting after the first node with no error.
+  # Reading the file only once, up front, into an array keeps the loop
+  # body's stdin untouched.
+  local -a rolling_cohort_specs=()
+  mapfile -t rolling_cohort_specs < "$selected_specs_file"
+  for spec in "${rolling_cohort_specs[@]}"; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
@@ -17079,7 +17090,7 @@ PY
       return 1
     fi
     echo "==> ${agent}: rolling phase-2 apply proved; availability boundary advanced"
-  done < "$selected_specs_file"
+  done
 
   prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"
   cleanup_committed_hub_relay "$hub_agent" "$selected_specs_file"

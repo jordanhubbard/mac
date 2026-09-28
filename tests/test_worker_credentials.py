@@ -737,6 +737,39 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     assert 'add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' not in script
 
 
+def test_fleet_deploy_rolling_cohort_loop_does_not_read_stdin() -> None:
+    # The rolling phase-2 loop's body performs a whole node's worth of remote
+    # work (quiesce, arm, apply). If that body's `while read` loop is fed
+    # from the specs file via `done < "$selected_specs_file"`, anything
+    # inside the loop that inherits and reads local stdin (an `ssh` call
+    # without its own redirection, for example) silently drains the
+    # remaining spec lines -- the loop then exits after the first node with
+    # no error. Iterating an array populated before the loop starts keeps
+    # the loop body's stdin decoupled from its iteration source.
+    root = Path(__file__).resolve().parents[1]
+    script_path = root / "deploy" / "deploy-mac-fleet.sh"
+    script = script_path.read_text(encoding="utf-8")
+    syntax = subprocess.run(
+        ["bash", "-n", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert syntax.returncode == 0, syntax.stderr
+
+    rolling = script.split(
+        '==> fleet: rolling the exact cohort under hub epoch ownership', 1
+    )[1].split('prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"', 1)[0]
+
+    assert 'done < "$selected_specs_file"' not in rolling
+    assert 'while IFS= read -r spec; do' not in rolling
+    assert 'mapfile -t rolling_cohort_specs < "$selected_specs_file"' in rolling
+    assert 'for spec in "${rolling_cohort_specs[@]}"; do' in rolling
+    assert rolling.index('mapfile -t rolling_cohort_specs') < rolling.index(
+        'for spec in "${rolling_cohort_specs[@]}"; do'
+    )
+
+
 def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
     tmp_path: Path,
 ) -> None:
