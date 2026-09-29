@@ -167,8 +167,30 @@ skipping, because a suite that silently covers nothing is worse than a red one.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+`mac` is a multi-agent coordinator control plane written in Python. It separates concerns between human-facing conversational agents (via Hermes, OpenClaw, or compatible runtimes) and durable operational infrastructure.
+
+**Core layers:**
+- **Control Plane** (`ControlPlane` in services.py): Centralized API for task management, agent state, leasing, routing, and audit trails
+- **Task System**: Persistent work items with state machines (open → running → reviewing → completed/failed)
+- **Agent Registry & Health**: Tracks fleet agents, their capabilities, health status, and last-seen timestamps
+- **Leasing & Routing**: Manages task claims, work allocation, and deadline-driven timeouts
+- **Review System**: Evidence collection, transcripts, and structured approval workflows
+- **Data Persistence**: PostgreSQL backend (sqlite in tests) with schema migrations via `create_schema()`
+
+**Key design patterns:**
+- Task state is immutable per transition; history trails record actor, timestamp, detail
+- Agents are stateless workers pulling from a durable task queue
+- Reviews are structured evidence (task transcripts, agent outputs, decision records)
+- Sandbox execution via OpenShell provides isolation; MAC coordinates runtime policy
+- Hermes integration via clean-room adapter (not vendored); gateway owns personality/skills
+
+**Testing**: Full test suite runs on PostgreSQL with per-test schemas. Default Postgres lock limit (64 per txn) increased to 1024 by `scripts/start-test-postgres.sh` to allow DDL in parallel test batches.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- **Worktree discipline**: Multiple agents work against this repo concurrently; **never edit `~/Src/mac` directly**. Always `git worktree add` and work in isolation to prevent silent commit collisions.
+- **Task-driven development**: Work via `mac task` (not beads/dolt); the ledger is authoritative. Use `mac memory remember` for persistent knowledge; `.tickets/` is gitignored operational state.
+- **Explicit staging**: Use `git add <path>` for specific files; never `git add -A` or `git commit -a` without reviewing `git status` first.
+- **Postgres-only testing**: Tests require `MAC_TEST_PG_URL` pointing to a real PostgreSQL instance. `scripts/start-test-postgres.sh` auto-starts one if needed.
+- **Code organization**: Service classes in `services.py`, schemas in `models.py`, CLI in `cli_*.py`, tests in `tests/test_*.py`.
+- **Commit discipline**: Work is NOT complete until `git push` succeeds. File follow-up issues, run quality gates (`scripts/run-contract-tests.sh`), and push before signing off.

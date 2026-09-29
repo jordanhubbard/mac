@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(uv *)",
+      "Bash(pytest *)",
+      "Bash(scripts/run-contract-tests.sh)",
+      "Bash(scripts/start-test-postgres.sh)",
+      "Bash(mac *)",
+      "Bash(codegraph *)",
+      "Edit",
+      "Read",
+      "Write"
+    ]
+  },
+  "worktree": {
+    "baseRef": "fresh",
+    "bgIsolation": "worktree"
+  },
+  "model": "opus",
+  "effortLevel": "high",
+  "alwaysThinkingEnabled": true
+}
