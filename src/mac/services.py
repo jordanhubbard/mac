@@ -635,6 +635,16 @@ _DETERMINISTIC_FAILURE_MARKERS = (
     "tests failed",
     "review rejected after max attempts",
 )
+# Failures that belong to the worker node, not to the task: the same task
+# succeeds unchanged on a healthy node. Each entry is (name, markers that must
+# all appear). Keep these unambiguous -- a match benches the node. On
+# 2026-09-23..28 one disk-full node failed 55 tasks and a broken install on two
+# nodes failed 40 more, each charged to the task while the node kept claiming.
+_NODE_FAULT_SIGNATURES = (
+    ("disk_full", ("no space left on device",)),
+    ("broken_worker_install", ("mac-task-executor.py", "no module named 'mac'")),
+)
+NODE_FAULT_QUARANTINE_PREFIX = "auto_quarantine:node_fault:"
 _FAILURE_ID_RE = re.compile(
     r"\b(?:task|agent|lease|ev|review|pub|obs)_[A-Za-z0-9_-]{8,}\b",
     re.IGNORECASE,
@@ -676,6 +686,17 @@ def _is_openshell_verifier_infrastructure_failure(text: str) -> bool:
         )
     )
     return verifier_context and transport_failure
+
+
+def _node_fault(value: Any) -> Optional[str]:
+    """Name the node fault a blocked attempt reports, if it reports one."""
+
+    detail = ensure_json_object(value) if isinstance(value, Mapping) else {}
+    blob = json_dumps(detail).lower() if detail else str(value or "").lower()
+    for name, markers in _NODE_FAULT_SIGNATURES:
+        if all(marker in blob for marker in markers):
+            return name
+    return None
 
 
 def _blocked_attempt_retry_kind(value: Any) -> str:
@@ -26405,6 +26426,73 @@ class ControlPlane:
             and _blocked_attempt_failure_fingerprint(event.detail) == fingerprint
         )
 
+    def _requeue_after_node_fault(
+        self,
+        task: Task,
+        *,
+        agent_id: str,
+        fault: str,
+        fingerprint: str,
+        detail: Mapping[str, Any],
+        now: str,
+    ) -> Task:
+        """Hold the faulty node and reopen the task without charging the attempt."""
+
+        hold_reason = NODE_FAULT_QUARANTINE_PREFIX + fault
+        try:
+            agent: Optional[Agent] = self.get_agent(agent_id)
+        except NotFoundError:
+            agent = None
+        quarantined = False
+        if agent is not None and not agent.dispatch_hold:
+            self.set_agent_dispatch_hold(agent_id, hold_reason)
+            quarantined = True
+            self.record_log(
+                "agent.auto_quarantined",
+                level="warning",
+                layer="control_plane",
+                source="dispatcher",
+                subject_type="agent",
+                subject_id=agent_id,
+                detail={"agent_id": agent_id, "task_id": task.id, "reason": hold_reason},
+            )
+        self._record_retry_worker_exclusion(
+            task,
+            agent_id=agent_id,
+            fingerprint=fingerprint,
+            retry_kind="node_fault",
+            now=now,
+        )
+        self.store.execute(
+            "UPDATE tasks SET attempt_count = CASE WHEN attempt_count > 0 "
+            "THEN attempt_count - 1 ELSE 0 END WHERE id = ?",
+            (task.id,),
+        )
+        reopen_detail = {
+            **detail,
+            "reason": "node fault on %s (%s): requeued without charging an attempt"
+            % (agent_id, fault),
+            "node_fault": fault,
+            "node_fault_agent_id": agent_id,
+            "node_quarantined": quarantined,
+            "attempt_refunded": True,
+        }
+        reopened = self._transition_task_internal(
+            task.id,
+            TaskState.OPEN.value,
+            "dispatcher.tick",
+            reopen_detail,
+        )
+        self._record_history(
+            task.id,
+            "task.auto_reopened",
+            "dispatcher.tick",
+            TaskState.BLOCKED.value,
+            TaskState.OPEN.value,
+            reopen_detail,
+        )
+        return reopened
+
     def _record_retry_worker_exclusion(
         self,
         task: Task,
@@ -26542,6 +26630,19 @@ class ControlPlane:
             "same_failure_count": same_failure_count,
         }
         non_retryable = self._blocked_attempt_non_retryable_marker(task)
+        node_fault = _node_fault(latest_detail)
+        if node_fault is not None and not non_retryable and prior_agent_id.startswith("agent_"):
+            # The node failed, not the task: bench the node and give the task
+            # its attempt back, whatever the worker labelled the failure.
+            reopened = self._requeue_after_node_fault(
+                task,
+                agent_id=prior_agent_id,
+                fault=node_fault,
+                fingerprint=fingerprint,
+                detail=base_detail,
+                now=now,
+            )
+            return reopened, None
         repeated_failure = same_failure_count >= 2
         exhausted = task.attempt_count >= task.max_attempts
         must_stop = bool(
