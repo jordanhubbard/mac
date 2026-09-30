@@ -212,7 +212,6 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
         (
             ("dispatch", "the loop that matches ready tasks to eligible agents"),
             ("review", "adversarial review of completed work"),
-            ("judgement", "hourly process-quality authority over lifecycle gates"),
             ("publish", "publish reviewed work to its destination"),
             ("pull-request", "pull requests raised from task work"),
             ("workflow", "multi-step workflow definitions and runs"),
@@ -230,7 +229,6 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("mood", "agent temperament and its effect on execution"),
             ("nap", "consolidation cycles that summarize recent work"),
             ("dream", "offline pattern-finding over past work"),
-            ("curiosity", "quarantined self-proposed experiments awaiting judgment"),
             ("human-interface", "port an agent profile between Hermes and OpenClaw"),
             ("persona", "Hermes personas and their memory scopes"),
         ),

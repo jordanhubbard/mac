@@ -92,15 +92,11 @@ request and response definitions.
 | `POST` | `/artifacts` | Register Artifact |
 | `DELETE` | `/artifacts/{artifact_id_or_digest}` | Delete Artifact |
 | `GET` | `/artifacts/{artifact_id_or_digest}` | Get Artifact |
-| `POST` | `/backlog-groom/run` | Backlog Groom Run |
-| `GET` | `/backlog-groom/status` | Backlog Groom Status |
 | `POST` | `/break-glass-authorizations/{authorization_id}/revoke` | Revoke Break Glass |
 | `GET` | `/bridge/items` | List Project Items |
 | `POST` | `/bridge/items` | Import Project Item |
 | `GET` | `/bridge/repositories` | List Project Repositories |
 | `POST` | `/bridge/repositories` | Register Project Repository |
-| `POST` | `/cicd-monitor/run` | Cicd Monitor Run |
-| `GET` | `/cicd-monitor/status` | Cicd Monitor Status |
 | `GET` | `/command-audit` | List Command Audit |
 | `GET` | `/communication/accounts` | List Communication Accounts |
 | `POST` | `/communication/accounts` | Configure Communication Account |
@@ -128,10 +124,6 @@ request and response definitions.
 | `GET` | `/crash-reports` | List Crash Reports |
 | `GET` | `/crash-reports/{report_id}` | Get Crash Report |
 | `POST` | `/crash-reports/{report_id}/resolve` | Resolve Crash Report |
-| `POST` | `/curiosity-review/run` | Curiosity Review Run |
-| `GET` | `/curiosity-review/status` | Curiosity Review Status |
-| `GET` | `/curiosity/candidates` | List Curiosity Candidates |
-| `POST` | `/curiosity/candidates/{candidate_id}/{decision}` | Decide Curiosity Candidate |
 | `GET` | `/dashboard/observe` | Dashboard Observe |
 | `GET` | `/dashboard/observe/projects/{project}/graph` | Dashboard Observe Project Graph |
 | `GET` | `/dashboard/observe/tasks/{task_id}` | Dashboard Observe Task |
@@ -209,8 +201,6 @@ request and response definitions.
 | `GET` | `/integrations/findings` | List Integration Findings |
 | `POST` | `/integrations/findings` | Record Integration Finding Endpoint |
 | `GET` | `/integrations/observations` | List Integration Observations |
-| `POST` | `/judgement/run` | Judgement Run |
-| `GET` | `/judgement/status` | Judgement Status |
 | `POST` | `/leases/{lease_id}/delegate` | Delegate Lease |
 | `POST` | `/leases/{lease_id}/renew` | Renew Lease |
 | `GET` | `/machines` | List Machines |
@@ -340,8 +330,6 @@ request and response definitions.
 | `POST` | `/secrets/{name}/rotate` | Rotate Secret |
 | `POST` | `/secrets/{secret_id}/access` | Request Secret |
 | `POST` | `/secrets/{secret_id}/reveal` | Reveal Secret |
-| `POST` | `/self-heal/run` | Self Heal Run |
-| `GET` | `/self-heal/status` | Self Heal Status |
 | `GET` | `/service-claims` | List Service Claims |
 | `GET` | `/service-roles` | List Service Roles |
 | `GET` | `/source-convergence` | Source Convergence Status |

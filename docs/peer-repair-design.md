@@ -6,6 +6,10 @@
   unchecked until they meet the roadmap's completion rule (deployed fleet-wide
   and verified against the live fleet).
 - Date: 2026-09-22, revised 2026-09-23
+- Note (2026-09-30): `src/mac/self_healing.py`, which §1–§6 cite as the
+  existing detection and task-filing substrate, was deleted along with the
+  other hub task generators. Those citations describe the code as it stood at
+  the revision date; the peer-repair proposal would now need its own detector.
 - Scope: agent-to-agent repair (§1–§6), plus two observability tracks the
   investigation forced out (§7). Hub *failover* is surveyed and deliberately
   **not** proposed — it conflicts with an existing accepted decision, and that

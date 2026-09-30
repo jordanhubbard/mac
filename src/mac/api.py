@@ -76,13 +76,8 @@ from mac.models import (
 )
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
-from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
-from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
-from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
-from mac.judgement import JudgementConfig, JudgementProcess
-from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
 from mac.hgx_autoscaler import HgxAutoscaler, HgxAutoscalerConfig
@@ -356,7 +351,7 @@ def _agent_filed_on_behalf_of(
        provenance in the strict sense, and it survives the agent being
        re-owned or replaced.
     2. The agent's own owner. Covers work an agent originates itself (repair
-       sweeps, dreams, curiosity) where there is no parent to inherit from.
+       sweeps, dreams) where there is no parent to inherit from.
 
     Returns None when neither is known, which leaves the task unowned exactly
     as it is today rather than guessing at a responsible person.
@@ -984,20 +979,6 @@ class AgentUpdate(BaseModel):
     owner_human_id: Optional[str] = None
     visibility: Optional[str] = None
     actor: str = "human"
-
-
-class CuriosityDecision(BaseModel):
-    """Approve/reject one quarantined curiosity candidate.
-
-    actor, reason and approval_id are all mandatory: the sidecar withholds
-    approve/reject from the submitting agent precisely so that promotion
-    carries external judgment with an auditable trail, and dropping any of the
-    three would defeat that.
-    """
-
-    actor: str
-    reason: str
-    approval_id: str
 
 
 class AgentBulkUpdate(BaseModel):
@@ -4541,19 +4522,6 @@ def create_app(
     # for any project that has not set metadata["github_issue_ingest"], so
     # enabling it fleet-wide is safe.
     github_ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
-    # CI is a repository lifecycle continuation, not part of the publication
-    # transaction.  The monitor periodically reconciles registered GitHub
-    # repositories and follows up exact SHAs after MAC lands them.
-    cicd_monitor = CICDMonitor(cp, CICDMonitorConfig.from_env())
-    # Publication is the only point that has both the durable publication id
-    # and the canonical integration SHA.  Give the service layer the running
-    # monitor so it can atomically hand that identity to the delayed checker.
-    cp._cicd_monitor = cicd_monitor
-    # mac-backlog-groom: seed grooming tasks for opted-in repos going idle, so
-    # the fleet manufactures its own backlog instead of starving when the
-    # human/GitHub-issue queue drains. No-op until a project opts in via
-    # metadata["backlog_grooming"].
-    backlog_groomer = BacklogGroomer(cp, BacklogGroomerConfig.from_env())
     # mac-model-select: periodically pick the fleet's powerhouse models from a
     # web search of what's currently leading, moderated by what the gateway can
     # actually route — instead of a hard-coded, forever-pinned default. No-op
@@ -4564,20 +4532,6 @@ def create_app(
     # systemd timer was useless on a launchd hub and the whole nap → dream →
     # repair pipeline silently died with it. No-op unless MAC_NAP_TICK_ENABLED.
     nap_ticker = NapTicker(cp, NapTickerConfig.from_env())
-    # mac-curiosity-review: close the curiosity quarantine loop by filing
-    # pinned adjudication tasks. No-op unless MAC_CURIOSITY_REVIEW_ENABLED.
-    curiosity_reviewer = CuriosityReviewer(cp, CuriosityReviewerConfig.from_env())
-    # mac-self-heal: observe → plan → act → verify over hub invariants (nap
-    # liveness, task starvation, daemon heartbeats, silent read paths, stuck
-    # quarantines). Violations become fleet tasks; fixes that don't hold are
-    # re-filed with escalation. No-op unless MAC_SELF_HEAL_ENABLED.
-    self_healing_sentinel = SelfHealingSentinel(cp, SelfHealingConfig.from_env())
-    # mac-judgement: hourly process-quality authority over the claim/fix/
-    # deliver cycle. Not sandboxed. Can stop tasks, hold agents, stop the
-    # fleet, and redeploy. No-op unless MAC_JUDGEMENT_ENABLED; the hub
-    # deploy turns it on.
-    judgement_process = JudgementProcess(cp, JudgementConfig.from_env())
-    cp._judgement_process = judgement_process
     # Durable provisioning requests wake a background HGX reconciler. Provider
     # calls never run on dispatch or HTTP threads; sustained-demand and
     # step/cooldown policy prevent transient backlog from creating a worker
@@ -4628,8 +4582,6 @@ def create_app(
                 repository_ref_reconciler.stop,
             ),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
-            ("cicd_monitor", cicd_monitor.start, cicd_monitor.stop),
-            ("backlog_groomer", backlog_groomer.start, backlog_groomer.stop),
             (
                 "model_selection_service",
                 model_selection_service.start,
@@ -4637,9 +4589,6 @@ def create_app(
             ),
             ("scientific_optimizer", scientific_optimizer.start, scientific_optimizer.stop),
             ("nap_ticker", nap_ticker.start, nap_ticker.stop),
-            ("curiosity_reviewer", curiosity_reviewer.start, curiosity_reviewer.stop),
-            ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
-            ("judgement_process", judgement_process.start, judgement_process.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
             # Last, and started from the lifespan so it runs on the SAME loop
@@ -4697,14 +4646,9 @@ def create_app(
     app.state.local_console_service = local_console_service
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
-    app.state.cicd_monitor = cicd_monitor
-    app.state.backlog_groomer = backlog_groomer
     app.state.model_selection_service = model_selection_service
     app.state.scientific_optimizer = scientific_optimizer
     app.state.nap_ticker = nap_ticker
-    app.state.curiosity_reviewer = curiosity_reviewer
-    app.state.self_healing_sentinel = self_healing_sentinel
-    app.state.judgement_process = judgement_process
     app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
@@ -4970,12 +4914,7 @@ def create_app(
             SystemRouteServices(
                 repository_ref_reconciler=repository_ref_reconciler,
                 github_ingestor=github_ingestor,
-                cicd_monitor=cicd_monitor,
-                backlog_groomer=backlog_groomer,
                 nap_ticker=nap_ticker,
-                curiosity_reviewer=curiosity_reviewer,
-                self_healing_sentinel=self_healing_sentinel,
-                judgement_process=judgement_process,
                 model_selection_service=model_selection_service,
             ),
             get_principal=_get_principal,
@@ -6609,39 +6548,6 @@ def create_app(
             body.reason,
             actor=body.actor,
         ).to_dict()
-
-    # Hub-mediated curiosity quarantine access (task_3a4503f0).
-    #
-    # The ledger lives inside the mac-openclaw-<agent> sandbox, and dispatched
-    # tasks run in a different mac-task-* sandbox that cannot reach it -- so
-    # every adjudication task ever filed against the quarantine was
-    # unsatisfiable, no matter which host it was pinned to. The hub runs ON the
-    # agent host and can invoke the wrapper, and every task sandbox can already
-    # reach the hub, so mediating here is what makes the loop closable.
-    @app.get("/curiosity/candidates")
-    def list_curiosity_candidates(
-        status: Optional[str] = None,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        # ControlPlane already raises domain errors (ValidationError for a bad
-        # request or a failing wrapper, NotFoundError for a host with no
-        # OpenClaw ledger at all), which the app's handlers map to status codes.
-        return cp.list_curiosity_candidates(status)
-
-    @app.post("/curiosity/candidates/{candidate_id}/{decision}")
-    def decide_curiosity_candidate(
-        candidate_id: str,
-        decision: str,
-        body: CuriosityDecision,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.decide_curiosity_candidate(
-            candidate_id,
-            decision,
-            actor=body.actor,
-            reason=body.reason,
-            approval_id=body.approval_id,
-        )
 
     @app.get("/agents")
     def list_agents() -> List[Dict[str, Any]]:

@@ -306,7 +306,6 @@
       "src/mac/auto_land.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
-      "src/mac/curiosity_reviewer.py",
       "src/mac/deploy_env.py",
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
@@ -693,75 +692,6 @@
   },
   {
     "default": null,
-    "description": "Backlog Grooming setting: backlog groom backlog size.",
-    "family": "backlog-grooming",
-    "name": "MAC_BACKLOG_GROOM_BACKLOG_SIZE",
-    "retired": false,
-    "sources": [
-      "src/mac/backlog_groomer.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Backlog Grooming setting: backlog groom enabled.",
-    "family": "backlog-grooming",
-    "name": "MAC_BACKLOG_GROOM_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/backlog_groomer.py",
-      "src/mac/deploy_env.py",
-      "src/mac/self_healing.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Backlog Grooming setting: backlog groom initial delay seconds.",
-    "family": "backlog-grooming",
-    "name": "MAC_BACKLOG_GROOM_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/backlog_groomer.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Backlog Grooming setting: backlog groom interval seconds.",
-    "family": "backlog-grooming",
-    "name": "MAC_BACKLOG_GROOM_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/backlog_groomer.py",
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Backlog Grooming setting: backlog groom min ready.",
-    "family": "backlog-grooming",
-    "name": "MAC_BACKLOG_GROOM_MIN_READY",
-    "retired": false,
-    "sources": [
-      "src/mac/backlog_groomer.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Backlog Grooming setting: backlog groom regroom interval seconds.",
-    "family": "backlog-grooming",
-    "name": "MAC_BACKLOG_GROOM_REGROOM_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/backlog_groomer.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: bash contract ok.",
     "family": "core",
     "name": "MAC_BASH_CONTRACT_OK",
@@ -932,106 +862,6 @@
       "deploy/hermes/install-hermes-gateway.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor absent recheck seconds.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_ABSENT_RECHECK_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor api timeout seconds.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_API_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor enabled.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor initial delay seconds.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor interval seconds.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor max checks per run.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_MAX_CHECKS_PER_RUN",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor max observations.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_MAX_OBSERVATIONS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor pending retry seconds.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_PENDING_RETRY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: cicd monitor post publication delay hours.",
-    "family": "core",
-    "name": "MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS",
-    "retired": false,
-    "sources": [
-      "src/mac/cicd_monitor.py"
     ],
     "type": "str"
   },
@@ -1558,85 +1388,6 @@
     "retired": false,
     "sources": [
       "src/mac/credential_renewal.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity review cooldown seconds.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_reviewer.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity review enabled.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_REVIEW_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_reviewer.py",
-      "src/mac/self_healing.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity review initial delay seconds.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_reviewer.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity review interval seconds.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_reviewer.py",
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity review project.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_REVIEW_PROJECT",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_reviewer.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity timeout seconds.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_service.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: curiosity wrapper.",
-    "family": "core",
-    "name": "MAC_CURIOSITY_WRAPPER",
-    "retired": false,
-    "sources": [
-      "src/mac/curiosity_service.py"
     ],
     "type": "str"
   },
@@ -6259,7 +6010,6 @@
       "deploy/openclaw/run-script-cron-job.py",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
-      "src/mac/curiosity_service.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hub_upgrade_supervisor.py",
       "src/mac/mac_paths.py",
@@ -6957,141 +6707,6 @@
     "sources": [
       "deploy/install-agent-journal-service.sh",
       "src/mac/journal.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement enabled.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/judgement.py",
-      "src/mac/self_healing.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement excessive reviewing count.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_EXCESSIVE_REVIEWING_COUNT",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement excessive reviewing fraction.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_EXCESSIVE_REVIEWING_FRACTION",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement initial delay seconds.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement interval seconds.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py",
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement max actions per cycle.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_MAX_ACTIONS_PER_CYCLE",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement max redeploys per day.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_MAX_REDEPLOYS_PER_DAY",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement redeploy cmd.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_REDEPLOY_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement rejection loop threshold.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_REJECTION_LOOP_THRESHOLD",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement repo root.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_REPO_ROOT",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement reviewing stuck seconds.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_REVIEWING_STUCK_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Judgement setting: judgement too many gates.",
-    "family": "judgement",
-    "name": "MAC_JUDGEMENT_TOO_MANY_GATES",
-    "retired": false,
-    "sources": [
-      "src/mac/judgement.py"
     ],
     "type": "str"
   },
@@ -8090,8 +7705,7 @@
     "retired": false,
     "sources": [
       "deploy/install-macos-services.sh",
-      "src/mac/nap_ticker.py",
-      "src/mac/self_healing.py"
+      "src/mac/nap_ticker.py"
     ],
     "type": "bool"
   },
@@ -8113,8 +7727,7 @@
     "name": "MAC_NAP_TICK_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/nap_ticker.py",
-      "src/mac/self_healing.py"
+      "src/mac/nap_ticker.py"
     ],
     "type": "int"
   },
@@ -8338,8 +7951,7 @@
     "sources": [
       "deploy/fleet-node-install.sh",
       "deploy/openclaw/curiosity-sidecar.py",
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/self_healing.py"
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -8428,8 +8040,7 @@
     "name": "MAC_OPENCLAW_CONTROL_URL",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/self_healing.py"
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -8811,8 +8422,7 @@
     "name": "MAC_OPENCLAW_ROUTER_API_KEY",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/self_healing.py"
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -12835,138 +12445,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: self heal agent silence seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_AGENT_SILENCE_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal enabled.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal initial delay seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal interval seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal max attempts.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_MAX_ATTEMPTS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal max tasks per cycle.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal nap stall seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_NAP_STALL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal pin divergence seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal read silence seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_READ_SILENCE_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal stale deploy hold seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_STALE_DEPLOY_HOLD_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal starvation seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_STARVATION_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: self heal stuck draining seconds.",
-    "family": "core",
-    "name": "MAC_SELF_HEAL_STUCK_DRAINING_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/self_healing.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Core setting: self update git timeout.",
     "family": "core",
     "name": "MAC_SELF_UPDATE_GIT_TIMEOUT",
@@ -13700,7 +13178,6 @@
     "name": "MAC_TASK_REPO_WORKTREE",
     "retired": false,
     "sources": [
-      "src/mac/backlog_groomer.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
@@ -14644,7 +14121,6 @@
       "deploy/fleet-node-machine-onboard.py",
       "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
-      "src/mac/self_healing.py",
       "src/mac/worker.py"
     ],
     "type": "str"

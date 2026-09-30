@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-55 administrative commands live under `mac admin` (`mac admin help` lists them).
+53 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -266,7 +266,6 @@ Fleet and machines:
 Getting work done:
   dispatch      the loop that matches ready tasks to eligible agents
   review        adversarial review of completed work
-  judgement     hourly process-quality authority over lifecycle gates
   publish       publish reviewed work to its destination
   pull-request  pull requests raised from task work
   workflow      multi-step workflow definitions and runs
@@ -281,7 +280,6 @@ What agents know:
   mood             agent temperament and its effect on execution
   nap              consolidation cycles that summarize recent work
   dream            offline pattern-finding over past work
-  curiosity        quarantined self-proposed experiments awaiting judgment
   human-interface  port an agent profile between Hermes and OpenClaw
   persona          Hermes personas and their memory scopes
 

@@ -1439,78 +1439,6 @@ def cmd_fleet_ssh_spec(args: argparse.Namespace) -> None:
     _print(spec.to_dict())
 
 
-def cmd_fleet_backlog_groom_status(args: argparse.Namespace) -> None:
-    """Show the backlog groomer's config + last run report (hub read)."""
-    cp = _plane(args)
-    status = cp.backlog_groom_status()
-    _print(status.to_dict() if hasattr(status, "to_dict") else status)
-
-
-def cmd_fleet_backlog_groom_run(args: argparse.Namespace) -> None:
-    """Trigger one immediate grooming pass across opted-in idle repos."""
-    cp = _plane(args)
-    report = cp.backlog_groom_run()
-    _print(report.to_dict() if hasattr(report, "to_dict") else report)
-
-
-def _backlog_project_metadata(cp: Any, project: str) -> Dict[str, Any]:
-    """Return a project record's mutable metadata dict, or error out.
-
-    Backlog grooming targets onboarded projects (those with a ProjectRecord and
-    a repository_url); a derived, record-less project cannot be opted in.
-    """
-    detail = cp.get_project(project)
-    data = detail.to_dict() if hasattr(detail, "to_dict") else detail
-    record = data.get("record") if isinstance(data, dict) else None
-    if not record:
-        raise SystemExit(
-            "mac: project %r has no project record (onboard it first: "
-            "`mac onboard <repo-url> --project %s`)" % (project, project)
-        )
-    metadata = record.get("metadata")
-    return dict(metadata) if isinstance(metadata, dict) else {}
-
-
-def cmd_fleet_backlog_groom_enable(args: argparse.Namespace) -> None:
-    """Opt a project into autonomous backlog grooming."""
-    cp = _plane(args)
-    metadata = _backlog_project_metadata(cp, args.project)
-    block = dict(metadata.get("backlog_grooming") or {})
-    block["enabled"] = True
-    if args.backlog_size is not None:
-        block["backlog_size"] = args.backlog_size
-    if args.min_ready is not None:
-        block["min_ready"] = args.min_ready
-    if args.capability:
-        block["default_capabilities"] = list(args.capability)
-    metadata["backlog_grooming"] = block
-    cp.update_project(args.project, metadata=metadata, actor="human")
-    _print({"project": args.project, "backlog_grooming": block})
-
-
-def cmd_fleet_backlog_groom_disable(args: argparse.Namespace) -> None:
-    """Opt a project out of autonomous backlog grooming."""
-    cp = _plane(args)
-    metadata = _backlog_project_metadata(cp, args.project)
-    block = dict(metadata.get("backlog_grooming") or {})
-    block["enabled"] = False
-    metadata["backlog_grooming"] = block
-    cp.update_project(args.project, metadata=metadata, actor="human")
-    _print({"project": args.project, "backlog_grooming": block})
-
-
-def cmd_judgement_status(args: argparse.Namespace) -> None:
-    """Show the hub judgement process config and last report."""
-    status = _plane(args).judgement_status()
-    _print(status.to_dict() if hasattr(status, "to_dict") else status)
-
-
-def cmd_judgement_run(args: argparse.Namespace) -> None:
-    """Trigger one immediate judgement cycle on the hub."""
-    report = _plane(args).judgement_run()
-    _print(report.to_dict() if hasattr(report, "to_dict") else report)
-
-
 def cmd_fleet_model_selection_status(args: argparse.Namespace) -> None:
     """Show the active/pending powerhouse-model selection + last refresh."""
     cp = _plane(args)
@@ -7066,30 +6994,6 @@ def cmd_memory_forget(args: argparse.Namespace) -> None:
     _print(_plane(args).forget_memory(args.key, project=args.project))
 
 
-def cmd_curiosity_list(args: argparse.Namespace) -> None:
-    """List curiosity candidates through the hub.
-
-    The ledger lives inside the owning agent's OpenClaw sandbox, which a task
-    sandbox cannot reach, so reading it locally only works on the host. Going
-    through the hub works from anywhere, including a dispatched task
-    (task_3a4503f0).
-    """
-    _print(_plane(args).list_curiosity_candidates(args.status))
-
-
-def cmd_curiosity_decide(args: argparse.Namespace) -> None:
-    """Approve or reject one candidate, with the audit trail the ledger wants."""
-    _print(
-        _plane(args).decide_curiosity_candidate(
-            args.candidate_id,
-            args.decision,
-            actor=args.actor,
-            reason=args.reason,
-            approval_id=args.approval_id,
-        )
-    )
-
-
 def cmd_memory_decay(args: argparse.Namespace) -> None:
     """dream-04: forget stale, low-salience memory (dry-run unless --apply)."""
     _print(
@@ -10342,68 +10246,6 @@ def build_parser() -> argparse.ArgumentParser:
     ft_list.add_argument("--manifest", help="override manifest path")
     _set(cmd_fleet_target_list, ft_list)
 
-    # mac-backlog-groom: autonomous per-repo backlog grooming — status, manual
-    # run, and per-project opt-in.
-    fleet_groom = fleet.add_parser(
-        "backlog-groom",
-        help="autonomous backlog grooming: status, manual run, per-project opt-in",
-    )
-    groom_sub = fleet_groom.add_subparsers(dest="backlog_groom_command")
-    groom_sub.required = True
-    _set(
-        cmd_fleet_backlog_groom_status,
-        groom_sub.add_parser("status", help="show groomer config + last run report (hub read)"),
-    )
-    _set(
-        cmd_fleet_backlog_groom_run,
-        groom_sub.add_parser(
-            "run", help="trigger one immediate grooming pass across opted-in idle repos"
-        ),
-    )
-    groom_enable = groom_sub.add_parser("enable", help="opt a project into backlog grooming")
-    groom_enable.add_argument("project", help="project name (must be onboarded)")
-    groom_enable.add_argument(
-        "--backlog-size",
-        type=int,
-        default=None,
-        help="number of backlog items to request per grooming pass",
-    )
-    groom_enable.add_argument(
-        "--min-ready",
-        type=int,
-        default=None,
-        help="only groom when the project has fewer than N pending tasks",
-    )
-    groom_enable.add_argument(
-        "--capability",
-        action="append",
-        default=None,
-        help="required capability to stamp on the grooming task; repeatable",
-    )
-    _set(cmd_fleet_backlog_groom_enable, groom_enable)
-    groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
-    groom_disable.add_argument("project", help="project name")
-    _set(cmd_fleet_backlog_groom_disable, groom_disable)
-
-    judgement = sub.add_parser(
-        "judgement",
-        help="hourly process-quality authority over task lifecycle gates",
-    ).add_subparsers(dest="judgement_command", required=True)
-    _set(
-        cmd_judgement_status,
-        judgement.add_parser(
-            "status",
-            help="show judgement config, skill binding, and last run report",
-        ),
-    )
-    _set(
-        cmd_judgement_run,
-        judgement.add_parser(
-            "run",
-            help="run one judgement cycle now (stop tasks, hold agents, or redeploy)",
-        ),
-    )
-
     # mac-model-select: dynamic powerhouse-model selection. A swap is recorded
     # pending and only changes routing when promoted (operator/eval gate).
     fleet_msel = fleet.add_parser(
@@ -11870,30 +11712,6 @@ def build_parser() -> argparse.ArgumentParser:
     integrations_observations.add_argument("--limit", type=int, default=100)
     _set(cmd_integrations_observations, integrations_observations)
 
-    curiosity = sub.add_parser(
-        "curiosity",
-        help="read and adjudicate a host's curiosity quarantine THROUGH THE HUB "
-        "(the ledger lives in the agent's OpenClaw sandbox; a task sandbox "
-        "cannot reach it directly)",
-    ).add_subparsers(dest="curiosity_command", required=True)
-    curiosity_list = curiosity.add_parser("list", help="list candidates")
-    curiosity_list.add_argument(
-        "--status", choices=["quarantined", "approved", "rejected"], default=None
-    )
-    _set(cmd_curiosity_list, curiosity_list)
-    for _decision in ("approve", "reject"):
-        _parser = curiosity.add_parser(_decision, help="%s a quarantined candidate" % _decision)
-        _parser.add_argument("candidate_id")
-        _parser.add_argument("--actor", required=True)
-        _parser.add_argument("--reason", required=True)
-        _parser.add_argument(
-            "--approval-id",
-            required=True,
-            help="external approval id; use the adjudicating task id so the "
-            "promotion is traceable in both the curiosity ledger and task history",
-        )
-        _parser.set_defaults(decision=_decision)
-        _set(cmd_curiosity_decide, _parser)
     memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(
         dest="memory_command", required=True
     )

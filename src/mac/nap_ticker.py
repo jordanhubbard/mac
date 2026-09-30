@@ -4,9 +4,9 @@
 driver was a systemd timer (``deploy/systemd/mac-nap-tick.timer``) — useless on
 a macOS hub, where launchd rules. The live fleet's naps (and therefore dream
 artifacts and dream-repair tasks) silently stopped the day the timer's host
-went away. This daemon moves the tick into the hub process itself, mirroring
-``BacklogGroomer``: a thread wakes on an interval, asks the ledger which
-agents' nap windows have opened, and drives each through one full cycle.
+went away. This daemon moves the tick into the hub process itself: a thread
+wakes on an interval, asks the ledger which agents' nap windows have opened,
+and drives each through one full cycle.
 
 No-op unless ``MAC_NAP_TICK_ENABLED`` is set, so bringing the hub up with this
 code is safe everywhere; enabling is one env line, not an OS-specific unit.

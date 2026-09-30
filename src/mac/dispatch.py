@@ -999,18 +999,6 @@ class RemoteDispatch:
     def github_ingest_run(self) -> _Dictish:
         return _Dictish(self._post("/github-ingest/run", {}))
 
-    def backlog_groom_status(self) -> _Dictish:
-        return _Dictish(self._get("/backlog-groom/status"))
-
-    def backlog_groom_run(self) -> _Dictish:
-        return _Dictish(self._post("/backlog-groom/run", {}))
-
-    def judgement_status(self) -> _Dictish:
-        return _Dictish(self._get("/judgement/status"))
-
-    def judgement_run(self) -> _Dictish:
-        return _Dictish(self._post("/judgement/run", {}))
-
     def model_selection_status(self) -> _Dictish:
         return _Dictish(self._get("/model-selection/status"))
 
@@ -1358,33 +1346,6 @@ class RemoteDispatch:
 
     def clear_agent_dispatch_hold(self, agent_id: str) -> _Dictish:
         return _Dictish(self._delete("/agents/%s/dispatch-hold" % quote(agent_id, safe="")))
-
-    def list_curiosity_candidates(self, status: Optional[str] = None) -> _Dictish:
-        """Quarantined curiosity candidates, read through the hub.
-
-        The ledger lives inside the agent's OpenClaw sandbox, which a task
-        sandbox cannot reach; the hub can, so this is the route that works from
-        anywhere (task_3a4503f0).
-        """
-        params = {} if status is None else {"status": status}
-        return _Dictish(self._get("/curiosity/candidates", **params))
-
-    def decide_curiosity_candidate(
-        self,
-        candidate_id: str,
-        decision: str,
-        *,
-        actor: str,
-        reason: str,
-        approval_id: str,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/curiosity/candidates/%s/%s"
-                % (quote(candidate_id, safe=""), quote(decision, safe="")),
-                {"actor": actor, "reason": reason, "approval_id": approval_id},
-            )
-        )
 
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
