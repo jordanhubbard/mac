@@ -214,8 +214,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # fleet domain
         ("fleet", "build-distribution"),
         ("fleet", "doctor"),
-        ("fleet", "memory-export"),
-        ("fleet", "memory-prune"),
         ("fleet", "move-agent"),
         ("fleet", "refresh-context"),
         ("fleet", "rotate-token"),

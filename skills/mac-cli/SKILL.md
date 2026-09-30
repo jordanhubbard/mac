@@ -167,17 +167,11 @@ called "help".
     mac project pause/activate <name>
     mac admin human register <username>
     mac admin dispatch submit <file>    literate-ai execution requests
-    mac admin events news --follow      significant task and agent activity
     mac admin login --local-console     hub-local enrollment without SSH
     mac admin plugin install --scope global
     mac admin plugin install --scope repo --repo PATH
     mac admin plugin status
     mac admin plugin uninstall
-
-`mac admin events news` is the human-facing fleet feed: task creation, claim and
-state changes plus meaningful agent lifecycle/status changes. Add `--follow` to
-subscribe continuously, `--project NAME` to restrict task activity to one
-project, or `--json` for newline-delimited records in follow mode.
 
 `mac admin login --local-console` is only for a shell on the hub. It asks the
 running API service for a new scoped, independently revocable credential over

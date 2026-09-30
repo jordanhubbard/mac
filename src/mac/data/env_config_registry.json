@@ -37,39 +37,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: activation probe activations file.",
-    "family": "core",
-    "name": "MAC_ACTIVATION_PROBE_ACTIVATIONS_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/activation_probe/advisory.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: activation probe checkpoint.",
-    "family": "core",
-    "name": "MAC_ACTIVATION_PROBE_CHECKPOINT",
-    "retired": false,
-    "sources": [
-      "src/mac/activation_probe/advisory.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: activation probe enabled.",
-    "family": "core",
-    "name": "MAC_ACTIVATION_PROBE_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/activation_probe/advisory.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Core setting: agentbus service result publish attempts.",
     "family": "core",
     "name": "MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS",
@@ -10477,17 +10444,6 @@
       "src/mac/api.py"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: recovery reflex enabled.",
-    "family": "core",
-    "name": "MAC_RECOVERY_REFLEX_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/harness_recovery_reflex.py"
-    ],
-    "type": "bool"
   },
   {
     "default": null,

@@ -157,7 +157,6 @@ from mac.worker_directable import DirectableMixin
 from mac.worker_workspace_gc import WorkspaceGCMixin
 from mac.agentbus_service import HUMAN_DIRECTIVE_TOPIC
 from mac.worker_repo_prep import RepoPrepMixin
-import mac.harness_recovery_reflex as _hrr
 from mac.worker_runtime_deps import (
     REQUIRED_RUNTIME_PIP,
     RuntimeDepsMixin,
@@ -1835,7 +1834,6 @@ class MacWorker(
         task_id = task["id"]
         lease_id = str(lease["id"])
         task_dir: Optional[Path] = None
-        attempt_state: JsonDict = {"recovery_count": 0, "recovery_log": []}
         # Published for the shutdown watchdog: this is the lease that must be
         # released if the process is torn down mid-execution.
         self._set_active_assignment(task_id, lease_id)
@@ -1869,41 +1867,7 @@ class MacWorker(
                 ),
                 {},
             )
-            try:
-                task_dir = self._prepare_task_workspace(task, lease)
-            except Exception as _prep_exc:
-                # Workspace preparation is an environment-prerequisite step:
-                # it fetches/rebases the canonical repo and lays out the task
-                # worktree. Historically only ``RuntimeError``/``OSError`` were
-                # routed through the harness-recovery reflex, so any OTHER
-                # exception (a git ``subprocess.CalledProcessError``, a
-                # ``MacApiError`` from the fetch/rebase API round-trip, a
-                # ``KeyError``/``TypeError`` from malformed task metadata) skipped
-                # just-in-time recovery entirely and wedged the assignment into a
-                # bare ``worker_exception`` -> blocked loop with no remediation
-                # (observed live: three consecutive environment-class failures on
-                # a dream-repair prerequisite, all with empty diagnostics). Triage
-                # every prep failure through the reflex; the unrecovered branch
-                # re-raises so the outer handler still captures the traceback.
-                if isinstance(_prep_exc, OSError):
-                    _step = "disk_io"
-                elif any(kw in str(_prep_exc) for kw in ("fetch", "rebase", "clone", "checkout")):
-                    _step = "fetch_rebase"
-                else:
-                    _step = "worktree_preparation"
-                _wt_dir = self.workspace / _safe_path_component(task_id)
-                _wt_dir.mkdir(parents=True, exist_ok=True)
-                _recovered, _choice, _msg = _hrr.try_recovery(
-                    attempt_state,
-                    str(_prep_exc),
-                    None,  # no remediation dispatcher wired
-                    lambda _s, _c, _r: self._emit_recovery_observability(task_id, _s, _c, _r),
-                )
-                self._append_harness_recovery_log(_wt_dir, _step, _choice, _msg)
-                if _recovered:
-                    task_dir = self._prepare_task_workspace(task, lease)
-                else:
-                    raise
+            task_dir = self._prepare_task_workspace(task, lease)
             if not self._assignment_is_current(task_id, lease_id):
                 return self._stale_result(
                     task_id, lease, "assignment no longer current after workspace preparation"
@@ -1946,26 +1910,6 @@ class MacWorker(
                     "assignment no longer current after executor completed",
                     execution=execution,
                 )
-            _bootstrap_meta = execution.metadata.get("bootstrap") or {}
-            _boot_failed = isinstance(_bootstrap_meta, dict) and (
-                (_bootstrap_meta.get("returncode") not in (None, 0))
-                or bool(_bootstrap_meta.get("error"))
-                or bool(_bootstrap_meta.get("status"))
-            )
-            if not execution.succeeded and _boot_failed:
-                _boot_info = "bootstrap failed: %s" % (
-                    _bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown"
-                )
-                _b_recovered, _b_choice, _b_msg = _hrr.try_recovery(
-                    attempt_state,
-                    _boot_info,
-                    None,  # no remediation dispatcher wired
-                    lambda _s, _c, _r: self._emit_recovery_observability(task_id, _s, _c, _r),
-                )
-                self._append_harness_recovery_log(task_dir, "bootstrap", _b_choice, _b_msg)
-                if _b_recovered:
-                    started = time.monotonic()
-                    execution = self._execute_task(task, lease, task_dir)
             recorded_execution, late_exit_acceptance = _salvage_accepted_late_exit(
                 task,
                 task_dir,
@@ -1989,7 +1933,6 @@ class MacWorker(
                 task_dir,
                 recorded_execution,
                 lease_id=lease_id,
-                attempt_state=attempt_state,
             )
             if recorded_execution.succeeded:
                 evidence_metadata = ensure_json_object(evidence.get("metadata"))
@@ -2134,7 +2077,6 @@ class MacWorker(
                         task_dir,
                         recorded_execution,
                         lease_id=lease_id,
-                        attempt_state=attempt_state,
                     )
                     reviewed_task = self.client.post(submit_path, {})
                 return WorkerRunResult(
@@ -4612,7 +4554,6 @@ class MacWorker(
         execution: WorkerExecution,
         *,
         lease_id: str,
-        attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
         execution = _redact_worker_execution(execution)
         self._redact_verification_manifest(task_dir)
@@ -4623,7 +4564,6 @@ class MacWorker(
                 task_id,
                 task_dir,
                 execution,
-                attempt_state=attempt_state,
             )
             if not self._assignment_is_current(task_id, lease_id):
                 raise RuntimeError("assignment no longer current after finalization")
@@ -4778,7 +4718,6 @@ class MacWorker(
         task_id: str,
         task_dir: Path,
         execution: WorkerExecution,
-        attempt_state: Optional[JsonDict] = None,
     ) -> bool:
         task = _task_payload_from_workspace(task_dir)
         serialized_context = _load_repository_context(task_dir)
@@ -4843,7 +4782,6 @@ class MacWorker(
                 task_dir,
                 execution,
                 context,
-                attempt_state=attempt_state,
             )
         except Exception as exc:  # noqa: BLE001 - evidence must record finalizer failures.
             manifest = {
@@ -4952,7 +4890,6 @@ class MacWorker(
         task_dir: Path,
         execution: WorkerExecution,
         context: JsonDict,
-        attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
         task = _task_payload_from_workspace(task_dir)
         worktree = Path(str(context.get("repository_worktree") or "")).expanduser()
@@ -5065,39 +5002,7 @@ class MacWorker(
                 )
                 pushed = publication.ok and publication.remote_verified
                 if not pushed:
-                    _push_fail_info = "repository publication blocked: %s" % publication.error
-                    if attempt_state is not None:
-                        _p_recovered, _p_choice, _p_msg = _hrr.try_recovery(
-                            attempt_state,
-                            _push_fail_info,
-                            None,  # no remediation dispatcher wired
-                            lambda _s, _c, _r: self._emit_recovery_observability(
-                                task_id, _s, _c, _r
-                            ),
-                        )
-                        self._append_harness_recovery_log(task_dir, "retry_push", _p_choice, _p_msg)
-                        if _p_recovered:
-                            publication = guarded_push(publication_target)
-                            display = (
-                                publication.target.remote_display
-                                if publication.target is not None
-                                else repo["push_remote"]
-                            )
-                            repo["push_remote"] = display
-                            if publication.canonical_tip_sha:
-                                repo["base_sha"] = publication.canonical_tip_sha
-                            repo["freshness"] = publication.evidence()
-                            push_item = _process_check_item(
-                                "guarded git push",
-                                0 if publication.ok and publication.remote_verified else 1,
-                                command="guarded git push %s HEAD:refs/heads/%s"
-                                % (display, branch),
-                                stdout=publication.push_stdout,
-                                stderr=publication.push_stderr or publication.error,
-                            )
-                            pushed = publication.ok and publication.remote_verified
-                    if not pushed:
-                        problems.append("repository publication blocked: %s" % publication.error)
+                    problems.append("repository publication blocked: %s" % publication.error)
             else:
                 problems.append("repository publication target invalid: %s" % target_error)
         else:
@@ -5563,26 +5468,6 @@ class MacWorker(
 
     def _execution_metadata(self, task_dir: Path, execution: WorkerExecution) -> JsonDict:
         metadata = redact_for_persistence(dict(execution.metadata))
-        # The external activation probe is optional diagnostic evidence only.
-        # It consumes activations supplied by an instrumented runtime; it cannot
-        # inspect hosted-model internals. Its adapter catches model/checkpoint/
-        # input failures, and this outer boundary guarantees a future adapter
-        # regression still cannot change task success, review, or publication.
-        try:
-            from mac.activation_probe.advisory import (
-                activation_probe_audit_from_environment,
-            )
-
-            activation_probe_audit = activation_probe_audit_from_environment(
-                task_dir, execution.metadata
-            )
-            if activation_probe_audit is not None:
-                metadata["activation_probe_audit"] = activation_probe_audit
-        except Exception as exc:  # noqa: BLE001 - advisory means non-authoritative.
-            logger.warning("external activation-probe evidence unavailable: %s", exc)
-        # Raw residual tensors can be very large and are an executor-to-auditor
-        # handoff, not durable task evidence.  Persist only the bounded result.
-        metadata.pop("activation_probe_activations", None)
         task_payload = _task_payload_from_workspace(task_dir)
         serialized_context = _load_repository_context(task_dir)
         trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
@@ -6781,60 +6666,6 @@ class MacWorker(
                     self._observation_post_failures,
                     type(exc).__name__,
                 )
-
-    def _emit_recovery_observability(
-        self,
-        task_id: str,
-        step: str,
-        choice: str,
-        result_detail: str,
-    ) -> None:
-        """Emit a structured observability event for a harness recovery action.
-
-        Called before dispatching each remediation so the hub and fleet
-        operators can observe recovery attempts in the task event log.
-        """
-        self._observe_log(
-            "worker.harness.recovery",
-            level="info",
-            subject_type="task",
-            subject_id=task_id,
-            detail={
-                "step": step,
-                "choice": choice,
-                "result": result_detail,
-            },
-        )
-
-    def _append_harness_recovery_log(
-        self,
-        task_dir: Path,
-        step: str,
-        choice: str,
-        result_detail: str,
-    ) -> None:
-        """Append one recovery entry to harness-recovery-log.json in task_dir.
-
-        The file is written/extended on each invocation so cross-process
-        evidence survives partial failures.
-        """
-        log_path = task_dir / "harness-recovery-log.json"
-        try:
-            existing: List[JsonDict] = []
-            if log_path.exists():
-                raw = log_path.read_text(encoding="utf-8")
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    existing = [e for e in parsed if isinstance(e, dict)]
-            existing.append(
-                {"step": step, "choice": choice, "result": result_detail, "ts": _utcnow()}
-            )
-            log_path.write_text(
-                json.dumps(existing, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except Exception:  # noqa: BLE001 - harness log is best-effort evidence
-            pass
 
 
 def _summary_from_output(returncode: int, stdout: str, stderr: str) -> str:

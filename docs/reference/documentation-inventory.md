@@ -11,11 +11,6 @@ marked `historical archive` and must not be read as current behaviour.
 
 | Category | Source | Title |
 |---|---|---|
-| supplemental reference | [`activation-probe/calibration-spec.md`](../activation-probe/calibration-spec.md) | Held-out calibration protocol |
-| supplemental reference | [`activation-probe/classifier-spec.md`](../activation-probe/classifier-spec.md) | External activation-probe classifier contract |
-| supplemental reference | [`activation-probe/integration-guide.md`](../activation-probe/integration-guide.md) | External activation-probe worker integration |
-| supplemental reference | [`activation-probe/prototype-report.md`](../activation-probe/prototype-report.md) | External activation-probe prototype |
-| supplemental reference | [`activation-probe/runtime-selection.md`](../activation-probe/runtime-selection.md) | External activation capture runtime |
 | architecture decision | [`adr/0001-unify-hermes-runtime-into-mac.md`](../adr/0001-unify-hermes-runtime-into-mac.md) | ADR 0001 — Unify the Hermes runtime into the `mac` monorepo |
 | architecture decision | [`adr/0002-memory-store-at-scale.md`](../adr/0002-memory-store-at-scale.md) | ADR 0002 — Memory store / vector tier at fleet scale (50–200 agents per hub) |
 | architecture decision | [`adr/0003-tokenhub-core-into-mac.md`](../adr/0003-tokenhub-core-into-mac.md) | ADR 0003 — Optional in-mac model router + vault (revisiting TokenHub's boundary) |
