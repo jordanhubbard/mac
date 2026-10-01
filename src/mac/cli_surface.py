@@ -226,8 +226,6 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("memory", "durable cross-session knowledge"),
             ("journal", "per-agent narrative history"),
             ("mood", "agent temperament and its effect on execution"),
-            ("nap", "consolidation cycles that summarize recent work"),
-            ("dream", "offline pattern-finding over past work"),
             ("human-interface", "port an agent profile between Hermes and OpenClaw"),
             ("persona", "Hermes personas and their memory scopes"),
         ),

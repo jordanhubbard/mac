@@ -157,8 +157,8 @@ transaction or equivalent durable evidence.
 5. Repair the MAC CLI, verify deterministic plugin generation, and migrate the
    fleet to plugin-based CLI installation.
 6. Implement hierarchical sandbox ACL feedback and profile placement.
-7. Revisit dream-cycle analysis only after the higher-priority proofs are
-   durable.
+7. ~~Revisit dream-cycle analysis only after the higher-priority proofs are
+   durable.~~ Dreaming was removed on 2026-09-30.
 
 ## Known defects from the v1.3.0 capabilities deck (slide 12)
 

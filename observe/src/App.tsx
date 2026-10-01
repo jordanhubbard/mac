@@ -5,7 +5,7 @@ import { duration } from "./lib/format";
 import { LiveView } from "./views/Live";
 import { StuckView } from "./views/Stuck";
 import { AgentsView, ProjectsView } from "./views/Fleet";
-import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
+import { PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
 import { MergeQueueView } from "./views/MergeQueue";
 import { MissionControlView } from "./views/MissionControl";
@@ -24,7 +24,6 @@ const VIEWS = [
   { id: "mission-control", label: "Mission Control", group: "Fleet" },
   { id: "pipelines", label: "Pipelines", group: "Delivery" },
   { id: "merge-queue", label: "Merge queue", group: "Delivery" },
-  { id: "cycles", label: "Dream & nap", group: "Delivery" },
   { id: "telemetry", label: "Telemetry", group: "Health" },
 ] as const;
 
@@ -304,8 +303,6 @@ function Router({
       return <PipelinesView snap={snap} />;
     case "merge-queue":
       return <MergeQueueView snap={snap} />;
-    case "cycles":
-      return <CyclesView snap={snap} />;
     case "telemetry":
       return <TelemetryView snap={snap} />;
     case "live":

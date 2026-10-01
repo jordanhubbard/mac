@@ -52,15 +52,7 @@ elif name == "curl":
     print('{"status":"ok"}')
 elif name == "launchctl":
     if args[0] == "print":
-        if args[1].endswith("/com.mac.dream-cycle"):
-            mode = os.environ.get("SERVICE_DREAM", "absent")
-            if mode == "active":
-                print("state = running")
-                sys.exit(0)
-            if mode == "unknown":
-                print("permission denied", file=sys.stderr)
-                sys.exit(5)
-        elif state.exists():
+        if state.exists():
             print("state = running")
             sys.exit(0)
         print("Could not find service", file=sys.stderr)
@@ -117,7 +109,6 @@ def test_selected_runtime_uses_shared_owner_and_preserves_database_and_vectors(s
     assert plist["ProgramArguments"] == [str(runtime / "bin/mac-qdrant-run")]
     assert plist["WorkingDirectory"] == str(runtime)
     assert plist["StandardOutPath"] == str(runtime / "selected-logs/mac-qdrant.log")
-    assert not (agents / "com.mac.dream-cycle.plist").exists()
     assert "MAC_DATABASE_URL=postgresql:///selected-authority" in (runtime / "mac.env").read_text()
     assert (
         "QDRANT_DATA_DIR=" + str(runtime / "vectors")
@@ -141,24 +132,6 @@ def test_failed_health_propagates_and_preserves_vector_data(service_host):
     assert "[mac] Done" not in result.stdout
     assert not (home / "Library/LaunchAgents/com.selected.qdrant.plist").exists()
     assert (runtime / "vectors/collection-marker").read_text() == "preserve existing vectors"
-
-
-@pytest.mark.parametrize("existing", ["file", "active", "unknown"])
-def test_existing_or_uninspectable_dream_owner_prevents_service_mutation(service_host, existing):
-    home, runtime, env = service_host
-    if existing == "file":
-        agents = home / "Library/LaunchAgents"
-        agents.mkdir(parents=True)
-        (agents / "com.mac.dream-cycle.plist").write_text("operator owned")
-    else:
-        env["SERVICE_DREAM"] = existing
-    result = run_installer(env)
-    assert result.returncode != 0
-    assert not (runtime / "service-env").exists()
-    assert not Path(env["SERVICE_STATE"]).exists()
-    assert "Qdrant installation verified" not in result.stdout
-    if existing == "file":
-        assert (agents / "com.mac.dream-cycle.plist").read_text() == "operator owned"
 
 
 def test_non_macos_entrypoint_refuses_before_service_changes(service_host):

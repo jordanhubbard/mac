@@ -201,12 +201,6 @@ def test_memory_decay_dry_run(tmp_path):
     assert "dry_run" in result or "deleted" in result or "candidates" in result
 
 
-def test_memory_health(tmp_path):
-    rc, result = _run(tmp_path, "admin", "memory", "health")
-    assert rc == 0
-    assert result is not None
-
-
 def test_memory_summarize_actions_empty(tmp_path):
     _, agent_id = _setup_task_and_agent(tmp_path)
     rc, result = _run(

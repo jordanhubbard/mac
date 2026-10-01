@@ -103,39 +103,6 @@ export interface PipelinesSection {
   leases: Record<string, number>;
 }
 
-export interface NapRow {
-  id: string;
-  agent_id: string | null;
-  status: string;
-  started_at: string | null;
-  completed_at: string | null;
-  age_seconds: number | null;
-}
-
-export interface CyclesSection {
-  naps_by_status: Record<string, number>;
-  recent_naps: NapRow[];
-  schedules_total: number;
-  schedules_enabled: number;
-}
-
-export interface DreamRow {
-  id: string;
-  agent_id: string | null;
-  project: string | null;
-  status: string;
-  state: string;
-  created_at: string | null;
-  promoted_at: string | null;
-  age_seconds: number | null;
-}
-
-export interface DreamsSection {
-  by_status: Record<string, number>;
-  by_state: Record<string, number>;
-  recent: DreamRow[];
-}
-
 export interface AgentBusSection {
   streams_by_status: Record<string, number>;
   messages_by_status: Record<string, number>;
@@ -212,8 +179,6 @@ export interface Snapshot {
   transitions?: TransitionRow[];
   agents?: AgentsSection;
   pipelines?: PipelinesSection;
-  cycles?: CyclesSection;
-  dreams?: DreamsSection;
   merge_queue?: MergeQueueSection;
   agentbus?: AgentBusSection;
   telemetry?: TelemetrySection;

@@ -2452,8 +2452,6 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert unscoped["ready_count"] == 1
     assert state["swarm_summary"]["agent_total"] == 1
     assert "memory_records" in state
-    assert "nap_schedules" in state
-    assert "nap_runs" in state
 
     streamed = client.get("/dashboard/stream", params={"timeout_seconds": 0})
     assert streamed.status_code == 200

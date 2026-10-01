@@ -12,8 +12,8 @@ produced almost nothing that ever completed:
     backlog_grooming                5 tasks    0.0%   (generator deleted)
 
 against 20.0% for operator-filed work. The precedent for deleting one is
-already set: mac.dreaming records in its own source that the scanner it
-replaced "filed 1,259 investigation tasks of which 4 completed".
+already set: the dreaming module (itself removed on 2026-09-30) recorded that
+the scanner it replaced "filed 1,259 investigation tasks of which 4 completed".
 
 Deleting named generators one at a time does not hold. Three of the
 zero-yield origins above were not in the ticket that asked for this, and a

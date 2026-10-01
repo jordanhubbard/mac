@@ -249,7 +249,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_LOCK_RENEW_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy lock renew seconds. |
 | `MAC_DEPLOY_LOCK_STALE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy lock stale seconds. |
 | `MAC_DEPLOY_LOCK_TAKEOVER` | str | consumer-defined | deployment | Deployment setting: deploy lock takeover. |
-| `MAC_DEPLOY_MEMORY_EMBED_MODEL` | str | consumer-defined | deployment | Deployment setting: deploy memory embed model. |
 | `MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX` | str | consumer-defined | deployment | Deployment setting: deploy network hostname prefix. |
 | `MAC_DEPLOY_NETWORK_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy network install. |
 | `MAC_DEPLOY_NETWORK_PROVIDER` | str | consumer-defined | deployment | Deployment setting: deploy network provider. |
@@ -400,11 +399,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DISPATCH_DUE_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch due aging seconds. |
 | `MAC_DISPATCH_PAGE_PREFIX_WIDTH` | str | consumer-defined | core | Core setting: dispatch page prefix width. |
 | `MAC_DISPATCH_PRIORITY_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch priority aging seconds. |
-| `MAC_DREAM_AUTO_PROMOTE` | bool | consumer-defined | core | Core setting: dream auto promote. |
-| `MAC_DREAM_MAX_RETIRE_PER_RUN` | str | consumer-defined | core | Core setting: dream max retire per run. |
-| `MAC_DREAM_MODEL` | str | consumer-defined | core | Core setting: dream model. |
-| `MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS` | int | consumer-defined | core | Core setting: dream model retry budget seconds. |
-| `MAC_DREAM_MODEL_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: dream model timeout seconds. |
 | `MAC_EVIDENCE_ARTIFACT_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact max bytes. |
 | `MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact total max bytes. |
 | `MAC_EVIDENCE_BLOB_DIR` | str | consumer-defined | evidence | Evidence setting: evidence blob dir. |
@@ -621,18 +615,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MAX_DECOMPOSE_DEPTH` | str | consumer-defined | core | Core setting: max decompose depth. |
 | `MAC_MAX_TASK_LEASE_SECONDS` | int | consumer-defined | core | Core setting: max task lease seconds. |
 | `MAC_MEMORY_EMBEDDING_DIM` | int | consumer-defined | memory | Memory setting: memory embedding dim. |
-| `MAC_MEMORY_EMBED_API_KEY` | str | consumer-defined | memory | Memory setting: memory embed api key. |
-| `MAC_MEMORY_EMBED_BACKEND` | str | consumer-defined | memory | Memory setting: memory embed backend. |
-| `MAC_MEMORY_EMBED_BASE_URL` | str | consumer-defined | memory | Memory setting: memory embed base url. |
-| `MAC_MEMORY_EMBED_DIM` | int | consumer-defined | memory | Memory setting: memory embed dim. |
-| `MAC_MEMORY_EMBED_INPUT_TYPE` | str | consumer-defined | memory | Memory setting: memory embed input type. |
-| `MAC_MEMORY_EMBED_MODEL` | str | consumer-defined | memory | Memory setting: memory embed model. |
-| `MAC_MEMORY_HEALTH_SCAN_LIMIT` | int | consumer-defined | memory | Memory setting: memory health scan limit. |
-| `MAC_MEMORY_HEALTH_TICK_SECONDS` | int | consumer-defined | memory | Memory setting: memory health tick seconds. |
-| `MAC_MEMORY_INGESTION_MAX_AGE_HOURS` | str | consumer-defined | memory | Memory setting: memory ingestion max age hours. |
-| `MAC_MEMORY_PROMOTION_ENABLED` | bool | consumer-defined | memory | Memory setting: memory promotion enabled. |
-| `MAC_MEMORY_PROMOTION_MAX_PER_PASS` | str | consumer-defined | memory | Memory setting: memory promotion max per pass. |
-| `MAC_MEMORY_PROMOTION_MIN_AGE_DAYS` | str | consumer-defined | memory | Memory setting: memory promotion min age days. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
 | `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue capability ttl seconds. |
 | `MAC_MERGE_QUEUE_LEASE_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue lease seconds. |
@@ -646,10 +628,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MODEL_SELECT_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: model select interval seconds. |
 | `MAC_MODEL_SWAP_EVAL_ENABLED` | bool | consumer-defined | core | Core setting: model swap eval enabled. |
 | `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | str | consumer-defined | core | Core setting: model swap eval golden set. |
-| `MAC_NAP_TICK_ENABLED` | bool | consumer-defined | core | Core setting: nap tick enabled. |
-| `MAC_NAP_TICK_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: nap tick initial delay seconds. |
-| `MAC_NAP_TICK_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: nap tick interval seconds. |
-| `MAC_NAP_TICK_MAX_AGENTS_PER_TICK` | str | consumer-defined | core | Core setting: nap tick max agents per tick. |
 | `MAC_NEMOCLAW_AGENT_ID` | str | consumer-defined | core | Core setting: nemoclaw agent id. |
 | `MAC_NEMOCLAW_FLEET_NAME` | str | consumer-defined | core | Core setting: nemoclaw fleet name. |
 | `MAC_NEMOCLAW_GATEWAY_PORT` | int | consumer-defined | core | Core setting: nemoclaw gateway port. |
@@ -1129,7 +1107,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TOKENHUB_URL` | str | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub url. |
 | `MAC_TOOLCHAIN_BIN` | str | consumer-defined | core | Core setting: toolchain bin. |
 | `MAC_TOOLCHAIN_ROOT` | str | consumer-defined | core | Core setting: toolchain root. |
-| `MAC_TRANSCRIPT_VECTOR_INDEX` | str | consumer-defined | core | Core setting: transcript vector index. |
 | `MAC_UNIT_BACKUP` | str | consumer-defined | core | Core setting: unit backup. |
 | `MAC_UNIT_MUTATED` | str | consumer-defined | core | Core setting: unit mutated. |
 | `MAC_URL` | str | consumer-defined | core | Core setting: url. |

@@ -540,7 +540,6 @@
       "src/mac/client_profiles.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
-      "src/mac/dreaming/engine.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_memory.py",
@@ -2967,18 +2966,6 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy memory embed model.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_MEMORY_EMBED_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy network hostname prefix.",
     "family": "deployment",
     "name": "MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX",
@@ -4722,61 +4709,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: dream auto promote.",
-    "family": "core",
-    "name": "MAC_DREAM_AUTO_PROMOTE",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: dream max retire per run.",
-    "family": "core",
-    "name": "MAC_DREAM_MAX_RETIRE_PER_RUN",
-    "retired": false,
-    "sources": [
-      "src/mac/dreaming/store.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: dream model.",
-    "family": "core",
-    "name": "MAC_DREAM_MODEL",
-    "retired": false,
-    "sources": [
-      "src/mac/dreaming/engine.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: dream model retry budget seconds.",
-    "family": "core",
-    "name": "MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/dreaming/engine.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: dream model timeout seconds.",
-    "family": "core",
-    "name": "MAC_DREAM_MODEL_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/dreaming/engine.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
     "description": "Evidence setting: evidence artifact max bytes.",
     "family": "evidence",
     "name": "MAC_EVIDENCE_ARTIFACT_MAX_BYTES",
@@ -5995,7 +5927,6 @@
     "sources": [
       "deploy/install-agent-journal-service.sh",
       "deploy/install-fleet-context-service.sh",
-      "deploy/install-nap-tick-service.sh",
       "deploy/install-observability-prune.sh"
     ],
     "type": "str"
@@ -7105,7 +7036,6 @@
     "name": "MAC_LESSON_CURATION_MODEL",
     "retired": false,
     "sources": [
-      "src/mac/dreaming/engine.py",
       "src/mac/executor_memory.py"
     ],
     "type": "str"
@@ -7379,148 +7309,6 @@
   },
   {
     "default": null,
-    "description": "Memory setting: memory embed api key.",
-    "family": "memory",
-    "name": "MAC_MEMORY_EMBED_API_KEY",
-    "retired": false,
-    "sources": [
-      "src/mac/vector_writer_service.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory embed backend.",
-    "family": "memory",
-    "name": "MAC_MEMORY_EMBED_BACKEND",
-    "retired": false,
-    "sources": [
-      "deploy/install-nap-tick-service.sh",
-      "deploy/systemd/mac-nap-tick.service",
-      "src/mac/vector_writer_service.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory embed base url.",
-    "family": "memory",
-    "name": "MAC_MEMORY_EMBED_BASE_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/vector_writer_service.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory embed dim.",
-    "family": "memory",
-    "name": "MAC_MEMORY_EMBED_DIM",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/vector_writer_service.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory embed input type.",
-    "family": "memory",
-    "name": "MAC_MEMORY_EMBED_INPUT_TYPE",
-    "retired": false,
-    "sources": [
-      "deploy/install-nap-tick-service.sh",
-      "src/mac/vector_writer_service.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory embed model.",
-    "family": "memory",
-    "name": "MAC_MEMORY_EMBED_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/install-nap-tick-service.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/vector_writer_service.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory health scan limit.",
-    "family": "memory",
-    "name": "MAC_MEMORY_HEALTH_SCAN_LIMIT",
-    "retired": false,
-    "sources": [
-      "src/mac/memory_tier_probe.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory health tick seconds.",
-    "family": "memory",
-    "name": "MAC_MEMORY_HEALTH_TICK_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory ingestion max age hours.",
-    "family": "memory",
-    "name": "MAC_MEMORY_INGESTION_MAX_AGE_HOURS",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory promotion enabled.",
-    "family": "memory",
-    "name": "MAC_MEMORY_PROMOTION_ENABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/memory_promotion.py",
-      "src/mac/services.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory promotion max per pass.",
-    "family": "memory",
-    "name": "MAC_MEMORY_PROMOTION_MAX_PER_PASS",
-    "retired": false,
-    "sources": [
-      "src/mac/cli.py",
-      "src/mac/memory_promotion.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Memory setting: memory promotion min age days.",
-    "family": "memory",
-    "name": "MAC_MEMORY_PROMOTION_MIN_AGE_DAYS",
-    "retired": false,
-    "sources": [
-      "src/mac/cli.py",
-      "src/mac/memory_promotion.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Memory setting: memory topology file.",
     "family": "memory",
     "name": "MAC_MEMORY_TOPOLOGY_FILE",
@@ -7661,51 +7449,6 @@
     "retired": false,
     "sources": [
       "src/mac/eval_runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nap tick enabled.",
-    "family": "core",
-    "name": "MAC_NAP_TICK_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/install-macos-services.sh",
-      "src/mac/nap_ticker.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nap tick initial delay seconds.",
-    "family": "core",
-    "name": "MAC_NAP_TICK_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/nap_ticker.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nap tick interval seconds.",
-    "family": "core",
-    "name": "MAC_NAP_TICK_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/nap_ticker.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: nap tick max agents per tick.",
-    "family": "core",
-    "name": "MAC_NAP_TICK_MAX_AGENTS_PER_TICK",
-    "retired": false,
-    "sources": [
-      "src/mac/nap_ticker.py"
     ],
     "type": "str"
   },
@@ -10393,11 +10136,7 @@
     "name": "MAC_QDRANT_URL",
     "retired": false,
     "sources": [
-      "deploy/install-nap-tick-service.sh",
-      "deploy/systemd/mac-nap-tick.service",
-      "src/mac/cli.py",
-      "src/mac/memory_config.py",
-      "src/mac/services.py"
+      "src/mac/memory_config.py"
     ],
     "type": "str"
   },
@@ -11698,7 +11437,6 @@
     "name": "MAC_ROUTER_INTERNAL_URL",
     "retired": false,
     "sources": [
-      "src/mac/dreaming/engine.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_memory.py"
     ],
@@ -11821,7 +11559,6 @@
     "name": "MAC_ROUTER_URL",
     "retired": false,
     "sources": [
-      "src/mac/dreaming/engine.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_memory.py"
     ],
@@ -12810,7 +12547,6 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/dreaming/engine.py",
       "src/mac/executor_memory.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -13435,17 +13171,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: transcript vector index.",
-    "family": "core",
-    "name": "MAC_TRANSCRIPT_VECTOR_INDEX",
-    "retired": false,
-    "sources": [
-      "src/mac/api.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: unit backup.",
     "family": "core",
     "name": "MAC_UNIT_BACKUP",
@@ -13505,7 +13230,6 @@
     "sources": [
       "deploy/install-agent-journal-service.sh",
       "deploy/install-fleet-context-service.sh",
-      "deploy/install-nap-tick-service.sh",
       "deploy/install-observability-prune.sh"
     ],
     "type": "str"

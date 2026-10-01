@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-52 administrative commands live under `mac admin` (`mac admin help` lists them).
+50 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -277,8 +277,6 @@ What agents know:
   memory           durable cross-session knowledge
   journal          per-agent narrative history
   mood             agent temperament and its effect on execution
-  nap              consolidation cycles that summarize recent work
-  dream            offline pattern-finding over past work
   human-interface  port an agent profile between Hermes and OpenClaw
   persona          Hermes personas and their memory scopes
 

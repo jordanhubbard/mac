@@ -64,7 +64,6 @@ from mac.observability_console import (
     build_task_drilldown,
     build_transcript_entry,
 )
-from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
 from mac.models import (
     AmbiguousIdError,
     AuthorizationError,
@@ -77,7 +76,6 @@ from mac.models import (
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
-from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
 from mac.hgx_autoscaler import HgxAutoscaler, HgxAutoscalerConfig
@@ -90,19 +88,6 @@ from mac.services import ControlPlane
 from mac.store import StoreError, make_store_from_env, open_postgres_store
 
 _log = logging.getLogger(__name__)
-
-
-def _vector_writer_for_memory(
-    cp: ControlPlane, *, enabled: bool, qdrant_url: Optional[str]
-) -> Optional[Any]:
-    if not enabled:
-        return None
-    resolved = _configured_qdrant_url(qdrant_url)
-    if not resolved:
-        return None
-    from mac.vector_writer_service import VectorWriterService
-
-    return VectorWriterService(memory=cp.memory, qdrant_url=resolved)
 
 
 @dataclass(frozen=True)
@@ -351,7 +336,7 @@ def _agent_filed_on_behalf_of(
        provenance in the strict sense, and it survives the agent being
        re-owned or replaced.
     2. The agent's own owner. Covers work an agent originates itself (repair
-       sweeps, dreams) where there is no parent to inherit from.
+       sweeps) where there is no parent to inherit from.
 
     Returns None when neither is known, which leaves the task unowned exactly
     as it is today rather than guessing at a responsible person.
@@ -1835,54 +1820,6 @@ class AgentMemoryStore(BaseModel):
     task_id: Optional[str] = None
 
 
-class NapConfigure(BaseModel):
-    offset_minutes: Optional[int] = None
-    window_minutes: int = 15
-    enabled: bool = True
-    actor: Optional[str] = None
-
-
-class NapBegin(BaseModel):
-    actor: Optional[str] = None
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class NapComplete(BaseModel):
-    summary_evidence_id: Optional[str] = None
-    detail: Optional[Dict[str, Any]] = None
-    actor: Optional[str] = None
-
-
-class NapFail(BaseModel):
-    reason: str
-    actor: Optional[str] = None
-
-
-class NapCycle(BaseModel):
-    actor: Optional[str] = None
-    embed_into_medium: bool = True
-    emit_dream_artifacts: bool = True
-    qdrant_url: Optional[str] = None
-
-
-class DreamImportLogs(BaseModel):
-    dream_logs_dir: Optional[str] = None
-    agent_id: Optional[str] = None
-    created_by: str = "dream-log-import"
-    embed: bool = True
-    dry_run: bool = False
-    qdrant_url: Optional[str] = None
-
-
-class NapConsolidate(BaseModel):
-    since: Optional[str] = None
-    nap_run_id: Optional[str] = None
-    embed_into_medium: bool = True
-    emit_dream_artifacts: bool = True
-    created_by: Optional[str] = None
-    qdrant_url: Optional[str] = None
-
-
 class ConversationThreadTrack(BaseModel):
     platform_binding_id: str
     external_thread_id: str
@@ -2185,15 +2122,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
-    if path in ("/v1/memory/promote", "/v1/memory/reconcile-embeddings"):
-        # Both rewrite the shared vector store: promotion can retire medium-tier
-        # points, and reconciliation re-embeds a whole collection (every point a
-        # paid embedding call). They live under /v1 next to the rest of the
-        # memory surface, but the blanket /v1 rule below would hand them the
-        # agent scope alongside model inference — and a bound agent token has no
-        # business triggering a fleet-wide re-embed. Admin, like every other
-        # mutating control-plane trigger.
-        return "admin"
     if path == "/v1" or path.startswith("/v1/"):
         # In-mac model router (th-merge-02): LLM inference is an agent action, so
         # the OpenAI front door requires the agent scope (admin inherits it),
@@ -3476,8 +3404,6 @@ def _dashboard_state(
     # beads repositories (kept as an empty list for dashboard shape stability).
     project_repositories: List[Dict[str, Any]] = []
     memory_records = [record.to_dict() for record in cp.search_memory()][-120:]
-    nap_schedules = [schedule.to_dict() for schedule in cp.list_nap_schedules()]
-    nap_runs = [run.to_dict() for run in cp.list_nap_runs()]
     runtime_runs = [run.to_dict() for run in cp.list_runtime_runs()]
     runtime_deltas = [delta.to_dict() for delta in cp.list_runtime_deltas(limit=120)]
     integration_findings = [
@@ -3598,8 +3524,6 @@ def _dashboard_state(
         "bridge_items": bridge_items,
         "project_repositories": project_repositories,
         "memory_records": memory_records,
-        "nap_schedules": nap_schedules,
-        "nap_runs": nap_runs,
         "integration_findings": integration_findings,
         "integration_observations": integration_observations,
         "openshell_policies": openshell_policies,
@@ -4320,23 +4244,6 @@ def create_app(
         cp = ControlPlane(open_postgres_store(db_path))
     else:
         cp = ControlPlane(make_store_from_env())
-    # Attach the transcript index once, not per request: transcripts arrive on
-    # the worker write path and rebuilding a writer for each would pay
-    # collection probing on every turn. Absent qdrant configuration this stays
-    # None and indexing silently does not happen, which is the state of every
-    # test and every standalone hub.
-    if getattr(cp, "vector_writer", None) is None:
-        try:
-            resolved_qdrant = _configured_qdrant_url(None)
-            from mac.env_config import env_bool
-
-            if resolved_qdrant and env_bool("MAC_TRANSCRIPT_VECTOR_INDEX", True):
-                from mac.vector_writer_service import VectorWriterService
-
-                cp.vector_writer = VectorWriterService(memory=cp.memory, qdrant_url=resolved_qdrant)
-        except Exception:  # noqa: BLE001 - the hub must start without a vector store
-            cp.vector_writer = None
-
     # When the caller injects a control_plane or db_path directly (embedded/test
     # mode) and does not supply explicit auth_tokens, default to no-auth so the
     # injected instance behaves hermetically.  Production ``create_app()``
@@ -4459,10 +4366,6 @@ def create_app(
     # actually route — instead of a hard-coded, forever-pinned default. No-op
     # unless MAC_MODEL_SELECT_ENABLED is set.
     model_selection_service = ModelSelectionService(cp, ModelSelectionConfig.from_env())
-    # mac-nap-tick: OS-agnostic nap driver inside the hub process. The old
-    # systemd timer was useless on a launchd hub and the whole nap → dream →
-    # repair pipeline silently died with it. No-op unless MAC_NAP_TICK_ENABLED.
-    nap_ticker = NapTicker(cp, NapTickerConfig.from_env())
     # Durable provisioning requests wake a background HGX reconciler. Provider
     # calls never run on dispatch or HTTP threads; sustained-demand and
     # step/cooldown policy prevent transient backlog from creating a worker
@@ -4518,7 +4421,6 @@ def create_app(
                 model_selection_service.start,
                 model_selection_service.stop,
             ),
-            ("nap_ticker", nap_ticker.start, nap_ticker.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
             # Last, and started from the lifespan so it runs on the SAME loop
@@ -4577,7 +4479,6 @@ def create_app(
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.model_selection_service = model_selection_service
-    app.state.nap_ticker = nap_ticker
     app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
@@ -4843,7 +4744,6 @@ def create_app(
             SystemRouteServices(
                 repository_ref_reconciler=repository_ref_reconciler,
                 github_ingestor=github_ingestor,
-                nap_ticker=nap_ticker,
                 model_selection_service=model_selection_service,
             ),
             get_principal=_get_principal,
@@ -7020,97 +6920,6 @@ def create_app(
     def list_mood_history(agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return [overlay.to_dict() for overlay in cp.list_mood_history(agent_id, limit=limit)]
 
-    # Nap — daily memory-consolidation lifecycle
-    @app.put("/agents/{agent_id}/nap-schedule")
-    @app.post("/agents/{agent_id}/nap-schedule")
-    def configure_nap(agent_id: str, body: NapConfigure) -> Dict[str, Any]:
-        return cp.configure_nap(agent_id, **_data(body)).to_dict()
-
-    @app.get("/agents/{agent_id}/nap-schedule")
-    def get_nap_schedule(agent_id: str) -> Optional[Dict[str, Any]]:
-        schedule = cp.get_nap_schedule(agent_id)
-        return schedule.to_dict() if schedule is not None else None
-
-    @app.get("/agents/{agent_id}/nap-schedule/next")
-    def next_nap_window(agent_id: str) -> Optional[Dict[str, Any]]:
-        return cp.next_nap_window(agent_id)
-
-    @app.get("/nap-schedules")
-    def list_nap_schedules() -> List[Dict[str, Any]]:
-        return [schedule.to_dict() for schedule in cp.list_nap_schedules()]
-
-    @app.get("/nap-due")
-    def list_due_nap_agents(as_of: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return cp.list_due_nap_agents(as_of=as_of)
-
-    @app.post("/agents/{agent_id}/nap-runs")
-    def begin_nap(agent_id: str, body: NapBegin) -> Dict[str, Any]:
-        return cp.begin_nap(agent_id, **_data(body)).to_dict()
-
-    @app.get("/nap-runs")
-    def list_nap_runs(agent_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return [run.to_dict() for run in cp.list_nap_runs(agent_id)]
-
-    @app.get("/nap-runs/{run_id}")
-    def get_nap_run(run_id: str) -> Dict[str, Any]:
-        return cp.get_nap_run(run_id).to_dict()
-
-    @app.post("/nap-runs/{run_id}/complete")
-    def complete_nap(run_id: str, body: NapComplete) -> Dict[str, Any]:
-        return cp.complete_nap(run_id, **_data(body)).to_dict()
-
-    @app.post("/nap-runs/{run_id}/fail")
-    def fail_nap(run_id: str, body: NapFail) -> Dict[str, Any]:
-        return cp.fail_nap(run_id, **_data(body)).to_dict()
-
-    @app.post("/agents/{agent_id}/nap-cycle")
-    def run_nap_cycle(agent_id: str, body: NapCycle) -> Dict[str, Any]:
-        vector_writer = _vector_writer_for_memory(
-            cp,
-            enabled=body.embed_into_medium,
-            qdrant_url=body.qdrant_url,
-        )
-        return cp.run_nap_cycle(
-            agent_id,
-            actor=body.actor,
-            vector_writer=vector_writer,
-            embed_into_medium=body.embed_into_medium,
-            emit_dream_artifacts=body.emit_dream_artifacts,
-        )
-
-    @app.post("/dream/import-logs")
-    def import_dream_logs(body: DreamImportLogs) -> Dict[str, Any]:
-        vector_writer = _vector_writer_for_memory(
-            cp,
-            enabled=body.embed and not body.dry_run,
-            qdrant_url=body.qdrant_url,
-        )
-        return cp.import_dream_logs(
-            dream_logs_dir=body.dream_logs_dir,
-            agent_id=body.agent_id,
-            created_by=body.created_by,
-            embed=body.embed,
-            vector_writer=vector_writer,
-            dry_run=body.dry_run,
-        )
-
-    @app.post("/agents/{agent_id}/nap-consolidate")
-    def consolidate_nap(agent_id: str, body: NapConsolidate) -> Dict[str, Any]:
-        vector_writer = _vector_writer_for_memory(
-            cp,
-            enabled=body.embed_into_medium,
-            qdrant_url=body.qdrant_url,
-        )
-        return cp.consolidate_nap(
-            agent_id,
-            since=body.since,
-            nap_run_id=body.nap_run_id,
-            embed_into_medium=body.embed_into_medium,
-            emit_dream_artifacts=body.emit_dream_artifacts,
-            vector_writer=vector_writer,
-            created_by=body.created_by,
-        )
-
     @app.post("/agents/{agent_id}/heartbeat")
     def heartbeat_agent(
         agent_id: str,
@@ -9286,13 +9095,13 @@ def create_app(
         subject_type: Optional[str] = Query(default=None),
         subject_id: Optional[str] = Query(default=None),
         record_type: Optional[str] = Query(
-            default=None, description="Exact record_type filter (e.g. nap_summary)"
+            default=None, description="Exact record_type filter (e.g. agent_learning)"
         ),
         record_type_prefix: Optional[str] = Query(
-            default=None, description="Prefix match on record_type (e.g. dream:)"
+            default=None, description="Prefix match on record_type (e.g. agent_learning:)"
         ),
         created_by: Optional[str] = Query(
-            default=None, description="Filter by creator (e.g. nap-consolidator, agent_rocky)"
+            default=None, description="Filter by creator (e.g. agent_rocky)"
         ),
         since: Optional[str] = Query(
             default=None, description="ISO-8601 lower bound on created_at (inclusive)"
@@ -9341,92 +9150,6 @@ def create_app(
     def forget_memory(key: str, project: Optional[str] = Query(default=None)) -> Dict[str, Any]:
         return cp.forget_memory(key, project=project)
 
-    # mem-10: memory-tier health snapshot for operators + future alerter.
-    @app.get("/v1/memory/health")
-    def memory_health(
-        nap_interval_hours: float = Query(default=1.0, ge=0.1, le=720.0),
-        vector_ingestion_max_age_hours: float = Query(
-            default=24.0,
-            ge=0.1,
-            le=8760.0,
-            description=(
-                "a Qdrant collection whose newest embedded_at is older than "
-                "this raises stalled_vector_ingestion"
-            ),
-        ),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.memory_health(
-            nap_interval_hours=nap_interval_hours,
-            vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
-        )
-
-    # The writer mac_memory_long never had. Operator-triggered here; the nap
-    # cycle also runs it on its own schedule.
-    @app.post("/v1/memory/promote")
-    def promote_memory_tier(
-        min_age_days: Optional[float] = Query(default=None, ge=0.0, le=3650.0),
-        limit: Optional[int] = Query(default=None, ge=1, le=10000),
-        drop_medium: bool = Query(
-            default=False,
-            description=("retire each medium point once its long-tier write succeeded"),
-        ),
-        dry_run: bool = Query(default=False),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.promote_memory_tier(
-            min_age_days=min_age_days,
-            limit=limit,
-            drop_medium=drop_medium,
-            dry_run=dry_run,
-            created_by="api:memory-promote",
-        )
-
-    # Collapse a tier onto one embedding model; see mixed_embedding_spaces.
-    @app.post("/v1/memory/reconcile-embeddings")
-    def reconcile_memory_embedding_spaces(
-        tier: str = Query(default="medium"),
-        limit: Optional[int] = Query(default=None, ge=1, le=100000),
-        scan_limit: Optional[int] = Query(default=None, ge=1, le=1000000),
-        dry_run: bool = Query(default=False),
-        report_only: bool = Query(
-            default=False, description="count the models present, write nothing"
-        ),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        return cp.reconcile_memory_embedding_spaces(
-            tier=tier,
-            limit=limit,
-            scan_limit=scan_limit,
-            dry_run=dry_run,
-            report_only=report_only,
-            created_by="api:memory-reconcile-embeddings",
-        )
-
-    # mem-09: vector-tier recall.
-    @app.get("/v1/memory/recall")
-    def recall_memory(
-        q: str = Query(..., min_length=1, description="free-form query text"),
-        tier: str = Query(default="medium"),
-        limit: int = Query(default=5, ge=1, le=100),
-        min_score: Optional[float] = Query(default=None),
-        project: Optional[str] = Query(default=None),
-        tenant_id: Optional[str] = Query(default=None),
-        agent_id: Optional[str] = Query(default=None),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        if principal.agent_id and agent_id and principal.agent_id != agent_id:
-            raise AuthorizationError("agent token cannot recall a peer agent's memory")
-        return cp.recall_memory(
-            q,
-            tier=tier,
-            limit=limit,
-            min_score=min_score,
-            project=project,
-            tenant_id=tenant_id,
-            agent_id=agent_id,
-        )
-
     @app.get("/v1/agents/{agent_id}/continuity")
     def get_openclaw_continuity_context(
         agent_id: str,
@@ -9434,11 +9157,14 @@ def create_app(
         limit: int = Query(default=5, ge=0, le=20),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        """Return the bound agent's dynamic mood and medium-term memories.
+        """Return the bound agent's dynamic mood and recent peer conversation.
 
         This endpoint is the narrow runtime bridge used by MAC's OpenClaw
         plugin.  It lives below ``/v1`` so an ordinary bound agent token can
         read its own context without receiving fleet-wide ``read`` scope.
+
+        The vector memory tier was removed on 2026-09-30, so ``memories`` no
+        longer carries vector recall; it carries only bounded AgentBus history.
         """
         if principal.agent_id and principal.agent_id != agent_id:
             raise AuthorizationError("agent token cannot read a peer agent's continuity context")
@@ -9449,14 +9175,13 @@ def create_app(
         memories: List[Dict[str, Any]] = []
         metrics = ContinuityMetrics()
         if q.strip() and limit:
-            # Selective, provenance-rich recall: a calibrated score floor keeps
-            # low-value filler out, and bounded AgentBus recall lets a prior
-            # peer conversation resurface labelled with its source and score.
+            # Bounded AgentBus recall lets a prior peer conversation resurface
+            # labelled with its source and score. No vector recall: the memory
+            # tier it read from was removed.
             memories, metrics = recall_continuity(
                 agent_id=agent_id,
                 query=q,
                 limit=limit,
-                recall=cp.recall_memory,
                 agentbus=getattr(cp, "agentbus", None),
             )
         from mac.mood_policy import render_mood_overlay
@@ -9810,11 +9535,8 @@ def create_app(
 
         This is the conversational write path Hermes' background review used
         to provide: without it, nothing an OpenClaw agent learns in chat can
-        outlive the session. Records land in the raw tier as
-        ``agent_learning*`` rows (``created_by = agent_id``), which is exactly
-        the population nap consolidation summarizes into the recallable
-        medium tier — so stored learnings flow into recall via the existing
-        nap → embed pipeline rather than a new one.
+        outlive the session. Records land in ``memory_records`` as
+        ``agent_learning*`` rows (``created_by = agent_id``).
 
         The record_type is constrained to the ``agent_learning`` namespace so
         an agent cannot masquerade as protected tiers (``user``, ``feedback``,
@@ -9851,33 +9573,6 @@ def create_app(
             },
         )
         return record.to_dict()
-
-    @app.get("/v1/memory/dreams/recall")
-    def recall_dream_artifacts(
-        q: str = Query(..., min_length=1, description="free-form query text"),
-        tier: str = Query(default="medium"),
-        limit: int = Query(default=5, ge=1, le=100),
-        min_score: Optional[float] = Query(default=None),
-        project: Optional[str] = Query(default=None),
-        agent_id: Optional[str] = Query(default=None),
-        scope: Optional[str] = Query(default=None),
-        kind: Optional[str] = Query(default=None),
-        min_confidence: Optional[str] = Query(default=None),
-        tenant_id: Optional[str] = Query(default=None),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        return cp.recall_dream_artifacts(
-            q,
-            tier=tier,
-            limit=limit,
-            min_score=min_score,
-            project=project,
-            agent_id=agent_id,
-            scope=scope,
-            kind=kind,
-            min_confidence=min_confidence,
-            tenant_id=tenant_id,
-        )
 
     @app.post("/eval-sets")
     def create_eval_set(body: EvalSetCreate) -> Dict[str, Any]:

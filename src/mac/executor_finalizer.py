@@ -19,9 +19,8 @@ Three capabilities beyond the original:
 * **Memory feed (deployment gets smarter over time)** — before running, the
   executor *recalls* prior "deployment lessons" for the project and injects
   them into the agent prompt; after running, it *records* a structured
-  ``deployment_learning`` memory from the outcome. The nap consolidator
-  (mem-08) later promotes those records into the vector tier, so recall
-  improves with every task the fleet completes.
+  ``deployment_learning`` memory from the outcome, so recall improves with
+  every task the fleet completes.
 * **Automatic task sizing** — before running the agent, the executor inspects
   the task title and description for "plan" signals (conjunctions of verbs,
   numbered steps, multi-phase language, excessive scope).  When signals are
