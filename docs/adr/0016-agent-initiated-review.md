@@ -132,7 +132,7 @@ off by default, one flag): a single, revertible switch.
 
 Then compare completion rate and tokens-per-completed-task between the two paths
 on the same project over a few hundred tasks (the arms already tracked by the
-scientific optimizer). If peer-to-peer wins, there is evidence to dismantle the
+scientific optimizer, since removed on 2026-09-30). If peer-to-peer wins, there is evidence to dismantle the
 ringmaster incrementally. If it loses, one flag is reverted and the mandatory
 path is unchanged.
 

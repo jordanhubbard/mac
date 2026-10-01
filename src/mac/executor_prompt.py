@@ -981,117 +981,12 @@ def build_review_prompt(
         "sentences, no code or diff), wrapped EXACTLY in these two marker lines:\n"
         "%s\n<your recap here>\n%s" % (MAC_TASK_SUMMARY_BEGIN, MAC_TASK_SUMMARY_END),
     ]
-    assignment = _review_experiment_assignment(task)
-    if assignment:
-        if assignment.get("blind"):
-            parts.insert(
-                -1,
-                "This task is the adjudication phase of blind review experiment %s "
-                "(arm %s). The host already ran a discovery pass while "
-                "executor-evidence.json was physically withheld. Read "
-                "review-independent-findings.json first, then read the executor "
-                "evidence. Preserve, refine, or explicitly rebut those findings "
-                "in the final findings/feedback; do not silently discard them."
-                % (assignment.get("experiment_id"), assignment.get("arm")),
-            )
-        else:
-            parts.insert(
-                -1,
-                "This review is assigned to experiment %s (arm %s, standard "
-                "evidence-aware protocol)."
-                % (assignment.get("experiment_id"), assignment.get("arm")),
-            )
     lessons_section = _lessons_section(lessons or [])
     if lessons_section:
         # Append recalled lessons near the end, before the final summary
         # instruction, mirroring build_task_prompt.
         parts.insert(-1, lessons_section)
     return "\n\n".join(parts)
-
-
-def _review_experiment_assignment(task: Dict[str, Any]) -> Dict[str, Any]:
-    metadata = task.get("metadata") if isinstance(task, dict) else {}
-    assignment = metadata.get("review_experiment") if isinstance(metadata, dict) else {}
-    if not isinstance(assignment, dict):
-        return {}
-    if assignment.get("schema") != "mac.review_experiment.v1":
-        return {}
-    if not str(assignment.get("experiment_id") or "").strip():
-        return {}
-    if not str(assignment.get("arm") or "").strip():
-        return {}
-    return dict(assignment)
-
-
-def build_blind_review_discovery_prompt(
-    task: Dict[str, Any], task_workspace: Path, assignment: Dict[str, Any]
-) -> str:
-    """Prompt the pre-evidence pass whose treatment is enforced by the host."""
-    return "\n\n".join(
-        [
-            "You are running the discovery phase of a blind MAC fleet review.",
-            "The host has physically withheld executor-evidence.json for this phase. Do not look for it, infer its claims, or write a final approval/rejection verdict yet.",
-            "Read executor-task.json, inspect the prepared review checkout, its diff and relevant call paths, and run focused checks needed to identify defects or missing requirements independently of the executor's explanation.",
-            "Record the result in %s/review-independent-findings.json using schema mac.independent_review_findings.v1. Include experiment_id=%s, arm=%s, findings as a JSON list, and no_findings_reason as a non-empty string when findings is empty. Each finding should have a concise summary and, when applicable, severity, path, line, and supporting check."
-            % (str(task_workspace), assignment.get("experiment_id"), assignment.get("arm")),
-            "Do not create mac-evidence.json in this discovery phase. The host will restore executor evidence and run a separate adjudication phase after this pass.",
-            "Read the original task from %s/executor-task.json." % str(task_workspace),
-        ]
-    )
-
-
-def _read_json_object(path: Path, *, max_bytes: int = 1024 * 1024) -> Dict[str, Any]:
-    try:
-        if not path.is_file() or path.stat().st_size > max_bytes:
-            return {}
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
-def _blind_review_protocol(
-    task_workspace: Path,
-    assignment: Dict[str, Any],
-    result: Any,
-    *,
-    duration_ms: float,
-    evidence_hidden: bool,
-) -> Dict[str, Any]:
-    findings_path = task_workspace / "review-independent-findings.json"
-    independent = _read_json_object(findings_path)
-    raw = (
-        findings_path.read_bytes()
-        if findings_path.is_file() and findings_path.stat().st_size <= 1024 * 1024
-        else b""
-    )
-    findings = independent.get("findings") if isinstance(independent.get("findings"), list) else []
-    no_findings_reason = str(independent.get("no_findings_reason") or "").strip()
-    valid_findings = (
-        independent.get("schema") == "mac.independent_review_findings.v1"
-        and str(independent.get("experiment_id") or "").strip()
-        == str(assignment.get("experiment_id") or "").strip()
-        and str(independent.get("arm") or "").strip() == str(assignment.get("arm") or "").strip()
-        and (bool(findings) or bool(no_findings_reason))
-    )
-    return {
-        "schema": "mac.review_protocol.v1",
-        "experiment_id": assignment.get("experiment_id"),
-        "arm": assignment.get("arm"),
-        "mode": "blind_discovery_then_adjudication",
-        "executor_evidence_hidden": bool(evidence_hidden),
-        "discovery_returncode": int(getattr(result, "returncode", 1)),
-        "discovery_duration_ms": round(float(duration_ms), 3),
-        "discovery_stdout_sha256": sha256_text(getattr(result, "stdout", "") or ""),
-        "discovery_stderr_sha256": sha256_text(getattr(result, "stderr", "") or ""),
-        "independent_findings_valid": valid_findings,
-        "independent_findings_count": len(findings),
-        "independent_findings_sha256": ("sha256:" + hashlib.sha256(raw).hexdigest() if raw else ""),
-        "protocol_compliant": bool(
-            evidence_hidden and valid_findings and int(getattr(result, "returncode", 1)) == 0
-        ),
-        "recorded_at": utcnow(),
-    }
 
 
 # ---------------------------------------------------------------------------

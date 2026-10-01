@@ -465,7 +465,6 @@ def test_run_executor_skips_scope_estimate_for_reviews(monkeypatch, tmp_path):
     monkeypatch.setattr(te, "build_review_prompt", lambda *a, **kw: "review prompt")
     monkeypatch.setattr(te, "emit_telemetry", lambda *a, **kw: True)
     monkeypatch.setattr(te, "_openshell_enabled", lambda: False)
-    monkeypatch.setattr(te, "_review_experiment_assignment", lambda task: {})
     monkeypatch.setattr(te, "_invoke_agent", lambda *a, **kw: _FakeResult(0))
     monkeypatch.setattr(te, "run_deterministic_review_verdict", lambda *a, **kw: None)
     monkeypatch.setattr(te, "write_fallback_evidence_manifest", lambda *a, **kw: None)

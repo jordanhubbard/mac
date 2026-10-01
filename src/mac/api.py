@@ -603,67 +603,6 @@ class TaskGroupRequest(BaseModel):
     actor: str = "human"
 
 
-class ReviewExperimentAssign(BaseModel):
-    experiment_id: str
-    arm: Optional[str] = None
-    arms: Optional[Dict[str, float]] = None
-    assignment_probability: Optional[float] = None
-    blind: bool = False
-    blind_arms: List[str] = Field(default_factory=list)
-    policy_version: str = "v1"
-    hypothesis: str = ""
-    stratum: str = ""
-    actor: str = "human"
-
-
-class ReviewOutcomeCreate(BaseModel):
-    kind: str
-    status: str
-    finding_id: str = ""
-    severity_weight: float = 1.0
-    source: str = "operator"
-    detail: Dict[str, Any] = Field(default_factory=dict)
-    actor: str = "human"
-
-
-class ScientificPolicyCreate(BaseModel):
-    name: str
-    project: str
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    description: str = ""
-    created_by: str = "human"
-
-
-class ScientificPolicyAction(BaseModel):
-    actor: str = "operator"
-    reason: str = ""
-
-
-class ScientificExperimentCreate(BaseModel):
-    name: str
-    project: str
-    hypothesis: str
-    control_policy_id: str
-    treatment_policy_id: str
-    primary_metric: str
-    direction: Optional[str] = None
-    min_effect: float = 0.0
-    quality_margin: float = 0.05
-    min_samples_per_arm: Optional[int] = None
-    max_samples_per_arm: Optional[int] = None
-    exploration_fraction: Optional[float] = None
-    outcome_horizon_seconds: Optional[float] = None
-    guardrails: Dict[str, Any] = Field(default_factory=dict)
-    auto_promote: Optional[bool] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_by: str = "human"
-
-
-class ScientificExperimentAction(BaseModel):
-    actor: str = "operator"
-    reason: str = ""
-
-
 class TaskChildCreate(BaseModel):
     node_id: Optional[str] = None
     title: str
@@ -2264,11 +2203,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     if path.startswith("/repository-refs"):
         # A forced reconciliation in prune mode can delete remote branches.
         # Status is ordinary read data; every mutating trigger is admin-only.
-        return "read" if method == "GET" else "admin"
-    if path.startswith("/optimizer"):
-        # Learned policy changes future task execution across a project.  Reads
-        # are ordinary fleet visibility; mutation and manual ticks are admin
-        # control-plane operations, not general task writes.
         return "read" if method == "GET" else "admin"
     if method == "GET" and re.match(r"^/evidence/[^/]+/artifacts/[^/]+$", path):
         # Durable evidence artifact bytes can contain raw stdout/stderr and
@@ -4525,7 +4459,6 @@ def create_app(
     # actually route — instead of a hard-coded, forever-pinned default. No-op
     # unless MAC_MODEL_SELECT_ENABLED is set.
     model_selection_service = ModelSelectionService(cp, ModelSelectionConfig.from_env())
-    scientific_optimizer = cp.optimizer
     # mac-nap-tick: OS-agnostic nap driver inside the hub process. The old
     # systemd timer was useless on a launchd hub and the whole nap → dream →
     # repair pipeline silently died with it. No-op unless MAC_NAP_TICK_ENABLED.
@@ -4585,7 +4518,6 @@ def create_app(
                 model_selection_service.start,
                 model_selection_service.stop,
             ),
-            ("scientific_optimizer", scientific_optimizer.start, scientific_optimizer.stop),
             ("nap_ticker", nap_ticker.start, nap_ticker.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
@@ -4645,7 +4577,6 @@ def create_app(
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.model_selection_service = model_selection_service
-    app.state.scientific_optimizer = scientific_optimizer
     app.state.nap_ticker = nap_ticker
     app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
@@ -5862,132 +5793,6 @@ def create_app(
         if data.get("metadata") is not None:
             _ensure_payload_bounded(data["metadata"], "task.metadata")
         return cp.update_task(task_id, actor=actor, **data).to_dict()
-
-    @app.post("/tasks/{task_id}/review-experiment")
-    def assign_review_experiment(task_id: str, body: ReviewExperimentAssign) -> Dict[str, Any]:
-        data = _data(body)
-        actor = data.pop("actor", "human")
-        return cp.assign_review_experiment(task_id, actor=actor, **data)
-
-    @app.get("/tasks/{task_id}/review-observation")
-    def review_observation(task_id: str) -> Dict[str, Any]:
-        return cp.review_observation(task_id)
-
-    @app.post("/tasks/{task_id}/review-outcomes")
-    def record_review_outcome(task_id: str, body: ReviewOutcomeCreate) -> Dict[str, Any]:
-        data = _data(body)
-        actor = data.pop("actor", "human")
-        _ensure_payload_bounded(data.get("detail") or {}, "review_outcome.detail")
-        return cp.record_review_outcome(task_id, actor=actor, **data)
-
-    @app.get("/review-experiments/{experiment_id}")
-    def review_experiment_report(
-        experiment_id: str,
-        project: Optional[str] = Query(default=None),
-        min_tasks_per_arm: int = Query(default=5, ge=1, le=10000),
-        min_validated_outcomes_per_arm: int = Query(default=3, ge=0, le=10000),
-    ) -> Dict[str, Any]:
-        return cp.review_experiment_report(
-            experiment_id,
-            project=project,
-            min_tasks_per_arm=min_tasks_per_arm,
-            min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
-        )
-
-    @app.get("/optimizer/status")
-    def scientific_optimizer_status() -> Dict[str, Any]:
-        return scientific_optimizer.status()
-
-    @app.post("/optimizer/tick")
-    def scientific_optimizer_tick() -> Dict[str, Any]:
-        return scientific_optimizer.tick(trigger="operator")
-
-    @app.post("/optimizer/policies")
-    def create_scientific_policy(body: ScientificPolicyCreate) -> Dict[str, Any]:
-        _ensure_payload_bounded(body.parameters, "scientific_policy.parameters")
-        return scientific_optimizer.create_policy(**_data(body))
-
-    @app.get("/optimizer/policies")
-    def list_scientific_policies(
-        project: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return scientific_optimizer.list_policies(project=project, status=status)
-
-    @app.get("/optimizer/policies/{policy_id}")
-    def get_scientific_policy(policy_id: str) -> Dict[str, Any]:
-        return scientific_optimizer.get_policy(policy_id)
-
-    @app.post("/optimizer/policies/{policy_id}/promote")
-    def promote_scientific_policy(policy_id: str, body: ScientificPolicyAction) -> Dict[str, Any]:
-        return scientific_optimizer.promote_policy(policy_id, actor=body.actor, reason=body.reason)
-
-    @app.post("/optimizer/projects/{project}/rollback/{policy_id}")
-    def rollback_scientific_policy(
-        project: str, policy_id: str, body: ScientificPolicyAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.rollback_policy(
-            project, policy_id, actor=body.actor, reason=body.reason
-        )
-
-    @app.post("/optimizer/experiments")
-    def create_scientific_experiment(
-        body: ScientificExperimentCreate,
-    ) -> Dict[str, Any]:
-        _ensure_payload_bounded(body.guardrails, "scientific_experiment.guardrails")
-        _ensure_payload_bounded(body.metadata, "scientific_experiment.metadata")
-        return scientific_optimizer.create_experiment(**_data(body))
-
-    @app.get("/optimizer/experiments")
-    def list_scientific_experiments(
-        project: Optional[str] = Query(default=None),
-        state: Optional[str] = Query(default=None),
-    ) -> List[Dict[str, Any]]:
-        return scientific_optimizer.list_experiments(project=project, state=state)
-
-    @app.get("/optimizer/experiments/{experiment_id}")
-    def get_scientific_experiment(experiment_id: str) -> Dict[str, Any]:
-        return scientific_optimizer.get_experiment(experiment_id)
-
-    @app.get("/optimizer/experiments/{experiment_id}/evidence")
-    def get_scientific_experiment_evidence(
-        experiment_id: str,
-        limit: int = Query(default=500, ge=1, le=5000),
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.experiment_evidence(experiment_id, limit=limit)
-
-    @app.post("/optimizer/experiments/{experiment_id}/start")
-    def start_scientific_experiment(
-        experiment_id: str, body: ScientificExperimentAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.start_experiment(experiment_id, actor=body.actor)
-
-    @app.post("/optimizer/experiments/{experiment_id}/pause")
-    def pause_scientific_experiment(
-        experiment_id: str, body: ScientificExperimentAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.pause_experiment(
-            experiment_id, actor=body.actor, reason=body.reason
-        )
-
-    @app.post("/optimizer/experiments/{experiment_id}/promote")
-    def promote_scientific_experiment(
-        experiment_id: str, body: ScientificExperimentAction
-    ) -> Dict[str, Any]:
-        return scientific_optimizer.promote_experiment(
-            experiment_id,
-            actor=body.actor,
-            reason=body.reason,
-        )
-
-    @app.post("/optimizer/experiments/{experiment_id}/observe/{task_id}")
-    def observe_scientific_task(experiment_id: str, task_id: str) -> Dict[str, Any]:
-        return scientific_optimizer.observe_task(experiment_id, task_id)
-
-    @app.post("/optimizer/experiments/{experiment_id}/analyze")
-    def analyze_scientific_experiment(experiment_id: str) -> Dict[str, Any]:
-        scientific_optimizer.refresh_experiment(experiment_id)
-        return scientific_optimizer.analyze_experiment(experiment_id, actor="operator")
 
     @app.post("/tasks/{task_id}/children")
     def add_child_tasks(

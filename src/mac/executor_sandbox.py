@@ -202,12 +202,10 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
     should_enter_planning_phase,
 )
 from mac.executor_prompt import (  # noqa: E402,F401 - compatibility re-exports
-    _blind_review_protocol,
     _cooperative_integration_section,
     _error_signature,
     _is_truthy,
     _is_untracked_new_files_refusal,
-    _read_json_object,
     _repository_bootstrap_timeout,
     _repository_contract_bootstrap,
     _repository_contract_canonical_branch,
@@ -217,10 +215,8 @@ from mac.executor_prompt import (  # noqa: E402,F401 - compatibility re-exports
     _repository_prepared_base,
     _repository_publication_remote,
     _repository_task_branch,
-    _review_experiment_assignment,
     _run_repository_bootstrap_if_needed,
     _run_captured,
-    build_blind_review_discovery_prompt,
     build_review_prompt,
     build_task_prompt,
     classify_outcome,
@@ -6045,11 +6041,6 @@ def _manifest_is_complete(task_workspace: Path) -> bool:
         "rejected",
     }:
         return False
-    experiment = manifest.get("review_experiment")
-    if isinstance(experiment, dict) and experiment.get("blind"):
-        protocol = experiment.get("protocol")
-        if not isinstance(protocol, dict) or protocol.get("protocol_compliant") is not True:
-            return False
     return True
 
 
@@ -6459,110 +6450,17 @@ def _run_executor(
         prompt += _break_glass_prompt(break_glass_authorization)
 
     audit_task_id = review_context.get("task_id") if is_review else task_id
-    assignment = _review_experiment_assignment(task) if is_review else {}
-    blind_protocol_failed = False
-    if assignment.get("blind"):
-        executor_evidence = task_workspace / "executor-evidence.json"
-        legacy_withheld_evidence = task_workspace / ".mac-withheld-executor-evidence.json"
-        independent_findings = task_workspace / "review-independent-findings.json"
-        evidence_hidden = False
-        evidence_payload: Optional[bytes] = None
-        discovery_started = time.monotonic()
-        if legacy_withheld_evidence.exists():
-            if not executor_evidence.exists():
-                legacy_withheld_evidence.replace(executor_evidence)
-            else:
-                legacy_withheld_evidence.unlink()
-        if independent_findings.exists():
-            independent_findings.replace(
-                task_workspace / "review-independent-findings.previous.json"
-            )
-        if executor_evidence.exists():
-            # Hold the bounded evidence payload in the host process rather than
-            # renaming it inside the workspace. A dotfile in the workspace is
-            # still visible to both direct and OpenShell agent invocations.
-            evidence_payload = executor_evidence.read_bytes()
-            executor_evidence.unlink()
-            evidence_hidden = True
-        try:
-            discovery_result = _invoke_agent(
-                runner,
-                build_blind_review_discovery_prompt(task, task_workspace, assignment),
-                task_workspace,
-                str(audit_task_id) if audit_task_id else None,
-                {
-                    "execution_kind": "review_discovery",
-                    "timeout": _agent_timeout(),
-                    "task": task,
-                },
-            )
-        finally:
-            if evidence_payload is not None:
-                executor_evidence.write_bytes(evidence_payload)
-        discovery_duration_ms = (time.monotonic() - discovery_started) * 1000.0
-        discovery_manifest = task_workspace / "mac-evidence.json"
-        if discovery_manifest.exists():
-            discovery_manifest.replace(task_workspace / "review-independent-draft-evidence.json")
-        protocol = _blind_review_protocol(
-            task_workspace,
-            assignment,
-            discovery_result,
-            duration_ms=discovery_duration_ms,
-            evidence_hidden=evidence_hidden,
-        )
-        (task_workspace / "review-protocol.json").write_text(
-            json.dumps(protocol, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        emit_telemetry(
-            "review_discovery_completed",
-            task_id=task_id,
-            returncode=discovery_result.returncode,
-            protocol_compliant=protocol["protocol_compliant"],
-            findings=protocol["independent_findings_count"],
-            duration_ms=discovery_duration_ms,
-        )
-        blind_protocol_failed = not bool(protocol["protocol_compliant"])
-
-    if blind_protocol_failed:
-        # The blind treatment is already invalid. Running adjudication would
-        # spend a second model budget on a sample that can no longer be used,
-        # and historically allowed a missing discovery artifact to masquerade
-        # as a semantic code rejection. Preserve the discovery output and make
-        # the review attempt fail distinctly so reviewer selection can retry or
-        # choose another eligible reviewer without re-executing the patch.
-        result = subprocess.CompletedProcess(
-            getattr(discovery_result, "args", ["review_discovery"]),
-            65,
-            getattr(discovery_result, "stdout", "") or "",
-            "\n".join(
-                part
-                for part in (
-                    (getattr(discovery_result, "stderr", "") or "").strip(),
-                    "blind review discovery protocol was not completed",
-                )
-                if part
-            ),
-        )
-        emit_telemetry(
-            "review_protocol_failed",
-            task_id=task_id,
-            level="warning",
-            phase="discovery",
-            protocol_compliant=False,
-        )
-    else:
-        result = _invoke_agent(
-            runner,
-            prompt,
-            task_workspace,
-            str(audit_task_id) if audit_task_id else None,
-            {
-                "execution_kind": "review" if is_review else "task",
-                "timeout": _agent_timeout(),
-                "task": task,
-            },
-        )
+    result = _invoke_agent(
+        runner,
+        prompt,
+        task_workspace,
+        str(audit_task_id) if audit_task_id else None,
+        {
+            "execution_kind": "review" if is_review else "task",
+            "timeout": _agent_timeout(),
+            "task": task,
+        },
+    )
     emit_telemetry(
         "agent_completed",
         task_id=task_id,
@@ -6710,7 +6608,7 @@ def _run_executor(
                 finalize_with_new_file_recovery(task_workspace, task, task_id)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
-    elif not blind_protocol_failed:
+    else:
         try:
             run_deterministic_review_verdict(task_workspace, task, review_context)
         except Exception as exc:  # noqa: BLE001

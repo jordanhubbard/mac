@@ -447,7 +447,6 @@ def _patch_run_executor_planning(monkeypatch, *, tmp_path: Path) -> Dict[str, li
         },
     )
     monkeypatch.setattr(te, "_manifest_is_complete", lambda *a, **kw: True)
-    monkeypatch.setattr(te, "_review_experiment_assignment", lambda t: {})
 
     return state
 

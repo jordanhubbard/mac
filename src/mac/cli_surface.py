@@ -216,7 +216,6 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("pull-request", "pull requests raised from task work"),
             ("workflow", "multi-step workflow definitions and runs"),
             ("eval", "evaluation runs over agent output"),
-            ("optimizer", "model and routing optimization"),
             ("repo", "repositories that tasks execute against"),
             ("artifact", "durable artifacts produced by task work"),
         ),

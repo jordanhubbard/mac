@@ -152,7 +152,6 @@ def test_review_verdict_finalizer_does_not_touch_new_files_in_review_checkout(
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
 
     monkeypatch.setattr(executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None)
-    monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
 
     task = {
         "id": "task-review",
@@ -219,7 +218,6 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "test-attestation-key")
     monkeypatch.setenv("MAC_WORKER_AGENT_ID", "agent-reviewer")
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
-    monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
 
     task = {"id": "task-review", "owner_agent_id": "agent-reviewer"}
     review_context = {"executor_evidence_id": "ev-exec", "review_id": "rv-1"}

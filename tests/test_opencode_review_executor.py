@@ -22,9 +22,6 @@ def _write_exec(path: Path, body: str) -> None:
 def _run_review(
     tmp_path: Path,
     event_text: str,
-    *,
-    blind: bool = False,
-    discovery_event_text: str = "",
 ):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -33,11 +30,6 @@ def _run_review(
         opencode,
         "#!/usr/bin/env sh\n"
         'if [ "$1" = "--version" ]; then echo opencode-test; exit 0; fi\n'
-        "if printf '%s' \"$*\" | grep -q 'evidence-withheld discovery'; then\n"
-        '  if [ -e "$MAC_TASK_WORKSPACE/executor-evidence.json" ]; then exit 9; fi\n'
-        "  cat <<'DISCOVERY_EOF'\n" + discovery_event_text + "\nDISCOVERY_EOF\n"
-        "  exit 0\n"
-        "fi\n"
         "cat <<'EOF'\n" + event_text + "\nEOF\n"
         "exit 0\n",
     )
@@ -74,13 +66,6 @@ def _run_review(
             "executor_evidence_id": "ev_executor",
         }
     }
-    if blind:
-        metadata["review_experiment"] = {
-            "schema": "mac.review_experiment.v1",
-            "experiment_id": "exp-opencode-blind",
-            "arm": "blind",
-            "blind": True,
-        }
     original_task = {
         "id": "task_test",
         "title": "test task",
@@ -205,49 +190,3 @@ def test_opencode_review_approved_event_stream(tmp_path: Path) -> None:
     assert manifest["result"] == "review_completed"
     assert manifest["llm_model"] == "inference-hub/reviewer-model"
     assert manifest["worktree_digest"].startswith("sha256:")
-
-
-def test_opencode_review_blind_discovery_withholds_then_restores_evidence(
-    tmp_path: Path,
-) -> None:
-    discovery_events = json.dumps(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": '```json\n{"findings":[{"severity":"medium","summary":"Independent concern"}],"no_findings_reason":""}\n```',
-                }
-            ],
-        }
-    )
-    final_events = json.dumps(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": '```json\n{"verdict":"approved","summary":"Concern resolved","feedback":"","findings":[]}\n```',
-                }
-            ],
-        }
-    )
-
-    result, manifest = _run_review(
-        tmp_path,
-        final_events,
-        blind=True,
-        discovery_event_text=discovery_events,
-    )
-
-    assert result.returncode == 0, result.stderr + result.stdout
-    assert (tmp_path / "executor-evidence.json").is_file()
-    assert manifest["review_experiment"]["protocol"]["protocol_compliant"] is True
-    assert manifest["independent_findings"] == [
-        {"severity": "medium", "summary": "Independent concern"}
-    ]
-    protocol = json.loads((tmp_path / "review-protocol.json").read_text(encoding="utf-8"))
-    assert protocol["executor_evidence_hidden"] is True
-    assert protocol["independent_findings_count"] == 1
