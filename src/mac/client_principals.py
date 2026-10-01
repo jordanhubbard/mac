@@ -673,11 +673,10 @@ def _expiry_reason_from_registry(
     `_active_mapping_from_registry` drops every inactive record, so a caller
     holding a credential that merely lapsed is indistinguishable from one
     presenting a forged token: both surface as "unknown bearer token". That
-    message names the wrong cause. The documented remedy for a 403 is token
-    *drift* (`mac admin fleet sync-token`), so an operator whose credential
-    simply aged out is sent to repair the wrong layer -- observed on
-    2026-09-23, when an expired hub-admin credential was first investigated as
-    drift.
+    message names the wrong cause: it reads as token *drift*, so an operator
+    whose credential simply aged out is sent to repair the wrong layer --
+    observed on 2026-09-23, when an expired hub-admin credential was first
+    investigated as drift.
 
     Only expiry is reported, and only to a caller that already presented the
     exact token, so this discloses nothing the caller does not hold. Revoked

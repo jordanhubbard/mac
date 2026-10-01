@@ -1431,25 +1431,18 @@ def cmd_fleet_connect(args: argparse.Namespace) -> None:
     terminals and CI logs. --show-token is the deliberate act.
     """
     from mac.fleet_env import resolve as resolve_fleet_env, scoped_var
-    from mac.fleet_creds import fleet_hub_url, load_fleets_config, resolve_fleet_key
+    from mac.fleet_ssh import FleetSshError, fleet_entries, load_fleet_config, resolve_fleet_key
     from mac import mac_paths
 
-    registry = load_fleets_config(getattr(args, "fleets_config", None))
-    fleets = registry.get("fleets") or {}
     requested = getattr(args, "fleet", None) or os.environ.get("MAC_FLEET")
-    fleet_key = resolve_fleet_key(registry, requested) if requested else None
-    if fleet_key is None:
-        # One fleet is the unambiguous case and by far the common one right
-        # for a single-hub install; more than one must be named rather than guessed.
-        if not requested and len(fleets) == 1:
-            fleet_key = next(iter(fleets))
-        else:
-            known = ", ".join(sorted(fleets)) or "(none registered)"
-            raise SystemExit(
-                "no such fleet: %s\nknown fleets: %s"
-                % (requested or "(none given; pass --fleet)", known)
-            )
-    url = fleet_hub_url(registry, fleet_key)
+    try:
+        registry = load_fleet_config(getattr(args, "fleets_config", None))
+        # One fleet (or one marked default) is unambiguous; otherwise the
+        # error names the fleets that exist.
+        fleet_key = resolve_fleet_key(registry, requested)
+    except FleetSshError as exc:
+        raise SystemExit(str(exc)) from None
+    url = str(fleet_entries(registry)[fleet_key].get("hub_url") or "").strip()
     # The environment first, then ~/.mac/.env. Fleet setup WRITES the token to
     # that file without exporting it, so a shell that has not sourced it -- the
     # shell you are in seconds after building a hub, which is exactly when you
@@ -1734,47 +1727,6 @@ def cmd_fleet_creds_sync(args: argparse.Namespace) -> None:
         except Exception as exc:  # noqa: BLE001 - report per-agent, keep going
             results[agent] = {"error": str(exc)}
     _print({"synced": results})
-
-
-def cmd_fleet_sync_token(args: argparse.Namespace) -> None:
-    """auth-token-sync-01: pull the hub's current bearer token into this client.
-
-    The hub accepts only the tokens in its own ~/.mac/mac.env; the client sends
-    MAC_API_TOKEN__<FLEET>. When they drift the hub returns 403 "unknown bearer
-    token". This re-syncs the client from the authoritative source (the hub host,
-    reached out-of-band over SSH).
-    """
-    from mac.fleet_creds import sync_token
-
-    _print(
-        sync_token(
-            args.fleet,
-            fleets_config_path=args.fleets_config,
-            env_path=args.env_file,
-        )
-    )
-
-
-def cmd_fleet_rotate_token(args: argparse.Namespace) -> None:
-    """auth-token-sync-01: graceful bearer-token rotation via MAC_API_TOKENS.
-
-    Default is a dry-run plan. --apply adds a new token alongside the old
-    (overlap window) and advertises it as the new primary; --prune --apply
-    drops the old tokens once every client has rolled over via sync-token.
-    """
-    from mac.fleet_creds import rotate_token
-
-    _print(
-        rotate_token(
-            args.fleet,
-            scopes=tuple(args.scope) if args.scope else ("admin",),
-            prune=args.prune,
-            do_apply=args.apply,
-            restart=args.restart,
-            fleets_config_path=args.fleets_config,
-            env_path=args.env_file,
-        )
-    )
 
 
 def cmd_tenant_register(args: argparse.Namespace) -> None:
@@ -4279,40 +4231,6 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
             row["dispatch_hold"] = bool(row.get("dispatch_hold", False))
             row["unconsumed_control_stream_age_seconds"] = age
     _print(_apply_selector(rows, args, "agent"))
-
-
-def cmd_agent_attestation_recover(args: argparse.Namespace) -> None:
-    """Conditionally recover a missing/stale key into an owner-only manifest.
-
-    The cleartext key is never rendered by the CLI. Fleet deploy relays the
-    manifest under its target-side deployment lock and consumes it only after a
-    second signed proof succeeds.
-    """
-
-    from mac.deployment_attestation import _atomic_private_json, recovery_manifest
-
-    probe_path = Path(args.probe_file).expanduser()
-    probe = json.loads(probe_path.read_text(encoding="utf-8"))
-    if not isinstance(probe, dict):
-        raise MACError("attestation recovery probe must be a JSON object")
-    result = _plane(args).recover_agent_attestation_key(args.agent_id, probe)
-    payload = result.to_dict() if hasattr(result, "to_dict") else result
-    key = payload if isinstance(payload, str) else payload.get("attestation_key")
-    manifest = recovery_manifest(
-        args.agent_id,
-        str(probe.get("deployment_id") or ""),
-        str(key or ""),
-    )
-    destination = Path(args.manifest_out).expanduser()
-    _atomic_private_json(destination, manifest)
-    _print(
-        {
-            "status": "rotation_manifest_written",
-            "agent_id": args.agent_id,
-            "deployment_id": manifest["deployment_id"],
-            "manifest": str(destination),
-        }
-    )
 
 
 def cmd_agent_report_executor_approve(args: argparse.Namespace) -> None:
@@ -8550,15 +8468,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_agent_list, agent_list)
 
-    agent_attestation_recover = agent.add_parser(
-        "attestation-recover",
-        help="admin-only conditional recovery for a missing/stale worker signing key",
-    )
-    agent_attestation_recover.add_argument("agent_id")
-    agent_attestation_recover.add_argument("--probe-file", required=True)
-    agent_attestation_recover.add_argument("--manifest-out", required=True)
-    _set(cmd_agent_attestation_recover, agent_attestation_recover)
-
     report_executor_approve = agent.add_parser(
         "report-executor-approve",
         help="approve the exact current startup-attested OpenShell report executor",
@@ -8822,29 +8731,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_journal_restore, journal_restore)
 
-    # auth-token-sync-01: recover/re-sync a client's bearer token from the hub.
-    fleet_sync_token = fleet.add_parser(
-        "sync-token",
-        help="pull the hub's current MAC_API_TOKEN into ~/.mac/.env as "
-        "MAC_API_TOKEN__<FLEET> (fixes 403 'unknown bearer token' drift)",
-    )
-    fleet_sync_token.add_argument(
-        "--fleet",
-        required=True,
-        help="fleet name to sync (resolves the hub's ssh target from fleets.yaml)",
-    )
-    fleet_sync_token.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
-    )
-    fleet_sync_token.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-        help="client env file to update (default ~/.mac/.env)",
-    )
-    _set(cmd_fleet_sync_token, fleet_sync_token)
-
     # Coding-CLI credential fabric: the operator's CURRENT workstation is the
     # source of truth for claude/codex/cursor auth; workers get it over the
     # fleet's SSH routes, on demand.
@@ -8953,49 +8839,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ghingest_disable.add_argument("project", help="project name")
     _set(cmd_project_ingest_disable, ghingest_disable)
-
-    # auth-token-sync-01: graceful rotation via the overlapping MAC_API_TOKENS map.
-    fleet_rotate_token = fleet.add_parser(
-        "rotate-token",
-        help="rotate the hub bearer token with an overlap window (dry-run unless --apply)",
-    )
-    fleet_rotate_token.add_argument(
-        "--fleet",
-        required=True,
-        help="fleet name to rotate",
-    )
-    fleet_rotate_token.add_argument(
-        "--scope",
-        action="append",
-        help="scope for the new token (repeatable; default admin)",
-    )
-    fleet_rotate_token.add_argument(
-        "--prune",
-        action="store_true",
-        help="end the overlap: drop all but the current token (run after every "
-        "client has synced to the new token)",
-    )
-    fleet_rotate_token.add_argument(
-        "--apply",
-        action="store_true",
-        help="actually mutate the hub + this client (default: dry-run plan only)",
-    )
-    fleet_rotate_token.add_argument(
-        "--restart",
-        action="store_true",
-        help="with --apply, also run the hub restart command over SSH",
-    )
-    fleet_rotate_token.add_argument(
-        "--fleets-config",
-        default=str(mac_paths.fleets_config()),
-        help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
-    )
-    fleet_rotate_token.add_argument(
-        "--env-file",
-        default=str(mac_paths.deploy_env_file()),
-        help="client env file to update (default ~/.mac/.env)",
-    )
-    _set(cmd_fleet_rotate_token, fleet_rotate_token)
 
     mood = sub.add_parser(
         "mood",

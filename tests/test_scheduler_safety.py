@@ -28,18 +28,6 @@ def _register_agent(cp: ControlPlane, name: str, *, capacity: int = 1):
     )
 
 
-def _set_worker_identity_enforced(cp: ControlPlane) -> None:
-    """Seed an already-reviewed mode; readiness flip validation is tested elsewhere."""
-
-    cp.store.execute(
-        "INSERT INTO worker_credential_policy_state ("
-        "singleton_key, mode, inventory_digest, ready_agent_ids, revision, "
-        "updated_by, updated_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("fleet", "enforced", None, "[]", 1, "test", "2026-01-01T00:00:00+00:00"),
-    )
-
-
 def test_claim_transaction_rechecks_dependencies(cp: ControlPlane) -> None:
     worker = _register_agent(cp, "worker")
     prerequisite = cp.create_task("prerequisite")
@@ -508,52 +496,6 @@ def test_lifecycle_http_identity_and_recovery_authority_are_fail_closed(
     assert cp.get_task(force_target.id).state == TaskState.COMPLETED.value
 
 
-def test_unbound_write_and_admin_tokens_cannot_impersonate_workers(
-    cp: ControlPlane,
-) -> None:
-    worker = _register_agent(cp, "bound-only-worker", capacity=3)
-    write_target = cp.create_task("unbound write claim")
-    admin_target = cp.create_task("unbound admin claim")
-    active = cp.create_task("unbound active mutation")
-    _claimed, lease = cp.claim_task(active.id, worker.id, sync_beads=False)
-    _set_worker_identity_enforced(cp)
-    app = create_app(
-        control_plane=cp,
-        auth_tokens={
-            "shared-write": {"scopes": ["write"]},
-            "shared-admin": {"scopes": ["admin"]},
-        },
-    )
-
-    with TestClient(app) as client:
-        write_claim = client.post(
-            "/tasks/%s/claim" % write_target.id,
-            headers={"Authorization": "Bearer shared-write"},
-            params={"agent_id": worker.id},
-        )
-        admin_claim = client.post(
-            "/tasks/%s/claim" % admin_target.id,
-            headers={"Authorization": "Bearer shared-admin"},
-            params={"agent_id": worker.id},
-        )
-        admin_start = client.post(
-            "/tasks/%s/start" % active.id,
-            headers={"Authorization": "Bearer shared-admin"},
-            params={"agent_id": worker.id, "lease_id": lease.id},
-        )
-
-    assert [write_claim.status_code, admin_claim.status_code, admin_start.status_code] == [
-        403,
-        403,
-        403,
-    ]
-    assert "agent-bound token" in write_claim.json()["detail"]
-    assert "agent-bound token" in admin_claim.json()["detail"]
-    assert cp.get_task(write_target.id).lease_id is None
-    assert cp.get_task(admin_target.id).lease_id is None
-    assert cp.get_task(active.id).state == TaskState.CLAIMED.value
-
-
 def test_bound_agent_cannot_mutate_unowned_nonactive_tasks_or_evidence(
     cp: ControlPlane,
 ) -> None:
@@ -697,7 +639,6 @@ def test_review_routes_bind_assignment_claim_and_decision_to_principal(
         "leased_until = NULL WHERE id = ?",
         (TaskState.NEEDS_REVIEW.value, task.id),
     )
-    _set_worker_identity_enforced(cp)
     app = create_app(
         control_plane=cp,
         auth_tokens={
@@ -722,11 +663,6 @@ def test_review_routes_bind_assignment_claim_and_decision_to_principal(
             headers=attacker_headers,
             json={"reviewer_agent_id": assigned.id, "actor": attacker.id},
         )
-        unbound_claim = client.post(
-            "/reviews/%s/claim" % review_id,
-            headers=admin_headers,
-            json={"reviewer_agent_id": assigned.id, "actor": "admin"},
-        )
         valid_claim = client.post(
             "/reviews/%s/claim" % review_id,
             headers=assigned_headers,
@@ -746,7 +682,7 @@ def test_review_routes_bind_assignment_claim_and_decision_to_principal(
             },
         )
 
-    assert [forged_claim.status_code, unbound_claim.status_code] == [403, 403]
+    assert forged_claim.status_code == 403
     assert valid_claim.status_code == 200
     assert valid_claim.json()["claim"]["actor"] == assigned.id
     assert forged_decision.status_code == 403

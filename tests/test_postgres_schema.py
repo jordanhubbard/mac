@@ -222,8 +222,6 @@ EXPECTED_TABLES = [
     "tenants",
     "users",
     "vector_refs",
-    "worker_credential_events",
-    "worker_credential_policy_state",
     "worker_credentials",
     "workflow_drafts",
     "workflow_run_history",
@@ -321,12 +319,15 @@ def test_live_schema_has_every_column_the_ddl_declares(postgres_store, schema_sq
     for row in rows:
         live.setdefault(row["table_name"], set()).add(row["column_name"])
 
+    # schema.sql concatenates immutable migrations, so a column a later
+    # migration drops is still declared in its table's CREATE block.
+    dropped = set(re.findall(r"ALTER TABLE\s+(\w+)\s+DROP COLUMN IF EXISTS\s+(\w+)", schema_sql))
     missing = []
     for table, body in _create_table_bodies(schema_sql).items():
         if table not in live:
             continue
         for column in _declared_column_names(body):
-            if column not in live[table]:
+            if column not in live[table] and (table, column) not in dropped:
                 missing.append("%s.%s" % (table, column))
     assert not missing, "declared in schema.sql but not on the live table: %s" % sorted(missing)
 
@@ -478,6 +479,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0006_drop_rollout_and_deploy_tables",
         "0007_drop_agent_provisioning_requests",
         "0008_drop_self_upgrade_and_release_epoch_tables",
+        "0009_slim_worker_credentials",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -503,6 +505,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0008_drop_self_upgrade_and_release_epoch_tables": (
             "3585d4c4e4b7bdb8acec991e4cea94983bc2adc1f1b14733490bab3ba56a3fac"
+        ),
+        "0009_slim_worker_credentials": (
+            "7ef6348425012dec2d5872a8d845ac07ce14b5050659b615ec5b6f73a0b1e7e8"
         ),
     }
     for migration in MIGRATIONS:

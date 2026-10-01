@@ -202,12 +202,10 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # fleet domain
         ("fleet", "build-distribution"),
         ("fleet", "refresh-context"),
-        ("fleet", "rotate-token"),
         ("fleet", "snapshot"),
         ("fleet", "soul-pull"),
         ("fleet", "soul-audit"),
         ("fleet", "soul-push"),
-        ("fleet", "sync-token"),
         # hermes domain
         ("persona-instance", "context"),
         ("persona-instance", "register"),

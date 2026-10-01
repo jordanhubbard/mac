@@ -299,18 +299,17 @@ mac task stats
 mac agent list
 ```
 
-If the client already has a home-scoped `~/.mac/fleets.yaml` entry with a
-verified SSH route to the hub, it can refresh the fleet-scoped token and use
-the legacy fleet selector:
+If the client already has a home-scoped `~/.mac/fleets.yaml` entry and
+`MAC_API_TOKEN__<FLEET>` in `~/.mac/.env`, it can use the legacy fleet
+selector:
 
 ```console
-mac admin fleet sync-token --fleet my-fleet
 mac --fleet my-fleet diagnostics
 mac --fleet my-fleet task stats
 ```
 
-`mac admin fleet sync-token` copies the historical shared administrator token. Treat
-it as existing-operator recovery, not new-client enrollment. Do not copy
+That token is the historical shared administrator token. Treat it as
+existing-operator recovery, not new-client enrollment. Do not copy
 database credentials, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a different
 operator's complete `~/.mac` directory. New clients should use the scoped SSH
 enrollment and mode-`0600` profile credential above.

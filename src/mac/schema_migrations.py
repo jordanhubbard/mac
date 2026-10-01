@@ -315,6 +315,28 @@ MIGRATIONS: tuple[Migration, ...] = (
         ]) AS name
         """,
     ),
+    Migration(
+        "0009_slim_worker_credentials",
+        _load_sql(MIGRATION_PATH / "0009_slim_worker_credentials.sql"),
+        """
+        SELECT to_regclass(current_schema() || '.worker_credential_events') IS NULL
+           AND to_regclass(current_schema() || '.worker_credential_policy_state') IS NULL
+           AND NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema()
+                     AND table_name = 'worker_credentials'
+                     AND column_name IN (
+                         'fleet',
+                         'environment',
+                         'expected_source_commit',
+                         'expected_runtime_digest',
+                         'required_capabilities',
+                         'package_capable',
+                         'destination'
+                     )
+               )
+        """,
+    ),
 )
 
 
@@ -400,11 +422,19 @@ def _expected_inventory(sql: str) -> tuple[dict[str, set[str]], dict[str, set[st
         for table, body in _table_bodies(sql).items()
         if table not in dropped
     }
+    # Column changes apply in file order, so a column a later migration drops
+    # is not expected to exist.
     for match in re.finditer(
-        r"ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)", sql, re.IGNORECASE
+        r"ALTER TABLE\s+(\w+)\s+(ADD|DROP) COLUMN IF (?:NOT )?EXISTS\s+(\w+)",
+        sql,
+        re.IGNORECASE,
     ):
-        if match.group(1) in tables:
-            tables[match.group(1)].add(match.group(2))
+        table, action, column = match.groups()
+        if table in tables:
+            if action.upper() == "ADD":
+                tables[table].add(column)
+            else:
+                tables[table].discard(column)
     # An index or trigger goes with its table, so one declared on a table a
     # later migration dropped is not expected to exist.
     objects = {

@@ -382,7 +382,6 @@
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/fleet_creds.py",
       "src/mac/fleet_env.py",
       "src/mac/gitops.py",
       "src/mac/hermes_adapter.py",
@@ -403,10 +402,9 @@
     "sources": [
       "deploy/systemd/mac.service",
       "src/mac/api.py",
-      "src/mac/cli.py",
       "src/mac/dispatch.py",
-      "src/mac/fleet_creds.py",
-      "src/mac/fleet_env.py"
+      "src/mac/fleet_env.py",
+      "src/mac/worker_credentials.py"
     ],
     "type": "str"
   },
@@ -456,7 +454,6 @@
     "name": "MAC_ATTESTATION_KEY",
     "retired": false,
     "sources": [
-      "src/mac/deployment_attestation.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
@@ -1150,8 +1147,7 @@
       "src/mac/router_service.py",
       "src/mac/schema_migrations.py",
       "src/mac/store.py",
-      "src/mac/worker.py",
-      "src/mac/worker_credentials.py"
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -1170,8 +1166,7 @@
       "src/mac/router_service.py",
       "src/mac/schema_migrations.py",
       "src/mac/store.py",
-      "src/mac/worker.py",
-      "src/mac/worker_credentials.py"
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -1719,7 +1714,6 @@
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
       "src/mac/dispatch.py",
-      "src/mac/fleet_creds.py",
       "src/mac/fleet_ssh.py",
       "src/mac/hermes_config_surface.py",
       "src/mac/ide_launcher.py",
@@ -1902,7 +1896,6 @@
       "src/mac/agent_provider.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
-      "src/mac/worker_credentials.py",
       "src/mac/worker_token_cli.py"
     ],
     "type": "str"
@@ -7495,83 +7488,6 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker credential agent id.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker credential fingerprint.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_FINGERPRINT",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker credential id.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker credential policy file.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_POLICY_FILE",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker credential runtime digest.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker credential source commit.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker credential version.",
-    "family": "worker",
-    "name": "MAC_WORKER_CREDENTIAL_VERSION",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Worker setting: worker delivery drain seconds.",
     "family": "worker",
     "name": "MAC_WORKER_DELIVERY_DRAIN_SECONDS",
@@ -7653,17 +7569,6 @@
   },
   {
     "default": null,
-    "description": "Worker setting: worker identity mode.",
-    "family": "worker",
-    "name": "MAC_WORKER_IDENTITY_MODE",
-    "retired": false,
-    "sources": [
-      "src/mac/worker_credentials.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Worker setting: worker persona id.",
     "family": "worker",
     "name": "MAC_WORKER_PERSONA_ID",
@@ -7740,8 +7645,7 @@
     "name": "MAC_WORKER_RUNNING_DIGEST",
     "retired": false,
     "sources": [
-      "src/mac/worker.py",
-      "src/mac/worker_credentials.py"
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -7785,7 +7689,6 @@
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
       "src/mac/worker.py",
-      "src/mac/worker_credentials.py",
       "src/mac/worker_token_cli.py"
     ],
     "type": "str"

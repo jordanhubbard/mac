@@ -41,7 +41,7 @@ logged-in user can) and materializes the portable form on the worker. Cursor's
 `CURSOR_AUTH_TOKEN`; treating it as `CURSOR_API_KEY` makes Cursor attempt the
 generated-API-key login flow and reject it.
 
-**Transport rules** (same discipline as `mac admin fleet sync-token`): secrets move
+**Transport rules**: secrets move
 only over the fleet's SSH routes, only on **stdin** — never argv, env,
 stdout, or the hub ledger. The hub never sees the credential; it sees only
 route fields, a SHA-256 route fingerprint, the verification time/result, and a

@@ -84,7 +84,7 @@ Neither root has a single honored resolver, which is the root cause:
 - **`.mac`** — `MAC_HOME` is a **leaky knob**. The canonical `mac_home()`
   (`src/mac/client_principals.py:62`) honors it, but dozens of hot-path modules
   re-implement the path and hard-code `~/.mac` *ignoring* `MAC_HOME`: the ledger
-  (`src/mac/dispatch.py:2811`), fleets registry (`src/mac/fleet_creds.py:121`),
+  (`src/mac/dispatch.py:2811`), fleets registry (`src/mac/fleet_ssh.py`),
   journal, most of `src/mac/cli.py`, OpenShell. Setting `MAC_HOME` today would
   relocate *some* data and orphan the rest — a data-loss trap.
 

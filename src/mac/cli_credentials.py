@@ -23,7 +23,7 @@ Where credentials actually live (verified, not assumed):
   browser-login JWT, not a generated API key, so it is delivered as
   ``CURSOR_AUTH_TOKEN``.
 
-Transport rules match ``mac.fleet_creds``: secret bytes travel over SSH
+Transport rules: secret bytes travel over SSH
 **stdin only** — never argv, never env, never stdout, and never through the
 hub ledger. The remote side writes files 0600, merges env into ``mac.env``
 (0600), then re-runs the coding-agent detector and prints the secret-free

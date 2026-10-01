@@ -117,7 +117,6 @@ class TokenPrincipal:
     credential_fingerprint: Optional[str] = None
     worker_credential_version: Optional[int] = None
     worker_credential_state: Optional[str] = None
-    worker_identity_mode: str = "compatibility"
 
     @property
     def is_admin(self) -> bool:
@@ -194,29 +193,22 @@ class TokenPrincipal:
 
         mac-rreh / mac-kgi5 / mac-wcfy: callers pass actor identifiers
         (``agent_id``, ``sender_agent_id``, ``accessor_agent_id``,
-        ``created_by``) in request bodies / URL paths. Actor-bearing worker
-        endpoints require a per-agent credential: neither a shared write token
-        nor an admin token may turn a payload string into worker authority.
-        Operators use explicit admin/recovery routes; trusted services call the
-        private ControlPlane path after their own authority check.
+        ``created_by``) in request bodies / URL paths. An agent-bound worker
+        token may act only as its own agent. An unbound token (static
+        ``MAC_API_TOKENS`` entry or operator client) may name any agent; the
+        route's scope decides what it may do.
         """
         from mac.worker_credentials import evaluate_worker_actor
 
         decision = evaluate_worker_actor(
-            mode=self.worker_identity_mode,
             principal_agent_id=self.agent_id,
             claimed_agent_id=claimed_agent_id,
         )
-        if decision.allowed:
-            return
-        if decision.reason == "agent_principal_mismatch":
+        if not decision.allowed:
             raise AuthorizationError(
                 "token is bound to agent %s and cannot act as %r"
                 % (self.agent_id, claimed_agent_id)
             )
-        if decision.reason == "legacy_worker_package_link_forbidden":
-            raise AuthorizationError("legacy worker credentials cannot act on package-linked work")
-        raise AuthorizationError("actor-bearing worker endpoint requires an agent-bound token")
 
 
 AuthTokenMapping = Mapping[str, Union[List[str], Dict[str, Any], TokenPrincipal]]
@@ -870,10 +862,6 @@ class AgentRegister(BaseModel):
 class AgentAttestationKeyVerify(BaseModel):
     challenge: Dict[str, Any] = Field(default_factory=dict)
     signature: str
-
-
-class AgentAttestationKeyRecover(BaseModel):
-    probe: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentReportRepositoryExecutorApprove(BaseModel):
@@ -2099,17 +2087,15 @@ def _authorize_request(
     principal = _resolve_principal(token, auth_tokens)
     if principal is None:
         # Name expiry when that is the actual cause. "unknown bearer token" is
-        # true but useless here: the documented remedy for a 403 is token
-        # drift (`mac admin fleet sync-token`), which repairs nothing when the
-        # credential simply aged out and the fix is `mac admin client renew`.
+        # true but useless here: it reads as token drift, when the credential
+        # simply aged out and the fix is `mac admin client renew`.
         detail = explain_expired(token) if explain_expired is not None else None
         if detail:
             client_id = detail.get("client_id") or "client"
             raise AuthorizationError(
                 "expired bearer token: credential %s expired at %s; "
                 "renew it with `mac admin client renew %s` (this is expiry, "
-                "not token drift -- `mac admin fleet sync-token` will not fix it)"
-                % (client_id, detail.get("expires_at"), client_id)
+                "not token drift)" % (client_id, detail.get("expires_at"), client_id)
             )
         raise AuthorizationError("unknown bearer token")
     if not principal.has_scope(required):
@@ -3990,10 +3976,7 @@ def create_app(
     # This gives SSH enrollment immediate issuance/renewal/revocation without a
     # control-plane restart while preserving the static admin recovery token.
     from mac.client_principals import ClientPrincipalProvider
-    from mac.worker_credentials import (
-        WorkerCredentialPolicyProvider,
-        WorkerCredentialPrincipalProvider,
-    )
+    from mac.worker_credentials import WorkerCredentialPrincipalProvider
 
     injected_app = control_plane is not None or db_path is not None
     if injected_app:
@@ -4014,7 +3997,6 @@ def create_app(
     )
     client_registry_seen = bool(client_principals is not None and client_principals.path.exists())
     worker_principals = WorkerCredentialPrincipalProvider(cp.store)
-    worker_identity_policy = WorkerCredentialPolicyProvider(cp.store)
     local_console_service = None
     if local_console_enabled:
         from mac.client_principals import ClientPrincipalStore
@@ -4184,7 +4166,6 @@ def create_app(
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
     app.state.worker_principals = worker_principals
-    app.state.worker_identity_policy = worker_identity_policy
     app.state.local_console_service = local_console_service
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
@@ -4348,13 +4329,6 @@ def create_app(
                     else None
                 ),
             )
-            if principal is not None:
-                principal = replace(
-                    principal,
-                    worker_identity_mode=await asyncio.to_thread(
-                        lambda: worker_identity_policy.mode
-                    ),
-                )
             request.state.principal = principal
         except AuthorizationError as exc:
             status_code = 403
@@ -5827,24 +5801,7 @@ def create_app(
                 # static worker must not be able to relabel itself fungible
                 # and thereby opt into replacement/re-attestation behavior.
                 principal.require_admin()
-        resources = dict(data.get("resources") or {})
-        resources.pop("worker_credential_authenticated", None)
-        if (
-            principal.principal_kind == "worker"
-            and principal.agent_id
-            and principal.agent_id == requested_agent_id
-        ):
-            from mac.worker_credentials import authenticated_credential_resource
-
-            authenticated = authenticated_credential_resource(
-                agent_id=requested_agent_id,
-                principal_id=principal.client_id,
-                token_fingerprint=principal.credential_fingerprint,
-                credential_version=principal.worker_credential_version,
-            )
-            if authenticated:
-                resources["worker_credential_authenticated"] = authenticated
-        data["resources"] = resources
+        data["resources"] = dict(data.get("resources") or {})
         fleet_id = data.pop("fleet_id", None)
         actor = str(data.get("actor") or "human")
         agent = cp.register_agent(
@@ -5904,22 +5861,6 @@ def create_app(
                 body.challenge,
                 body.signature,
             ),
-        }
-
-    @app.post("/agents/{agent_id}/attestation-key/recover")
-    def recover_agent_attestation_key(
-        agent_id: str,
-        body: AgentAttestationKeyRecover,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, str]:
-        # The response contains the new cleartext key. Only the fenced deploy
-        # controller may request it; a bound worker can submit a secret-free
-        # verify probe but can never rotate or retrieve key material.
-        principal.require_admin()
-        _ensure_payload_bounded(body.probe, "agent.attestation.recovery_probe")
-        return {
-            "agent_id": agent_id,
-            "attestation_key": cp.recover_agent_attestation_key(agent_id, body.probe),
         }
 
     @app.post("/agents/{agent_id}/report-repository-executor/approve")
@@ -6418,21 +6359,6 @@ def create_app(
             # must not inherit the last worker's release generation merely
             # because the API clones resources to attach principal facts.
             resources.pop("deployment_generation", None)
-        # This namespace is hub-owned. A legacy/shared token clears any stale
-        # authentication proof; a DB-backed exact worker token replaces it
-        # with facts derived from the resolved bearer principal.
-        resources.pop("worker_credential_authenticated", None)
-        if principal.principal_kind == "worker" and principal.agent_id == agent_id:
-            from mac.worker_credentials import authenticated_credential_resource
-
-            authenticated = authenticated_credential_resource(
-                agent_id=agent_id,
-                principal_id=principal.client_id,
-                token_fingerprint=principal.credential_fingerprint,
-                credential_version=principal.worker_credential_version,
-            )
-            if authenticated:
-                resources["worker_credential_authenticated"] = authenticated
         if resources_value is not None or resources:
             data["resources"] = resources
         return cp.heartbeat_agent(agent_id, **data).to_dict()

@@ -14933,134 +14933,6 @@ class ControlPlane:
         return verify_verification_manifest_signature(key, challenge, signature)
 
     @staticmethod
-    def _validated_deployment_attestation_probe(
-        agent_id: str, probe: Mapping[str, Any]
-    ) -> tuple[str, str, Dict[str, Any], str]:
-        """Validate the secret-free, deployment-owner key probe.
-
-        The probe does not authorize recovery by itself: the API route is
-        admin-only and the fleet deployer additionally holds the target's
-        fenced deployment lock.  Its purpose is to make the recovery decision
-        explicit and auditable while ensuring a valid installed key is never
-        rotated merely because a deploy was rerun.
-        """
-
-        expected_keys = {
-            "schema",
-            "state",
-            "agent_id",
-            "deployment_id",
-            "challenge",
-            "signature",
-        }
-        if not isinstance(probe, Mapping) or set(probe) != expected_keys:
-            raise ValidationError("attestation-key recovery probe is malformed")
-        if probe.get("schema") != "mac.agent_attestation_key_probe.v1":
-            raise ValidationError("attestation-key recovery probe schema is unsupported")
-        if probe.get("agent_id") != agent_id:
-            raise ValidationError("attestation-key recovery probe agent does not match")
-        deployment_id = str(probe.get("deployment_id") or "").strip()
-        if not deployment_id:
-            raise ValidationError("attestation-key recovery probe lacks deployment id")
-        state = str(probe.get("state") or "").strip()
-        challenge = probe.get("challenge")
-        signature = str(probe.get("signature") or "")
-        if state == "missing":
-            if challenge != {} or signature:
-                raise ValidationError("missing-key probe must not carry a signature")
-            return state, deployment_id, {}, ""
-        if state != "present" or not isinstance(challenge, dict):
-            raise ValidationError("attestation-key recovery probe state is unsupported")
-        if set(challenge) != {
-            "schema",
-            "purpose",
-            "agent_id",
-            "deployment_id",
-            "nonce",
-        }:
-            raise ValidationError("attestation-key recovery challenge is malformed")
-        if (
-            challenge.get("schema") != "mac.agent_attestation_challenge.v1"
-            or challenge.get("purpose") != "fleet-deploy-attestation-key-proof"
-            or challenge.get("agent_id") != agent_id
-            or challenge.get("deployment_id") != deployment_id
-            or len(str(challenge.get("nonce") or "")) < 32
-            or not signature.startswith("v1:")
-        ):
-            raise ValidationError("attestation-key recovery challenge is invalid")
-        return state, deployment_id, challenge, signature
-
-    def recover_agent_attestation_key(self, agent_id: str, probe: Mapping[str, Any]) -> str:
-        """Rotate only when the deployment-owned probe is missing or stale.
-
-        This is the deployment recovery primitive.  Unlike the historical
-        worker-side ``--rotate-missing``/``--rotate-invalid`` path, it runs
-        under administrator authority and linearizes the probe decision with
-        the key rotation.  A valid installed key fails closed without change.
-        """
-
-        state, deployment_id, challenge, signature = self._validated_deployment_attestation_probe(
-            agent_id, probe
-        )
-        now = utcnow()
-        with self.store.transaction() as conn:
-            locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-                (agent_id,),
-            )
-            if locked.rowcount != 1:
-                raise NotFoundError("agent not found: %s" % agent_id)
-            row = conn.execute(
-                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?",
-                (agent_id,),
-            ).fetchone()
-            current_key: Optional[str] = None
-            if row is not None and row["attestation_key_ciphertext"]:
-                try:
-                    current_key = self.secrets._decrypt(row["attestation_key_ciphertext"])
-                except Exception:  # noqa: BLE001 - corrupt authority is stale.
-                    current_key = None
-            if (
-                state == "present"
-                and current_key is not None
-                and verify_verification_manifest_signature(current_key, challenge, signature)
-            ):
-                raise ValidationError("attestation key is already valid; recovery rotation refused")
-            key = _generate_attestation_key()
-            conn.execute(
-                """
-                UPDATE agents
-                SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
-                    attestation_key_history_ciphertext = ?,
-                    attestation_key_ciphertext = ?,
-                    attestation_key_rotated_at = ?,
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    self._attestation_history_after_rotation(agent_id, rotated_at=now, conn=conn),
-                    self.secrets._encrypt(key),
-                    now,
-                    now,
-                    agent_id,
-                ),
-            )
-            self._record_agent_lifecycle_event(
-                conn,
-                agent_id,
-                "agent.attestation_key.recovered",
-                "fleet-deploy",
-                {
-                    "agent_id": agent_id,
-                    "deployment_id": deployment_id,
-                    "probe_state": state,
-                    "reason": "missing" if state == "missing" else "stale",
-                },
-                now,
-            )
-        return key
-
-    @staticmethod
     def _report_executor_startup_proof_matches(
         agent_id: str,
         resources: Mapping[str, Any],
@@ -15700,43 +15572,14 @@ class ControlPlane:
             # hiding credentials behind agents.deleted_at lets an intentional
             # later resurrection make every old active bearer valid again.
             # Revoke pending/active principals in the same transaction as the
-            # tombstone and preserve secret-free audit facts. This also repairs
-            # credentials left behind by tombstones created before this rule.
-            credential_rows = conn.execute(
-                "SELECT id, agent_id, credential_version, token_fingerprint "
-                "FROM worker_credentials WHERE agent_id = ? "
-                "AND state IN ('pending_install', 'active')",
-                (agent_id,),
-            ).fetchall()
+            # tombstone. This also repairs credentials left behind by
+            # tombstones created before this rule.
             conn.execute(
                 "UPDATE worker_credentials SET state = 'revoked', "
                 "revoked_at = ?, updated_at = ? WHERE agent_id = ? "
                 "AND state IN ('pending_install', 'active')",
                 (now, now, agent_id),
             )
-            for credential in credential_rows:
-                conn.execute(
-                    "INSERT INTO worker_credential_events ("
-                    "id, principal_id, agent_id, event_type, actor, detail, created_at"
-                    ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        new_id("workercred-event"),
-                        credential["id"],
-                        credential["agent_id"],
-                        "worker_credential.revoked",
-                        actor,
-                        json_dumps(
-                            {
-                                "schema": "mac.worker_credential_event.v1",
-                                "credential_version": int(credential["credential_version"] or 0),
-                                "token_fingerprint": str(credential["token_fingerprint"] or ""),
-                                "state": "revoked",
-                                "reason": "agent_decommissioned",
-                            }
-                        ),
-                        now,
-                    ),
-                )
             if agent.deleted_at:
                 return
             departed = agent

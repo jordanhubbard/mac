@@ -81,48 +81,6 @@ def test_postgres_store_satisfies_protocol(postgres_store) -> None:
     assert isinstance(postgres_store, Store)
 
 
-def test_postgres_fleet_source_runtime_registration_converges_concurrently(
-    postgres_store,
-) -> None:
-    from mac.worker_credentials import ensure_fleet_source_runtime
-
-    source_commit = "d" * 40
-    barrier = threading.Barrier(2)
-    results = []
-    errors = []
-    result_lock = threading.Lock()
-
-    def register() -> None:
-        try:
-            barrier.wait(timeout=10)
-            result = ensure_fleet_source_runtime(postgres_store, source_commit)
-            with result_lock:
-                results.append(result)
-        except Exception as exc:  # pragma: no cover - asserted below
-            with result_lock:
-                errors.append(exc)
-
-    threads = [threading.Thread(target=register) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=20)
-        assert not thread.is_alive()
-
-    assert not errors
-    assert len(results) == 2
-    assert {result["created"] for result in results} == {True, False}
-    assert len({result["runtime_id"] for result in results}) == 1
-    assert len({result["runtime_digest"] for result in results}) == 1
-    assert (
-        postgres_store.query_one(
-            "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
-            (results[0]["runtime_name"],),
-        )["count"]
-        == 1
-    )
-
-
 def test_postgres_delete_agent_serializes_before_credential_revocation(
     postgres_store,
     monkeypatch: pytest.MonkeyPatch,
@@ -199,7 +157,7 @@ def test_postgres_delete_agent_serializes_before_credential_revocation(
 
     def issue_credential() -> None:
         try:
-            result = lifecycle.issue(agent.id, environment="vm", actor="postgres-test")
+            result = lifecycle.issue(agent.id, actor="postgres-test")
             with result_lock:
                 issued.append(result)
         except Exception as exc:  # pragma: no cover - asserted below
@@ -248,19 +206,11 @@ def test_postgres_delete_agent_serializes_before_credential_revocation(
 def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
     postgres_store,
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     """Activation and deletion cannot deadlock on inverted row-lock order."""
 
-    from mac.deploy_env import read_env_file
     from mac.services import ControlPlane
-    from mac.worker_credentials import (
-        WorkerCredentialLifecycle,
-        authenticated_credential_resource,
-        credential_resource_from_env,
-        install_vm_manifest,
-        installation_manifest,
-    )
+    from mac.worker_credentials import WorkerCredentialLifecycle
 
     cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
     machine = cp.register_machine("postgres-delete-activate-host")
@@ -271,26 +221,7 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
         agent_id="agent_postgres_delete_activate",
     )
     lifecycle = WorkerCredentialLifecycle(postgres_store)
-    issue = lifecycle.issue(agent.id, environment="vm", actor="postgres-test")
-    env_path = tmp_path / "worker.env"
-    receipt = install_vm_manifest(
-        installation_manifest(issue), env_path, expected_agent_id=agent.id
-    )
-    env_values = read_env_file(env_path)
-    cp.heartbeat_agent(
-        agent.id,
-        status="idle",
-        health_status="healthy",
-        resources={
-            "worker_credential": credential_resource_from_env(agent.id, env_values),
-            "worker_credential_authenticated": authenticated_credential_resource(
-                agent_id=agent.id,
-                principal_id=issue.record["id"],
-                token_fingerprint=issue.record["token_fingerprint"],
-                credential_version=issue.worker_version,
-            ),
-        },
-    )
+    issue = lifecycle.issue(agent.id, actor="postgres-test")
 
     activation_has_agent_lock = threading.Event()
     permit_activation_to_commit = threading.Event()
@@ -332,9 +263,7 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
 
     def activate_credential() -> None:
         try:
-            result = lifecycle.activate(
-                agent.id, issue.record["id"], receipt=receipt, actor="postgres-test"
-            )
+            result = lifecycle.activate(agent.id, issue.record["id"])
             with result_lock:
                 activated.append(result)
         except Exception as exc:  # pragma: no cover - asserted below

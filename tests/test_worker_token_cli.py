@@ -57,7 +57,7 @@ def _issue(db: str, capsys, *extra: str) -> str:
 def test_issue_prints_token_once_and_makes_it_the_only_active_credential(db, capsys) -> None:
     token = _issue(db, capsys)
     (row,) = _rows(db)
-    assert row["state"] == "active" and row["destination"] == "vm_env"
+    assert row["state"] == "active" and row["activated_at"]
     assert row["token_hash"] == _token_hash(token)
     assert token not in json.dumps(row, default=str)
     expires = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
@@ -65,12 +65,6 @@ def test_issue_prints_token_once_and_makes_it_the_only_active_credential(db, cap
     projected = WorkerCredentialPrincipalProvider(store_on(db)).tokens()
     assert projected[_token_hash(token)]["agent_id"] == "agent_natasha"
     assert projected[_token_hash(token)]["worker_credential_state"] == "active"
-    events = store_on(db).query_all("SELECT event_type, detail FROM worker_credential_events")
-    assert [e["event_type"] for e in events] == [
-        "worker_credential.issued",
-        "worker_credential.activated",
-    ]
-    assert all(token not in str(e["detail"]) for e in events)
 
 
 def test_rotate_supersedes_the_previous_token(db, capsys) -> None:

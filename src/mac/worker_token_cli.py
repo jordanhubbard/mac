@@ -1,7 +1,7 @@
 """``mac admin worker-token``: operator-issued worker bearer tokens.
 
-A small, human-run surface over the existing ``worker_credentials`` lifecycle
-(no schema change).  ``issue`` and ``rotate`` mint a new credential for one
+A small, human-run surface over the ``worker_credentials`` lifecycle.
+``issue`` and ``rotate`` mint a new credential for one
 agent, make it the agent's only active credential, and hand the raw token to
 the operator exactly once: on stdout, in a mode-0600 ``--out`` file, or
 straight into the worker's ``~/.mac/mac.env`` with ``--install HOST``.
@@ -29,8 +29,8 @@ DEFAULT_DAYS = 365
 # Self-contained apart from mac.deploy_env so it works against whatever mac
 # version the worker currently runs.  Every MAC_WORKER_TOKEN / _<FLEET> key
 # the host already uses is rewritten (MAC_WORKER_TOKEN when it has none), and
-# hub-facing aliases that held the previous token move with it -- the same
-# rule install_vm_manifest applies during a deploy.
+# hub-facing aliases that held the previous token move with it, so no copy of
+# the old token survives on the host.
 REMOTE_ENV_UPDATE = r"""
 import sys
 from pathlib import Path
@@ -128,7 +128,7 @@ def _lifecycle(args: argparse.Namespace) -> Any:
     from mac.worker_credentials import WorkerCredentialLifecycle
 
     # Row-level credential changes only; never replay schema DDL against the
-    # live hub authority (see mac.worker_credentials.main).
+    # live hub authority.
     dsn = getattr(args, "db", None)
     store = (
         open_postgres_store(dsn, initialize_schema=False)
@@ -165,9 +165,7 @@ def cmd_worker_token_issue(args: argparse.Namespace) -> None:
         raise SystemExit("--days must be at least 1")
     lifecycle = _lifecycle(args)
     actor = args.actor or "%s@%s" % (getpass.getuser(), socket.gethostname())
-    issued = lifecycle.issue(
-        args.agent_id, environment="vm", expires_in=args.days * 86400, actor=actor
-    )
+    issued = lifecycle.issue(args.agent_id, expires_in=args.days * 86400, actor=actor)
     principal_id = issued.record["id"]
     token = issued.token
     if args.out:
@@ -181,21 +179,21 @@ def cmd_worker_token_issue(args: argparse.Namespace) -> None:
             if exc.token_installed:
                 # The host already has the new token: activating it is the only
                 # state in which the worker can authenticate once restarted.
-                lifecycle.activate_operator_issued(args.agent_id, principal_id, actor=actor)
+                lifecycle.activate(args.agent_id, principal_id)
                 print(
                     "worker-token: %s; the new credential is active -- restart mac-agent "
                     "and hermes-gateway on %s by hand" % (exc, args.install),
                     file=sys.stderr,
                 )
                 raise SystemExit(1) from None
-            lifecycle.revoke_operator_issued(args.agent_id, principal_id, actor=actor)
+            lifecycle.revoke(args.agent_id, principal_id)
             print(
                 "worker-token: %s; the new credential was revoked and the previous one "
                 "is still active" % exc,
                 file=sys.stderr,
             )
             raise SystemExit(1) from None
-    record = lifecycle.activate_operator_issued(args.agent_id, principal_id, actor=actor)
+    record = lifecycle.activate(args.agent_id, principal_id)
     meta = _summary(
         record,
         token_written_to=str(Path(args.out).expanduser()) if args.out else None,
