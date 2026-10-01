@@ -1873,10 +1873,11 @@ called out by the follow-up dead-code task (task_251b3796) — <code>changeset_a
 <code>openclaw_checkpoint_gc</code>, <code>openclaw_delivery_continuity</code>,
 <code>openshell_static_runtime_refresh</code>, <code>remote_session</code>, <code>reported_version</code>,
 <code>skill_auto_repair</code> — and their tests are <strong>deleted</strong> in the current tree; git
-history retains them if any is wanted for real. The two survivors,
-<code>predispatch_conflict</code> and <code>investigation_artifacts</code>, are <strong>not</strong> abandoned:
-each is wired to a real, behaviour-exercising test and carries a dated owner
-and a concrete wiring plan in §0.</p>
+history retains them if any is wanted for real. Of the two survivors,
+<code>investigation_artifacts</code> is <strong>not</strong> abandoned: it is wired to a real,
+behaviour-exercising test and carries a dated owner and a concrete wiring plan
+in §0. The other, <code>predispatch_conflict</code>, passed its 2026-09-30 re-audit date
+still unwired and was <strong>deleted</strong> with its test on 2026-10-01 (§0.2).</p>
 </blockquote>
 <h2 id="0-current-tree-resolution-2026-08-18-supersedes-45">0. Current-tree resolution (2026-08-18) — supersedes §4/§5<a class="headerlink" href="#0-current-tree-resolution-2026-08-18-supersedes-45" title="Permanent link">&para;</a></h2>
 <p>This section decides each still-present candidate from the twelve-module
@@ -1917,10 +1918,10 @@ caller and design contract.</p>
 <tbody>
 <tr>
 <td><code>predispatch_conflict</code></td>
-<td>fleet dead-code steward, recorded 2026-08-18</td>
-<td><code>tests/test_predispatch_conflict.py</code> drives <code>check_predispatch_conflict</code> against a real temp git repo (real <code>git merge-tree</code>, not mocked)</td>
-<td>Consumed by dispatch-time ready-task selection as the symmetric, earlier counterpart to the land-time gate: <code>check_predispatch_conflict</code> wraps <code>mac.merge_queue.validate_projected_merge</code> (<code>src/mac/merge_queue.py</code>) the way <code>mac.auto_land.decide_land</code> wraps the land-time gate. Integration point: the ready-task selection / scheduler path (<code>mac.dispatch.ready_tasks</code> and the hub-side selector it fronts), which attaches the advisory verdict to task evidence or re-orders to prefer non-conflicting tasks. Design contract and intended behaviour: <code>docs/archive/field-notes/investigation-predispatch-conflict-5a43ad.md</code>. Trigger to wire: the first dispatch task that adds conflict-aware ordering.</td>
-<td>2026-09-30</td>
+<td><strong>DELETED 2026-10-01</strong></td>
+<td>—</td>
+<td>Never wired by its 2026-09-30 re-audit date. Deleted with <code>tests/test_predispatch_conflict.py</code> when the review/merge pipeline was simplified; git history retains it.</td>
+<td>—</td>
 </tr>
 <tr>
 <td><code>investigation_artifacts</code></td>
