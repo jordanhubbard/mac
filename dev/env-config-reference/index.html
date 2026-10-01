@@ -3670,13 +3670,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Deployment setting: deploy lock takeover.</td>
 </tr>
 <tr>
-<td><code>MAC_DEPLOY_MEMORY_EMBED_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy memory embed model.</td>
-</tr>
-<tr>
 <td><code>MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -4725,41 +4718,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: dispatch priority aging seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_DREAM_AUTO_PROMOTE</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: dream auto promote.</td>
-</tr>
-<tr>
-<td><code>MAC_DREAM_MAX_RETIRE_PER_RUN</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: dream max retire per run.</td>
-</tr>
-<tr>
-<td><code>MAC_DREAM_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: dream model.</td>
-</tr>
-<tr>
-<td><code>MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: dream model retry budget seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_DREAM_MODEL_TIMEOUT_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: dream model timeout seconds.</td>
 </tr>
 <tr>
 <td><code>MAC_EVIDENCE_ARTIFACT_MAX_BYTES</code></td>
@@ -6274,90 +6232,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Memory setting: memory embedding dim.</td>
 </tr>
 <tr>
-<td><code>MAC_MEMORY_EMBED_API_KEY</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory embed api key.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_EMBED_BACKEND</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory embed backend.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_EMBED_BASE_URL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory embed base url.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_EMBED_DIM</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory embed dim.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_EMBED_INPUT_TYPE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory embed input type.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_EMBED_MODEL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory embed model.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_HEALTH_SCAN_LIMIT</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory health scan limit.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_HEALTH_TICK_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory health tick seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_INGESTION_MAX_AGE_HOURS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory ingestion max age hours.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_PROMOTION_ENABLED</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory promotion enabled.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_PROMOTION_MAX_PER_PASS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory promotion max per pass.</td>
-</tr>
-<tr>
-<td><code>MAC_MEMORY_PROMOTION_MIN_AGE_DAYS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>memory</td>
-<td>Memory setting: memory promotion min age days.</td>
-</tr>
-<tr>
 <td><code>MAC_MEMORY_TOPOLOGY_FILE</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -6447,34 +6321,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: model swap eval golden set.</td>
-</tr>
-<tr>
-<td><code>MAC_NAP_TICK_ENABLED</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nap tick enabled.</td>
-</tr>
-<tr>
-<td><code>MAC_NAP_TICK_INITIAL_DELAY_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nap tick initial delay seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_NAP_TICK_INTERVAL_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nap tick interval seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_NAP_TICK_MAX_AGENTS_PER_TICK</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: nap tick max agents per tick.</td>
 </tr>
 <tr>
 <td><code>MAC_NEMOCLAW_AGENT_ID</code></td>
@@ -9828,13 +9674,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: toolchain root.</td>
-</tr>
-<tr>
-<td><code>MAC_TRANSCRIPT_VECTOR_INDEX</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: transcript vector index.</td>
 </tr>
 <tr>
 <td><code>MAC_UNIT_BACKUP</code></td>

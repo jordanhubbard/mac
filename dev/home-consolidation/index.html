@@ -2078,6 +2078,11 @@ drop the legacy subtree entirely and remove the compat symlinks.</p>
   <strong>read-old / write-new / symlink-bridge</strong> mode so no worker breaks mid-fleet.</li>
 </ul>
 <h2 id="5b-dream-cycle-learning-two-systems-one-orphan-executed">5b. Dream-cycle learning: two systems, one orphan (executed)<a class="headerlink" href="#5b-dream-cycle-learning-two-systems-one-orphan-executed" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>Update 2026-09-30:</strong> MAC's nap/dream pipeline, <code>dream_log_import.py</code> and
+<code>mac_paths.dream_logs_dir()</code> described below were removed. The historical
+<code>dream:*</code> and <code>nap_summary</code> records stay in <code>memory_records</code>.</p>
+</blockquote>
 <p>Investigation of the dream/learning capability found <strong>two</strong> dream systems:</p>
 <ol>
 <li><strong>MAC's durable pipeline (correct, alive).</strong> <code>nap_consolidator</code> walks each

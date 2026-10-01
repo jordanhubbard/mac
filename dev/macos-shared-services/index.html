@@ -1753,21 +1753,11 @@ replacement. A readiness failure exits nonzero; existing vector data is retained
 <code>QDRANT_DATA_DIR</code>, <code>QDRANT_BIND_ADDR</code>, and <code>QDRANT_PORT</code>. Use the existing data
 directory when updating a working installation. The wrapper and service env live
 under the selected <code>MAC_HOME</code>; the launchd plist belongs to the invoking account.</p>
-<p>Dream scheduling remains inside the hub's <code>NapTicker</code>, controlled by
-<code>MAC_NAP_TICK_ENABLED</code> and its existing configuration. The nap cycle calls
-<code>run_dream_cycle</code> against the hub's database authority and performs memory
-promotion. This installer neither enables that scheduler nor starts a second
-database authority. Check the hub's nap status and configuration to establish
-that scheduling is enabled and working; a successful Qdrant install does not
-prove it.</p>
-<p>The former <code>com.mac.dream-cycle</code> plist embedded an account-specific Python path
-and database URL. It also scheduled dreams independently of the hub's existing
-nap cycle. The installer no longer creates this job or copies static plists.
-If an existing standalone dream plist or loaded job is found, installation stops
-before changing services. Inspect that job's actual command, current activity,
-and hub scheduling before retiring or migrating it. An operator-customized job
-is preserved, not silently overwritten or removed. Existing Hermes personality,
-memory, and gateway services are outside this installer's scope.</p>
+<p>MAC no longer schedules dreams or naps: the hub's nap ticker and dreaming were
+removed on 2026-09-30, and this installer starts no scheduler and no second
+database authority. A standalone <code>com.mac.dream-cycle</code> launchd job left over from
+an older install is not inspected or removed here; retire it by hand if present. Existing Hermes personality, memory, and gateway
+services are outside this installer's scope.</p>
 
 
 

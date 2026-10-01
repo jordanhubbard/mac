@@ -1961,6 +1961,13 @@ revision is a product decision, not a mac-internal refactor.</p>
 contract in the module docstring (child task).</p>
 <hr />
 <h3 id="module-2-nap_consolidatorpy-stay-in-mac-contract-formally-redefined">Module 2: <code>nap_consolidator.py</code> — <strong>Stay in mac; contract formally redefined</strong><a class="headerlink" href="#module-2-nap_consolidatorpy-stay-in-mac-contract-formally-redefined" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p><strong>Update 2026-09-30:</strong> <code>nap_consolidator.py</code>, the nap ticker, dreaming and the
+vector memory tier (recall, promotion, <code>/v1/memory/dreams/recall</code>) were
+removed. Naps and dreams no longer exist in MAC; the <code>nap_*</code> and <code>dream_*</code>
+tables remain until a later migration drops them. Mood (Module 1) and
+<code>soul_snapshot.py</code> (Module 3) are unaffected.</p>
+</blockquote>
 <p><strong>Finding:</strong> <code>nap_consolidator.py</code> (612 lines) does two things:</p>
 <ol>
 <li>
