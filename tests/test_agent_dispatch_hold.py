@@ -1302,6 +1302,53 @@ def test_hold_then_resume_restores_availability():
     assert reason_after != "agent_dispatch_held"
 
 
+def test_fleet_update_hold_cycle_heartbeats_and_claims_without_release_epochs():
+    """The worker path fleet-update drives, end to end over HTTP.
+
+    Release epochs used to fence claim, heartbeat and credential changes with
+    an "is this agent reserved by an open epoch" check. Epochs and their tables
+    are gone, so a held worker must still heartbeat, and once its hold is
+    released it must claim and heartbeat exactly as if no epoch ever existed.
+    """
+    cp = _make_cp()
+    agent = _register_agent(cp, "fleet-update-worker")
+    client = TestClient(create_app(control_plane=cp))
+    for table in ("fleet_release_epochs", "fleet_release_epoch_agents", "fleet_upgrades"):
+        assert cp.store.query_one("SELECT to_regclass(?) AS rel", (table,))["rel"] is None
+    reason = "fleet-update 0123456789ab"
+    task = cp.create_task("work queued while the worker is updated")
+
+    held = client.post("/agents/%s/dispatch-hold" % agent.id, json={"reason": reason})
+    assert held.status_code == 200
+    beat = client.post(
+        "/agents/%s/heartbeat" % agent.id,
+        json={"status": "idle", "health_status": "healthy"},
+    )
+    assert beat.status_code == 200
+    assert beat.json()["dispatch_hold_reason"] == reason
+    refused = client.post("/agents/%s/claim-next" % agent.id, json={})
+    assert refused.status_code == 200
+    assert cp.get_task(task.id).state == "open"
+
+    released = client.post(
+        "/agents/%s/dispatch-hold/release" % agent.id, json={"reason": reason}
+    )
+    assert released.status_code == 200
+    assert released.json()["released"] is True
+
+    claimed = client.post(
+        "/tasks/%s/claim" % task.id, params={"agent_id": agent.id, "lease_seconds": 60}
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["lease"]["agent_id"] == agent.id
+    beat = client.post(
+        "/agents/%s/heartbeat" % agent.id,
+        json={"status": "busy", "health_status": "healthy"},
+    )
+    assert beat.status_code == 200, beat.text
+    assert beat.json()["dispatch_hold"] is False
+
+
 def test_two_zero_telemetry_expiries_auto_quarantine_agent(monkeypatch):
     monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
     cp = _make_cp()

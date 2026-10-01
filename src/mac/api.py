@@ -29,7 +29,6 @@ from typing import (
     Dict,
     Iterable,
     List,
-    Literal,
     Mapping,
     Optional,
     Tuple,
@@ -39,7 +38,7 @@ from typing import (
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from mac import __version__
@@ -1192,56 +1191,6 @@ class DispatchHoldBatchTransitionRequest(DispatchHoldBatchReleaseRequest):
     successor_reason: str
 
 
-class FleetReleaseAttestationCandidateRequest(BaseModel):
-    key: SecretStr
-
-
-class FleetReleaseEpochParticipantRequest(BaseModel):
-    agent_id: str
-    expected_dispatch_hold: bool
-    expected_hold_reason: Optional[str] = None
-    expected_hold_at: Optional[str] = None
-    generation: str
-    baseline_seen: str
-    principal_id: str
-    principal_mode: Literal["current", "pending"]
-    attestation_candidate: Optional[FleetReleaseAttestationCandidateRequest] = None
-    report_executor_action: Literal["preserve", "approve", "revoke"] = "preserve"
-    report_executor_attestation: Optional[Dict[str, Any]] = None
-
-
-class FleetReleaseEpochOpenRequest(BaseModel):
-    epoch_id: str
-    participants: List[FleetReleaseEpochParticipantRequest] = Field(default_factory=list)
-    successor_hold_reason: Optional[str] = None
-    desired_worker_credential_mode: Optional[Literal["compatibility", "enforced"]] = None
-
-
-class FleetReleaseEpochCommitRequest(BaseModel):
-    identity_sha256: str
-
-
-class FleetReleaseAttestationProofRequest(BaseModel):
-    challenge: Dict[str, Any] = Field(default_factory=dict)
-    signature: str
-
-
-class FleetReleaseEpochParticipantProofRequest(BaseModel):
-    agent_id: str
-    install_receipt: Dict[str, Any] = Field(default_factory=dict)
-    attestation_proof: Optional[FleetReleaseAttestationProofRequest] = None
-    report_executor_startup_timestamp: Optional[str] = None
-
-
-class FleetReleaseEpochProveRequest(FleetReleaseEpochCommitRequest):
-    proofs: List[FleetReleaseEpochParticipantProofRequest] = Field(default_factory=list)
-
-
-class FleetReleaseEpochAbortRequest(FleetReleaseEpochCommitRequest):
-    reason: str
-    disposition: str = "auto"
-
-
 class BreakGlassAuthorizeRequest(BaseModel):
     agent_id: str
     reason: str
@@ -1900,72 +1849,6 @@ class MemoryRemember(BaseModel):
     actor: Optional[str] = None
 
 
-class SourceReleaseCreate(BaseModel):
-    repository_id: str
-    repository_name: str
-    canonical_remote_url: str
-    commit_sha: str
-    canonical_ref: str
-    tree_digest: str
-    status: str = "draft"
-    artifact_digest: Optional[str] = None
-    image_digest: Optional[str] = None
-    created_by_task_id: Optional[str] = None
-    review_evidence_id: Optional[str] = None
-    publication_evidence_id: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class FleetDesiredSourceUpdate(BaseModel):
-    release_id: str
-    request_id: str
-    reason: str
-    fleet_id: Optional[str] = None
-    environment_id: Optional[str] = None
-    rollout_policy: str = "immediate"
-    paused: bool = False
-    expected_generation: Optional[int] = None
-
-
-class FleetUpgradeCreate(BaseModel):
-    fleet_id: str
-    idempotency_key: str
-    target_policy: str
-    reason: str
-    requested_release_id: Optional[str] = None
-    slack_provenance: Dict[str, Any] = Field(default_factory=dict)
-    recovery_policy: str = "retain-upgraded-hub"
-
-
-class FleetUpgradeCancel(BaseModel):
-    reason: str
-
-
-class FleetUpgradeStage(BaseModel):
-    branch: str = "main"
-    required_checks: List[str] = Field(default_factory=list)
-
-
-class FleetUpgradeArm(BaseModel):
-    service: str
-    health_url: str
-    attestation_url: str
-    authorization_ttl_seconds: int = 900
-
-
-class FleetUpgradeEpochOpen(BaseModel):
-    participants: List[Dict[str, Any]]
-
-
-class FleetUpgradeEpochProve(BaseModel):
-    proofs: List[Dict[str, Any]]
-
-
-class FleetUpgradeEpochAbort(BaseModel):
-    reason: str
-    disposition: str = "restore"
-
-
 class EvalSetCreate(BaseModel):
     name: str
     scoring: str = "higher_is_better"
@@ -2141,12 +2024,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # are matched earlier and keep the `agent` scope, so a worker still
         # receives and acknowledges directives normally.
         return "admin"
-    if path == "/fleet-upgrades" or path.startswith("/fleet-upgrades/"):
-        if method == "GET":
-            return "upgrade"
-        if path == "/fleet-upgrades" or path.endswith("/cancel"):
-            return "upgrade"
-        return "deploy"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
@@ -2189,8 +2066,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path.startswith("/dispatch"):
         return "dispatch"
-    if path.startswith("/source-releases") or path.startswith("/fleet-desired-source"):
-        return "read" if method == "GET" else "deploy"
     if path.startswith("/secrets") or path.startswith("/secret-audits"):
         return "secret"
     if path.startswith("/runtimes") or path.startswith("/runtime-deltas"):
@@ -4258,11 +4133,7 @@ def create_app(
         # the try, so one failing service skipped the finally entirely and left
         # every service started before it running as an orphaned daemon thread
         # against a control plane the app then abandoned.
-        # A replacement hub claims only digest-bound supervisor receipts from
-        # durable storage. No conversational state participates in recovery.
-        cp.resume_fleet_upgrades(actor="hub-startup")
         services: List[Tuple[str, Callable[[], Any], Callable[[], Any]]] = [
-            ("fleet_upgrade", cp.fleet_upgrades.start, cp.fleet_upgrades.stop),
             ("hub_tick", lambda: _start_hub_tick_loop(_app, cp), lambda: _stop_hub_tick_loop(_app)),
             (
                 "retention",
@@ -6263,19 +6134,6 @@ def create_app(
             "agents": [agent.to_dict() for agent in agents],
         }
 
-    @app.get("/agents/dispatch-hold/authority")
-    def dispatch_hold_authority(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Return the durable hub identity used to bind a fleet transaction."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return {
-            "schema": "mac.fleet_release_hub_authority.v1",
-            "hub_authority_id": cp.fleet_release_epochs.hub_authority_id,
-        }
-
     @app.get("/agents/dispatch-hold/epochs/{epoch_id}")
     def dispatch_hold_epoch_status(
         epoch_id: str,
@@ -6286,104 +6144,7 @@ def create_app(
 
         principal.refuse_tenant_bound()
         principal.require_admin()
-        if identity_sha256.startswith("sha256:"):
-            return cp.fleet_release_epochs.status(epoch_id, identity_sha256)
         return cp.agent_dispatch_hold_epoch_status(epoch_id, identity_sha256)
-
-    @app.get("/agents/dispatch-hold/epochs/{epoch_id}/readiness")
-    def dispatch_hold_epoch_pre_prove_readiness(
-        epoch_id: str,
-        identity_sha256: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Fail closed unless the exact pending cohort is ready to prove."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.fleet_release_epochs.pre_prove_readiness(epoch_id, identity_sha256)
-
-    @app.post("/agents/dispatch-hold/epochs/open")
-    def open_fleet_release_epoch(
-        body: FleetReleaseEpochOpenRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Atomically reserve one exact cohort without promoting authority."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        participants: List[Dict[str, Any]] = []
-        for item in body.participants:
-            value = item.model_dump(exclude={"attestation_candidate"})
-            if item.attestation_candidate is not None:
-                value["attestation_candidate"] = {
-                    "key": item.attestation_candidate.key.get_secret_value(),
-                }
-            participants.append(value)
-        return cp.fleet_release_epochs.open_epoch(
-            body.epoch_id,
-            participants,
-            successor_hold_reason=body.successor_hold_reason,
-            desired_policy_mode=body.desired_worker_credential_mode,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/prove")
-    def prove_fleet_release_epoch(
-        epoch_id: str,
-        body: FleetReleaseEpochProveRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Verify exact post-apply evidence without promoting authority."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        proofs: List[Dict[str, Any]] = []
-        for item in body.proofs:
-            value = item.model_dump(exclude={"attestation_proof"})
-            value["attestation_proof"] = (
-                item.attestation_proof.model_dump() if item.attestation_proof is not None else None
-            )
-            proofs.append(value)
-        return cp.fleet_release_epochs.prove(
-            epoch_id,
-            body.identity_sha256,
-            proofs,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/commit")
-    def commit_fleet_release_epoch(
-        epoch_id: str,
-        body: FleetReleaseEpochCommitRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Promote identity, approval, policy, and holds in one transaction."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.fleet_release_epochs.commit(
-            epoch_id,
-            body.identity_sha256,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
-
-    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/abort")
-    def abort_fleet_release_epoch(
-        epoch_id: str,
-        body: FleetReleaseEpochAbortRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Discard epoch staging and restore each exact pre-open authority."""
-
-        principal.refuse_tenant_bound()
-        principal.require_admin()
-        return cp.fleet_release_epochs.abort(
-            epoch_id,
-            body.identity_sha256,
-            reason=body.reason,
-            disposition=body.disposition,
-            actor=principal.client_id or principal.agent_id or "admin",
-        )
 
     @app.post("/agents/dispatch-hold/transition-batch")
     def transition_dispatch_holds_batch(
@@ -8027,215 +7788,6 @@ def create_app(
             desired_generation=body.desired_generation,
             release_id=body.release_id,
         )
-
-    @app.post("/source-releases")
-    def register_source_release(
-        body: SourceReleaseCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id:
-            raise AuthorizationError("agent credentials cannot publish source releases")
-        actor = str(principal.human_id or principal.client_id or "").strip()
-        if not actor:
-            raise AuthorizationError("source release publication requires a bound principal")
-        return cp.register_source_release(created_by=actor, **_data(body)).to_dict()
-
-    @app.get("/source-releases")
-    def list_source_releases(
-        repository_id: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        principal.refuse_tenant_bound()
-        return [
-            item.to_dict()
-            for item in cp.list_source_releases(
-                repository_id=repository_id,
-                status=status,
-                limit=limit,
-            )
-        ]
-
-    @app.get("/source-releases/{release_id}")
-    def get_source_release(
-        release_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        return cp.get_source_release(release_id).to_dict()
-
-    @app.post("/fleet-desired-source")
-    def set_fleet_desired_source(
-        body: FleetDesiredSourceUpdate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id:
-            raise AuthorizationError("agent credentials cannot set fleet desired source")
-        actor = str(principal.human_id or principal.client_id or "").strip()
-        if not actor:
-            raise AuthorizationError("desired-source mutation requires a bound principal")
-        return cp.set_fleet_desired_source(actor=actor, **_data(body)).to_dict()
-
-    @app.post("/fleet-upgrades")
-    def request_fleet_upgrade(
-        body: FleetUpgradeCreate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id or not principal.human_id:
-            raise AuthorizationError(
-                "fleet upgrade requests require a human-bound elevated credential"
-            )
-        actor = str(principal.client_id or principal.human_id)
-        return cp.request_fleet_upgrade(
-            requested_by_human=principal.human_id,
-            requested_by_principal=actor,
-            **_data(body),
-        )
-
-    @app.get("/fleet-upgrades")
-    def list_fleet_upgrades(
-        fleet_id: Optional[str] = Query(default=None),
-        state: Optional[str] = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        principal.refuse_tenant_bound()
-        return cp.list_fleet_upgrades(fleet_id=fleet_id, state=state, limit=limit)
-
-    @app.get("/fleet-upgrades/{upgrade_id}")
-    def get_fleet_upgrade(
-        upgrade_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        return cp.get_fleet_upgrade(upgrade_id)
-
-    @app.get("/fleet-upgrades/{upgrade_id}/events")
-    def get_fleet_upgrade_events(
-        upgrade_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> List[Dict[str, Any]]:
-        principal.refuse_tenant_bound()
-        return cp.fleet_upgrade_events(upgrade_id)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/cancel")
-    def cancel_fleet_upgrade(
-        upgrade_id: str,
-        body: FleetUpgradeCancel,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        if principal.agent_id or not principal.human_id:
-            raise AuthorizationError(
-                "fleet upgrade cancellation requires a human-bound elevated credential"
-            )
-        return cp.cancel_fleet_upgrade(
-            upgrade_id,
-            actor=principal.human_id,
-            reason=body.reason,
-        )
-
-    @app.post("/fleet-upgrades/{upgrade_id}/stage")
-    def stage_fleet_upgrade(
-        upgrade_id: str,
-        body: FleetUpgradeStage,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet upgrade staging requires a bound deploy principal")
-        return cp.stage_fleet_upgrade(
-            upgrade_id,
-            actor=actor,
-            branch=body.branch,
-            explicit_required_checks=body.required_checks,
-        )
-
-    @app.post("/fleet-upgrades/{upgrade_id}/arm")
-    def arm_fleet_upgrade(
-        upgrade_id: str,
-        body: FleetUpgradeArm,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet upgrade arming requires a bound deploy principal")
-        return cp.arm_fleet_upgrade(upgrade_id, actor=actor, **_data(body))
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/open")
-    def open_fleet_upgrade_epoch(
-        upgrade_id: str,
-        body: FleetUpgradeEpochOpen,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch open requires a bound deploy principal")
-        return cp.open_fleet_upgrade_epoch(upgrade_id, body.participants, actor=actor)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/prove")
-    def prove_fleet_upgrade_epoch(
-        upgrade_id: str,
-        body: FleetUpgradeEpochProve,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch proof requires a bound deploy principal")
-        return cp.prove_fleet_upgrade_epoch(upgrade_id, body.proofs, actor=actor)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/commit")
-    def commit_fleet_upgrade_epoch(
-        upgrade_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch commit requires a bound deploy principal")
-        return cp.commit_fleet_upgrade_epoch(upgrade_id, actor=actor)
-
-    @app.post("/fleet-upgrades/{upgrade_id}/epoch/abort")
-    def abort_fleet_upgrade_epoch(
-        upgrade_id: str,
-        body: FleetUpgradeEpochAbort,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        actor = str(principal.human_id or principal.client_id or "")
-        if principal.agent_id or not actor:
-            raise AuthorizationError("fleet epoch abort requires a bound deploy principal")
-        return cp.abort_fleet_upgrade_epoch(
-            upgrade_id,
-            actor=actor,
-            reason=body.reason,
-            disposition=body.disposition,
-        )
-
-    @app.get("/source-convergence")
-    def source_convergence_status(
-        fleet_id: Optional[str] = Query(default=None),
-        limit: int = Query(default=250, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        return cp.source_convergence_status(fleet_id=fleet_id, limit=limit)
-
-    @app.post("/source-convergence/tick")
-    def tick_source_convergence(
-        limit: int = Query(default=100, ge=1, le=1000),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.tick_source_convergence(limit=limit)
 
     @app.post("/agentbus/artifact-publish")
     def publish_agentbus_artifact(

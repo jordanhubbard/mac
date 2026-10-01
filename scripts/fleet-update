@@ -91,6 +91,11 @@ hub_dsn() { ( set +u -a; . "$MAC_HOME/mac.env"; printf '%s' "${MAC_DATABASE_URL:
 pip_install() {
   if command -v uv > /dev/null; then uv pip install -q --python "$VENV/bin/python" -e "$SRC"; else "$VENV/bin/pip" install -q -e "$SRC"; fi
 }
+# deploy/bin/mac-service ignores ~/.mac/current. A hub still running the
+# mac-service that deploy/fleet-node-install.sh generated reads it: that wrapper
+# runs ~/.mac/current/source only when its HEAD equals current/source-commit.
+# Writing the deployed sha keeps such a wrapper on ~/.mac/src/mac until the
+# wrapper is replaced.
 write_current() {
   mkdir -p "$MAC_HOME/current"
   printf '%s\n' "$1" > "$MAC_HOME/current/source-commit"

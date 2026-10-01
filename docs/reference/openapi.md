@@ -30,13 +30,7 @@ request and response definitions.
 | `GET` | `/agents` | List Agents |
 | `POST` | `/agents` | Register Agent |
 | `POST` | `/agents/bulk` | Bulk Update Agents |
-| `GET` | `/agents/dispatch-hold/authority` | Dispatch Hold Authority |
-| `POST` | `/agents/dispatch-hold/epochs/open` | Open Fleet Release Epoch |
 | `GET` | `/agents/dispatch-hold/epochs/{epoch_id}` | Dispatch Hold Epoch Status |
-| `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/abort` | Abort Fleet Release Epoch |
-| `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/commit` | Commit Fleet Release Epoch |
-| `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/prove` | Prove Fleet Release Epoch |
-| `GET` | `/agents/dispatch-hold/epochs/{epoch_id}/readiness` | Dispatch Hold Epoch Pre Prove Readiness |
 | `POST` | `/agents/dispatch-hold/release-batch` | Release Dispatch Holds Batch |
 | `POST` | `/agents/dispatch-hold/transition-batch` | Transition Dispatch Holds Batch |
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |
@@ -156,18 +150,6 @@ request and response definitions.
 | `GET` | `/events/stream` | Stream Events |
 | `GET` | `/evidence/{evidence_id}/artifacts` | List Evidence Artifacts |
 | `GET` | `/evidence/{evidence_id}/artifacts/{artifact_id}` | Get Evidence Artifact |
-| `POST` | `/fleet-desired-source` | Set Fleet Desired Source |
-| `GET` | `/fleet-upgrades` | List Fleet Upgrades |
-| `POST` | `/fleet-upgrades` | Request Fleet Upgrade |
-| `GET` | `/fleet-upgrades/{upgrade_id}` | Get Fleet Upgrade |
-| `POST` | `/fleet-upgrades/{upgrade_id}/arm` | Arm Fleet Upgrade |
-| `POST` | `/fleet-upgrades/{upgrade_id}/cancel` | Cancel Fleet Upgrade |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/abort` | Abort Fleet Upgrade Epoch |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/commit` | Commit Fleet Upgrade Epoch |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/open` | Open Fleet Upgrade Epoch |
-| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/prove` | Prove Fleet Upgrade Epoch |
-| `GET` | `/fleet-upgrades/{upgrade_id}/events` | Get Fleet Upgrade Events |
-| `POST` | `/fleet-upgrades/{upgrade_id}/stage` | Stage Fleet Upgrade |
 | `GET` | `/fleet/build-distribution` | Fleet Build Distribution |
 | `GET` | `/fleet/snapshot` | Fleet Snapshot |
 | `GET` | `/fleets` | List Fleets |
@@ -276,11 +258,6 @@ request and response definitions.
 | `POST` | `/secrets/{secret_id}/reveal` | Reveal Secret |
 | `GET` | `/service-claims` | List Service Claims |
 | `GET` | `/service-roles` | List Service Roles |
-| `GET` | `/source-convergence` | Source Convergence Status |
-| `POST` | `/source-convergence/tick` | Tick Source Convergence |
-| `GET` | `/source-releases` | List Source Releases |
-| `POST` | `/source-releases` | Register Source Release |
-| `GET` | `/source-releases/{release_id}` | Get Source Release |
 | `GET` | `/startup-attestation` | Startup Attestation |
 | `GET` | `/startup/hermes` | Hermes Startup |
 | `GET` | `/task-groups` | List Task Groups |

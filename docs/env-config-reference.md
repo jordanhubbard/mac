@@ -472,7 +472,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_CONTROL_PLANE_CPU_LOW` | str | consumer-defined | hub | Hub setting: hub control plane cpu low. |
 | `MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss high mb. |
 | `MAC_HUB_CONTROL_PLANE_RSS_LOW_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss low mb. |
-| `MAC_HUB_GENERATION_ID` | str | consumer-defined | hub | Hub setting: hub generation id. |
 | `MAC_HUB_LOAD_SHED_AGENT` | str | consumer-defined | hub | Hub setting: hub load shed agent. |
 | `MAC_HUB_LOAD_SHED_DISABLED` | str | consumer-defined | hub | Hub setting: hub load shed disabled. |
 | `MAC_HUB_LOAD_SHED_FORCE` | str | consumer-defined | hub | Hub setting: hub load shed force. |
@@ -481,13 +480,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_MAX_CONCURRENT_TASKS` | str | consumer-defined | hub | Hub setting: hub max concurrent tasks. |
 | `MAC_HUB_MAX_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub max test jobs. |
 | `MAC_HUB_MIN_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub min test jobs. |
-| `MAC_HUB_SELF_UPGRADE_ENABLED` | bool | consumer-defined | hub | Hub setting: hub self upgrade enabled. |
 | `MAC_HUB_TEST_JOBS_FRACTION` | str | consumer-defined | hub | Hub setting: hub test jobs fraction. |
 | `MAC_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick interval seconds. |
 | `MAC_HUB_TICK_STALE_AFTER_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick stale after seconds. |
 | `MAC_HUB_TOKEN` | str | consumer-defined | hub | Hub setting: hub token. |
-| `MAC_HUB_UPGRADE_BRANCH` | str | consumer-defined | hub | Hub setting: hub upgrade branch. |
-| `MAC_HUB_UPGRADE_REQUIRED_CHECKS` | bool | consumer-defined | hub | Hub setting: hub upgrade required checks. |
 | `MAC_HUB_URL` | str | consumer-defined | hub | Hub setting: hub url. |
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
 | `MAC_HUB_VERIFY_PROFILE` | str | default | hub | Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected. |
@@ -946,7 +942,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |
 | `MAC_SOURCE_COMMIT` | str | consumer-defined | core | Core setting: source commit. |
-| `MAC_SOURCE_ROOT` | str | consumer-defined | core | Core setting: source root. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |
 | `MAC_STARTUP_CLEAR_HOLD` | str | consumer-defined | core | Core setting: startup clear hold. |
 | `MAC_STARTUP_EMIT_CHECKOUT_SHA` | str | consumer-defined | core | Core setting: startup emit checkout sha. |

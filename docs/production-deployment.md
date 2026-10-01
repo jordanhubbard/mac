@@ -1100,11 +1100,10 @@ notification outbox.
 
 ## Upgrade procedure
 
-Use the [synchronized cutover runbook](synchronized-fleet-cutover.md) and its
-[typed transaction protocol](fleet-cutover-transaction-protocol.md). Preserve
-an independently restorable PostgreSQL backup and the prior diagnostic
-artifacts. Deploy applies the ordered schema migrations before candidate
-services start; startup verifies rather than silently changing schema.
+Use [`scripts/fleet-update`](operations/fleet-update.md). It takes a verified
+PostgreSQL backup and applies the ordered schema migrations before the new hub
+starts; startup verifies rather than silently changing schema. Preserve the
+prior diagnostic artifacts.
 
 Keep failed candidates and their affected workers held for diagnosis, then
 repair forward. Restoring an older source or database is an explicit

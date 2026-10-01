@@ -158,7 +158,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`deploy-prerequisite-vs-phase1-audit.md`](../deploy-prerequisite-vs-phase1-audit.md) | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | [`dispatch-priority-bias-audit.md`](../dispatch-priority-bias-audit.md) | Dispatch priority bias ordering audit |
 | supplemental reference | [`env-config-reference.md`](../env-config-reference.md) | MAC environment configuration reference |
-| runbook | [`fleet-cutover-transaction-protocol.md`](../fleet-cutover-transaction-protocol.md) | Fleet Cut-over Transaction Protocol |
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
 | runbook | [`fleet-node-onboarding-checklist.md`](../fleet-node-onboarding-checklist.md) | Fleet node onboarding checklist |
 | supplemental reference | [`fleet-operational-learning.md`](../fleet-operational-learning.md) | Fleet operational learning |
@@ -227,7 +226,6 @@ marked `historical archive` and must not be read as current behaviour.
 | historical archive | [`superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md`](../superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md) | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
 | historical archive | [`superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md`](../superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md) | Autonomous Project Routing and Review/Fix Loop Design |
 | historical archive | [`superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md`](../superpowers/specs/2026-08-22-native-darwin-openclaw-and-slack-home-routing-design.md) | Native Darwin OpenClaw and Slack home-channel routing — design |
-| runbook | [`synchronized-fleet-cutover.md`](../synchronized-fleet-cutover.md) | Synchronized Fleet Cut-over |
 | supplemental reference | [`task-dependency-semantics.md`](../task-dependency-semantics.md) | Task dependency failure semantics |
 | supplemental reference | [`task-throughput-observability.md`](../task-throughput-observability.md) | Task throughput observability |
 | supplemental reference | [`testing-strategy.md`](../testing-strategy.md) | Test portfolio strategy |

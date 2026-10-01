@@ -144,7 +144,6 @@ EXPECTED_TABLES = [
     "conversation_threads",
     "dispatch_mismatch_state",
     "dispatch_rounds",
-    "environments",
     "eval_runs",
     "eval_set_events",
     "eval_sets",
@@ -153,9 +152,6 @@ EXPECTED_TABLES = [
     "evidence_reuse_records",
     "fleet_agent_observations",
     "fleet_agents",
-    "fleet_desired_source_idempotency",
-    "fleet_desired_source_states",
-    "fleet_desired_source_transitions",
     "fleet_directive_acks",
     "fleet_directive_activations",
     "fleet_directive_approvals",
@@ -166,12 +162,6 @@ EXPECTED_TABLES = [
     "fleet_directive_waivers",
     "fleet_directives",
     "fleet_events",
-    "fleet_release_admission_episodes",
-    "fleet_release_attestation_candidates",
-    "fleet_release_epoch_agents",
-    "fleet_release_epochs",
-    "fleet_upgrade_events",
-    "fleet_upgrades",
     "fleets",
     "gateway_identity_leases",
     "hub_authority_identity",
@@ -213,9 +203,6 @@ EXPECTED_TABLES = [
     "secrets",
     "service_claims",
     "service_roles",
-    "source_convergence_controller_leases",
-    "source_convergence_nodes",
-    "source_releases",
     "task_agent_transcripts",
     "task_break_glass_authorizations",
     "task_completions",
@@ -490,6 +477,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0005_drop_native_merge_queue_tables",
         "0006_drop_rollout_and_deploy_tables",
         "0007_drop_agent_provisioning_requests",
+        "0008_drop_self_upgrade_and_release_epoch_tables",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -512,6 +500,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0007_drop_agent_provisioning_requests": (
             "e78a3705bc9b36b8993626794672ca2c8f7ed19eed1b63a5e4e4cfed2067ea91"
+        ),
+        "0008_drop_self_upgrade_and_release_epoch_tables": (
+            "3585d4c4e4b7bdb8acec991e4cea94983bc2adc1f1b14733490bab3ba56a3fac"
         ),
     }
     for migration in MIGRATIONS:
@@ -550,7 +541,6 @@ def test_additive_columns_are_present_in_schema(
 ) -> None:
     """Guard the columns that exposed drift during the live migration rehearsal."""
     for table, column in (
-        ("fleet_release_epochs", "abort_disposition"),
         ("tasks", "human_assignees"),
         ("tasks", "created_by_human"),
         ("tasks", "idempotency_key"),

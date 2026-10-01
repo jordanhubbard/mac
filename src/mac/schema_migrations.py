@@ -121,8 +121,6 @@ FORMER_STARTUP_ENSURE_COLUMNS = frozenset(
         ("agents", "installed_packages"),
         ("agents", "attestation_key_prev_ciphertext"),
         ("agents", "attestation_key_history_ciphertext"),
-        ("fleet_release_epoch_agents", "prior_report_executor_projection_sha256"),
-        ("fleet_release_epochs", "abort_disposition"),
         ("tasks", "human_assignees"),
         ("tasks", "created_by_human"),
         ("tasks", "idempotency_key"),
@@ -133,20 +131,6 @@ FORMER_STARTUP_ENSURE_COLUMNS = frozenset(
         ("agents", "last_control_stream_published_at"),
         ("agents", "last_control_stream_consumed_at"),
         ("reviews", "findings"),
-        ("fleet_release_admission_episodes", "project"),
-        ("fleet_release_admission_episodes", "barrier_resource_digest"),
-        ("fleet_release_admission_episodes", "owner_kind"),
-        ("fleet_release_admission_episodes", "owner_id"),
-        ("fleet_release_admission_episodes", "waiter_kind"),
-        ("fleet_release_admission_episodes", "waiter_id"),
-        ("fleet_release_admission_episodes", "waiting_publishers"),
-        ("fleet_release_admission_episodes", "waiting_epoch_openers"),
-        ("fleet_release_admission_episodes", "queue_depth"),
-        ("fleet_release_admission_episodes", "wait_started_at"),
-        ("fleet_release_admission_episodes", "wait_ended_at"),
-        ("fleet_release_admission_episodes", "wait_seconds"),
-        ("fleet_release_admission_episodes", "outcome"),
-        ("fleet_release_admission_episodes", "metadata"),
     }
 )
 AUTHORITY_DDL = """
@@ -305,6 +289,32 @@ MIGRATIONS: tuple[Migration, ...] = (
         SELECT to_regclass(current_schema() || '.agent_provisioning_requests') IS NULL
         """,
     ),
+    Migration(
+        "0008_drop_self_upgrade_and_release_epoch_tables",
+        _load_sql(MIGRATION_PATH / "0008_drop_self_upgrade_and_release_epoch_tables.sql"),
+        """
+        SELECT bool_and(to_regclass(current_schema() || '.' || name) IS NULL)
+           AND to_regprocedure(current_schema() || '._trg_source_releases_sha_immutable()')
+               IS NULL
+           AND to_regprocedure(current_schema() || '._trg_fleet_desired_source_gen_monotonic()')
+               IS NULL
+        FROM unnest(ARRAY[
+            'fleet_upgrade_events',
+            'fleet_upgrades',
+            'source_convergence_nodes',
+            'source_convergence_controller_leases',
+            'fleet_release_attestation_candidates',
+            'fleet_release_epoch_agents',
+            'fleet_release_epochs',
+            'fleet_release_admission_episodes',
+            'fleet_desired_source_idempotency',
+            'fleet_desired_source_transitions',
+            'fleet_desired_source_states',
+            'source_releases',
+            'environments'
+        ]) AS name
+        """,
+    ),
 )
 
 
@@ -366,6 +376,23 @@ def _dropped_tables(sql: str) -> set[str]:
     return {table for table, dropped in final.items() if dropped}
 
 
+def _dropped_functions(sql: str) -> set[str]:
+    """Functions a later statement drops and nothing after it creates again.
+
+    Unlike a trigger, a function does not go with the table it served, so a
+    migration that retires one drops it explicitly.
+    """
+
+    final: dict[str, bool] = {}
+    for match in re.finditer(
+        r"\b(?:(?P<create>CREATE OR REPLACE FUNCTION)|DROP FUNCTION(?: IF EXISTS)?)\s+(?P<name>\w+)\s*\(",
+        sql,
+        re.IGNORECASE,
+    ):
+        final[match.group("name")] = match.group("create") is None
+    return {function for function, dropped in final.items() if dropped}
+
+
 def _expected_inventory(sql: str) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     dropped = _dropped_tables(sql)
     tables = {
@@ -394,9 +421,8 @@ def _expected_inventory(sql: str) -> tuple[dict[str, set[str]], dict[str, set[st
             if match.group(2) not in dropped
         },
         "views": set(re.findall(r"CREATE OR REPLACE VIEW\s+(\w+)", sql)),
-        "functions": set(
-            re.findall(r"CREATE OR REPLACE FUNCTION\s+(\w+)\s*\(", sql, re.IGNORECASE)
-        ),
+        "functions": set(re.findall(r"CREATE OR REPLACE FUNCTION\s+(\w+)\s*\(", sql, re.IGNORECASE))
+        - _dropped_functions(sql),
     }
     return tables, objects
 

@@ -463,3 +463,77 @@ def test_hub_failure_after_migrating_never_rolls_back(fleet, hub, failure) -> No
     assert "ROLLBACK" not in result.stdout
     assert _git(fleet.src, "rev-parse", "HEAD") == fleet.shas["b"]
     assert not any("kickstart" in c for c in _calls(fleet))
+
+
+def test_mac_service_runs_the_checkout_and_attests_its_head(tmp_path: Path) -> None:
+    """deploy/bin/mac-service starts ~/.mac/src/mac and nothing else.
+
+    The ~/.mac/current indirection and the self-upgrade supervisor are gone: a
+    stale current/ tree and a supervisor script left behind by an old install
+    are both ignored. MAC_SOURCE_COMMIT is the checkout's HEAD, which is what
+    fleet-update's hub_attested compares against the target sha.
+    """
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    src = mac_home / "src" / "mac"
+    src.mkdir(parents=True)
+    _git(src, "init", "-q")
+    (src / "README").write_text("x\n")
+    _git(src, "add", "README")
+    _git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c")
+    head = _git(src, "rev-parse", "HEAD")
+    (mac_home / "mac.env").write_text("MAC_DATABASE_URL=postgresql://stub/mac\n")
+    record = tmp_path / "exec.json"
+    python = mac_home / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(
+        "#!/bin/sh\n"
+        'printf \'{"argv": "%s", "commit": "%s", "generation": "%s"}\' '
+        '"$*" "$MAC_SOURCE_COMMIT" "${MAC_HUB_GENERATION_ID:-}" > "$RECORD"\n'
+    )
+    python.chmod(0o755)
+    stale_bin = mac_home / "current" / "venv" / "bin"
+    stale_bin.mkdir(parents=True)
+    supervisor = stale_bin / "mac-hub-upgrade-supervisor"
+    supervisor.write_text('#!/bin/sh\ntouch "$RECORD.supervisor"\nexit 1\n')
+    supervisor.chmod(0o755)
+    (mac_home / "current" / "source-commit").write_text("f" * 40 + "\n")
+
+    env = {"HOME": str(home), "PATH": os.environ["PATH"], "RECORD": str(record)}
+    result = subprocess.run(
+        ["bash", str(ROOT / "deploy" / "bin" / "mac-service")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(record.read_text()) == {
+        "argv": "-m mac.hub_serve",
+        "commit": head,
+        "generation": "",
+    }
+    assert not Path(str(record) + ".supervisor").exists()
+
+
+def test_startup_attestation_reports_only_the_source_commit(monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from mac.http_routes.system import SystemRouteServices, build_system_router
+
+    monkeypatch.setenv("MAC_SOURCE_COMMIT", "a" * 40)
+    monkeypatch.setenv("MAC_HUB_GENERATION_ID", "legacy-aaaaaaaaaaaa")
+    app = FastAPI()
+    app.include_router(
+        build_system_router(SystemRouteServices(None, None), get_principal=lambda: None)
+    )
+
+    response = TestClient(app).get("/startup-attestation")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "schema": "mac.hub_startup_attestation.v1",
+        "source_commit": "a" * 40,
+    }
