@@ -6559,6 +6559,28 @@
     "type": "str"
   },
   {
+    "default": "86400",
+    "description": "Wall-clock deadline, from the first landing attempt, for every review/landing wait (reviewer, hub verify, publication target/evidence, checks pending, release barrier). Past it the task moves to BLOCKED with `landing_budget_exhausted`.",
+    "family": "core",
+    "name": "MAC_LANDING_DEADLINE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": "8",
+    "description": "Landing attempts (publication retries, unavailable hub verifies) a task may spend between review and landing before it moves to BLOCKED with `landing_budget_exhausted`. Attempts back off from 5 to 60 minutes.",
+    "family": "core",
+    "name": "MAC_LANDING_MAX_ATTEMPTS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
     "default": null,
     "description": "Core setting: launchd artifact timeout seconds.",
     "family": "core",

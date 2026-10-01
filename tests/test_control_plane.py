@@ -725,9 +725,11 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, semantic_reviewer
 
     assert result["status"] == "publish_failed"
     assert result["target"] == "git://main"
-    # Approved, still REVIEWING (not silently dropped, not falsely completed).
+    # A merge failure retrying cannot fix: BLOCKED with the reason, not
+    # silently dropped, not falsely completed, and not retried every tick.
+    assert result["blocked_reason"] == "landing_non_retryable"
     parked = cp.get_task(task.id)
-    assert parked.state == TaskState.REVIEWING.value
+    assert parked.state == TaskState.BLOCKED.value
     # A glanceable diagnosis is on the task.
     activity = (parked.metadata or {}).get("activity", [])
     assert any(
@@ -914,6 +916,16 @@ def _drive_task_to_approved(cp, *, task_metadata=None, files_changed=None):
     return task, worker, reviewer, evidence
 
 
+def _expire_landing_backoff(cp, task_id):
+    """Let the next advance retry now, as if the landing backoff had elapsed."""
+    task = cp.get_task(task_id)
+    metadata = dict(task.metadata)
+    landing = dict(metadata.get("landing") or {})
+    landing.pop("not_before", None)
+    metadata["landing"] = landing
+    cp._persist_task_metadata_narrow(task_id, metadata, actor="test")
+
+
 def _merge_gate_conflict_raiser(
     cp,
     task_id,
@@ -1014,6 +1026,7 @@ def test_conflict_handoff_is_idempotent(cp, monkeypatch, semantic_reviewer_on):
         _merge_gate_conflict_raiser(cp, task.id, evidence, conflicted_paths=["src/example.py"]),
     )
     first = cp.advance_default_review_workflow(task.id)
+    _expire_landing_backoff(cp, task.id)
     second = cp.advance_default_review_workflow(task.id)
 
     assert first["integration_task_id"] is not None
@@ -1061,6 +1074,7 @@ def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
         actor="legacy-fixture",
     )
 
+    _expire_landing_backoff(cp, task.id)
     second = cp.advance_default_review_workflow(task.id)
 
     assert second["integration_task_id"] == current_id
@@ -1112,6 +1126,7 @@ def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
         ),
     )
 
+    _expire_landing_backoff(cp, task.id)
     second = cp.advance_default_review_workflow(task.id)
     current_id = second["integration_task_id"]
 
@@ -14565,7 +14580,9 @@ def test_hub_verify_deferred_merge_blocked_while_pending_unblocks_on_approved(cp
     # Phase 2: swap in a successful runner (hub verify completes).
     cp._hub_verify_runner = lambda remote, branch, head, cmd: (0, "all passed")
 
-    # Subsequent advance must approve and publish.
+    # Subsequent advance (once the landing backoff the crash earned has
+    # elapsed) must approve and publish.
+    _expire_landing_backoff(cp, task.id)
     statuses = [
         cp.advance_default_review_workflow(task.id)["status"],
         cp.advance_default_review_workflow(task.id)["status"],

@@ -62,9 +62,11 @@ def test_timeout_keeps_redacted_partial_output_and_cleans_up(
     )
     monkeypatch.delenv("MAC_OPENSHELL_GC", raising=False)
     monkeypatch.delenv("MAC_HUB_VERIFY_PROFILE", raising=False)
+    charges = []
     plane = types.SimpleNamespace(
         _hub_review_test_command=lambda task, info: "run-tests",
         _record_default_review_observation=lambda *args: observations.append(args),
+        _consume_landing_budget=lambda *args, **kwargs: charges.append((args, kwargs)),
     )
     plane._hub_verify_run_contract_test = types.MethodType(
         services.ControlPlane._hub_verify_run_contract_test, plane
@@ -94,6 +96,9 @@ def test_timeout_keeps_redacted_partial_output_and_cleans_up(
     assert len(detail["output_excerpt"]) < 5000
     assert "private-" not in str(detail) + caplog.text
     assert "<redacted>" in detail["output_excerpt"]
+    # The crash charges the landing budget, with the redacted detail only.
+    assert [args[1] for args, _kwargs in charges] == ["hub_verify_error"]
+    assert "private-" not in str(charges)
     assert len([a for a in calls if "delete" in a]) == 2
     clone = next(a for a in calls if "clone" in a)
     assert not Path(clone[-1]).parent.exists()
