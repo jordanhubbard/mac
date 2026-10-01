@@ -234,10 +234,10 @@ SEMANTIC_REASONS = frozenset(
     }
 )
 
-#: Protocol-failure reasons produced by _review_attempt_protocol_failure().
-#: These represent *reviewer execution* failures (wrong exit code, bad
-#: manifest) and are classified as infrastructure so the workflow retries
-#: with a different reviewer rather than blocking the task.
+#: Protocol-failure reasons the retired reviewer-agent workflow recorded.
+#: They describe *reviewer execution* failures (wrong exit code, bad
+#: manifest) and stay classified as infrastructure so historical rows read
+#: correctly.
 PROTOCOL_FAILURE_PREFIX = "reviewer_protocol_failure:"
 
 #: Reason string produced when the review executor exits nonzero.

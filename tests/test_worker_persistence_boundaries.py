@@ -460,9 +460,7 @@ def test_secondary_artifact_redaction_preserves_input_and_hashes_captured_bytes(
     assert artifact["metadata"]["redacted"] is True
 
 
-def test_review_redacts_durable_evidence_and_keeps_signed_verdict(
-    tmp_path: Path, semantic_reviewer_on
-):
+def test_review_redacts_durable_evidence_and_keeps_signed_verdict(tmp_path: Path):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -500,9 +498,22 @@ def test_review_redacts_durable_evidence_and_keeps_signed_verdict(
         metadata={"returncode": 0, "verification": executor_manifest},
     )
     cp.submit_for_review(task.id, executor_agent.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    assert first["reviewer_agent_id"] == reviewer.id
+    requested = cp.request_review(task.id, reviewer.id)
+    first = {"review_id": requested.id, "reviewer_agent_id": reviewer.id}
+    # The default workflow no longer chases agent reviewers; deliver the
+    # verdict request an operator-driven review would send.
+    cp.send_message(
+        "dispatcher",
+        reviewer.id,
+        "nudge",
+        {
+            "task_id": task.id,
+            "review_id": requested.id,
+            "executor_evidence_id": evidence.id,
+            "reason": "produce_review_verdict",
+        },
+        task_id=task.id,
+    )
     client = TestClient(create_app(control_plane=cp))
     secret = "opaque-credential-fixture"
 
@@ -548,7 +559,7 @@ def test_review_redacts_durable_evidence_and_keeps_signed_verdict(
     result = worker.run_once()
 
     assert result.status == "review_verdict_recorded"
-    verdict_evidence = cp.list_evidence(task.id)[-1]
+    verdict_evidence = [e for e in cp.list_evidence(task.id) if e.created_by == reviewer.id][-1]
     manifest = verdict_evidence.metadata["verification"]
     assert verdict_evidence.kind == "review"
     assert manifest["evidence_type"] == "review_verdict"

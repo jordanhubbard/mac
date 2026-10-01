@@ -284,53 +284,6 @@ def test_dispatch_signal_is_idempotent_across_ticks(cp):
     assert len(pending) == 1
 
 
-def test_review_workflow_emits_provisioning_signal_when_no_reviewer(cp, semantic_reviewer_on):
-    # Worker is the only agent; it cannot review its own work, so the
-    # default review workflow has no eligible reviewer. The signal must
-    # explain what's missing.
-    machine = cp.register_machine("h")
-    worker = cp.register_agent(machine.id, "worker", capabilities=["python"])
-    task = cp.create_task("solo", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    from mac.services import sign_verification_manifest
-
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "abcdef1234567890abcdef1234567890abcdef12",
-            "pushed": True,
-            "remote_ref": "refs/heads/x",
-            "dirty": False,
-            "files_changed": ["src/x.py"],
-        },
-        "tests": [{"command": "pytest", "returncode": 0}],
-    }
-    key = cp._agent_attestation_key(worker.id)
-    manifest["signed_by"] = worker.id
-    manifest["signature"] = sign_verification_manifest(key, manifest)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://x",
-        "done",
-        worker.id,
-        metadata={"returncode": 0, "verification": manifest},
-    )
-    cp.submit_for_review(task.id, worker.id)
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "waiting_for_reviewer"
-    pending = cp.provisioning.list_pending_requests()
-    assert any(
-        req.reason == "review.no_eligible_reviewer"
-        and req.task_id == task.id
-        and "review" in req.capabilities
-        for req in pending
-    )
-
-
 def test_cancel_request_terminates_signal(cp):
     request = cp.provisioning.request_agent(reason="dispatch.no_eligible_agent")
     cancelled = cp.provisioning.cancel_request(request.id, reason="not-needed")

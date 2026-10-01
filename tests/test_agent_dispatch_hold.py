@@ -1322,7 +1322,7 @@ def test_two_zero_telemetry_expiries_auto_quarantine_agent(monkeypatch):
 
 
 def test_virtual_agent_lease_expiry_never_quarantines(monkeypatch):
-    """A virtual, hub-driven agent (e.g. the hub_verify review verifier) has no
+    """A virtual, hub-driven agent (e.g. the hub-reviewer) has no
     worker process and by design emits no executor telemetry, so its expired
     review leases must NOT be counted as zombie signals or quarantine it."""
     monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
@@ -1332,7 +1332,7 @@ def test_virtual_agent_lease_expiry_never_quarantines(monkeypatch):
         machine.id,
         "hub-reviewer",
         capabilities=["review"],
-        resources={"virtual": True, "review": {"mode": "hub_verify"}},
+        resources={"virtual": True, "review": {"mode": "worker_evidence"}},
     )
 
     # Well past the threshold: a real agent would be quarantined after 2.

@@ -4930,12 +4930,10 @@ class MacWorker(
         files_changed = _repository_context_changed_files(worktree, diff_context)
 
         test_command = _repository_contract_test_command(task)
-        hub_verify = _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY"))
         test_item = self._run_repository_contract_test(
             worktree,
             test_command,
             task_dir=task_dir,
-            hub_verify=hub_verify,
             task=task,
             # The tip HEAD was just rebased onto: the scoped gate then selects
             # this task's change, not everything landed since the lease.
@@ -4985,7 +4983,6 @@ class MacWorker(
             task,
             repo,
             test_item,
-            hub_verify=hub_verify,
         )
         if problems:
             problems.append("repository finalizer had local errors; refusing to push")
@@ -5210,7 +5207,6 @@ class MacWorker(
         command: str,
         *,
         task_dir: Optional[Path] = None,
-        hub_verify: bool = False,
         task: Optional[JsonDict] = None,
         selection_base_sha: str = "",
     ) -> JsonDict:
@@ -7923,8 +7919,6 @@ def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,
     test_item: JsonDict,
-    *,
-    hub_verify: bool = False,
 ) -> List[str]:
     problems: List[str] = []
     head_sha = str(repo.get("head_sha") or "").strip()
@@ -8004,42 +7998,13 @@ def _agent_manifest_lacks_verifier_tests(manifest_path: Path, task: JsonDict) ->
     return bool(verifier_tests_problems(loaded))
 
 
-def _hub_verify_deferred_test_item(command: str) -> JsonDict:
-    """Report pending independent review without claiming a test result.
-
-    This is valid for native read-only reports; it never authorizes a code push.
-    """
-    return {
-        "name": "repository contract test",
-        "command": command,
-        "returncode": None,
-        "status": "deferred",
-        "execution_environment": "hub_verify_pending",
-        "stdout": "",
-        "stderr": "",
-    }
-
-
-def _is_hub_verify_deferred_item(item: Any) -> bool:
-    """True iff *item* is the deferred sentinel produced by hub-verify mode."""
-    if not isinstance(item, dict):
-        return False
-    return (
-        str(item.get("status") or "").strip().lower() == "deferred"
-        and str(item.get("execution_environment") or "").strip().lower() == "hub_verify_pending"
-    )
-
-
 def _sandbox_repository_verification_item(
     task_dir: Optional[Path],
     command: str,
     *,
-    hub_verify: bool = False,
     require_command_match: bool = False,
 ) -> Optional[JsonDict]:
     if task_dir is None:
-        if hub_verify:
-            return _hub_verify_deferred_test_item(command)
         return None
     path = task_dir / "mac-sandbox-verification.json"
     try:
@@ -8047,12 +8012,8 @@ def _sandbox_repository_verification_item(
             raise OSError("sandbox verification evidence is not a regular file")
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        if hub_verify:
-            return _hub_verify_deferred_test_item(command)
         return None
     if not isinstance(loaded, dict):
-        if hub_verify:
-            return _hub_verify_deferred_test_item(command)
         return None
     observed_command = str(loaded.get("command") or "").strip()
     record_problem = ""
@@ -8104,11 +8065,8 @@ def _trusted_read_only_report_test_item(
         == REPORT_REPOSITORY_MACOS_HOST_POSTURE
     ):
         # A native agent can write files in its workspace. None of those files
-        # can attest to a Linux test run. The signed host projection requests
-        # independent hub verification, which gates report publication.
-        if not _env_truthy(os.environ.get("MAC_REVIEW_HUB_VERIFY")):
-            return None, ["native read-only repository reports require Linux hub verification"]
-        return _hub_verify_deferred_test_item(command), []
+        # can attest to a Linux test run, and nothing downstream runs one.
+        return None, ["native read-only repository reports require a Linux contract test run"]
     item = _sandbox_repository_verification_item(
         task_dir,
         command,

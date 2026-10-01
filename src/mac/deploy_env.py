@@ -1173,21 +1173,11 @@ def build_mac_env(
     values.setdefault("MAC_RELAY_OBSERVABILITY", "1")
     values.setdefault("MAC_REVIEW_TICK_HUB_AGENT", cfg.identity.shared_services_manager)
     if cfg.identity.is_hub:
-        # Option C: the hub runs the review contract test itself in one
-        # controlled OpenShell sandbox and records the signed verdict, instead
-        # of dispatching to a reviewer agent (whose per-node host+sandbox
-        # environment was the fragility that stalled the autonomous loop).
-        values.setdefault("MAC_REVIEW_HUB_VERIFY", "1")
-        values.setdefault("MAC_HUB_REVIEWER_AUTO_REGISTER", "1")
-        values.setdefault("MAC_HUB_REVIEWER_AGENT_NAME", "hub-reviewer")
-        values.setdefault("MAC_HUB_REVIEWER_AGENT_ID", "agent_hub-reviewer")
-        values.setdefault("MAC_HUB_REVIEWER_MACHINE_ID", "machine_operator_review")
         # mac-ghingest: run the GitHub-issue work generator on the hub. It is a
         # no-op for every project that has not opted in via
         # metadata["github_issue_ingest"], so enabling it by default is safe;
         # it needs GH_TOKEN/GITHUB_TOKEN in the hub environment to reach the API.
         values.setdefault("MAC_GITHUB_INGEST_ENABLED", "1")
-        values.setdefault("MAC_REVIEW_SEMANTIC_REVIEWER", "0")
     _apply_router(values, cfg, env)
     _apply_home_channel(values, cfg)
     return values

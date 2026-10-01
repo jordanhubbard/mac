@@ -510,10 +510,10 @@ install_nemoclaw_service() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 13: verify hub-verify and executor sandbox still work
+# Step 13: verify the executor sandbox still works
 # ---------------------------------------------------------------------------
 verify_executor_sandbox() {
-  log "verifying executor sandbox + hub-verify still work after migration"
+  log "verifying executor sandbox still works after migration"
 
   # Executor uses the main venv's hermes, not the nemoclaw gateway.
   # Check that the main venv python is functional.

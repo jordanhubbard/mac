@@ -99,10 +99,10 @@ elsewhere in the system.
 
 ## Verifier resources
 
-The hub runs pushed repository code on its configured Linux OpenShell gateway.
-A macOS hub may own the CLI/tunnel connection, but does not host that runtime.
-The same verifier execution path serves independent review and projected-merge
-publication checks.
+Verifiers run repository code on the configured Linux OpenShell gateway.
+A macOS host may own the CLI/tunnel connection, but does not host that runtime.
+The same verifier execution path serves the worker's pre-push verification
+(whose result is the review verdict) and projected-merge publication checks.
 
 `MAC_HUB_VERIFY_PROFILE` is an opt-in setting on each hub and Linux OpenShell
 worker process. Unset, empty,
@@ -562,7 +562,7 @@ usernames, hostnames, tokens, Slack team names, or local fleet identities.
 ### OpenShell 0.0.72 compatibility — validated 2026-07-04
 
 OpenShell 0.0.72 has been validated against all three MAC sandbox surfaces
-(executor sandbox create, hub-verify tar-upload verify, gateway confinement).
+(executor sandbox create, verifier tar-upload verify, gateway confinement).
 The fleet pin was advanced from 0.0.62 to 0.0.72 in bootstrap-openshell.sh,
 openshell_reconcile.py, and cli.py. The existing mac-hermes-policy.yaml
 template is fully forward-compatible; no policy adjustments are needed.

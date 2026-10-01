@@ -462,9 +462,7 @@ def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
-def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
-    tmp_path: Path, semantic_reviewer_on
-):
+def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: Path):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -502,9 +500,22 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
         metadata={"returncode": 0, "verification": executor_manifest},
     )
     cp.submit_for_review(task.id, executor_agent.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    assert first["reviewer_agent_id"] == reviewer.id
+    requested = cp.request_review(task.id, reviewer.id)
+    first = {"review_id": requested.id, "reviewer_agent_id": reviewer.id}
+    # The default workflow no longer chases agent reviewers; deliver the
+    # verdict request an operator-driven review would send.
+    cp.send_message(
+        "dispatcher",
+        reviewer.id,
+        "nudge",
+        {
+            "task_id": task.id,
+            "review_id": requested.id,
+            "executor_evidence_id": evidence.id,
+            "reason": "produce_review_verdict",
+        },
+        task_id=task.id,
+    )
     client = TestClient(create_app(control_plane=cp))
 
     def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
@@ -544,7 +555,7 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
     result = worker.run_once()
 
     assert result.status == "review_verdict_recorded"
-    verdict_evidence = cp.list_evidence(task.id)[-1]
+    verdict_evidence = [e for e in cp.list_evidence(task.id) if e.created_by == reviewer.id][-1]
     manifest = verdict_evidence.metadata["verification"]
     assert verdict_evidence.kind == "review"
     assert manifest["evidence_type"] == "review_verdict"
@@ -557,9 +568,7 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
     assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
 
 
-def test_review_nudge_prepares_review_worktree_and_git_main_publication(
-    tmp_path: Path, semantic_reviewer_on
-):
+def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path: Path):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -617,8 +626,22 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(
         metadata={"returncode": 0, "verification": executor_manifest},
     )
     cp.submit_for_review(task.id, executor_agent.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
+    requested = cp.request_review(task.id, reviewer.id)
+    first = {"review_id": requested.id, "reviewer_agent_id": reviewer.id}
+    # The default workflow no longer chases agent reviewers; deliver the
+    # verdict request an operator-driven review would send.
+    cp.send_message(
+        "dispatcher",
+        reviewer.id,
+        "nudge",
+        {
+            "task_id": task.id,
+            "review_id": requested.id,
+            "executor_evidence_id": evidence.id,
+            "reason": "produce_review_verdict",
+        },
+        task_id=task.id,
+    )
     client = TestClient(create_app(control_plane=cp))
 
     def review_executor(task_payload: Dict[str, Any], task_dir: Path) -> WorkerExecution:
@@ -781,139 +804,7 @@ def test_private_review_clone_uses_env_token_but_persists_only_clean_remote(
     assert learning["credential_source"] == "env:GH_TOKEN"
 
 
-def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
-    tmp_path: Path,
-    monkeypatch,
-    semantic_reviewer_on,
-):
-    cp = ControlPlane.in_memory()
-    machine = cp.register_machine("review-host")
-    executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
-    failing_reviewer = cp.register_agent(machine.id, "a-failing", capabilities=["review"])
-    successful_reviewer = cp.register_agent(machine.id, "b-success", capabilities=["review"])
-    remote_url = "https://github.com/acme/private.git"
-    contract = {
-        "schema": "mac.repository_contract.v1",
-        "project": "demo",
-        "canonical_remote_url": remote_url,
-    }
-    task = cp.create_task(
-        "Review private repository",
-        project="demo",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://publish",
-            "execution_contract": {
-                "type": "repository",
-                "repository_contract": contract,
-            },
-            "origin": {
-                "repository_url": remote_url,
-                "repository_contract": contract,
-            },
-        },
-    )
-    cp.claim_task(task.id, executor_agent.id)
-    cp.start_task(task.id, executor_agent.id)
-    executor_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "abc123abc123abc123abc123abc123abc123abcd",
-            "base_sha": "def456def456def456def456def456def456def4",
-            "remote_ref": "refs/heads/mac/review-proof",
-            "remote_url": remote_url,
-            "pushed": True,
-            "dirty": False,
-            "files_changed": ["src/example.py"],
-        },
-        "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
-        "signed_by": executor_agent.id,
-    }
-    executor_manifest["signature"] = sign_verification_manifest(
-        cp._agent_attestation_key(executor_agent.id), executor_manifest
-    )
-    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "0")
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "file:///tmp/executor-result.json",
-        "executor completed",
-        executor_agent.id,
-        metadata={"returncode": 0, "verification": executor_manifest},
-    )
-    cp.submit_for_review(task.id, executor_agent.id)
-
-    known_success = build_repository_access_learning(
-        project="demo",
-        remote=remote_url,
-        operation="review_clone",
-        agent_id=successful_reviewer.id,
-        outcome="success",
-        credential_source="env:GH_TOKEN",
-    )
-    cp.add_memory(**build_repository_access_memory_payload(known_success))
-    first_review = cp.request_review(
-        task.id,
-        failing_reviewer.id,
-        actor="test",
-    )
-    first_tick = cp.advance_default_review_workflow(task.id)
-    assert first_tick["review_id"] == first_review.id
-    assert first_tick["executor_evidence_id"] == evidence.id
-
-    client = TestClient(create_app(control_plane=cp))
-    real_run = subprocess.run
-
-    def fail_private_clone(argv, *args, **kwargs):
-        if list(argv[:3]) == ["git", "clone", "--no-checkout"]:
-            return subprocess.CompletedProcess(
-                argv,
-                128,
-                "",
-                "fatal: could not read Username for 'https://github.com': "
-                "No such device or address",
-            )
-        return real_run(argv, *args, **kwargs)
-
-    monkeypatch.setattr("mac.worker.subprocess.run", fail_private_clone)
-    worker = MacWorker(
-        MacApiClient("http://mac.test", transport=api_transport(client)),
-        failing_reviewer.id,
-        tmp_path / "workspaces",
-        lambda *_args: pytest.fail("review executor must not run after clone failure"),
-        attestation_key=cp._agent_attestation_key(failing_reviewer.id),
-    )
-
-    result = worker.run_once()
-
-    assert result.status == "review_verdict_failed"
-    assert "could not read Username" in (result.error or "")
-    assert not (tmp_path / "workspaces" / "_reviews" / first_review.id / "review-repo").exists()
-    reviews = cp.list_reviews(task.id)
-    assert [review.status for review in reviews] == [
-        ReviewStatus.RETRACTED.value,
-        ReviewStatus.PENDING.value,
-    ]
-    assert reviews[0].reviewer_agent_id == failing_reviewer.id
-    assert "reviewer_repository_access_authentication:github.com" in (reviews[0].reason or "")
-    assert reviews[1].reviewer_agent_id == successful_reviewer.id
-    memories = cp.search_memory(
-        subject_type="agent",
-        subject_id=failing_reviewer.id,
-        record_type=REPOSITORY_ACCESS_RECORD_TYPE,
-    )
-    failure = parse_repository_access_learning(memories[-1].content)
-    assert failure is not None
-    assert failure["outcome"] == "failure"
-    assert failure["failure_class"] == "authentication"
-    assert "No such device or address" in failure["error_signature"]
-
-
-def test_mac_worker_skips_stale_review_nudge_and_processes_next(
-    tmp_path: Path, semantic_reviewer_on
-):
+def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path):
     from tests.conftest import submit_review_verdict
 
     cp = ControlPlane.in_memory()
@@ -955,8 +846,20 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(
             metadata={"returncode": 0, "verification": manifest},
         )
         cp.submit_for_review(task.id, executor_agent.id)
-        review_tick = cp.advance_default_review_workflow(task.id)
-        return task, evidence, review_tick, manifest
+        review = cp.request_review(task.id, reviewer.id)
+        cp.send_message(
+            "dispatcher",
+            reviewer.id,
+            "nudge",
+            {
+                "task_id": task.id,
+                "review_id": review.id,
+                "executor_evidence_id": evidence.id,
+                "reason": "produce_review_verdict",
+            },
+            task_id=task.id,
+        )
+        return task, evidence, {"review_id": review.id}, manifest
 
     stale_task, stale_evidence, stale_tick, _ = create_reviewable_task("Stale review")
     stale_verdict_id = submit_review_verdict(cp, stale_task.id, reviewer.id, stale_evidence.id)
@@ -1005,8 +908,11 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(
     result = worker.run_once()
 
     assert result.status == "review_verdict_recorded"
-    assert cp.list_reviews(current_task.id)[0].status == ReviewStatus.APPROVED.value
-    assert cp.get_task(current_task.id).state == TaskState.COMPLETED.value
+    assert any(
+        evidence.created_by == reviewer.id
+        and evidence.metadata["verification"]["reviewed_evidence_id"] == current_evidence.id
+        for evidence in cp.list_evidence(current_task.id)
+    )
 
 
 def test_mac_worker_forwards_notifier_status_updates_to_slack_home_channels(

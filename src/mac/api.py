@@ -4061,7 +4061,6 @@ def _start_publication_worker(app: FastAPI, cp: ControlPlane) -> None:
                     limit=limit,
                     actor="publication-worker",
                     tenant_id=None,
-                    allow_blocking_hub_verify=True,
                 )
             except Exception:  # noqa: BLE001 - the worker must never crash the hub
                 logging.getLogger("mac.publication_worker").warning(

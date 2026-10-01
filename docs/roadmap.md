@@ -164,8 +164,9 @@ transaction or equivalent durable evidence.
 
 Source: [MAC capabilities at `d8d491d6`](https://docs.google.com/presentation/d/1yOOzFqRVwhY6opljcPEzfkzQmdjwylsxi1_hFO_8wJ0/edit?slide=id.p12),
 captured 2026-08-28. Items stay unchecked until they meet the completion rule
-above. Large ADRs are held `--no-dispatch` until hub-verify can land
-repository work (`task_321b8e8d`).
+above. Large ADRs were held `--no-dispatch` until hub-verify could land
+repository work (`task_321b8e8d`); hub-verify was deleted on 2026-10-01 and the
+worker's verifier run is now the review verdict.
 
 - [ ] Default `mac --help` reports the real `mac admin` subcommand count, not
       zero. Ledger `task_2d33cc69`.
@@ -186,7 +187,7 @@ repository work (`task_321b8e8d`).
 - [ ] ADR 0012 (native steward + containerized execution) stays deferred until
       a fleet measurement exists. ADR 0015 already narrowed the containerized
       half to Linux. Ledger `task_3a48fd75`.
-- [ ] Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
-      (not the live hub database) so a repository canary can complete.
-      Ledger `task_321b8e8d`. Blocked the v1.3.1 canary `task_d894080c` /
-      PR #681.
+- [x] ~~Hub-verify OpenShell sandboxes receive a dedicated test Postgres DSN
+      (not the live hub database) so a repository canary can complete.~~
+      Hub-verify was deleted on 2026-10-01; verifier sandboxes start their own
+      PostgreSQL. Ledger `task_321b8e8d`.

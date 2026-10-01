@@ -46,7 +46,16 @@ def _bad_items():
         "missing_executed_head_sha": verifier_test_item(HEAD, executed_head_sha=""),
         "mismatched_executed_head_sha": verifier_test_item(OTHER),
         "missing_executed_tree_sha": verifier_test_item(HEAD, executed_tree_sha=""),
-        "deferred": worker._hub_verify_deferred_test_item("scripts/run-contract-tests.sh"),
+        # The placeholder workers used to submit when hub-verify ran the tests.
+        "deferred": {
+            "name": "repository contract test",
+            "command": "scripts/run-contract-tests.sh",
+            "returncode": None,
+            "status": "deferred",
+            "execution_environment": "hub_verify_pending",
+            "stdout": "",
+            "stderr": "",
+        },
         "skipped": verifier_test_item(HEAD, skipped=True),
         "clean_tree_sandbox_receipt": clean_tree_receipt,
         "agent_written": {"name": "pytest", "command": "pytest -q", "returncode": 0},

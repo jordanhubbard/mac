@@ -12,12 +12,12 @@ from mac.services import ControlPlane, sign_verification_manifest
 
 
 def main() -> int:
-    # The old same-worker fallback was retired: the independent hub verifier
-    # now prevents starvation without making the executor its own reviewer.
-    # Keep the legacy hub opt-in off on the historical tree, so it exercises
-    # its default reviewer route rather than bypassing the original defect.
+    # The old same-worker fallback was retired: the hub-reviewer now approves
+    # from the worker's validated evidence, so a single physical worker never
+    # has to review its own task. Keep the legacy hub opt-in off on the
+    # historical tree, so it exercises its default reviewer route rather than
+    # bypassing the original defect.
     os.environ["MAC_REVIEW_HUB_VERIFY"] = "0"
-    os.environ["MAC_REVIEW_SEMANTIC_REVIEWER"] = "0"
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("only-reviewer-host", resources={"cpu": 4, "memory_gb": 8})
     agent = cp.register_agent(
@@ -66,15 +66,16 @@ def main() -> int:
     cp.submit_for_review(task.id, agent.id)
     try:
         result = cp.advance_default_review_workflow(task.id)
+        approved = [review for review in cp.list_reviews(task.id) if review.status == "approved"]
     finally:
         cp.store.close()
-    if result.get("status") != "waiting_for_hub_verify":
+    if not approved:
         print(f"fault reproduced: {result}")
         return 1
-    if not result.get("reviewer_agent_id") or result["reviewer_agent_id"] == agent.id:
+    if any(review.reviewer_agent_id == agent.id for review in approved):
         print(f"executor was incorrectly allowed to review itself: {result}")
         return 1
-    print("fault absent: single physical worker progressed to independent hub verification")
+    print("fault absent: single physical worker progressed to an independent approval")
     return 0
 
 
