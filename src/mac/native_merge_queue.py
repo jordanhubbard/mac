@@ -5,10 +5,11 @@
 :mod:`mac.merge_queue` implements the OCC *validation phase* for one landing:
 serialize per repository, project the merge against the CURRENT tip with ``git
 merge-tree``, and run the contract suite against that projected tree.  What it
-does not do is order *several* approved changes against each other.  Until now
-that ordering was borrowed from the forge: ``gitops.merge_queue_enabled`` asks
-GitHub whether the canonical branch has a merge queue, and when it does the
-landing is enqueued with ``expectedHeadOid`` and GitHub serializes it.
+does not do is order *several* approved changes against each other.  #400
+borrowed that ordering from the forge: it asked GitHub whether the canonical
+branch had a merge queue and, when it did, enqueued the landing with
+``expectedHeadOid``.  No repository ever had one, and that forge path was
+removed on 2026-10-01; this queue is now the only ordering mechanism.
 
 GitHub merge queues are an **organization-only** feature.  On a User-owned
 repository the API refuses the rule outright -- adding a ``merge_queue`` rule to
@@ -98,7 +99,6 @@ QUEUE_SCHEMA = "mac.native_merge_queue.v1"
 # Serialization modes, recorded in publication evidence as `merge_serialization`
 # exactly the way #400 records the forge's.  These strings are a contract: they
 # show up in `mac task show` and in the integration proof.
-MODE_FORGE_QUEUE = "merge_queue"
 MODE_NATIVE_QUEUE = "mac_native_queue"
 MODE_DIRECT_SQUASH = "direct_squash"
 
@@ -1631,7 +1631,6 @@ __all__ = [
     "FRONT_RECOVERY_NONE",
     "FRONT_RECOVERY_REQUEUE",
     "MODE_DIRECT_SQUASH",
-    "MODE_FORGE_QUEUE",
     "MODE_NATIVE_QUEUE",
     "BatchSlot",
     "EvictionPlan",

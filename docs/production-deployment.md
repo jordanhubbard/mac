@@ -699,14 +699,14 @@ alone do not close this; a **merge queue** does, and unlike
 serializing the *test runs* (which here take ~2 hours, so strict rebasing never
 converges with several open pull requests).
 
-| branch has | what mac does | the guarantee |
-| --- | --- | --- |
-| a forge merge queue (`merge_queue`) | enqueues the PR pinned to the reviewed head; the queue tests the projected merge and lands it in order | what was tested is what lands |
-| no forge merge queue (`mac_native_queue`) | orders the change in **mac's own merge queue**, tests it against the tree it will land on, and refuses the merge unless the canonical tip's tree is still that exact tree | what was tested is what lands |
-
-Both branches are recorded in the publication evidence as a
-`merge_serialization` entry naming the mode and its guarantee, and on the
-canonical-integration proof as `merge_serialization`.
+Every pull-request landing goes through **mac's own merge queue**
+(`mac_native_queue`): it orders the change, tests it against the tree it will
+land on, and refuses the merge unless the canonical tip's tree is still that
+exact tree — what was tested is what lands. mac never enqueues into a forge
+merge queue; that path was removed on 2026-10-01 because no repository used it.
+The mode and its guarantee are recorded in the publication evidence as a
+`merge_serialization` entry, and on the canonical-integration proof as
+`merge_serialization`.
 
 ### mac's own merge queue
 
@@ -715,8 +715,7 @@ canonical-integration proof as `merge_serialization`.
 open them to personal accounts. Adding a `merge_queue` rule to a User-owned
 repository's ruleset returns HTTP 422 `Invalid rule 'merge_queue'` even with no
 parameters. So on every personal repository mac manages there is no forge queue
-to borrow serialization from, and `mac_native_queue` is not a rare fallback —
-it is the only path. `src/mac/native_merge_queue.py` provides the queue itself.
+to borrow serialization from, and `mac_native_queue` is the only path. `src/mac/native_merge_queue.py` provides the queue itself.
 
 **What it does.** Approved changes awaiting land are ordered per (repository,
 canonical branch) in the `merge_queue_entries` table. Entry *N* is projected on
@@ -754,7 +753,7 @@ their place in line.
 | `MAC_MERGE_QUEUE_WINDOW_CEILING` | `4` | the most entries that may speculate at once, and therefore the most workers speculation can occupy. Set to `1` to disable speculation without disabling the queue |
 | `MAC_MERGE_QUEUE_WINDOW_INCREMENT` | `1` | how fast the window recovers after a failure |
 | `MAC_MERGE_QUEUE_LEASE_SECONDS` | `5400` | how long a slot may be held before a dead hub's slot is reclaimable. Deliberately longer than a full contract run (~45 min) |
-| `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | `86400` | how long a resolved forge capability is trusted before it is re-probed |
+| `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | `86400` | how long a resolved forge capability record is trusted before it is re-resolved |
 
 **What is observable.** Every publication records a `merge_serialization`
 command carrying a queue snapshot: `queue_depth`, `window_size`,
@@ -767,36 +766,29 @@ per-attempt commands name each decision: `merge_serialization_capability`,
 `merge_queue_observe_pull_request`, `merge_queue_land_gate`,
 `merge_queue_landed`, `merge_queue_eviction`.
 
-**Which mechanism applies is a stored project attribute, not a per-merge probe.**
+**The forge capability is a stored project attribute, not a per-merge probe.**
 `mac.merge_capability` resolves the forge's capability once and stores it on the
 project's repository record in `project_repositories.metadata` under
-`merge_serialization_capability`. It records *supported* and *enabled*
-separately (they differ: an org repo can have a queue and may not have turned it
-on), the forge kind, whether a credential resolved, and when and by what it was
+`merge_serialization_capability`. It is evidence only — it no longer selects a
+mechanism. It records *supported* (an org-owned GitHub repo could have a forge
+queue) and *enabled* (always `false`: mac does not use a forge queue), the forge kind, whether a credential resolved, and when and by what it was
 determined — so an operator can see that an answer is six weeks old rather than
 trusting it silently. The existing GitHub ingest poller refreshes it on its
 normal pass, behind `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS`, and reports the
 outcome in its run report under `merge_queue_capability`. To force a refresh
 now, run the poller: `mac admin fleet github-ingest run` (`POST /github-ingest/run`).
-A missing or expired answer is re-resolved at publication time. **Unknown is
-never permission to do an unserialized squash** — it routes to mac's queue,
-which serializes correctly regardless of what the forge does.
+A missing or expired answer is re-resolved at publication time. Whatever it
+says, the landing routes to mac's queue, which serializes correctly regardless
+of what the forge does.
 
 > **Live-hub note.** `schema.sql` is `CREATE TABLE IF NOT EXISTS` with no
 > migration framework, and `PostgresStore.initialize()` only creates missing
 > tables. `merge_queue_entries` and `merge_queue_windows` therefore appear on a
 > hub the next time the schema is applied; on an already-running hub, apply the
 > DDL from `src/mac/data/postgres/schema.sql` (the block headed *"mac's own
-> merge queue"*) once by hand. Until they exist, publication on a repository
-> without a forge queue will fail rather than fall back to an unserialized
-> squash — which is the correct direction to fail.
-
-**Queued, not merged yet.** A pull request accepted into the merge queue has
-not landed. Publication defers with
-`publication_failure_kind=pull_request_queued` through the same retry backoff
-pending checks use, and a later attempt observes the merge the queue performed
-(it asks the forge for the pull request's state before doing anything, so a PR
-the queue already landed is never merged twice).
+> merge queue"*) once by hand. Until they exist, pull-request publication will
+> fail rather than fall back to an unserialized squash — which is the correct
+> direction to fail.
 
 **Who gates the merge.** Both, at different moments. mac's own reviewer verdict
 plus the merge gate decide whether a pull request is opened and a merge is

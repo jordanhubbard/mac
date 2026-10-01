@@ -270,7 +270,6 @@
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac-openshell-supervisor.service",
       "scripts/run-contract-tests.sh",
-      "src/mac/auto_land.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/deploy_env.py",
@@ -10643,17 +10642,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: reviewer agent id.",
-    "family": "core",
-    "name": "MAC_REVIEWER_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "src/mac/auto_land.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Review setting: review hub verify.",
     "family": "review",
     "name": "MAC_REVIEW_HUB_VERIFY",
@@ -12354,7 +12342,6 @@
     "name": "MAC_TASK_ID",
     "retired": false,
     "sources": [
-      "src/mac/auto_land.py",
       "src/mac/coding_agent.py",
       "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
