@@ -143,10 +143,8 @@ EXPECTED_TABLES = [
     "communication_accounts",
     "communication_identities",
     "conversation_threads",
-    "deployments",
     "dispatch_mismatch_state",
     "dispatch_rounds",
-    "environment_events",
     "environments",
     "eval_runs",
     "eval_set_events",
@@ -185,7 +183,6 @@ EXPECTED_TABLES = [
     "integration_observations",
     "leases",
     "machines",
-    "managed_task_publication_rollout",
     "memory_records",
     "messages",
     "mood_overlays",
@@ -209,8 +206,6 @@ EXPECTED_TABLES = [
     "reconciliation_state",
     "representation_bindings",
     "reviews",
-    "rollout_events",
-    "rollouts",
     "runtime_environment_deltas",
     "runtime_environments",
     "runtime_runs",
@@ -494,6 +489,7 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         "0003_drop_leftover_work_package_triggers",
         "0004_drop_removed_feature_tables",
         "0005_drop_native_merge_queue_tables",
+        "0006_drop_rollout_and_deploy_tables",
     ]
     expected_checksums = {
         "0001_postgresql_authority_baseline": (
@@ -510,6 +506,9 @@ def test_schema_migration_authority_is_separate_from_legacy_receipts() -> None:
         ),
         "0005_drop_native_merge_queue_tables": (
             "3cfc5b4536aee2fa783c2ad90ac3f84b1c52db7f33a4062c42eedf679d9e9d0f"
+        ),
+        "0006_drop_rollout_and_deploy_tables": (
+            "f2969fbd949f44ba0525df8e95c58aeb76329c411aded84e0a68d5e0672e8fbe"
         ),
     }
     for migration in MIGRATIONS:

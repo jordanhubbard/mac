@@ -107,6 +107,12 @@ def _function_exists(store, name: str) -> bool:
     return row is not None
 
 
+def _probe_id(name: str) -> str:
+    """A probe migration id at the next free ordinal after the binary's chain."""
+
+    return "%04d_%s" % (len(MIGRATIONS) + 1, name)
+
+
 def _relation_exists(store, relation: str) -> bool:
     return store.query_one("SELECT to_regclass(?) AS relation", (relation,))["relation"] is not None
 
@@ -155,7 +161,7 @@ def test_known_existing_schema_requires_and_accepts_explicit_baseline(pg_dsn: st
 
 def test_explicit_upgrade_applies_in_order_and_proves_postcondition(pg_dsn: str) -> None:
     upgrade = Migration(
-        "0006_upgrade_probe",
+        _probe_id("upgrade_probe"),
         "CREATE TABLE migration_upgrade_probe (id INTEGER PRIMARY KEY)",
         "SELECT to_regclass('migration_upgrade_probe') IS NOT NULL",
     )
@@ -164,14 +170,12 @@ def test_explicit_upgrade_applies_in_order_and_proves_postcondition(pg_dsn: str)
         store.apply_migrations(applied_by="pytest:bootstrap")
         result = store.apply_migrations(applied_by="pytest:upgrade", migrations=chain)
 
-        assert result["applied"] == ["0006_upgrade_probe"]
-        assert result["current_version"] == "0006_upgrade_probe"
-        assert (
-            store.query_one("SELECT migration_id FROM schema_migrations WHERE ordinal = 6")[
-                "migration_id"
-            ]
-            == "0006_upgrade_probe"
-        )
+        assert result["applied"] == [_probe_id("upgrade_probe")]
+        assert result["current_version"] == _probe_id("upgrade_probe")
+        assert store.query_one(
+            "SELECT migration_id FROM schema_migrations WHERE ordinal = ?",
+            (len(MIGRATIONS) + 1,),
+        )["migration_id"] == _probe_id("upgrade_probe")
 
 
 def test_checksum_mismatch_refuses_startup(pg_dsn: str) -> None:
@@ -232,7 +236,7 @@ def test_schema_version_rejects_inconsistency_and_verification_detects_tampering
 
 def test_missing_or_out_of_order_ledger_is_refused(pg_dsn: str) -> None:
     upgrade = Migration(
-        "0006_order_probe",
+        _probe_id("order_probe"),
         "CREATE TABLE migration_order_probe (id INTEGER PRIMARY KEY)",
         "SELECT to_regclass('migration_order_probe') IS NOT NULL",
     )
@@ -249,7 +253,7 @@ def test_missing_or_out_of_order_ledger_is_refused(pg_dsn: str) -> None:
 
 def test_failed_migration_rolls_back_ddl_and_receipt(pg_dsn: str) -> None:
     broken = Migration(
-        "0006_rollback_probe",
+        _probe_id("rollback_probe"),
         "CREATE TABLE migration_rollback_probe (id INTEGER PRIMARY KEY)",
         "SELECT FALSE",
     )
@@ -318,7 +322,7 @@ def test_partial_or_empty_authority_is_refused(pg_dsn: str) -> None:
 
 def test_pending_migration_without_postcondition_is_refused(pg_dsn: str) -> None:
     missing_proof = Migration(
-        "0006_missing_proof",
+        _probe_id("missing_proof"),
         "CREATE TABLE migration_missing_proof (id INTEGER PRIMARY KEY)",
     )
     with _fresh_store(pg_dsn) as store:
@@ -412,7 +416,7 @@ def test_failure_after_legacy_drop_rolls_back_tables_rows_and_ledger(pg_dsn: str
     from mac.schema_migrations import LEGACY_PRUNABLE_TABLES
 
     broken = Migration(
-        "0006_legacy_prune_rollback_probe",
+        _probe_id("legacy_prune_rollback_probe"),
         "CREATE TABLE legacy_prune_rollback_probe (id INTEGER PRIMARY KEY)",
         "SELECT FALSE",
     )
@@ -455,6 +459,7 @@ def test_upgrade_drops_leftover_work_package_task_triggers(pg_dsn: str) -> None:
             "0003_drop_leftover_work_package_triggers",
             "0004_drop_removed_feature_tables",
             "0005_drop_native_merge_queue_tables",
+            "0006_drop_rollout_and_deploy_tables",
         ]
         assert not _function_exists(store, "trg_work_package_task_claim_authority")
         assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
@@ -574,6 +579,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert status["pending"] == [
             "0004_drop_removed_feature_tables",
             "0005_drop_native_merge_queue_tables",
+            "0006_drop_rollout_and_deploy_tables",
         ]
         assert status["requires_backup"] is True
 
@@ -582,6 +588,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert result["applied"] == [
             "0004_drop_removed_feature_tables",
             "0005_drop_native_merge_queue_tables",
+            "0006_drop_rollout_and_deploy_tables",
         ]
         assert not [table for table in _REMOVED_FEATURE_TABLES if _relation_exists(store, table)]
         # Rows outside the dropped tables survive, and 0002's re-proved
@@ -589,7 +596,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert store.query_one("SELECT COUNT(*) AS n FROM agents")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 1
         verified = store.verify_schema()
-        assert verified["current_version"] == "0005_drop_native_merge_queue_tables"
+        assert verified["current_version"] == "0006_drop_rollout_and_deploy_tables"
         assert "0002_dream_candidate_store" in verified["proof"]["postconditions"]
 
 
@@ -637,19 +644,25 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             assert store.query_one('SELECT COUNT(*) AS n FROM "%s"' % table)["n"] == 1, table
 
         status = store.migration_status()
-        assert status["pending"] == ["0005_drop_native_merge_queue_tables"]
+        assert status["pending"] == [
+            "0005_drop_native_merge_queue_tables",
+            "0006_drop_rollout_and_deploy_tables",
+        ]
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:drop-native-merge-queue")
 
-        assert result["applied"] == ["0005_drop_native_merge_queue_tables"]
+        assert result["applied"] == [
+            "0005_drop_native_merge_queue_tables",
+            "0006_drop_rollout_and_deploy_tables",
+        ]
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         # The task the queue entry pointed at is untouched: it is still
         # REVIEWING and the land loop picks it up on the next tick.
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "reviewing"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0005_drop_native_merge_queue_tables"
+        assert verified["current_version"] == "0006_drop_rollout_and_deploy_tables"
 
 
 def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None:
@@ -658,4 +671,100 @@ def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0005_drop_native_merge_queue_tables"
+        assert verified["current_version"] == "0006_drop_rollout_and_deploy_tables"
+
+
+_ROLLOUT_AND_DEPLOY_TABLES = (
+    "rollout_events",
+    "rollouts",
+    "deployments",
+    "environment_events",
+    "managed_task_publication_rollout",
+)
+
+
+def _populate_rollout_and_deploy_tables(conn) -> None:
+    """A row in every table 0006 drops, plus the kept tables they point at."""
+
+    now = "2026-10-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO rollouts (id, version, strategy, status, target_percent, "
+        "created_by, created_at, updated_at) "
+        "VALUES ('rollout1', 'v1', 'canary', 'planned', 10, 'test', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO rollout_events (id, rollout_id, event_type, actor, detail, created_at) "
+        "VALUES ('rev1', 'rollout1', 'rollout.created', 'test', '{}', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO environments (id, name, metadata, created_by, created_at, updated_at) "
+        "VALUES ('env1', 'staging', '{}', 'test', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO environment_events (id, environment_id, event_type, actor, detail, "
+        "created_at) VALUES ('eev1', 'env1', 'environment.registered', 'test', '{}', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO artifacts (id, kind, digest, uri, signers, metadata, created_by, "
+        "created_at, updated_at) "
+        "VALUES ('art1', 'wheel', %s, 'file:///tmp/a.whl', '[]', '{}', 'test', %s, %s)",
+        ("sha256:" + "b" * 64, now, now),
+    )
+    conn.execute(
+        "INSERT INTO deployments (id, environment_id, artifact_id, status, deployed_by, "
+        "deployed_at) VALUES ('dep1', 'env1', 'art1', 'active', 'test', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO managed_task_publication_rollout (singleton_key, revision, crossed_by, "
+        "crossed_at) VALUES ('fleet', 1, 'test', %s)",
+        (now,),
+    )
+
+
+def test_upgrade_from_0005_drops_rollout_and_deploy_tables_with_rows(pg_dsn: str) -> None:
+    """A hub at 0005 still has the rollout/deploy tables; 0006 drops them."""
+
+    with _fresh_store(pg_dsn) as store:
+        store.apply_migrations(applied_by="pytest:through-0005", migrations=MIGRATIONS[:5])
+        with store._pool.connection() as conn:
+            _populate_rollout_and_deploy_tables(conn)
+        for table in _ROLLOUT_AND_DEPLOY_TABLES:
+            assert store.query_one('SELECT COUNT(*) AS n FROM "%s"' % table)["n"] == 1, table
+        subjects = store.query_all("SELECT DISTINCT subject_type FROM events")
+        assert {"rollout", "environment"} <= {row["subject_type"] for row in subjects}
+
+        status = store.migration_status()
+        assert status["pending"] == ["0006_drop_rollout_and_deploy_tables"]
+        assert status["requires_backup"] is True
+
+        result = store.apply_migrations(applied_by="pytest:drop-rollout-and-deploy")
+
+        assert result["applied"] == ["0006_drop_rollout_and_deploy_tables"]
+        assert not [t for t in _ROLLOUT_AND_DEPLOY_TABLES if _relation_exists(store, t)]
+        # The tables other code still uses keep their rows.
+        assert store.query_one("SELECT COUNT(*) AS n FROM environments")["n"] == 1
+        assert store.query_one("SELECT COUNT(*) AS n FROM artifacts")["n"] == 1
+        # The unified events view survives without the dropped sources.
+        assert _relation_exists(store, "events")
+        subjects = store.query_all("SELECT DISTINCT subject_type FROM events")
+        assert not {"rollout", "environment"} & {row["subject_type"] for row in subjects}
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0006_drop_rollout_and_deploy_tables"
+
+
+def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
+    with _fresh_store(pg_dsn) as store:
+        store.initialize()
+        assert not [t for t in _ROLLOUT_AND_DEPLOY_TABLES if _relation_exists(store, t)]
+        assert _relation_exists(store, "events")
+        assert _relation_exists(store, "environments")
+        assert _relation_exists(store, "artifacts")
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0006_drop_rollout_and_deploy_tables"

@@ -390,7 +390,7 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                 "command_audit/observability_events",
                 "memory_records/agentbus_streams/artifacts",
                 "notifier_channels/integration_findings",
-                "rollouts/environments/evals/secrets",
+                "evals/secrets",
             ],
             "rule": "Use MAC APIs/CLIs for operational state; use Hermes memory for personality, private memory, and conversation context.",
         },

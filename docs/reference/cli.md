@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-51 administrative commands live under `mac admin` (`mac admin help` lists them).
+49 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -254,10 +254,8 @@ Fleet and machines:
   mcp            serve the ledger to coding agents as Model Context Protocol tools
   plugin         install mac skills and MCP into Claude, Codex, Cursor, OpenCode
   cli-session    auto-join this CLI session to the AgentBus (ADR 0032 auto-trigger)
-  sandbox-image  the sandbox IMAGE: its bill of materials and its rollout
+  sandbox-image  the sandbox IMAGE: its bill of materials
   runtime        runtime images and environment definitions
-  rollout        staged rollout of a runtime or configuration
-  env            environment variables projected onto fleet hosts
   secret         secret storage, rotation and access audit
   database       control-plane database maintenance
   migrate        schema and data migrations

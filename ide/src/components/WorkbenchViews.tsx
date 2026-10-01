@@ -468,11 +468,10 @@ function AgentsView({
 function RuntimeView({ data }: { data: DashboardState }) {
   return (
     <main className="workbench-view">
-      <ViewHeader description="Promote validated runtime changes and watch canary health." eyebrow="Delivery" title="Runtime & rollouts" />
+      <ViewHeader description="Promote validated runtime changes and watch active runs." eyebrow="Delivery" title="Runtime" />
       <div className="three-column-grid">
         <RecordSection label="Runtime deltas" records={data.runtime_deltas} primary="summary" secondary="id" state="status" />
         <RecordSection label="Active runs" records={data.runtime_runs} primary="runtime_id" secondary="id" state="status" />
-        <RecordSection label="Rollouts" records={data.rollouts} primary="version" secondary="strategy" state="status" />
       </div>
     </main>
   );

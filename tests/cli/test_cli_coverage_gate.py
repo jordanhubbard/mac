@@ -195,13 +195,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # dispatch domain
         ("dispatch", "assign"),
         ("dispatch", "tick"),
-        # env domain
-        ("env", "current"),
-        ("env", "deploy"),
-        ("env", "history"),
-        ("env", "list"),
-        ("env", "register"),
-        ("env", "show"),
         # eval domain
         ("eval", "run"),
         ("eval", "set"),
@@ -262,13 +255,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # review domain
         ("review", "decision"),
         ("review", "request"),
-        # rollout domain
-        ("rollout", "advance"),
-        ("rollout", "create"),
-        ("rollout", "health"),
-        ("rollout", "list"),
-        ("rollout", "rescue"),
-        ("rollout", "verify-artifact"),
         # runtime sub-commands
         ("runtime", "list"),
         # secret sub-commands

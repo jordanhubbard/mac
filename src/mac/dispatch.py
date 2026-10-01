@@ -151,10 +151,8 @@ class LocalDispatch:
             "convert_ticketing_source",
             "create_interaction_task",
             "create_task",
-            "evaluate_rollout_health",
             "import_project_item",
             "register_project",
-            "rescue_rollout",
             "start_workflow",
         }
     )
@@ -1622,7 +1620,7 @@ class RemoteDispatch:
     def list_secret_audits(self, secret_id: str) -> List[_Dictish]:
         return _wrap_list(self._get("/secret-audits", secret_id=secret_id))
 
-    # -- Runtime / Artifact / Environment / Deployment ----------------------
+    # -- Runtime / Artifact -------------------------------------------------
 
     def create_runtime(self, name: str, manifest: Dict[str, Any], created_by: str) -> _Dictish:
         return _Dictish(
@@ -1721,34 +1719,6 @@ class RemoteDispatch:
     def delete_artifact(self, artifact: str, actor: Optional[str] = None) -> _Dictish:
         return _Dictish(self._delete("/artifacts/%s" % quote(artifact, safe="")))
 
-    def register_environment(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/environments", _drop_none(kw)))
-
-    def list_environments(
-        self,
-        tenant_id: Optional[str] = None,
-        channel: Optional[str] = None,
-    ) -> List[_Dictish]:
-        return _wrap_list(self._get("/environments", tenant_id=tenant_id, channel=channel))
-
-    def get_environment(self, environment: str) -> _Dictish:
-        return _Dictish(self._get("/environments/%s" % quote(environment, safe="")))
-
-    def deploy_artifact(self, environment: str, **kw: Any) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/environments/%s/deploy" % quote(environment, safe=""),
-                _drop_none(kw),
-            )
-        )
-
-    def current_deployment(self, environment: str) -> Optional[_Dictish]:
-        resp = self._get("/environments/%s/current" % quote(environment, safe=""))
-        return _Dictish(resp) if resp else None
-
-    def list_deployments(self, environment: str) -> List[_Dictish]:
-        return _wrap_list(self._get("/environments/%s/deployments" % quote(environment, safe="")))
-
     # -- Bridge (project items) ---------------------------------------------
     # beads bridge endpoints removed: beads is no longer a read/write source.
 
@@ -1828,78 +1798,6 @@ class RemoteDispatch:
                 "/memory/remembered/%s%s" % (quote(key, safe=""), _query({"project": project}))
             )
         )
-
-    # -- Rollout ------------------------------------------------------------
-
-    def create_rollout(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/rollouts", _drop_none(kw)))
-
-    def list_rollouts(
-        self,
-        tenant_id: Optional[str] = None,
-        channel: Optional[str] = None,
-    ) -> List[_Dictish]:
-        return _wrap_list(self._get("/rollouts", tenant_id=tenant_id, channel=channel))
-
-    def advance_rollout(
-        self,
-        rollout_id: str,
-        action: str,
-        actor: str,
-        detail: Optional[Dict[str, Any]] = None,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/rollouts/%s/advance" % quote(rollout_id, safe=""),
-                _drop_none({"action": action, "actor": actor, "detail": detail or {}}),
-            )
-        )
-
-    def verify_rollout_artifact(
-        self,
-        rollout_id: str,
-        artifact_uri: str,
-        artifact_hash: str,
-        actor: str,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/rollouts/%s/artifact" % quote(rollout_id, safe=""),
-                {
-                    "artifact_uri": artifact_uri,
-                    "artifact_hash": artifact_hash,
-                    "actor": actor,
-                },
-            )
-        )
-
-    def evaluate_rollout_health(
-        self,
-        rollout_id: str,
-        checks: Dict[str, Any],
-        actor: str,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/rollouts/%s/health" % quote(rollout_id, safe=""),
-                {"checks": checks, "actor": actor},
-            )
-        )
-
-    def rescue_rollout(
-        self,
-        rollout_id: str,
-        actor: str,
-        reason: str,
-        detail: Optional[Dict[str, Any]] = None,
-    ) -> tuple:  # type: ignore[type-arg]
-        resp = self._post(
-            "/rollouts/%s/rescue" % quote(rollout_id, safe=""),
-            _drop_none({"actor": actor, "reason": reason, "detail": detail or {}}),
-        )
-        rollout = resp.get("rollout") if isinstance(resp, dict) else None
-        task = resp.get("task") if isinstance(resp, dict) else None
-        return _Dictish(rollout or {}), _Dictish(task or {})
 
     # -- Eval ---------------------------------------------------------------
 
@@ -2082,26 +1980,6 @@ class RemoteDispatch:
 
     def list_human_messages(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/communication/deliveries", **kw))
-
-    def roll_out_sandbox_image(
-        self,
-        image_ref: str,
-        *,
-        bom: Optional[Dict[str, Any]] = None,
-        actor: str = "human",
-        project: Optional[str] = None,
-    ) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/sandbox/rollout",
-                {
-                    "image": image_ref,
-                    "bom": bom or {},
-                    "actor": actor,
-                    "project": project,
-                },
-            )
-        )
 
     def stream_events(self, **kw: Any) -> Any:
         """Follow /events/stream, yielding each record as it arrives.
@@ -2491,8 +2369,6 @@ def _task_producing_cli_operation(args: Any) -> Optional[str]:
         return "bridge task import"
     if command == "workflow" and getattr(args, "workflow_command", None) == "start":
         return "workflow start"
-    if command == "rollout" and getattr(args, "rollout_command", None) in {"health", "rescue"}:
-        return "rollout %s" % getattr(args, "rollout_command")
     if command == "migrate":
         migrate_command = getattr(args, "migrate_command", None)
         if migrate_command == "import":

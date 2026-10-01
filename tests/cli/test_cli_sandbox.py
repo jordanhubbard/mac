@@ -1,8 +1,7 @@
-"""Behavioral tests for `mac admin sandbox-image bom` and `mac admin sandbox-image rollout`.
+"""Behavioral tests for `mac admin sandbox-image bom`.
 
-Both commands are the operator-facing end of the contract-derived image: one
-answers "what does the fleet's sandbox need", the other puts a reviewed image
-onto workers without interrupting their work. Neither is useful if it only
+The command is the operator-facing end of the contract-derived image: it
+answers "what does the fleet's sandbox need". It is not useful if it only
 works when called as a Python function, so these go through the CLI.
 """
 
@@ -16,9 +15,7 @@ from pathlib import Path
 import pytest
 
 from mac.cli import main
-from mac.test_support import control_plane_on, dsn_for
-
-DIGEST = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+from mac.test_support import dsn_for
 
 
 def _run(tmp_path, *args):
@@ -81,29 +78,3 @@ def test_bom_compare_is_quiet_when_the_manifest_matches(tmp_path):
 
     assert rc in (None, 0)
     assert out["has_drift"] is False
-
-
-def test_rollout_files_a_barrier_task_for_each_worker(tmp_path):
-    cp = control_plane_on(dsn_for(tmp_path))
-    machine = cp.register_machine("cli-roll-host")
-    cp.register_agent(machine.id, "worker1")
-
-    rc, out = _run(tmp_path, "admin", "sandbox-image", "rollout", "--image", DIGEST)
-
-    assert rc in (None, 0)
-    assert len(out["filed"]) == 1
-
-
-def test_rollout_refuses_a_tag(tmp_path):
-    """A tag can be repointed after review, so what ships and what was
-    reviewed could differ with nothing recording it."""
-    rc, out = _run(
-        tmp_path,
-        "admin",
-        "sandbox-image",
-        "rollout",
-        "--image",
-        "ghcr.io/jordanhubbard/mac-openshell-runtime:latest",
-    )
-
-    assert rc not in (None, 0)

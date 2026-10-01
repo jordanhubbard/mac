@@ -264,7 +264,6 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
         ({"command": "project", "project_command": "register"}, "project registration"),
         ({"command": "bridge", "bridge_command": "import"}, "bridge task import"),
         ({"command": "workflow", "workflow_command": "start"}, "workflow start"),
-        ({"command": "rollout", "rollout_command": "health"}, "rollout health"),
         ({"command": "migrate", "migrate_command": "import"}, "task migration import"),
         (
             {"command": "task", "task_command": "migrate-beads", "dry_run": False},
