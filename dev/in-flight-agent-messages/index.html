@@ -1996,8 +1996,8 @@ evidence that it works here. MAC keeps its own bus: AgentBus streams are bound
 to tasks and leases and audited into <code>action_events</code>, none of which a standalone
 message server provides. What was adopted is the <em>delivery mode</em>, which is the
 part they measured.</p>
-<p>Worth measuring on this fleet before believing it. <code>mac task generator-yield</code>
-already reports completion yield by origin, and MAC's own data is a caution:
+<p>Worth measuring on this fleet before believing it. MAC's own completion yield
+by task origin (measured in September 2026) is a caution:
 <code>direct_task</code> (plain human free text) completes at 20.0% while machine-originated
 work runs 0–9.6%, so communication mode may not be the binding constraint here.</p>
 

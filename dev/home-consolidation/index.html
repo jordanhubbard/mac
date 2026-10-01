@@ -2080,8 +2080,10 @@ drop the legacy subtree entirely and remove the compat symlinks.</p>
 <h2 id="5b-dream-cycle-learning-two-systems-one-orphan-executed">5b. Dream-cycle learning: two systems, one orphan (executed)<a class="headerlink" href="#5b-dream-cycle-learning-two-systems-one-orphan-executed" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p><strong>Update 2026-09-30:</strong> MAC's nap/dream pipeline, <code>dream_log_import.py</code> and
-<code>mac_paths.dream_logs_dir()</code> described below were removed. The historical
-<code>dream:*</code> and <code>nap_summary</code> records stay in <code>memory_records</code>.</p>
+<code>mac_paths.dream_logs_dir()</code> described below were removed, and migration
+<code>0004_drop_removed_feature_tables</code> drops the <code>nap_runs</code>, <code>nap_schedules</code>,
+<code>dream_runs</code> and <code>dream_candidate_entries</code> tables. The historical <code>dream:*</code>
+and <code>nap_summary</code> records stay in <code>memory_records</code>.</p>
 </blockquote>
 <p>Investigation of the dream/learning capability found <strong>two</strong> dream systems:</p>
 <ol>
