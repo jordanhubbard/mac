@@ -49,10 +49,6 @@
          <lastmod>2026-10-01</lastmod>
     </url>
     <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/deploy-prerequisite-vs-phase1-audit/</loc>
-         <lastmod>2026-10-01</lastmod>
-    </url>
-    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/dispatch-priority-bias-audit/</loc>
          <lastmod>2026-10-01</lastmod>
     </url>
@@ -61,15 +57,7 @@
          <lastmod>2026-10-01</lastmod>
     </url>
     <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/fleet-cutover-transaction-protocol/</loc>
-         <lastmod>2026-10-01</lastmod>
-    </url>
-    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/fleet-directives/</loc>
-         <lastmod>2026-10-01</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/fleet-node-onboarding-checklist/</loc>
          <lastmod>2026-10-01</lastmod>
     </url>
     <url>
@@ -98,10 +86,6 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/hermes-vendor-fate/</loc>
-         <lastmod>2026-10-01</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/hgx-elastic-capacity/</loc>
          <lastmod>2026-10-01</lastmod>
     </url>
     <url>
@@ -206,10 +190,6 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/structured-task-bodies/</loc>
-         <lastmod>2026-10-01</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/synchronized-fleet-cutover/</loc>
          <lastmod>2026-10-01</lastmod>
     </url>
     <url>
@@ -874,10 +854,6 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/superpowers/specs/2026-05-31-autonomous-review-fix-loop-design/</loc>
-         <lastmod>2026-10-01</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design/</loc>
          <lastmod>2026-10-01</lastmod>
     </url>
     <url>

@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -2045,7 +1989,7 @@ actually live?"</strong> — precisely POLA.</p>
 <li><strong><code>.mac</code></strong> — <code>MAC_HOME</code> is a <strong>leaky knob</strong>. The canonical <code>mac_home()</code>
   (<code>src/mac/client_principals.py:62</code>) honors it, but dozens of hot-path modules
   re-implement the path and hard-code <code>~/.mac</code> <em>ignoring</em> <code>MAC_HOME</code>: the ledger
-  (<code>src/mac/dispatch.py:2811</code>), fleets registry (<code>src/mac/fleet_creds.py:121</code>),
+  (<code>src/mac/dispatch.py:2811</code>), fleets registry (<code>src/mac/fleet_ssh.py</code>),
   journal, most of <code>src/mac/cli.py</code>, OpenShell. Setting <code>MAC_HOME</code> today would
   relocate <em>some</em> data and orphan the rest — a data-loss trap.</li>
 </ul>

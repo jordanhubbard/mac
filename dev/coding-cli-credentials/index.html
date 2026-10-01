@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -1900,7 +1844,7 @@ logged-in user can) and materializes the portable form on the worker. Cursor's
 <code>cursor-access-token</code> entry is a browser-login token and must be projected as
 <code>CURSOR_AUTH_TOKEN</code>; treating it as <code>CURSOR_API_KEY</code> makes Cursor attempt the
 generated-API-key login flow and reject it.</p>
-<p><strong>Transport rules</strong> (same discipline as <code>mac admin fleet sync-token</code>): secrets move
+<p><strong>Transport rules</strong>: secrets move
 only over the fleet's SSH routes, only on <strong>stdin</strong> — never argv, env,
 stdout, or the hub ledger. The hub never sees the credential; it sees only
 route fields, a SHA-256 route fingerprint, the verification time/result, and a

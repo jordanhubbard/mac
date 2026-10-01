@@ -1488,62 +1488,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hub-availability/" class="md-nav__link">
         
   
@@ -1920,51 +1864,6 @@ request and response definitions.</p>
 <td>Bulk Update Agents</td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/agents/dispatch-hold/authority</code></td>
-<td>Dispatch Hold Authority</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/dispatch-hold/epochs/open</code></td>
-<td>Open Fleet Release Epoch</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/agents/dispatch-hold/epochs/{epoch_id}</code></td>
-<td>Dispatch Hold Epoch Status</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/dispatch-hold/epochs/{epoch_id}/abort</code></td>
-<td>Abort Fleet Release Epoch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/dispatch-hold/epochs/{epoch_id}/commit</code></td>
-<td>Commit Fleet Release Epoch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/dispatch-hold/epochs/{epoch_id}/prove</code></td>
-<td>Prove Fleet Release Epoch</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/agents/dispatch-hold/epochs/{epoch_id}/readiness</code></td>
-<td>Dispatch Hold Epoch Pre Prove Readiness</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/dispatch-hold/release-batch</code></td>
-<td>Release Dispatch Holds Batch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/dispatch-hold/transition-batch</code></td>
-<td>Transition Dispatch Holds Batch</td>
-</tr>
-<tr>
 <td><code>DELETE</code></td>
 <td><code>/agents/{agent_id}</code></td>
 <td>Delete Agent</td>
@@ -2008,11 +1907,6 @@ request and response definitions.</p>
 <td><code>GET</code></td>
 <td><code>/agents/{agent_id}/agentbus/traffic</code></td>
 <td>Read Agentbus Traffic</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/agents/{agent_id}/attestation-key/recover</code></td>
-<td>Recover Agent Attestation Key</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
@@ -2550,66 +2444,6 @@ request and response definitions.</p>
 <td>Get Evidence Artifact</td>
 </tr>
 <tr>
-<td><code>POST</code></td>
-<td><code>/fleet-desired-source</code></td>
-<td>Set Fleet Desired Source</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/fleet-upgrades</code></td>
-<td>List Fleet Upgrades</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades</code></td>
-<td>Request Fleet Upgrade</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}</code></td>
-<td>Get Fleet Upgrade</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/arm</code></td>
-<td>Arm Fleet Upgrade</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/cancel</code></td>
-<td>Cancel Fleet Upgrade</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/epoch/abort</code></td>
-<td>Abort Fleet Upgrade Epoch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/epoch/commit</code></td>
-<td>Commit Fleet Upgrade Epoch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/epoch/open</code></td>
-<td>Open Fleet Upgrade Epoch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/epoch/prove</code></td>
-<td>Prove Fleet Upgrade Epoch</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/events</code></td>
-<td>Get Fleet Upgrade Events</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/fleet-upgrades/{upgrade_id}/stage</code></td>
-<td>Stage Fleet Upgrade</td>
-</tr>
-<tr>
 <td><code>GET</code></td>
 <td><code>/fleet/build-distribution</code></td>
 <td>Fleet Build Distribution</td>
@@ -2990,31 +2824,6 @@ request and response definitions.</p>
 <td>Set Project Dispatch</td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/provisioning/requests</code></td>
-<td>List Provisioning Requests</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/provisioning/requests</code></td>
-<td>Create Provisioning Request</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/provisioning/requests/{request_id}</code></td>
-<td>Get Provisioning Request</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/provisioning/requests/{request_id}/cancel</code></td>
-<td>Cancel Provisioning Request</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/provisioning/requests/{request_id}/fulfill</code></td>
-<td>Fulfill Provisioning Request</td>
-</tr>
-<tr>
 <td><code>POST</code></td>
 <td><code>/publications</code></td>
 <td>Publish</td>
@@ -3173,31 +2982,6 @@ request and response definitions.</p>
 <td><code>GET</code></td>
 <td><code>/service-roles</code></td>
 <td>List Service Roles</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/source-convergence</code></td>
-<td>Source Convergence Status</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/source-convergence/tick</code></td>
-<td>Tick Source Convergence</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/source-releases</code></td>
-<td>List Source Releases</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/source-releases</code></td>
-<td>Register Source Release</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/source-releases/{release_id}</code></td>
-<td>Get Source Release</td>
 </tr>
 <tr>
 <td><code>GET</code></td>

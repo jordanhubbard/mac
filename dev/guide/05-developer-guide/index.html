@@ -1624,62 +1624,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hub-availability/" class="md-nav__link">
         
   
@@ -2140,21 +2084,14 @@ was rewritten to fix.</p>
 </ul>
 <h2 id="deploying-the-hub">Deploying the hub<a class="headerlink" href="#deploying-the-hub" title="Permanent link">&para;</a></h2>
 <p>The hub serves from <code>~/.mac/src/mac</code> on the hub host — <strong>not</strong> a developer
-checkout.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">git -C ~/.mac/src/mac fetch origin &amp;&amp; git -C ~/.mac/src/mac merge --ff-only origin/main</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">sudo launchctl kickstart -k system/com.mac.control-plane</span>
-</code></pre></div>
-<p>Verify by <strong>PID change</strong>, not checkout SHA: <code>refresh-source</code> has reported
-<code>restart_requested: false</code> while the checkout advanced. <code>/health</code> returns empty
-for ~10s during startup; that is not a failure.</p>
-<p>After a manual pull on the hub host, also restart the co-located agent
-(<code>com.mac.agent</code>) — it shares that checkout and will otherwise keep running
-stale code through several refreshes.</p>
+checkout. Move it (and the workers) to a new commit with <code>scripts/fleet-update</code>;
+see <a href="../../operations/fleet-update/">Updating the fleet with fleet-update</a>.
+<code>/health</code> returns empty for ~10s during startup; that is not a failure.</p>
 <h2 id="debugging-the-fleet">Debugging the fleet<a class="headerlink" href="#debugging-the-fleet" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac admin fleet doctor</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">mac task why-unclaimed &lt;id&gt;</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">mac admin observability list --name executor.agent_completed</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">mac agent list --json                     # hardware under resources.hardware</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac admin diagnostics</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac task why-unclaimed &lt;id&gt;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac admin observability list --name executor.agent_completed</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">mac agent list --json                     # hardware under resources.hardware</span>
 </code></pre></div>
 <p>Read the hub's own log at <code>~/.mac/logs/mac-service.log</code>. Watch for
 best-effort <code>except Exception</code> blocks: one swallowed a <code>NameError</code> and

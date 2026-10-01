@@ -498,17 +498,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#add-workers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Add workers
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#check-it-came-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1624,62 +1613,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hub-availability/" class="md-nav__link">
         
   
@@ -1939,17 +1872,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#add-workers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Add workers
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#check-it-came-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2044,11 +1966,10 @@ so rather than assuming it will not happen.</p>
   secrets table. Without it the CLI and API both refuse to start — deliberately,
   because a control plane that boots without its secret key would be storing
   credentials it cannot protect.</li>
-<li><strong>SSH key access</strong> to every host you plan to use, working <em>before</em> you begin.
-  The setup wizard configures mac; it does not fix SSH.</li>
+<li><strong>SSH key access</strong> from the hub to every host you plan to use, working
+  <em>before</em> you begin.</li>
 <li><strong>At least one LLM provider key</strong> (nvidia / openai / anthropic / perplexity).
-  The wizard will not finish without one, because a fleet with no provider
-  cannot execute a task.</li>
+  A fleet with no provider cannot execute a task.</li>
 </ul>
 <h2 id="install-the-cli">Install the CLI<a class="headerlink" href="#install-the-cli" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">make install</span>
@@ -2057,28 +1978,15 @@ so rather than assuming it will not happen.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac --version</span>
 </code></pre></div>
 <h2 id="create-a-fleet">Create a fleet<a class="headerlink" href="#create-a-fleet" title="Permanent link">&para;</a></h2>
-<p>Run the wizard on the machine that will be the hub:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">bash setup.sh</span>
-</code></pre></div>
-<p>It asks two questions before anything else — whether you are on the machine
-being configured, and whether this is a <strong>hub</strong> or a <strong>worker</strong>. Choose <code>hub</code>.</p>
-<p>It then collects the fleet name, supervisor (<code>auto</code> selects launchd on macOS,
-systemd on Linux), network provider (Tailscale by default), and your provider
-key; writes <code>~/.mac/fleets.yaml</code> and <code>~/.mac/.env</code>; and deploys.</p>
-<p>To write config without deploying:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">bash setup.sh --configure-only</span>
-</code></pre></div>
-<p>Neither file belongs in version control. Fleet topology and provider keys are
-yours, not the product's.</p>
-<h2 id="add-workers">Add workers<a class="headerlink" href="#add-workers" title="Permanent link">&para;</a></h2>
-<p>Run the wizard again on (or pointed at) each additional host and choose
-<code>worker</code>. It looks up the fleet by hub name and asks only what is new: the
-worker's name, SSH target, OS, supervisor, and mode.</p>
-<p>Workers do <strong>not</strong> need a checkout of this repository — deploy ships the source
-to each host.</p>
+<p>Provision the hub, then each worker, by hand with the "Provision a new host"
+checklist in <a href="../../operations/fleet-update/">Updating the fleet with fleet-update</a>.
+Every host runs MAC from a git checkout at <code>~/.mac/src/mac</code>. Move hosts to a new
+commit with <code>scripts/fleet-update</code>, run on the hub.</p>
+<p><code>~/.mac/fleets.yaml</code>, <code>~/.mac/fleet-hosts</code> and the env files don't belong in
+version control. Fleet topology and provider keys are yours, not the product's.</p>
 <h2 id="check-it-came-up">Check it came up<a class="headerlink" href="#check-it-came-up" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --fleet &lt;name&gt; agent list</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac --fleet &lt;name&gt; task ready</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac --fleet &lt;name&gt; agent list</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac --fleet &lt;name&gt; task ready</span>
 </code></pre></div>
 <p><code>agent list</code> shows each agent's status and probed hardware. <code>task ready</code> shows
 what could be claimed <em>right now</em> — open, unclaimed, no unfinished
@@ -2090,17 +1998,17 @@ heard from.</p>
 <h2 id="run-your-first-task">Run your first task<a class="headerlink" href="#run-your-first-task" title="Permanent link">&para;</a></h2>
 <p>Use one repository and one executable worker first. From the repository you
 want the fleet to change, register it and inspect the result:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac --fleet &lt;name&gt; project register</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">mac --fleet &lt;name&gt; project list</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">mac --fleet &lt;name&gt; task throughput</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac --fleet &lt;name&gt; project register</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac --fleet &lt;name&gt; project list</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac --fleet &lt;name&gt; task throughput</span>
 </code></pre></div>
 <p>Use the returned project name explicitly. Write <code>brief.txt</code> with one small
 change, the exact behavior to demonstrate, and the test command. Then create
 one task:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac --fleet &lt;name&gt; task create &quot;Implement the behavior in brief.txt&quot; \</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">    --project &lt;project&gt; --description-file=brief.txt</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">mac --fleet &lt;name&gt; task show &lt;id&gt;</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac --fleet &lt;name&gt; task why-unclaimed &lt;id&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --fleet &lt;name&gt; task create &quot;Implement the behavior in brief.txt&quot; \</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">    --project &lt;project&gt; --description-file=brief.txt</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac --fleet &lt;name&gt; task show &lt;id&gt;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">mac --fleet &lt;name&gt; task why-unclaimed &lt;id&gt;</span>
 </code></pre></div>
 <p>Open <code>http://&lt;hub&gt;:8789/ui</code> for the live view. A pull request and passing tests
 are intermediate evidence. Follow <a href="../06-trust-workflow/">the trust workflow</a>
@@ -2108,37 +2016,37 @@ to check publication and explicitly accept the requested behavior.</p>
 <h2 id="when-a-task-does-not-move">When a task does not move<a class="headerlink" href="#when-a-task-does-not-move" title="Permanent link">&para;</a></h2>
 <p>This is the most common early frustration, and it has three usual causes.</p>
 <p><strong>It was never claimable.</strong> Ask before filing:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">mac task preflight --capabilities python --hardware &#39;{&quot;os&quot;:[&quot;linux&quot;]}&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac task preflight --capabilities python --hardware &#39;{&quot;os&quot;:[&quot;linux&quot;]}&#39;</span>
 </code></pre></div>
 <p>The classic mistake is asking for a <em>capability</em> that is really a host fact.
 Agents advertise <code>python</code>, <code>testing</code>, <code>review</code>. They never advertise <code>linux</code> —
 that is probed into <code>resources.hardware</code>. A task requiring capability <code>linux</code>
 is accepted and then never claimed, with nothing obviously wrong.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>WRONG   --capabilities linux
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>RIGHT   --hardware &#39;{&quot;os&quot;: [&quot;linux&quot;], &quot;cpu_arch&quot;: [&quot;x86_64&quot;]}&#39;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>WRONG   --capabilities linux
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>RIGHT   --hardware &#39;{&quot;os&quot;: [&quot;linux&quot;], &quot;cpu_arch&quot;: [&quot;x86_64&quot;]}&#39;
 </code></pre></div>
 <p><strong>It is blocked on something that can never finish.</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac task why-unclaimed &lt;id&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">mac task why-unclaimed &lt;id&gt;</span>
 </code></pre></div>
 <p>A blocked task waiting on a <code>failed</code> or <code>cancelled</code> dependency will never
 release under the default <code>all_success</code> join policy — only a <em>completed</em>
 dependency releases it.</p>
 <p><strong>It was filed with a dispatch hold.</strong> <code>mac task create --no-dispatch</code> stages a
 task without making it claimable. Release it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac task release &lt;id&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac task release &lt;id&gt;</span>
 </code></pre></div>
 <h2 id="everyday-commands">Everyday commands<a class="headerlink" href="#everyday-commands" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac task list                     # active work (add --all-states for everything)</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac task list --all               # every project, not just the inferred one</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="go">mac task ready --limit 10</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="go">mac task show &lt;id&gt;</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="go">mac task create &quot;title&quot; --description-file=f.txt</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="go">mac task ask &lt;id&gt; --question &quot;...&quot;     # park a task pending an answer</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="go">mac task answer &lt;id&gt; --answer &quot;...&quot; --disposition resume</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="go">mac agent list</span>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="go">mac agent hold/resume &lt;id&gt;</span>
-<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="go">mac project list</span>
-<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="go">mac admin fleet doctor</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac task list                     # active work (add --all-states for everything)</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">mac task list --all               # every project, not just the inferred one</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="go">mac task ready --limit 10</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="go">mac task show &lt;id&gt;</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="go">mac task create &quot;title&quot; --description-file=f.txt</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="go">mac task ask &lt;id&gt; --question &quot;...&quot;     # park a task pending an answer</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="go">mac task answer &lt;id&gt; --answer &quot;...&quot; --disposition resume</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="go">mac agent list</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="go">mac agent hold/resume &lt;id&gt;</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="go">mac project list</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="go">mac admin diagnostics</span>
 </code></pre></div>
 <p><code>mac task list</code> prints short ids (git-style, 8 hex) and accepts them anywhere a
 full id is accepted.</p>

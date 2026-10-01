@@ -16,7 +16,7 @@
         <link rel="prev" href="../../production-deployment/">
       
       
-        <link rel="next" href="../../fleet-node-onboarding-checklist/">
+        <link rel="next" href="../../hub-availability/">
       
       
         
@@ -1642,62 +1642,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hub-availability/" class="md-nav__link">
         
   
@@ -2070,10 +2014,10 @@
 a new commit. You run it on the hub, as the operator account. It
 updates one host at a time, checks each host before it moves on, and stops at
 the first failure.</p>
-<p>It sits alongside the older deploy protocol (<code>deploy/deploy-mac-fleet.sh</code>,
-release epochs, hub self-upgrade). In the 90 days before it was written, release
-epochs aborted 62% of the time and hub self-upgrade never succeeded. The old
-machinery will be deleted once this script has been proven on the real fleet.</p>
+<p>It replaces hub self-upgrade, release epochs and source convergence, which
+have been deleted: in the 90 days before it was written, release epochs aborted
+62% of the time and hub self-upgrade never succeeded. The older deploy script
+(<code>deploy/deploy-mac-fleet.sh</code>) and its node installer have been deleted too.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
 </code></pre></div>
@@ -2152,22 +2096,29 @@ default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
    and require <code>restore_verified == true</code>. <code>MAC_DATABASE_URL</code> is read from
    <code>~/.mac/mac.env</code> and passed through the environment, never on a command line.</li>
 <li>Run <code>git checkout --detach &lt;sha&gt;</code>.</li>
-<li>Run <code>uv pip install -e</code> (or the venv's <code>pip</code>), but only if <code>pyproject.toml</code>,
-   <code>uv.lock</code> or <code>setup.py</code> changed.</li>
+<li>Run <code>uv pip install -e</code> (or the venv's <code>pip</code>), but only if <code>pyproject.toml</code>
+   or <code>uv.lock</code> changed.</li>
 <li>Run <code>~/.mac/venv/bin/python -c 'import mac.services'</code>.</li>
 <li>Run <code>mac-schema-migrate --status</code>, then
    <code>mac-schema-migrate --applied-by fleet-update:&lt;user&gt;@&lt;host&gt;:&lt;sha12&gt;</code>.</li>
 <li>Write <code>~/.mac/current/source-commit</code> and <code>~/.mac/current/generation-id</code>
-   (<code>legacy-&lt;sha12&gt;</code>). <code>mac-service</code> only uses <code>~/.mac/current/source</code> when
-   <code>source-commit</code> matches its <code>HEAD</code>.</li>
+   (<code>legacy-&lt;sha12&gt;</code>). <code>deploy/bin/mac-service</code> ignores them. They are written
+   for a hub still running the <code>mac-service</code> that the deleted
+   <code>deploy/fleet-node-install.sh</code> generated, which runs <code>~/.mac/current/source</code>
+   only when its <code>HEAD</code> equals <code>source-commit</code>.</li>
 <li>Run <code>sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist</code>.</li>
 <li>Poll <code>/health</code>, then require <code>/startup-attestation</code>'s <code>source_commit</code> to equal
-   the target.</li>
+   the target. <code>mac-service</code> sets it from the <code>HEAD</code> of <code>~/.mac/src/mac</code>.</li>
 <li>Run <code>launchctl kickstart -k gui/&lt;uid&gt;/com.mac.agent</code>. With <code>--hermes</code>, also
     kickstart <code>gui/&lt;uid&gt;/ai.hermes.gateway</code>.</li>
 </ol>
 <p>The hub step doesn't reinstall <code>~/.mac/bin/mac-service</code>. Its content is in
-<code>deploy/bin/mac-service</code> if it ever needs replacing by hand.</p>
+<code>deploy/bin/mac-service</code>: it runs <code>~/.mac/venv/bin/python -m mac.hub_serve</code>
+from <code>~/.mac/src/mac</code> and nothing else. The wrapper that
+the deleted <code>deploy/fleet-node-install.sh</code> used to generate also ran
+<code>~/.mac/current/venv/bin/mac-hub-upgrade-supervisor recover-all</code> when that
+script existed. Hub self-upgrade is deleted, so replace that wrapper with
+<code>deploy/bin/mac-service</code> by hand.</p>
 <h3 id="hub-rollback">Hub rollback<a class="headerlink" href="#hub-rollback" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Failure before the schema can have changed.</strong> This covers a backup that
@@ -2261,28 +2212,97 @@ existing <code>worker_credentials</code> table. It runs on the hub, against
   holds it) and the command tells you to restart the services by hand.
 - <code>list</code> prints credential metadata. It never prints the token or its hash.</p>
 <h2 id="provision-a-new-host">Provision a new host<a class="headerlink" href="#provision-a-new-host" title="Permanent link">&para;</a></h2>
+<p><code>fleet-update</code> only moves an already-provisioned host to a new commit. The
+deleted deploy scripts did the rest, so do these by hand. <code>$HERMES_HOME</code> is
+the host's Hermes home (<code>~/.mac/openclaw</code> on hosts the old installer set up).</p>
 <ol>
 <li>Install Tailscale and join the tailnet. Confirm that <code>ssh &lt;host&gt;</code> works from
    the hub without a password.</li>
-<li><code>git clone &lt;origin&gt; ~/.mac/src/mac</code>.</li>
-<li>Run <code>python3 -m venv ~/.mac/venv &amp;&amp; ~/.mac/venv/bin/pip install -e ~/.mac/src/mac</code>
-   (or use <code>uv venv</code> and <code>uv pip install -e</code>).</li>
-<li>Create <code>~/.mac/mac.env</code> (mode 0600) from <code>deploy/systemd/mac.env.example</code>.
-   That example is written for a hub, so for a worker set <code>MAC_HUB_URL</code>,
-   <code>MAC_AGENT_ID</code>, <code>MAC_WORKER_MODE=loop</code> and the Hermes and OpenShell keys
-   your hosts use.</li>
-<li>On the hub, add the host to <code>~/.mac/fleet-hosts</code>. A token can only be
+<li>Install git 2.38 or newer (<code>merge-tree --write-tree</code>; Ubuntu 22.04 ships
+   2.34), <code>gh</code> with HTTPS credentials
+   (<code>GH_TOKEN=... gh auth setup-git --hostname github.com</code>), and the review key
+   at <code>~/.ssh/mac_github_review_id</code> (mode 0600, plus a <code>Host github.com</code>
+   <code>IdentityFile</code>/<code>IdentitiesOnly yes</code> entry in <code>~/.ssh/config</code>). The hub needs
+   a working GitHub SSH identity; workers only use it for reviews.</li>
+<li>Grant passwordless sudo for what <code>fleet-update</code> runs: on a Linux worker,
+   <code>&lt;user&gt; ALL=(root) NOPASSWD: /usr/bin/systemctl restart mac-agent</code>; on the
+   macOS hub, <code>&lt;user&gt; ALL=(root) NOPASSWD: /bin/launchctl</code>. Check with
+   <code>sudo -n true</code>.</li>
+<li><code>git clone &lt;origin&gt; ~/.mac/src/mac</code>, then do the locked install and put
+   <code>mac</code> on <code>PATH</code>:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">PYTHONPATH=~/.mac/src/mac/src python3 -m mac.native_runtime \</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --source ~/.mac/src/mac --venv ~/.mac/venv \</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  --snapshot ~/.mac/logs/native-runtime-packages.json \</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">  --footprint ~/.mac/agent-footprint.json --uv &quot;$(command -v uv)&quot; \</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="go">  --record ~/.mac/logs/native-runtime-locked.json</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="go">ln -sf ~/.mac/venv/bin/mac ~/.local/bin/mac</span>
+</code></pre></div>
+<p>The operator side of <code>fleet-update</code> calls plain <code>mac</code> (<code>FLEET_UPDATE_MAC_CLI</code>).
+5. Create <code>~/.mac/mac.env</code> (mode 0600). <code>deploy/systemd/mac.env.example</code> is
+   written for a hub and lacks most worker keys, so set these by hand on a
+   worker: <code>MAC_CONTROL_PLANE_ROLE=client</code>, <code>MAC_HUB_URL</code> and <code>MAC_URL</code>,
+   <code>MAC_FLEET_NAME</code>, <code>MAC_AGENT_ID</code>, <code>MAC_WORKER_TOKEN</code> (written by step 7),
+   <code>MAC_WORKER_MODE=loop</code>, <code>MAC_WORKER_AGENT_NAME</code>, <code>MAC_WORKER_HOSTNAME</code>,
+   <code>MAC_WORKER_CAPABILITIES</code>, <code>HERMES_HOME</code>, <code>HERMES_REDACT_SECRETS=true</code>,
+   <code>MAC_MEMORY_TOPOLOGY_FILE</code>, <code>GH_TOKEN</code>, plus the OpenShell keys your hosts
+   use. The <code>mac-agent</code> wrapper refuses to start without <code>MAC_HUB_URL</code> and
+   <code>MAC_WORKER_TOKEN</code>.
+6. Provider keys live only in the hub vault, never in worker env. On the hub,
+   store each as <code>&lt;provider&gt;-upstream</code>:
+   <code>printf %s "$KEY" | mac admin secret set openai-upstream --from-stdin --scopes '{"capabilities":["router-upstream"]}' --created-by &lt;you&gt;</code>.
+   On a worker, remove <code>{NVIDIA,OPENAI,ANTHROPIC,PERPLEXITY}_API_KEY</code> and
+   <code>_BASE_URL</code>, <code>NVIDIA_API_BASE</code>, <code>NVIDIA_IMAGE_BASE_URL</code>,
+   <code>PERPLEXITY_API_BASE</code>, <code>FAL_KEY</code>, <code>VLLM_API_KEY</code>, <code>HAIMAKER_API_KEY</code>,
+   <code>LLM_KEY</code>, <code>LLM_URL</code>, <code>QDRANT_API_KEY</code> and <code>FIRECRAWL_API_KEY</code> from
+   <code>mac.env</code> and <code>$HERMES_HOME/.env</code>.
+7. On the hub, add the host to <code>~/.mac/fleet-hosts</code>. A token can only be
    issued to a registered agent, so register it first:
    <code>mac admin machine register &lt;hostname&gt; --machine-id &lt;machine_id&gt;</code> and
    <code>mac agent register &lt;machine_id&gt; &lt;name&gt; --agent-id &lt;agent_id&gt;</code>. Then run
-   <code>mac admin worker-token issue &lt;agent_id&gt; --install &lt;host&gt;</code>.</li>
-<li>Install the systemd units from <code>deploy/systemd</code>. <code>mac-agent.service</code> is
+   <code>mac admin worker-token issue &lt;agent_id&gt; --install &lt;host&gt;</code>.
+8. Hub only: run <code>deploy/install-postgres-service.sh</code>,
+   <code>deploy/install-qdrant-service.sh</code>, <code>deploy/install-firecrawl-gateway.sh</code>
+   and <code>deploy/install-webdav-server.sh</code> (each with <code>MAC_HOME</code>, <code>WORKSPACE</code>
+   and <code>FLEET_NAME</code> set). The Postgres installer writes <code>MAC_DATABASE_URL</code> into
+   <code>~/.mac/mac.env</code>; confirm it is there. The others write <code>QDRANT_URL</code>, the
+   <code>FIRECRAWL_*</code> and <code>MAC_WEB_SEARCH_*</code> keys and <code>MAC_PUBLISH_*</code>.
+9. Install the systemd units from <code>deploy/systemd</code>. <code>mac-agent.service</code> is
    rendered from <code>deploy/systemd/mac-agent.service.in</code>; the sed command is at
-   the top of that file. Then run <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable mac-agent</code>.</li>
-<li>Run <code>deploy/openshell/bootstrap-openshell.sh</code> on the host, then
-   <code>deploy/hermes/install-hermes-gateway.sh prepare</code>.</li>
+   the top of that file. Then run <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable mac-agent</code>.
+10. Prepare Hermes:
+    - write <code>$HERMES_HOME/mac-memory-topology.json</code> (schema
+      <code>mac.hermes.memory_topology.v1</code>, naming the hub's Qdrant and Firecrawl
+      URLs) and, in <code>$HERMES_HOME/.env</code>, <code>MAC_MEMORY_TOPOLOGY_FILE</code>,
+      <code>QDRANT_URL</code>, <code>FIRECRAWL_API_URL</code>, <code>MAC_WEB_SEARCH_PROVIDER=firecrawl</code>,
+      <code>HERMES_WEB_SEARCH_BACKEND=firecrawl</code> and
+      <code>HERMES_WEB_EXTRACT_BACKEND=firecrawl</code>;
+    - force secret redaction: <code>redact_secrets: true</code> in
+      <code>$HERMES_HOME/config.yaml</code> and <code>HERMES_REDACT_SECRETS=true</code> in
+      <code>$HERMES_HOME/.env</code>;
+    - write the runtime context, without which <code>prepare</code> refuses to run:</p>
+<div class="highlight"><pre><span></span><code>  ```console
+  ~/.mac/venv/bin/python -m mac.hermes_runtime \
+    &quot;$HERMES_HOME/mac-runtime-context.json&quot; &quot;$HERMES_HOME/mac-runtime-context.md&quot; &quot;$HERMES_HOME/.env&quot; \
+    --agent-name &lt;name&gt; --fleet-name &lt;fleet&gt; --mac-url &quot;$MAC_HUB_URL&quot; \
+    --hermes-home &quot;$HERMES_HOME&quot; --mac-home ~/.mac --workspace ~/.mac/src/mac \
+    --tenant-id &quot;$MAC_FLEET_TENANT_ID&quot; --persona-id &quot;$MAC_HERMES_PERSONA_ID&quot; \
+    --hermes-instance-id &quot;$MAC_HERMES_INSTANCE_ID&quot; --agent-id &lt;agent_id&gt;
+  ```
+
+- run `deploy/openshell/bootstrap-openshell.sh`, then
+  `deploy/hermes/install-hermes-gateway.sh prepare`.
+</code></pre></div>
+<ol>
+<li>Copy each <code>deploy/skills/fleet/&lt;skill&gt;/</code> that has a <code>SKILL.md</code> into
+    <code>$HERMES_HOME/workspace/skills/</code>. On a GPU host (<code>nvidia-smi -L</code> works),
+    also <code>tar xzf deploy/skills/omniverse-skills.tar.gz -C $HERMES_HOME/workspace/skills</code>
+    and add the <code>local-gen</code> media units <code>&lt;fleet&gt;-gen-server</code> (port 8189),
+    <code>&lt;fleet&gt;-gen-audio-server</code> (8190) and <code>&lt;fleet&gt;-gen-video-server</code> (8191).
+    Each runs <code>deploy/local-gen/{openai_image_server,audio_server,video_server}.py</code>
+    with <code>~/.mac/mac.env</code> sourced.</li>
 <li>From the hub: <code>scripts/fleet-update &lt;host&gt; &lt;sha&gt;</code>. This installs
-   <code>deploy/bin</code> into <code>~/.mac/bin</code> and starts the worker.</li>
+    <code>deploy/bin</code> into <code>~/.mac/bin</code> and starts the worker.</li>
 </ol>
 
 
@@ -2336,13 +2356,13 @@ existing <code>worker_credentials</code> table. It runs on the hub, against
         
         
           
-          <a href="../../fleet-node-onboarding-checklist/" class="md-footer__link md-footer__link--next" aria-label="Next: Fleet node onboarding">
+          <a href="../../hub-availability/" class="md-footer__link md-footer__link--next" aria-label="Next: Hub availability">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Fleet node onboarding
+                Hub availability
               </div>
             </div>
             <div class="md-footer__button md-icon">

@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -2072,9 +2016,8 @@ returns the token.</p>
 <p>Revoking one principal does not affect any other client or the recovery admin
 token.</p>
 <h2 id="legacy-migration">Legacy Migration<a class="headerlink" href="#legacy-migration" title="Permanent link">&para;</a></h2>
-<p><code>mac admin fleet sync-token</code> copies the historical shared <code>MAC_API_TOKEN</code>. That token
-has administrator authority and is a recovery mechanism, not new-client
-enrollment.</p>
+<p>The historical shared <code>MAC_API_TOKEN</code> has administrator authority and is a
+recovery mechanism, not new-client enrollment.</p>
 <p>The bounded migration command can import an existing fleet route and token into
 the separated profile layout, but it refuses unless the administrator
 authority is acknowledged:</p>

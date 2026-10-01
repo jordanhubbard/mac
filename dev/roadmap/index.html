@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -1905,33 +1849,21 @@ transaction or equivalent durable evidence.</p>
   repairing, publishing, and completing nontrivial work in <code>~/Src/mac</code>.</li>
 </ul>
 <h2 id="fleet-and-self-upgrade">Fleet and self-upgrade<a class="headerlink" href="#fleet-and-self-upgrade" title="Permanent link">&para;</a></h2>
+<p>Hub self-upgrade, release epochs and source convergence are deleted. In 90 days
+release epochs aborted 62% of the time and hub self-upgrade never succeeded.
+The fleet is updated by a human with
+<a href="../operations/fleet-update/"><code>scripts/fleet-update</code></a>.</p>
 <ul>
-<li>[ ] OpenClaw can submit authenticated human upgrade intent without receiving
-  deployment authority.</li>
-<li>[ ] An admin can issue an <code>upgrade yourself</code> or critical roll-forward request
-  through OpenClaw, and OpenClaw can report durable progress and outcome.</li>
-<li>[ ] Upgrade credentials are independently revocable, human-bound,
-  least-privilege, and projected through the fenced secret channel; neither
-  OpenClaw nor the supervisor receives general deploy or keystore authority.</li>
 <li>[ ] Keystore operations are scope-aware and auditable so each service can read
   only the named credentials required for its finite role.</li>
-<li>[ ] The hub accepts only approved immutable releases with remote CI and local
-  contract-test evidence.</li>
-<li>[ ] A host-native supervisor can swap the hub generation, prove health, and
-  roll back through a finite transaction without an LLM, arbitrary coding, or
-  arbitrary command execution.</li>
 <li>[ ] Critical hub recovery has a break-glass path that remains usable when the
   current hub or OpenClaw generation is stale, while preserving authorization,
   audit, health proof, and rollback.</li>
-<li>[ ] The restarted hub resumes the durable release epoch and rolls workers
-  forward or back by bounded cohorts.</li>
-<li>[ ] Crash recovery, authorization failures, failed health proofs, and cohort
-  rollback are covered and proven in the live fleet.</li>
 <li>[x] The current <code>main</code> source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
   Verified <code>060acc500ab99e30bc01cfccf7eef2232108b4e4</code> on the hub, worker-1, and
-  gpu-worker after typed cohort <code>20260827T060057Z</code> (<code>make deploy HUB=&lt;hub&gt;</code>
-  with hold-adoptions after a retained roll-forward). Hub <code>/health</code> ok;
+  gpu-worker after typed cohort <code>20260827T060057Z</code> (the since-deleted
+  <code>make deploy HUB=&lt;hub&gt;</code> with hold-adoptions after a retained roll-forward). Hub <code>/health</code> ok;
   workers idle and unheld; <code>HERMES_HOME=$MAC_HOME/openclaw</code>.</li>
 <li>[x] A failed or interrupted fleet deployment can safely resume without
   dispatch-hold drift, credential loss, partial promotion, or manual mutation

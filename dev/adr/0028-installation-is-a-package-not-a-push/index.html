@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hub-availability/" class="md-nav__link">
         
   
@@ -1904,10 +1848,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#9-kubernetes-shares-the-payload-not-the-installer" class="md-nav__link">
+  <a href="#9-containers-share-the-payload-not-the-installer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        9. Kubernetes shares the payload, not the installer
+        9. Containers share the payload, not the installer
       
     </span>
   </a>
@@ -2178,15 +2122,15 @@ that must cut over together, and ADR 0027 §6 already says an upgrade is a fleet
 event. <code>deploy-mac-fleet.sh</code> shrinks from <em>the thing that installs mac</em> to <em>the
 thing that coordinates when N nodes each run their local upgrade verb</em> — which
 is a few hundred lines of orchestration, not thirty thousand lines of shell.</p>
-<h3 id="9-kubernetes-shares-the-payload-not-the-installer">9. Kubernetes shares the payload, not the installer<a class="headerlink" href="#9-kubernetes-shares-the-payload-not-the-installer" title="Permanent link">&para;</a></h3>
-<p><code>deploy/k8s</code> runs stateless <code>mac-api</code> and <code>mac-runner</code> Deployments against an
-externally managed Postgres. Those are OCI images: immutable, no installer, no
-symlink generations, no SSH enrollment.</p>
+<h3 id="9-containers-share-the-payload-not-the-installer">9. Containers share the payload, not the installer<a class="headerlink" href="#9-containers-share-the-payload-not-the-installer" title="Permanent link">&para;</a></h3>
+<p>The container image (<code>Dockerfile</code>) is an OCI image: immutable, no installer, no
+symlink generations, no SSH enrollment. (The <code>deploy/k8s</code> Deployments this
+section originally described were deleted on 2026-10-01.)</p>
 <p>The rule is that the container image and the host package are <strong>built from the
 same payload at the same version</strong> and are described by the same manifest — one
 artifact family, two delivery mechanisms — but they do not share an installer,
-and the k8s path does not grow one. Host installs get <code>install.sh</code>; k8s gets an
-image tag and its own reconciliation.</p>
+and the container path does not grow one. Host installs get <code>install.sh</code>; the
+container gets an image tag.</p>
 <h3 id="10-the-installer-menu-names-all-three-roles-and-offers-cancel">10. The installer menu names all three roles and offers cancel<a class="headerlink" href="#10-the-installer-menu-names-all-three-roles-and-offers-cancel" title="Permanent link">&para;</a></h3>
 <p>With <code>--role hub|worker|client</code> the installer is non-interactive and scripted
 end to end. With a TTY and no role, it presents a menu: <strong>hub, worker, client,

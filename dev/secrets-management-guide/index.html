@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -2176,8 +2120,7 @@ host-key, scope, expiry, and credential-reference metadata only. Its bearer is
 stored separately under <code>~/.mac/credentials/clients/</code> with mode <code>0600</code> and is
 redacted from normal profile output. Unknown manifest fields, credential-bearing
 URLs, and strict SSH profiles without pinned host identity are rejected.</p>
-<p><code>mac admin fleet sync-token</code> remains an administrator-token recovery command for an
-existing operator workstation. It is not a client issuance mechanism. The
+<p>The shared administrator <code>MAC_API_TOKEN</code> is not a client issuance mechanism. The
 bounded <code>client profile migrate-legacy</code> command requires
 <code>--allow-legacy-admin-token</code>, makes a secure first-import backup, and labels the
 resulting authority accurately as <code>admin</code> until it is replaced with scoped

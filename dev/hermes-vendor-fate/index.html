@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -1852,6 +1796,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#update-2026-10-01-fleet-orchestration-deleted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update (2026-10-01): fleet orchestration deleted
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2079,6 +2034,13 @@ covers this exemption explicitly.</p>
 prepare/verify/finalize/withdraw cutover <code>deploy-mac-fleet.sh</code> already
 orchestrates for OpenClaw -- no more manual <code>install-hermes-gateway.sh
 prepare</code> runs against individual nodes.</p>
+<h2 id="update-2026-10-01-fleet-orchestration-deleted">Update (2026-10-01): fleet orchestration deleted<a class="headerlink" href="#update-2026-10-01-fleet-orchestration-deleted" title="Permanent link">&para;</a></h2>
+<p><code>deploy/deploy-mac-fleet.sh</code> and <code>deploy/fleet-node-install.sh</code> have been
+deleted; hosts are updated with <code>scripts/fleet-update</code> (see
+<a href="../operations/fleet-update/">Updating the fleet with fleet-update</a>). A new
+node's Hermes gateway is again prepared by running
+<code>deploy/hermes/install-hermes-gateway.sh prepare</code> on it, as the "Provision a new
+host" checklist says; <code>scripts/fleet-update --hermes</code> restarts it on update.</p>
 
 
 

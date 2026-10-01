@@ -1488,62 +1488,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hub-availability/" class="md-nav__link">
         
   
@@ -1792,21 +1736,18 @@ Uniformity comes from contracts and evidence rather than identical operating
 systems. The registry records targets and roles; deployment discovers the
 supervisor, architecture, filesystem, container runtime, and available coding
 CLIs on each selected node.</p>
-<p>Before any fleet mutation, resolve targets from <code>~/.mac/fleets.yaml</code>. The
-prepublication qualifier performs a read-only cohort check and writes an
-owner-private receipt for the exact candidate.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/scripts/prepublish-fleet-qualification.py&quot;</span><span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>bash<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/deploy/deploy-mac-fleet.sh&quot;</span><span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/scripts/image-publication-identity.py&quot;</span><span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/docs/fleet-node-onboarding-checklist.md&quot;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/docs/fleet-registry-schema.md&quot;</span>
+<p>Hosts are provisioned by hand from the "Provision a new host" checklist in
+<a href="../../operations/fleet-update/">Updating the fleet with fleet-update</a>, then
+moved to a commit with <code>scripts/fleet-update</code>. Resolve targets from
+<code>~/.mac/fleets.yaml</code> and <code>~/.mac/fleet-hosts</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">test</span><span class="w"> </span>-x<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/scripts/fleet-update&quot;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/scripts/image-publication-identity.py&quot;</span><span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/docs/operations/fleet-update.md&quot;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/docs/fleet-registry-schema.md&quot;</span>
 </code></pre></div>
-<p>Onboarding is complete only when registry identity, route, prerequisites,
-credential projection, source convergence, runtime attestation, anonymous image
-readback, and a role-specific acceptance task all pass. Registration alone is
-not readiness.</p>
-<p>Read-only preflight aggregates every node failure so operators can repair the
-whole cohort. Mutation phases are bounded and fail fast to protect rollback.</p>
+<p>Onboarding is complete only when registry identity, route, credentials, the
+host's reported source commit, runtime attestation and a role-specific
+acceptance task all pass. Registration alone is not readiness.</p>
 
 
 

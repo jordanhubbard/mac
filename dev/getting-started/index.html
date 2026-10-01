@@ -1472,62 +1472,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Fleet node onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Synchronized cutover
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hub-availability/" class="md-nav__link">
         
   
@@ -2179,15 +2123,14 @@ of band:</p>
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="go">mac task stats</span>
 <a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="go">mac agent list</span>
 </code></pre></div>
-<p>If the client already has a home-scoped <code>~/.mac/fleets.yaml</code> entry with a
-verified SSH route to the hub, it can refresh the fleet-scoped token and use
-the legacy fleet selector:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin fleet sync-token --fleet my-fleet</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">mac --fleet my-fleet diagnostics</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">mac --fleet my-fleet task stats</span>
+<p>If the client already has a home-scoped <code>~/.mac/fleets.yaml</code> entry and
+<code>MAC_API_TOKEN__&lt;FLEET&gt;</code> in <code>~/.mac/.env</code>, it can use the legacy fleet
+selector:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac --fleet my-fleet diagnostics</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">mac --fleet my-fleet task stats</span>
 </code></pre></div>
-<p><code>mac admin fleet sync-token</code> copies the historical shared administrator token. Treat
-it as existing-operator recovery, not new-client enrollment. Do not copy
+<p>That token is the historical shared administrator token. Treat it as
+existing-operator recovery, not new-client enrollment. Do not copy
 database credentials, <code>MAC_SECRET_KEY</code>, provider keys, hub/spoke private keys, or a different
 operator's complete <code>~/.mac</code> directory. New clients should use the scoped SSH
 enrollment and mode-<code>0600</code> profile credential above.</p>
@@ -2257,70 +2200,19 @@ stale.</p>
 list projects, claim work, add child tasks, record evidence, run web research,
 and write completed operational context back to MAC.</p>
 <h2 id="deploy-a-real-fleet">Deploy A Real Fleet<a class="headerlink" href="#deploy-a-real-fleet" title="Permanent link">&para;</a></h2>
-<p>After the local quickstart makes sense, deploy a hub. The fleet registry is
-home-scoped at <code>~/.mac/fleets.yaml</code>; it is not checked into the repository.</p>
-<p>For an LLM-driven setup, start from a generic, per-CSP sample instead of writing
-a <code>mac.fleet_setup.v1</code> spec from scratch. The repo ships de-personalized samples
-under <code>deploy/fleet/samples/</code> (GKE is the worked example); your real, named fleet
-spec lives outside git in <code>~/.mac/specs/&lt;fleet&gt;.fleet.yaml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="go">scripts/setup-fleet.py --list-samples                  # browse per-CSP samples</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">scripts/setup-fleet.py --init-from gke --name my-gke   # -&gt; ~/.mac/specs/my-gke.fleet.yaml</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="gp">$</span>EDITOR<span class="w"> </span>~/.mac/specs/my-gke.fleet.yaml<span class="w">                 </span><span class="c1"># fill in the &lt;placeholders&gt;</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac admin fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="go">mac admin fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml</span>
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="go">make setup ARGS=&quot;--spec ~/.mac/specs/my-gke.fleet.yaml --force&quot;</span>
-</code></pre></div>
-<p>See <code>deploy/fleet/samples/README.md</code> for the per-CSP convention. Never check a
-named fleet into the repo.</p>
-<p>The doctor report is JSON and calls out missing provider env vars, bad targets,
-sample-config mistakes, and the exact next commands.</p>
-<p>For a new hub:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="go">make deploy ARGS=&quot;--new-hub horde --target horde@20.115.163.162:2201&quot;</span>
-</code></pre></div>
-<p>Use <code>--ssh-port 2201</code> instead of an inline <code>:2201</code> when the target is an SSH
-alias or otherwise contains a colon:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="go">make deploy ARGS=&quot;--new-hub horde --target horde@20.115.163.162 --ssh-port 2201&quot;</span>
-</code></pre></div>
-<p>Re-run deployment for an existing hub:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="go">make deploy HUB=horde</span>
-</code></pre></div>
-<p>The deploy opens SSH with <code>BatchMode=yes</code>, so it can never prompt to accept an
-unknown host key. On a brand-new box (no <code>~/.ssh/known_hosts</code> entry for the
-target yet) the route probe therefore fails; it reports the classified cause —
-<code>host-key-untrusted</code> — with the tail of the OpenSSH transcript and the fix.
-Trust the key deliberately before deploying:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="go">ssh-keyscan -H &lt;host&gt; &gt;&gt; ~/.ssh/known_hosts</span>
-</code></pre></div>
-<p>Alternatively, give the fleet an explicit <code>ssh_known_hosts_file</code> /
-<code>ssh_host_key_fingerprint</code>, or set <code>ssh_host_key_policy: accept-new</code> in
-<code>~/.mac/fleets.yaml</code> for a host you control. The other classified causes are
-<code>host-key-changed</code> (the target's key no longer matches the pinned entry — never
-paper over this one), <code>auth-rejected</code>, <code>unreachable</code>, and <code>timeout</code>.</p>
-<p>The Make targets select <code>.venv/bin/python</code>, <code>python3.14</code>, <code>python3</code>, or <code>python</code>
-only when it matches the exact version in <code>.python-version</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="go">make setup</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">make deploy HUB=horde</span>
-</code></pre></div>
-<p>MAC state lives under <code>~/.mac</code>. Hermes state lives under <code>~/.hermes</code>. The
-in-mac LLM router, Qdrant, Firecrawl, the MAC API, worker services, and Hermes
-bridge files are bootstrapped as part of the fleet service picture. Standalone
-TokenHub is retired from the default fleet topology.</p>
+<p>After the local quickstart makes sense, build a fleet. Hosts are provisioned
+by hand from the "Provision a new host" checklist in
+<a href="../operations/fleet-update/">Updating the fleet with <code>fleet-update</code></a>, and
+updated with <code>scripts/fleet-update</code>, run on the hub. The client-side fleet
+registry is home-scoped at <code>~/.mac/fleets.yaml</code>; it is not checked into the
+repository.</p>
+<p>MAC state lives under <code>~/.mac</code>. Hermes state lives under <code>~/.hermes</code>.</p>
 <p>Private GitHub HTTPS repositories require a credential on every host or task
-runner that performs Git work. An explicit deploy token may be kept in the
-host-local <code>~/.mac/.env</code> (mode <code>0600</code>), never in <code>~/.mac/fleets.yaml</code> or a
-committed fleet spec:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="gp"># </span>~/.mac/.env<span class="w"> </span>--<span class="w"> </span>placeholder<span class="w"> </span>only<span class="p">;</span><span class="w"> </span>supply<span class="w"> </span>the<span class="w"> </span>real<span class="w"> </span>value<span class="w"> </span>out<span class="w"> </span>of<span class="w"> </span>band.
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="go">MAC_DEPLOY_GH_TOKEN=&lt;github-token-authorized-for-the-organization&gt;</span>
+runner that performs Git work. Put it in the host-local <code>~/.mac/mac.env</code>
+(mode <code>0600</code>) as <code>GH_TOKEN</code>, never in <code>~/.mac/fleets.yaml</code> or a committed file:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="gp"># </span>~/.mac/mac.env<span class="w"> </span>--<span class="w"> </span>placeholder<span class="w"> </span>only<span class="p">;</span><span class="w"> </span>supply<span class="w"> </span>the<span class="w"> </span>real<span class="w"> </span>value<span class="w"> </span>out<span class="w"> </span>of<span class="w"> </span>band.
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">GH_TOKEN=&lt;github-token-authorized-for-the-organization&gt;</span>
 </code></pre></div>
-<p>Fleet deploy resolves <code>MAC_DEPLOY_GH_TOKEN</code>, <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, then an
-existing <code>gh</code> keychain login. It reports only the source name, streams the value
-over SSH stdin, and writes it to the owner-only managed runtime as <code>GH_TOKEN</code>.
-Pure <code>gateway_impl: none</code> workers verify the credential before drain or source
-replacement and forward it to OpenShell through a private mode-<code>0600</code> file.
-Kubernetes task and review Jobs instead read optional <code>GH_TOKEN</code>,
-<code>GITHUB_TOKEN</code>, and <code>GITEA_TOKEN</code> keys from the runner's configured Kubernetes
-Secret. Review Jobs do not receive <code>MAC_SECRET_KEY</code>.</p>
 <h2 id="where-to-go-next">Where To Go Next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../hermes-integration/">Hermes Integration</a>: how Hermes learns and uses the
