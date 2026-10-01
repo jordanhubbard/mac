@@ -239,6 +239,27 @@ def postgres_store(pg_dsn: str) -> Iterator[object]:
             conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
+def verifier_test_item(head_sha: str, **overrides):
+    """A repository contract test result as the pre-push verifier records it.
+
+    repo_change evidence on a repository whose contract defines tests passes
+    only on one of these, bound to the evidence's repo.head_sha.
+    """
+    item = {
+        "name": "repository contract test",
+        "command": "scripts/run-contract-tests.sh",
+        "returncode": 0,
+        "status": "pass",
+        "execution_environment": "openshell_sandbox",
+        "executed_head_sha": head_sha,
+        "executed_tree_sha": "f" * 40,
+        "stdout": "12 passed in 1.00s\n",
+        "test_count": 12,
+    }
+    item.update(overrides)
+    return item
+
+
 def submit_review_verdict(
     cp: ControlPlane,
     task_id: str,
@@ -392,6 +413,10 @@ def linux_repository_verifier(monkeypatch, tmp_path):
                 ["bash", "-lc", shell], cwd=target, capture_output=True, text=True
             )
             kwargs["verifier_identity"]["execution_attempted"] = True
-            return result.returncode, result.stdout + result.stderr
+            # The real transport always reports its staging steps, so a gate
+            # never comes back with no output at all.
+            return result.returncode, (
+                "verifier: staged %s\n" % head + result.stdout + result.stderr
+            )
 
     monkeypatch.setattr(services, "run_repository_contract_test_in_openshell", run)

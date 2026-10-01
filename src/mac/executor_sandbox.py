@@ -1716,26 +1716,11 @@ command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
 # executor's gate_detect_test_command and the hub-review verifier, which already
 # prefer the sanity contract; the report/worker sandbox path had been left on the
 # whole-repo gate, so every code task paid the full ~34-60min suite.
-# NOTHING CHANGED => NOTHING TO VERIFY.
 #
-# A read-only task leaves the worktree exactly as it was uploaded. Running a
-# repository test gate over an unchanged tree cannot say anything about the
-# task's work: it can only report on the state of the repository, which the
-# task did not touch. It is also how a read-only canary came to run the entire
-# ~11,000-test contract suite inside a sandbox with no Postgres and fail.
-#
-# Detected against the sandbox's own baseline commit, which is what the agent
-# was given -- not against the host's history, which is not present here.
-_no_changes = False
-try:
-    _status = subprocess.run(
-        ["git", "-C", worktree, "status", "--porcelain", "-uall"],
-        capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
-    )
-    _no_changes = _status.returncode == 0 and not _status.stdout.strip()
-except Exception:
-    _no_changes = False
-
+# There is deliberately NO "clean tree => pass" shortcut. A clean `git status`
+# only means the agent committed its work; reporting that as a pass recorded
+# 265 test passes in 90 days where nothing ran. Only a HEAD that never moved
+# off the baseline skips the gate, and that is recorded as skipped, not pass.
 # --- baseline-resolver (extracted verbatim by tests/test_sandbox_baseline.py) ---
 def _resolve_baseline_sha(subprocess, worktree, env_base):
     """The commit the agent started from, as this repository can name it.
@@ -1780,6 +1765,35 @@ def _resolve_baseline_sha(subprocess, worktree, env_base):
 _repo_base_sha = _resolve_baseline_sha(
     subprocess, worktree, os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
 )
+
+def _worktree_is_unchanged_baseline(base):
+    """True only when HEAD IS the pre-task baseline and nothing is uncommitted.
+
+    Not "the tree is clean": an agent that committed its work leaves a clean
+    tree on top of new commits. Only an unmoved HEAD proves the task changed
+    nothing, and even then the record says skipped -- never pass.
+    """
+    if not base:
+        return False
+    try:
+        head = subprocess.run(
+            ["git", "-C", worktree, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+        )
+        status = subprocess.run(
+            ["git", "-C", worktree, "status", "--porcelain", "-uall"],
+            capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        return False
+    return (
+        head.returncode == 0
+        and head.stdout.strip() == base
+        and status.returncode == 0
+        and not status.stdout.strip()
+    )
+
+_unchanged_baseline = _worktree_is_unchanged_baseline(_repo_base_sha)
 if command in ("scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh") and _repo_base_sha:
     _sanity = os.path.join(worktree, "scripts", "run-sanity-tests.sh")
     if os.path.isfile(_sanity) and os.access(_sanity, os.X_OK):
@@ -2008,20 +2022,21 @@ elif bootstrap is not None and bootstrap.get("returncode") != 0:
         "environment_delta": delta,
         "bootstrap": bootstrap,
     }
-elif _no_changes:
-    # The task touched nothing, so the gate has nothing of the task's to judge.
-    # Reported as a pass with an explicit reason rather than skipped silently:
-    # "we did not test this, and here is why" is evidence; an absent result is
-    # indistinguishable from a gate that never ran.
+elif _unchanged_baseline:
+    # The task changed nothing, so there is no change of the task's to judge.
+    # Recorded as SKIPPED, not pass: this is not a test result and must never
+    # be read as one (a clean-tree "pass" here once stood in for 265 test runs
+    # that never happened). Repository changes are verified on the exact
+    # commit they publish, by the pre-push verifier, regardless.
     payload = {
         "schema": "mac.sandbox_verification.v1",
-        "status": "pass",
+        "status": "skipped",
         "command": command,
         "returncode": 0,
         "stdout": "",
         "stderr": "",
         "skipped": True,
-        "skipped_reason": "no repository changes to verify",
+        "skipped_reason": "HEAD is the uploaded baseline and the worktree is clean",
         "duration_ms": 0,
         "worktree": worktree,
         "environment_delta": delta,

@@ -50,6 +50,7 @@ from mac.worker import (
     build_parser,
     register_worker,
 )
+from tests.conftest import verifier_test_item
 
 
 def api_transport(client: TestClient):
@@ -600,6 +601,7 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(
             "dirty": False,
             "files_changed": ["README.md"],
         },
+        "tests": [verifier_test_item(reviewed_head)],
         "checks": [{"name": "executor tests", "status": "passed", "returncode": 0}],
         "signed_by": executor_agent.id,
     }

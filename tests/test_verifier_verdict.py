@@ -47,34 +47,26 @@ def _script() -> str:
     )
 
 
-def test_an_unchanged_worktree_skips_the_gate():
-    """A task that touched nothing leaves the gate nothing of the task's to
-    judge: it can only report on the repository, which the task did not touch."""
+def test_a_clean_tree_is_not_reported_as_a_pass():
+    """A clean ``git status`` means the agent committed, not that nothing changed.
+
+    The shortcut that answered a clean tree with ``status: pass, skipped: true``
+    recorded 265 test passes over 90 days where no test ran -- the largest
+    single source of worker "passes" the hub's second run then rejected. Only a
+    HEAD that never left the uploaded baseline proves the task changed nothing.
+    """
     script = _script()
 
-    assert "status" in script and "--porcelain" in script
-    assert "no repository changes to verify" in script
-
-
-def test_the_skip_is_recorded_rather_than_silent():
-    """ "We did not test this, and here is why" is evidence. An absent result is
-    indistinguishable from a gate that never ran -- which is exactly the
-    ambiguity that made the original failure take three attempts to read."""
-    script = _script()
-
-    assert '"skipped": True' in script
-    assert '"skipped_reason"' in script
-
-
-def test_the_skip_reports_a_pass_not_a_failure():
-    """A skipped gate must not fail the task; nothing was wrong with the work."""
-    script = _script()
-
-    head, _sep, tail = script.partition("elif _no_changes:")
-    assert tail, "the no-change branch is missing"
+    assert "no repository changes to verify" not in script
+    assert "_no_changes" not in script
+    # The one remaining skip -- HEAD never moved off the uploaded baseline --
+    # is recorded as skipped, never as a pass.
+    _head, _sep, tail = script.partition("elif _unchanged_baseline:")
+    assert tail, "the unchanged-baseline branch is missing"
     branch = tail.split("else:", 1)[0]
-    assert '"status": "pass"' in branch
-    assert '"returncode": 0' in branch
+    assert '"status": "skipped"' in branch
+    assert '"status": "pass"' not in branch
+    assert "rev-parse" in script and "HEAD" in script
 
 
 def test_git_probes_do_not_inherit_stdin():
@@ -82,6 +74,5 @@ def test_git_probes_do_not_inherit_stdin():
     will write to is a subprocess that can block forever."""
     script = _script()
 
-    for probe in ("status", "cat-file"):
-        assert probe in script
+    assert "cat-file" in script
     assert script.count("stdin=subprocess.DEVNULL") >= 2

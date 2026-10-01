@@ -38,6 +38,88 @@ def repo_files_changed_problem(value: Any) -> Optional[str]:
     return None
 
 
+# Where ``verify_unpublished_repository`` records that a repository gate ran:
+# the OpenShell verifier sandbox, or the dedicated KVM verifier.
+VERIFIER_EXECUTION_ENVIRONMENTS = frozenset({"openshell_sandbox", "dedicated_kvm"})
+_FULL_GIT_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def verifier_test_item_problems(item: Any, head_sha: str) -> List[str]:
+    """Why *item* is not a verifier-produced pass for commit *head_sha*.
+
+    A repository change counts as tested only when the pre-push verifier ran
+    the contract gate on a fresh clone of the exact commit being published and
+    recorded that it did. Everything else that looks like a pass is not one:
+    a sandbox receipt for a clean tree where nothing ran, a ``deferred`` item
+    waiting on another gate, or a ``tests`` list the agent wrote itself. 64% of
+    the hub's second-run "catches" over 90 days were such items.
+    """
+    if not isinstance(item, dict):
+        return ["test item is not an object"]
+    problems: List[str] = []
+    status = str(item.get("status") or "").strip().lower()
+    if status != "pass":
+        problems.append("status is %r, not 'pass'" % (status or None))
+    returncode = item.get("returncode")
+    if isinstance(returncode, bool) or returncode != 0:
+        problems.append("returncode is %r, not 0" % (returncode,))
+    if item.get("skipped"):
+        problems.append("the gate was skipped, nothing ran")
+    environment = str(item.get("execution_environment") or "").strip()
+    if environment not in VERIFIER_EXECUTION_ENVIRONMENTS:
+        problems.append("execution_environment %r is not a repository verifier" % (environment,))
+    executed_head = str(item.get("executed_head_sha") or "").strip().lower()
+    expected_head = str(head_sha or "").strip().lower()
+    if not executed_head:
+        problems.append("executed_head_sha is missing")
+    elif executed_head != expected_head:
+        problems.append(
+            "executed_head_sha %s is not repo.head_sha %s"
+            % (executed_head[:12], expected_head[:12])
+        )
+    if not _FULL_GIT_SHA_RE.match(str(item.get("executed_tree_sha") or "").strip().lower()):
+        problems.append("executed_tree_sha is missing")
+    test_count = item.get("test_count")
+    has_count = isinstance(test_count, int) and not isinstance(test_count, bool) and test_count > 0
+    if not str(item.get("stdout") or "").strip() and not has_count:
+        problems.append("no verifier output or test count was recorded")
+    return problems
+
+
+def verifier_tests_problems(
+    manifest: Mapping[str, Any], head_sha: Optional[str] = None
+) -> List[str]:
+    """[] when ``verification.tests`` holds a verifier pass for the repo head.
+
+    *head_sha* defaults to ``manifest.repo.head_sha``. ``checks`` never count:
+    they carry finalizer/push bookkeeping, not a test run.
+    """
+    if head_sha is None:
+        repo = manifest.get("repo")
+        head_sha = str(repo.get("head_sha") or "") if isinstance(repo, dict) else ""
+    tests = manifest.get("tests")
+    if isinstance(tests, dict):
+        tests = [tests]
+    if not isinstance(tests, list) or not tests:
+        return [
+            "repo_change evidence requires a repository verifier test result for "
+            "repo.head_sha; verification.tests is empty"
+        ]
+    reasons: List[str] = []
+    for index, item in enumerate(tests):
+        item_problems = verifier_test_item_problems(item, head_sha)
+        if not item_problems:
+            return []
+        name = str(item.get("name") or "") if isinstance(item, dict) else ""
+        reasons.append(
+            "tests[%d]%s: %s" % (index, " (%s)" % name if name else "", "; ".join(item_problems))
+        )
+    return [
+        "repo_change evidence requires a repository verifier test result for "
+        "repo.head_sha; none qualifies (%s)" % " | ".join(reasons[:3])
+    ]
+
+
 def normalize_manifest_tests(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     """Normalize ``verification.tests`` so it is always a list of result objects.
 
@@ -178,6 +260,9 @@ class EvidenceValidationContext:
     repo_coupled: bool = False
     # mac-wjy3: a task whose contract requires tests must record a tests list.
     require_tests: bool = False
+    # The task's repository contract defines a test command, so a repo_change
+    # passes only on a verifier-produced test result for repo.head_sha.
+    require_verifier_tests: bool = False
     # Prepared canonical HEAD the worker attached. Empty means this run did
     # not snapshot a worktree (unit tests of bare manifests stay fail-open).
     expected_reconcile_head_sha: str = ""
@@ -266,6 +351,12 @@ class RepoChangeValidator(EvidenceValidator):
                 "this task's contract requires tests, but verification.tests is "
                 "null/missing — run the repository test command and record results"
             )
+        # An allowed empty change (a no-op source refresh) has nothing to test.
+        no_op = context.allow_empty_repo_change and not (
+            manifest.repo is not None and manifest.repo.files_changed
+        )
+        if context.require_verifier_tests and not no_op:
+            problems.extend(verifier_tests_problems(manifest.raw))
         return problems
 
 
@@ -504,6 +595,7 @@ def validate_evidence_type(
     allow_empty_repo_change: bool = False,
     repo_coupled: bool = False,
     require_tests: bool = False,
+    require_verifier_tests: bool = False,
     expected_reconcile_head_sha: str = "",
 ) -> List[str]:
     typed = VerificationManifest.parse(manifest)
@@ -517,6 +609,7 @@ def validate_evidence_type(
             allow_empty_repo_change=allow_empty_repo_change,
             repo_coupled=repo_coupled,
             require_tests=require_tests,
+            require_verifier_tests=require_verifier_tests,
             expected_reconcile_head_sha=expected_reconcile_head_sha,
         ),
     )

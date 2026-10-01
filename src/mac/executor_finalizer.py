@@ -82,9 +82,11 @@ from mac.fleet_learning import (
     repository_host,
     task_repository_remote,
 )
+from mac.evidence_validators import verifier_test_item_problems
 from mac.gitops import (
     CanonicalFreshnessResult,
     agent_pull_request,
+    canonical_sync_selection_base,
     check_canonical_freshness,
     guarded_push,
     resolve_canonical_publication_target,
@@ -1447,7 +1449,13 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             test_cmd,
             str(_repository_contract_bootstrap(task).get("command") or ""),
             timeout_seconds=phase.remaining,
-            prepared_base_sha=_repository_prepared_base(task),
+            # Select against the canonical tip HEAD was just rebased onto, so
+            # the scoped gate covers this task's change and only that. The
+            # lease's prepared base would also pull in everything that landed
+            # since, making the selection depend on how long the task ran.
+            selection_base_sha=canonical_sync_selection_base(
+                canonical_sync, _repository_prepared_base(task)
+            ),
         )
         progress["tests"] = tests
         if tests.get("returncode") != 0:
@@ -1457,7 +1465,9 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 )
             )
     bootstrap_ok = True  # The combined remote gate includes the bootstrap.
-    tests_ok = tests.get("returncode") == 0 and tests.get("status") == "pass"
+    # Only the verifier's own record of running the gate on this exact commit
+    # counts; a result for another head (or one where nothing ran) does not.
+    tests_ok = not verifier_test_item_problems(tests, head_sha)
     canonical_remote_raw = _repository_publication_remote(task)
     canonical_branch = _repository_contract_canonical_branch(task)
     prepared_base_sha = _repository_prepared_base(task)
@@ -1511,6 +1521,21 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     pull_request: Optional[dict] = None
     publication: Optional[CanonicalFreshnessResult] = None
     push_remote_display = freshness.target.remote_display if freshness.target is not None else ""
+    # Landing order is rebase -> verify -> guarded_push, and nothing may move
+    # HEAD in between: the commit pushed must be the commit verified.
+    # guarded_push refuses any HEAD other than the target's task_head_sha, so
+    # binding that to the verified head closes the chain.
+    if (
+        tests_ok
+        and publication_target is not None
+        and publication_target.task_head_sha != tests.get("executed_head_sha")
+    ):
+        tests_ok = False
+        freshness_ok = False
+        freshness_error = "verified head %s is not the head being pushed %s" % (
+            str(tests.get("executed_head_sha") or "")[:12],
+            publication_target.task_head_sha[:12],
+        )
     if bootstrap_ok and tests_ok and clean and freshness_ok:
         assert publication_target is not None
         with _FinalizerPhaseContext(
@@ -1861,7 +1886,7 @@ def run_deterministic_review_verdict(
                 test_cmd,
                 str(_repository_contract_bootstrap(task).get("command") or ""),
                 allow_untracked=True,
-                prepared_base_sha=_repository_prepared_base(task),
+                selection_base_sha=_repository_prepared_base(task),
             )
             integration = _cooperative_integration_check(task, review_worktree_path)
             integration_ok = integration is None or integration.get("status") == "pass"
