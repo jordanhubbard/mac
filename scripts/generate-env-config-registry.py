@@ -118,11 +118,23 @@ CONSUMER_DEFAULTS = {
     # so the non-fatal default is the installer's, not an invented one.
     "MAC_DEPLOY_GATEWAY_PROBE_FATAL": "0",
     "MAC_OPENCLAW_READY_LOG_TIMEOUT": "20",
+    "MAC_LANDING_MAX_ATTEMPTS": "8",
+    "MAC_LANDING_DEADLINE_SECONDS": "86400",
 }
 # Descriptions an operator cannot derive from the variable name. The generated
 # sentence is fine for a setting whose name says what it does; an escape hatch
 # needs its default, its blast radius, and the one case for turning it on.
 CURATED_DESCRIPTIONS = {
+    "MAC_LANDING_MAX_ATTEMPTS": (
+        "Landing attempts (publication retries, unavailable hub verifies) a task may spend "
+        "between review and landing before it moves to BLOCKED with "
+        "`landing_budget_exhausted`. Attempts back off from 5 to 60 minutes."
+    ),
+    "MAC_LANDING_DEADLINE_SECONDS": (
+        "Wall-clock deadline, from the first landing attempt, for every review/landing wait "
+        "(reviewer, hub verify, publication target/evidence, checks pending, release "
+        "barrier). Past it the task moves to BLOCKED with `landing_budget_exhausted`."
+    ),
     "MAC_HUB_VERIFY_VM_CONFIG": "Private controller configuration for explicitly allowlisted repositories verified in disposable dedicated KVM guests; other repositories retain OpenShell verification.",
     "MAC_HUB_VERIFY_PROFILE": (
         "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves "

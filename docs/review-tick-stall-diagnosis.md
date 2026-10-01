@@ -94,7 +94,14 @@ single failing verify path. This is distinct from the "no evidence to verify"
 case, which is deliberately *allowed* to fall through to the agent-nudge path
 (`src/mac/services.py:22070` comment).
 
-*Pinned by:* `test_waiting_for_hub_verify_has_no_iteration_ceiling`,
+*Status:* fixed by the landing budget (`metadata.landing`). Each
+`waiting_for_hub_verify` return charges the task's deadline
+(`MAC_LANDING_DEADLINE_SECONDS`), and each `hub_verify_unavailable` or
+`hub_verify_error` run charges one of `MAC_LANDING_MAX_ATTEMPTS` with a 5 to 60
+minute backoff. When the budget runs out the task moves to BLOCKED with
+`reason="landing_budget_exhausted"`.
+
+*Pinned by:* `test_waiting_for_hub_verify_is_bounded_by_the_landing_budget`,
 `test_hub_verifiable_evidence_holds_the_merge_gate`.
 
 ## Ruled-out hypotheses

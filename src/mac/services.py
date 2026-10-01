@@ -621,6 +621,70 @@ def _is_timeout_blob(text: str) -> bool:
     return any(marker in lowered for marker in _TIMEOUT_BLOB_MARKERS)
 
 
+# One landing budget per task (metadata.landing). Every wait between "work is
+# in review" and "work has landed" charges it, so no wait can loop forever.
+# Observed live: two approved tasks retried publication ~7,140 times each on
+# "git publication requires evidence repo.head_sha" -- a ValidationError that
+# can never succeed, retried on every tick with no cap and no deadline.
+LANDING_BUDGET_SCHEMA = "mac.landing_budget.v1"
+DEFAULT_LANDING_MAX_ATTEMPTS = 8
+DEFAULT_LANDING_DEADLINE_SECONDS = 86400
+LANDING_BACKOFF_MIN_SECONDS = 300
+LANDING_BACKOFF_MAX_SECONDS = 3600
+# Publication failure kinds that are waits on someone else (forge checks, the
+# merge queue): they count against the deadline, not the attempt cap.
+_LANDING_WAIT_FAILURE_KINDS = frozenset(
+    {
+        "pull_request_checks_pending",
+        "pull_request_queued",
+        "merge_queue_waiting",
+        "merge_queue_deferred",
+    }
+)
+# A ValidationError normally states a fact retrying cannot change. These
+# markers say the fact was a transport fault (git fetch over a flaky network
+# raises a plain ValidationError), so it consumes the budget instead.
+_LANDING_TRANSIENT_MARKERS = (
+    _SHARED_TRANSIENT_FAILURE_MARKERS
+    + _TIMEOUT_BLOB_MARKERS
+    + (
+        "could not resolve host",
+        "unable to access",
+        "the remote end hung up",
+        "early eof",
+    )
+)
+
+
+def _landing_failure_mode(exc: BaseException) -> str:
+    """Classify a landing failure: ``wait``, ``retry`` or ``permanent``.
+
+    ``wait`` charges only the deadline, ``retry`` charges an attempt, and
+    ``permanent`` blocks the task at once: retrying cannot change the outcome.
+    """
+    if isinstance(exc, PublicationDeferredError):
+        return "wait"
+    try:
+        retry_after = int(getattr(exc, "publication_retry_after_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        retry_after = 0
+    if retry_after > 0:
+        kind = str(getattr(exc, "publication_failure_kind", "") or "")
+        return "wait" if kind in _LANDING_WAIT_FAILURE_KINDS else "retry"
+    if isinstance(getattr(exc, "conflict_integration_context", None), Mapping):
+        # A linked integration repair task owns the fix; wait for it.
+        return "wait"
+    if isinstance(exc, TransitionError):
+        # A concurrent consumer moved the task mid-publish.
+        return "retry"
+    if isinstance(exc, ValidationError):
+        text = str(exc).lower()
+        if any(marker in text for marker in _LANDING_TRANSIENT_MARKERS):
+            return "retry"
+        return "permanent"
+    return "retry"
+
+
 def _nonnegative_int(value: Any, *, default: int = 0) -> int:
     try:
         return max(0, int(value))
@@ -22174,6 +22238,20 @@ class ControlPlane:
             except (TypeError, ValueError):
                 # Malformed controller metadata must not strand the task.
                 pass
+        landing = ensure_json_object(ensure_json_object(task.metadata).get("landing"))
+        landing_not_before = str(landing.get("not_before") or "").strip()
+        if landing_not_before and not landing.get("blocked_at"):
+            try:
+                if parse_time(utcnow()) < parse_time(landing_not_before):
+                    return {
+                        "task_id": task_id,
+                        "status": "landing_backoff",
+                        "not_before": landing_not_before,
+                        "attempts": landing.get("attempts"),
+                        "last_reason": landing.get("last_reason"),
+                    }
+            except (TypeError, ValueError):
+                pass
         if self._default_review_disabled(task):
             self._record_default_review_observation(
                 task_id,
@@ -22425,6 +22503,15 @@ class ControlPlane:
                         "evidence_type": evidence_assessment.get("evidence_type"),
                     },
                 )
+                exhausted = self._consume_landing_budget(
+                    task_id,
+                    "waiting_for_reviewer",
+                    counts_attempt=False,
+                    evidence_id=evidence.id,
+                    actor=actor,
+                )
+                if exhausted is not None:
+                    return exhausted
                 return {"task_id": task_id, "status": "waiting_for_reviewer"}
             fallback_reason = self._reviewer_independence_fallback_reason(
                 task,
@@ -22527,6 +22614,15 @@ class ControlPlane:
                             },
                             actor,
                         )
+                        exhausted = self._consume_landing_budget(
+                            task_id,
+                            "waiting_for_hub_verify",
+                            counts_attempt=False,
+                            evidence_id=evidence.id,
+                            actor=actor,
+                        )
+                        if exhausted is not None:
+                            return exhausted
                         return {
                             "task_id": task_id,
                             "status": "waiting_for_hub_verify",
@@ -22568,6 +22664,15 @@ class ControlPlane:
                         },
                         actor,
                     )
+                    exhausted = self._consume_landing_budget(
+                        task_id,
+                        "waiting_for_hub_verify",
+                        counts_attempt=False,
+                        evidence_id=evidence.id,
+                        actor=actor,
+                    )
+                    if exhausted is not None:
+                        return exhausted
                     return {
                         "task_id": task_id,
                         "status": "waiting_for_hub_verify",
@@ -22811,6 +22916,15 @@ class ControlPlane:
                 },
                 actor,
             )
+            exhausted = self._consume_landing_budget(
+                task_id,
+                "waiting_for_publication_evidence",
+                counts_attempt=False,
+                evidence_id=evidence.id,
+                actor=actor,
+            )
+            if exhausted is not None:
+                return exhausted
             return {
                 "task_id": task_id,
                 "status": "waiting_for_publication_evidence",
@@ -22850,6 +22964,15 @@ class ControlPlane:
                     {"review_id": review.id, "evidence_id": evidence.id},
                     actor,
                 )
+                exhausted = self._consume_landing_budget(
+                    task_id,
+                    "waiting_for_publication_target",
+                    counts_attempt=False,
+                    evidence_id=evidence.id,
+                    actor=actor,
+                )
+                if exhausted is not None:
+                    return exhausted
                 return {
                     "task_id": task_id,
                     "status": "waiting_for_publication_target",
@@ -22881,6 +23004,18 @@ class ControlPlane:
                 evidence_id=evidence.id,
                 actor=actor,
             )
+            # The release barrier is a wait on the fleet, not a failed
+            # attempt: it charges the landing deadline only.
+            exhausted = self._consume_landing_budget(
+                task_id,
+                "publication_deferred",
+                counts_attempt=False,
+                error=str(exc),
+                evidence_id=evidence.id,
+                actor=actor,
+            )
+            if exhausted is not None:
+                return exhausted
             return {
                 "task_id": task_id,
                 "status": "publication_deferred",
@@ -22936,6 +23071,24 @@ class ControlPlane:
                     actor=actor,
                     _preserve_control_plane_publication_metadata=True,
                 )
+            # Every publication failure charges the single landing budget. A
+            # failure retrying cannot fix blocks now; transient ones back off
+            # and block once attempts or the deadline run out.
+            failure_mode = _landing_failure_mode(exc)
+            landing_blocked = self._consume_landing_budget(
+                task_id,
+                str(getattr(exc, "publication_failure_kind", "") or "publish_failed"),
+                retryable=failure_mode != "permanent",
+                counts_attempt=failure_mode != "wait",
+                error=detail,
+                evidence_id=evidence.id,
+                retry_after_seconds=(
+                    retry_after_seconds
+                    if retry_after_seconds > 0
+                    else (LANDING_BACKOFF_MIN_SECONDS if failure_mode == "wait" else 0)
+                ),
+                actor=actor,
+            )
             # Legacy single-task publication conflict handoff: when the failure
             # is the merge-gate reporting that the approved branch no longer
             # integrates onto the CURRENT canonical main tip, do not just park
@@ -22949,7 +23102,7 @@ class ControlPlane:
             # still see why publication paused.
             conflict_context = getattr(exc, "conflict_integration_context", None)
             integration_task_id: Optional[str] = None
-            if isinstance(conflict_context, Mapping):
+            if isinstance(conflict_context, Mapping) and landing_blocked is None:
                 try:
                     integration_task_id = self._handoff_conflict_to_integration(
                         task=task,
@@ -22996,7 +23149,19 @@ class ControlPlane:
                     actor,
                 )
             try:
-                if integration_task_id is not None:
+                if landing_blocked is not None:
+                    self.append_task_activity(
+                        task_id,
+                        "diagnosis",
+                        actor,
+                        "Problem: Auto-publish to %s failed after approval and the "
+                        "task cannot land (%s); it is now BLOCKED instead of "
+                        "retrying.\n"
+                        "Remediation: Fix the cause below, then re-drive the task; "
+                        "it gets a fresh landing budget. Error: %s"
+                        % (target, landing_blocked.get("status"), detail[:300]),
+                    )
+                elif integration_task_id is not None:
                     self.append_task_activity(
                         task_id,
                         "diagnosis",
@@ -23029,7 +23194,7 @@ class ControlPlane:
                     )
             except Exception:
                 pass
-            return {
+            failed: JsonDict = {
                 "task_id": task_id,
                 "status": "publish_failed",
                 "review_id": review.id,
@@ -23037,6 +23202,10 @@ class ControlPlane:
                 "error": detail,
                 "integration_task_id": integration_task_id,
             }
+            if landing_blocked is not None:
+                failed["blocked_reason"] = landing_blocked.get("status")
+                failed["state"] = self.get_task(task_id).state
+            return failed
         self._record_default_review_observation(
             task_id,
             "workflow.default_review.published",
@@ -23060,6 +23229,131 @@ class ControlPlane:
             "review_id": review.id,
             "publication_id": publication.id,
         }
+
+    def _consume_landing_budget(
+        self,
+        task_id: str,
+        reason: str,
+        *,
+        retryable: bool = True,
+        counts_attempt: bool = True,
+        error: str = "",
+        evidence_id: Optional[str] = None,
+        retry_after_seconds: int = 0,
+        actor: str = "default-review-workflow",
+    ) -> Optional[JsonDict]:
+        """Charge one landing wait or attempt against the task's single budget.
+
+        Every wait between review and landing calls this. ``counts_attempt``
+        charges one of ``MAC_LANDING_MAX_ATTEMPTS`` and backs off 5 -> 60
+        minutes; a pure wait (``counts_attempt=False``) charges only the
+        ``MAC_LANDING_DEADLINE_SECONDS`` deadline, measured from the first
+        landing attempt recorded in ``metadata.landing`` -- never from
+        ``updated_at``, which every retry refreshes. ``retryable=False`` blocks
+        at once. Returns ``None`` while budget remains, else the result of
+        moving the task to BLOCKED. New executor evidence (rework) or a return
+        from BLOCKED starts a fresh budget.
+        """
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        landing = ensure_json_object(metadata.get("landing"))
+        if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
+            # Blocked earlier in this same advance (e.g. by the verifier).
+            if task.state == TaskState.BLOCKED.value and landing.get("blocked_at"):
+                return {
+                    "task_id": task_id,
+                    "status": str(landing.get("outcome") or "landing_budget_exhausted"),
+                    "state": task.state,
+                }
+            return None
+        if landing.get("blocked_at") or (
+            evidence_id and landing.get("evidence_id") not in (None, "", evidence_id)
+        ):
+            landing = {}
+        now = utcnow()
+        first_attempt_at = str(landing.get("first_attempt_at") or "") or now
+        try:
+            elapsed = (parse_time(now) - parse_time(first_attempt_at)).total_seconds()
+        except (TypeError, ValueError):
+            first_attempt_at, elapsed = now, 0.0
+        attempts = _nonnegative_int(landing.get("attempts")) + (1 if counts_attempt else 0)
+        max_attempts = _int_env("MAC_LANDING_MAX_ATTEMPTS", DEFAULT_LANDING_MAX_ATTEMPTS)
+        deadline_seconds = _int_env(
+            "MAC_LANDING_DEADLINE_SECONDS", DEFAULT_LANDING_DEADLINE_SECONDS
+        )
+        block_reason: Optional[str] = None
+        exhausted_by: Optional[str] = None
+        if not retryable:
+            block_reason = "landing_non_retryable"
+        elif counts_attempt and attempts >= max_attempts:
+            block_reason, exhausted_by = "landing_budget_exhausted", "attempts"
+        elif elapsed >= deadline_seconds:
+            block_reason, exhausted_by = "landing_budget_exhausted", "deadline"
+        record: JsonDict = {
+            "schema": LANDING_BUDGET_SCHEMA,
+            "attempts": attempts,
+            "first_attempt_at": first_attempt_at,
+            "last_reason": str(landing.get("last_reason") or reason),
+            "evidence_id": str(evidence_id or landing.get("evidence_id") or ""),
+        }
+        if landing.get("last_error"):
+            record["last_error"] = landing["last_error"]
+        if counts_attempt or not retryable:
+            record["last_reason"] = reason
+            record["last_attempt_at"] = now
+            if error:
+                record["last_error"] = str(error)[:500]
+        if block_reason is None:
+            delay = int(retry_after_seconds or 0)
+            if counts_attempt:
+                delay = max(
+                    delay,
+                    min(
+                        LANDING_BACKOFF_MAX_SECONDS,
+                        LANDING_BACKOFF_MIN_SECONDS * (2 ** min(attempts - 1, 16)),
+                    ),
+                )
+            if delay > 0:
+                record["not_before"] = (parse_time(now) + timedelta(seconds=delay)).isoformat(
+                    timespec="microseconds"
+                )
+            # A pure wait re-checks every tick; persist only its first sighting
+            # so the wait itself does not churn metadata and updated_at.
+            if counts_attempt or delay > 0 or not landing.get("first_attempt_at"):
+                metadata["landing"] = record
+                self._persist_task_metadata_narrow(
+                    task_id, metadata, actor=actor, detail={"landing": reason}
+                )
+            return None
+        record["blocked_at"] = now
+        record["outcome"] = block_reason
+        metadata["landing"] = record
+        self._persist_task_metadata_narrow(
+            task_id, metadata, actor=actor, detail={"landing": block_reason}
+        )
+        detail: JsonDict = {
+            "reason": block_reason,
+            "manual_repair_required": True,
+            "waiting_on": reason,
+            "last_reason": record["last_reason"],
+            "error": str(record.get("last_error") or error or reason)[:500],
+            "attempts": attempts,
+            "max_attempts": max_attempts,
+            "first_attempt_at": first_attempt_at,
+            "deadline_seconds": deadline_seconds,
+        }
+        if exhausted_by:
+            detail["exhausted_by"] = exhausted_by
+        self._record_default_review_observation(
+            task_id, "workflow.default_review.exhausted", "error", detail, actor
+        )
+        self._record_history(task_id, "task.landing_exhausted", actor, None, None, detail)
+        try:
+            self._transition_task_internal(task_id, TaskState.BLOCKED.value, actor, detail)
+        except TransitionError:
+            # Already terminal or otherwise moved: nothing more to do.
+            pass
+        return {"task_id": task_id, "status": block_reason, **detail}
 
     def _record_review_outcome_lesson(self, task_id: str, *, outcome: str, detail: str) -> None:
         """Distill a review-stage outcome into a ``deployment_learning`` memory
@@ -27561,12 +27855,22 @@ class ControlPlane:
                 **report_options,
             )
         except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
+            crash = _hub_verify_exception_detail(exc)
             self._record_default_review_observation(
                 task.id,
                 "workflow.default_review.hub_verify_error",
                 "warning",
-                {"review_id": review.id, **_hub_verify_exception_detail(exc)},
+                {"review_id": review.id, **crash},
                 actor,
+            )
+            # A verifier crash is a transient landing attempt. Record only the
+            # redacted detail: str(exc) can carry the subprocess argv.
+            self._consume_landing_budget(
+                task.id,
+                "hub_verify_error",
+                error="%s: %s" % (crash.get("error_type"), crash.get("error")),
+                evidence_id=executor_evidence.id,
+                actor=actor,
             )
             return None
         if returncode != 0:
@@ -27592,6 +27896,16 @@ class ControlPlane:
                         "excerpt": _hub_review_failure_excerpt(output, head=400, tail=400),
                     },
                     actor,
+                )
+                # Each unavailable run charges the landing budget, so a
+                # harness that never comes back blocks the task instead of
+                # leaving it in waiting_for_hub_verify forever.
+                self._consume_landing_budget(
+                    task.id,
+                    "hub_verify_unavailable",
+                    error=str(unavailable),
+                    evidence_id=executor_evidence.id,
+                    actor=actor,
                 )
                 return None
         verdict = "approved" if returncode == 0 else "rejected"

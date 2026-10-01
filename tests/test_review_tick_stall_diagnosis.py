@@ -135,26 +135,18 @@ def test_enable_event_driven_review_advance_populates_the_queue():
 # --------------------------------------------------------------------------- #
 
 
-def test_waiting_for_hub_verify_has_no_iteration_ceiling():
-    """C2: when hub verify produces no verdict, the workflow returns
-    ``waiting_for_hub_verify`` for hub-verifiable evidence with no attempt/age
-    cap, so every sweep re-parks the same task.
-
-    Sibling fix: bound the loop and retract after N attempts (see docs
-    recommended fix #2). This test pins the *absence* of a ceiling today."""
+def test_waiting_for_hub_verify_is_bounded_by_the_landing_budget():
+    """C2 (fixed): every ``waiting_for_hub_verify`` return first charges the
+    task's single landing budget, and an unavailable/crashed verifier charges an
+    attempt, so the wait ends in BLOCKED instead of re-parking forever. The
+    behaviour is exercised in tests/test_landing_budget.py."""
     src = inspect.getsource(ControlPlane.advance_default_review_workflow)
     assert '"status": "waiting_for_hub_verify"' in src
-    # There is no attempt-count / age ceiling gating that return today.
-    for ceiling_marker in (
-        "max_hub_verify_attempts",
-        "hub_verify_attempt",
-        "waiting_for_hub_verify_attempts",
-        "hub_verify_deadline",
-    ):
-        assert ceiling_marker not in src, (
-            "a ceiling appeared -- update this diagnosis test and the doc; the "
-            "sibling fix for C2 may have landed"
-        )
+    assert src.count('"waiting_for_hub_verify",\n') >= 2
+    assert "self._consume_landing_budget(" in src
+    verifier = inspect.getsource(ControlPlane._run_hub_review_verification_locked)
+    assert '"hub_verify_unavailable",' in verifier
+    assert '"hub_verify_error",' in verifier
 
 
 def test_hub_verifiable_evidence_holds_the_merge_gate(monkeypatch):
