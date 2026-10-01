@@ -13,8 +13,7 @@ Covers:
   - secret: access (with trusted machine)
   - task extended: detect-beads, detect-ticketing
 
-Duplicate smoke-tests for memory (health/recall/recall-dreams/decay/
-summarize-actions), ``env register/list/show``, ``env current`` (empty), and
+Duplicate smoke-tests for memory (decay/summarize-actions), ``env register/list/show``, ``env current`` (empty), and
 ``action-events list`` were removed: they executed identical code paths to the
 stronger dedicated suites in ``tests/cli/test_cli_memory.py`` and
 ``tests/cli/test_domains_cli.py``.
@@ -473,30 +472,6 @@ def test_rollout_health(tmp_path):
     assert isinstance(result, dict)
     # health report always has a 'healthy' key
     assert "healthy" in result
-
-
-# ===========================================================================
-# nap extended: cycle, due
-# ===========================================================================
-
-
-def test_nap_cycle_runs_all_due(tmp_path):
-    """nap cycle for a configured agent runs the full cycle."""
-    agent = _make_agent(tmp_path, "cycle-napper", agent_id="agent_cycle")
-    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
-
-    rc, result = _run(tmp_path, "admin", "nap", "cycle", agent["id"])
-    # cycle may fail if Qdrant is unavailable; accept non-zero but no crash
-    assert isinstance(rc, int)
-
-
-def test_nap_due_returns_agents(tmp_path):
-    """nap due lists agents with upcoming nap windows."""
-    agent = _make_agent(tmp_path, "due-napper", agent_id="agent_due")
-    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
-    rc, result = _run(tmp_path, "admin", "nap", "due")
-    assert rc == 0
-    assert isinstance(result, (list, dict))
 
 
 # ===========================================================================

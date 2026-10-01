@@ -237,19 +237,11 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("journal", "list"),
         ("journal", "restore"),
         ("journal", "snapshot"),
-        # memory domain -- recall-dreams and backfill need external deps
-        ("memory", "backfill"),
-        ("memory", "embed"),
-        ("memory", "recall-dreams"),
         # message domain
         ("message", "inbox"),
         ("message", "send"),
         # migrate domain
         ("migrate", "import"),
-        # nap consolidate/cycle require an LLM for memory summarisation;
-        # the simpler nap lifecycle commands are covered in test_cli_nap.py
-        ("nap", "consolidate"),
-        ("nap", "cycle"),
         # notifier domain
         ("notifier", "configure"),
         ("notifier", "delete"),

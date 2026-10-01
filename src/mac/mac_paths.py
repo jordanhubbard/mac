@@ -35,7 +35,6 @@ __all__ = [
     "journal_dir",
     "backups_dir",
     "archive_dir",
-    "dream_logs_dir",
     "openclaw_home",
     "script_jobs_dir",
     "script_jobs_scripts_dir",
@@ -206,15 +205,3 @@ def legacy_gateway_scripts_dir() -> Path:
 def gateway_env_file() -> Path:
     """Gateway secrets file the gateway process sources: ``$HERMES_HOME/.env``."""
     return gateway_home() / ".env"
-
-
-def dream_logs_dir() -> Path:
-    """Directory the gateway dream-cycle cron writes human-readable reports to:
-    ``$HERMES_HOME/dream_logs``.
-
-    NOTE: this is *not* MAC's durable learning store — those are
-    ``memory_records`` (record_type ``dream:*``) in the ledger. This resolver
-    exists so the dream-log importer (``mac.dream_log_import``) can merge the
-    otherwise-orphaned reports into that durable store.
-    """
-    return gateway_home() / "dream_logs"

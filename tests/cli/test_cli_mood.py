@@ -8,8 +8,7 @@ Subcommands covered:
 
 Each test invokes the CLI end-to-end against an in-file SQLite database
 (tmp_path) and asserts on exit code, returned JSON shape, and store
-round-trips.  The _run helper mirrors the pattern used in test_mac_cli.py
-and test_cli_nap.py.
+round-trips.  The _run helper mirrors the pattern used in test_mac_cli.py.
 """
 
 from __future__ import annotations

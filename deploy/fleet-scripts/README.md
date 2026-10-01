@@ -52,11 +52,6 @@ Installs the headscale control plane on the hub node. Used when the fleet
 spec selects `network.provider: headscale` (self-hosted Tailscale control
 plane) instead of Tailscale SaaS.
 
-### install-nap-tick-service.sh
-
-Installs the nap-tick service, which manages agent sleep/wake cycles to
-reduce resource usage when no tasks are available.
-
 ### install-observability-prune.sh
 
 Installs a periodic pruning job that keeps observability data (logs,

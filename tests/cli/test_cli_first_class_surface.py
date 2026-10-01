@@ -259,7 +259,7 @@ def test_top_level_help_is_only_the_first_class_objects(parser, capsys):
         assert name in out
     assert "Getting started:" not in out, "administrative groups are back at the top level"
     assert "mac admin help" in out
-    assert "0 administrative commands live under" not in out
+    assert not re.search(r"\b0 administrative commands live under", out), out
     match = re.search(r"(\d+) administrative commands live under", out)
     assert match is not None, out
     assert int(match.group(1)) >= 20, out

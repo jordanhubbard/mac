@@ -69,7 +69,6 @@ TOP_PROJECTS = 12
 OLDEST_TASKS = 15
 RECENT_TRANSITIONS = 60
 AGENT_LIMIT = 200
-RECENT_CYCLE_RUNS = 12
 GRAPH_SCHEMA_VERSION = "mac.dashboard.observe.project_graph.v1"
 # One project's live work, plus a bounded remainder of recently updated
 # terminal rows. A fleet-wide dump is the thing ADR 0018 refused; 200 is
@@ -461,44 +460,6 @@ def build_console_snapshot(
             out[key] = _counts(q(sql), "status")
         return out
 
-    # --- dreaming / nap cycles ----------------------------------------------
-    def cycles_section() -> Dict[str, Any]:
-        naps = _counts(q("SELECT status, COUNT(*) AS n FROM nap_runs GROUP BY status"), "status")
-        recent = q(
-            "SELECT id, agent_id, status, started_at, completed_at "
-            "FROM nap_runs ORDER BY started_at DESC LIMIT %d" % RECENT_CYCLE_RUNS
-        )
-        for row in recent:
-            row["age_seconds"] = _age_seconds(row.get("started_at"), moment)
-        schedules = q(
-            "SELECT COUNT(*) AS n, "
-            "SUM(CASE WHEN enabled <> 0 THEN 1 ELSE 0 END) AS enabled FROM nap_schedules"
-        )
-        summary = schedules[0] if schedules else {}
-        return {
-            "naps_by_status": naps,
-            "recent_naps": recent,
-            "schedules_total": int(summary.get("n") or 0),
-            "schedules_enabled": int(summary.get("enabled") or 0),
-        }
-
-    def dreams_section() -> Dict[str, Any]:
-        # dream_runs is created by mac.dreaming.store, not by schema.sql, so on
-        # a hub where dreaming never ran the table is simply absent. That is a
-        # real answer ("dreaming has never run here"), so it must surface as a
-        # degraded section rather than as zeros.
-        by_status = _counts(
-            q("SELECT status, COUNT(*) AS n FROM dream_runs GROUP BY status"), "status"
-        )
-        by_state = _counts(q("SELECT state, COUNT(*) AS n FROM dream_runs GROUP BY state"), "state")
-        recent = q(
-            "SELECT id, agent_id, project, status, state, created_at, promoted_at "
-            "FROM dream_runs ORDER BY created_at DESC LIMIT %d" % RECENT_CYCLE_RUNS
-        )
-        for row in recent:
-            row["age_seconds"] = _age_seconds(row.get("created_at"), moment)
-        return {"by_status": by_status, "by_state": by_state, "recent": recent}
-
     # --- agentbus traffic ----------------------------------------------------
     def agentbus_section() -> Dict[str, Any]:
         streams = _counts(
@@ -563,8 +524,6 @@ def build_console_snapshot(
     payload["transitions"] = sections.run("transitions", transitions_section)
     payload["agents"] = sections.run("agents", agents_section)
     payload["pipelines"] = sections.run("pipelines", pipelines_section)
-    payload["cycles"] = sections.run("cycles", cycles_section)
-    payload["dreams"] = sections.run("dreams", dreams_section)
 
     # --- transcript coverage -------------------------------------------------
     def transcripts_section() -> Dict[str, Any]:

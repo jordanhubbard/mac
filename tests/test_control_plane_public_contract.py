@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -121,7 +120,6 @@ _NAMED_VALUES: dict[str, Any] = {
     "hardware": {},
     "metadata": {},
     "detail": {},
-    "vector_writer": SimpleNamespace(recall=lambda *_args, **_kwargs: []),
     "min_score": 0.0,
 }
 

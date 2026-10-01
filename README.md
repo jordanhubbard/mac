@@ -504,10 +504,10 @@ API token rules as the REST API.
 
 It is READ-ONLY, and that is the point rather than a limitation. It answers
 what the fleet is doing — tasks and agents moving through states — with views
-for live movement, stuck work, agents, projects, pipelines, dream & nap cycles,
-telemetry, the merge queue, and a per-task drill-down. The live view charts
-state transitions per time bucket, because a count tells you 360 tasks are
-blocked and only a series tells you whether they are arriving or draining.
+for live movement, stuck work, agents, projects, pipelines, telemetry, the
+merge queue, and a per-task drill-down. The live view charts state transitions
+per time bucket, because a count tells you 360 tasks are blocked and only a
+series tells you whether they are arriving or draining.
 
 Two properties it will not trade away:
 

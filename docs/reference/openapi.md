@@ -71,13 +71,6 @@ request and response definitions.
 | `POST` | `/agents/{agent_id}/mood` | Set Mood |
 | `PUT` | `/agents/{agent_id}/mood` | Set Mood |
 | `GET` | `/agents/{agent_id}/mood/history` | List Mood History |
-| `POST` | `/agents/{agent_id}/nap-consolidate` | Consolidate Nap |
-| `POST` | `/agents/{agent_id}/nap-cycle` | Run Nap Cycle |
-| `POST` | `/agents/{agent_id}/nap-runs` | Begin Nap |
-| `GET` | `/agents/{agent_id}/nap-schedule` | Get Nap Schedule |
-| `POST` | `/agents/{agent_id}/nap-schedule` | Configure Nap |
-| `PUT` | `/agents/{agent_id}/nap-schedule` | Configure Nap |
-| `GET` | `/agents/{agent_id}/nap-schedule/next` | Next Nap Window |
 | `GET` | `/agents/{agent_id}/openshell/policy` | Get Agent Openshell Policy |
 | `GET` | `/agents/{agent_id}/openshell/status` | Get Agent Openshell Status |
 | `POST` | `/agents/{agent_id}/openshell/status` | Report Agent Openshell Status |
@@ -152,7 +145,6 @@ request and response definitions.
 | `GET` | `/dispatch/dead-letters` | Dead Letters |
 | `GET` | `/dispatch/dead-letters/page` | Dead Letters Page |
 | `POST` | `/dispatch/tick` | Dispatch Tick |
-| `POST` | `/dream/import-logs` | Import Dream Logs |
 | `GET` | `/environments` | List Environments |
 | `POST` | `/environments` | Register Environment |
 | `GET` | `/environments/{env_id}` | Get Environment |
@@ -217,14 +209,6 @@ request and response definitions.
 | `POST` | `/model-selection/promote` | Model Selection Promote |
 | `POST` | `/model-selection/refresh` | Model Selection Refresh |
 | `GET` | `/model-selection/status` | Model Selection Status |
-| `GET` | `/nap-due` | List Due Nap Agents |
-| `GET` | `/nap-runs` | List Nap Runs |
-| `GET` | `/nap-runs/{run_id}` | Get Nap Run |
-| `POST` | `/nap-runs/{run_id}/complete` | Complete Nap |
-| `POST` | `/nap-runs/{run_id}/fail` | Fail Nap |
-| `GET` | `/nap-schedules` | List Nap Schedules |
-| `POST` | `/nap-tick/run` | Nap Tick Run |
-| `GET` | `/nap-tick/status` | Nap Tick Status |
 | `GET` | `/notifications` | List Notifications |
 | `POST` | `/notifications/{notification_id}/delivered` | Mark Notification Delivered |
 | `GET` | `/notifier/channels` | List Notifier Channels |
@@ -380,11 +364,6 @@ request and response definitions.
 | `POST` | `/v1/agents/{agent_id}/memory` | Store Agent Memory |
 | `DELETE` | `/v1/agents/{agent_id}/mood` | Clear Openclaw Agent Mood |
 | `POST` | `/v1/agents/{agent_id}/mood` | Set Openclaw Agent Mood |
-| `GET` | `/v1/memory/dreams/recall` | Recall Dream Artifacts |
-| `GET` | `/v1/memory/health` | Memory Health |
-| `POST` | `/v1/memory/promote` | Promote Memory Tier |
-| `GET` | `/v1/memory/recall` | Recall Memory |
-| `POST` | `/v1/memory/reconcile-embeddings` | Reconcile Memory Embedding Spaces |
 | `GET` | `/vector-refs` | List Vector Refs |
 | `POST` | `/vector-refs` | Record Vector Ref |
 | `GET` | `/workflows` | List Workflows |

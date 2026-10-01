@@ -1,4 +1,4 @@
-"""dream-04: salience-aware memory decay (forgetting + bloat control)."""
+"""Salience-aware memory decay (forgetting + bloat control)."""
 
 from __future__ import annotations
 

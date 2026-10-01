@@ -461,9 +461,6 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     publish_worker = agent("publish-route-worker", ["python"])
     ctx["publish_worker_id"] = publish_worker["id"]
     ctx["publish_worker_key"] = publish_worker["attestation_key"]
-    ctx["nap_agent_id"] = agent("nap-route-agent", ["ops"])["id"]
-    ctx["nap_begin_agent_id"] = agent("nap-begin-route-agent", ["ops"])["id"]
-    ctx["nap_fail_agent_id"] = agent("nap-fail-route-agent", ["ops"])["id"]
     ctx["attest_rotate_agent_id"] = agent("attest-rotate-route-agent", ["python"])["id"]
     attest_verify = agent("attest-verify-route-agent", ["python"])
     ctx["attest_verify_agent_id"] = attest_verify["id"]
@@ -832,19 +829,6 @@ network_policies:
                 "tenant_id": tenant["id"],
             },
         )
-    )["id"]
-
-    _ok(
-        client.post(
-            "/agents/%s/nap-schedule" % ctx["nap_agent_id"],
-            json={"offset_minutes": 15, "window_minutes": 30, "actor": "operator"},
-        )
-    )
-    ctx["nap_run_id"] = _ok(
-        client.post("/agents/%s/nap-runs" % ctx["nap_agent_id"], json={"actor": "operator"})
-    )["id"]
-    ctx["nap_fail_run_id"] = _ok(
-        client.post("/agents/%s/nap-runs" % ctx["nap_fail_agent_id"], json={"actor": "operator"})
     )["id"]
 
     notification = cp.record_notification(
@@ -1417,17 +1401,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/crash-reports"): {"agent_id": "agent_id"},
         ("GET", "/crash-reports/{report_id}"): {"report_id": "crash_report_id"},
         ("POST", "/crash-reports/{report_id}/resolve"): {"report_id": "crash_report_id"},
-        ("POST", "/agents/{agent_id}/nap-runs"): {"agent_id": "nap_begin_agent_id"},
-        ("GET", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
-        ("GET", "/agents/{agent_id}/nap-schedule/next"): {"agent_id": "nap_agent_id"},
-        ("POST", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
-        ("PUT", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
-        ("POST", "/agents/{agent_id}/nap-cycle"): {"agent_id": "nap_agent_id"},
-        ("POST", "/agents/{agent_id}/nap-consolidate"): {"agent_id": "nap_agent_id"},
         ("POST", "/agents/{agent_id}/service-claims/sync"): {"agent_id": "agent_id"},
-        ("GET", "/nap-runs/{run_id}"): {"run_id": "nap_run_id"},
-        ("POST", "/nap-runs/{run_id}/complete"): {"run_id": "nap_run_id"},
-        ("POST", "/nap-runs/{run_id}/fail"): {"run_id": "nap_fail_run_id"},
         ("POST", "/provisioning/requests/{request_id}/cancel"): {"request_id": "cancel_request_id"},
         ("DELETE", "/roles/{role_id}"): {"role_id": "delete_role_id"},
         ("DELETE", "/workflows/{workflow_id}"): {"workflow_id": "delete_workflow_id"},
@@ -1550,15 +1524,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         expected = (200, 400, 403, 409)
     if path_template.startswith("/fleet-upgrades"):
         expected = (200, 400, 403, 409, 503)
-    if path_template in {"/v1/memory/promote", "/v1/memory/reconcile-embeddings"}:
-        # Both need a Qdrant endpoint, and a test app has none configured, so
-        # the route answers 400 ("pass qdrant_url or set MAC_QDRANT_URL...").
-        # That fail-closed answer IS the coverage here: it proves the route is
-        # wired to the facade and validating, without pointing an inventory
-        # test at a live vector store. The promotion and reconciliation
-        # behaviour itself is covered in tests/test_memory_promotion.py and
-        # tests/test_memory_embedding_spaces.py against a fake Qdrant.
-        expected = (200, 400)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False
@@ -1592,8 +1557,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/dashboard/stream":
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
-        elif path_template == "/v1/memory/recall":
-            kwargs["params"] = {"q": "route coverage", "limit": 1}
         elif path_template == "/v1/agents/{agent_id}/agentbus-cursor":
             kwargs["params"] = {"topic": "peer.message.v1"}
         elif path_template in {
@@ -1601,8 +1564,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "/agents/dispatch-hold/epochs/{epoch_id}/readiness",
         }:
             kwargs["params"] = {"identity_sha256": "a" * 64}
-        elif path_template == "/v1/memory/dreams/recall":
-            kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
         elif path_template == "/tasks/search":
             kwargs["params"] = {"q": "route coverage"}
         elif path_template == "/humans/resolve":
@@ -2251,27 +2212,6 @@ edges:
             "content": "route coverage learning: the hub answers on :8789",
             "record_type": "agent_learning:route_coverage",
         },
-        ("POST", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 20, "window_minutes": 30},
-        ("PUT", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 25, "window_minutes": 30},
-        ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},
-        ("POST", "/nap-runs/{run_id}/complete"): {
-            "actor": "operator",
-            "detail": {"summary": "rested"},
-        },
-        ("POST", "/nap-runs/{run_id}/fail"): {
-            "actor": "operator",
-            "reason": "route coverage failure case",
-        },
-        ("POST", "/agents/{agent_id}/nap-cycle"): {
-            "actor": "operator",
-            "embed_into_medium": False,
-            "emit_dream_artifacts": True,
-        },
-        ("POST", "/agents/{agent_id}/nap-consolidate"): {
-            "embed_into_medium": False,
-            "emit_dream_artifacts": True,
-            "created_by": "operator",
-        },
         ("POST", "/agents/{agent_id}/heartbeat"): {
             "status": "idle",
             "health_status": "healthy",
@@ -2355,7 +2295,6 @@ edges:
             "actor": "operator",
         },
         ("POST", "/github-ingest/run"): {},
-        ("POST", "/nap-tick/run"): {},
         ("POST", "/model-selection/refresh"): {},
         ("POST", "/model-selection/promote"): {},
         ("POST", "/observability/metrics"): {
@@ -2385,13 +2324,6 @@ edges:
             "agent_id": ctx["agent_id"],
             "created_by": "operator",
             "write": False,
-        },
-        ("POST", "/dream/import-logs"): {
-            "dream_logs_dir": "/nonexistent-route-coverage-dream-logs",
-            "agent_id": ctx["agent_id"],
-            "created_by": "route-coverage",
-            "embed": False,
-            "dry_run": True,
         },
         ("POST", "/integrations/findings"): {
             "source_kind": "repository",
@@ -2715,12 +2647,6 @@ edges:
         ("POST", "/agentbus/streams/{stream_id}/close"): {
             "params": {"sender_agent_id": ctx["agent_id"], "status": "closed"}
         },
-        # Read-only shapes of both memory-tier maintenance routes, so an
-        # inventory sweep can never re-embed or retire anything.
-        ("POST", "/v1/memory/promote"): {"params": {"dry_run": True}},
-        ("POST", "/v1/memory/reconcile-embeddings"): {
-            "params": {"tier": "medium", "report_only": True}
-        },
     }
     key = (method, path_template)
     if key in bodies:
@@ -2745,44 +2671,6 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
     (hermes_home / "config.yaml").write_text("{}\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "fleets.yaml"))
-
-    class FakeVectorWriter:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def recall(self, query, **kwargs):
-            payload = {"dream_confidence": "high", "dream_confidence_score": 1.0}
-            return [
-                {
-                    "memory_id": "mem_route_fake",
-                    "score": 0.99,
-                    "summary": "fake vector recall for %s" % query,
-                    "payload": payload,
-                }
-            ]
-
-        # The memory-tier maintenance routes build their writer through this
-        # class too, so the fake has to answer for them or the sweep dies on an
-        # AttributeError instead of exercising the route.
-        def embedding_space_report(self, *, tier="medium", scan_limit=None):
-            return {
-                "tier": tier,
-                "collection": "mac_memory_%s" % tier,
-                "target_model": "fake/embedder",
-                "scanned": 0,
-                "embedding_models": {},
-                "mismatched": 0,
-            }
-
-        def reconcile_embedding_spaces(self, **kwargs):
-            return {"reembedded": 0, "reembedded_memory_ids": [], "orphaned": []}
-
-        def embed_memory(self, memory_id, **kwargs):
-            raise AssertionError("route coverage must not embed; the promote case is dry_run")
-
-    import mac.vector_writer_service as vector_writer_service
-
-    monkeypatch.setattr(vector_writer_service, "VectorWriterService", FakeVectorWriter)
 
     cp = ControlPlane.in_memory()
     app = create_app(control_plane=cp)

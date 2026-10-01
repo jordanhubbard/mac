@@ -1,6 +1,8 @@
 # ADR 0030: LangChain extracts meaning on the agent; hub Qdrant only stores the extract
 
-- Status: Proposed
+- Status: Proposed — overtaken 2026-09-30: `VectorWriterService`, memory
+  promotion, the nap consolidator, dreaming and the dream-log importer this ADR
+  rewires were all removed, so MAC no longer writes to Qdrant at all
 - Date: 2026-08-23
 - Decision owner: MAC fleet owner
 - Related: [ADR 0002](0002-memory-store-at-scale.md) — Qdrant is the production

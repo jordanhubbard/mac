@@ -1031,14 +1031,6 @@ def build_mac_env(
     values.update(_shared_service_requirement_values())
     values.update(_shared_service_url_values(values, cfg))
     values.update(_webdav_values(values, cfg, env))
-    memory_model = (env.get("MAC_DEPLOY_MEMORY_EMBED_MODEL") or "").strip()
-    if memory_model:
-        values["MAC_MEMORY_EMBED_MODEL"] = memory_model
-        if memory_model.endswith("text-embedding-3-large"):
-            # MAC's shared Qdrant collections are provisioned at 2048
-            # dimensions; OpenAI's large embedding model supports requesting
-            # that reduced width while preserving collection compatibility.
-            values["MAC_MEMORY_EMBED_DIM"] = "2048"
     # media-01 durable advertisement: carry the deploy-supplied local-gen config
     # into mac.env so a GPU agent self-advertises a media route on registration
     # (GPU-gated in worker.register_worker) — no hand-patched env, no per-agent

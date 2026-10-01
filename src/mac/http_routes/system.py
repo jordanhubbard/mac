@@ -19,7 +19,6 @@ class RepositoryRefReconcileRequest(BaseModel):
 class SystemRouteServices:
     repository_ref_reconciler: Any
     github_ingestor: Any
-    nap_ticker: Any
     model_selection_service: Any
 
 
@@ -75,7 +74,6 @@ def build_system_router(
             return controller.run_once(trigger="operator")
 
     controller_routes("github-ingest", services.github_ingestor)
-    controller_routes("nap-tick", services.nap_ticker)
 
     @router.get("/model-selection/status")
     def model_selection_status() -> Dict[str, Any]:

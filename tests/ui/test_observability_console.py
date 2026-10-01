@@ -105,11 +105,7 @@ def cp() -> ControlPlane:
 def test_snapshot_of_an_empty_hub_is_all_zeros_and_no_degradation(cp: ControlPlane):
     snap = build_console_snapshot(cp)
     assert snap["schema"] == SCHEMA_VERSION
-    # `dreams` is the one section allowed to be missing on a fresh hub:
-    # dream_runs is created lazily by mac.dreaming.store, not by schema.sql, so
-    # its absence is the true statement "dreaming has never run here" and must
-    # be reported as such rather than as zero dream runs.
-    assert {entry["section"] for entry in snap["degraded"]} <= {"dreams"}, snap["degraded"]
+    assert snap["degraded"] == [], snap["degraded"]
     assert snap["tasks"]["total"] == 0
     assert snap["tasks"]["by_state"] == {}
     assert snap["agents"]["rows"] == []
@@ -206,12 +202,12 @@ def test_a_broken_section_is_named_and_omitted_never_rendered_as_zero(
     could not reach the table is the worst possible thing to add to this
     codebase, so the absence has to be structural rather than a convention.
     """
-    cp.store.execute("DROP TABLE IF EXISTS nap_runs CASCADE")
+    cp.store.execute("DROP TABLE IF EXISTS publications CASCADE")
     snap = build_console_snapshot(cp)
-    assert "cycles" not in snap
+    assert "pipelines" not in snap
     reasons = {entry["section"]: entry["reason"] for entry in snap["degraded"]}
-    assert "cycles" in reasons
-    assert reasons["cycles"]
+    assert "pipelines" in reasons
+    assert reasons["pipelines"]
     # Unaffected sections still answer.
     assert "tasks" in snap
 

@@ -172,12 +172,10 @@ def test_gateway_values_build_env_passthrough_and_write(tmp_path) -> None:
     gateway = deploy_env._gateway_values(cfg)
     assert gateway["CUSTOM_BASE_URL"] == "https://llm"
     environ = {
-        "MAC_DEPLOY_MEMORY_EMBED_MODEL": "embed",
         "MAC_DEPLOY_AGENT_GEN_MODEL": "gen",
         "MAC_DEPLOY_SERVICE_ROLE_OPS": "image.generate",
     }
     values = deploy_env.build_mac_env({}, cfg, environ=environ)
-    assert values["MAC_MEMORY_EMBED_MODEL"] == "embed"
     assert values["MAC_AGENT_GEN_MODEL"] == "gen"
     assert values["MAC_SERVICE_ROLE_OPS"] == "image.generate"
     written = deploy_env.write_mac_env_file(cfg, environ=environ)

@@ -157,8 +157,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`dedicated-vm-verifier.md`](../dedicated-vm-verifier.md) | Dedicated VM repository verification |
 | supplemental reference | [`deploy-prerequisite-vs-phase1-audit.md`](../deploy-prerequisite-vs-phase1-audit.md) | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | [`dispatch-priority-bias-audit.md`](../dispatch-priority-bias-audit.md) | Dispatch priority bias ordering audit |
-| supplemental reference | [`dream-repair-slack-lineage.md`](../dream-repair-slack-lineage.md) | Ground truth: dream finding `dreamrepair:4becfa8d` (slack failure_pattern) |
-| supplemental reference | [`dreaming-rewrite.md`](../dreaming-rewrite.md) | Dreaming, rewritten |
 | supplemental reference | [`env-config-reference.md`](../env-config-reference.md) | MAC environment configuration reference |
 | runbook | [`fleet-cutover-transaction-protocol.md`](../fleet-cutover-transaction-protocol.md) | Fleet Cut-over Transaction Protocol |
 | supplemental reference | [`fleet-directives.md`](../fleet-directives.md) | Fleet directives |
@@ -193,8 +191,6 @@ marked `historical archive` and must not be read as current behaviour.
 | supplemental reference | [`investigations/hermes-runtime-ownership.md`](../investigations/hermes-runtime-ownership.md) | Hermes deployment ownership investigation |
 | supplemental reference | [`investigations/read-only-verifier-process-ownership.md`](../investigations/read-only-verifier-process-ownership.md) | Read-only verifier process ownership |
 | supplemental reference | [`macos-shared-services.md`](../macos-shared-services.md) | macOS shared services |
-| supplemental reference | [`memory-tier-schema.md`](../memory-tier-schema.md) | MAC vector memory tier — schema, collections, model, TTLs |
-| supplemental reference | [`memory-tier-verification.md`](../memory-tier-verification.md) | Memory tier — end-to-end verification |
 | supplemental reference | [`notifier-configuration-guide.md`](../notifier-configuration-guide.md) | Notifier Configuration Guide |
 | supplemental reference | [`oneshot-isolation-gate-verification.md`](../oneshot-isolation-gate-verification.md) | Oneshot isolation — contract gate verification |
 | supplemental reference | [`openclaw-identities.md`](../openclaw-identities.md) | OpenClaw public identities and fleet representation |

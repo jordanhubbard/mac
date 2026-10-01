@@ -46,8 +46,9 @@ Corroborating from the origin-yield table in
 performers measured — `curiosity_adjudication` 0/11, `backlog_grooming` 0/5,
 `dream_low_confidence_repair` 4/1396 (0.3%, since deleted).
 
-So MAC has the architecture — `nap_ticker`, `nap_consolidator`,
-`curiosity_reviewer` (deleted 2026-09-30), `dreaming`, `fleet_learning`, `worker_reflect`. What it
+So MAC had the architecture — `nap_ticker`, `nap_consolidator`,
+`curiosity_reviewer` and `dreaming` (all deleted 2026-09-30), `fleet_learning`,
+`worker_reflect`. What it
 demonstrably has in production is a **durable operator-notes store**, which is
 genuinely valuable and is what carried knowledge across sessions. That is not
 the same claim as superseding a learning capability.

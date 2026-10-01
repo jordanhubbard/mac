@@ -83,6 +83,12 @@ contract in the module docstring (child task).
 
 ### Module 2: `nap_consolidator.py` — **Stay in mac; contract formally redefined**
 
+> **Update 2026-09-30:** `nap_consolidator.py`, the nap ticker, dreaming and the
+> vector memory tier (recall, promotion, `/v1/memory/dreams/recall`) were
+> removed. Naps and dreams no longer exist in MAC; the `nap_*` and `dream_*`
+> tables remain until a later migration drops them. Mood (Module 1) and
+> `soul_snapshot.py` (Module 3) are unaffected.
+
 **Finding:** `nap_consolidator.py` (612 lines) does two things:
 
 1. Writes `nap_summary` memory records: flat, aggregate text of what the

@@ -77,8 +77,6 @@ def _sample(name: str) -> Any:
         "enabled",
         "all_agents",
         "restart",
-        "embed_into_medium",
-        "emit_dream_artifacts",
         "sync_beads",
     }:
         return True
@@ -95,7 +93,7 @@ def _sample(name: str) -> Any:
         "expected_epoch",
     }:
         return 1
-    if name in {"nap_interval_hours", "min_score"}:
+    if name == "min_score":
         return 1.0
     if name in {
         "manifest",
