@@ -31,9 +31,6 @@ def test_non_v1_paths_unchanged():
     assert (
         _required_scope("POST", "/agents/agent_1/directive-activations/activation_1/ack") == "agent"
     )
-    assert _required_scope("GET", "/optimizer/status") == "read"
-    assert _required_scope("POST", "/optimizer/tick") == "admin"
-    assert _required_scope("POST", "/optimizer/policies") == "admin"
 
 
 def test_secret_resolve_requires_secret_scope():

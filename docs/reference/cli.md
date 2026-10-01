@@ -55,7 +55,7 @@ The objects mac models. Start here:
 Everything else:
   admin  fleet, runtime and control-plane administration
 
-53 administrative commands live under `mac admin` (`mac admin help` lists them).
+52 administrative commands live under `mac admin` (`mac admin help` lists them).
 They moved: `mac fleet ...` is now `mac admin fleet ...`, and the old spelling says so.
 
 Run `mac help --all` to see every command in one list.
@@ -270,7 +270,6 @@ Getting work done:
   pull-request  pull requests raised from task work
   workflow      multi-step workflow definitions and runs
   eval          evaluation runs over agent output
-  optimizer     model and routing optimization
   repo          repositories that tasks execute against
   artifact      durable artifacts produced by task work
 

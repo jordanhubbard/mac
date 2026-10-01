@@ -35,7 +35,6 @@ SOURCE_SUFFIXES = {".py", ".sh", ".yaml", ".yml", ".toml", ".conf", ".service"}
 
 FAMILIES = (
     ("MAC_SEMANTIC_RETRY_", "semantic-retry"),
-    ("MAC_SCIENTIFIC_OPTIMIZER_", "scientific-optimizer"),
     ("MAC_REPOSITORY_REF_RECONCILER_", "repository-lifecycle"),
     ("MAC_CODING_ROUTE_", "coding-route-ladder"),
     ("MAC_CODING_AGENT_", "coding-agent-auth"),

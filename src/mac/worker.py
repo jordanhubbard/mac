@@ -7163,17 +7163,6 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "repository-worktree.json", "repository-worktree.json", "repository_context"),
         (task_dir / "executor-evidence.json", "executor-evidence.json", "review_context"),
         (task_dir / "executor-task.json", "executor-task.json", "review_context"),
-        (
-            task_dir / "review-independent-findings.json",
-            "review-independent-findings.json",
-            "review_experiment",
-        ),
-        (task_dir / "review-protocol.json", "review-protocol.json", "review_experiment"),
-        (
-            task_dir / "review-independent-draft-evidence.json",
-            "review-independent-draft-evidence.json",
-            "review_experiment",
-        ),
     ]
     try:
         wip_manifest = json.loads(
@@ -7471,9 +7460,9 @@ def _review_input_task(task: JsonDict) -> JsonDict:
 
     Review claims, activity summaries, runtime publication anchors, and the
     executor model are post-execution treatment data. They must not be copied
-    into ``executor-task.json`` or the review task metadata because the blind
-    discovery pass can read both files while ``executor-evidence.json`` is
-    withheld. Unknown task-authored metadata remains available so custom
+    into ``executor-task.json`` or the review task metadata: the reviewer
+    must judge the task contract, not the executor's own account of it.
+    Unknown task-authored metadata remains available so custom
     acceptance criteria are not lost.
     """
     safe = copy.deepcopy(task) if isinstance(task, dict) else {}
@@ -7565,8 +7554,8 @@ def _task_model_override(task: JsonDict, hub_client: Any = None) -> str:
 def _task_iteration_override(task: JsonDict) -> Optional[int]:
     """Resolve a bounded Hermes iteration budget from immutable task metadata.
 
-    Review payloads use ``review_max_iterations`` so an experiment can bound
-    each discovery/adjudication pass independently of the executor budget.
+    Review payloads use ``review_max_iterations`` so a review pass can be
+    bounded independently of the executor budget.
     Values outside 1..500 are ignored instead of producing an unsafe or
     effectively unbounded child process.
     """

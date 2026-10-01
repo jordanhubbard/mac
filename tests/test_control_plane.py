@@ -13614,7 +13614,7 @@ def test_rollout_deploy_environment_id_round_trips(cp):
     assert fetched.deploy_environment_id == env.id
 
 
-def _setup_hubverify_task(cp, runner, *, experiment=False):
+def _setup_hubverify_task(cp, runner):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     # Canonical remote lives on the task contract (the hub verifier resolves
@@ -13630,13 +13630,6 @@ def _setup_hubverify_task(cp, runner, *, experiment=False):
             },
         },
     )
-    if experiment:
-        cp.assign_review_experiment(
-            task.id,
-            experiment_id="exp-semantic-review",
-            arm="standard",
-            actor="test",
-        )
     cp.claim_task(task.id, worker.id)
     cp.start_task(task.id, worker.id)
     evidence = cp.add_evidence(
@@ -13757,51 +13750,6 @@ def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, semantic_reviewer_on,
     # Hub verify off: no hub run, workflow waits for an agent verdict as before.
     assert not called
     assert result["status"] == "waiting_for_reviewer_verdict"
-
-
-def test_review_experiment_uses_hub_verify_when_semantic_reviewer_removed(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
-    called = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda *args: called.append(args) or (0, "ok"),
-        experiment=True,
-    )
-
-    cp.advance_default_review_workflow(task.id)
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert called
-    assert result["status"] in {"published", "waiting_for_hub_verify", "already_published"}
-    observations = cp.list_observability(subject_type="task", subject_id=task.id, limit=100)
-    skipped = [
-        item for item in observations if item.name == "workflow.default_review.hub_verify_skipped"
-    ]
-    assert not skipped
-
-
-def test_review_experiment_can_opt_in_to_semantic_reviewer(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
-    called = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda *args: called.append(args) or (0, "ok"),
-        experiment=True,
-    )
-
-    cp.advance_default_review_workflow(task.id)
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert called == []
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    observations = cp.list_observability(subject_type="task", subject_id=task.id, limit=100)
-    skipped = [
-        item for item in observations if item.name == "workflow.default_review.hub_verify_skipped"
-    ]
-    assert skipped
-    assert skipped[-1].detail["reason"] == "experiment_requires_semantic_reviewer"
 
 
 def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
@@ -14077,29 +14025,6 @@ def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypat
     # An observation is recorded so operators can see what's happening.
     obs_names = {ev.name for ev in cp.list_observability(limit=50)}
     assert "workflow.default_review.waiting_for_hub_verify" in obs_names
-
-
-def test_hub_verify_blocking_guard_does_not_fire_for_experiments(cp, monkeypatch):
-    """Experiments used to skip hub-verify so a semantic reviewer could be
-    measured. That reviewer is gone; an experiment is gated the same way as
-    every other repo task unless MAC_REVIEW_SEMANTIC_REVIEWER is opted in.
-    """
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
-
-    def always_raises(*args):
-        raise RuntimeError("sandbox unavailable")
-
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        always_raises,
-        experiment=True,
-    )
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "waiting_for_hub_verify"
-    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
-    assert "workflow.default_review.waiting_for_hub_verify" in obs_names
-    assert "workflow.default_review.hub_verify_skipped" not in obs_names
 
 
 def test_hub_verify_gate_falls_through_for_non_repo_evidence(cp, monkeypatch):

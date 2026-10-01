@@ -134,7 +134,7 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
         for match in run_pattern.finditer(content):
             first, second, third = match.group(1), match.group(2), match.group(3)
             # The administrative commands moved under `mac admin`, so their
-            # calls read _run(tmp, "admin", "optimizer", "status"). Without
+            # calls read _run(tmp, "admin", "fleet", "status"). Without
             # this the gate sees domain="admin" for all of them and reports
             # every one as untested -- fifty false alarms, which would train
             # whoever hits them to add allowlist entries instead of tests.

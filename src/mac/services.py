@@ -263,12 +263,8 @@ from mac.review_service import (
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
-from mac.scientific_optimizer import (
-    ScientificOptimizerConfig,
-    ScientificOptimizerService,
-    derive_task_kpis,
-)
 from mac.store import Store, make_store_from_env
+from mac.task_kpis import derive_task_kpis
 from mac.task_batch import (
     TaskBatchService,
     TaskGroupService,
@@ -3104,15 +3100,6 @@ class ControlPlane:
             get_environment=self.deploy.get_environment,
             current_deployment=self.deploy.current_deployment,
         )
-        self.optimizer = ScientificOptimizerService(
-            self.store,
-            self.observability,
-            get_task=self.get_task,
-            task_detail=self.task_detail,
-            list_observability=self.list_observability,
-            create_task=self.create_task,
-            config=ScientificOptimizerConfig.from_env(),
-        )
         # Event-driven review advancement (opt-in; enabled by the hub's tick
         # wiring). Review-stage transitions used to wait for the next periodic
         # sweep, so every hop of work -> verify -> publish paid up to a full
@@ -5936,11 +5923,6 @@ class ControlPlane:
                 "schema": "mac.managed_single_task.route.v1",
                 "activation": "legacy_compatibility",
             }
-        normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
-            task_id,
-            project,
-            normalized_metadata,
-        )
         created = False
         with self.store.transaction() as conn:
             existing = conn.execute(
@@ -6027,8 +6009,6 @@ class ControlPlane:
                         creation_detail,
                         conn=conn,
                     )
-                    if optimizer_assignment is not None:
-                        self.optimizer.insert_assignment(conn, optimizer_assignment)
                     created = True
         if (
             created
@@ -8276,11 +8256,6 @@ class ControlPlane:
                 child_project,
                 child_capabilities,
             )
-            normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
-                allocated_child_ids[index - 1],
-                child_project,
-                normalized_metadata,
-            )
             prepared.append(
                 {
                     "id": allocated_child_ids[index - 1],
@@ -8296,7 +8271,6 @@ class ControlPlane:
                     "required_capabilities": child_capabilities,
                     "dependencies": child_dependencies,
                     "metadata": normalized_metadata,
-                    "optimizer_assignment": optimizer_assignment,
                     "max_attempts": int(
                         spec["max_attempts"]
                         if spec.get("max_attempts") is not None
@@ -8428,8 +8402,6 @@ class ControlPlane:
                     child_creation_detail,
                     conn=conn,
                 )
-                if child["optimizer_assignment"] is not None:
-                    self.optimizer.insert_assignment(conn, child["optimizer_assignment"])
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
@@ -9536,238 +9508,6 @@ class ControlPlane:
                 "total": len(start_models),
             },
         )
-
-    def assign_review_experiment(
-        self,
-        task_id: str,
-        *,
-        experiment_id: str,
-        arm: Optional[str] = None,
-        arms: Optional[Dict[str, Any]] = None,
-        assignment_probability: Optional[float] = None,
-        blind: bool = False,
-        blind_arms: Optional[Iterable[str]] = None,
-        policy_version: str = "v1",
-        hypothesis: str = "",
-        stratum: str = "",
-        actor: str = "human",
-    ) -> JsonDict:
-        """Persist a replayable review-strategy assignment on a task.
-
-        Weighted assignment is deterministic from experiment/task/policy ids,
-        so callers can reproduce the choice while the stored probability keeps
-        future off-policy analysis possible.
-        """
-        from mac.review_experiments import build_assignment, parse_assignment
-
-        task = self.get_task(task_id)
-        assignment = build_assignment(
-            task_id=task_id,
-            experiment_id=experiment_id,
-            arm=arm,
-            arms=arms,
-            assignment_probability=assignment_probability,
-            blind=blind,
-            blind_arms=blind_arms,
-            policy_version=policy_version,
-            hypothesis=hypothesis,
-            stratum=stratum,
-            assigned_by=actor,
-        )
-        existing = parse_assignment(task.metadata)
-        if existing is not None:
-            immutable_fields = (
-                "experiment_id",
-                "arm",
-                "assignment_method",
-                "assignment_probability",
-                "blind",
-                "blind_arms",
-                "policy_version",
-                "arm_distribution",
-                "hypothesis",
-                "stratum",
-            )
-            if all(existing.get(key) == assignment.get(key) for key in immutable_fields):
-                return existing
-            raise ValidationError("review experiment assignment is immutable")
-        if (
-            task.state != TaskState.OPEN.value
-            or task.owner_agent_id is not None
-            or task.lease_id is not None
-        ):
-            raise ValidationError(
-                "review experiment assignment must occur before a task is claimed"
-            )
-        metadata = ensure_json_object(task.metadata)
-        metadata["review_experiment"] = assignment
-        self.update_task(task_id, metadata=metadata, actor=actor)
-        self._record_history(
-            task_id,
-            "task.review_experiment_assigned",
-            actor,
-            task.state,
-            task.state,
-            {
-                "experiment_id": assignment["experiment_id"],
-                "arm": assignment["arm"],
-                "assignment_method": assignment["assignment_method"],
-                "assignment_probability": assignment["assignment_probability"],
-                "blind": assignment["blind"],
-                "policy_version": assignment["policy_version"],
-            },
-        )
-        return assignment
-
-    def record_review_outcome(
-        self,
-        task_id: str,
-        *,
-        kind: str,
-        status: str,
-        finding_id: str = "",
-        severity_weight: float = 1.0,
-        source: str = "operator",
-        detail: Optional[Dict[str, Any]] = None,
-        actor: str = "human",
-    ) -> JsonDict:
-        """Attach a validated or delayed outcome without mutating evidence."""
-        from mac.review_experiments import append_outcome, build_outcome
-
-        task = self.get_task(task_id)
-        outcome = build_outcome(
-            kind=kind,
-            status=status,
-            finding_id=finding_id,
-            severity_weight=severity_weight,
-            source=source,
-            detail=detail,
-            observed_by=actor,
-        )
-        metadata = append_outcome(task.metadata, outcome)
-        self.update_task(task_id, metadata=metadata, actor=actor)
-        self._record_history(
-            task_id,
-            "task.review_outcome_recorded",
-            actor,
-            task.state,
-            task.state,
-            {
-                "outcome_id": outcome["id"],
-                "kind": outcome["kind"],
-                "status": outcome["status"],
-                "finding_id": outcome["finding_id"],
-                "severity_weight": outcome["severity_weight"],
-                "source": outcome["source"],
-            },
-        )
-        return outcome
-
-    def review_observation(self, task_id: str) -> JsonDict:
-        from mac.review_experiments import build_observation
-
-        detail = self.task_detail(task_id)
-        review_subject_ids = [
-            "review_%s" % review.get("id")
-            for review in detail.get("reviews", [])
-            if isinstance(review, dict) and review.get("id")
-        ]
-        routes = []
-        seen_route_ids = set()
-        for subject_id in [task_id, *review_subject_ids]:
-            for route in self.list_observability(
-                kind="log",
-                name="llm.route",
-                subject_type="task",
-                subject_id=subject_id,
-                limit=1000,
-            ):
-                route_id = getattr(route, "id", None)
-                if route_id and route_id in seen_route_ids:
-                    continue
-                if route_id:
-                    seen_route_ids.add(route_id)
-                routes.append(route)
-        return build_observation(
-            detail,
-            llm_routes=[item.to_dict() for item in routes],
-        )
-
-    def review_experiment_report(
-        self,
-        experiment_id: str,
-        *,
-        project: Optional[str] = None,
-        min_tasks_per_arm: int = 5,
-        min_validated_outcomes_per_arm: int = 3,
-    ) -> JsonDict:
-        from mac.review_experiments import build_report, parse_assignment
-
-        observations = []
-        for task in self.list_tasks():
-            if project is not None and task.project != project:
-                continue
-            assignment = parse_assignment(task.metadata)
-            if assignment is None or assignment.get("experiment_id") != experiment_id:
-                continue
-            observations.append(self.review_observation(task.id))
-        return build_report(
-            experiment_id,
-            observations,
-            min_tasks_per_arm=min_tasks_per_arm,
-            min_validated_outcomes_per_arm=min_validated_outcomes_per_arm,
-        )
-
-    # Scientific optimizer -------------------------------------------------
-
-    def optimizer_status(self) -> JsonDict:
-        return self.optimizer.status()
-
-    def optimizer_tick(self) -> JsonDict:
-        return self.optimizer.tick(trigger="operator")
-
-    def create_scientific_policy(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.optimizer.create_policy(*args, **kwargs)
-
-    def list_scientific_policies(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.optimizer.list_policies(*args, **kwargs)
-
-    def get_scientific_policy(self, policy_id: str) -> JsonDict:
-        return self.optimizer.get_policy(policy_id)
-
-    def promote_scientific_policy(self, policy_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.promote_policy(policy_id, **kwargs)
-
-    def rollback_scientific_policy(self, project: str, policy_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.rollback_policy(project, policy_id, **kwargs)
-
-    def create_scientific_experiment(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.optimizer.create_experiment(*args, **kwargs)
-
-    def list_scientific_experiments(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.optimizer.list_experiments(*args, **kwargs)
-
-    def get_scientific_experiment(self, experiment_id: str) -> JsonDict:
-        return self.optimizer.get_experiment(experiment_id)
-
-    def start_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.start_experiment(experiment_id, **kwargs)
-
-    def pause_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.pause_experiment(experiment_id, **kwargs)
-
-    def promote_scientific_experiment(self, experiment_id: str, **kwargs: Any) -> JsonDict:
-        return self.optimizer.promote_experiment(experiment_id, **kwargs)
-
-    def observe_scientific_task(self, experiment_id: str, task_id: str) -> JsonDict:
-        return self.optimizer.observe_task(experiment_id, task_id)
-
-    def analyze_scientific_experiment(self, experiment_id: str) -> JsonDict:
-        self.optimizer.refresh_experiment(experiment_id)
-        return self.optimizer.analyze_experiment(experiment_id, actor="operator")
-
-    def scientific_experiment_evidence(self, experiment_id: str, *, limit: int = 500) -> JsonDict:
-        return self.optimizer.experiment_evidence(experiment_id, limit=limit)
 
     def task_summary(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id).to_dict()
@@ -23998,16 +23738,7 @@ class ControlPlane:
                 # NOT fall through to the agent-nudge path — that would allow
                 # an unverified task to advance toward merge.  Return a
                 # waiting status so the sweep retries on the next tick.
-                #
-                # Experiments used to skip hub-verify so a semantic reviewer
-                # could be measured. That reviewer is gone; hub-verify is the
-                # only default gate unless the emergency opt-in is set.
                 if verdict_evidence is None:
-                    task_meta = ensure_json_object(task.metadata)
-                    experiment_assignment = ensure_json_object(task_meta.get("review_experiment"))
-                    is_experiment = (
-                        experiment_assignment.get("schema") == "mac.review_experiment.v1"
-                    )
                     # Hold the merge gate only for evidence hub-verify can
                     # actually gate: a pushed repo change with a contract test to
                     # run. Evidence that is NOT a pushed repo change has nothing
@@ -24017,12 +23748,7 @@ class ControlPlane:
                     hub_verifiable = self._hub_verify_repo_info(
                         task, evidence
                     ) is not None or self._read_only_report_needs_hub_verify(task, evidence)
-                    wait_for_hub = hub_verifiable and (
-                        self._read_only_report_needs_hub_verify(task, evidence)
-                        or not is_experiment
-                        or not _semantic_reviewer_enabled()
-                    )
-                    if wait_for_hub:
+                    if hub_verifiable:
                         self._record_default_review_observation(
                             task_id,
                             "workflow.default_review.waiting_for_hub_verify",
@@ -28791,27 +28517,6 @@ class ControlPlane:
             return None
         if current_task.state == TaskState.COMPLETED.value:
             return None
-        assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if (
-            assignment.get("schema") == "mac.review_experiment.v1"
-            and _semantic_reviewer_enabled()
-            and not self._read_only_report_needs_hub_verify(task, executor_evidence)
-        ):
-            # Opt-in only. The default review no longer has a semantic
-            # reviewer, so experiments take the same hub-verify path as
-            # every other repository task.
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_skipped",
-                "info",
-                {
-                    "reason": "experiment_requires_semantic_reviewer",
-                    "review_id": review.id,
-                    "experiment_id": str(assignment.get("experiment_id") or ""),
-                },
-                actor,
-            )
-            return None
         info = self._hub_verify_repo_info(task, executor_evidence)
         if info is None:
             return None
@@ -29618,14 +29323,6 @@ class ControlPlane:
                 if semantic_verdict not in {"approved", "rejected"}:
                     problems.append("verdict %s semantic verdict is invalid" % evidence.id)
                     continue
-            experiment = manifest.get("review_experiment")
-            if isinstance(experiment, dict) and experiment.get("blind"):
-                protocol = experiment.get("protocol")
-                if not isinstance(protocol, dict) or protocol.get("protocol_compliant") is not True:
-                    problems.append(
-                        "verdict %s blind review protocol is noncompliant" % evidence.id
-                    )
-                    continue
             if verdict == "rejected":
                 feedback_problems = rejected_verdict_feedback_problems(manifest)
                 if feedback_problems:
@@ -29753,11 +29450,6 @@ class ControlPlane:
                 "rejected",
             }:
                 return evidence, "semantic_verdict_invalid"
-            experiment = ensure_json_object(manifest.get("review_experiment"))
-            if experiment.get("blind"):
-                protocol = ensure_json_object(experiment.get("protocol"))
-                if protocol.get("protocol_compliant") is not True:
-                    return evidence, "blind_protocol_noncompliant"
         return None, ""
 
     def _cooperative_review_integration_problems(
@@ -30038,13 +29730,6 @@ class ControlPlane:
         if _semantic_reviewer_enabled() and not _hub_review_verify_enabled():
             return None
         if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
-            return None
-        assignment = ensure_json_object(ensure_json_object(task.metadata).get("review_experiment"))
-        if (
-            assignment.get("schema") == "mac.review_experiment.v1"
-            and _semantic_reviewer_enabled()
-            and not metadata_declares_read_only_report_repository(task.metadata)
-        ):
             return None
         name = (
             os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()

@@ -1031,18 +1031,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SCHEMA_QUIESCENCE` | str | consumer-defined | core | Core setting: schema quiescence. |
 | `MAC_SCHEMA_RECEIPT_STATUS` | str | consumer-defined | core | Core setting: schema receipt status. |
 | `MAC_SCHEMA_RESULT` | str | consumer-defined | core | Core setting: schema result. |
-| `MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer auto improve. |
-| `MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROMOTE` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer auto promote. |
-| `MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer auto propose. |
-| `MAC_SCIENTIFIC_OPTIMIZER_ENABLED` | bool | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer enabled. |
-| `MAC_SCIENTIFIC_OPTIMIZER_EXPLORATION_FRACTION` | str | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer exploration fraction. |
-| `MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS` | int | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer improvement cooldown seconds. |
-| `MAC_SCIENTIFIC_OPTIMIZER_INITIAL_DELAY_SECONDS` | int | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer initial delay seconds. |
-| `MAC_SCIENTIFIC_OPTIMIZER_INTERVAL_SECONDS` | int | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer interval seconds. |
-| `MAC_SCIENTIFIC_OPTIMIZER_MAX_SAMPLES_PER_ARM` | str | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer max samples per arm. |
-| `MAC_SCIENTIFIC_OPTIMIZER_MIN_BASELINE_TASKS` | str | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer min baseline tasks. |
-| `MAC_SCIENTIFIC_OPTIMIZER_MIN_SAMPLES_PER_ARM` | str | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer min samples per arm. |
-| `MAC_SCIENTIFIC_OPTIMIZER_OUTCOME_HORIZON_SECONDS` | int | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer outcome horizon seconds. |
 | `MAC_SCOPE_UNPROJECTED_TASKS` | str | consumer-defined | core | Core setting: scope unprojected tasks. |
 | `MAC_SECRET_KEY` | str | consumer-defined | core | Core setting: secret key. |
 | `MAC_SECRET_VAULT_TOKEN` | str | consumer-defined | core | Core setting: secret vault token. |

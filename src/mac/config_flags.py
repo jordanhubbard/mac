@@ -13,9 +13,8 @@ agent-global row (``channel = ''``), which beats the registry default — the
 same precedence the Hermes gateway's ``display.channels`` tier uses, so one
 room's opt-in never leaks to another.
 
-The registry is deliberately a closed allowlist of display/visibility knobs,
-mirroring the scientific optimizer's parameter allowlist: there is
-intentionally no flag for sandbox policy, review requirements, approval
+The registry is deliberately a closed allowlist of display/visibility knobs:
+there is intentionally no flag for sandbox policy, review requirements, approval
 gates, or anything else where "the agent was asked nicely in chat" must not
 be sufficient authority. Add flags here in code review, not at runtime.
 """

@@ -417,8 +417,6 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
 )
 from mac.executor_prompt import (
     _run_captured,
-    _blind_review_protocol,
-    _read_json_object,
     _repository_contract_canonical_branch,
     _repository_contract_canonical_remote,
     _repository_contract_test_command,
@@ -428,7 +426,6 @@ from mac.executor_prompt import (
     _repository_prepared_base,
     _repository_publication_remote,
     _repository_task_branch,
-    _review_experiment_assignment,
     clip_process_text,
     task_evidence_type,
     task_is_repo_coupled,
@@ -1982,32 +1979,6 @@ def run_deterministic_review_verdict(
         manifest["bootstrap"] = bootstrap
     if integration is not None:
         manifest["integration"] = integration
-    assignment = _review_experiment_assignment(task)
-    if assignment:
-        protocol = _read_json_object(task_workspace / "review-protocol.json")
-        independent = _read_json_object(task_workspace / "review-independent-findings.json")
-        experiment_record = dict(assignment)
-        if assignment.get("blind"):
-            experiment_record["protocol"] = protocol or {
-                "schema": "mac.review_protocol.v1",
-                "mode": "blind_discovery_then_adjudication",
-                "protocol_compliant": False,
-                "problem": "blind discovery protocol record is missing",
-            }
-        else:
-            experiment_record["protocol"] = {
-                "schema": "mac.review_protocol.v1",
-                "mode": "standard_evidence_aware",
-                "protocol_compliant": True,
-            }
-        manifest["review_experiment"] = experiment_record
-        if independent.get("schema") == "mac.independent_review_findings.v1":
-            manifest["independent_findings"] = (
-                independent.get("findings") if isinstance(independent.get("findings"), list) else []
-            )
-            manifest["independent_no_findings_reason"] = str(
-                independent.get("no_findings_reason") or ""
-            ).strip()
     manifest["signature"] = _sign_verdict(attestation_key, manifest)
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

@@ -250,22 +250,6 @@ request and response definitions.
 | `POST` | `/openshell/policies/{policy_id}/assignments` | Assign Openshell Policy |
 | `POST` | `/openshell/policies/{policy_id}/render` | Render Openshell Policy |
 | `GET` | `/openshell/policies/{policy_id}/versions` | List Openshell Policy Versions |
-| `GET` | `/optimizer/experiments` | List Scientific Experiments |
-| `POST` | `/optimizer/experiments` | Create Scientific Experiment |
-| `GET` | `/optimizer/experiments/{experiment_id}` | Get Scientific Experiment |
-| `POST` | `/optimizer/experiments/{experiment_id}/analyze` | Analyze Scientific Experiment |
-| `GET` | `/optimizer/experiments/{experiment_id}/evidence` | Get Scientific Experiment Evidence |
-| `POST` | `/optimizer/experiments/{experiment_id}/observe/{task_id}` | Observe Scientific Task |
-| `POST` | `/optimizer/experiments/{experiment_id}/pause` | Pause Scientific Experiment |
-| `POST` | `/optimizer/experiments/{experiment_id}/promote` | Promote Scientific Experiment |
-| `POST` | `/optimizer/experiments/{experiment_id}/start` | Start Scientific Experiment |
-| `GET` | `/optimizer/policies` | List Scientific Policies |
-| `POST` | `/optimizer/policies` | Create Scientific Policy |
-| `GET` | `/optimizer/policies/{policy_id}` | Get Scientific Policy |
-| `POST` | `/optimizer/policies/{policy_id}/promote` | Promote Scientific Policy |
-| `POST` | `/optimizer/projects/{project}/rollback/{policy_id}` | Rollback Scientific Policy |
-| `GET` | `/optimizer/status` | Scientific Optimizer Status |
-| `POST` | `/optimizer/tick` | Scientific Optimizer Tick |
 | `GET` | `/persona-instances` | List Persona Instances |
 | `POST` | `/persona-instances` | Register Persona Instance |
 | `GET` | `/persona-instances/{instance_id}/context` | Persona Context |
@@ -293,7 +277,6 @@ request and response definitions.
 | `POST` | `/publications` | Publish |
 | `POST` | `/repository-refs/reconcile` | Reconcile Repository Refs |
 | `GET` | `/repository-refs/reconciler` | Repository Ref Reconciler Status |
-| `GET` | `/review-experiments/{experiment_id}` | Review Experiment Report |
 | `POST` | `/reviews/default/tick` | Default Review Tick |
 | `POST` | `/reviews/{review_id}/claim` | Claim Review |
 | `POST` | `/reviews/{review_id}/decision` | Submit Review |
@@ -373,9 +356,6 @@ request and response definitions.
 | `GET` | `/tasks/{task_id}/outcome` | Task Outcome |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
 | `POST` | `/tasks/{task_id}/reopen` | Reopen Task |
-| `POST` | `/tasks/{task_id}/review-experiment` | Assign Review Experiment |
-| `GET` | `/tasks/{task_id}/review-observation` | Review Observation |
-| `POST` | `/tasks/{task_id}/review-outcomes` | Record Review Outcome |
 | `POST` | `/tasks/{task_id}/reviews` | Request Review |
 | `POST` | `/tasks/{task_id}/start` | Start Task |
 | `POST` | `/tasks/{task_id}/stop` | Stop Task |
