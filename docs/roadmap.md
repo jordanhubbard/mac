@@ -53,27 +53,16 @@ transaction or equivalent durable evidence.
 
 ## Fleet and self-upgrade
 
-- [ ] OpenClaw can submit authenticated human upgrade intent without receiving
-  deployment authority.
-- [ ] An admin can issue an `upgrade yourself` or critical roll-forward request
-  through OpenClaw, and OpenClaw can report durable progress and outcome.
-- [ ] Upgrade credentials are independently revocable, human-bound,
-  least-privilege, and projected through the fenced secret channel; neither
-  OpenClaw nor the supervisor receives general deploy or keystore authority.
+Hub self-upgrade, release epochs and source convergence are deleted. In 90 days
+release epochs aborted 62% of the time and hub self-upgrade never succeeded.
+The fleet is updated by a human with
+[`scripts/fleet-update`](operations/fleet-update.md).
+
 - [ ] Keystore operations are scope-aware and auditable so each service can read
   only the named credentials required for its finite role.
-- [ ] The hub accepts only approved immutable releases with remote CI and local
-  contract-test evidence.
-- [ ] A host-native supervisor can swap the hub generation, prove health, and
-  roll back through a finite transaction without an LLM, arbitrary coding, or
-  arbitrary command execution.
 - [ ] Critical hub recovery has a break-glass path that remains usable when the
   current hub or OpenClaw generation is stale, while preserving authorization,
   audit, health proof, and rollback.
-- [ ] The restarted hub resumes the durable release epoch and rolls workers
-  forward or back by bounded cohorts.
-- [ ] Crash recovery, authorization failures, failed health proofs, and cohort
-  rollback are covered and proven in the live fleet.
 - [x] The current `main` source commit is deployed and attested on the hub,
   every configured worker, and every subsequently registered fleet member.
   Verified `060acc500ab99e30bc01cfccf7eef2232108b4e4` on the hub, worker-1, and

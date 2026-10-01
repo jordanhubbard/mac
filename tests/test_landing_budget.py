@@ -13,7 +13,6 @@ import pytest
 
 import mac.services as services
 from mac.models import (
-    PublicationDeferredError,
     TaskState,
     TransitionError,
     ValidationError,
@@ -144,33 +143,6 @@ def test_attempt_cap_blocks_with_the_last_error(cp, monkeypatch):
     assert len(calls) == 3
 
 
-def test_deadline_blocks_even_a_pure_wait(cp, monkeypatch):
-    """The release barrier never charges an attempt, but it does not get to
-    hold a task past the deadline either."""
-    task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
-    barrier = {"epoch_id": "epoch-1", "state": "open"}
-    calls = []
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _raiser(calls, lambda: PublicationDeferredError("fleet release", barrier=barrier)),
-    )
-
-    for _ in range(3):
-        assert cp.advance_default_review_workflow(task.id)["status"] == "publication_deferred"
-    landing = _landing(cp, task.id)
-    assert landing["attempts"] == 0
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-
-    _age_landing(cp, task.id, services.DEFAULT_LANDING_DEADLINE_SECONDS + 1)
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "landing_budget_exhausted"
-    assert result["exhausted_by"] == "deadline"
-    assert result["waiting_on"] == "publication_deferred"
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
-
-
 def test_checks_pending_charges_the_deadline_not_attempts(cp, monkeypatch):
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
 
@@ -239,7 +211,6 @@ def test_waiting_for_hub_reviewer_is_bounded_by_the_deadline(cp, monkeypatch):
         (ValidationError("git fetch: Could not resolve host: github.com"), "retry"),
         (ValidationError("git publication push timed out"), "retry"),
         (TransitionError("task state changed during publish; retry"), "retry"),
-        (PublicationDeferredError("release", barrier={}), "wait"),
     ],
 )
 def test_landing_failure_classification(exc, mode):

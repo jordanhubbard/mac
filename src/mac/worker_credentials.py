@@ -316,30 +316,6 @@ class WorkerCredentialLifecycle:
         )
 
     @staticmethod
-    def _assert_release_epoch_reservation(
-        conn: Any,
-        agent_id: str,
-        *,
-        expected_epoch_id: Optional[str] = None,
-    ) -> None:
-        """Fence ordinary credential changes while a cutover owns the agent."""
-
-        reservation = conn.execute(
-            "SELECT epoch_id FROM fleet_release_epoch_agents WHERE agent_id = ? AND open_state = 1",
-            (agent_id,),
-        ).fetchone()
-        if expected_epoch_id is None:
-            if reservation is not None:
-                raise WorkerCredentialError(
-                    "worker credential is reserved by an open fleet release epoch"
-                )
-            return
-        if reservation is None or str(reservation["epoch_id"]) != expected_epoch_id:
-            raise WorkerCredentialError(
-                "worker credential is not reserved by the committing fleet release epoch"
-            )
-
-    @staticmethod
     def _validate_install_receipt(
         exact_agent: str,
         principal_id: str,
@@ -394,7 +370,6 @@ class WorkerCredentialLifecycle:
         principal_id: str,
         *,
         receipt: Mapping[str, Any],
-        expected_epoch_id: Optional[str] = None,
         require_pending: bool = False,
     ) -> Dict[str, Any]:
         """Validate an installed, authenticating principal without promoting it.
@@ -415,9 +390,6 @@ class WorkerCredentialLifecycle:
         )
         if agent_lock.rowcount != 1:
             raise WorkerCredentialError("worker agent does not exist")
-        self._assert_release_epoch_reservation(
-            conn, exact_agent, expected_epoch_id=expected_epoch_id
-        )
         credential_lock = conn.execute(
             "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
             (principal_id,),
@@ -480,64 +452,11 @@ class WorkerCredentialLifecycle:
             "readiness": readiness,
         }
 
-    def validate_pending_readiness_in_transaction(
-        self,
-        conn: Any,
-        agent_id: str,
-        principal_id: str,
-        *,
-        expected_epoch_id: str,
-    ) -> Dict[str, Any]:
-        """Read-only preflight for the exact pending principal prove will use.
-
-        This deliberately shares the activation readiness evaluator and error
-        contract while omitting receipt validation and all state mutation.
-        ``validate_activation_in_transaction`` remains the authoritative prove
-        check and revalidates the same evidence inside the prove transaction.
-        """
-
-        exact_agent = _validate_agent_id(agent_id)
-        self._assert_release_epoch_reservation(
-            conn, exact_agent, expected_epoch_id=expected_epoch_id
-        )
-        agent_row = conn.execute(
-            "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
-            (exact_agent,),
-        ).fetchone()
-        if agent_row is None:
-            raise WorkerCredentialError("worker agent does not exist")
-        row = conn.execute(
-            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
-        ).fetchone()
-        if row is None:
-            raise WorkerCredentialError("worker principal does not exist")
-        record = _record_from_row(row)
-        if record.get("agent_id") != exact_agent or record.get("principal_kind") != "worker":
-            raise WorkerCredentialError("principal is not bound to the requested agent")
-        if record.get("state") != "pending_install" or not _not_expired(record):
-            raise WorkerCredentialError("worker principal is revoked or expired")
-
-        readiness = _credential_readiness(agent_row, record)
-        if not readiness["credential_bound"]:
-            raise WorkerCredentialError("activation requires live authenticated heartbeat proof")
-        if record.get("package_capable") and not readiness["ready"]:
-            raise WorkerCredentialError(
-                "activation requires compatible source, runtime, and capability proof"
-            )
-        return {
-            "agent_id": exact_agent,
-            "principal_id": record["id"],
-            "credential_version": record["credential_version"],
-            "readiness": readiness,
-        }
-
     def validate_current_in_transaction(
         self,
         conn: Any,
         agent_id: str,
         principal_id: Optional[str] = None,
-        *,
-        expected_epoch_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Validate the existing active credential without rotating it.
 
@@ -550,9 +469,6 @@ class WorkerCredentialLifecycle:
         """
 
         exact_agent = _validate_agent_id(agent_id)
-        self._assert_release_epoch_reservation(
-            conn, exact_agent, expected_epoch_id=expected_epoch_id
-        )
         agent_row = conn.execute(
             "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
             (exact_agent,),
@@ -597,115 +513,6 @@ class WorkerCredentialLifecycle:
         with self.store.transaction() as conn:
             return self.validate_current_in_transaction(conn, agent_id, principal_id)
 
-    def stage_pending_in_transaction(
-        self,
-        conn: Any,
-        agent_id: str,
-        principal_id: str,
-        *,
-        expected_epoch_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Validate an uninstalled pending principal without node-side proof."""
-
-        exact_agent = _validate_agent_id(agent_id)
-        locked = conn.execute(
-            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-            (exact_agent,),
-        )
-        if locked.rowcount != 1:
-            raise WorkerCredentialError("worker agent does not exist")
-        self._assert_release_epoch_reservation(
-            conn, exact_agent, expected_epoch_id=expected_epoch_id
-        )
-        credential_lock = conn.execute(
-            "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
-            (principal_id,),
-        )
-        if credential_lock.rowcount != 1:
-            raise WorkerCredentialError("worker principal does not exist")
-        row = conn.execute(
-            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
-        ).fetchone()
-        record = _record_from_row(row, include_hash=True)
-        if record.get("agent_id") != exact_agent:
-            raise WorkerCredentialError("principal is not bound to the requested agent")
-        if record.get("state") != "pending_install" or not _not_expired(record):
-            raise WorkerCredentialError("fleet release requires an unexpired pending principal")
-        return record
-
-    def discard_pending_in_transaction(
-        self,
-        conn: Any,
-        agent_id: str,
-        principal_id: str,
-        *,
-        expected_epoch_id: str,
-        actor: str = "operator",
-    ) -> Dict[str, Any]:
-        """Revoke exactly the pending principal owned by an open epoch.
-
-        The caller owns the surrounding transaction.  This is deliberately
-        narrower than :meth:`revoke`: abort must make the staged successor
-        stop authenticating without disturbing any identity that was live
-        before the epoch opened.
-        """
-
-        exact_agent = _validate_agent_id(agent_id)
-        exact_epoch = str(expected_epoch_id or "").strip()
-        if not exact_epoch:
-            raise WorkerCredentialError("fleet release epoch id is required")
-        agent_lock = conn.execute(
-            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-            (exact_agent,),
-        )
-        if agent_lock.rowcount != 1:
-            raise WorkerCredentialError("worker agent does not exist")
-        self._assert_release_epoch_reservation(conn, exact_agent, expected_epoch_id=exact_epoch)
-        participant = conn.execute(
-            "SELECT principal_id FROM fleet_release_epoch_agents "
-            "WHERE epoch_id = ? AND agent_id = ? AND open_state = 1",
-            (exact_epoch, exact_agent),
-        ).fetchone()
-        if participant is None or str(participant["principal_id"]) != principal_id:
-            raise WorkerCredentialError(
-                "worker principal is not the pending identity owned by the epoch"
-            )
-        credential_lock = conn.execute(
-            "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
-            (principal_id,),
-        )
-        if credential_lock.rowcount != 1:
-            raise WorkerCredentialError("worker principal does not exist")
-        row = conn.execute(
-            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
-        ).fetchone()
-        record = _record_from_row(row, include_hash=True)
-        if (
-            record.get("agent_id") != exact_agent
-            or record.get("principal_kind") != "worker"
-            or record.get("state") != "pending_install"
-        ):
-            raise WorkerCredentialError("epoch-owned worker principal is no longer pending")
-        now = _timestamp()
-        discarded = conn.execute(
-            "UPDATE worker_credentials SET state = ?, revoked_at = ?, "
-            "updated_at = ? WHERE id = ? AND agent_id = ? "
-            "AND state = 'pending_install'",
-            ("revoked", now, now, principal_id, exact_agent),
-        )
-        if discarded.rowcount != 1:
-            raise WorkerCredentialError("epoch-owned worker principal could not be discarded")
-        record["state"] = "revoked"
-        record["revoked_at"] = now
-        self._event(
-            conn,
-            record,
-            "worker_credential.discarded",
-            actor=actor,
-            detail={"epoch_id": exact_epoch},
-        )
-        return _safe_record(record)
-
     def promote_in_transaction(
         self,
         conn: Any,
@@ -714,7 +521,6 @@ class WorkerCredentialLifecycle:
         *,
         receipt: Mapping[str, Any],
         actor: str = "operator",
-        expected_epoch_id: Optional[str] = None,
         require_pending: bool = False,
     ) -> Dict[str, Any]:
         """Promote one validated principal in the caller's transaction."""
@@ -724,7 +530,6 @@ class WorkerCredentialLifecycle:
             agent_id,
             principal_id,
             receipt=receipt,
-            expected_epoch_id=expected_epoch_id,
             require_pending=require_pending,
         )
         record = dict(validated["record"])
@@ -789,7 +594,6 @@ class WorkerCredentialLifecycle:
         )
         if locked.rowcount != 1:
             raise WorkerCredentialError("worker agent does not exist")
-        self._assert_release_epoch_reservation(conn, exact_agent)
         credential_lock = conn.execute(
             "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ? AND agent_id = ?",
             (principal_id, exact_agent),
@@ -896,7 +700,6 @@ class WorkerCredentialLifecycle:
             )
             if agent_lock.rowcount != 1:
                 raise WorkerCredentialError("worker credential requires a registered agent")
-            self._assert_release_epoch_reservation(conn, exact_agent)
             version_row = conn.execute(
                 "SELECT COALESCE(MAX(credential_version), 0) AS version "
                 "FROM worker_credentials WHERE agent_id = ?",
@@ -978,7 +781,6 @@ class WorkerCredentialLifecycle:
             )
             if locked.rowcount != 1:
                 raise WorkerCredentialError("worker agent does not exist")
-            self._assert_release_epoch_reservation(conn, exact_agent)
             rows = conn.execute(
                 "SELECT * FROM worker_credentials WHERE agent_id = ? "
                 "AND state IN ('pending_install', 'active')",
@@ -1007,9 +809,8 @@ class WorkerCredentialLifecycle:
     ) -> List[Dict[str, Any]]:
         """Revoke only orphaned pending credentials from one exact issuance owner.
 
-        This closes the crash window between issuing successor credentials and
-        opening their fleet-release epoch.  It refuses to operate while any
-        epoch owns the agent and never touches an active credential.
+        deploy-mac-fleet.sh uses it to clean up successor credentials it issued
+        but never installed. It never touches an active credential.
         """
 
         exact_agent = _validate_agent_id(agent_id)
@@ -1028,7 +829,6 @@ class WorkerCredentialLifecycle:
                 # there is nothing to discard. Treat that recovery operation
                 # as the same idempotent no-op as a repeated successful discard.
                 return []
-            self._assert_release_epoch_reservation(conn, exact_agent)
             rows = conn.execute(
                 "SELECT * FROM worker_credentials WHERE agent_id = ? "
                 "AND created_by = ? AND state = 'pending_install'",

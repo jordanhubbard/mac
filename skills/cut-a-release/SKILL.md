@@ -18,8 +18,8 @@ mac do?" with "it depends when you looked", while a deck bound to a SHA can be
 checked against that SHA a year later.
 
 **Scope.** This covers documentation and the tag/release mechanics. Fleet
-cutover and image qualification are separate and are not in here — see
-`docs/synchronized-fleet-cutover.md` and
+updates and image qualification are separate and are not in here — see
+`docs/operations/fleet-update.md` and
 `docs/image-publication-and-qualification.md`.
 
 ## 0. Do not start until the gates are actually green

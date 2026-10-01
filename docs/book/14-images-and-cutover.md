@@ -25,11 +25,11 @@ python3 "$DOCS_ROOT/scripts/prepublish-fleet-qualification.py" --help >/dev/null
 python3 "$DOCS_ROOT/scripts/verify-runtime-publication.py" --help >/dev/null
 bash "$DOCS_ROOT/deploy/deploy-mac-fleet.sh" --help | \
   grep -- '--preflight-only' >/dev/null
-test -f "$DOCS_ROOT/docs/fleet-cutover-transaction-protocol.md"
+test -x "$DOCS_ROOT/scripts/fleet-update"
 ```
 
-A synchronized cutover does not require identical hardware or equal worker
-speed. It requires a fixed cohort, candidate, plan version, epoch, deadline,
-barrier, and acceptance contract. Nodes can prepare independently, but none may
-publish readiness for a different candidate or cross the activation barrier
-without the whole required cohort.
+Moving the fleet to a new commit is a separate, human-run step:
+`scripts/fleet-update` updates the hub, then one worker at a time, and stops at
+the first host that does not come back healthy on the new commit (see
+[Updating the fleet with fleet-update](../operations/fleet-update.md)). The
+synchronized release epochs that used to do this are deleted.

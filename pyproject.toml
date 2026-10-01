@@ -73,7 +73,6 @@ mac = "mac.cli:main"
 mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
-mac-hub-upgrade-supervisor = "mac.hub_upgrade_supervisor:main"
 mac-webdav-server = "mac.webdav_server:main"
 # Standalone LLM router (MAC_ROUTER_BACKEND=standalone): same router as the
 # in-hub inproc mount, in its own process so ledger restarts don't drop

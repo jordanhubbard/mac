@@ -461,6 +461,7 @@ def test_upgrade_drops_leftover_work_package_task_triggers(pg_dsn: str) -> None:
             "0005_drop_native_merge_queue_tables",
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
         ]
         assert not _function_exists(store, "trg_work_package_task_claim_authority")
         assert not _function_exists(store, "trg_work_package_expiry_task_detach_guard")
@@ -582,6 +583,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
             "0005_drop_native_merge_queue_tables",
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
         ]
         assert status["requires_backup"] is True
 
@@ -592,6 +594,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
             "0005_drop_native_merge_queue_tables",
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
         ]
         assert not [table for table in _REMOVED_FEATURE_TABLES if _relation_exists(store, table)]
         # Rows outside the dropped tables survive, and 0002's re-proved
@@ -599,7 +602,7 @@ def test_upgrade_from_0003_drops_removed_feature_tables_with_rows(pg_dsn: str) -
         assert store.query_one("SELECT COUNT(*) AS n FROM agents")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 1
         verified = store.verify_schema()
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
         assert "0002_dream_candidate_store" in verified["proof"]["postconditions"]
 
 
@@ -651,6 +654,7 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             "0005_drop_native_merge_queue_tables",
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
         ]
         assert status["requires_backup"] is True
 
@@ -660,6 +664,7 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
             "0005_drop_native_merge_queue_tables",
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
         ]
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         # The task the queue entry pointed at is untouched: it is still
@@ -667,7 +672,7 @@ def test_upgrade_from_0004_drops_native_merge_queue_tables_with_rows(pg_dsn: str
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "reviewing"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
 
 
 def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None:
@@ -676,7 +681,7 @@ def test_fresh_bootstrap_leaves_no_native_merge_queue_table(pg_dsn: str) -> None
         assert not [t for t in _NATIVE_MERGE_QUEUE_TABLES if _relation_exists(store, t)]
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
 
 
 _ROLLOUT_AND_DEPLOY_TABLES = (
@@ -747,26 +752,36 @@ def test_upgrade_from_0005_drops_rollout_and_deploy_tables_with_rows(pg_dsn: str
         assert status["pending"] == [
             "0006_drop_rollout_and_deploy_tables",
             "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
         ]
         assert status["requires_backup"] is True
 
-        result = store.apply_migrations(applied_by="pytest:drop-rollout-and-deploy")
+        result = store.apply_migrations(
+            applied_by="pytest:drop-rollout-and-deploy", migrations=MIGRATIONS[:6]
+        )
 
-        assert result["applied"] == [
-            "0006_drop_rollout_and_deploy_tables",
-            "0007_drop_agent_provisioning_requests",
-        ]
+        assert result["applied"] == ["0006_drop_rollout_and_deploy_tables"]
         assert not [t for t in _ROLLOUT_AND_DEPLOY_TABLES if _relation_exists(store, t)]
-        # The tables other code still uses keep their rows.
+        # The tables other code still used at 0006 keep their rows.
         assert store.query_one("SELECT COUNT(*) AS n FROM environments")["n"] == 1
         assert store.query_one("SELECT COUNT(*) AS n FROM artifacts")["n"] == 1
         # The unified events view survives without the dropped sources.
         assert _relation_exists(store, "events")
         subjects = store.query_all("SELECT DISTINCT subject_type FROM events")
         assert not {"rollout", "environment"} & {row["subject_type"] for row in subjects}
+
+        result = store.apply_migrations(applied_by="pytest:through-head")
+
+        assert result["applied"] == [
+            "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
+        ]
+        # 0008 drops environments once nothing references it.
+        assert not _relation_exists(store, "environments")
+        assert store.query_one("SELECT COUNT(*) AS n FROM artifacts")["n"] == 1
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
 
 
 def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
@@ -774,11 +789,10 @@ def test_fresh_bootstrap_leaves_no_rollout_or_deploy_table(pg_dsn: str) -> None:
         store.initialize()
         assert not [t for t in _ROLLOUT_AND_DEPLOY_TABLES if _relation_exists(store, t)]
         assert _relation_exists(store, "events")
-        assert _relation_exists(store, "environments")
         assert _relation_exists(store, "artifacts")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
 
 
 def _populate_agent_provisioning_requests(conn) -> None:
@@ -815,18 +829,24 @@ def test_upgrade_from_0006_drops_agent_provisioning_requests_with_rows(pg_dsn: s
         assert store.query_one("SELECT COUNT(*) AS n FROM agent_provisioning_requests")["n"] == 2
 
         status = store.migration_status()
-        assert status["pending"] == ["0007_drop_agent_provisioning_requests"]
+        assert status["pending"] == [
+            "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
+        ]
         assert status["requires_backup"] is True
 
         result = store.apply_migrations(applied_by="pytest:drop-provisioning-requests")
 
-        assert result["applied"] == ["0007_drop_agent_provisioning_requests"]
+        assert result["applied"] == [
+            "0007_drop_agent_provisioning_requests",
+            "0008_drop_self_upgrade_and_release_epoch_tables",
+        ]
         assert not _relation_exists(store, "agent_provisioning_requests")
         # The task a request pointed at is untouched and still dispatchable.
         assert store.query_one("SELECT state FROM tasks WHERE id = 't1'")["state"] == "open"
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
 
 
 def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str) -> None:
@@ -835,4 +855,181 @@ def test_fresh_bootstrap_leaves_no_agent_provisioning_requests_table(pg_dsn: str
         assert not _relation_exists(store, "agent_provisioning_requests")
         verified = store.verify_schema()
         assert verified["status"] == "verified"
-        assert verified["current_version"] == "0007_drop_agent_provisioning_requests"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+
+
+# Children before parents: the order 0008 drops them in.
+_SELF_UPGRADE_AND_RELEASE_EPOCH_TABLES = (
+    "fleet_upgrade_events",
+    "fleet_upgrades",
+    "source_convergence_nodes",
+    "source_convergence_controller_leases",
+    "fleet_release_attestation_candidates",
+    "fleet_release_epoch_agents",
+    "fleet_release_epochs",
+    "fleet_release_admission_episodes",
+    "fleet_desired_source_idempotency",
+    "fleet_desired_source_transitions",
+    "fleet_desired_source_states",
+    "source_releases",
+    "environments",
+)
+_SELF_UPGRADE_TRIGGER_FUNCTIONS = (
+    "_trg_source_releases_sha_immutable",
+    "_trg_fleet_desired_source_gen_monotonic",
+)
+
+
+def _populate_self_upgrade_and_release_epoch_tables(conn) -> None:
+    """A row in every table 0008 drops, wired through every foreign key."""
+
+    now = "2026-10-01T00:00:00+00:00"
+    conn.execute(
+        "INSERT INTO machines (id, hostname, labels, resources, trusted, created_at, "
+        "updated_at, last_seen_at) VALUES ('m1', 'host', '{}', '{}', 1, %s, %s, %s)",
+        (now, now, now),
+    )
+    conn.execute(
+        "INSERT INTO agents (id, machine_id, name, capabilities, resources, status, "
+        "health_status, created_at, updated_at, last_seen_at) "
+        "VALUES ('a1', 'm1', 'agent', '[]', '{}', 'idle', 'healthy', %s, %s, %s)",
+        (now, now, now),
+    )
+    conn.execute(
+        "INSERT INTO fleets (id, name, description, created_at, updated_at) "
+        "VALUES ('f1', 'fleet', '', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO worker_credentials (id, agent_id, credential_version, token_hash, "
+        "token_fingerprint, scopes, environment, state, issued_at, expires_at, created_by, "
+        "updated_at) VALUES ('p1', 'a1', 1, 'h', 'fp', '[]', 'vm', 'active', %s, %s, "
+        "'test', %s)",
+        (now, now, now),
+    )
+    conn.execute(
+        "INSERT INTO environments (id, name, metadata, created_by, created_at, updated_at) "
+        "VALUES ('env1', 'staging', '{}', 'test', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO source_releases (id, repository_id, repository_name, "
+        "canonical_remote_url, commit_sha, canonical_ref, tree_digest, created_by, "
+        "created_at, updated_at) VALUES ('rel1', 'repo1', 'mac', "
+        "'https://example.invalid/mac.git', %s, 'refs/tags/v1', 'sha256:t', 'test', %s, %s)",
+        ("a" * 40, now, now),
+    )
+    conn.execute(
+        "INSERT INTO fleet_desired_source_states (id, fleet_id, environment_id, generation, "
+        "release_id, actor, created_at, updated_at) "
+        "VALUES ('ds1', 'f1', 'env1', 1, 'rel1', 'test', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO fleet_desired_source_transitions (id, desired_source_state_id, "
+        "to_generation, release_id, actor, created_at) "
+        "VALUES ('dst1', 'ds1', 1, 'rel1', 'test', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO fleet_desired_source_idempotency (id, scope_key, request_id, "
+        "desired_source_state_id, generation, created_at) "
+        "VALUES ('dsi1', 'fleet:f1', 'req1', 'ds1', 1, %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO fleet_release_epochs (epoch_id, request_sha256, identity_sha256, "
+        "identity_payload, state, policy_snapshot, actor, prepared_at) "
+        "VALUES ('ep1', 'r', 'i', '{}', 'aborted', '{}', 'test', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO fleet_release_epoch_agents (epoch_id, agent_id, ordinal, "
+        "prior_dispatch_hold, epoch_hold_reason, epoch_hold_at, "
+        "prior_active_service_claim_ids, generation, baseline_seen, principal_id, "
+        "principal_version, principal_fingerprint, prior_live_principal_ids, "
+        "prior_attestation_ciphertext_sha256, report_executor_action, "
+        "prior_report_executor_projection_sha256, created_at) "
+        "VALUES ('ep1', 'a1', 0, 0, 'mac:fleet-release:ep1', %s, '[]', 'g', 'b', 'p1', "
+        "1, 'fp', '[]', 'sha', 'preserve', 'sha', %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO fleet_release_attestation_candidates (epoch_id, agent_id, "
+        "key_ciphertext, key_fingerprint, created_at) VALUES ('ep1', 'a1', 'c', 'k', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO fleet_release_admission_episodes (id, barrier_resource_digest, "
+        "owner_kind, waiter_kind, wait_started_at, outcome, created_at, updated_at) "
+        "VALUES ('ae1', 'd', 'publisher', 'epoch_opener', %s, 'admitted', %s, %s)",
+        (now, now, now),
+    )
+    conn.execute(
+        "INSERT INTO fleet_upgrades (id, idempotency_key, request_sha256, fleet_id, "
+        "requested_by_human, requested_by_principal, target_policy, reason, state, phase, "
+        "requested_release_id, epoch_id, desired_source_state_id, created_at, updated_at) "
+        "VALUES ('up1', 'idem', 'r', 'f1', 'human', 'principal', 'approved-current', "
+        "'test', 'failed', 'stage', 'rel1', 'ep1', 'ds1', %s, %s)",
+        (now, now),
+    )
+    conn.execute(
+        "INSERT INTO fleet_upgrade_events (id, upgrade_id, event_type, phase, actor, "
+        "created_at) VALUES ('ue1', 'up1', 'fleet_upgrade.requested', 'stage', 'test', %s)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO source_convergence_nodes (id, desired_source_state_id, fleet_id, "
+        "agent_id, desired_generation, release_id, desired_sha, action, plan_digest, phase, "
+        "created_at, updated_at) VALUES ('scn1', 'ds1', 'f1', 'a1', 1, 'rel1', %s, "
+        "'noop', 'd', 'converged', %s, %s)",
+        ("a" * 40, now, now),
+    )
+    conn.execute(
+        "INSERT INTO source_convergence_controller_leases (scope_key, owner_id, "
+        "expires_at, updated_at) VALUES ('global', 'hub', %s, %s)",
+        (now, now),
+    )
+
+
+def test_upgrade_from_0007_drops_self_upgrade_and_release_epoch_tables_with_rows(
+    pg_dsn: str,
+) -> None:
+    """A hub at 0007 holds rows in every self-upgrade table; 0008 drops them all."""
+
+    with _fresh_store(pg_dsn) as store:
+        store.apply_migrations(applied_by="pytest:through-0007", migrations=MIGRATIONS[:7])
+        with store._pool.connection() as conn:
+            _populate_self_upgrade_and_release_epoch_tables(conn)
+        for table in _SELF_UPGRADE_AND_RELEASE_EPOCH_TABLES:
+            assert store.query_one('SELECT COUNT(*) AS n FROM "%s"' % table)["n"] == 1, table
+        for function in _SELF_UPGRADE_TRIGGER_FUNCTIONS:
+            assert _function_exists(store, function), function
+
+        status = store.migration_status()
+        assert status["pending"] == ["0008_drop_self_upgrade_and_release_epoch_tables"]
+        assert status["requires_backup"] is True
+
+        result = store.apply_migrations(applied_by="pytest:drop-self-upgrade")
+
+        assert result["applied"] == ["0008_drop_self_upgrade_and_release_epoch_tables"]
+        assert not [t for t in _SELF_UPGRADE_AND_RELEASE_EPOCH_TABLES if _relation_exists(store, t)]
+        assert not [f for f in _SELF_UPGRADE_TRIGGER_FUNCTIONS if _function_exists(store, f)]
+        # The rows the dropped tables pointed at are untouched.
+        assert store.query_one("SELECT COUNT(*) AS n FROM agents")["n"] == 1
+        assert store.query_one("SELECT COUNT(*) AS n FROM fleets")["n"] == 1
+        assert store.query_one("SELECT COUNT(*) AS n FROM machines")["n"] == 1
+        assert store.query_one("SELECT COUNT(*) AS n FROM worker_credentials")["n"] == 1
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"
+
+
+def test_fresh_bootstrap_leaves_no_self_upgrade_or_release_epoch_table(pg_dsn: str) -> None:
+    with _fresh_store(pg_dsn) as store:
+        store.initialize()
+        assert not [t for t in _SELF_UPGRADE_AND_RELEASE_EPOCH_TABLES if _relation_exists(store, t)]
+        assert not [f for f in _SELF_UPGRADE_TRIGGER_FUNCTIONS if _function_exists(store, f)]
+        verified = store.verify_schema()
+        assert verified["status"] == "verified"
+        assert verified["current_version"] == "0008_drop_self_upgrade_and_release_epoch_tables"

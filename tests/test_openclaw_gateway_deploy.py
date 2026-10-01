@@ -2029,7 +2029,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         '    case "$*" in\n'
         "      *'OPENCLAW_CONTROL_PROBE_OK'*) printf '%s\\n' 'OPENCLAW_CONTROL_PROBE_OK' ;;\n"
         '      *\'channels status\'*) printf \'%s\\n\' \'{"channelAccounts": {"slack": [{"accountId": "offtera", "enabled": true, "configured": true, "probe": {"ok": true, "team": {"id": "T123"}}}, {"accountId": "omgjkh", "enabled": true, "configured": true, "probe": {"ok": true, "team": {"id": "T456"}}}]}, "channelDefaultAccountId": {"slack": "offtera"}}\' ;;\n'
-        '      *\'plugins inspect mac-continuity\'*) printf \'%s\\n\' \'{"plugin": {"imported": true, "status": "loaded", "toolNames": ["memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_fleet_upgrade_request", "mac_fleet_upgrade_status", "mac_fleet_upgrade_cancel", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"], "hookNames": ["before_prompt_build"]}}\' ;;\n'
+        '      *\'plugins inspect mac-continuity\'*) printf \'%s\\n\' \'{"plugin": {"imported": true, "status": "loaded", "toolNames": ["memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"], "hookNames": ["before_prompt_build"]}}\' ;;\n'
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"
@@ -3706,9 +3706,6 @@ def test_verify_channel_probe_has_monotonic_bounded_subprocess_deadline(
         "mac_config_flag_set",
         "mac_config_flag_clear",
         "mac_fleet_status",
-        "mac_fleet_upgrade_request",
-        "mac_fleet_upgrade_status",
-        "mac_fleet_upgrade_cancel",
         "mac_agent_send",
         "mac_agent_share",
         "mac_notify_human",

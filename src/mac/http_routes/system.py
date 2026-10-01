@@ -39,11 +39,15 @@ def build_system_router(
 
     @router.get("/startup-attestation")
     def startup_attestation() -> Dict[str, str]:
-        """Secret-free process identity consumed by the host swap supervisor."""
+        """Secret-free identity of the running hub process.
+
+        mac-service exports MAC_SOURCE_COMMIT from the checkout it starts, and
+        scripts/fleet-update waits for ``source_commit`` to equal the commit it
+        just deployed before it calls the hub updated.
+        """
         return {
             "schema": "mac.hub_startup_attestation.v1",
             "source_commit": os.environ.get("MAC_SOURCE_COMMIT", "").strip(),
-            "generation_id": os.environ.get("MAC_HUB_GENERATION_ID", "").strip(),
         }
 
     @router.get("/repository-refs/reconciler")

@@ -111,7 +111,6 @@ from mac.models import (
     EvidenceArtifact,
     EvidenceReuseRecord,
     Fleet,
-    FleetDesiredSourceState,
     HealthStatus,
     HistoryEvent,
     HermesInstance,
@@ -137,7 +136,6 @@ from mac.models import (
     ProjectRecord,
     ProjectItem,
     Publication,
-    PublicationDeferredError,
     PublicationStatus,
     RepresentationBinding,
     Review,
@@ -150,7 +148,6 @@ from mac.models import (
     SecretRecord,
     ServiceClaimStatus,
     ServiceRole,
-    SourceRelease,
     REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY,
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
     REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
@@ -214,7 +211,6 @@ from mac.fleet_learning import (
     repository_host,
     task_repository_remote,
 )
-from mac.fleet_upgrade_service import FleetUpgradeService
 from mac.identity_service import IdentityService
 from mac.openclaw_direct_execution import OpenClawDirectExecutionService
 from mac.humans_service import HumansService
@@ -235,8 +231,6 @@ from mac.project_repository_service import ProjectRepositoryService
 from mac.retention_service import RetentionPolicy, RetentionService
 from mac.runtime_environment_service import RuntimeEnvironmentService
 from mac.service_role_service import ServiceRoleService
-from mac.source_convergence_service import SourceConvergenceService
-from mac.source_release_service import SourceReleaseService
 from mac.review_service import (
     ReviewService,
     cross_llm_review_problems,
@@ -307,17 +301,16 @@ MAX_EVIDENCE_ARTIFACT_BYTES = 50 * 1024 * 1024
 DEFAULT_EVIDENCE_ARTIFACT_TOTAL_BYTES = 50 * 1024 * 1024
 MAX_EVIDENCE_ARTIFACT_TOTAL_BYTES = 100 * 1024 * 1024
 AUTO_QUARANTINE_REASON = "auto_quarantine:consecutive_expiries_no_telemetry"
-DEPLOYMENT_AVAILABILITY_RESOURCE_KEY = "deployment_availability"
-DEPLOYMENT_AVAILABILITY_SCHEMA = "mac.deployment_availability.v1"
-DEPLOYMENT_UNAVAILABLE = "deployment_unavailable"
-DEPLOYMENT_QUARANTINED = "deployment_quarantined"
-# The two shapes a deploy's own dispatch hold takes: the epoch hold from
-# FleetReleaseEpochService._epoch_hold_reason, and the per-deployment hold
-# deploy_host places on every node it touches. A worker wearing either was
-# stopped by a deploy rather than by its host going away.
+# The shapes a deploy's own dispatch hold takes. A worker wearing one was
+# stopped by a deploy rather than by its host going away:
+#   - "fleet-update <sha12>": scripts/fleet-update holds each worker it updates;
+#   - "mac admin fleet deployment ": the per-node hold deploy-mac-fleet.sh places;
+#   - "mac:fleet-release:": the hold a release epoch placed. Epochs are gone, but
+#     a worker can still carry one that an aborted epoch left behind.
 DEPLOYMENT_HOLD_REASON_PREFIXES = (
-    "mac:fleet-release:",
+    "fleet-update ",
     "mac admin fleet deployment ",
+    "mac:fleet-release:",
 )
 BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
 BREAK_GLASS_EXECUTION_BOUNDARY = "host"
@@ -641,8 +634,6 @@ def _landing_failure_mode(exc: BaseException) -> str:
     ``wait`` charges only the deadline, ``retry`` charges an attempt, and
     ``permanent`` blocks the task at once: retrying cannot change the outcome.
     """
-    if isinstance(exc, PublicationDeferredError):
-        return "wait"
     if str(getattr(exc, "publication_failure_kind", "") or "") in (
         _LANDING_PERMANENT_FAILURE_KINDS
     ):
@@ -1330,55 +1321,6 @@ _BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_\-]*$")
 # overkill for the threat model but fits in one stretch of base64 and
 # keeps the door closed if HMAC-SHA256 ever becomes the bottleneck.
 ATTESTATION_KEY_BYTES = 32
-
-
-def _serialize_runtime_source_publication(function: Callable[..., Optional[JsonDict]]):
-    """Order mutation of the deployed checkout against fleet epoch creation."""
-
-    @functools.wraps(function)
-    def wrapped(
-        self: "ControlPlane",
-        task_id: str,
-        target: str,
-        evidence_id: str,
-    ) -> Optional[JsonDict]:
-        if target not in {"git://main", "git://origin/main"}:
-            return function(self, task_id, target, evidence_id)
-        if not self._publication_targets_runtime_source(task_id):
-            return function(self, task_id, target, evidence_id)
-        # Hold the barrier only long enough to READ it. It used to wrap the
-        # publication itself, and a publication then ran a contract gate in a
-        # sandbox for 45-90 minutes (the hub no longer runs one).
-        #
-        # Thread dump taken on the hub mid-hang, 2026-08-14:
-        #
-        #   one thread:  publish_task -> (the hub's projected contract gate)
-        #                -> subprocess wait
-        #                (holding _PUBLICATION_BARRIER_THREAD_LOCK)
-        #   seven more:  publish_task -> publication_serialization (blocked),
-        #                one of them the hub TICK thread
-        #
-        # The waiters occupy the request threadpool, /health stops being
-        # answered, the supervisor restarts the process after its probes fail,
-        # and the in-flight gate dies without recording anything. 147
-        # consecutive failed probes and 225 restarts were logged before this
-        # was found; every publication attempt in this session died that way.
-        #
-        # The docstring of publication_serialization already says the epoch row
-        # "remains the durable barrier after this short creation critical
-        # section ends" -- so the long tail never needed the lock. The read is
-        # what must be atomic against epoch creation.
-        with self.fleet_release_epochs.publication_serialization():
-            barrier = self.fleet_release_epochs.active_publication_barrier()
-        if barrier is not None:
-            raise PublicationDeferredError(
-                "git publication is deferred while fleet release epoch %s is %s"
-                % (barrier["epoch_id"], barrier["state"]),
-                barrier=barrier,
-            )
-        return function(self, task_id, target, evidence_id)
-
-    return wrapped
 
 
 def _generate_attestation_key() -> str:
@@ -2489,8 +2431,6 @@ class ControlPlane:
         # Task lifecycle -> addressed bus traffic. Fed by the transition
         # outbox, so it publishes only what committed (task_7faf8e56).
         self.task_lifecycle_bus = TaskLifecycleBusPublisher(self)
-        self.source_releases = SourceReleaseService(self.store)
-        self.source_convergence = SourceConvergenceService(self)
         self.service_roles = ServiceRoleService(self.store, self.observability)
         self.roles = RolesService(
             self.store,
@@ -2528,13 +2468,6 @@ class ControlPlane:
             get_machine=self.get_machine,
             machine_allows_tenant=self._machine_allows_tenant,
         )
-        from mac.fleet_release_epoch_service import FleetReleaseEpochService
-
-        self.fleet_release_epochs = FleetReleaseEpochService(
-            self,
-            verify_signature=verify_verification_manifest_signature,
-        )
-        self.fleet_upgrades = FleetUpgradeService(self)
         self.memory = MemoryService(
             self.store,
             get_task=self.get_task,
@@ -3005,14 +2938,6 @@ class ControlPlane:
             and reviewer_key_status.get("schema") == HUB_REVIEWER_KEY_STATUS_SCHEMA
         ):
             merged[HUB_REVIEWER_KEY_RESOURCE_KEY] = dict(reviewer_key_status)
-        # Deployment availability is hub-owned epoch state. A worker cannot
-        # erase it with a fresh inventory or forge it before the epoch
-        # controller has observed the worker unavailable.
-        merged.pop(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY, None)
-        if DEPLOYMENT_AVAILABILITY_RESOURCE_KEY in existing:
-            merged[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = existing[
-                DEPLOYMENT_AVAILABILITY_RESOURCE_KEY
-            ]
         merged.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         existing_approval = existing.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
         if valid_read_only_report_repository_executor_approval(existing_approval):
@@ -3031,11 +2956,6 @@ class ControlPlane:
         """
 
         projected = ensure_json_object(requested)
-        projected.pop(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY, None)
-        if DEPLOYMENT_AVAILABILITY_RESOURCE_KEY in existing:
-            projected[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = existing[
-                DEPLOYMENT_AVAILABILITY_RESOURCE_KEY
-            ]
         requested_has_approval = REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in projected
         requested_approval = projected.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
         projected.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
@@ -3083,12 +3003,7 @@ class ControlPlane:
         requested_health: Optional[str],
         resources: Dict[str, Any],
     ) -> Optional[str]:
-        deployment = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
-        deployment_degraded = isinstance(deployment, dict) and deployment.get("state") in {
-            DEPLOYMENT_UNAVAILABLE,
-            DEPLOYMENT_QUARANTINED,
-        }
-        if not self._startup_self_test_degrades_health(resources) and not deployment_degraded:
+        if not self._startup_self_test_degrades_health(resources):
             return requested_health
         if requested_health is None:
             return (
@@ -14880,8 +14795,8 @@ class ControlPlane:
     def _agent_attestation_history_keys(self, agent_id: str) -> List[str]:
         """Decrypted attestation keys retired before the immediate previous one.
 
-        A fleet release rotates every participating agent at once
-        (fleet_release_epoch_service). With only ``prev`` retained, two
+        A fleet release (the release epochs, since removed) rotated every
+        participating agent at once. With only ``prev`` retained, two
         releases put in-flight review evidence permanently out of reach and the
         task parks in waiting_for_verifiable_evidence with no diagnosis --
         observed live 2026-07-30, when one release orphaned 66 tasks.
@@ -14983,7 +14898,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             conn.execute(
                 """
                 UPDATE agents
@@ -15096,7 +15010,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             row = conn.execute(
                 "SELECT attestation_key_ciphertext FROM agents WHERE id = ?",
                 (agent_id,),
@@ -15211,7 +15124,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             resources = ensure_json_object(json_loads(row["resources"], {}))
             current_attestation = resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
@@ -15290,7 +15202,6 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
             row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
             resources = ensure_json_object(json_loads(row["resources"], {}))
             resources.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
@@ -15672,14 +15583,6 @@ class ControlPlane:
             row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if row is None:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            if changed.rowcount == 1:
-                self._adopt_deployment_quarantine_hold_in_transaction(
-                    conn,
-                    agent_id,
-                    hold_reason=reason,
-                    now=now,
-                )
-                row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(row)
             # Whether this caller acquired/replaced the hold or merely lost a
             # CAS to another hold owner, dispatch_hold implies zero active
@@ -15719,14 +15622,6 @@ class ControlPlane:
             row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             if row is None:
                 raise NotFoundError("agent not found: %s" % agent_id)
-            if released.rowcount == 1:
-                self._release_deployment_quarantine_in_transaction(
-                    conn,
-                    agent_id,
-                    expected_hold_reason=reason,
-                    now=now,
-                )
-                row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(row)
         return released.rowcount == 1, agent
 
@@ -16117,13 +16012,6 @@ class ControlPlane:
                 )
                 if locked.rowcount != 1:
                     raise NotFoundError("agent not found: %s" % agent_id)
-                reserved = conn.execute(
-                    "SELECT epoch_id FROM fleet_release_epoch_agents "
-                    "WHERE agent_id = ? AND open_state = 1",
-                    (agent_id,),
-                ).fetchone()
-                if reserved is not None:
-                    raise ValidationError("agent belongs to an open prepared fleet release epoch")
             replayed = replayed_epoch_agents(conn)
             if replayed is not None:
                 return replayed
@@ -16277,12 +16165,6 @@ class ControlPlane:
                 "UPDATE agents SET dispatch_hold = 0, dispatch_hold_reason = NULL, dispatch_hold_at = NULL, updated_at = ? WHERE id = ?",
                 (now, agent_id),
             )
-            self._release_deployment_quarantine_in_transaction(
-                conn,
-                agent_id,
-                expected_hold_reason=None,
-                now=now,
-            )
         agent = self.get_agent(agent_id)
         self.agentbus_broadcast.publish_system("agent.resumed.v1", payload={"agent_id": agent_id})
         return agent
@@ -16331,11 +16213,6 @@ class ControlPlane:
             agent_row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             agent = self._agent_from_row(agent_row)
             if not agent.deleted_at:
-                # Epoch membership is a durable identity pin. This check is
-                # made after acquiring the same agent-row fence used by epoch
-                # open, so deletion cannot revoke a cohort's credentials via
-                # a stale pre-check race.
-                self.fleet_release_epochs.assert_agent_unreserved_in_transaction(conn, agent_id)
                 active_lease = conn.execute(
                     """
                     SELECT 1 FROM leases l
@@ -17080,9 +16957,9 @@ class ControlPlane:
         """Tombstone ephemeral agents whose heartbeat lease has lapsed.
 
         Skips agents holding an active task lease (lease expiry reclaims the
-        task first; the agent is swept on a later tick) or participating in an
-        open fleet release epoch. Deployment deliberately stops those workers,
-        so heartbeat silence is not evidence that their hosts departed. Open
+        task first; the agent is swept on a later tick) or held by a deploy
+        (DEPLOYMENT_HOLD_REASON_PREFIXES). A deploy deliberately stops those
+        workers, so heartbeat silence is not evidence that their hosts departed. Open
         bus streams the departed agent left behind are closed so waiting peers
         see a terminal status rather than an open stream that will never append
         again.
@@ -17100,32 +16977,14 @@ class ControlPlane:
                 continue
             if self._agent_has_active_lease(agent.id):
                 continue
-            if self._mark_epoch_member_deployment_unavailable(agent, ttl=ttl, now=now):
-                continue
             if self._agent_held_by_deployment(agent):
-                # Retained for roll-forward repair. The projection above binds an
-                # aborted epoch to the agent by exact hold-reason string, which
-                # drifts the moment a second epoch holds the same worker, an
-                # operator touches the hold, or the deploy's own per-node hold
-                # replaces the epoch one -- and then this reaper deletes a node a
-                # deploy deliberately stopped. That is unrecoverable:
-                # phase-zero refuses a node carrying a deployed revision and the
-                # deploy refuses a worker with no agent row, so the host can only
-                # be destroyed and rebuilt. Silence under a release hold is not
-                # evidence the host departed, whatever the reason string says.
+                # A deploy stopped this worker on purpose (fleet-update restarts
+                # it while it is held). Deleting its agent row would strand the
+                # host: the update waits for this agent to report the new
+                # commit, and a worker with no agent row cannot. Silence under a
+                # deploy hold is not evidence the host departed.
                 continue
-            try:
-                self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
-            except ValidationError as exc:
-                # Epoch open and expiry share the agent-row fence. If the
-                # epoch won after candidate selection, re-project the reserved
-                # identity instead of failing the whole hub tick.
-                if "reserved by an open fleet release epoch" not in str(exc):
-                    raise
-                refreshed = self.get_agent(agent.id)
-                if not self._mark_epoch_member_deployment_unavailable(refreshed, ttl=ttl, now=now):
-                    raise
-                continue
+            self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
             self.store.execute(
                 """
                 UPDATE agentbus_streams
@@ -17154,171 +17013,6 @@ class ControlPlane:
             )
             expired.append(self.get_agent(agent.id))
         return expired
-
-    def _mark_epoch_member_deployment_unavailable(
-        self,
-        agent: Agent,
-        *,
-        ttl: int,
-        now: str,
-    ) -> bool:
-        """Retain a stale release participant and expose its deployment state."""
-
-        with self.store.transaction() as conn:
-            locked = conn.execute(
-                "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
-                (agent.id,),
-            )
-            if locked.rowcount != 1:
-                return False
-            row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent.id,)).fetchone()
-            resources = ensure_json_object(json_loads(row["resources"], {}))
-            previous = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
-            membership = None
-            if (
-                isinstance(previous, dict)
-                and previous.get("schema") == DEPLOYMENT_AVAILABILITY_SCHEMA
-                and previous.get("state") == DEPLOYMENT_QUARANTINED
-                and previous.get("hold_reason") == row["dispatch_hold_reason"]
-            ):
-                membership = conn.execute(
-                    """
-                    SELECT p.epoch_id, p.epoch_hold_reason, p.open_state, e.state
-                    FROM fleet_release_epoch_agents p
-                    JOIN fleet_release_epochs e ON e.epoch_id = p.epoch_id
-                    WHERE p.agent_id = ? AND p.epoch_id = ? AND e.state = 'aborted'
-                    """,
-                    (agent.id, previous.get("epoch_id")),
-                ).fetchone()
-            if membership is None:
-                membership = conn.execute(
-                    """
-                    SELECT p.epoch_id, p.epoch_hold_reason, p.open_state, e.state
-                    FROM fleet_release_epoch_agents p
-                    JOIN fleet_release_epochs e ON e.epoch_id = p.epoch_id
-                    WHERE p.agent_id = ?
-                      AND (
-                        (p.open_state = 1 AND e.state IN ('open', 'proved'))
-                        OR (e.state = 'aborted' AND p.epoch_hold_reason = ?)
-                      )
-                    ORDER BY p.created_at DESC, p.epoch_id DESC
-                    LIMIT 1
-                    """,
-                    (agent.id, row["dispatch_hold_reason"]),
-                ).fetchone()
-            if membership is None:
-                return False
-            state = (
-                DEPLOYMENT_UNAVAILABLE
-                if int(membership["open_state"] or 0) == 1
-                else DEPLOYMENT_QUARANTINED
-            )
-            same_projection = bool(
-                isinstance(previous, dict)
-                and previous.get("schema") == DEPLOYMENT_AVAILABILITY_SCHEMA
-                and previous.get("state") == state
-                and previous.get("epoch_id") == membership["epoch_id"]
-            )
-            marker = (
-                previous
-                if same_projection
-                else {
-                    "schema": DEPLOYMENT_AVAILABILITY_SCHEMA,
-                    "state": state,
-                    "epoch_id": str(membership["epoch_id"]),
-                    "reason": "heartbeat_ttl_expired",
-                    "observed_at": now,
-                    "last_seen_at": agent.last_seen_at,
-                    "ttl_seconds": ttl,
-                    "hold_reason": row["dispatch_hold_reason"],
-                }
-            )
-            resources[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = marker
-            conn.execute(
-                "UPDATE agents SET status = ?, health_status = ?, "
-                "current_task_id = NULL, resources = ?, updated_at = ? WHERE id = ?",
-                (
-                    AgentStatus.OFFLINE.value,
-                    HealthStatus.DEGRADED.value,
-                    json_dumps(resources),
-                    now,
-                    agent.id,
-                ),
-            )
-            if not same_projection:
-                self._record_agent_lifecycle_event(
-                    conn,
-                    agent.id,
-                    "agent.fleet_release_epoch.%s" % state,
-                    "hub-ephemeral-expiry",
-                    dict(marker),
-                    now,
-                )
-        return True
-
-    def _release_deployment_quarantine_in_transaction(
-        self,
-        conn: Any,
-        agent_id: str,
-        *,
-        expected_hold_reason: Optional[str],
-        now: str,
-    ) -> None:
-        row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
-        if row is None:
-            return
-        resources = ensure_json_object(json_loads(row["resources"], {}))
-        marker = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
-        if not isinstance(marker, dict) or marker.get("state") != DEPLOYMENT_QUARANTINED:
-            return
-        if expected_hold_reason is not None and marker.get("hold_reason") != expected_hold_reason:
-            return
-        resources.pop(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY, None)
-        conn.execute(
-            "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
-            (json_dumps(resources), now, agent_id),
-        )
-        self._record_agent_lifecycle_event(
-            conn,
-            agent_id,
-            "agent.fleet_release_epoch.deployment_quarantine_released",
-            "human",
-            {
-                "agent_id": agent_id,
-                "epoch_id": marker.get("epoch_id"),
-                "hold_reason": marker.get("hold_reason"),
-            },
-            now,
-        )
-
-    def _adopt_deployment_quarantine_hold_in_transaction(
-        self,
-        conn: Any,
-        agent_id: str,
-        *,
-        hold_reason: str,
-        now: str,
-    ) -> None:
-        """Keep a quarantined identity pinned when a newer hold supersedes it."""
-
-        row = conn.execute("SELECT resources FROM agents WHERE id = ?", (agent_id,)).fetchone()
-        if row is None:
-            return
-        resources = ensure_json_object(json_loads(row["resources"], {}))
-        marker = resources.get(DEPLOYMENT_AVAILABILITY_RESOURCE_KEY)
-        if not isinstance(marker, dict) or marker.get("state") != DEPLOYMENT_QUARANTINED:
-            return
-        if marker.get("hold_reason") == hold_reason:
-            return
-        resources[DEPLOYMENT_AVAILABILITY_RESOURCE_KEY] = {
-            **marker,
-            "hold_reason": hold_reason,
-            "hold_adopted_at": now,
-        }
-        conn.execute(
-            "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
-            (json_dumps(resources), now, agent_id),
-        )
 
     def deregister_agent(
         self,
@@ -17814,22 +17508,6 @@ class ControlPlane:
                 level="warning",
                 detail={"error": str(exc)[:500]},
             )
-        # Desired-source holds must land before dispatch.  Otherwise a stale
-        # idle node can acquire new work in the same tick that notices drift.
-        try:
-            source_convergence = self.source_convergence.tick(limit=limit_value)
-        except Exception as exc:  # noqa: BLE001 - controller failure must not stop lease maintenance.
-            source_convergence = {
-                "schema": "mac.source_convergence.v1",
-                "errors": [{"error": str(exc)[:500]}],
-            }
-            self.record_log(
-                "source_convergence.tick_failed",
-                layer="control_plane",
-                source="dispatcher.tick",
-                level="error",
-                detail={"error": str(exc)[:500]},
-            )
         try:
             from mac.session_nudge import nudge_stalled_sessions
 
@@ -17862,7 +17540,6 @@ class ControlPlane:
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
-            "source_convergence": source_convergence,
             "stall_nudges": stall_nudges,
             "retention_pruned": retention_pruned,
             "auto_reopened": [task.to_dict() for task in auto_retry_page["tasks"]],
@@ -17880,68 +17557,6 @@ class ControlPlane:
                 "dead_letters_next_cursor": dead_letters_page["next_cursor"],
             },
         }
-
-    # Communication bus
-
-    def register_source_release(self, *args: Any, **kwargs: Any) -> SourceRelease:
-        return self.source_releases.register_release(*args, **kwargs)
-
-    def get_source_release(self, release_id: str) -> SourceRelease:
-        return self.source_releases.get_release(release_id)
-
-    def list_source_releases(self, *args: Any, **kwargs: Any) -> List[SourceRelease]:
-        return self.source_releases.list_releases(*args, **kwargs)
-
-    def set_fleet_desired_source(self, *args: Any, **kwargs: Any) -> FleetDesiredSourceState:
-        return self.source_releases.set_desired_source(*args, **kwargs)
-
-    def source_convergence_status(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.source_convergence.status(*args, **kwargs)
-
-    def tick_source_convergence(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.source_convergence.tick(*args, **kwargs)
-
-    def request_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.request(*args, **kwargs)
-
-    def get_fleet_upgrade(self, upgrade_id: str) -> JsonDict:
-        return self.fleet_upgrades.get(upgrade_id)
-
-    def list_fleet_upgrades(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.fleet_upgrades.list(*args, **kwargs)
-
-    def cancel_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.cancel(*args, **kwargs)
-
-    def stage_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.stage(*args, **kwargs)
-
-    def arm_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.arm_hub_swap(*args, **kwargs)
-
-    def launch_fleet_upgrade_hub_swap(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.launch_hub_swap(*args, **kwargs)
-
-    def resume_fleet_upgrades(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
-        return self.fleet_upgrades.resume_pending(*args, **kwargs)
-
-    def record_fleet_upgrade_supervisor_receipt(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.record_supervisor_receipt(*args, **kwargs)
-
-    def open_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.open_worker_epoch(*args, **kwargs)
-
-    def prove_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.prove_worker_epoch(*args, **kwargs)
-
-    def commit_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.commit_worker_epoch(*args, **kwargs)
-
-    def abort_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
-        return self.fleet_upgrades.abort_worker_epoch(*args, **kwargs)
-
-    def fleet_upgrade_events(self, upgrade_id: str) -> List[JsonDict]:
-        return self.fleet_upgrades.events(upgrade_id)
 
     # Agent control messages: thin facade over ``self.messaging``.
 
@@ -19225,22 +18840,6 @@ class ControlPlane:
             _trusted_internal=True,
         )
 
-    def _publication_targets_runtime_source(self, task_id: str) -> bool:
-        """Whether legacy publication would mutate this process's source checkout."""
-
-        task = self.get_task(task_id)
-        metadata = ensure_json_object(task.metadata)
-        origin = ensure_json_object(metadata.get("origin"))
-        repository_path = str(origin.get("repository_path") or "").strip()
-        if not repository_path:
-            return False
-        try:
-            candidate = Path(repository_path).expanduser().resolve()
-            runtime_source = Path(__file__).resolve().parents[2]
-        except OSError:
-            return False
-        return candidate == runtime_source
-
     @contextlib.contextmanager
     def _repository_land_lock(self, clone_url: str, canonical_branch: str) -> Iterator[None]:
         """Serialize land steps per (repository, canonical branch).
@@ -19269,7 +18868,6 @@ class ControlPlane:
                 raise busy
             yield
 
-    @_serialize_runtime_source_publication
     def _publish_git_target_if_needed(
         self,
         task_id: str,
@@ -21132,36 +20730,6 @@ class ControlPlane:
                 review.reviewer_agent_id,
                 evidence_id=evidence.id,
             )
-        except PublicationDeferredError as exc:
-            barrier = dict(exc.barrier)
-            self._record_publication_deferred_once(
-                task_id,
-                barrier=barrier,
-                target=target,
-                review_id=review.id,
-                evidence_id=evidence.id,
-                actor=actor,
-            )
-            # The release barrier is a wait on the fleet, not a failed
-            # attempt: it charges the landing deadline only.
-            exhausted = self._consume_landing_budget(
-                task_id,
-                "publication_deferred",
-                counts_attempt=False,
-                error=str(exc),
-                evidence_id=evidence.id,
-                actor=actor,
-            )
-            if exhausted is not None:
-                return exhausted
-            return {
-                "task_id": task_id,
-                "status": "publication_deferred",
-                "review_id": review.id,
-                "target": target,
-                "reason": str(exc),
-                "barrier": barrier,
-            }
         except _LandingRebaseRequiredError as exc:
             terminal = self._terminal_review_noop(task_id)
             if terminal is not None:
@@ -26582,43 +26150,6 @@ class ControlPlane:
             subject_type="task",
             subject_id=task_id,
             detail={"actor": actor, **detail},
-        )
-
-    def _record_publication_deferred_once(
-        self,
-        task_id: str,
-        *,
-        barrier: JsonDict,
-        target: str,
-        review_id: str,
-        evidence_id: str,
-        actor: str,
-    ) -> None:
-        """Record one explanation per task/epoch without sweep-driven log churn."""
-
-        latest = self.store.query_one(
-            "SELECT detail FROM observability_events "
-            "WHERE kind = 'log' AND name = ? AND subject_type = 'task' "
-            "AND subject_id = ? ORDER BY sequence DESC LIMIT 1",
-            ("workflow.default_review.publication_deferred", task_id),
-        )
-        previous = (
-            ensure_json_object(json_loads(latest["detail"], {})) if latest is not None else {}
-        )
-        if str(previous.get("epoch_id") or "") == str(barrier.get("epoch_id") or ""):
-            return
-        self._record_default_review_observation(
-            task_id,
-            "workflow.default_review.publication_deferred",
-            "info",
-            {
-                "reason": "fleet_release_epoch_active",
-                "target": target,
-                "review_id": review_id,
-                "evidence_id": evidence_id,
-                **barrier,
-            },
-            actor,
         )
 
     def _record_project_failure_lesson(
