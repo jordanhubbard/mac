@@ -230,9 +230,18 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         "0002_dream_candidate_store",
         _load_sql(MIGRATION_PATH / "0002_dream_candidate_store.sql"),
+        # 0004 drops these tables again. Every applied postcondition is
+        # re-proved on each verification, so this one holds either while the
+        # tables exist or once the migration that removed them is recorded.
         """
-        SELECT to_regclass(current_schema() || '.dream_runs') IS NOT NULL
-           AND to_regclass(current_schema() || '.dream_candidate_entries') IS NOT NULL
+        SELECT (
+                   to_regclass(current_schema() || '.dream_runs') IS NOT NULL
+               AND to_regclass(current_schema() || '.dream_candidate_entries') IS NOT NULL
+               )
+            OR EXISTS (
+                   SELECT 1 FROM schema_migrations
+                   WHERE migration_id = '0004_drop_removed_feature_tables'
+               )
         """,
     ),
     Migration(
@@ -245,6 +254,26 @@ MIGRATIONS: tuple[Migration, ...] = (
            AND to_regprocedure(
                    current_schema() || '.trg_work_package_expiry_task_detach_guard()'
                ) IS NULL
+        """,
+    ),
+    Migration(
+        "0004_drop_removed_feature_tables",
+        _load_sql(MIGRATION_PATH / "0004_drop_removed_feature_tables.sql"),
+        """
+        SELECT bool_and(to_regclass(current_schema() || '.' || name) IS NULL)
+        FROM unnest(ARRAY[
+            'scientific_decisions',
+            'scientific_observations',
+            'scientific_assignments',
+            'scientific_experiments',
+            'scientific_policies',
+            'scientific_optimizer_events',
+            'scientific_optimizer_locks',
+            'dream_candidate_entries',
+            'dream_runs',
+            'nap_runs',
+            'nap_schedules'
+        ]) AS name
         """,
     ),
 )
@@ -295,16 +324,46 @@ def _column_names(body: str) -> set[str]:
     return columns
 
 
+def _dropped_tables(sql: str) -> set[str]:
+    """Tables a later statement drops and nothing after it creates again."""
+
+    final: dict[str, bool] = {}
+    for match in re.finditer(
+        r"\b(?:(?P<create>CREATE TABLE(?: IF NOT EXISTS)?)|DROP TABLE(?: IF EXISTS)?)\s+(?P<name>\w+)",
+        sql,
+        re.IGNORECASE,
+    ):
+        final[match.group("name")] = match.group("create") is None
+    return {table for table, dropped in final.items() if dropped}
+
+
 def _expected_inventory(sql: str) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    tables = {table: _column_names(body) for table, body in _table_bodies(sql).items()}
+    dropped = _dropped_tables(sql)
+    tables = {
+        table: _column_names(body)
+        for table, body in _table_bodies(sql).items()
+        if table not in dropped
+    }
     for match in re.finditer(
         r"ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)", sql, re.IGNORECASE
     ):
         if match.group(1) in tables:
             tables[match.group(1)].add(match.group(2))
+    # An index or trigger goes with its table, so one declared on a table a
+    # later migration dropped is not expected to exist.
     objects = {
-        "indexes": set(re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+(\w+)", sql)),
-        "triggers": set(re.findall(r"CREATE TRIGGER\s+(\w+)", sql)),
+        "indexes": {
+            match.group(1)
+            for match in re.finditer(
+                r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+(\w+)\s+ON\s+(\w+)", sql
+            )
+            if match.group(2) not in dropped
+        },
+        "triggers": {
+            match.group(1)
+            for match in re.finditer(r"CREATE TRIGGER\s+(\w+)\s.*?\bON\s+(\w+)", sql, re.DOTALL)
+            if match.group(2) not in dropped
+        },
         "views": set(re.findall(r"CREATE OR REPLACE VIEW\s+(\w+)", sql)),
         "functions": set(
             re.findall(r"CREATE OR REPLACE FUNCTION\s+(\w+)\s*\(", sql, re.IGNORECASE)

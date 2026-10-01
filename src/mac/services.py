@@ -193,12 +193,6 @@ from mac.repository_hygiene import (
     repository_ref_lifecycle_for_transition,
 )
 from mac.env_config import resolve_hub_agent
-from mac.generator_yield import (
-    GENERATOR_YIELD_SCHEMA,
-    GeneratorSuppressed,
-    GeneratorYieldGate,
-    origin_type_of as generator_origin_type_of,
-)
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.reconciliation import ReconciliationCoordinator
 from mac.ticketing_service import TicketingCoordinator
@@ -5677,55 +5671,6 @@ class ControlPlane:
                 )
             return str(row["task_id"])
 
-    @property
-    def generator_yield_gate(self) -> "GeneratorYieldGate":
-        """The measured yield gate, constructed once per control plane."""
-
-        gate = getattr(self, "_generator_yield_gate", None)
-        if gate is None:
-            gate = GeneratorYieldGate(self.store)
-            self._generator_yield_gate = gate
-        return gate
-
-    def _enforce_generator_yield(self, metadata: Any) -> None:
-        """Refuse a filing from a generator whose measured yield is too low.
-
-        Records the suppression before raising: a generator that silently
-        stopped filing would be indistinguishable from one that had nothing
-        to file, which is how the low-yield generators went unnoticed for six
-        weeks in the first place.
-        """
-
-        try:
-            self.generator_yield_gate.enforce(metadata)
-        except GeneratorSuppressed as exc:
-            origin_type = generator_origin_type_of(metadata)
-            try:
-                self.record_log(
-                    "task.generator_suppressed",
-                    level="warning",
-                    detail={
-                        "origin_type": origin_type,
-                        "verdict": self.generator_yield_gate.evaluate(origin_type),
-                        "message": str(exc),
-                    },
-                )
-            except Exception:  # noqa: BLE001 - reporting must not mask the refusal
-                pass
-            raise
-
-    def generator_yield_report(self) -> JsonDict:
-        """Every task origin's filed/completed record and gate standing."""
-
-        gate = self.generator_yield_gate
-        return {
-            "schema": GENERATOR_YIELD_SCHEMA,
-            "floor": gate.policy.floor,
-            "min_sample": gate.policy.min_sample,
-            "enabled": gate.policy.enabled,
-            "origins": gate.report(),
-        }
-
     def create_task(
         self,
         title: str,
@@ -5801,12 +5746,6 @@ class ControlPlane:
         if bool(_workflow_run_id) != bool(_workflow_node_key):
             raise ValidationError("workflow-linked task creation requires both run id and node key")
         self._reject_reserved_break_glass_metadata(requested_metadata)
-        # An automated generator whose filed work does not complete stops
-        # filing. This is the single choke point every generator passes
-        # through, so a generator added later is gated by default rather than
-        # having to remember to opt in. Human-filed origins are exempt --
-        # see mac.generator_yield.HUMAN_ORIGIN_TYPES.
-        self._enforce_generator_yield(requested_metadata)
         if idempotency_key is not None:
             if _task_id is not None:
                 raise ValidationError(
@@ -6327,7 +6266,7 @@ class ControlPlane:
                         "metadata.origin.%s contradicts the current registered repository" % key
                     )
             # Repository identity is canonical; the producer still owns its
-            # origin type, which drives grooming cadence and generator yield.
+            # origin type.
             origin.setdefault("type", "direct_task")
             origin.update(
                 {
@@ -17023,10 +16962,6 @@ class ControlPlane:
                 now,
             )
             conn.execute("DELETE FROM mood_overlays WHERE agent_id = ?", (agent_id,))
-            # The nap feature is gone but its tables remain until the migration
-            # that drops them; purge any historical rows for this agent.
-            conn.execute("DELETE FROM nap_schedules WHERE agent_id = ?", (agent_id,))
-            conn.execute("DELETE FROM nap_runs WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM agent_config_flags WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM agent_deploy_configs WHERE agent_id = ?", (agent_id,))
             conn.execute(
@@ -18499,20 +18434,6 @@ class ControlPlane:
                 detail={"error": str(exc)[:500]},
             )
         try:
-            crash_repairs = self.crashes.tick(limit=limit_value)
-        except Exception as exc:  # noqa: BLE001 - crash repair must not stop dispatch.
-            crash_repairs = {
-                "schema": "mac.agent_crash_repair_tick.v1",
-                "errors": [{"error": str(exc)[:500]}],
-            }
-            self.record_log(
-                "agent.crash.repair_tick_failed",
-                layer="control_plane",
-                source="dispatcher.tick",
-                level="error",
-                detail={"error": str(exc)[:500]},
-            )
-        try:
             from mac.session_nudge import nudge_stalled_sessions
 
             stall_nudges = nudge_stalled_sessions(self)
@@ -18545,7 +18466,6 @@ class ControlPlane:
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
             "source_convergence": source_convergence,
-            "crash_repairs": crash_repairs,
             "stall_nudges": stall_nudges,
             "retention_pruned": retention_pruned,
             "auto_reopened": [task.to_dict() for task in auto_retry_page["tasks"]],

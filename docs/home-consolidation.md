@@ -156,8 +156,10 @@ drop the legacy subtree entirely and remove the compat symlinks.
 ## 5b. Dream-cycle learning: two systems, one orphan (executed)
 
 > **Update 2026-09-30:** MAC's nap/dream pipeline, `dream_log_import.py` and
-> `mac_paths.dream_logs_dir()` described below were removed. The historical
-> `dream:*` and `nap_summary` records stay in `memory_records`.
+> `mac_paths.dream_logs_dir()` described below were removed, and migration
+> `0004_drop_removed_feature_tables` drops the `nap_runs`, `nap_schedules`,
+> `dream_runs` and `dream_candidate_entries` tables. The historical `dream:*`
+> and `nap_summary` records stay in `memory_records`.
 
 Investigation of the dream/learning capability found **two** dream systems:
 

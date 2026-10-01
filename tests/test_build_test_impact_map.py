@@ -259,11 +259,52 @@ def test_prune_drops_always_run_files_that_no_longer_exist(tmp_path):
     assert pruned["always_run"] == ["tests/test_foo.py"]
 
 
+def test_prune_drops_source_files_that_no_longer_exist(tmp_path):
+    """A deleted module can never appear in a diff again; its entries are dead weight."""
+    (tmp_path / "src" / "mac").mkdir(parents=True)
+    (tmp_path / "src" / "mac" / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    pruned = BUILDER.prune_uncollectable(
+        _stale_document(),
+        set(_stale_document()["nodeids"]),
+        repo_root=tmp_path,
+    )
+    for key in ("file_tests", "file_line_tests", "file_scope_tests", "file_hashes"):
+        assert list(pruned[key]) == ["src/mac/foo.py"], key
+    assert pruned["stats"]["mapped_files"] == 1
+
+
 def _seed_collectable_repo(tmp_path: Path) -> Path:
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_foo.py").write_text("def test_live():\n    assert True\n", encoding="utf-8")
+    source = tmp_path / "src" / "mac"
+    source.mkdir(parents=True)
+    for name in ("foo.py", "bar.py"):
+        (source / name).write_text("x = 1\n", encoding="utf-8")
     return tmp_path
+
+
+def test_check_fails_when_a_mapped_source_file_was_deleted(tmp_path):
+    repo = _seed_collectable_repo(tmp_path)
+    (repo / "src" / "mac" / "bar.py").unlink()
+    document = _stale_document()
+    document["nodeids"] = ["tests/test_foo.py::test_live"]
+    document["file_tests"] = {"src/mac/foo.py": [0], "src/mac/bar.py": [0]}
+    document["file_line_tests"] = {}
+    document["file_scope_tests"] = {}
+    document["always_run"] = []
+    document["stats"] = {"interned_nodeids": 1}
+    out = repo / "map.json"
+    out.write_text(json.dumps(document), encoding="utf-8")
+    args = ["--repo-root", str(repo), "--output", str(out)]
+    args += ["--coverage-file", str(repo / "nope.coverage")]
+
+    assert BUILDER.main(["--check", *args]) == 1
+    assert BUILDER.main(["--write", *args]) == 0
+    updated = json.loads(out.read_text(encoding="utf-8"))
+    assert list(updated["file_tests"]) == ["src/mac/foo.py"]
+    assert list(updated["file_hashes"]) == ["src/mac/foo.py"]
+    assert BUILDER.main(["--check", *args]) == 0
 
 
 def test_check_fails_on_stale_interned_ids(tmp_path):

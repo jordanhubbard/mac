@@ -639,14 +639,12 @@ def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:
     schema_path = (
         Path(__file__).resolve().parent.parent / "src" / "mac" / "data" / "postgres" / "schema.sql"
     )
-    expected = len(
-        set(
-            re.findall(
-                r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(",
-                schema_path.read_text(),
-            )
-        )
-    )
+    schema = schema_path.read_text()
+    # schema.sql concatenates immutable migrations, so a table a later
+    # migration drops is still created earlier in the text.
+    created = set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", schema))
+    dropped = set(re.findall(r"^DROP TABLE IF EXISTS\s+(\w+);", schema, re.MULTILINE))
+    expected = len(created - dropped)
     row = postgres_store.query_one(
         "SELECT count(*) AS n FROM information_schema.tables "
         "WHERE table_schema = current_schema() AND table_type = ?",

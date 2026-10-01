@@ -2,8 +2,8 @@
 
 Start with the [supported setup](02-getting-started.md): PostgreSQL, the
 configured gateway, one registered repository project, and one executable
-worker. Keep the current generator yield gate and dispatch holds in place
-while validating this path. Additional tasks or workers do not repair an
+worker. Keep the current dispatch holds in place while validating this
+path. Additional tasks or workers do not repair an
 unreliable request-to-result loop.
 
 ## Define one observable result

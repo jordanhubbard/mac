@@ -27,6 +27,21 @@ from mac.worker import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_mac_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point MAC_HOME at an empty directory for every test here.
+
+    The worker also looks for a repository at ``$MAC_HOME/src/<name>``. Without
+    this, a developer whose real ``~/.mac/src`` holds a checkout of the same
+    name (``ova``, say) takes the local-source branch instead of the remote
+    clone these tests exercise, and the result depends on whose machine runs it.
+    """
+    home = tmp_path / "mac-home"
+    home.mkdir()
+    monkeypatch.setenv("MAC_HOME", str(home))
+    return home
+
+
 def _noop_transport(method: str, path: str, payload: Any) -> Any:
     return None
 

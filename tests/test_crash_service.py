@@ -43,56 +43,61 @@ def _payload(event_id: str, stack: str = STACK_A, revision: str = "abc123"):
     }
 
 
-def test_crash_ingest_deduplicates_and_reassigns_repair_to_unaffected_peer():
+def _crash_notifications(cp: ControlPlane, report_id: str):
+    return [
+        item
+        for item in cp.list_notifications(subject_type="crash_report", subject_id=report_id)
+        if item.event_type == "agent.crash.observed"
+    ]
+
+
+def test_crash_ingest_deduplicates_records_and_files_no_task():
     cp = ControlPlane.in_memory()
     cp.create_project("mac", dispatch_paused=False)
     crashed = _agent(cp, "crashed")
-    first_peer = _agent(cp, "first-peer")
+    peer = _agent(cp, "peer")
 
     first = cp.crashes.ingest(crashed.id, _payload("event-1"))
     assert first["occurrence_count"] == 1
-    task = cp.get_task(first["repair_task_id"])
-    assert task.owner_agent_id == first_peer.id
-    assert task.metadata["excluded_agent_ids"] == [crashed.id]
-    assert task.metadata.get("no_dispatch") is None
+    assert first["status"] == "open"
+    assert first["repair_task_id"] is None
+    assert first["repair_attempt_count"] == 0
+    assert len(first["occurrences"]) == 1
 
-    second_peer = _agent(cp, "second-peer")
-    repeated = cp.crashes.ingest(
-        first_peer.id,
-        _payload("event-2", stack=STACK_B),
-    )
+    repeated = cp.crashes.ingest(peer.id, _payload("event-2", stack=STACK_B))
     assert repeated["id"] == first["id"]
     assert repeated["fingerprint"] == first["fingerprint"]
     assert repeated["occurrence_count"] == 2
-    assert repeated["affected_agent_ids"] == sorted([crashed.id, first_peer.id])
-    task = cp.get_task(first["repair_task_id"])
-    assert task.owner_agent_id == second_peer.id
-    assert task.metadata["excluded_agent_ids"] == sorted([crashed.id, first_peer.id])
+    assert repeated["affected_agent_ids"] == sorted([crashed.id, peer.id])
 
-    duplicate = cp.crashes.ingest(first_peer.id, _payload("event-2", stack=STACK_B))
+    duplicate = cp.crashes.ingest(peer.id, _payload("event-2", stack=STACK_B))
     assert duplicate["duplicate"] is True
     assert duplicate["occurrence_count"] == 2
 
+    # Crashes are recorded and surfaced; they no longer become self-filed work.
+    assert cp.list_tasks() == []
+    assert [item["id"] for item in cp.crashes.list_reports(status="open")] == [first["id"]]
+    # One operator notification per incident, not one per occurrence.
+    assert len(_crash_notifications(cp, first["id"])) == 1
 
-def test_crash_recurrence_after_completed_repair_creates_new_task():
+
+def test_crash_recurrence_after_resolution_reopens_and_notifies_again():
     cp = ControlPlane.in_memory()
     crashed = _agent(cp, "crashed")
-    _agent(cp, "repairer")
     first = cp.crashes.ingest(crashed.id, _payload("event-1"))
-    old_task = cp.get_task(first["repair_task_id"])
-    cp.force_complete_task(old_task.id, "test", "repair proof")
+    cp.crashes.resolve(first["id"], actor="test", reason="fixed")
 
     recurring = cp.crashes.ingest(crashed.id, _payload("event-2"))
-    assert recurring["repair_task_id"] != old_task.id
-    new_task = cp.get_task(recurring["repair_task_id"])
-    assert new_task.metadata["prior_repair_task_id"] == old_task.id
-    assert "recurred after repair task" in new_task.description
+    assert recurring["id"] == first["id"]
+    assert recurring["status"] == "open"
+    assert recurring["repair_task_id"] is None
+    assert len(_crash_notifications(cp, first["id"])) == 2
+    assert cp.list_tasks() == []
 
 
 def test_crash_fingerprint_includes_revision_and_resolve_is_durable():
     cp = ControlPlane.in_memory()
     crashed = _agent(cp, "crashed")
-    _agent(cp, "repairer")
     first = cp.crashes.ingest(crashed.id, _payload("event-1", revision="rev-a"))
     second = cp.crashes.ingest(crashed.id, _payload("event-2", revision="rev-b"))
     assert first["fingerprint"] != second["fingerprint"]
@@ -100,39 +105,3 @@ def test_crash_fingerprint_includes_revision_and_resolve_is_durable():
     assert resolved["status"] == "resolved"
     listed = cp.crashes.list_reports(status="resolved")
     assert [item["id"] for item in listed] == [resolved["id"]]
-
-
-def test_crash_repair_tick_closes_incident_after_verified_task_completion():
-    cp = ControlPlane.in_memory()
-    crashed = _agent(cp, "crashed")
-    _agent(cp, "repairer")
-    report = cp.crashes.ingest(crashed.id, _payload("event-1"))
-    assert report["repair_attempt_count"] == 1
-    cp.force_complete_task(report["repair_task_id"], "test", "regression verified")
-    tick = cp.crashes.tick()
-    assert tick["resolved"] == 1
-    assert cp.crashes.get_report(report["id"])["status"] == "resolved"
-
-
-def test_crash_repair_tick_refiles_failed_repair_with_prior_evidence_link():
-    cp = ControlPlane.in_memory()
-    cp.create_project("mac", dispatch_paused=False)
-    crashed = _agent(cp, "crashed")
-    repairer = _agent(cp, "repairer")
-    report = cp.crashes.ingest(crashed.id, _payload("event-1"))
-    old_task = cp.get_task(report["repair_task_id"])
-    assert old_task.owner_agent_id == repairer.id
-    cp.transition_task(
-        old_task.id,
-        "failed",
-        repairer.id,
-        {"reason": "first repair approach did not hold"},
-        lease_id=old_task.lease_id,
-    )
-    tick = cp.crashes.tick()
-    assert tick["requeued"] == 1
-    refreshed = cp.crashes.get_report(report["id"])
-    assert refreshed["repair_attempt_count"] == 2
-    assert refreshed["repair_task_id"] != old_task.id
-    replacement = cp.get_task(refreshed["repair_task_id"])
-    assert replacement.metadata["prior_repair_task_id"] == old_task.id

@@ -48,7 +48,10 @@ def test_crash_api_binds_agent_identity_and_exposes_normalized_read_model():
     assert created.status_code == 200
     report = created.json()
     assert report["schema"] == "mac.agent_crash_report.v1"
-    assert report["repair_task_id"]
+    assert report["status"] == "open"
+    # Recorded and visible, but no longer turned into a self-filed task.
+    assert report["repair_task_id"] is None
+    assert cp.list_tasks() == []
 
     listed = client.get(
         "/crash-reports?agent_id=%s" % crashed.id,
