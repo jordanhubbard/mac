@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0016-agent-initiated-review/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/operations/fleet-update/">
       
       
+        <link rel="prev" href="../../production-deployment/">
+      
+      
+        <link rel="next" href="../../fleet-node-onboarding-checklist/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>ADR 0016 - Agents decide what a task needs; review is agent-initiated - MAC Documentation</title>
+        <title>Fleet update - MAC Documentation</title>
       
     
     
@@ -76,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0016-agents-decide-what-a-task-needs-review-is-agent-initiated" class="md-skip">
+        <a href="#updating-the-fleet-with-fleet-update" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0016 - Agents decide what a task needs; review is agent-initiated
+              Fleet update
             
           </span>
         </div>
@@ -1361,8 +1365,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -1373,11 +1379,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -1398,7 +1404,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1441,10 +1447,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../operations/fleet-update/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet update
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1460,6 +1493,143 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hosts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preflight-every-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preflight (every target)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hub-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hub (macOS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hub (macOS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hub-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hub rollback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#linux-worker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linux worker
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Linux worker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#worker-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker rollback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker tokens
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provision-a-new-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provision a new host
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1754,22 +1924,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
+  <a href="#usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Context
+        Usage
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Context">
+    <nav class="md-nav" aria-label="Usage">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-evidence-from-one-session-2026-08-1617" class="md-nav__link">
+  <a href="#hosts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The evidence from one session (2026-08-16/17)
+        Hosts
       
     </span>
   </a>
@@ -1782,10 +1952,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#problem" class="md-nav__link">
+  <a href="#preflight-every-target" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Problem
+        Preflight (every target)
       
     </span>
   </a>
@@ -1793,44 +1963,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
+  <a href="#hub-macos" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Decision
+        Hub (macOS)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Decision">
+    <nav class="md-nav" aria-label="Hub (macOS)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-must-not-be-lost" class="md-nav__link">
+  <a href="#hub-rollback" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What must not be lost
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#first-step-deliberately-small-and-reversible" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        First step — deliberately small and reversible
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prerequisite" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisite
+        Hub rollback
       
     </span>
   </a>
@@ -1843,10 +1991,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#acceptance-record" class="md-nav__link">
+  <a href="#linux-worker" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Acceptance record
+        Linux worker
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Linux worker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#worker-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker rollback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker tokens
       
     </span>
   </a>
@@ -1854,10 +2030,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
+  <a href="#provision-a-new-host" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Consequences
+        Provision a new host
       
     </span>
   </a>
@@ -1881,7 +2057,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0016-agent-initiated-review.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/operations/fleet-update.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1889,197 +2065,225 @@
   
 
 
-<h1 id="adr-0016-agents-decide-what-a-task-needs-review-is-agent-initiated">ADR 0016 - Agents decide what a task needs; review is agent-initiated<a class="headerlink" href="#adr-0016-agents-decide-what-a-task-needs-review-is-agent-initiated" title="Permanent link">&para;</a></h1>
-<ul>
-<li>Status: <strong>Accepted</strong></li>
-<li>Date: 2026-08-17 (accepted 2026-08-20)</li>
-<li>Decision owner: MAC fleet owner</li>
-<li>Related: ADR 0011 (hub review verification uses affected tests), ADR 0013
-  (one authoritative hub allocator), ADR 0014 (visibility is a communication
-  boundary, not a dispatch gate)</li>
-</ul>
-<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>MAC today runs a <strong>mandatory, hub-mediated task workflow</strong>. When a repository
-task finishes, the hub drives it through <code>RUNNING → NEEDS_REVIEW → REVIEWING →
-COMPLETED</code> (<code>src/mac/review_service.py</code>), and the default-review controller in
-<code>src/mac/services.py</code> (<code>advance_default_review_workflow</code> and the sweep loop)
-selects a reviewer, waits for a verdict, and only then allows publication. The
-hub decides <em>what a task needs</em> — whether it must be reviewed, decomposed, or
-routed to particular hardware — from <code>required_capabilities</code> and task metadata
-guessed at filing time.</p>
-<p><code>required_capabilities</code> is a guess made before anyone has read the diff.
-<code>--no-decompose</code> (<code>src/mac/cli.py</code>, <code>src/mac/task_lifecycle.py</code>,
-<code>src/mac/services.py</code>) exists only because the hub cannot tell an atomic task
-from a splittable one and needs an operator override. Whether a change actually
-needs review, a GPU, or a second opinion is knowable only <em>after</em> reading the
-change — information the executing agent holds and the hub does not.</p>
-<h3 id="the-evidence-from-one-session-2026-08-1617">The evidence from one session (2026-08-16/17)<a class="headerlink" href="#the-evidence-from-one-session-2026-08-1617" title="Permanent link">&para;</a></h3>
-<p>The <em>work</em> succeeded on the first attempt: the agent read the task, fixed the
-target function, wrote a focused unit test, ran it against the test Postgres,
-and confirmed caller control flow was unchanged.</p>
-<p>Everything that failed was hub-mediated ceremony:</p>
-<ul>
-<li>764,172 tokens burned and the task dead at attempt 1/3, because the executor
-  entered a mandatory decomposition phase it was not authorised to complete,
-  then emitted <code>plan_decomposed</code> evidence with zero children, which the
-  contract gate correctly rejected as self-contradictory.</li>
-<li>52 reviews across 38 tasks produced exactly four distinct reason strings and
-  zero findings — a mandatory step contributing no measurable signal.</li>
-<li>One task was destroyed by three review rejections that were harness faults,
-  not judgements, spending its whole retry budget on the mandated step.</li>
-<li>18 ready tasks, 3 idle agents, 0 assignments, because the hub was
-  arbitrating who may work on what.</li>
-<li><code>workflow.default_review.waiting_for_hub_verify</code> polling: the hub relaying a
-  conversation between two agents that could have spoken directly.</li>
-</ul>
-<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
-<p>The mandatory workflow puts the least-informed party (the hub, at filing time)
-in charge of deciding what a task needs, and turns a synchronous
-agent-to-agent conversation (a review) into a hub-polled state machine. That
-costs tokens and retry budget without producing review signal, and it strands
-ready work behind arbitration.</p>
-<p>At the same time, the parts of the system that demonstrably worked are exactly
-the <em>deterministic gates</em> — the contract gate, dead-code contract, impact-map
-staleness check, <code>test_no_dead_indexes</code>, the CLI coverage gate, the reviewed-CLI
-classifier, and the <code>tested-&lt;inputs-sha&gt;</code> image tag. Each named the defect and
-the fix cheaply and reproducibly. Those are not opinions the hub must broker;
-they are checks an agent can run.</p>
-<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>Move the <em>decision authority</em> to the agent and reduce the hub to a resource
-orchestrator and capability registry.</p>
+<h1 id="updating-the-fleet-with-fleet-update">Updating the fleet with <code>fleet-update</code><a class="headerlink" href="#updating-the-fleet-with-fleet-update" title="Permanent link">&para;</a></h1>
+<p><code>scripts/fleet-update</code> is the human-run way to move the hub and the workers to
+a new commit. You run it on the hub, as the operator account. It
+updates one host at a time, checks each host before it moves on, and stops at
+the first failure.</p>
+<p>It sits alongside the older deploy protocol (<code>deploy/deploy-mac-fleet.sh</code>,
+release epochs, hub self-upgrade). In the 90 days before it was written, release
+epochs aborted 62% of the time and hub self-upgrade never succeeded. The old
+machinery will be deleted once this script has been proven on the real fleet.</p>
+<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">scripts/fleet-update [--dry-run] [--hermes] [--yes] &lt;hub|HOST|all&gt; &lt;sha&gt;</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hub</code></td>
+<td>Update the hub's control plane, then restart the hub's own worker.</td>
+</tr>
+<tr>
+<td><code>HOST</code></td>
+<td>Update one Linux worker, named as in <code>~/.mac/fleet-hosts</code>.</td>
+</tr>
+<tr>
+<td><code>all</code></td>
+<td>The hub first, then each worker in turn. Stops at the first failure.</td>
+</tr>
+<tr>
+<td><code>&lt;sha&gt;</code></td>
+<td>Any commit on an <code>origin</code> branch. A short sha is fine; it is resolved to the full one.</td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Print the plan, including any migrations, and change nothing. The only write is <code>git fetch</code>, which updates remote-tracking refs.</td>
+</tr>
+<tr>
+<td><code>--hermes</code></td>
+<td>Also restart the Hermes gateway (<code>ai.hermes.gateway</code> on the hub, <code>hermes-gateway</code> user unit on Linux).</td>
+</tr>
+<tr>
+<td><code>--yes</code></td>
+<td>Don't ask for confirmation before each host.</td>
+</tr>
+</tbody>
+</table>
+<p>Every line of output also goes to <code>~/.mac/logs/fleet-update-&lt;timestamp&gt;.log</code>.</p>
+<h3 id="hosts">Hosts<a class="headerlink" href="#hosts" title="Permanent link">&para;</a></h3>
+<p>Worker names are looked up in <code>~/.mac/fleet-hosts</code> (override the path with
+<code>FLEET_UPDATE_HOSTS</code>). Each line has the form <code>&lt;name&gt; &lt;ssh_target&gt; &lt;agent_id&gt;</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># name       ssh target              hub agent id
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>worker-1     &lt;user&gt;@&lt;mesh-ip-1&gt;      agent_worker-1
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>worker-2     &lt;user&gt;@&lt;mesh-ip-2&gt;      agent_worker-2
+</code></pre></div>
+<p>Create this file before the first run. If it doesn't exist, the script falls
+back to a built-in list of two workers (<code>host_entry</code> in the script), which is
+only right for the fleet it was first written for. <code>all</code> updates every worker listed there, in file order.</p>
+<p>Other knobs, mostly useful for testing: <code>FLEET_UPDATE_SRC</code> (the checkout, by
+default <code>~/.mac/src/mac</code>), <code>FLEET_UPDATE_HUB_URL</code> (default
+<code>http://127.0.0.1:8789</code>), <code>FLEET_UPDATE_MAC_CLI</code> (default <code>mac</code>),
+<code>FLEET_UPDATE_POLL_SECONDS</code>, <code>FLEET_UPDATE_DRAIN_TIMEOUT</code> (default 600) and
+<code>FLEET_UPDATE_HEALTH_TIMEOUT</code> (default 180).</p>
+<h2 id="preflight-every-target">Preflight (every target)<a class="headerlink" href="#preflight-every-target" title="Permanent link">&para;</a></h2>
 <ol>
-<li>
-<p><strong>Agent-side skills decide what a task needs.</strong> Reading the diff, the agent
-   answers: is this atomic? does it need review? do I have the hardware to test
-   it? who should I ask? am I saturated? These are skills the agent runs, not
-   states the hub imposes. The deterministic gates in "Problem" become skills
-   the agent runs locally and records, per the literate-AI thesis: where
-   structure makes a breaking change obvious, review is verification rather
-   than opinion.</p>
-</li>
-<li>
-<p><strong>Review is peer-to-peer over AgentBus.</strong> When a skill decides a change
-   should be reviewed, the agent asks a peer directly over AgentBus, receives
-   findings, and the review plus its findings are recorded in the ledger
-   exactly as today. Choreography is peer-to-peer; the record stays
-   centralised.</p>
-</li>
-<li>
-<p><strong>The hub keeps only durable, uncontested authority:</strong> the task ledger
-   (find work, claim, close), the capability registry (what each agent can
-   do), and capacity provisioning (ask for more workers when saturated). It
-   stops being the arbiter of what a given task needs in order to finish. This
-   extends ADR 0014's principle — visibility and coordination are communication
-   boundaries, not dispatch gates — from <em>who may talk</em> to <em>what a task needs</em>.</p>
-</li>
+<li><code>git fetch origin</code> in <code>~/.mac/src/mac</code> on the hub.</li>
+<li>Resolve <code>&lt;sha&gt;</code> to a full commit and refuse it unless some <code>origin/*</code>
+   branch contains it.</li>
+<li>Read the commit the host currently runs. On the hub that is the checkout's
+   <code>HEAD</code>; on a worker it is read over ssh.</li>
+<li>Compare <code>src/mac/data/postgres/migrations/*.sql</code> between the two commits:</li>
+<li>migrations that the target adds are listed;</li>
+<li>if the deployed commit has a migration the target lacks, the script refuses.
+     It never goes backwards across a migration.</li>
+<li>The checkout must be clean (<code>git status --porcelain</code> empty).</li>
 </ol>
-<h3 id="what-must-not-be-lost">What must not be lost<a class="headerlink" href="#what-must-not-be-lost" title="Permanent link">&para;</a></h3>
+<h2 id="hub-macos">Hub (macOS)<a class="headerlink" href="#hub-macos" title="Permanent link">&para;</a></h2>
 <ol>
-<li>
-<p><strong>Evidence in the ledger, even when the conversation is peer-to-peer.</strong>
-   Otherwise reviewer value becomes permanently unmeasurable — the exact
-   problem solved by persisting review findings. The peer-to-peer review path
-   must still write the review row and its findings through the existing
-   ledger APIs (<code>request_review</code> / review + findings records), so
-   reviewer signal remains queryable regardless of who initiated the review.</p>
-</li>
-<li>
-<p><strong>Liveness.</strong> Lease expiry is how a dead agent's work is reclaimed. A
-   synchronous peer wait must carry a bounded deadline and a defined fallback,
-   or lease expiry gets reinvented — worse — in several places. A review
-   request that is not answered before its deadline falls back to completing
-   without peer review (recording that the request timed out) or to the
-   existing hub path, never to an unbounded wait.</p>
-</li>
-<li>
-<p><strong>The gates.</strong> The deterministic contract/dead-code/impact/coverage/image
-   gates stay. They move from hub choreography to skills the agent runs, but
-   their pass/fail signal and evidence are unchanged.</p>
-</li>
+<li><code>sudo -n launchctl bootout system/com.mac.control-plane</code>, then wait for the
+   <code>mac.hub_serve</code> process to exit.</li>
+<li>Run <code>~/.mac/venv/bin/mac-pg-backup --json --out ~/.mac/backups/fleet-update-&lt;ts&gt;</code>
+   and require <code>restore_verified == true</code>. <code>MAC_DATABASE_URL</code> is read from
+   <code>~/.mac/mac.env</code> and passed through the environment, never on a command line.</li>
+<li>Run <code>git checkout --detach &lt;sha&gt;</code>.</li>
+<li>Run <code>uv pip install -e</code> (or the venv's <code>pip</code>), but only if <code>pyproject.toml</code>,
+   <code>uv.lock</code> or <code>setup.py</code> changed.</li>
+<li>Run <code>~/.mac/venv/bin/python -c 'import mac.services'</code>.</li>
+<li>Run <code>mac-schema-migrate --status</code>, then
+   <code>mac-schema-migrate --applied-by fleet-update:&lt;user&gt;@&lt;host&gt;:&lt;sha12&gt;</code>.</li>
+<li>Write <code>~/.mac/current/source-commit</code> and <code>~/.mac/current/generation-id</code>
+   (<code>legacy-&lt;sha12&gt;</code>). <code>mac-service</code> only uses <code>~/.mac/current/source</code> when
+   <code>source-commit</code> matches its <code>HEAD</code>.</li>
+<li>Run <code>sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.mac.control-plane.plist</code>.</li>
+<li>Poll <code>/health</code>, then require <code>/startup-attestation</code>'s <code>source_commit</code> to equal
+   the target.</li>
+<li>Run <code>launchctl kickstart -k gui/&lt;uid&gt;/com.mac.agent</code>. With <code>--hermes</code>, also
+    kickstart <code>gui/&lt;uid&gt;/ai.hermes.gateway</code>.</li>
 </ol>
-<h3 id="first-step-deliberately-small-and-reversible">First step — deliberately small and reversible<a class="headerlink" href="#first-step-deliberately-small-and-reversible" title="Permanent link">&para;</a></h3>
-<p>For one project, make review <strong>optional and agent-initiated</strong> behind a single
-flag, changing nothing else:</p>
+<p>The hub step doesn't reinstall <code>~/.mac/bin/mac-service</code>. Its content is in
+<code>deploy/bin/mac-service</code> if it ever needs replacing by hand.</p>
+<h3 id="hub-rollback">Hub rollback<a class="headerlink" href="#hub-rollback" title="Permanent link">&para;</a></h3>
 <ul>
-<li>The agent decides via skill whether to request review.</li>
-<li>If it does, it asks a peer over AgentBus, receives findings, and records the
-  review and findings in the ledger exactly as today.</li>
-<li>If it does not, the task completes without a mandatory review step, and that
-  decision is observable in the ledger.</li>
+<li><strong>Failure before the schema can have changed.</strong> This covers a backup that
+  fails or isn't verified, a failed checkout, install or import, and any
+  failure when <code>--status</code> reported no pending migrations. The script checks out
+  the old commit, reinstalls it if the dependency files differ, rewrites
+  <code>source-commit</code>, bootstraps the old hub and exits non-zero.</li>
+<li><strong>Failure once migrations have run.</strong> This covers a migration that fails
+  part-way (the hub is left stopped) and a hub that won't come up healthy after
+  migrating. The script <strong>stops</strong> and prints what to do. It never downgrades
+  the schema. Fix forward with a new sha if you can. A full restore discards
+  every write made after the backup, so do it by hand:</li>
+<li>Stop the hub.</li>
+<li><code>pg_restore</code> the dump into the database. The dump is listed in the
+     backup's manifest.</li>
+<li>Run <code>git -C ~/.mac/src/mac checkout --detach &lt;old&gt;</code> and write that sha to
+     <code>~/.mac/current/source-commit</code>.</li>
+<li>Bootstrap the LaunchDaemon.</li>
 </ul>
-<p>The mechanism reuses machinery that already exists rather than adding a parallel
-one. Per-task review policy already supports disabling the mandatory workflow:
-<code>_default_review_policy</code> reads a <code>review</code> / <code>default_review</code> metadata object and
-<code>_default_review_disabled</code> honours <code>mode: manual</code>, <code>manual: true</code>,
-<code>enabled: false</code>, or <code>auto: false</code>; <code>advance_default_review_workflow</code> then
-no-ops with a <code>workflow.default_review.skipped</code> observation. The first step is
-to make that per-task opt-out the <em>project default</em> for one project — an
-<code>agent_initiated</code> (opt-in) review mode — so the mandatory controller stands
-down for that project and review runs only when an agent asks for it. This
-mirrors the opt-in shape of the former <code>MAC_REVIEW_HUB_VERIFY</code> flag (off by
-default, one flag; hub-verify was deleted on 2026-10-01): a single, revertible
-switch.</p>
-<p>Then compare completion rate and tokens-per-completed-task between the two paths
-on the same project over a few hundred tasks (the arms already tracked by the
-scientific optimizer, since removed on 2026-09-30). If peer-to-peer wins, there is evidence to dismantle the
-ringmaster incrementally. If it loses, one flag is reverted and the mandatory
-path is unchanged.</p>
-<h3 id="prerequisite">Prerequisite<a class="headerlink" href="#prerequisite" title="Permanent link">&para;</a></h3>
-<p>Concurrency-safety (tracked separately). Agents serving reviews for each other
-while multi-tasking makes today's latent thread bugs primary, so the
-peer-review server path must be brought under the concurrency-safety work
-before it is enabled beyond the first project.</p>
-<h2 id="acceptance-record">Acceptance record<a class="headerlink" href="#acceptance-record" title="Permanent link">&para;</a></h2>
-<p>Accepted 2026-08-20 by the fleet owner.</p>
-<p>Between proposal and acceptance the failure this ADR was written about
-recurred, at scale, unchanged. The proposal cited one task: <em>"764,172 tokens
-burned and the task dead at attempt 1/3, because the executor entered a
-mandatory decomposition phase it was not authorised to complete, then emitted
-<code>plan_decomposed</code> evidence with zero children, which the contract gate
-correctly rejected as self-contradictory."</em></p>
-<p>Three days later, in the 24 hours to 2026-08-20, the fleet <strong>completed 1 task
-and failed 24</strong>. Every one of the 24 was <code>verification_contract_failed</code>; 28 of
-32 failure transitions were non-retryable, so those tasks never reached their
-second attempt; 12 emitted <code>plan_decomposed</code>. The decomposition phase could
-not complete because hub authority is deliberately withheld from the sandbox
-(<code>_HOST_ONLY_HUB_CREDENTIALS</code>), which is correct — the phase should not have
-been entered.</p>
-<p>That is the evidence for accepting rather than continuing to weigh this: the
-mandatory workflow's cost is no longer hypothetical, and the recorded decision
-not being implemented is itself what let the cost repeat.</p>
-<p>Two pieces of work were separated out so this ADR is not a prerequisite for
-stopping the bleeding:</p>
+<p>If the script exits while the hub is stopped, its last line says so and gives
+the <code>launchctl bootstrap</code> command.</p>
+<h2 id="linux-worker">Linux worker<a class="headerlink" href="#linux-worker" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Hold.</strong> Read the agent with <code>mac agent show &lt;agent_id&gt;</code>. If it already has
+   a dispatch hold, note it and leave it alone; this run will neither add nor
+   remove a hold, such as an operator's fleet-wide dispatch pause. If there is
+   no hold,
+   <code>mac agent hold &lt;agent_id&gt; --reason "fleet-update &lt;sha12&gt;"</code>.</li>
+<li><strong>Drain.</strong> Wait up to 10 minutes for <code>current_task_id</code> to clear. If it
+   doesn't, release the script's own hold (if it set one) and stop. Nothing has
+   changed on the host at that point.</li>
+<li><strong>Update over ssh.</strong> A single <code>ssh &lt;target&gt; bash -s</code> runs these steps:</li>
+<li><code>git fetch</code> and <code>git checkout --detach &lt;sha&gt;</code> in <code>~/.mac/src/mac</code>;</li>
+<li>a conditional <code>uv pip install -e</code>;</li>
+<li><code>python -c 'import mac'</code>. If the import fails, the old checkout and its
+     dependencies are restored before anything is restarted.</li>
+<li>install <code>deploy/bin/{mac-agent-service, mac-agent-startup-self-test,
+     mac-task-executor, mac-task-executor.py}</code> and <code>deploy/mac-crash-observer.py</code>
+     into <code>~/.mac/bin</code>. Each file is renamed into place, so a running wrapper
+     keeps its old inode.</li>
+<li><code>sudo -n systemctl restart mac-agent</code>. With <code>--hermes</code>, also
+     <code>systemctl --user restart hermes-gateway</code>.</li>
+<li>after 10 seconds, <code>systemctl is-active mac-agent</code>.</li>
+<li><strong>Health.</strong> Within 3 minutes, the hub must report the new commit for this
+   agent: <code>resources.source_state.commit_sha == &lt;sha&gt;</code> with <code>dirty == false</code>.</li>
+<li><strong>Resume.</strong> The script resumes dispatch only if it placed the hold itself,
+   and only if the hold reason is still <code>fleet-update &lt;sha12&gt;</code>. If someone
+   replaced the hold meanwhile, the script leaves it alone.</li>
+<li><strong>Failure.</strong> The rollout stops, the host stays held, and the script prints
+   an inspect command, a rollback command and the resume command.</li>
+</ol>
+<h3 id="worker-rollback">Worker rollback<a class="headerlink" href="#worker-rollback" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">ssh &lt;target&gt; &#39;git -C ~/.mac/src/mac checkout --detach &lt;old-sha&gt; &amp;&amp; sudo -n systemctl restart mac-agent&#39;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac agent resume &lt;agent_id&gt;      # only if fleet-update placed the hold</span>
+</code></pre></div>
+<p>GKE pods (supervisord <code>mac-agent</code>) are not handled by this script.</p>
+<h2 id="worker-tokens">Worker tokens<a class="headerlink" href="#worker-tokens" title="Permanent link">&para;</a></h2>
+<p><code>mac admin worker-token</code> issues long-lived worker bearer tokens using the
+existing <code>worker_credentials</code> table. It runs on the hub, against
+<code>MAC_DATABASE_URL</code> (or <code>mac --db &lt;dsn&gt;</code>).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin worker-token issue  &lt;agent_id&gt; [--days 365] [--out FILE] [--install HOST]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac admin worker-token rotate &lt;agent_id&gt; [--days 365] [--out FILE] [--install HOST]</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac admin worker-token list   [&lt;agent_id&gt;]</span>
+</code></pre></div>
 <ul>
-<li><code>task_5ccf1fa5</code> — do not enter a phase this environment cannot complete.
-  The tourniquet; independent of this ADR.</li>
-<li><code>task_d5a11553</code> — the host creates the children the agent planned, since the
-  agent already writes the plan as evidence and nothing consumes it.</li>
+<li><code>issue</code> and <code>rotate</code> are the same operation. Each mints a new credential that
+  expires after <code>--days</code> days (default 365) and makes it the agent's only active
+  credential; earlier ones become <code>superseded</code>.</li>
+<li>The token is shown exactly once:</li>
+<li>with no options, the raw token goes alone on stdout and a summary goes to
+    stderr;</li>
+<li><code>--out FILE</code> writes the token to a mode-0600 file instead;</li>
+<li>with <code>--install</code>, the token is not printed at all.</li>
+<li>Without <code>--install</code>, the old token stops working immediately. Install the new
+  one straight away.</li>
+<li><code>--install HOST</code> keeps the old token working until the new one is in place.
+  While the new credential is still pending (the old one keeps authenticating),
+  the command runs <code>ssh HOST bash -s</code>, with the token carried on stdin, never
+  in argv. On the host, that session:</li>
+<li>rewrites every <code>MAC_WORKER_TOKEN</code> / <code>MAC_WORKER_TOKEN__&lt;FLEET&gt;</code> key that
+     <code>~/.mac/mac.env</code> already has (or adds <code>MAC_WORKER_TOKEN</code> if it has none),
+     and moves any hub-facing alias that held the old token;</li>
+<li>runs <code>~/.mac/venv/bin/python -m mac.hermes_chat_config --hermes-home ~/.hermes --mac-env ~/.mac/mac.env</code>,
+     because Hermes embeds the token;</li>
+<li>restarts <code>mac-agent</code> and <code>hermes-gateway</code>.</li>
 </ul>
-<p>Implementation of this ADR is <code>task_38c33434</code>, scoped to the "First step"
-below — one project, one flag, off by default — and explicitly not to the
-whole architecture. The prerequisite recorded below (concurrency-safety before
-the peer-review <em>server</em> path is enabled beyond the first project) is
-unchanged by acceptance.</p>
-<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<ul>
-<li>The hub's job shrinks to resource orchestration and a capability registry.
-  What agents are <em>doing</em> becomes state inside the agents; the hub is consulted
-  to find work, claim it, close it, or ask for more workers.</li>
-<li>Review stops being an unconditional tax. It runs when a skill says the change
-  warrants it, and its findings are still persisted, so reviewer value stays
-  measurable and the "zero findings across 52 reviews" pattern becomes visible
-  as <em>review not requested</em> rather than <em>review requested and empty</em>.</li>
-<li>A synchronous peer review introduces a new wait that must be bounded. The
-  deadline-and-fallback rule keeps lease expiry as the single liveness
-  mechanism instead of spawning per-review timeouts.</li>
-<li>The change is reversible at project granularity by one flag, so the
-  completion-rate / token comparison can run as a controlled experiment before
-  any hub choreography is removed.</li>
-<li>The trade-off is that agent-decided review can skip a review a mandatory
-  policy would have run. The deterministic gates (which stay, as skills) bound
-  that risk for structural defects, and the ledger record of <em>review not
-  requested</em> makes any resulting regression attributable rather than silent.</li>
-</ul>
+<p>Only after that succeeds is the new credential activated. If the install
+  fails before <code>mac.env</code> is rewritten, the new credential is revoked and the
+  old one stays active. If <code>mac.env</code> was rewritten but the Hermes resync or a
+  restart failed, the new credential is activated anyway (the host already
+  holds it) and the command tells you to restart the services by hand.
+- <code>list</code> prints credential metadata. It never prints the token or its hash.</p>
+<h2 id="provision-a-new-host">Provision a new host<a class="headerlink" href="#provision-a-new-host" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Install Tailscale and join the tailnet. Confirm that <code>ssh &lt;host&gt;</code> works from
+   the hub without a password.</li>
+<li><code>git clone &lt;origin&gt; ~/.mac/src/mac</code>.</li>
+<li>Run <code>python3 -m venv ~/.mac/venv &amp;&amp; ~/.mac/venv/bin/pip install -e ~/.mac/src/mac</code>
+   (or use <code>uv venv</code> and <code>uv pip install -e</code>).</li>
+<li>Create <code>~/.mac/mac.env</code> (mode 0600) from <code>deploy/systemd/mac.env.example</code>.
+   That example is written for a hub, so for a worker set <code>MAC_HUB_URL</code>,
+   <code>MAC_AGENT_ID</code>, <code>MAC_WORKER_MODE=loop</code> and the Hermes and OpenShell keys
+   your hosts use.</li>
+<li>On the hub, add the host to <code>~/.mac/fleet-hosts</code>. A token can only be
+   issued to a registered agent, so register it first:
+   <code>mac admin machine register &lt;hostname&gt; --machine-id &lt;machine_id&gt;</code> and
+   <code>mac agent register &lt;machine_id&gt; &lt;name&gt; --agent-id &lt;agent_id&gt;</code>. Then run
+   <code>mac admin worker-token issue &lt;agent_id&gt; --install &lt;host&gt;</code>.</li>
+<li>Install the systemd units from <code>deploy/systemd</code>. <code>mac-agent.service</code> is
+   rendered from <code>deploy/systemd/mac-agent.service.in</code>; the sed command is at
+   the top of that file. Then run <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable mac-agent</code>.</li>
+<li>Run <code>deploy/openshell/bootstrap-openshell.sh</code> on the host, then
+   <code>deploy/hermes/install-hermes-gateway.sh prepare</code>.</li>
+<li>From the hub: <code>scripts/fleet-update &lt;host&gt; &lt;sha&gt;</code>. This installs
+   <code>deploy/bin</code> into <code>~/.mac/bin</code> and starts the worker.</li>
+</ol>
 
 
 
@@ -2110,6 +2314,44 @@ unchanged by acceptance.</p>
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../production-deployment/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Production deployment">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Production deployment
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../fleet-node-onboarding-checklist/" class="md-footer__link md-footer__link--next" aria-label="Next: Fleet node onboarding">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Fleet node onboarding
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
