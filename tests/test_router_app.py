@@ -1337,3 +1337,34 @@ def test_llm_route_mac_route_context_headers_feeds_attribution():
     assert ctx["persona_instance_id"] == "persona_chain_test"
     # No mismatch — no principal, so claimed_agent_id must not appear.
     assert "claimed_agent_id" not in ctx
+
+
+def test_failover_sends_each_provider_its_own_name_for_the_model():
+    """One logical model, several keys: an exhausted key fails over to the next
+    provider, which is sent the id it knows the model by."""
+    logical = "azure/anthropic/claude-sonnet-4-6"
+    r = ProviderRouter(
+        [
+            Provider(
+                "openrouter",
+                "http://or/v1",
+                priority=0,
+                models=(logical,),
+                model_aliases=((logical, "anthropic/claude-sonnet-4.6"),),
+            ),
+            Provider("nvidia", "http://nv/v1", priority=1),
+        ],
+        failure_threshold=1,
+        cooldown_seconds=1000.0,
+    )
+    sent = []
+
+    def fwd(provider, path, payload, *, timeout=60.0):
+        sent.append((provider.name, payload["model"]))
+        if provider.name == "openrouter":
+            return 429, {"error": "quota"}
+        return 200, {"ok": True}
+
+    status, body = ProviderProxy(r, fwd).complete("/chat/completions", {"model": logical})
+    assert status == 200 and body == {"ok": True}
+    assert sent == [("openrouter", "anthropic/claude-sonnet-4.6"), ("nvidia", logical)]

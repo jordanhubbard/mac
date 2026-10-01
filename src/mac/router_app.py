@@ -497,7 +497,9 @@ class ProviderProxy:
                 if provider is None:
                     break
                 attempted_providers.add(provider.name)
-                status, obj = forward(provider, path, outgoing, timeout=timeout)
+                upstream = provider.upstream_model(model)
+                sent = outgoing if upstream == model else {**outgoing, "model": upstream}
+                status, obj = forward(provider, path, sent, timeout=timeout)
                 route_attempts.append({"provider": provider.name, "model": model, "status": status})
                 if _is_provider_failure(status):
                     self._router.record_failure(provider.name)
@@ -530,7 +532,7 @@ class ProviderProxy:
                         model,
                         provider.name,
                     )
-                    status, obj = forward(provider, path, outgoing, timeout=timeout)
+                    status, obj = forward(provider, path, sent, timeout=timeout)
                     route_attempts.append(
                         {
                             "provider": provider.name,

@@ -53,6 +53,17 @@ class Provider:
     models: Tuple[str, ...] = ("*",)  # which model ids it serves; "*" = any
     enabled: bool = True
     api_key_env: str = ""  # env var holding this provider's bearer key
+    # logical model id -> the id this provider expects for it. Lets several
+    # providers (separate keys and quotas) serve one logical model even though
+    # each names it differently, so exhausting one key fails over to the next.
+    model_aliases: Tuple[Tuple[str, str], ...] = ()
+
+    def upstream_model(self, model: str) -> str:
+        """The model id to send this provider for logical ``model``."""
+        for logical, upstream in self.model_aliases:
+            if logical == model:
+                return upstream
+        return model
 
 
 @dataclass
@@ -249,6 +260,10 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
 
     Format (semicolon-separated providers, comma-separated fields):
       ``name=base_url[,priority][,models=a|b|*][,key=ENV_VAR]``
+
+    A ``models`` entry may be ``logical=upstream``: the provider serves the
+    logical id but is sent ``upstream`` (e.g.
+    ``models=azure/anthropic/claude-sonnet-4-6=anthropic/claude-sonnet-4.6``).
     e.g. ``nvidia=https://inference-api.nvidia.com/v1,0,key=NVIDIA_API_KEY;`` +
            ``openai=https://api.openai.com/v1,1,models=*,key=OPENAI_API_KEY``
     """
@@ -266,10 +281,15 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
         base_url = fields[0]
         priority = 0
         models: Tuple[str, ...] = ("*",)
+        aliases: Tuple[Tuple[str, str], ...] = ()
         api_key_env = ""
         for f in fields[1:]:
             if f.startswith("models="):
-                models = tuple(m for m in f[len("models=") :].split("|") if m) or ("*",)
+                entries = [m for m in f[len("models=") :].split("|") if m]
+                models = tuple(m.partition("=")[0] for m in entries) or ("*",)
+                aliases = tuple(
+                    (m.partition("=")[0], m.partition("=")[2]) for m in entries if "=" in m
+                )
             elif f.startswith("key="):
                 api_key_env = f[len("key=") :].strip()
             elif f.isdigit():
@@ -281,6 +301,7 @@ def providers_from_env(env: Optional[Dict[str, str]] = None) -> List[Provider]:
                 priority=priority,
                 models=models,
                 api_key_env=api_key_env,
+                model_aliases=aliases,
             )
         )
     return providers

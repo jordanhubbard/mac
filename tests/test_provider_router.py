@@ -137,3 +137,17 @@ def test_providers_from_env_parses_spec():
     assert ps[0].base_url == "https://inf/v1" and ps[0].priority == 0
     assert ps[1].models == ("gpt-5", "gpt-4") and ps[1].priority == 1
     assert providers_from_env({}) == []
+
+
+def test_providers_from_env_parses_model_aliases():
+    env = {
+        "MAC_ROUTER_PROVIDERS": (
+            "openrouter=https://or/v1,0,models=azure/anthropic/claude-sonnet-4-6"
+            "=anthropic/claude-sonnet-4.6|plain-model,key=OPENROUTER_API_KEY"
+        )
+    }
+    (p,) = providers_from_env(env)
+    assert p.models == ("azure/anthropic/claude-sonnet-4-6", "plain-model")
+    assert p.upstream_model("azure/anthropic/claude-sonnet-4-6") == "anthropic/claude-sonnet-4.6"
+    assert p.upstream_model("plain-model") == "plain-model"
+    assert p.api_key_env == "OPENROUTER_API_KEY"
