@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+# fleet-update: human-run, one-host-at-a-time update of the MAC fleet.
+# See docs/operations/fleet-update.md for what each step does and how to roll back.
+set -euo pipefail
+
+usage() {
+  echo "usage: fleet-update [--dry-run] [--hermes] [--yes] <hub|natasha|bullwinkle|HOST|all> <sha>" >&2
+  exit 2
+}
+DRY=0 HERMES=0 YES=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1 ;; --hermes) HERMES=1 ;; --yes) YES=1 ;; -*) usage ;; *) break ;;
+  esac
+  shift
+done
+[ $# -eq 2 ] || usage
+TARGET=$1 REQ=$2
+
+MAC_HOME="${MAC_HOME:-$HOME/.mac}"
+SRC="${FLEET_UPDATE_SRC:-$MAC_HOME/src/mac}"
+VENV="$MAC_HOME/venv"
+HOSTS_FILE="${FLEET_UPDATE_HOSTS:-$MAC_HOME/fleet-hosts}"
+HUB_URL="${FLEET_UPDATE_HUB_URL:-http://127.0.0.1:8789}"
+MAC_CLI="${FLEET_UPDATE_MAC_CLI:-mac}"
+POLL="${FLEET_UPDATE_POLL_SECONDS:-5}"
+DRAIN_TIMEOUT="${FLEET_UPDATE_DRAIN_TIMEOUT:-600}"
+HEALTH_TIMEOUT="${FLEET_UPDATE_HEALTH_TIMEOUT:-180}"
+HUB_PLIST=/Library/LaunchDaemons/com.mac.control-plane.plist
+MIG_DIR=src/mac/data/postgres/migrations
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p "$MAC_HOME/logs"
+LOG="$MAC_HOME/logs/fleet-update-$TS.log"
+exec > >(tee -a "$LOG") 2>&1
+HUB_STOPPED=0
+trap '[ "$HUB_STOPPED" = 1 ] && log "WARNING: the hub is STOPPED; start it with: sudo launchctl bootstrap system $HUB_PLIST"' EXIT
+
+log() { printf '%s fleet-update: %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
+die() { log "ERROR: $*"; exit 1; }
+plan() { log "PLAN: $*"; }
+confirm() {
+  [ "$YES" = 1 ] && return 0
+  local answer
+  read -r -p "fleet-update: $* -- proceed? [y/N] " answer < /dev/tty || answer=n
+  [ "$answer" = y ] || [ "$answer" = Y ] || die "aborted by operator"
+}
+jget() {  # jget a.b.c < json  -> scalar ("" when absent)
+  python3 -c 'import json, sys
+v = json.load(sys.stdin)
+for k in sys.argv[1].split("."):
+    v = v.get(k) if isinstance(v, dict) else None
+print(v if isinstance(v, str) else ("" if v is None else json.dumps(v)))' "$1"
+}
+wait_for() {  # wait_for SECONDS cmd...   (always checks at least once)
+  local end=$((SECONDS + $1)); shift
+  until "$@"; do [ "$SECONDS" -lt "$end" ] || return 1; sleep "$POLL"; done
+}
+rssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"; }
+migs() { git -C "$SRC" ls-tree --name-only "$1" "$MIG_DIR/" | sed 's#.*/##' | grep '\.sql$' | sort || true; }
+deps_changed() { ! git -C "$SRC" diff --quiet "$1" "$SHA" -- pyproject.toml uv.lock setup.py; }
+
+host_entry() {  # name -> sets H_TARGET (ssh target) and H_AGENT (hub agent id)
+  local line=""
+  if [ -r "$HOSTS_FILE" ]; then
+    line=$(awk -v n="$1" '$1 == n && NF >= 3 { print $2, $3; exit }' "$HOSTS_FILE")
+  else
+    case "$1" in
+      natasha) line="100.87.229.125 agent_natasha" ;;
+      bullwinkle) line="100.121.27.109 agent_bullwinkle" ;;
+    esac
+  fi
+  [ -n "$line" ] || die "unknown host '$1'; add a line '<name> <ssh_target> <agent_id>' to $HOSTS_FILE"
+  read -r H_TARGET H_AGENT <<< "$line"
+}
+worker_names() {
+  if [ -r "$HOSTS_FILE" ]; then awk '!/^#/ && NF >= 3 { print $1 }' "$HOSTS_FILE"; else echo natasha bullwinkle; fi
+}
+
+check_migrations() {  # $1 = commit currently deployed on the host being updated
+  local gone new
+  git -C "$SRC" cat-file -e "$1^{commit}" 2>/dev/null || die "deployed commit $1 is unknown in $SRC; cannot compare migrations"
+  gone=$(comm -23 <(migs "$1") <(migs "$SHA") | tr '\n' ' ')
+  new=$(comm -13 <(migs "$1") <(migs "$SHA") | tr '\n' ' ')
+  [ -z "$gone" ] || die "refusing to go backwards across migration(s): $gone(${1:0:12} has them, $SHA12 does not)"
+  if [ -n "$new" ]; then log "migrations between ${1:0:12} and $SHA12: $new"; else log "migrations between ${1:0:12} and $SHA12: none"; fi
+}
+
+# ---- hub (rocky, macOS) -------------------------------------------------------
+# shellcheck disable=SC1091
+hub_dsn() { ( set +u -a; . "$MAC_HOME/mac.env"; printf '%s' "${MAC_DATABASE_URL:-}" ) }
+pip_install() {
+  if command -v uv > /dev/null; then uv pip install -q --python "$VENV/bin/python" -e "$SRC"; else "$VENV/bin/pip" install -q -e "$SRC"; fi
+}
+write_current() {
+  mkdir -p "$MAC_HOME/current"
+  printf '%s\n' "$1" > "$MAC_HOME/current/source-commit"
+  printf 'legacy-%s\n' "${1:0:12}" > "$MAC_HOME/current/generation-id"
+}
+hub_down() { ! pgrep -f mac.hub_serve > /dev/null; }
+hub_healthy() { curl -fsS --max-time 5 "$HUB_URL/health" > /dev/null 2>&1; }
+hub_attested() {
+  local got; got=$(curl -fsS --max-time 5 "$HUB_URL/startup-attestation" 2>/dev/null | jget source_commit) || return 1
+  [ -z "$got" ] || [ "$got" = "$SHA" ]
+}
+hub_rollback() {  # only ever called before the schema was migrated
+  log "hub: ROLLBACK to ${1:0:12} ($2)"
+  git -C "$SRC" checkout -q --detach "$1" || log "hub: WARNING checkout of ${1:0:12} failed"
+  if deps_changed "$1"; then pip_install || log "hub: WARNING reinstall of ${1:0:12} failed"; fi
+  write_current "$1"
+  sudo -n launchctl bootstrap system "$HUB_PLIST" || true
+  HUB_STOPPED=0
+  if wait_for "$HEALTH_TIMEOUT" hub_healthy; then log "hub: old code is serving again"; else log "hub: WARNING old code is not healthy either"; fi
+  die "hub update failed: $2"
+}
+hub_stuck() {  # the schema has (or may have) moved forward: never downgrade it
+  HUB_STOPPED=0
+  log "hub: $1. The schema was migrated, so NOTHING is rolled back. Next steps:"
+  log "  1. find the error (sudo launchctl print system/com.mac.control-plane; ~/.mac/logs) and fix forward with a new sha"
+  log "  2. the old code may not run against the new schema; the pre-update backup is in $2"
+  log "  3. full restore (loses writes since the backup): stop the hub, pg_restore that dump,"
+  log "     git -C $SRC checkout --detach $3, write that sha to $MAC_HOME/current/source-commit, bootstrap"
+  exit 1
+}
+update_hub() {
+  local old pending receipt bdir="$MAC_HOME/backups/fleet-update-$TS"
+  old=$(git -C "$SRC" rev-parse HEAD)
+  log "hub: deployed ${old:0:12}, target $SHA12"
+  check_migrations "$old"
+  [ -z "$(git -C "$SRC" status --porcelain)" ] || die "hub checkout $SRC has local changes"
+  deps_changed "$old" && log "hub: dependency files changed; will reinstall the editable package"
+  if [ "$DRY" = 1 ]; then
+    plan "hub: bootout com.mac.control-plane; mac-pg-backup -> $bdir; checkout $SHA12; import check;"
+    plan "hub: mac-schema-migrate --status/--applied-by; write current/source-commit; bootstrap; poll /health"
+    plan "hub: kickstart gui/$(id -u)/com.mac.agent$([ "$HERMES" = 1 ] && echo ' and ai.hermes.gateway')"
+    return 0
+  fi
+  confirm "update the hub to $SHA12"
+  export MAC_DATABASE_URL; MAC_DATABASE_URL=$(hub_dsn)
+  [ -n "$MAC_DATABASE_URL" ] || die "MAC_DATABASE_URL is not set in $MAC_HOME/mac.env"
+  log "hub: stopping com.mac.control-plane"
+  HUB_STOPPED=1
+  sudo -n launchctl bootout system/com.mac.control-plane || log "hub: bootout returned non-zero (not loaded?)"
+  wait_for 120 hub_down || die "mac.hub_serve is still running after bootout"
+  log "hub: backing up the database to $bdir"
+  receipt=$("$VENV/bin/mac-pg-backup" --json --out "$bdir") || hub_rollback "$old" "database backup failed"
+  [ "$(jget restore_verified <<< "$receipt")" = true ] || hub_rollback "$old" "backup restore_verified is not true"
+  log "hub: backup verified: $(jget path <<< "$receipt")"
+  git -C "$SRC" checkout -q --detach "$SHA" || hub_rollback "$old" "checkout failed"
+  if deps_changed "$old"; then pip_install || hub_rollback "$old" "editable install failed"; fi
+  "$VENV/bin/python" -c 'import mac.services' || hub_rollback "$old" "import mac.services failed"
+  receipt=$("$VENV/bin/mac-schema-migrate" --status) || hub_rollback "$old" "mac-schema-migrate --status failed"
+  pending=$(jget pending <<< "$receipt")
+  log "hub: pending migrations: ${pending:-[]}"
+  if ! "$VENV/bin/mac-schema-migrate" --applied-by "fleet-update:$(whoami)@$(hostname -s):$SHA12"; then
+    [ "${pending:-[]}" = "[]" ] && hub_rollback "$old" "mac-schema-migrate failed"
+    hub_stuck "mac-schema-migrate failed part-way (the hub is STOPPED)" "$bdir" "$old"
+  fi
+  write_current "$SHA"
+  log "hub: starting com.mac.control-plane"
+  sudo -n launchctl bootstrap system "$HUB_PLIST" || true
+  HUB_STOPPED=0
+  if ! wait_for "$HEALTH_TIMEOUT" hub_healthy || ! wait_for 30 hub_attested; then
+    [ "${pending:-[]}" = "[]" ] && hub_rollback "$old" "hub did not come up healthy on $SHA12"
+    hub_stuck "NOT HEALTHY on $SHA12 after migrating" "$bdir" "$old"
+  fi
+  log "hub: healthy on $SHA12"
+  launchctl kickstart -k "gui/$(id -u)/com.mac.agent" || log "hub: WARNING kickstart com.mac.agent failed"
+  if [ "$HERMES" = 1 ]; then launchctl kickstart -k "gui/$(id -u)/ai.hermes.gateway" || log "hub: WARNING kickstart hermes failed"; fi
+}
+
+# ---- Linux worker -------------------------------------------------------------
+REMOTE_UPDATE=$(cat << 'REMOTE'
+set -euo pipefail
+sha=$1 hermes=$2 src="$HOME/.mac/src/mac" venv="$HOME/.mac/venv" bin="$HOME/.mac/bin"
+cd "$src"
+[ -z "$(git status --porcelain)" ] || { echo "remote: $src has local changes" >&2; exit 3; }
+old=$(git rev-parse HEAD)
+deps() { ! git diff --quiet "$old" "$sha" -- pyproject.toml uv.lock setup.py; }
+reinstall() { if command -v uv > /dev/null; then uv pip install -q --python "$venv/bin/python" -e "$src"; else "$venv/bin/pip" install -q -e "$src"; fi; }
+undo() { echo "remote: $1; restoring $old" >&2; git checkout -q --detach "$old"; if deps; then reinstall || true; fi; exit 4; }
+put() { install -m "$1" "$2" "$3.fleet-update.$$" && mv -f "$3.fleet-update.$$" "$3"; }
+git fetch -q origin
+git checkout -q --detach "$sha"
+if deps; then echo "remote: dependency files changed; reinstalling"; reinstall || undo "editable install failed"; fi
+"$venv/bin/python" -c 'import mac' || undo "import mac failed"
+if [ -d deploy/bin ]; then
+  for f in mac-agent-service mac-agent-startup-self-test mac-task-executor; do put 0700 "deploy/bin/$f" "$bin/$f"; done
+  put 0600 deploy/bin/mac-task-executor.py "$bin/mac-task-executor.py"
+  put 0755 deploy/mac-crash-observer.py "$bin/mac-crash-observer"
+fi
+sudo -n systemctl restart mac-agent
+[ "$hermes" = 1 ] && systemctl --user restart hermes-gateway
+sleep 10
+systemctl is-active --quiet mac-agent || { echo "remote: mac-agent is not active" >&2; exit 5; }
+echo "remote: now at $(git rev-parse HEAD)"
+REMOTE
+)
+agent_json() { "$MAC_CLI" agent show "$1"; }
+agent_idle() { local j; j=$(agent_json "$1") || return 1; [ -z "$(jget current_task_id <<< "$j")" ]; }
+agent_reports_sha() {
+  local j; j=$(agent_json "$1") || return 1
+  [ "$(jget resources.source_state.commit_sha <<< "$j")" = "$SHA" ] && [ "$(jget resources.source_state.dirty <<< "$j")" = false ]
+}
+release_own_hold() {  # resume only a hold this run placed, and only if it is still ours
+  local j; j=$(agent_json "$1")
+  if [ "$(jget dispatch_hold <<< "$j")" = true ] && [ "$(jget dispatch_hold_reason <<< "$j")" = "$2" ]; then
+    log "$1: resuming dispatch (removing our hold '$2')"; "$MAC_CLI" agent resume "$1" > /dev/null
+  else
+    log "$1: hold is no longer ours ('$(jget dispatch_hold_reason <<< "$j")'); leaving it alone"
+  fi
+}
+update_worker() {
+  local name=$1 target agent cur j reason="fleet-update $SHA12" ours=0 rc=0
+  host_entry "$name"; target=$H_TARGET agent=$H_AGENT
+  # shellcheck disable=SC2016  # $HOME must expand on the remote host
+  cur=$(rssh "$target" 'git -C "$HOME/.mac/src/mac" rev-parse HEAD') || die "$name: cannot read deployed commit over ssh ($target)"
+  log "$name ($target, $agent): deployed ${cur:0:12}, target $SHA12"
+  check_migrations "$cur"
+  j=$(agent_json "$agent") || die "$name: 'mac agent show $agent' failed"
+  if [ "$(jget dispatch_hold <<< "$j")" = true ]; then
+    log "$name: already held ('$(jget dispatch_hold_reason <<< "$j")'); this run will not add or remove a hold"
+  fi
+  if [ "$DRY" = 1 ]; then
+    [ "$(jget dispatch_hold <<< "$j")" = true ] || plan "$name: mac agent hold $agent --reason '$reason'"
+    plan "$name: wait ${DRAIN_TIMEOUT}s for current task; ssh: checkout $SHA12, conditional install, deploy/bin -> ~/.mac/bin, restart mac-agent$([ "$HERMES" = 1 ] && echo ' + hermes-gateway')"
+    plan "$name: verify import, is-active, hub source_state == $SHA12 (clean)$([ "$(jget dispatch_hold <<< "$j")" = true ] || echo '; mac agent resume')"
+    return 0
+  fi
+  confirm "update $name to $SHA12"
+  if [ "$(jget dispatch_hold <<< "$j")" != true ]; then
+    log "$name: holding dispatch ('$reason')"; "$MAC_CLI" agent hold "$agent" --reason "$reason" > /dev/null; ours=1
+  fi
+  log "$name: waiting up to ${DRAIN_TIMEOUT}s for the current task to clear"
+  if ! wait_for "$DRAIN_TIMEOUT" agent_idle "$agent"; then
+    [ "$ours" = 1 ] && release_own_hold "$agent" "$reason"
+    die "$name: still running $(agent_json "$agent" | jget current_task_id); nothing changed on the host"
+  fi
+  log "$name: updating over ssh"
+  rssh "$target" bash -s -- "$SHA" "$HERMES" <<< "$REMOTE_UPDATE" || rc=$?
+  if [ "$rc" = 0 ]; then
+    log "$name: waiting up to ${HEALTH_TIMEOUT}s for the hub to see $SHA12 (clean)"
+    wait_for "$HEALTH_TIMEOUT" agent_reports_sha "$agent" || rc=6
+  fi
+  if [ "$rc" != 0 ]; then
+    log "$name: FAILED (code $rc). Rollout stopped; $agent is left held. Next steps:"
+    log "  inspect: ssh $target 'systemctl status mac-agent; journalctl -u mac-agent -n 200'"
+    log "  roll back: ssh $target 'git -C ~/.mac/src/mac checkout --detach ${cur:0:12} && sudo -n systemctl restart mac-agent'"
+    [ "$ours" = 1 ] && log "  when healthy: $MAC_CLI agent resume $agent"
+    exit 1
+  fi
+  log "$name: healthy on $SHA12"
+  if [ "$ours" = 1 ]; then release_own_hold "$agent" "$reason"; fi
+}
+
+# ---- main ---------------------------------------------------------------------
+log "log: $LOG$([ "$DRY" = 1 ] && echo ' (dry run: nothing will be changed)')"
+git -C "$SRC" fetch -q origin || die "git fetch origin failed in $SRC"
+SHA=$(git -C "$SRC" rev-parse --verify -q "$REQ^{commit}") || die "'$REQ' is not a known commit after fetching origin"
+[ -n "$(git -C "$SRC" branch -r --contains "$SHA" 2> /dev/null)" ] || die "$SHA is not on any origin branch"
+SHA12=${SHA:0:12}
+log "target: $SHA ($(git -C "$SRC" log -1 --format=%s "$SHA"))"
+case "$TARGET" in
+  hub | rocky) update_hub ;;
+  all) update_hub; for w in $(worker_names); do update_worker "$w"; done ;;
+  *) update_worker "$TARGET" ;;
+esac
+log "done"

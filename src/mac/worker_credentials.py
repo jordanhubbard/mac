@@ -747,6 +747,26 @@ class WorkerCredentialLifecycle:
             "superseded_by = NULL, updated_at = ? WHERE id = ?",
             ("active", destination, now, now, principal_id),
         )
+        record["state"] = "active"
+        record["destination"] = destination
+        record["activated_at"] = record.get("activated_at") or now
+        record["revoked_at"] = None
+        record["superseded_by"] = None
+        self._supersede_others_in_transaction(conn, record, now=now, actor=actor)
+        return _safe_record(record)
+
+    def _supersede_others_in_transaction(
+        self,
+        conn: Any,
+        record: Mapping[str, Any],
+        *,
+        now: str,
+        actor: str,
+        detail: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Record ``record`` as activated and supersede every other live version."""
+
+        agent_id, principal_id = record["agent_id"], record["id"]
         old_rows = conn.execute(
             "SELECT * FROM worker_credentials WHERE agent_id = ? AND id <> ? "
             "AND state IN ('pending_install', 'active')",
@@ -758,12 +778,7 @@ class WorkerCredentialLifecycle:
             "AND state IN ('pending_install', 'active')",
             ("superseded", now, principal_id, now, agent_id, principal_id),
         )
-        record["state"] = "active"
-        record["destination"] = destination
-        record["activated_at"] = record.get("activated_at") or now
-        record["revoked_at"] = None
-        record["superseded_by"] = None
-        self._event(conn, record, "worker_credential.activated", actor=actor)
+        self._event(conn, record, "worker_credential.activated", actor=actor, detail=detail)
         for old_row in old_rows:
             old = _record_from_row(old_row)
             old["state"] = "superseded"
@@ -774,6 +789,73 @@ class WorkerCredentialLifecycle:
                 actor=actor,
                 detail={"superseded_by": principal_id},
             )
+
+    def _locked_operator_pending(
+        self, conn: Any, agent_id: str, principal_id: str
+    ) -> Dict[str, Any]:
+        exact_agent = _validate_agent_id(agent_id)
+        locked = conn.execute(
+            "UPDATE agents SET updated_at = updated_at WHERE id = ? AND deleted_at IS NULL",
+            (exact_agent,),
+        )
+        if locked.rowcount != 1:
+            raise WorkerCredentialError("worker agent does not exist")
+        self._assert_release_epoch_reservation(conn, exact_agent)
+        credential_lock = conn.execute(
+            "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ? AND agent_id = ?",
+            (principal_id, exact_agent),
+        )
+        if credential_lock.rowcount != 1:
+            raise WorkerCredentialError("worker principal does not exist")
+        row = conn.execute(
+            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
+        ).fetchone()
+        record = _record_from_row(row)
+        if record.get("state") != "pending_install" or not _not_expired(record):
+            raise WorkerCredentialError("worker principal is no longer an unexpired pending issue")
+        return record
+
+    def activate_operator_issued(
+        self, agent_id: str, principal_id: str, *, actor: str = "operator"
+    ) -> Dict[str, Any]:
+        """Promote an operator-issued pending credential without a deploy receipt.
+
+        ``mac admin worker-token`` is the human-run path: the operator holds the
+        token and installs it, so there is no install receipt or heartbeat proof
+        to wait for.  Every other live version of the agent is superseded in the
+        same transaction, exactly as :meth:`activate` does.
+        """
+
+        with self.store.transaction() as conn:
+            record = self._locked_operator_pending(conn, agent_id, principal_id)
+            now = _timestamp()
+            conn.execute(
+                "UPDATE worker_credentials SET state = 'active', destination = ?, "
+                "activated_at = ?, revoked_at = NULL, superseded_by = NULL, updated_at = ? "
+                "WHERE id = ?",
+                ("vm_env", now, now, principal_id),
+            )
+            record.update(state="active", destination="vm_env", activated_at=now)
+            self._supersede_others_in_transaction(
+                conn, record, now=now, actor=actor, detail={"method": "operator_issue"}
+            )
+        return _safe_record(record)
+
+    def revoke_operator_issued(
+        self, agent_id: str, principal_id: str, *, actor: str = "operator"
+    ) -> Dict[str, Any]:
+        """Revoke one operator-issued pending credential whose install failed."""
+
+        with self.store.transaction() as conn:
+            record = self._locked_operator_pending(conn, agent_id, principal_id)
+            now = _timestamp()
+            conn.execute(
+                "UPDATE worker_credentials SET state = 'revoked', revoked_at = ?, updated_at = ? "
+                "WHERE id = ?",
+                (now, now, principal_id),
+            )
+            record.update(state="revoked", revoked_at=now)
+            self._event(conn, record, "worker_credential.revoked", actor=actor)
         return _safe_record(record)
 
     def issue(

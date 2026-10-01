@@ -259,6 +259,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("human", "people who own agents and file tasks"),
             ("user", "tenant-scoped user identities"),
             ("client", "API clients and their principals"),
+            ("worker-token", "long-lived worker bearer tokens: issue, rotate, list"),
         ),
     ),
     (

@@ -7219,6 +7219,10 @@ def build_parser() -> argparse.ArgumentParser:
     logout_parser.add_argument("--connect-timeout", type=int, default=10)
     _set(cmd_logout, logout_parser)
 
+    from mac.worker_token_cli import register as _register_worker_token
+
+    _register_worker_token(sub)
+
     client = sub.add_parser(
         "client", help="hub enrollment principals and secure local client profiles"
     ).add_subparsers(dest="client_command", required=True)

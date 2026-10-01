@@ -1,0 +1,449 @@
+#!/usr/bin/env bash
+set -euo pipefail
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+selftest_python="$HOME/.mac/venv/bin/python"
+exec "$selftest_python" - <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+def truthy(raw: str | None) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def falsey(raw: str | None) -> bool:
+    return str(raw or "").strip().lower() in {"0", "false", "no", "off"}
+
+
+def stable_agent_id(name: str) -> str:
+    import re
+
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.lower()).strip("_") or "default"
+    return f"agent_{safe}"
+
+
+def safe_error(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def is_transient_timeout(exc: BaseException) -> bool:
+    # A read/connect timeout during a shared-service probe is a transient hub
+    # blip, not a misconfiguration: socket timeouts surface as ``TimeoutError``
+    # (an ``OSError`` subclass) directly or wrapped inside ``URLError.reason``.
+    candidate: BaseException | None = exc
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException):
+        candidate = exc.reason
+    if isinstance(candidate, TimeoutError):
+        return True
+    text = str(candidate).lower()
+    return "timed out" in text or "timeout" in text
+
+
+def probe_http(
+    path_base: str,
+    suffix: str,
+    headers: dict[str, str] | None = None,
+    *,
+    attempts: int = 3,
+    backoff: float = 1.5,
+) -> tuple[bool, str, bool]:
+    # Returns (ok, error, timed_out). ``timed_out`` is True only when every
+    # bounded retry exhausted on a transient timeout, letting the caller class a
+    # persistent shared-service timeout as degraded rather than a hard block.
+    if not path_base:
+        return False, "endpoint is not configured", False
+    url = path_base.rstrip("/") + suffix
+    request = urllib.request.Request(url, headers=headers or {})
+    last_error = ""
+    last_timed_out = False
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                response.read(1_048_576)
+            return True, "", False
+        except (OSError, urllib.error.URLError) as exc:
+            last_error = safe_error(exc)
+            last_timed_out = is_transient_timeout(exc)
+            # Only retry transient timeouts; a refused connection or bad status
+            # is deterministic and retrying just delays the verdict.
+            if not last_timed_out or attempt >= max(1, attempts):
+                break
+            time.sleep(backoff * attempt)
+    return False, last_error, last_timed_out
+
+
+home = Path.home()
+mac_home = home / ".mac"
+report_path = Path(
+    os.environ.get("MAC_AGENT_STARTUP_SELF_TEST_REPORT")
+    or mac_home / "logs" / "mac-agent-startup-self-test.json"
+)
+report_path.parent.mkdir(parents=True, exist_ok=True)
+
+agent_name = os.environ.get("MAC_WORKER_AGENT_NAME") or os.environ.get("MAC_WORKER_HOSTNAME") or ""
+agent_id = os.environ.get("MAC_AGENT_ID") or os.environ.get("MAC_WORKER_AGENT_ID") or ""
+if not agent_id and agent_name:
+    agent_id = stable_agent_id(agent_name)
+hermes_instance = (
+    os.environ.get("MAC_WORKER_HERMES_INSTANCE_ID")
+    or os.environ.get("MAC_HERMES_INSTANCE_ID")
+    or ""
+)
+persona_id = os.environ.get("MAC_HERMES_PERSONA_ID") or ""
+tenant_id = os.environ.get("MAC_FLEET_TENANT_ID") or ""
+resources_path = Path(
+    os.environ.get("MAC_WORKER_RESOURCES_FILE")
+    or mac_home / "worker-resources.json"
+)
+qdrant_url = str(
+    os.environ.get("QDRANT_URL")
+    or os.environ.get("QDRANT_ADDRESS")
+    or os.environ.get("QDRANT_FLEET_URL")
+    or ""
+).rstrip("/")
+qdrant_key = os.environ.get("QDRANT_API_KEY") or os.environ.get("QDRANT_FLEET_KEY") or ""
+qdrant_required = True
+qdrant_required_flag = os.environ.get("MAC_REQUIRE_QDRANT_MEMORY")
+qdrant_disable_flag = os.environ.get("MAC_QDRANT_MEMORY") or os.environ.get("ACC_QDRANT_MEMORY")
+firecrawl_url = str(
+    os.environ.get("FIRECRAWL_API_URL")
+    or os.environ.get("FIRECRAWL_GATEWAY_URL")
+    or os.environ.get("MAC_WEB_SEARCH_URL")
+    or ""
+).rstrip("/")
+firecrawl_key = os.environ.get("FIRECRAWL_API_KEY") or ""
+firecrawl_required = True
+firecrawl_required_flag = os.environ.get("MAC_REQUIRE_FIRECRAWL")
+problems: list[str] = []
+checks: dict[str, object] = {
+    "identity_env": False,
+    "openshell_executor_config": False,
+    "report_repository_executor_attestation": False,
+    "qdrant_shared_memory": False,
+    "firecrawl_web_search": False,
+}
+
+openshell_create_args = str(os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
+openshell_enabled = truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
+if openshell_enabled and openshell_create_args:
+    try:
+        openshell_create_argv = shlex.split(openshell_create_args)
+    except ValueError as exc:
+        problems.append(f"MAC_OPENSHELL_CREATE_ARGS is invalid: {safe_error(exc)}")
+    else:
+        forbidden = sorted({arg for arg in openshell_create_argv if arg in {"--env", "--"}})
+        if forbidden:
+            problems.append(
+                "MAC_OPENSHELL_CREATE_ARGS contains forbidden executor arguments: "
+                + ", ".join(forbidden)
+            )
+openshell_bin = str(os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+if openshell_enabled and shutil.which(openshell_bin) is None:
+    problems.append(
+        f"OpenShell sandbox is enabled but MAC_OPENSHELL_BIN is not executable: {openshell_bin}"
+    )
+# The checks above only fire when the sandbox is ENABLED, so a worker with
+# MAC_OPENSHELL_SANDBOX=0 passed this vacuously -- reporting
+# openshell_executor_config: true while being unable to execute anything at
+# all. That is what happened to jordanh-worker6/7: a sandbox A/B experiment
+# set MAC_OPENSHELL_SANDBOX=0 and MAC_OPENSHELL_REQUIRED=0 without granting
+# MAC_ALLOW_UNSANDBOXED_YOLO, so every task routed to them died in the
+# executor while the self-test said the host was healthy.
+#
+# Mirror the executor's own refusal (executor_sandbox._unsandboxed_agent_argv):
+# with no sandbox, launching is permitted only by MAC_ALLOW_UNSANDBOXED_YOLO,
+# whose default is "0" when OpenShell is required and "1" when it is not. If
+# neither path is open the worker cannot run a task at all, and that is a
+# BLOCKING problem -- it must surface at registration, not at first dispatch.
+#
+# This is deliberately a property of the worker rather than of how it was
+# provisioned: an SSH-installed host, a container, and a future AWS or Azure
+# node all answer the same question the same way.
+if not openshell_enabled:
+    # Empty string falls back to the default, matching the executor's
+    # `env_str(...) or default_unsandboxed`.
+    yolo_raw = str(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO") or "").strip()
+    required_raw = os.environ.get("MAC_OPENSHELL_REQUIRED")
+    if yolo_raw:
+        can_run_unsandboxed = truthy(yolo_raw)
+        basis = f"MAC_ALLOW_UNSANDBOXED_YOLO={yolo_raw}"
+    elif required_raw is not None:
+        # Unset YOLO defaults to "0" exactly when OpenShell is required.
+        can_run_unsandboxed = not truthy(required_raw)
+        basis = (
+            "MAC_ALLOW_UNSANDBOXED_YOLO unset defaults to 0 because "
+            f"MAC_OPENSHELL_REQUIRED={required_raw}"
+        )
+    else:
+        # With neither set, the executor consults an identity allowlist this
+        # self-test cannot see. Do not guess -- a false blocking problem would
+        # stop a worker that can in fact run.
+        can_run_unsandboxed = True
+        basis = ""
+    if not can_run_unsandboxed:
+        problems.append(
+            "worker cannot execute: MAC_OPENSHELL_SANDBOX is disabled and "
+            f"unsandboxed execution is not permitted ({basis}). Enable the "
+            "sandbox, or explicitly set MAC_ALLOW_UNSANDBOXED_YOLO=1."
+        )
+checks["openshell_executor_config"] = not any(
+    problem.startswith(
+        (
+            "MAC_OPENSHELL_CREATE_ARGS",
+            "OpenShell sandbox is enabled",
+            "worker cannot execute",
+        )
+    )
+    for problem in problems
+)
+report_executor_attestation: dict[str, object] = {}
+# A loop worker's report-repository-executor attestation gap (probe exception or a
+# missing/mismatched hardened OpenShell attestation) is a soft, DEGRADED condition:
+# the attestation is healed at runtime by
+# mac.worker._resources_with_live_report_executor_attestation, so the self-test
+# must record the problem yet keep the service running.  These messages are tracked
+# here so they stay non-blocking, mirroring the transient-service degraded plumbing
+# below, while every genuine misconfiguration remains blocking.
+report_executor_attestation_problems: list[str] = []
+
+
+def add_report_executor_attestation_problem(message: str) -> None:
+    problems.append(message)
+    report_executor_attestation_problems.append(message)
+
+
+# Darwin host installs have no OpenShell runtime to attest, but still bind the
+# executor, Python, wrapper script, and source tree by digest.  Run the same
+# loop-worker probe there so the startup proof can be matched to the hub's
+# current worker claim and approved for read-only repository reports.
+if str(os.environ.get("MAC_WORKER_MODE") or "").strip() == "loop":
+    try:
+        from mac.worker import _read_only_report_executor_attestation
+
+        observed_report_attestation = _read_only_report_executor_attestation(
+            [str(mac_home / "bin" / "mac-task-executor")]
+        )
+    except Exception as exc:
+        observed_report_attestation = None
+        add_report_executor_attestation_problem(
+            "report repository executor attestation probe failed: "
+            + safe_error(exc)
+        )
+    if not isinstance(observed_report_attestation, dict):
+        add_report_executor_attestation_problem(
+            "report repository executor lacks the exact hardened OpenShell attestation"
+        )
+    else:
+        report_executor_attestation = observed_report_attestation
+        checks["report_repository_executor_attestation"] = True
+else:
+    checks["report_repository_executor_attestation"] = not openshell_enabled
+
+for key, value in {
+    "MAC_WORKER_AGENT_NAME": agent_name,
+    "MAC_AGENT_ID": agent_id,
+    "MAC_HERMES_INSTANCE_ID": hermes_instance,
+    "MAC_HERMES_PERSONA_ID": persona_id,
+    "MAC_FLEET_TENANT_ID": tenant_id,
+}.items():
+    if not value:
+        problems.append(f"missing required identity env {key}")
+checks["identity_env"] = not any(problem.startswith("missing required identity env") for problem in problems)
+
+# Worker health covers task execution and shared services. Chat gateways
+# own their readiness checks; retired gateway artifacts cannot degrade a worker.
+transient_problems: list[str] = []
+
+if not truthy(qdrant_required_flag):
+    problems.append("MAC_REQUIRE_QDRANT_MEMORY must be true")
+if falsey(qdrant_disable_flag):
+    problems.append("Qdrant shared memory is mandatory and cannot be disabled")
+qdrant_headers = {"Accept": "application/json"}
+if qdrant_key:
+    qdrant_headers["api-key"] = qdrant_key
+if qdrant_required and not qdrant_url:
+    problems.append("QDRANT_URL is required but not configured")
+elif qdrant_url:
+    ok, error, timed_out = probe_http(qdrant_url, "/collections", qdrant_headers)
+    if not ok:
+        message = f"Qdrant shared memory endpoint is unreachable: {error}"
+        problems.append(message)
+        if timed_out:
+            transient_problems.append(message)
+    checks["qdrant_shared_memory"] = ok
+
+if not truthy(firecrawl_required_flag):
+    problems.append("MAC_REQUIRE_FIRECRAWL must be true")
+firecrawl_headers = {"Accept": "application/json"}
+if firecrawl_key and firecrawl_key.lower() != "none":
+    firecrawl_headers["Authorization"] = f"Bearer {firecrawl_key}"
+if firecrawl_required and not firecrawl_url:
+    problems.append("FIRECRAWL_API_URL is required but not configured")
+elif firecrawl_url:
+    ok, error, timed_out = probe_http(firecrawl_url, "/health", firecrawl_headers)
+    if not ok:
+        message = f"Firecrawl web search endpoint is unreachable: {error}"
+        problems.append(message)
+        if timed_out:
+            transient_problems.append(message)
+    checks["firecrawl_web_search"] = ok
+
+non_blocking_problems: list[str] = []
+# A shared-service (or hub) probe that only ever timed out is a transient hub
+# blip after bounded retries, so it degrades the node instead of blocking start.
+for problem in transient_problems:
+    if problem not in non_blocking_problems:
+        non_blocking_problems.append(problem)
+# A loop worker's report-repository-executor attestation gap is healed at runtime by
+# mac.worker._resources_with_live_report_executor_attestation, so it degrades the
+# node instead of blocking startup.
+for problem in report_executor_attestation_problems:
+    if problem not in non_blocking_problems:
+        non_blocking_problems.append(problem)
+blocking_problems = [problem for problem in problems if problem not in non_blocking_problems]
+status = "passed"
+if blocking_problems:
+    status = "failed"
+elif problems:
+    status = "degraded"
+
+report = {
+    "schema": "mac.agent_startup_self_test.v1",
+    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "status": status,
+    "agent_name": agent_name,
+    "agent_id": agent_id,
+    "hermes_instance_id": hermes_instance,
+    "persona_id": persona_id,
+    "tenant_id": tenant_id,
+    "checks": checks,
+    "report_repository_executor_attestation": report_executor_attestation,
+    "mandatory_services": {
+        "qdrant_shared_memory": {
+            "required": qdrant_required,
+            "required_flag": "MAC_REQUIRE_QDRANT_MEMORY",
+            "required_flag_true": truthy(qdrant_required_flag),
+            "disabled_by_env": falsey(qdrant_disable_flag),
+            "url_configured": bool(qdrant_url),
+        },
+        "firecrawl_web_search": {
+            "required": firecrawl_required,
+            "required_flag": "MAC_REQUIRE_FIRECRAWL",
+            "required_flag_true": truthy(firecrawl_required_flag),
+            "url_configured": bool(firecrawl_url),
+        },
+    },
+    "problems": problems,
+    "blocking_problems": blocking_problems,
+    "non_blocking_problems": non_blocking_problems,
+    "transient_problems": transient_problems,
+}
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+# Registration follows this self-test in mac-agent-service. Persist the report
+# into the exact resources document that registration consumes so a brand-new
+# agent cannot lose a degraded verdict to the expected pre-registration 404.
+# Other registration resources are preserved.
+resources_path.parent.mkdir(parents=True, exist_ok=True)
+try:
+    registration_resources = (
+        json.loads(resources_path.read_text(encoding="utf-8"))
+        if resources_path.exists()
+        else {}
+    )
+    if not isinstance(registration_resources, dict):
+        raise ValueError("worker resources document is not an object")
+    registration_resources["startup_self_test"] = report
+    fd, raw = tempfile.mkstemp(prefix=resources_path.name + ".", dir=str(resources_path.parent))
+    tmp = Path(raw)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(registration_resources, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        tmp.chmod(0o600)
+        os.replace(tmp, resources_path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+except Exception as exc:
+    print(
+        f"agent startup self-test: cannot persist registration health: {safe_error(exc)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+# Resolve the hub bearer fleet-aware, mirroring mac.fleet_env (mac-g55y): a node
+# migrated to fleet-scoped credentials keeps the correct token in
+# MAC_WORKER_TOKEN__<FLEET> while the legacy flat MAC_WORKER_TOKEN is stale or
+# absent. Prefer the scoped form across the whole chain before any flat form so
+# a stale flat token cannot shadow the correct scoped one and 403 the heartbeat.
+# Un-migrated nodes still fall back to the flat token for one deprecation cycle.
+def _resolve_hub_token() -> str:
+    import re as _re
+
+    fleet = (
+        os.environ.get("MAC_FLEET")
+        or os.environ.get("MAC_FLEET_NAME")
+        or ""
+    ).strip()
+    chain = ("MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN")
+    if fleet:
+        suffix = _re.sub(r"[^A-Za-z0-9]+", "_", fleet).strip("_").upper()
+        if suffix:
+            for base in chain:
+                scoped = os.environ.get("%s__%s" % (base, suffix))
+                if scoped is not None:
+                    return scoped
+    for base in chain:
+        flat = os.environ.get(base)
+        if flat is not None:
+            return flat
+    return ""
+
+
+token = _resolve_hub_token()
+if hub_url and token and agent_id:
+    payload = {"resources": {"startup_self_test": report}}
+    if blocking_problems:
+        payload.update({"status": "offline", "health_status": "degraded"})
+    req = urllib.request.Request(
+        f"{hub_url}/agents/{agent_id}/heartbeat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10).read()
+    except (OSError, urllib.error.URLError) as exc:
+        # HTTPError (e.g. HTTP 400) is a URLError subclass, so a rejected heartbeat
+        # is logged but never propagates or changes the self-test exit code: only
+        # blocking_problems decide whether the worker starts.
+        print(f"agent startup self-test: failed to report heartbeat: {safe_error(exc)}", file=sys.stderr)
+
+if problems:
+    print(f"agent startup self-test: {status}; report={report_path}", file=sys.stderr)
+    for problem in problems:
+        print(f"agent startup self-test: {problem}", file=sys.stderr)
+    sys.exit(1 if blocking_problems else 0)
+
+print(f"agent startup self-test: passed; report={report_path}")
+PY
