@@ -17,7 +17,14 @@ def _repo():
 
 def test_deferred_code_test_cannot_authorize_push():
     problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), worker._hub_verify_deferred_test_item("test-project"), hub_verify=True
+        {},
+        _repo(),
+        {
+            "name": "repository contract test",
+            "command": "test-project",
+            "returncode": None,
+            "status": "deferred",
+        },
     )
     assert any("passing test" in p for p in problems)
 
@@ -36,15 +43,13 @@ def _verified(returncode=0):
 
 @pytest.mark.parametrize("returncode,blocked", [(0, False), (1, True)])
 def test_actual_test_result_controls_prepush(returncode, blocked):
-    problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), _verified(returncode), hub_verify=True
-    )
+    problems = worker._repository_finalizer_prepush_problems({}, _repo(), _verified(returncode))
     assert bool(problems) is blocked
 
 
 def test_stale_head_result_cannot_authorize_push():
     problems = worker._repository_finalizer_prepush_problems(
-        {}, _repo(), {"returncode": 0, "executed_head_sha": "b" * 40}, hub_verify=True
+        {}, _repo(), {"returncode": 0, "executed_head_sha": "b" * 40}
     )
     assert any("commit being pushed" in p for p in problems)
 
@@ -260,7 +265,6 @@ def test_worker_ignores_workspace_receipt_and_uses_current_contract(
         committed_repo,
         "current-test",
         task_dir=task_dir,
-        hub_verify=True,
         task={
             "metadata": {
                 "execution_contract": {

@@ -78,8 +78,7 @@ database variable is reintroduced.
 | `MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | no | Fallback cleanup grace for legacy lifecycle records, bounded from `0` through `365`. Default `7`. |
 | `MAC_REPOSITORY_REF_RECONCILER_REMOTE` / `MAC_REPOSITORY_REF_RECONCILER_BASE_REF` | no | Git remote name (default `origin`) and optional explicit `<remote>/<branch>` ancestry target. Without a base override, the remote HEAD is auto-detected. |
 | `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` | no | How long a newest authentication/authorization failure excludes a reviewer for the matching project, repository host, and operation. Default `1800`. |
-| `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning receives reviewer-selection preference. Default `86400`. |
-| `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | no | Maximum durable delivered verdict nudges for one review before it is retracted. Default `10`. |
+| `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | no | How long a successful repository-access learning stays current and supersedes an older failure. Default `86400`. |
 | `MAC_SUPERVISOR_KIND` | no | Runtime supervisor selected by fleet deploy: `systemd`, `launchd`, or `supervisord`. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | no | Hermes-visible memory topology JSON. Default `~/.hermes/mac-memory-topology.json`. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | no | Agent that owns hub-managed shared services. Defaults to the configured fleet hub. |
@@ -594,25 +593,20 @@ Use `--heartbeat-only` during deploy validation when you want fleet visibility
 without claiming migrated ACC work. Start the `--loop` form only after the
 executor command is the intended production worker. Successful executions write
 log evidence, move tasks to `needs_review`, and ask the control plane to run
-the default review workflow. The default workflow prefers a healthy reviewer
-that has never owned the task. If no independent reviewer is currently
-eligible, it may assign the least-conflicted healthy review-capable agent and
-records `reviewer_independence=fallback` plus the reason in task history and
-observability. A newly available independent reviewer supersedes a pending
-fallback review. Set task metadata `review.require_independent_reviewer: true`
-(or `review.allow_independence_fallback: false`) for work that must wait instead.
-Every path still requires a separate signed `review_verdict`; agent-generated
-work still requires a reviewer LLM different from the executor LLM. The
-workflow publishes/completes the task only when executor evidence and reviewer
-verdict are verifiable.
+the default review workflow. The worker's pre-push verifier run, on a fresh
+clone of the exact pushed commit, is the review verdict: once the executor
+evidence validates (for repository changes that includes a real verifier pass),
+the virtual hub-reviewer signs a separate `review_verdict` over it and the
+workflow publishes/completes the task. No reviewer agent is selected and no
+tests are re-run on the hub. A reviewer assigned explicitly through the review
+API must be independent of the executor; its signed verdict is honoured.
 Failed executions fail the task with evidence attached.
 
 For high-risk work, set `metadata.review.risk_level` to `high` or `critical`.
 Approval then fails closed unless the signed executor and verdict manifests
 identify different model families and different upstream providers; merely
 using two versions of Claude, GPT, or another single lineage is insufficient.
-Unknown lineage/provider metadata also blocks approval, and reviewer
-independence fallback is disabled. The same constraints can be enabled
+Unknown lineage/provider metadata also blocks approval. The same constraints can be enabled
 individually with `review.require_different_model_family: true` and
 `review.require_different_model_provider: true`.
 
@@ -845,9 +839,9 @@ repository host, operation, agent, credential source name, outcome, failure
 class, bounded redacted error signature, recommendation, and task/review IDs.
 It never stores a credential value or authenticated URL.
 
-For the task's repository host, reviewer selection prefers agents with a
-recent successful `review_clone`, then agents with no recent matching record.
-An agent whose newest matching record is an authentication or authorization
+For the task's repository host, a reviewer assigned through the review API is
+checked against these records (the default review workflow approves from worker
+evidence and selects no reviewer agent). An agent whose newest matching record is an authentication or authorization
 failure is ineligible during the configured cooldown. A newer success restores
 eligibility immediately; cooldown expiry returns the agent to unknown status.
 This lookup reads the authoritative PostgreSQL ledger directly, so routing changes immediately and does not

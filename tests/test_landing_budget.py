@@ -23,10 +23,8 @@ from mac.models import (
 from tests.test_control_plane import (  # noqa: F401 - pytest fixtures
     _drive_task_to_approved,
     _expire_landing_backoff,
-    _setup_deferred_hubverify_task,
     cp,
     register_agent,
-    semantic_reviewer_on,
     verified_repo_metadata,
 )
 
@@ -69,7 +67,7 @@ def _transient():
     return ValidationError("git publication fetch_source failed: connection reset by peer")
 
 
-def test_in_flight_head_sha_failure_blocks_on_first_tick(cp, semantic_reviewer_on, monkeypatch):
+def test_in_flight_head_sha_failure_blocks_on_first_tick(cp, monkeypatch):
     """The live shape: an approved REVIEWING task whose publication raises the
     repo.head_sha ValidationError. The first sweep after deploy must move it to
     BLOCKED with that reason -- not retry it another 7,000 times."""
@@ -95,7 +93,7 @@ def test_in_flight_head_sha_failure_blocks_on_first_tick(cp, semantic_reviewer_o
     assert calls == [1]
 
 
-def test_transient_failure_backs_off_and_charges_an_attempt(cp, semantic_reviewer_on, monkeypatch):
+def test_transient_failure_backs_off_and_charges_an_attempt(cp, monkeypatch):
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
     calls = []
     monkeypatch.setattr(cp, "publish_task", _raiser(calls, _transient))
@@ -124,7 +122,7 @@ def test_transient_failure_backs_off_and_charges_an_attempt(cp, semantic_reviewe
     assert calls == [1, 1]
 
 
-def test_attempt_cap_blocks_with_the_last_error(cp, semantic_reviewer_on, monkeypatch):
+def test_attempt_cap_blocks_with_the_last_error(cp, monkeypatch):
     monkeypatch.setenv("MAC_LANDING_MAX_ATTEMPTS", "3")
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
     calls = []
@@ -146,7 +144,7 @@ def test_attempt_cap_blocks_with_the_last_error(cp, semantic_reviewer_on, monkey
     assert len(calls) == 3
 
 
-def test_deadline_blocks_even_a_pure_wait(cp, semantic_reviewer_on, monkeypatch):
+def test_deadline_blocks_even_a_pure_wait(cp, monkeypatch):
     """The release barrier never charges an attempt, but it does not get to
     hold a task past the deadline either."""
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
@@ -173,7 +171,7 @@ def test_deadline_blocks_even_a_pure_wait(cp, semantic_reviewer_on, monkeypatch)
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
-def test_checks_pending_charges_the_deadline_not_attempts(cp, semantic_reviewer_on, monkeypatch):
+def test_checks_pending_charges_the_deadline_not_attempts(cp, monkeypatch):
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
 
     def _pending():
@@ -198,43 +196,13 @@ def test_checks_pending_charges_the_deadline_not_attempts(cp, semantic_reviewer_
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 
-def test_hub_verify_unavailable_wait_is_bounded(cp, monkeypatch):
-    """A verifier harness that never comes back used to leave the task in
-    waiting_for_hub_verify forever. Each unavailable run now charges an
-    attempt, and the cap moves the task to BLOCKED."""
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    monkeypatch.setenv("MAC_LANDING_MAX_ATTEMPTS", "2")
-    runs = []
-
-    def unavailable(remote, branch, head, command):
-        runs.append(head)
-        return 1, "error: connection refused"
-
-    _worker, _reviewer, task, _evidence = _setup_deferred_hubverify_task(cp, unavailable)
-
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_hub_verify"
-    landing = _landing(cp, task.id)
-    assert landing["attempts"] == 1
-    assert landing["last_reason"] == "hub_verify_unavailable"
-    assert cp.advance_default_review_workflow(task.id)["status"] == "landing_backoff"
-    assert len(runs) == 1
-
-    _expire_landing_backoff(cp, task.id)
-    second = cp.advance_default_review_workflow(task.id)
-
-    assert second["status"] == "landing_budget_exhausted"
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
-    detail = _blocked_detail(cp, task.id)
-    assert detail["exhausted_by"] == "attempts"
-    assert detail["last_reason"] == "hub_verify_unavailable"
-    assert len(runs) == 2
-
-
-def test_waiting_for_reviewer_is_bounded_by_the_deadline(cp, semantic_reviewer_on):
+def test_waiting_for_hub_reviewer_is_bounded_by_the_deadline(cp, monkeypatch):
+    """No approval identity (registration failing) is a pure wait: it charges
+    the landing deadline, not attempts, and ends in BLOCKED."""
+    monkeypatch.setattr(cp, "_ensure_hub_reviewer_agent", lambda **_kwargs: None)
     worker = register_agent(cp, "worker", ["python"])
     task = cp.create_task(
-        "No reviewer exists",
+        "No hub-reviewer exists",
         required_capabilities=["python"],
         metadata={"publication_target": "test://publish"},
     )
@@ -250,16 +218,16 @@ def test_waiting_for_reviewer_is_bounded_by_the_deadline(cp, semantic_reviewer_o
     )
     cp.submit_for_review(task.id, worker.id)
 
-    assert cp.advance_default_review_workflow(task.id)["status"] == "waiting_for_reviewer"
+    assert cp.advance_default_review_workflow(task.id)["status"] == "waiting_for_hub_reviewer"
     first_seen = _landing(cp, task.id)["first_attempt_at"]
-    assert cp.advance_default_review_workflow(task.id)["status"] == "waiting_for_reviewer"
+    assert cp.advance_default_review_workflow(task.id)["status"] == "waiting_for_hub_reviewer"
     # A pure wait does not rewrite metadata on every tick.
     assert _landing(cp, task.id)["first_attempt_at"] == first_seen
 
     _age_landing(cp, task.id, services.DEFAULT_LANDING_DEADLINE_SECONDS + 1)
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "landing_budget_exhausted"
-    assert result["waiting_on"] == "waiting_for_reviewer"
+    assert result["waiting_on"] == "waiting_for_hub_reviewer"
     assert cp.get_task(task.id).state == TaskState.BLOCKED.value
 
 

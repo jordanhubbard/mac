@@ -532,11 +532,11 @@ def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
     assert values["MAC_FLEET_TENANT_ID"] == "tenant_test-fleet"
     assert "if agent == shared_services_manager:" in script
     assert "cp.create_fleet(" in script
-    assert "DEFAULT_HUB_REVIEWER_AGENT_NAME" in script
-    assert "cp.register_machine(" in script
-    assert "cp.register_agent(" in script
-    assert "HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA" in script
-    assert "registered_configured_agent_ids.append(reviewer.id)" in script
+    # The hub-reviewer is registered lazily by the review workflow itself;
+    # the deploy no longer creates it.
+    assert "DEFAULT_HUB_REVIEWER_AGENT_NAME" not in script
+    assert "HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA" not in script
+    assert "registered_configured_agent_ids.append(configured_agent_id)" in script
     # Idempotent get-or-create: the id is derived once via stable_id (which
     # lowercases the name) and the fleet is looked up by both name and that id,
     # so a re-deploy under different name case reconciles instead of colliding.
@@ -1416,16 +1416,13 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
         extra_env=_ROUTER_ENV,
     )
     assert hub.get("MAC_EVIDENCE_BLOB_DIR", "").endswith("evidence-blobs")
-    # Option C: hub-side review verification is enabled on the hub only.
-    assert hub.get("MAC_REVIEW_HUB_VERIFY") == "1"
-    assert hub.get("MAC_HUB_REVIEWER_AUTO_REGISTER") == "1"
-    assert hub.get("MAC_HUB_REVIEWER_AGENT_NAME") == "hub-reviewer"
-    assert hub.get("MAC_HUB_REVIEWER_AGENT_ID") == "agent_hub-reviewer"
-    assert hub.get("MAC_HUB_REVIEWER_MACHINE_ID") == "machine_operator_review"
+    # Hub-verify and the semantic reviewer were removed; the hub writes neither.
+    assert "MAC_REVIEW_HUB_VERIFY" not in hub
+    assert "MAC_HUB_REVIEWER_AUTO_REGISTER" not in hub
+    assert "MAC_REVIEW_SEMANTIC_REVIEWER" not in hub
     # The judgement process was removed; the hub no longer enables it.
     assert "MAC_JUDGEMENT_ENABLED" not in hub
     assert "MAC_BACKLOG_GROOM_ENABLED" not in hub
-    assert hub.get("MAC_REVIEW_SEMANTIC_REVIEWER") == "0"
     spoke = _run_env_writer(
         tmp_path,
         agent="natasha",
@@ -3673,45 +3670,25 @@ def test_required_github_credentials_fail_before_worker_drain():
     )
 
 
-def test_hub_env_includes_all_option_c_env_vars(tmp_path):
-    """Option C end-to-end: the hub env must carry all four vars needed for the
-    hub-side review-verification path (MAC_REVIEW_HUB_VERIFY=1 tells the worker
-    to defer the contract test; the other three wire up the auto-registered
-    hub-reviewer agent that runs the test in the hub's own OpenShell sandbox).
-    Spokes must NOT receive any of these vars — they do not run the hub reviewer
-    and must not pretend to."""
-    hub = build_mac_env(
-        {},
-        deploy_env_config(tmp_path, agent="rocky", hub_agent="rocky"),
-        environ={},
-    )
-    # All four required Option C env vars must be present on the hub.
-    assert hub.get("MAC_REVIEW_HUB_VERIFY") == "1", (
-        "MAC_REVIEW_HUB_VERIFY must be '1' on hub nodes (Option C deferred path)"
-    )
-    assert hub.get("MAC_HUB_REVIEWER_AUTO_REGISTER") == "1", (
-        "MAC_HUB_REVIEWER_AUTO_REGISTER must be '1' on hub (auto-registers hub-reviewer agent)"
-    )
-    assert hub.get("MAC_HUB_REVIEWER_AGENT_NAME") == "hub-reviewer", (
-        "MAC_HUB_REVIEWER_AGENT_NAME must be 'hub-reviewer' (stable reviewer agent name)"
-    )
-    assert hub.get("MAC_HUB_REVIEWER_AGENT_ID") == "agent_hub-reviewer", (
-        "MAC_HUB_REVIEWER_AGENT_ID must be 'agent_hub-reviewer' (stable reviewer agent id)"
-    )
-
-    spoke = build_mac_env(
-        {},
-        deploy_env_config(tmp_path, agent="natasha", hub_agent="rocky"),
-        environ={},
-    )
-    # Option C vars must NOT be set on spoke nodes.
-    for var in (
-        "MAC_REVIEW_HUB_VERIFY",
-        "MAC_HUB_REVIEWER_AUTO_REGISTER",
-        "MAC_HUB_REVIEWER_AGENT_NAME",
-        "MAC_HUB_REVIEWER_AGENT_ID",
-    ):
-        assert var not in spoke, "%s must not be set on spoke nodes (Option C is hub-only)" % var
+def test_no_node_env_carries_the_retired_hub_verify_switches(tmp_path):
+    """Hub-verify and reviewer selection are gone. The validated worker
+    evidence is the review verdict, so neither hub nor spoke gets the old
+    Option C switches or the deploy-time hub-reviewer identity overrides."""
+    for agent in ("rocky", "natasha"):
+        env = build_mac_env(
+            {},
+            deploy_env_config(tmp_path, agent=agent, hub_agent="rocky"),
+            environ={},
+        )
+        for var in (
+            "MAC_REVIEW_HUB_VERIFY",
+            "MAC_HUB_REVIEWER_AUTO_REGISTER",
+            "MAC_HUB_REVIEWER_AGENT_NAME",
+            "MAC_HUB_REVIEWER_AGENT_ID",
+            "MAC_HUB_REVIEWER_MACHINE_ID",
+            "MAC_REVIEW_SEMANTIC_REVIEWER",
+        ):
+            assert var not in env, "%s is retired but still set on %s" % (var, agent)
 
 
 def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():

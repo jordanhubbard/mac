@@ -53,7 +53,7 @@ forwarding is disabled.
 
 ## Execution and evidence
 
-The controller stages the exact repository commit using the existing hub source
+The verifier stages the exact repository commit using the existing source
 preparation path and streams its archive to the host. Publication gates route by
 the canonical repository URL while staging the local projected merge and checking
 its exact commit and expected merged tree. Each request gets a fresh
@@ -70,7 +70,7 @@ and tree checks run before the unchanged bootstrap and test commands.
 The SSH exit status supplies the test verdict. The response binds the nonce,
 commit, tree, archive, base image, firmware, and commands. The controller checks
 these fields before accepting the result and includes the runtime identity in
-review evidence. Logs and request/result receipts remain under the host's
+the verification evidence. Logs and request/result receipts remain under the host's
 `workspace/receipts`; temporary disks and management keys are removed after the
 owned VM process stops. Operators must manage retained receipt disk usage.
 
@@ -79,7 +79,7 @@ owned VM process stops. Operators must manage retained receipt disk usage.
 Qualify clean-pass and deliberate-failure controls, source/digest rejection,
 network isolation, cleanup, and the full repository suite first. Deploy the
 reviewed controller and host source, enable routing for one repository, and
-complete one normal hub review before submitting its backlog. Keep fleet
+complete one normal verified task before submitting its backlog. Keep fleet
 dispatch paused when required by the project.
 
 Rollback removes `MAC_HUB_VERIFY_VM_CONFIG` and restarts only the controller

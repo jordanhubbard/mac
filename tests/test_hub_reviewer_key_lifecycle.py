@@ -35,7 +35,7 @@ def _register_virtual_reviewer(cp):
             "hub_review_verifier": {
                 "schema": HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA,
                 "enabled": True,
-                "mode": "hub_verify",
+                "mode": "worker_evidence",
             },
         },
         agent_id=DEFAULT_HUB_REVIEWER_AGENT_ID,

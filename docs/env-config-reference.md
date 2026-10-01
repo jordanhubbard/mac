@@ -507,10 +507,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_MAX_CONCURRENT_TASKS` | str | consumer-defined | hub | Hub setting: hub max concurrent tasks. |
 | `MAC_HUB_MAX_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub max test jobs. |
 | `MAC_HUB_MIN_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub min test jobs. |
-| `MAC_HUB_REVIEWER_AGENT_ID` | str | consumer-defined | hub | Hub setting: hub reviewer agent id. |
-| `MAC_HUB_REVIEWER_AGENT_NAME` | str | consumer-defined | hub | Hub setting: hub reviewer agent name. |
-| `MAC_HUB_REVIEWER_AUTO_REGISTER` | bool | consumer-defined | hub | Hub setting: hub reviewer auto register. |
-| `MAC_HUB_REVIEWER_MACHINE_ID` | str | consumer-defined | hub | Hub setting: hub reviewer machine id. |
 | `MAC_HUB_SELF_UPGRADE_ENABLED` | bool | consumer-defined | hub | Hub setting: hub self upgrade enabled. |
 | `MAC_HUB_TEST_JOBS_FRACTION` | str | consumer-defined | hub | Hub setting: hub test jobs fraction. |
 | `MAC_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick interval seconds. |
@@ -520,12 +516,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_UPGRADE_REQUIRED_CHECKS` | bool | consumer-defined | hub | Hub setting: hub upgrade required checks. |
 | `MAC_HUB_URL` | str | consumer-defined | hub | Hub setting: hub url. |
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
-| `MAC_HUB_VERIFY_PG_DATADIR` | str | consumer-defined | hub | Data directory for the dedicated hub-verify Postgres started by `scripts/start-test-postgres.sh`. Defaults to a temp `mac-hubverify-pgdata` directory, never the live hub cluster. |
-| `MAC_HUB_VERIFY_PG_HOST` | str | consumer-defined | hub | Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.openshell.internal` (OpenShell's host-bridge alias). Does not select the live hub Postgres. |
-| `MAC_HUB_VERIFY_PG_PORT` | int | consumer-defined | hub | Port passed to `scripts/start-test-postgres.sh` when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432. |
-| `MAC_HUB_VERIFY_PG_URL` | str | consumer-defined | hub | Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way. |
 | `MAC_HUB_VERIFY_PROFILE` | str | default | hub | Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected. |
-| `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
 | `MAC_HUB_VERIFY_VM_CONFIG` | str | consumer-defined | hub | Private controller configuration for explicitly allowlisted repositories verified in disposable dedicated KVM guests; other repositories retain OpenShell verification. |
 | `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |
@@ -899,18 +890,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_RETENTION_TICK_ENABLED` | bool | consumer-defined | core | Core setting: retention tick enabled. |
 | `MAC_REVIEWED_PYTHON_VERSION` | str | consumer-defined | core | Core setting: reviewed python version. |
 | `MAC_REVIEWED_UV_VERSION` | str | consumer-defined | core | Core setting: reviewed uv version. |
-| `MAC_REVIEW_HUB_VERIFY` | str | consumer-defined | review | Review setting: review hub verify. |
 | `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
-| `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | int | consumer-defined | review | Review setting: review nudge max attempts. |
-| `MAC_REVIEW_RETRACTION_CAP` | str | consumer-defined | review | Review setting: review retraction cap. |
-| `MAC_REVIEW_SEMANTIC_REVIEWER` | str | consumer-defined | review | Review setting: review semantic reviewer. |
 | `MAC_REVIEW_TARGET_EVIDENCE_ID` | str | consumer-defined | review | Review setting: review target evidence id. |
 | `MAC_REVIEW_TICK_HUB_AGENT` | str | consumer-defined | review | Review setting: review tick hub agent. |
 | `MAC_REVIEW_TICK_INTERVAL_SECONDS` | int | consumer-defined | review | Review setting: review tick interval seconds. |
 | `MAC_REVIEW_TICK_LIMIT` | int | consumer-defined | review | Review setting: review tick limit. |
 | `MAC_REVIEW_TICK_LOOP_ENABLED` | bool | consumer-defined | review | Review setting: review tick loop enabled. |
 | `MAC_REVIEW_TICK_ON_HEARTBEAT` | str | consumer-defined | review | Review setting: review tick on heartbeat. |
-| `MAC_REVIEW_VERDICT_WAIT_CAP` | str | consumer-defined | review | Review setting: review verdict wait cap. |
 | `MAC_REVIEW_WORKSPACE_ROOT` | str | consumer-defined | review | Review setting: review workspace root. |
 | `MAC_ROLLBACK_ACTIVE_GATEWAY` | str | consumer-defined | core | Core setting: rollback active gateway. |
 | `MAC_ROLLBACK_AGENT` | str | consumer-defined | core | Core setting: rollback agent. |
@@ -1085,7 +1071,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_SELECT_BASE` | str | consumer-defined | core | Core setting: test select base. |
 | `MAC_TEST_SERIAL_SLICE` | str | consumer-defined | core | Core setting: test serial slice. |
 | `MAC_TEST_STALL_TIMEOUT` | int | consumer-defined | core | Core setting: test stall timeout. |
-| `MAC_TICK_BLOCKING_HUB_VERIFY` | str | consumer-defined | core | Core setting: tick blocking hub verify. |
 | `MAC_TICK_RUNS_REVIEW_SWEEP` | str | consumer-defined | core | Core setting: tick runs review sweep. |
 | `MAC_TOKEN` | str | consumer-defined | core | Core setting: token. |
 | `MAC_TOKENHUB_ALLOW_DEGRADED` | bool | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub allow degraded. |

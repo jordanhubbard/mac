@@ -1398,7 +1398,6 @@
       "src/mac/pg_backup_scheduler.py",
       "src/mac/router_service.py",
       "src/mac/schema_migrations.py",
-      "src/mac/services.py",
       "src/mac/store.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
@@ -1422,7 +1421,6 @@
       "src/mac/mac_paths.py",
       "src/mac/router_service.py",
       "src/mac/schema_migrations.py",
-      "src/mac/services.py",
       "src/mac/store.py",
       "src/mac/worker.py",
       "src/mac/worker_credentials.py"
@@ -6037,58 +6035,6 @@
   },
   {
     "default": null,
-    "description": "Hub setting: hub reviewer agent id.",
-    "family": "hub",
-    "name": "MAC_HUB_REVIEWER_AGENT_ID",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hub setting: hub reviewer agent name.",
-    "family": "hub",
-    "name": "MAC_HUB_REVIEWER_AGENT_NAME",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hub setting: hub reviewer auto register.",
-    "family": "hub",
-    "name": "MAC_HUB_REVIEWER_AUTO_REGISTER",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Hub setting: hub reviewer machine id.",
-    "family": "hub",
-    "name": "MAC_HUB_REVIEWER_MACHINE_ID",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hub setting: hub self upgrade enabled.",
     "family": "hub",
     "name": "MAC_HUB_SELF_UPGRADE_ENABLED",
@@ -6213,50 +6159,6 @@
     "type": "str"
   },
   {
-    "default": null,
-    "description": "Data directory for the dedicated hub-verify Postgres started by `scripts/start-test-postgres.sh`. Defaults to a temp `mac-hubverify-pgdata` directory, never the live hub cluster.",
-    "family": "hub",
-    "name": "MAC_HUB_VERIFY_PG_DATADIR",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the hub-verify test DSN. Default `host.openshell.internal` (OpenShell's host-bridge alias). Does not select the live hub Postgres.",
-    "family": "hub",
-    "name": "MAC_HUB_VERIFY_PG_HOST",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Port passed to `scripts/start-test-postgres.sh` when hub-verify provisions a dedicated test DSN. Default 55432 so the helper does not attach to the live hub listener on 5432.",
-    "family": "hub",
-    "name": "MAC_HUB_VERIFY_PG_PORT",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Dedicated test Postgres DSN injected into the hub-verify OpenShell sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host and port, not merely the same database name). Loopback hosts are rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / `MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a dedicated port (default 55432) and rewrites that DSN the same way.",
-    "family": "hub",
-    "name": "MAC_HUB_VERIFY_PG_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
     "default": "default",
     "description": "Shared hub and Linux OpenShell worker verifier resource profile. Unset, empty or `default` preserves driver defaults. `bounded-tmpfs` requests 12 CPUs, 32 GiB memory, an 8 GiB sandbox-local Docker tmpfs for PostgreSQL and 8 MAC pytest workers. Repository fixture scratch uses a separate sandbox-local directory so fixture copies cannot fill the database mount. Requires a writable Linux tmpfs proof before repository code runs; unsupported profiles fail closed. Configure on each hub/worker process. Applies at sandbox create and fresh worker verification exec, including separate read-only verifiers; existing sandbox resources remain unchanged. Conflicting worker create resource overrides are rejected.",
     "family": "hub",
@@ -6264,17 +6166,6 @@
     "retired": false,
     "sources": [
       "src/mac/openshell_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Hub setting: hub verify runner.",
-    "family": "hub",
-    "name": "MAC_HUB_VERIFY_RUNNER",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -6296,7 +6187,6 @@
     "name": "MAC_HUB_VERIFY_VM_CONFIG",
     "retired": false,
     "sources": [
-      "src/mac/services.py",
       "src/mac/vm_verifier.py"
     ],
     "type": "str"
@@ -8542,8 +8432,7 @@
     "name": "MAC_OPENSHELL_HOST_ALIAS",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py",
-      "src/mac/services.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -10664,20 +10553,6 @@
   },
   {
     "default": null,
-    "description": "Review setting: review hub verify.",
-    "family": "review",
-    "name": "MAC_REVIEW_HUB_VERIFY",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/services.py",
-      "src/mac/worker.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Review setting: review id.",
     "family": "review",
     "name": "MAC_REVIEW_ID",
@@ -10685,40 +10560,6 @@
     "sources": [
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review nudge max attempts.",
-    "family": "review",
-    "name": "MAC_REVIEW_NUDGE_MAX_ATTEMPTS",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review retraction cap.",
-    "family": "review",
-    "name": "MAC_REVIEW_RETRACTION_CAP",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review semantic reviewer.",
-    "family": "review",
-    "name": "MAC_REVIEW_SEMANTIC_REVIEWER",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -10790,17 +10631,6 @@
     "description": "Review setting: review tick on heartbeat.",
     "family": "review",
     "name": "MAC_REVIEW_TICK_ON_HEARTBEAT",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Review setting: review verdict wait cap.",
-    "family": "review",
-    "name": "MAC_REVIEW_VERDICT_WAIT_CAP",
     "retired": false,
     "sources": [
       "src/mac/services.py"
@@ -12732,8 +12562,7 @@
     "name": "MAC_TEST_PG_CONTAINER",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh",
-      "src/mac/services.py"
+      "scripts/start-test-postgres.sh"
     ],
     "type": "str"
   },
@@ -12746,8 +12575,7 @@
     "sources": [
       "scripts/run-contract-tests.sh",
       "scripts/start-test-postgres.sh",
-      "src/mac/openshell_runtime.py",
-      "src/mac/services.py"
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -12758,8 +12586,7 @@
     "name": "MAC_TEST_PG_DB",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh",
-      "src/mac/services.py"
+      "scripts/start-test-postgres.sh"
     ],
     "type": "str"
   },
@@ -12815,8 +12642,7 @@
     "name": "MAC_TEST_PG_PORT",
     "retired": false,
     "sources": [
-      "scripts/start-test-postgres.sh",
-      "src/mac/services.py"
+      "scripts/start-test-postgres.sh"
     ],
     "type": "int"
   },
@@ -12905,17 +12731,6 @@
       "src/mac/executor_prompt.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: tick blocking hub verify.",
-    "family": "core",
-    "name": "MAC_TICK_BLOCKING_HUB_VERIFY",
-    "retired": false,
-    "sources": [
-      "src/mac/services.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,

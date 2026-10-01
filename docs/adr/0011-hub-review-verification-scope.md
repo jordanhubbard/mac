@@ -4,6 +4,10 @@
 - Date: 2026-07-05
 - Amended: **2026-07-06** by `docs/testing-strategy.md`
 - Amended: **2026-07-25** to make current-main publication the central full gate
+- Superseded (Option C): **2026-10-01**. Hub-side review verification was
+  deleted. The worker's pre-push verifier run on the exact pushed commit is the
+  review verdict, and the hub-reviewer approves from that validated evidence
+  without re-running tests. Option A and the publication gate below still hold.
 - Decision owner: MAC fleet owner
 
 ## Context

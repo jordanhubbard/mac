@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
-import types
 
 import pytest
 
@@ -20,7 +19,6 @@ def test_timeout_keeps_redacted_partial_output_and_cleans_up(
     monkeypatch, caplog, as_bytes, cleanup_fails
 ):
     calls = []
-    observations = []
     stdout = (
         "verification started\nAuthorization: Bearer private-auth-value\n"
         "MAC_API_TOKEN=private-env-value\n"
@@ -62,32 +60,15 @@ def test_timeout_keeps_redacted_partial_output_and_cleans_up(
     )
     monkeypatch.delenv("MAC_OPENSHELL_GC", raising=False)
     monkeypatch.delenv("MAC_HUB_VERIFY_PROFILE", raising=False)
-    charges = []
-    plane = types.SimpleNamespace(
-        _hub_review_test_command=lambda task, info: "run-tests",
-        _record_default_review_observation=lambda *args: observations.append(args),
-        _consume_landing_budget=lambda *args, **kwargs: charges.append((args, kwargs)),
-    )
-    plane._hub_verify_run_contract_test = types.MethodType(
-        services.ControlPlane._hub_verify_run_contract_test, plane
-    )
-    result = services.ControlPlane._run_hub_review_verification_locked(
-        plane,
-        types.SimpleNamespace(id="task", metadata={}),
-        types.SimpleNamespace(id="review"),
-        types.SimpleNamespace(id="executor-evidence"),
-        "operator",
-        {"remote_url": "https://example.invalid/repo.git", "branch": "branch", "head_sha": HEAD},
-        "unused-signing-key",
-    )
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        services.run_repository_contract_test_in_openshell(
+            "https://example.invalid/repo.git", "branch", HEAD, "run-tests"
+        )
 
-    # No signing/evidence-writing methods exist on this plane: the exception
-    # must return before approval or rejection can be manufactured.
-    assert result is None
-    assert len(observations) == 1
-    assert observations[0][1] == "workflow.default_review.hub_verify_error"
-    detail = observations[0][3]
-    assert detail["review_id"] == "review"
+    # The test timeout, not a cleanup failure, is what reaches the caller,
+    # and its retained detail is bounded and redacted.
+    assert raised.value is failure
+    detail = services._hub_verify_exception_detail(raised.value)
     assert detail["error_type"] == "TimeoutExpired"
     assert detail["timeout_seconds"] == 123
     assert "verification started" in detail["output_excerpt"]
@@ -96,9 +77,6 @@ def test_timeout_keeps_redacted_partial_output_and_cleans_up(
     assert len(detail["output_excerpt"]) < 5000
     assert "private-" not in str(detail) + caplog.text
     assert "<redacted>" in detail["output_excerpt"]
-    # The crash charges the landing budget, with the redacted detail only.
-    assert [args[1] for args, _kwargs in charges] == ["hub_verify_error"]
-    assert "private-" not in str(charges)
     assert len([a for a in calls if "delete" in a]) == 2
     clone = next(a for a in calls if "clone" in a)
     assert not Path(clone[-1]).parent.exists()

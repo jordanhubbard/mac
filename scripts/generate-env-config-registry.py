@@ -147,30 +147,6 @@ CURATED_DESCRIPTIONS = {
         "including separate read-only verifiers; existing sandbox resources remain unchanged. "
         "Conflicting worker create resource overrides are rejected."
     ),
-    "MAC_HUB_VERIFY_PG_URL": (
-        "Dedicated test Postgres DSN injected into the hub-verify OpenShell "
-        "sandbox as `MAC_TEST_PG_URL`. Never the live hub Postgres (same host "
-        "and port, not merely the same database name). Loopback hosts are "
-        "rewritten to `host.openshell.internal` (or `MAC_HUB_VERIFY_PG_HOST` / "
-        "`MAC_OPENSHELL_HOST_ALIAS`) so the sandbox can reach Postgres on the "
-        "hub. If unset, hub-verify runs `scripts/start-test-postgres.sh` on a "
-        "dedicated port (default 55432) and rewrites that DSN the same way."
-    ),
-    "MAC_HUB_VERIFY_PG_HOST": (
-        "Hostname substituted for `127.0.0.1`/`localhost`/`::1` in the "
-        "hub-verify test DSN. Default `host.openshell.internal` (OpenShell's "
-        "host-bridge alias). Does not select the live hub Postgres."
-    ),
-    "MAC_HUB_VERIFY_PG_PORT": (
-        "Port passed to `scripts/start-test-postgres.sh` when hub-verify "
-        "provisions a dedicated test DSN. Default 55432 so the helper does not "
-        "attach to the live hub listener on 5432."
-    ),
-    "MAC_HUB_VERIFY_PG_DATADIR": (
-        "Data directory for the dedicated hub-verify Postgres started by "
-        "`scripts/start-test-postgres.sh`. Defaults to a temp "
-        "`mac-hubverify-pgdata` directory, never the live hub cluster."
-    ),
     "MAC_DEPLOY_GATEWAY_PROBE_FATAL": (
         "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, "
         "and therefore the whole deploy cohort; unset or `0` records the failure, "

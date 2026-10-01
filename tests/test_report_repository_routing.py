@@ -263,15 +263,12 @@ def test_report_claim_requires_marker_and_break_glass_cannot_bypass():
     assert claimed.owner_agent_id == openshell.id
 
 
-def test_pending_k8s_review_is_retracted_and_nudged_to_attested_peer(
-    monkeypatch,
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
+def test_pending_k8s_review_is_superseded_by_the_worker_evidence_verdict():
+    from mac.services import DEFAULT_HUB_REVIEWER_AGENT_ID
+
     cp = ControlPlane.in_memory()
     executor = _agent(cp, "executor", ["ops", "review"], attested=True)
     k8s_reviewer = _agent(cp, "k8s-reviewer", ["review"], attested=False)
-    openshell_reviewer = _agent(cp, "openshell-reviewer", ["review"], attested=True)
     task = _report_task(cp)
     cp.claim_task(task.id, executor.id)
     cp.start_task(task.id, executor.id)
@@ -308,23 +305,20 @@ def test_pending_k8s_review_is_retracted_and_nudged_to_attested_peer(
 
     result = cp.advance_default_review_workflow(task.id)
 
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["reviewer_agent_id"] == openshell_reviewer.id
-    assert result["executor_evidence_id"] == evidence.id
-    assert result["nudge_id"]
     reviews = {review.id: review for review in cp.list_reviews(task.id)}
     assert reviews[legacy_review_id].status == ReviewStatus.RETRACTED.value
-    assert "reviewer_report_repository_executor_missing" in (reviews[legacy_review_id].reason or "")
-    assert any(
-        review.status == ReviewStatus.PENDING.value
-        and review.reviewer_agent_id == openshell_reviewer.id
-        for review in reviews.values()
+    assert reviews[legacy_review_id].reason == "superseded_by_worker_evidence"
+    approved = [
+        review for review in reviews.values() if review.status == ReviewStatus.APPROVED.value
+    ]
+    assert [review.reviewer_agent_id for review in approved] == [DEFAULT_HUB_REVIEWER_AGENT_ID], (
+        result
     )
+    verdict = cp.get_evidence(approved[0].evidence_id)
+    assert verdict.metadata["verification"]["reviewed_evidence_id"] == evidence.id
 
 
 def test_review_claim_revalidates_report_marker_atomically(monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
     cp = ControlPlane.in_memory()
     executor = _agent(cp, "claim-executor", ["ops", "review"], attested=True)
     reviewer = _agent(cp, "claim-reviewer", ["review"], attested=True)
@@ -343,8 +337,7 @@ def test_review_claim_revalidates_report_marker_atomically(monkeypatch):
         },
     )
     cp.submit_for_review(task.id, executor.id)
-    advanced = cp.advance_default_review_workflow(task.id)
-    assert advanced["reviewer_agent_id"] == reviewer.id
+    cp.request_review(task.id, reviewer.id)
     pending = next(
         item for item in cp.list_reviews(task.id) if item.status == ReviewStatus.PENDING.value
     )

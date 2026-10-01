@@ -36,7 +36,7 @@ def _invoke(monkeypatch, *, output="passed", returncode=0):
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
     monkeypatch.delenv("MAC_OPENSHELL_GC", raising=False)
-    result = services.ControlPlane._hub_verify_run_contract_test(
+    result = services.ControlPlane._run_contract_gate(
         types.SimpleNamespace(),
         "https://example.invalid/repo.git",
         "branch",
@@ -110,7 +110,7 @@ def test_unknown_profile_stops_before_cloning_or_creating(monkeypatch, profile):
     (rc, output), calls = _invoke(monkeypatch)
     assert rc != 0
     assert UNAVAILABLE in output
-    assert services.hub_verification_unavailable_reason(output) == UNAVAILABLE
+    assert UNAVAILABLE in output
     assert calls == []
 
 
@@ -122,7 +122,7 @@ def test_backend_without_profile_proof_cannot_produce_a_pass(monkeypatch, return
     )
     assert rc != 0
     assert "backend does not support requested mount" in output
-    assert services.hub_verification_unavailable_reason(output) == UNAVAILABLE
+    assert UNAVAILABLE in output
     assert calls[-1][1:3] == ["sandbox", "delete"]
 
 

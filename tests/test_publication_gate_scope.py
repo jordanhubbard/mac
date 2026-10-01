@@ -16,8 +16,7 @@ create ... -- <cmd>` works on that host. A day went into the wrong suspect.
 
 The projected tree differs from the tree review already gated only by however
 far main moved, so the changed-file selection is the honest question to ask of
-it -- and it is the same question the review verifier asks, through the same
-helper.
+it, through the same scoping helper the worker's pre-push verifier relies on.
 """
 
 from __future__ import annotations
@@ -27,14 +26,13 @@ import inspect
 from mac import services
 
 
-def test_publication_scopes_its_gate_the_way_review_does():
+def test_publication_scopes_its_gate_to_the_change():
     """Hardcoding the full command is what made the cap unmeetable."""
     source = inspect.getsource(services.ControlPlane._publish_git_target_attempt)
 
-    assert "_hub_review_test_command" in source, (
-        "the projected-merge gate must scope its command like the review "
-        "verifier; running the whole suite cannot finish inside "
-        "MAC_HUB_VERIFY_TIMEOUT"
+    assert "_contract_gate_test_command" in source, (
+        "the projected-merge gate must scope its command to the change; "
+        "running the whole suite cannot finish inside MAC_HUB_VERIFY_TIMEOUT"
     )
 
 
@@ -87,10 +85,10 @@ def test_a_short_failure_is_not_mangled():
 
 
 def test_the_publication_gate_also_runs_bootstrap_before_its_test_command():
-    """The projected-merge gate reuses _hub_verify_run_contract_test, which
+    """The projected-merge gate reuses _run_contract_gate, which
     needs bootstrap.command run before test.command in a fresh sandbox (see
     test_hub_verify_evidence_window.py). Confirmed live: mac-fleet-canary's
-    review approved via hub_verify (which got the bootstrap fix), then
+    review approved after a gate that got the bootstrap fix, then
     publication immediately failed with the identical
     "full repository contract test failed" -- because this second call site
     curried the runner without threading bootstrap_command through, so the
@@ -99,7 +97,7 @@ def test_the_publication_gate_also_runs_bootstrap_before_its_test_command():
 
     assert "_repository_contract_bootstrap_command_for_task" in source, (
         "the projected-merge gate's runner must supply bootstrap_command to "
-        "_hub_verify_run_contract_test, or every repository whose "
+        "_run_contract_gate, or every repository whose "
         "test.command assumes a pre-built toolchain fails publication even "
         "after review approves it"
     )

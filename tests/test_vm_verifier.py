@@ -279,7 +279,7 @@ def test_service_stages_exact_source_without_openshell(
 
     monkeypatch.setattr(controller, "run_staged_vm_verification", verify)
     run = (
-        object.__new__(services.ControlPlane)._hub_verify_run_contract_test
+        object.__new__(services.ControlPlane)._run_contract_gate
         if through_control_plane
         else services.run_repository_contract_test_in_openshell
     )

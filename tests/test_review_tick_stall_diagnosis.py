@@ -12,7 +12,7 @@ Companion document: docs/review-tick-stall-diagnosis.md.
 The merge-gate regression runs against Postgres. Other assertions use source introspection of the
 real functions (`inspect.getsource`) or exercises a DB-free helper
 (`ReconciliationCoordinator` against a fake store, `resolve_hub_agent`,
-`_hub_review_verify_enabled`, the cursor codec via a stub).
+the cursor codec via a stub).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from mac import api, services
 from mac.env_config import resolve_hub_agent
 from mac.models import parse_time, utcnow
 from mac.reconciliation import ReconciliationCoordinator
-from mac.services import ControlPlane, _hub_review_verify_enabled
+from mac.services import ControlPlane
 
 
 # --------------------------------------------------------------------------- #
@@ -104,17 +104,6 @@ def test_nudge_noop_branch_returns_without_recording():
     assert "record_log" not in src and "_record_default_review_observation" not in src
 
 
-def test_nonblocking_sweep_branch_only_nudges():
-    """C1: when hub verify is not allowed to block, the workflow takes the
-    else-branch and only nudges -- it never verifies. Combined with the test
-    above, an unrunning consumer means that task cannot advance from a
-    non-blocking sweep."""
-    src = inspect.getsource(ControlPlane.advance_default_review_workflow)
-    assert "if allow_blocking_hub_verify:" in src
-    assert "self._run_hub_review_verification(task, review, evidence, actor)" in src
-    assert "self._nudge_review_workflow(task.id)" in src
-
-
 def test_event_consumer_is_gated_by_the_tick_interval():
     """C1: the event-driven consumer is only started from the hub tick loop,
     which is gated by MAC_HUB_TICK_INTERVAL_SECONDS. Any process with the tick
@@ -131,50 +120,18 @@ def test_enable_event_driven_review_advance_populates_the_queue():
 
 
 # --------------------------------------------------------------------------- #
-# C2 -- uncapped waiting_for_hub_verify traps a pushed change forever          #
+# C2 -- retired: the review no longer waits on a hub-side test run             #
 # --------------------------------------------------------------------------- #
 
 
-def test_waiting_for_hub_verify_is_bounded_by_the_landing_budget():
-    """C2 (fixed): every ``waiting_for_hub_verify`` return first charges the
-    task's single landing budget, and an unavailable/crashed verifier charges an
-    attempt, so the wait ends in BLOCKED instead of re-parking forever. The
-    behaviour is exercised in tests/test_landing_budget.py."""
+def test_review_never_waits_on_a_second_test_run():
+    """C2 (removed): hub-verify re-ran the worker's tests and parked the task
+    in waiting_for_hub_verify while it did. The validated worker evidence is
+    now the verdict, so there is no such wait left to bound."""
     src = inspect.getsource(ControlPlane.advance_default_review_workflow)
-    assert '"status": "waiting_for_hub_verify"' in src
-    assert src.count('"waiting_for_hub_verify",\n') >= 2
-    assert "self._consume_landing_budget(" in src
-    verifier = inspect.getsource(ControlPlane._run_hub_review_verification_locked)
-    assert '"hub_verify_unavailable",' in verifier
-    assert '"hub_verify_error",' in verifier
-
-
-def test_hub_verifiable_evidence_holds_the_merge_gate(monkeypatch):
-    """A pushed change with pending tests cannot publish without a verifier result."""
-    from tests.test_control_plane import _setup_deferred_hubverify_task
-
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "0")
-    cp = ControlPlane.in_memory()
-
-    def unavailable(*args):
-        raise TimeoutError("verifier unavailable")
-
-    _executor, _reviewer, task, _evidence = _setup_deferred_hubverify_task(cp, unavailable)
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "waiting_for_hub_verify"
-    assert cp.get_task(task.id).state != "completed"
-    assert not any(e.metadata.get("hub_verified") for e in cp.list_evidence(task.id))
-
-
-def test_inflight_guard_is_unbounded_per_review():
-    """C2 mechanism: the in-flight guard parks a review id and short-circuits
-    every subsequent verify with ``return None`` while a verify is 'in
-    progress'. Nothing ages the id out, so a verify that never completes keeps
-    returning None -> no verdict -> waiting_for_hub_verify forever."""
-    src = inspect.getsource(ControlPlane._run_hub_review_verification)
-    assert "if review.id in inflight:" in src
-    assert "return None" in src
+    assert "waiting_for_hub_verify" not in src
+    assert "_review_from_worker_evidence" in src
+    assert not hasattr(ControlPlane, "_run_hub_review_verification")
 
 
 # --------------------------------------------------------------------------- #
@@ -271,10 +228,9 @@ def test_heartbeat_review_tick_is_off_by_default():
 
 def test_publication_worker_default_depends_on_tick_interval():
     """Context for R2/C1: the sweep worker (the actual driver) defaults ON only
-    when the hub tick interval is set, and always blocks-to-verify."""
+    when the hub tick interval is set."""
     src = inspect.getsource(api._start_publication_worker)
     assert '"30" if tick_interval > 0 else "0"' in src
-    assert "allow_blocking_hub_verify=True" in src
 
 
 # --------------------------------------------------------------------------- #
@@ -431,16 +387,3 @@ def test_abandon_preserves_the_durable_cursor():
     starve tasks (supports R1 too)."""
     src = inspect.getsource(ReconciliationCoordinator.abandon)
     assert "cursor=claim.cursor" in src
-
-
-# --------------------------------------------------------------------------- #
-# Option-C enablement flag -- context that both C1 and C2 depend on            #
-# --------------------------------------------------------------------------- #
-
-
-def test_hub_review_verify_flag_parsing():
-    assert _hub_review_verify_enabled({"MAC_REVIEW_HUB_VERIFY": "1"}) is True
-    assert _hub_review_verify_enabled({"MAC_REVIEW_HUB_VERIFY": "true"}) is True
-    assert _hub_review_verify_enabled({"MAC_REVIEW_HUB_VERIFY": "on"}) is True
-    assert _hub_review_verify_enabled({"MAC_REVIEW_HUB_VERIFY": "0"}) is False
-    assert _hub_review_verify_enabled({}) is False

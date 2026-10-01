@@ -374,7 +374,6 @@ class ReviewService:
         record_history: Callable[..., None],
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
         reviewer_eligibility_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
-        reviewer_fallback_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
         completion_proof_check: Optional[Callable[[Task], None]] = None,
         drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
     ) -> None:
@@ -393,7 +392,6 @@ class ReviewService:
         # the reviewer themselves — not just any evidence row.
         self._find_verdict_evidence = find_verdict_evidence
         self._reviewer_eligibility_check = reviewer_eligibility_check
-        self._reviewer_fallback_check = reviewer_fallback_check
         self._completion_proof_check = completion_proof_check
         self._drain_task_transition_outbox = drain_task_transition_outbox
         # Compatibility alias for integrations that temporarily disabled the
@@ -408,7 +406,7 @@ class ReviewService:
     ) -> Review:
         task = self._get_task(task_id)
         reviewer = self._get_agent(reviewer_agent_id)
-        fallback_reason = self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
+        self._ensure_reviewer_eligible(task, reviewer, reviewer_agent_id)
         if task.state not in {
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
@@ -430,13 +428,6 @@ class ReviewService:
                 if self._transition_task_in_transaction is None:
                     raise TransitionError("transactional task transition is unavailable")
                 transition_detail = {"reviewer_agent_id": reviewer_agent_id}
-                if fallback_reason:
-                    transition_detail.update(
-                        {
-                            "reviewer_independence": "fallback",
-                            "reviewer_independence_reason": fallback_reason,
-                        }
-                    )
                 self._transition_task_in_transaction(
                     conn,
                     task_id,
@@ -469,10 +460,7 @@ class ReviewService:
                 history_detail = {
                     "review_id": review_id,
                     "reviewer_agent_id": reviewer_agent_id,
-                    "reviewer_independence": ("fallback" if fallback_reason else "independent"),
                 }
-                if fallback_reason:
-                    history_detail["reviewer_independence_reason"] = fallback_reason
                 self._record_history(
                     task_id,
                     "task.review_requested",
@@ -495,11 +483,7 @@ class ReviewService:
             "dispatcher",
             reviewer_agent_id,
             MessageType.REVIEW_REQUEST.value,
-            {
-                "task_id": task_id,
-                "review_id": review_id,
-                "reviewer_independence": ("fallback" if fallback_reason else "independent"),
-            },
+            {"task_id": task_id, "review_id": review_id},
             task_id=task_id,
         )
         return self.get_review(review_id)
@@ -509,29 +493,23 @@ class ReviewService:
         task: Task,
         reviewer: Agent,
         reviewer_agent_id: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         reviewer_id = str(getattr(reviewer, "id", None) or reviewer_agent_id or "").strip()
         if not reviewer_id:
             raise AuthorizationError("reviewer agent identity is required")
         if "review" not in set(reviewer.capabilities):
             raise AuthorizationError("reviewer agent requires the review capability")
-        fallback_reason = (
-            self._reviewer_fallback_check(task, reviewer)
-            if self._reviewer_fallback_check is not None
-            else None
-        )
-        if self.agent_has_owned_task(task.id, reviewer_id) and not fallback_reason:
+        if self.agent_has_owned_task(task.id, reviewer_id):
             raise AuthorizationError(
                 "reviewer cannot review a task it currently or previously owned"
             )
-        if self.latest_executor_evidence_author(task.id) == reviewer_id and not fallback_reason:
+        if self.latest_executor_evidence_author(task.id) == reviewer_id:
             raise AuthorizationError("reviewer cannot review its own latest evidence")
         eligibility_check = self._reviewer_independence_check
         if eligibility_check is not None:
             problem = eligibility_check(task, reviewer)
             if problem:
                 raise AuthorizationError("reviewer eligibility check failed: %s" % problem)
-        return fallback_reason
 
     def submit_review(
         self,
@@ -667,45 +645,26 @@ class ReviewService:
         task_for_feedback = reviewed_task if rejected_feedback is not None else None
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
-        refund_attempt = False
         semantic_retry_update: Optional[Dict[str, Any]] = None
         if status_value in {
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,
         }:
-            # A rejection caused by the review HARNESS is not evidence about the
-            # work, so it must not consume the work's retry budget.
-            #
-            # Observed on task_4ce995cb (2026-08-13): a worker submitted a
-            # correct one-line regression test three times; all three reviews
-            # rejected with "hub contract verification failed" carrying 588
-            # collection errors and, on attempt 2, the sandbox UnicodeEncodeError
-            # that PR #352 fixed eleven hours later. attempt_count reached 3/3,
-            # the task went terminal, and the post-mortem classifier labelled it
-            # "scope" -- whose operator remediation is "decompose", advice that
-            # was actively wrong for a one-line change. An equivalent task filed
-            # afterwards succeeded unchanged (PR #353).
-            #
-            # classify_review_failure already separates these correctly; it was
-            # simply never consulted here. evidence_type is deliberately NOT
+            # A rejection that names the review HARNESS rather than the work
+            # says nothing about the change, so re-executing the task cannot
+            # fix it. It parks for an operator instead of reopening: reopening
+            # re-ran the whole task for a fault the task never had (275 times
+            # in the hub-verify era). evidence_type is deliberately NOT
             # passed: "review_verdict" short-circuits to semantic_rejection
-            # before the free-text rules run, which is precisely the reasoning
-            # that treated a blown-up harness as a judgement about the work.
+            # before the free-text rules run.
             classification = classify_review_failure(
                 reason or "",
                 error=str((rejected_feedback or {}).get("feedback") or "") or None,
             )
-            refund_attempt = bool(classification.is_infrastructure)
-            metadata = ensure_json_object(reviewed_task.metadata)
-            infrastructure_failures = int(metadata.get("review_infrastructure_failure_count") or 0)
-            if refund_attempt:
-                infrastructure_failures += 1
-            effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
-            exhausted = effective_attempts >= reviewed_task.max_attempts
-            infrastructure_exhausted = refund_attempt and infrastructure_failures >= 3
+            exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
             transition_target = (
                 TaskState.BLOCKED.value
-                if exhausted or infrastructure_exhausted
+                if exhausted or classification.is_infrastructure
                 else TaskState.OPEN.value
             )
             transition_detail = {
@@ -714,7 +673,6 @@ class ReviewService:
                 "reason": "review rejected after max attempts" if exhausted else "review rejected",
                 "review_failure_class": classification.failure_class,
                 "review_failure_is_infrastructure": classification.is_infrastructure,
-                "review_infrastructure_failure_count": infrastructure_failures,
             }
             acceptance = ensure_json_object(decision_manifest.get("acceptance"))
             acceptance_rejection = (
@@ -792,7 +750,6 @@ class ReviewService:
                     }
                 )
                 if failure_class == FAILURE_SEMANTIC_WORK:
-                    refund_attempt = False
                     exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
                     if exhausted:
                         transition_target = TaskState.NEEDS_REVIEW.value
@@ -845,7 +802,6 @@ class ReviewService:
                     # Verifier absence/version drift and malformed contracts are
                     # operator defects.  Park immediately without burning more
                     # model attempts or publishing the rejected candidate.
-                    refund_attempt = False
                     transition_target = TaskState.NEEDS_REVIEW.value
                     semantic_retry_update.pop("not_before", None)
                     semantic_retry_update["status"] = "operator_repair_required"
@@ -858,20 +814,13 @@ class ReviewService:
                         "verdict_evidence_id": evidence_id,
                         "manual_review_required": True,
                     }
-            if refund_attempt:
-                # Name the refund in the transition detail so the ledger shows
-                # why this rejection did not cost the task an attempt.
-                transition_detail["attempt_refunded"] = True
-                transition_detail["reason"] = (
-                    "review harness failed (%s); attempt refunded" % classification.failure_class
-                )
             if exhausted:
                 transition_detail["manual_repair_required"] = True
-            if infrastructure_exhausted:
+            if classification.is_infrastructure and transition_target == TaskState.BLOCKED.value:
                 transition_detail["manual_repair_required"] = True
                 transition_detail["reason"] = (
-                    "review harness failed %d consecutive times; operator repair required"
-                    % infrastructure_failures
+                    "review harness failed (%s); operator repair required"
+                    % classification.failure_class
                 )
         with self.store.transaction() as conn:
             locked_task = conn.execute(
@@ -922,8 +871,6 @@ class ReviewService:
                         rejected_feedback,
                         history,
                     )
-                if refund_attempt:
-                    metadata["review_infrastructure_failure_count"] = infrastructure_failures
                 if semantic_retry_update is not None:
                     metadata["semantic_retry"] = semantic_retry_update
                     selected_route = semantic_retry_update.get("selected_route")
@@ -932,23 +879,6 @@ class ReviewService:
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),
-                )
-            if refund_attempt:
-                # attempt_count increments at CLAIM time, so a harness failure
-                # has already spent one before any judgement about the work
-                # exists. Give it back, clamped at zero, in the same
-                # transaction as the review row and the transition.
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET attempt_count = CASE
-                            WHEN attempt_count > 0 THEN attempt_count - 1
-                            ELSE 0
-                        END,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (now, review.task_id),
                 )
             self._record_history(
                 review.task_id,
@@ -960,14 +890,6 @@ class ReviewService:
                     "review_id": review_id,
                     "status": status_value,
                     "reason": reason,
-                    **(
-                        {
-                            "attempt_refunded": True,
-                            "review_failure_class": classification.failure_class,
-                        }
-                        if refund_attempt
-                        else {}
-                    ),
                 },
                 conn=conn,
             )

@@ -46,7 +46,7 @@ from mac.models import (
     read_only_report_repository_executor_attestation,
     utcnow,
 )
-from mac.services import ControlPlane
+from mac.services import DEFAULT_HUB_REVIEWER_AGENT_ID, ControlPlane
 from mac.store import StoreError
 from mac.test_support import ephemeral_dsn, ephemeral_store, store_on
 from mac.models import ensure_json_object
@@ -62,16 +62,6 @@ def cp(tmp_path, monkeypatch):
     # used to write an executable stand-in for it on every one of this file's
     # tests, which read to an auditor as evidence that beads was still live.
     return ControlPlane.in_memory()
-
-
-@pytest.fixture
-def semantic_reviewer_on(monkeypatch):
-    """Opt the emergency LLM reviewer back in.
-
-    Default review is hub-verify only. Tests that still cover reviewer
-    selection, nudge, and agent-authored verdicts must say so.
-    """
-    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
 
 
 def register_agent(cp, name="agent", capabilities=None, resources=None):
@@ -634,11 +624,10 @@ def test_identical_review_reclaim_cannot_cross_new_dispatch_hold(cp):
     assert held.current_task_id == task.id
 
 
-def test_default_review_workflow_assigns_reviewer_and_publishes(cp, semantic_reviewer_on):
-    from tests.conftest import submit_review_verdict
+def test_default_review_workflow_approves_from_worker_evidence_and_publishes(cp):
+    """Validated worker evidence is the verdict: one tick approves and publishes."""
 
     worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
         "Implement thing",
         required_capabilities=["python"],
@@ -656,12 +645,6 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp, semantic_rev
     )
 
     cp.submit_for_review(task.id, worker.id)
-    # First tick: reviewer is assigned, workflow waits for verdict.
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    # Reviewer produces its signed verdict (mac-jqb).
-    verdict_evidence_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
-    # Second tick: verdict is consumed, task publishes.
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "published"
@@ -669,20 +652,23 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp, semantic_rev
     assert completed.state == TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
     assert len(reviews) == 1
-    assert reviews[0].reviewer_agent_id == reviewer.id
-    assert reviews[0].evidence_id == verdict_evidence_id  # review row links to the verdict
+    assert reviews[0].reviewer_agent_id == DEFAULT_HUB_REVIEWER_AGENT_ID
     assert reviews[0].status == ReviewStatus.APPROVED.value
+    verdict = cp.get_evidence(reviews[0].evidence_id)
+    manifest = verdict.metadata["verification"]
+    assert manifest["verified_by"] == "worker_evidence_v1"
+    assert manifest["reviewed_evidence_id"] == evidence.id
+    assert manifest["repo"]["head_sha"] == evidence.metadata["verification"]["repo"]["head_sha"]
     publications = cp.list_publications(task.id)
     assert len(publications) == 1
     assert publications[0].target == "test://publish"
     assert publications[0].evidence_id == evidence.id  # publication links to executor work
     names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.assigned" in names
     assert "workflow.default_review.approved" in names
     assert "workflow.default_review.published" in names
 
 
-def test_default_review_publish_failure_surfaces_diagnosis(cp, semantic_reviewer_on, monkeypatch):
+def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
     """An approved task whose auto-publish fails (e.g. a merge conflict) must NOT
     silently park in REVIEWING — it surfaces a Problem/Remediation diagnosis and a
     publish_failed observation so an operator sees why (mac task_51a777c2)."""
@@ -707,13 +693,7 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, semantic_reviewer
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
-    cp.advance_default_review_workflow(task.id)  # assign reviewer
-    submit_review_verdict(
-        cp,
-        task.id,
-        reviewer.id,
-        evidence.id,
-    )
+    assert evidence.id
 
     # Simulate auto-publish failing on a merge conflict.
     def _boom(*_a, **_k):
@@ -743,7 +723,7 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, semantic_reviewer
     assert "workflow.default_review.published" not in names
 
 
-def test_default_review_honors_publication_retry_backoff(cp, semantic_reviewer_on, monkeypatch):
+def test_default_review_honors_publication_retry_backoff(cp, monkeypatch):
     from mac.models import ValidationError
 
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
@@ -775,9 +755,7 @@ def test_default_review_honors_publication_retry_backoff(cp, semantic_reviewer_o
     assert cp.get_task(task.id).metadata["concurrent_publication_note"] == "preserve me"
 
 
-def test_default_review_publication_barrier_defers_without_false_failure(
-    cp, semantic_reviewer_on, monkeypatch
-):
+def test_default_review_publication_barrier_defers_without_false_failure(cp, monkeypatch):
     """A fleet epoch is a retryable publication pause, not a task failure."""
     from mac.models import PublicationDeferredError
     from tests.conftest import submit_review_verdict
@@ -800,8 +778,7 @@ def test_default_review_publication_barrier_defers_without_false_failure(
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
-    cp.advance_default_review_workflow(task.id)
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    assert evidence.id
 
     barrier = {
         "schema": "mac.fleet_release_publication_barrier.v1",
@@ -912,8 +889,9 @@ def _drive_task_to_approved(cp, *, task_metadata=None, files_changed=None):
         metadata=verified_repo_metadata(cp, worker.id, files_changed=files_changed),
     )
     cp.submit_for_review(task.id, worker.id)
-    cp.advance_default_review_workflow(task.id)  # assign reviewer
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    review = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    cp.submit_review(review.id, "approved", reviewer.id, evidence_id=verdict_id)
     return task, worker, reviewer, evidence
 
 
@@ -959,7 +937,7 @@ def _merge_gate_conflict_raiser(
     return _boom
 
 
-def test_conflict_creates_single_integration_task(cp, monkeypatch, semantic_reviewer_on):
+def test_conflict_creates_single_integration_task(cp, monkeypatch):
     """A legacy single-task publication merge-gate conflict creates exactly ONE
     context-rich integration repair task (not just a diagnosis), preserving the
     approved task in REVIEWING and the diagnosis/observation telemetry."""
@@ -1016,7 +994,7 @@ def test_conflict_creates_single_integration_task(cp, monkeypatch, semantic_revi
     assert "workflow.default_review.conflict_integration_created" in names
 
 
-def test_conflict_handoff_is_idempotent(cp, monkeypatch, semantic_reviewer_on):
+def test_conflict_handoff_is_idempotent(cp, monkeypatch):
     """Duplicate conflict events for the same (task, evidence, attempt base,
     canonical tip, conflict set) resolve to the SAME single integration task."""
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
@@ -1045,7 +1023,6 @@ def test_conflict_handoff_is_idempotent(cp, monkeypatch, semantic_reviewer_on):
 def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
     cp,
     monkeypatch,
-    semantic_reviewer_on,
 ):
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
 
@@ -1092,7 +1069,6 @@ def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
 def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
     cp,
     monkeypatch,
-    semantic_reviewer_on,
 ):
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
 
@@ -1278,63 +1254,7 @@ def test_add_evidence_accepts_operator_result_for_non_repo_task(cp):
     assert evidence.task_id == task.id
 
 
-def test_default_review_workflow_caps_retractions(cp, monkeypatch):
-    """mem-12: after N consecutive retractions for a task, the workflow
-    refuses to spawn another review and transitions the task to FAILED."""
-    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
-    worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "reviewer-a", ["review"])
-    register_agent(cp, "reviewer-b", ["review"])
-    task = cp.create_task("Loopy", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "test",
-        "file://repo",
-        "did the thing",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    # Pre-plant N retracted reviews so we land exactly at the cap on
-    # the next advance() call.
-    from mac.models import ReviewStatus, new_id, utcnow
-
-    now = utcnow()
-    for label in ("a", "b"):
-        cp.store.execute(
-            """
-            INSERT INTO reviews (
-                id, task_id, reviewer_agent_id, status, reason, evidence_id,
-                created_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-            """,
-            (
-                new_id("review"),
-                task.id,
-                "agent_" + label,
-                ReviewStatus.RETRACTED.value,
-                "reviewer_unable_to_produce_verdict_after_10_attempts",
-                now,
-                now,
-            ),
-        )
-
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "review_retraction_exhausted"
-    assert result["cap"] == 2
-    assert result["retracted_count"] >= 2
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
-    # Confirm an observability row was written so operators can see why.
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.exhausted" in names
-
-
-def test_default_review_retraction_cap_resets_on_new_evidence(
-    cp, semantic_reviewer_on, monkeypatch
-):
+def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
     """mem-12: the cap is scoped to retractions AFTER the latest evidence.
     Submitting fresh evidence implicitly resets the counter."""
     monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
@@ -1403,216 +1323,6 @@ def test_default_review_retraction_cap_resets_on_new_evidence(
     assert cp.get_task(task.id).state != TaskState.FAILED.value
 
 
-def test_default_review_workflow_caps_verdict_wait(cp, semantic_reviewer_on, monkeypatch):
-    """A reviewer that keeps producing review-attempt evidence but never a
-    valid signed verdict must not spin forever: past the verdict-wait cap the
-    task blocks for repair instead of re-nudging (the live half of the
-    2026-06 runaway)."""
-    monkeypatch.setenv("MAC_REVIEW_VERDICT_WAIT_CAP", "2")
-    worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "reviewer-a", ["review"])
-    task = cp.create_task("Spinny", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "test",
-        "file://repo",
-        "did the thing",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    # First advance opens a pending review (assigns a reviewer).
-    cp.advance_default_review_workflow(task.id)
-    from mac.models import ReviewStatus
-
-    pending = [r for r in cp.list_reviews(task.id) if r.status == ReviewStatus.PENDING.value]
-    assert pending, "expected a pending review after first advance"
-    review = pending[0]
-
-    # Reviewer produces N review-attempt evidence rows but no valid verdict.
-    for i in range(2):
-        cp.add_evidence(
-            task.id,
-            "review",
-            "file://review-%d" % i,
-            "looked, still unsure",
-            review.reviewer_agent_id,
-            _trusted_internal=True,
-        )
-
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "review_verdict_wait_exhausted", result
-    assert result["cap"] == 2
-    assert result["wait_count"] >= 2
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.exhausted" in names
-
-
-def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(
-    cp, semantic_reviewer_on
-):
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer_a = register_agent(cp, "reviewer-a", ["review"])
-    reviewer_b = register_agent(cp, "reviewer-b", ["review"])
-    task = cp.create_task("Protocol-aware selection", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    executor_evidence = cp.add_evidence(
-        task.id,
-        "test",
-        "file://repo",
-        "did the thing",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    cp.advance_default_review_workflow(task.id)
-    pending = [
-        review for review in cp.list_reviews(task.id) if review.status == ReviewStatus.PENDING.value
-    ]
-    assert len(pending) == 1
-    assert pending[0].reviewer_agent_id == reviewer_a.id
-
-    cp.add_evidence(
-        task.id,
-        "review",
-        "file://review-failed",
-        "review harness exhausted its budget",
-        reviewer_a.id,
-        metadata={
-            "returncode": 65,
-            "review_id": pending[0].id,
-            "executor_evidence_id": executor_evidence.id,
-        },
-        _trusted_internal=True,
-    )
-
-    failed = cp.advance_default_review_workflow(task.id)
-    assert failed["status"] == "reviewer_protocol_failed"
-    assert failed["reviewer_agent_id"] == reviewer_a.id
-    assert failed["reason"] == "review_executor_nonzero"
-
-    reassigned = cp.advance_default_review_workflow(task.id)
-    assert reassigned["status"] == "waiting_for_reviewer_verdict"
-    assert reassigned["reviewer_agent_id"] == reviewer_b.id
-    reviews = cp.list_reviews(task.id)
-    assert any(
-        review.reviewer_agent_id == reviewer_a.id
-        and review.status == ReviewStatus.RETRACTED.value
-        and review.reason == "reviewer_protocol_failure:review_executor_nonzero"
-        for review in reviews
-    )
-
-
-def test_default_review_blocks_when_pinned_reviewer_fails_protocol(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task(
-        "Pinned protocol failure",
-        required_capabilities=["python"],
-        metadata={"review": {"target_agent_id": reviewer.id}},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    executor_evidence = cp.add_evidence(
-        task.id,
-        "test",
-        "file://repo",
-        "did the thing",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    cp.advance_default_review_workflow(task.id)
-    pending = next(
-        review for review in cp.list_reviews(task.id) if review.status == ReviewStatus.PENDING.value
-    )
-    cp.add_evidence(
-        task.id,
-        "review",
-        "file://review-failed",
-        "review harness exhausted its budget",
-        reviewer.id,
-        metadata={
-            "returncode": 65,
-            "review_id": pending.id,
-            "executor_evidence_id": executor_evidence.id,
-        },
-        _trusted_internal=True,
-    )
-
-    failed = cp.advance_default_review_workflow(task.id)
-    assert failed["status"] == "reviewer_protocol_failed"
-    blocked = cp.advance_default_review_workflow(task.id)
-    assert blocked["status"] == "target_reviewer_protocol_failed"
-    assert blocked["reviewer_agent_id"] == reviewer.id
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
-
-
-def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypatch):
-    """mem-12 window fix: the reviewer's OWN review-attempt evidence must not
-    reset the retraction window. Only genuine new executor work (the reviewed
-    evidence) does. With the pre-fix 'latest evidence of any kind' window this
-    looped forever."""
-    monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
-    worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "reviewer-a", ["review"])
-    task = cp.create_task("Loopy2", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "test",
-        "file://repo",
-        "did the thing",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    from mac.models import ReviewStatus, new_id, utcnow
-
-    now = utcnow()
-    for label in ("a", "b"):
-        cp.store.execute(
-            """
-            INSERT INTO reviews (
-                id, task_id, reviewer_agent_id, status, reason, evidence_id,
-                created_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-            """,
-            (
-                new_id("review"),
-                task.id,
-                "agent_" + label,
-                ReviewStatus.RETRACTED.value,
-                "stale",
-                now,
-                now,
-            ),
-        )
-    # Reviewer churn AFTER the retractions: a 'review'-kind evidence row.
-    # Pre-fix this advanced the window and reset the count to 0; post-fix the
-    # window is anchored to the reviewed executor evidence, so the cap fires.
-    cp.add_evidence(
-        task.id,
-        "review",
-        "file://review-churn",
-        "still unsure",
-        "agent_reviewer-a",
-        _trusted_internal=True,
-    )
-
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "review_retraction_exhausted", result
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
-
-
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
     worker = register_agent(cp, "worker", ["ops"])
     fleet_reviewer = register_agent(cp, "reviewer", ["review"])
@@ -1653,14 +1363,13 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
     assert review.reviewer_agent_id != fleet_reviewer.id
     assert review.evidence_id != evidence.id
     verdict = cp.get_evidence(review.evidence_id)
-    assert verdict.metadata["verification"]["verified_by"] == "semantic_reviewer_removed"
+    assert verdict.metadata["verification"]["verified_by"] == "worker_evidence_v1"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
 def test_report_ignores_git_publication_targets_and_publishes_evidence(
     cp,
     monkeypatch,
-    semantic_reviewer_on,
 ):
     from tests.conftest import submit_review_verdict
 
@@ -1722,10 +1431,6 @@ def test_report_ignores_git_publication_targets_and_publishes_evidence(
         metadata={"returncode": 0, "verification": manifest},
     )
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
-
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "published"
@@ -1736,7 +1441,7 @@ def test_report_ignores_git_publication_targets_and_publishes_evidence(
     assert cp._repository_contract_for_task(cp.get_task(task.id)) == {}
 
 
-def test_default_review_workflow_falls_back_to_project_publication_target(cp, semantic_reviewer_on):
+def test_default_review_workflow_falls_back_to_project_publication_target(cp):
     """A task with no publication_target of its own must inherit the
     target from its registered project, so autonomous tasks complete
     instead of stalling in REVIEWING (waiting_for_publication_target)."""
@@ -1776,9 +1481,7 @@ def test_default_review_workflow_falls_back_to_project_publication_target(cp, se
         metadata={"returncode": 0, "verification": manifest},
     )
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    assert evidence.id
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "published"
@@ -1787,9 +1490,7 @@ def test_default_review_workflow_falls_back_to_project_publication_target(cp, se
     assert publications[-1].target == "test://project-publish"
 
 
-def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(
-    cp, semantic_reviewer_on
-):
+def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["ops"])
@@ -1817,9 +1518,9 @@ def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(
     )
 
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
+    pending = cp.request_review(task.id, reviewer.id)
     linked_verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    cp.submit_review(pending.id, "approved", reviewer.id, evidence_id=linked_verdict_id)
     approved = cp.advance_default_review_workflow(task.id)
     assert approved["status"] == "waiting_for_publication_target"
     submit_review_verdict(
@@ -1844,260 +1545,7 @@ def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
-def test_default_review_workflow_reuses_pending_verdict_nudge(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task(
-        "Implement thing",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://publish"},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    first = cp.advance_default_review_workflow(task.id)
-    second = cp.advance_default_review_workflow(task.id)
-    nudges = [
-        message
-        for message in cp.list_messages(reviewer.id)
-        if message.message_type == MessageType.NUDGE.value
-        and message.status == MessageStatus.QUEUED.value
-        and message.payload.get("reason") == "produce_review_verdict"
-        and message.payload.get("review_id") == first["review_id"]
-        and message.payload.get("executor_evidence_id") == evidence.id
-    ]
-
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    assert first["nudge_status"] == "queued"
-    assert second["status"] == "waiting_for_reviewer_verdict"
-    assert second["nudge_status"] == "already_queued"
-    assert len(nudges) == 1
-
-
-def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claims(
-    cp,
-    semantic_reviewer_on,
-    monkeypatch,
-):
-    monkeypatch.setenv("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "2")
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task(
-        "Bound review retries",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://publish"},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    first = cp.advance_default_review_workflow(task.id)
-    assert len(cp.deliver_messages(reviewer.id)) >= 1
-    second = cp.advance_default_review_workflow(task.id)
-    assert second["review_id"] == first["review_id"]
-    delivered = [
-        message
-        for message in cp.deliver_messages(reviewer.id)
-        if message.message_type == MessageType.NUDGE.value
-    ]
-    assert len(delivered) == 1
-
-    cp.advance_default_review_workflow(task.id)
-
-    review = cp.list_reviews(task.id)[0]
-    assert review.status == ReviewStatus.RETRACTED.value
-    assert review.reason == "reviewer_unable_to_produce_verdict_after_2_attempts"
-    assert not any(event.event_type == "task.review_claimed" for event in cp.task_history(task.id))
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.nudge_capped" in names
-
-
-def test_default_review_prefers_prior_owner_over_current_executor_fallback(
-    cp, semantic_reviewer_on
-):
-    from tests.conftest import submit_review_verdict
-
-    alpha = register_agent(cp, "alpha", ["python", "review"])
-    beta = register_agent(cp, "beta", ["python", "review"])
-    task = cp.create_task(
-        "retry with small fleet",
-        required_capabilities=["python"],
-        max_attempts=2,
-        metadata={"publication_target": "test://retry"},
-    )
-    cp.claim_task(task.id, alpha.id)
-    cp.start_task(task.id, alpha.id)
-    first_evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://attempt-1",
-        "attempt 1",
-        alpha.id,
-        metadata=verified_repo_metadata(cp, alpha.id),
-    )
-    cp.submit_for_review(task.id, alpha.id)
-
-    first_review = cp.advance_default_review_workflow(task.id)
-    assert first_review["reviewer_agent_id"] == beta.id
-    submit_review_verdict(
-        cp, task.id, beta.id, first_evidence.id, verdict="rejected", feedback="Rejected."
-    )
-    rejected = cp.advance_default_review_workflow(task.id)
-    assert rejected["status"] == "review_not_approved"
-    assert cp.get_task(task.id).state == TaskState.OPEN.value
-
-    cp.claim_task(task.id, beta.id)
-    cp.start_task(task.id, beta.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://attempt-2",
-        "attempt 2",
-        beta.id,
-        metadata=verified_repo_metadata(
-            cp,
-            beta.id,
-            head_sha="fedcba9876543210fedcba9876543210fedcba98",
-        ),
-    )
-    cp.submit_for_review(task.id, beta.id)
-
-    retry_review = cp.advance_default_review_workflow(task.id)
-    assert retry_review["status"] == "waiting_for_reviewer_verdict"
-    assert retry_review["reviewer_agent_id"] == alpha.id
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-    history = cp.store.query_one(
-        "SELECT detail FROM task_history WHERE task_id = ? "
-        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
-        (task.id,),
-    )
-    detail = json.loads(history["detail"])
-    assert detail["reviewer_independence"] == "fallback"
-    assert detail["reviewer_independence_reason"] == "reviewer_previously_owned_task"
-
-
-def test_request_review_allows_latest_evidence_author_only_without_peer(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    worker = register_agent(cp, "worker", ["python", "review"])
-    task = cp.create_task("self-review", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    review = cp.request_review(task.id, worker.id)
-
-    assert review.reviewer_agent_id == worker.id
-    detail = json.loads(
-        cp.store.query_one(
-            "SELECT detail FROM task_history WHERE task_id = ? "
-            "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
-            (task.id,),
-        )["detail"]
-    )
-    assert detail["reviewer_independence"] == "fallback"
-
-
-def test_default_review_workflow_uses_owner_when_no_peer_exists(
-    cp, semantic_reviewer_on, monkeypatch
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    worker = register_agent(cp, "worker", ["python", "review"])
-    task = cp.create_task("Implement thing", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-    reviews = cp.list_reviews(task.id)
-    assert len(reviews) == 1
-    assert reviews[0].reviewer_agent_id == worker.id
-
-
-def test_hub_review_verifier_auto_registers_without_live_worker(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    worker = register_agent(cp, "worker", ["python", "review"])
-    task = cp.create_task("Implement thing", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    # With the blocking guard (Option C): when hub verify is enabled but the
-    # live verifier runner is not available (no _hub_verify_runner mock here),
-    # the hub verify attempt fails/returns None and the workflow blocks with
-    # waiting_for_hub_verify rather than falling through to the agent-nudge
-    # path.  The hub reviewer is still auto-registered and the review is still
-    # assigned to it — the reviewer_agent_id assertion verifies that.
-    assert result["status"] in {"waiting_for_hub_verify", "waiting_for_reviewer_verdict"}
-    assert result["reviewer_agent_id"] == services.DEFAULT_HUB_REVIEWER_AGENT_ID
-    reviewer = cp.get_agent(services.DEFAULT_HUB_REVIEWER_AGENT_ID)
-    assert reviewer.name == services.DEFAULT_HUB_REVIEWER_AGENT_NAME
-    assert reviewer.capabilities == ["review"]
-    assert reviewer.resources["hub_review_verifier"]["schema"] == (
-        services.HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA
-    )
-    review = cp.list_reviews(task.id)[0]
-    assert review.reviewer_agent_id == reviewer.id
-
-    cp.store.execute(
-        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
-        ("2020-01-01T00:00:00+00:00", reviewer.id),
-    )
-    waiting = cp.advance_default_review_workflow(task.id)
-
-    assert waiting["status"] in {"waiting_for_hub_verify", "waiting_for_reviewer_verdict"}
-    assert waiting["reviewer_agent_id"] == reviewer.id
-    assert cp.list_reviews(task.id)[0].status == ReviewStatus.PENDING.value
-    assert cp.list_reviews(task.id)[0].reviewer_agent_id == reviewer.id
-    assert cp.list_reviews(task.id)[0].task_id == evidence.task_id
-
-
-def test_default_review_tick_processes_backlog(cp, semantic_reviewer_on):
+def test_default_review_tick_processes_backlog(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -2119,17 +1567,14 @@ def test_default_review_tick_processes_backlog(cp, semantic_reviewer_on):
     )
     cp.submit_for_review(task.id, worker.id)
 
-    # First tick assigns reviewer; reviewer then produces verdict;
-    # second tick publishes (mac-jqb).
-    first_report = cp.advance_default_review_workflows(limit=10)
-    assert first_report["results"][0]["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    # One sweep approves from the worker evidence and publishes.
+    assert evidence.id
     report = cp.advance_default_review_workflows(limit=10)
 
     assert report["processed"] == 1
     assert report["results"][0]["status"] == "published"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    assert cp.list_reviews(task.id)[0].reviewer_agent_id == reviewer.id
+    assert cp.list_reviews(task.id)[0].reviewer_agent_id == DEFAULT_HUB_REVIEWER_AGENT_ID
 
 
 def test_default_review_sweep_uses_bounded_state_query_and_cursor(cp, monkeypatch):
@@ -2543,7 +1988,7 @@ def test_submit_for_review_requires_pushed_repo_anchor_for_all_evidence_types(
         cp.submit_for_review(task.id, worker.id)
 
 
-def test_source_remediation_repo_change_allows_empty_files_changed(cp, semantic_reviewer_on):
+def test_source_remediation_repo_change_allows_empty_files_changed(cp):
     worker = register_agent(cp, "worker", ["ops"])
     register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -2572,10 +2017,13 @@ def test_source_remediation_repo_change_allows_empty_files_changed(cp, semantic_
     cp.submit_for_review(task.id, worker.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    assert result["status"] == "waiting_for_reviewer_verdict"
+    # Empty files_changed is valid remediation evidence: the review approves
+    # it rather than waiting for verifiable evidence.
+    assert result["status"] not in {"waiting_for_verifiable_evidence", "blocked"}
+    assert cp.list_reviews(task.id)[0].status == ReviewStatus.APPROVED.value
 
 
-def test_default_review_workflow_allows_verified_deployment_evidence(cp, semantic_reviewer_on):
+def test_default_review_workflow_allows_verified_deployment_evidence(cp):
     worker = register_agent(cp, "worker", ["ops"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -2595,16 +2043,14 @@ def test_default_review_workflow_allows_verified_deployment_evidence(cp, semanti
     )
     cp.submit_for_review(task.id, worker.id)
 
-    from tests.conftest import submit_review_verdict
-
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "published"
-    assert cp.list_reviews(task.id)[0].reviewer_agent_id == reviewer.id
-    assert cp.list_reviews(task.id)[0].evidence_id == verdict_id
+    review = cp.list_reviews(task.id)[0]
+    assert review.reviewer_agent_id == DEFAULT_HUB_REVIEWER_AGENT_ID
+    assert review.reviewer_agent_id != reviewer.id
+    verdict = cp.get_evidence(review.evidence_id)
+    assert verdict.metadata["verification"]["reviewed_evidence_id"] == evidence.id
 
 
 def test_unsigned_verification_manifest_is_rejected(cp):
@@ -2724,41 +2170,6 @@ def test_manifest_signed_by_unknown_agent_is_rejected(cp):
     assert result["rejected_evidence"][0]["reason"] == "signer_unknown"
 
 
-def test_default_review_workflow_refuses_on_ambiguous_pending_reviews(cp):
-    """mac-d9c: with more than one pending review the workflow must
-    refuse to pick — no auto-merge under ambiguity."""
-    worker = register_agent(cp, "worker", ["python"])
-    rev_one = register_agent(cp, "rev-one", ["review"])
-    rev_two = register_agent(cp, "rev-two", ["review"])
-    task = cp.create_task(
-        "ambiguous",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://ambig"},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://x",
-        "done",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    cp.request_review(task.id, rev_one.id, "human")
-    cp.request_review(task.id, rev_two.id, "human")
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "ambiguous_pending_reviews"
-    assert len(result["pending_review_ids"]) == 2
-    # Task is untouched; no publication was created.
-    assert cp.list_publications(task.id) == []
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.ambiguous" in names
-
-
 def test_request_review_reuses_pending_same_reviewer(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
@@ -2782,50 +2193,7 @@ def test_request_review_reuses_pending_same_reviewer(cp):
     assert [review.id for review in cp.list_reviews(task.id)] == [first.id]
 
 
-def test_default_review_workflow_retracts_same_reviewer_duplicate_pending(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task("duplicate same reviewer", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://x",
-        "done",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    kept = cp.request_review(task.id, reviewer.id, "workflow-a")
-    cp.store.execute(
-        """
-        INSERT INTO reviews (id, task_id, reviewer_agent_id, status, reason, evidence_id, created_at, completed_at)
-        VALUES (?, ?, ?, ?, NULL, NULL, ?, NULL)
-        """,
-        (
-            "review_duplicate_same_reviewer",
-            task.id,
-            reviewer.id,
-            ReviewStatus.PENDING.value,
-            utcnow(),
-        ),
-    )
-
-    result = cp.advance_default_review_workflow(task.id, actor="workflow-b")
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    reviews = {review.id: review for review in cp.list_reviews(task.id)}
-    assert reviews[kept.id].status == ReviewStatus.PENDING.value
-    assert reviews["review_duplicate_same_reviewer"].status == ReviewStatus.RETRACTED.value
-    assert (
-        reviews["review_duplicate_same_reviewer"].reason == "duplicate_pending_review_same_reviewer"
-    )
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.duplicate_pending_retracted" in names
-
-
-def test_default_review_workflow_refuses_without_publication_target(cp, semantic_reviewer_on):
+def test_default_review_workflow_refuses_without_publication_target(cp):
     """mac-w29: when no operator-set publication_target exists, the
     workflow approves the review but does NOT publish — refuses to
     invent a target."""
@@ -2846,11 +2214,9 @@ def test_default_review_workflow_refuses_without_publication_target(cp, semantic
     )
     cp.submit_for_review(task.id, worker.id)
 
-    # Verdict-aware flow: produce the verdict so the workflow reaches
-    # the publish-step gate.
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    # The worker evidence approves the review on the first tick, so the
+    # workflow reaches the publish-step gate.
+    assert evidence.id
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_publication_target"
     assert cp.list_publications(task.id) == []
@@ -2928,103 +2294,6 @@ def test_default_review_rejects_alias_evidence_taxonomy(cp):
     )
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_verifiable_evidence"
-
-
-def test_default_reviewer_requires_review_capability(cp, semantic_reviewer_on):
-    """mac-s1a: the reviewer pool must require the `review` capability,
-    not merely prefer it. An autonomous review can't be performed by an
-    agent whose role doesn't include review duties."""
-    worker = register_agent(cp, "worker", ["python"])
-    # Three more agents, none with `review` capability. The workflow
-    # must refuse to assign a reviewer rather than picking the
-    # alphabetically-first idle agent.
-    register_agent(cp, "alpha", ["docs"])
-    register_agent(cp, "bravo", ["ops"])
-    register_agent(cp, "charlie", ["python"])
-    task = cp.create_task(
-        "needs-real-reviewer",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://r"},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.list_reviews(task.id) == []
-    # Once a `review`-capable agent comes online, the workflow advances.
-    real_reviewer = register_agent(cp, "real-reviewer", ["review"])
-    waiting = cp.advance_default_review_workflow(task.id)
-    assert waiting["status"] == "waiting_for_reviewer_verdict"
-    from tests.conftest import submit_review_verdict
-
-    submit_review_verdict(cp, task.id, real_reviewer.id, evidence.id)
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "published"
-
-
-def test_default_reviewer_honors_target_agent_name(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "bullwinkle", ["review"])
-    natasha = register_agent(cp, "natasha", ["review"])
-    task = cp.create_task(
-        "needs-specific-reviewer",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://r",
-            "default_review": {"target_agent_name": "natasha"},
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "x",
-        "y",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["reviewer_agent_id"] == natasha.id
-
-
-def test_default_reviewer_honors_review_required_capabilities(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "bullwinkle", ["review"])
-    natasha = register_agent(cp, "natasha", ["qemu", "review"])
-    task = cp.create_task(
-        "needs-qemu-reviewer",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://r",
-            "default_review": {"required_capabilities": ["qemu"]},
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "x",
-        "y",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["reviewer_agent_id"] == natasha.id
 
 
 def test_manual_reviewer_assignment_uses_full_eligibility_policy(cp):
@@ -3275,700 +2544,6 @@ def test_rejected_review_and_task_transition_roll_back_together(cp, monkeypatch)
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
-def test_default_review_reassigns_stale_pending_reviewer(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    stale_reviewer = register_agent(cp, "operator-reviewer", ["review"])
-    live_reviewer = register_agent(cp, "rocky", ["review"])
-    task = cp.create_task(
-        "needs-live-reviewer",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://r"},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    stale_review = cp.request_review(task.id, stale_reviewer.id, actor="old-workflow")
-    cp.store.execute(
-        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
-        ("2020-01-01T00:00:00+00:00", stale_reviewer.id),
-    )
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["reviewer_agent_id"] == live_reviewer.id
-    reviews = cp.list_reviews(task.id)
-    assert [review.status for review in reviews] == [
-        ReviewStatus.RETRACTED.value,
-        ReviewStatus.PENDING.value,
-    ]
-    assert reviews[0].id == stale_review.id
-    assert reviews[0].reason == "reviewer_unavailable:reviewer_stale"
-    assert reviews[1].reviewer_agent_id == live_reviewer.id
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.retracted" in names
-    assert "workflow.default_review.assigned" in names
-
-
-def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
-    cp,
-    semantic_reviewer_on,
-    monkeypatch,
-):
-    worker = register_agent(cp, "worker", ["python"])
-    failed = register_agent(cp, "a-failed", ["review"])
-    cooldown_reviewer = register_agent(cp, "m-cooldown", ["review"])
-    successful = register_agent(cp, "z-successful", ["review"])
-    remote = "https://github.com/acme/private.git"
-    contract = {
-        "schema": "mac.repository_contract.v1",
-        "project": "demo",
-        "canonical_remote_url": remote,
-    }
-    task = cp.create_task(
-        "Use learned reviewer access",
-        project="demo",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://r",
-            "execution_contract": {
-                "type": "repository",
-                "repository_contract": contract,
-            },
-            "origin": {
-                "repository_url": remote,
-                "repository_contract": contract,
-            },
-        },
-    )
-    failure = build_repository_access_learning(
-        project="demo",
-        remote=remote,
-        operation="review_clone",
-        agent_id=failed.id,
-        outcome="failure",
-        credential_source="ambient:https",
-        failure_class="authentication",
-        error="could not read Username for https://github.com",
-    )
-    success = build_repository_access_learning(
-        project="demo",
-        remote=remote,
-        operation="review_clone",
-        agent_id=successful.id,
-        outcome="success",
-        credential_source="env:GH_TOKEN",
-    )
-    cp.add_memory(**build_repository_access_memory_payload(failure))
-    cp.add_memory(**build_repository_access_memory_payload(success))
-
-    selected = cp._select_default_reviewer(task, executor_agent_id=worker.id)
-
-    assert selected is not None and selected.id == successful.id
-    reason = cp._default_reviewer_unavailable_reason_for_id(
-        task,
-        failed.id,
-        executor_agent_id=worker.id,
-    )
-    assert reason == "reviewer_repository_access_authentication:github.com"
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://repository-access-review",
-        "ready for repository review",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    with pytest.raises(AuthorizationError, match="repository access authentication"):
-        cp.request_review(task.id, failed.id, actor="manual")
-
-    later_success = build_repository_access_learning(
-        project="demo",
-        remote=remote,
-        operation="review_clone",
-        agent_id=failed.id,
-        outcome="success",
-        credential_source="env:GITHUB_TOKEN",
-    )
-    cp.add_memory(**build_repository_access_memory_payload(later_success))
-    assert (
-        cp._default_reviewer_unavailable_reason_for_id(
-            task,
-            failed.id,
-            executor_agent_id=worker.id,
-        )
-        is None
-    )
-
-    # A failure is a cooldown, not a permanent ban.
-    cooldown_failure = build_repository_access_learning(
-        project="demo",
-        remote=remote,
-        operation="review_clone",
-        agent_id=cooldown_reviewer.id,
-        outcome="failure",
-        credential_source="ambient:https",
-        failure_class="authentication",
-    )
-    memory = cp.add_memory(**build_repository_access_memory_payload(cooldown_failure))
-    assert (
-        cp._default_reviewer_unavailable_reason_for_id(
-            task,
-            cooldown_reviewer.id,
-            executor_agent_id=worker.id,
-        )
-        == "reviewer_repository_access_authentication:github.com"
-    )
-    cp.store.execute(
-        "UPDATE memory_records SET created_at = ? WHERE id = ?",
-        ("2020-01-01T00:00:00+00:00", memory.id),
-    )
-    monkeypatch.setenv("MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS", "1")
-    assert (
-        cp._default_reviewer_unavailable_reason_for_id(
-            task,
-            cooldown_reviewer.id,
-            executor_agent_id=worker.id,
-        )
-        is None
-    )
-
-
-def test_default_review_waits_when_only_reviewer_is_stale(cp, semantic_reviewer_on):
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "stale-reviewer", ["review"])
-    cp.store.execute(
-        "UPDATE agents SET last_seen_at = ? WHERE id = ?",
-        ("2020-01-01T00:00:00+00:00", reviewer.id),
-    )
-    task = cp.create_task("needs-fresh-reviewer", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.list_reviews(task.id) == []
-
-
-def test_default_reviewer_uses_same_persona_peer_only_as_fallback(
-    cp, semantic_reviewer_on, monkeypatch
-):
-    """A different persona is preferred, but its absence cannot deadlock review."""
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    machine = cp.register_machine("h-collusion")
-    from tests.conftest import bind_soul
-
-    code_reviewer_soul_a = bind_soul(
-        cp,
-        persona_name="Code Reviewer",  # default slug = "code-reviewer"
-        tenant_name="collusion-tenant",
-        instance_name="instance-a",
-    )
-    # Reuse the same tenant by passing a different tenant_name=... isn't
-    # straightforward; bind_soul registers a fresh tenant each call.
-    # Use the same instance approach: two instances bound to the same
-    # persona under the same tenant.
-    tenant = cp.identity.get_hermes_instance(code_reviewer_soul_a)
-    code_reviewer_soul_b = cp.register_hermes_instance(
-        tenant.tenant_id,
-        "instance-b",
-        persona_id=tenant.persona_id,
-    ).id
-
-    executor = cp.register_agent(
-        machine.id,
-        "exec",
-        capabilities=["python", "review"],
-        hermes_instance_id=code_reviewer_soul_a,
-    )
-    peer = cp.register_agent(
-        machine.id,
-        "peer",
-        capabilities=["python", "review"],
-        hermes_instance_id=code_reviewer_soul_b,
-    )
-    cp.roles.create_role(
-        slug="code-reviewer",
-        name="Code Reviewer",
-        description="d",
-        system_prompt="p",
-        level="ic",
-    )
-    cp.roles.assign_role(executor.id, "code-reviewer")
-    cp.roles.assign_role(peer.id, "code-reviewer")
-
-    task = cp.create_task(
-        "collusion-target",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://collusion",
-            # Same-tenant task so the tenancy gate doesn't get in the way.
-            "origin": {"tenant_id": tenant.tenant_id},
-        },
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    cp.add_evidence(
-        task.id, "log", "x", "y", executor.id, metadata=verified_repo_metadata(cp, executor.id)
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-    # The peer is preferable to self-review because it did not execute the
-    # task, even though both agents share a persona. The relaxation is audited.
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    reviews = cp.list_reviews(task.id)
-    assert len(reviews) == 1
-    assert reviews[0].reviewer_agent_id == peer.id
-    history = cp.store.query_one(
-        "SELECT detail FROM task_history WHERE task_id = ? "
-        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
-        (task.id,),
-    )
-    detail = json.loads(history["detail"])
-    assert detail["reviewer_independence"] == "fallback"
-    assert detail["reviewer_independence_reason"] == "reviewer_same_persona"
-
-
-def test_default_review_prefers_independent_peer_over_executor_fallback(
-    cp, semantic_reviewer_on, monkeypatch
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    executor = register_agent(cp, "fallback-executor", ["python", "review"])
-    peer = register_agent(cp, "independent-reviewer", ["review"])
-    task = cp.create_task(
-        "prefer independent review",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://independent"},
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://independent",
-        "tests passed",
-        executor.id,
-        metadata=verified_repo_metadata(cp, executor.id),
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    review = cp.list_reviews(task.id)[0]
-    assert review.reviewer_agent_id == peer.id
-    history = cp.store.query_one(
-        "SELECT detail FROM task_history WHERE task_id = ? "
-        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
-        (task.id,),
-    )
-    assert json.loads(history["detail"])["reviewer_independence"] == "independent"
-
-
-def test_default_review_falls_back_to_executor_when_no_peer_exists(
-    cp, semantic_reviewer_on, monkeypatch
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    executor = register_agent(cp, "only-reviewer", ["python", "review"])
-    task = cp.create_task(
-        "single-node review",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://single-node"},
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://single-node",
-        "tests passed",
-        executor.id,
-        metadata=verified_repo_metadata(cp, executor.id),
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    review = cp.list_reviews(task.id)[0]
-    assert review.reviewer_agent_id == executor.id
-    history = cp.store.query_one(
-        "SELECT detail FROM task_history WHERE task_id = ? "
-        "AND event_type = 'task.review_requested' ORDER BY created_at DESC LIMIT 1",
-        (task.id,),
-    )
-    detail = json.loads(history["detail"])
-    assert detail["reviewer_independence"] == "fallback"
-    assert detail["reviewer_independence_reason"] in {
-        "reviewer_previously_owned_task",
-        "reviewer_created_executor_evidence",
-    }
-    submitted = cp.submit_review(
-        review.id,
-        ReviewStatus.REJECTED.value,
-        executor.id,
-        reason="fallback reviewer found a problem",
-    )
-    assert submitted.status == ReviewStatus.REJECTED.value
-
-
-def test_read_only_repository_report_never_falls_back_to_executor(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    executor = register_agent(
-        cp,
-        "report-only-reviewer",
-        ["ops", "review"],
-        read_only_report_executor_resources(),
-    )
-    task = cp.create_task(
-        "independently review repository report",
-        required_capabilities=["ops"],
-        metadata={
-            "deliverable": "report",
-            "report_repository_access": {
-                "schema": "mac.report_repository_access.v1",
-                "mode": "read_only",
-            },
-            "execution_contract": {
-                "type": "repository",
-                "repository_contract": {
-                    "schema": "mac.repository_contract.v1",
-                    "project": "review-routing",
-                    "canonical_remote_url": "https://example.invalid/review-routing.git",
-                    "default_branch": "main",
-                    "test": {"command": "true"},
-                },
-            },
-        },
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    manifest = _sign(
-        cp,
-        executor.id,
-        {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "operator_result",
-            "summary": "Repository analysis produced",
-            "result": "Substantive findings and prioritized next work.",
-            "repository_access": {
-                "schema": "mac.report_repository_access.v1",
-                "mode": "read_only",
-            },
-        },
-    )
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://independent-report",
-        "Repository analysis produced",
-        executor.id,
-        metadata={"returncode": 0, "verification": manifest},
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.list_reviews(task.id) == []
-    with pytest.raises(AuthorizationError, match="owned"):
-        cp.request_review(task.id, executor.id, actor="manual")
-
-
-def test_read_only_repository_report_assigns_distinct_eligible_peer(
-    cp, monkeypatch, semantic_reviewer_on
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    executor = register_agent(
-        cp,
-        "report-executor",
-        ["ops", "review"],
-        read_only_report_executor_resources(),
-    )
-    peer = register_agent(
-        cp,
-        "independent-report-reviewer",
-        ["review"],
-        read_only_report_executor_resources(),
-    )
-    task = cp.create_task(
-        "peer review repository report",
-        required_capabilities=["ops"],
-        metadata={
-            "deliverable": "report",
-            "report_repository_access": {
-                "schema": "mac.report_repository_access.v1",
-                "mode": "read_only",
-            },
-            "execution_contract": {
-                "type": "repository",
-                "repository_contract": {
-                    "schema": "mac.repository_contract.v1",
-                    "project": "review-routing",
-                    "canonical_remote_url": "https://example.invalid/review-routing.git",
-                    "default_branch": "main",
-                    "test": {"command": "true"},
-                },
-            },
-        },
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    manifest = _sign(
-        cp,
-        executor.id,
-        {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "operator_result",
-            "summary": "Repository analysis produced",
-            "result": "Substantive findings and prioritized next work.",
-            "repository_access": {
-                "schema": "mac.report_repository_access.v1",
-                "mode": "read_only",
-            },
-        },
-    )
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://peer-reviewed-report",
-        "Repository analysis produced",
-        executor.id,
-        metadata={"returncode": 0, "verification": manifest},
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    reviews = cp.list_reviews(task.id)
-    assert len(reviews) == 1
-    assert reviews[0].reviewer_agent_id == peer.id
-
-
-def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
-    cp,
-    monkeypatch,
-    semantic_reviewer_on,
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    executor = register_agent(cp, "dynamic-executor", ["python", "review"])
-    task = cp.create_task(
-        "dynamic reviewer availability",
-        required_capabilities=["python"],
-        metadata={"publication_target": "test://dynamic"},
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://dynamic",
-        "tests passed",
-        executor.id,
-        metadata=verified_repo_metadata(cp, executor.id),
-    )
-    cp.submit_for_review(task.id, executor.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["reviewer_agent_id"] == executor.id
-
-    peer = register_agent(cp, "late-independent-reviewer", ["review"])
-    second = cp.advance_default_review_workflow(task.id)
-
-    assert second["status"] == "waiting_for_reviewer_verdict"
-    assert second["reviewer_agent_id"] == peer.id
-    reviews = cp.list_reviews(task.id)
-    pending = [review for review in reviews if review.status == ReviewStatus.PENDING.value]
-    retracted = [review for review in reviews if review.status == ReviewStatus.RETRACTED.value]
-    assert [review.reviewer_agent_id for review in pending] == [peer.id]
-    assert [review.reviewer_agent_id for review in retracted] == [executor.id]
-
-
-def test_task_can_require_strictly_independent_reviewer(cp, monkeypatch, semantic_reviewer_on):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
-    executor = register_agent(cp, "strict-executor", ["python", "review"])
-    task = cp.create_task(
-        "strict independent review",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://strict",
-            "review": {"require_independent_reviewer": True},
-        },
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://strict",
-        "tests passed",
-        executor.id,
-        metadata=verified_repo_metadata(cp, executor.id),
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.list_reviews(task.id) == []
-    with pytest.raises(AuthorizationError, match="owned"):
-        cp.request_review(task.id, executor.id, actor="manual")
-
-
-def test_default_review_refuses_reviewer_from_different_tenant(cp, semantic_reviewer_on):
-    """mac-dyk: the reviewer's persona tenant must match the task's
-    tenant. Without this, tenant B's idle agent could auto-approve
-    tenant A's work."""
-    from tests.conftest import bind_soul
-
-    machine_a = cp.register_machine("host-a")
-    machine_b = cp.register_machine("host-b")
-    soul_a = bind_soul(
-        cp,
-        persona_name="Reviewer-A",
-        tenant_name="alpha",
-        allowed_role_slugs=["reviewer-a"],
-    )
-    soul_b = bind_soul(
-        cp,
-        persona_name="Reviewer-B",
-        tenant_name="beta",
-        allowed_role_slugs=["reviewer-b"],
-    )
-    tenant_a = cp.identity.get_hermes_instance(soul_a).tenant_id
-
-    executor = cp.register_agent(
-        machine_a.id, "exec-a", capabilities=["python"], hermes_instance_id=soul_a
-    )
-    cp.register_agent(
-        machine_b.id, "reviewer-b", capabilities=["review"], hermes_instance_id=soul_b
-    )
-    task = cp.create_task(
-        "tenant-a-work",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://a",
-            "origin": {"tenant_id": tenant_a},
-        },
-    )
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
-    cp.add_evidence(
-        task.id, "log", "x", "y", executor.id, metadata=verified_repo_metadata(cp, executor.id)
-    )
-    cp.submit_for_review(task.id, executor.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-    # Tenant B's review-capable agent must NOT be drafted.
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.list_reviews(task.id) == []
-
-
-def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(
-    cp, semantic_reviewer_on
-):
-    """mac: a headless K8s reviewer (no hermes_instance_id, so no persona
-    tenant) must still be drafted for a tenant-scoped task when its
-    machine's tenant policy permits that tenant. Persona-boundary
-    tenancy fails closed for headless workers; the hardware boundary
-    (_machine_allows_tenant) is the correct gate, mirroring how the
-    executor path admits the same workers. Without this, every Hermes
-    (tenant-scoped) task parks forever in needs_review because no
-    souled reviewer exists in the fleet."""
-    tenant = cp.register_tenant("personal", tenant_id="personal")
-    # Shared machine (default tenant policy => allows any tenant).
-    machine = cp.register_machine("k8s-shared-host", resources={"cpu": 4, "memory_gb": 8})
-    worker = cp.register_agent(machine.id, "worker", capabilities=["python"])
-    # Headless reviewer: no hermes_instance_id => agent_tenant is None.
-    reviewer = cp.register_agent(machine.id, "reviewer", capabilities=["review"])
-    assert reviewer.hermes_instance_id is None
-
-    task = cp.create_task(
-        "tenant-scoped-work",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://headless",
-            "origin": {"tenant_id": tenant.id},
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-    # The headless reviewer on a tenant-permitting machine must be drafted.
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert len(cp.list_reviews(task.id)) == 1
-
-
-def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(
-    cp, semantic_reviewer_on
-):
-    """mac: the hardware-boundary tenancy gate must still fail closed.
-    A headless reviewer whose machine's tenant policy does NOT permit
-    the task's tenant must not be drafted — otherwise the fallback would
-    leak cross-tenant review onto disallowed hardware."""
-    tenant = cp.register_tenant("personal", tenant_id="personal")
-    worker_machine = cp.register_machine("worker-host", resources={"cpu": 4, "memory_gb": 8})
-    # Reviewer machine is private to a different tenant => denies "personal".
-    reviewer_machine = cp.register_machine(
-        "private-host",
-        resources={"cpu": 4, "memory_gb": 8},
-        labels={"tenant_policy": {"mode": "private", "tenant_ids": ["other-tenant"]}},
-    )
-    worker = cp.register_agent(worker_machine.id, "worker", capabilities=["python"])
-    reviewer = cp.register_agent(reviewer_machine.id, "reviewer", capabilities=["review"])
-    assert reviewer.hermes_instance_id is None
-
-    task = cp.create_task(
-        "tenant-scoped-work",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://denied",
-            "origin": {"tenant_id": tenant.id},
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(
-        task.id, "log", "x", "y", worker.id, metadata=verified_repo_metadata(cp, worker.id)
-    )
-    cp.submit_for_review(task.id, worker.id)
-
-    result = cp.advance_default_review_workflow(task.id)
-    # The only review-capable agent lives on a machine that denies this
-    # tenant — the workflow must refuse to draft it.
-    assert result["status"] == "waiting_for_reviewer"
-    assert cp.list_reviews(task.id) == []
-
-
 def test_renew_lease_refuses_on_transitioning_task(cp):
     """mac-eow: renew_lease must refuse when the underlying task is no
     longer CLAIMED/RUNNING. Previous silent-update behavior was a
@@ -3997,7 +2572,7 @@ def test_renew_lease_refuses_on_transitioning_task(cp):
     assert "active" in str(exc.value).lower()
 
 
-def test_default_review_workflow_ignores_retracted_publication_and_review(cp, semantic_reviewer_on):
+def test_default_review_workflow_ignores_retracted_publication_and_review(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -4018,11 +2593,9 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp, se
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
-    waiting = cp.advance_default_review_workflow(task.id)
-    assert waiting["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, old_evidence.id)
     first = cp.advance_default_review_workflow(task.id)
     assert first["status"] == "published"
+    assert old_evidence.id
 
     cp.store.execute("UPDATE reviews SET status = ? WHERE task_id = ?", ("retracted", task.id))
     cp.store.execute("UPDATE publications SET status = ? WHERE task_id = ?", ("retracted", task.id))
@@ -4043,9 +2616,6 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp, se
     cp._transition_task_internal(task.id, TaskState.RUNNING.value, "test-retry")
     cp._transition_task_internal(task.id, TaskState.NEEDS_REVIEW.value, "test-retry")
 
-    waiting_again = cp.advance_default_review_workflow(task.id)
-    assert waiting_again["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(cp, task.id, reviewer.id, new_evidence.id)
     second = cp.advance_default_review_workflow(task.id)
 
     assert second["status"] == "published"
@@ -4060,10 +2630,10 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp, se
         item for item in cp.list_reviews(task.id) if item.status == ReviewStatus.APPROVED.value
     ]
     assert len(approved) == 1
-    # The approved review row links to the verdict, not the executor's
-    # evidence — the verdict's evidence_id is what flowed into
-    # submit_review.
-    assert approved[0].reviewer_agent_id == reviewer.id
+    # The approved review row links to a verdict over the NEW evidence, not
+    # the retracted one.
+    verdict = cp.get_evidence(approved[0].evidence_id)
+    assert verdict.metadata["verification"]["reviewed_evidence_id"] == new_evidence.id
 
 
 def test_dispatcher_matches_capabilities_and_expired_leases_recover(cp):
@@ -6524,7 +5094,7 @@ def _seed_bare_beads_repo(tmp_path, issue_id="mac-old"):
     return origin, seed, clone
 
 
-def test_hub_heartbeat_advances_default_review_workflow(cp, semantic_reviewer_on, monkeypatch):
+def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     rocky = register_agent(cp, "rocky", ["python"])
@@ -6554,10 +5124,11 @@ def test_hub_heartbeat_advances_default_review_workflow(cp, semantic_reviewer_on
     cp.heartbeat_agent(rocky.id, status=AgentStatus.IDLE.value)
 
     refreshed = cp.get_task(task.id)
-    assert refreshed.state == TaskState.REVIEWING.value
+    assert refreshed.state == TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
     assert len(reviews) == 1
-    assert reviews[0].reviewer_agent_id == reviewer.id
+    assert reviews[0].reviewer_agent_id == DEFAULT_HUB_REVIEWER_AGENT_ID
+    assert reviews[0].reviewer_agent_id != reviewer.id
     names = {event.name for event in cp.list_observability(layer="control_plane", limit=50)}
     assert "workflow.default_review.heartbeat_tick" in names
 
@@ -7204,7 +5775,7 @@ def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
         return 23, "integration suite failed"
 
     del cp._publication_merge_test_runner
-    cp._hub_verify_runner = fail_gate
+    cp._contract_test_runner = fail_gate
     # The gate is scoped now, so it is no longer "full"; what this test is
     # about is that a FAILING gate does not push main.
     with pytest.raises(ValidationError, match="contract gate failed on the projected"):
@@ -7375,7 +5946,7 @@ def test_git_publication_skips_origin_check_when_contract_unset(cp, tmp_path):
     assert publication.status == "published"
 
 
-def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp, semantic_reviewer_on):
+def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7412,7 +5983,7 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp, semanti
         "worktree_digest": "sha256:" + ("1" * 64),
     }
     verdict_manifest = _sign(cp, reviewer.id, verdict_manifest)
-    cp.add_evidence(
+    verdict = cp.add_evidence(
         task.id,
         "review",
         "artifact://review",
@@ -7421,15 +5992,13 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp, semanti
         metadata={"returncode": 0, "verification": verdict_manifest},
     )
 
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["review_id"] == review.id
-    assert any("repo.head_sha does not match" in problem for problem in result["problems"])
+    with pytest.raises(ValidationError, match="repo.head_sha does not match"):
+        cp.submit_review(review.id, "approved", reviewer.id, evidence_id=verdict.id)
+    assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
     assert cp.list_publications(task.id) == []
 
 
-def test_review_verdict_requires_executor_changed_files(cp, semantic_reviewer_on):
+def test_review_verdict_requires_executor_changed_files(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7468,7 +6037,7 @@ def test_review_verdict_requires_executor_changed_files(cp, semantic_reviewer_on
         "llm_model": "test-reviewer-llm",
     }
     verdict_manifest = _sign(cp, reviewer.id, verdict_manifest)
-    cp.add_evidence(
+    verdict = cp.add_evidence(
         task.id,
         "review",
         "artifact://review",
@@ -7477,18 +6046,15 @@ def test_review_verdict_requires_executor_changed_files(cp, semantic_reviewer_on
         metadata={"returncode": 0, "verification": verdict_manifest},
     )
 
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "waiting_for_reviewer_verdict"
-    assert result["review_id"] == review.id
-    assert any(
-        "repo.files_changed does not match executor evidence" in problem
-        for problem in result["problems"]
-    )
+    with pytest.raises(
+        ValidationError, match="repo.files_changed does not match executor evidence"
+    ):
+        cp.submit_review(review.id, "approved", reviewer.id, evidence_id=verdict.id)
+    assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
     assert cp.list_publications(task.id) == []
 
 
-def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp, semantic_reviewer_on):
+def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7507,8 +6073,7 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp, semanti
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
+    pending = cp.request_review(task.id, reviewer.id)
     verdict_manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -7534,10 +6099,14 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp, semanti
         metadata={"returncode": 0, "verification": verdict_manifest},
     )
 
-    result = cp.advance_default_review_workflow(task.id)
+    cp.submit_review(
+        pending.id,
+        ReviewStatus.REJECTED.value,
+        reviewer.id,
+        reason="dirty checkout",
+        evidence_id=verdict.id,
+    )
 
-    assert result["status"] == "review_not_approved"
-    assert result["review_status"] == ReviewStatus.REJECTED.value
     review = cp.list_reviews(task.id)[0]
     assert review.status == ReviewStatus.REJECTED.value
     assert review.evidence_id == verdict.id
@@ -7548,7 +6117,7 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp, semanti
     assert cp.list_publications(task.id) == []
 
 
-def test_rejected_review_verdict_blocks_exhausted_task(cp, semantic_reviewer_on):
+def test_rejected_review_verdict_blocks_exhausted_task(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -7570,23 +6139,27 @@ def test_rejected_review_verdict_blocks_exhausted_task(cp, semantic_reviewer_on)
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    submit_review_verdict(
+    pending = cp.request_review(task.id, reviewer.id)
+    verdict_id = submit_review_verdict(
         cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="No more attempts."
     )
 
-    result = cp.advance_default_review_workflow(task.id)
+    cp.submit_review(
+        pending.id,
+        ReviewStatus.REJECTED.value,
+        reviewer.id,
+        reason="no more attempts",
+        evidence_id=verdict_id,
+    )
 
-    assert result["status"] == "review_not_approved"
-    assert result["review_status"] == ReviewStatus.REJECTED.value
+    assert cp.get_review(pending.id).status == ReviewStatus.REJECTED.value
     exhausted = cp.get_task(task.id)
     assert exhausted.state == TaskState.BLOCKED.value
     assert exhausted.owner_agent_id is None
     assert exhausted.lease_id is None
 
 
-def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp, semantic_reviewer_on):
+def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -7608,13 +6181,17 @@ def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp, semantic
         metadata=verified_repo_metadata(cp, worker.id),
     )
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    submit_review_verdict(
+    first = cp.request_review(task.id, reviewer.id)
+    stale_verdict_id = submit_review_verdict(
         cp, task.id, reviewer.id, evidence.id, verdict="rejected", feedback="Stale."
     )
-    rejected = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    assert rejected["status"] == "review_not_approved"
+    cp.submit_review(
+        first.id,
+        ReviewStatus.REJECTED.value,
+        reviewer.id,
+        reason="stale",
+        evidence_id=stale_verdict_id,
+    )
     assert cp.get_task(task.id).state == TaskState.OPEN.value
 
     cp.store.execute(
@@ -7623,14 +6200,16 @@ def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp, semantic
     )
     second = cp.advance_default_review_workflow(task.id)
 
-    assert second["status"] == "waiting_for_reviewer_verdict"
-    assert second["reviewer_agent_id"] == reviewer.id
-    assert any("predates review request" in problem for problem in second["problems"])
+    # The new review is decided by a fresh verdict over the current evidence;
+    # the earlier rejection is history, not reused.
+    assert second["status"] == "published"
     reviews = cp.list_reviews(task.id)
     assert [review.status for review in reviews] == [
         ReviewStatus.REJECTED.value,
-        ReviewStatus.PENDING.value,
+        ReviewStatus.APPROVED.value,
     ]
+    assert reviews[1].evidence_id != stale_verdict_id
+    assert reviews[1].reviewer_agent_id == DEFAULT_HUB_REVIEWER_AGENT_ID
 
 
 def test_publication_requires_verifiable_review_verdict_not_plain_approval(cp):
@@ -8172,15 +6751,6 @@ def test_submit_review_high_risk_requires_different_model_family_and_provider(cp
             reviewer.id,
             evidence_id=verdict_id,
         )
-
-
-def test_high_risk_review_disables_independence_fallback(cp):
-    task = cp.create_task(
-        "t",
-        metadata={"default_review": {"risk_level": "critical"}},
-    )
-
-    assert cp._reviewer_independence_fallback_enabled(task) is False
 
 
 def test_cross_llm_review_helper_contracts():
@@ -13630,284 +12200,7 @@ def test_rollout_deploy_environment_id_round_trips(cp):
     assert fetched.deploy_environment_id == env.id
 
 
-def _setup_hubverify_task(cp, runner):
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    # Canonical remote lives on the task contract (the hub verifier resolves
-    # the clone target from there); the executor evidence carries no
-    # remote_url, so add_evidence performs no live git ls-remote.
-    task = cp.create_task(
-        "Implement thing",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://publish",
-            "origin": {
-                "repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}
-            },
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests passed",
-        worker.id,
-        metadata=verified_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    cp._hub_verify_runner = runner
-    return worker, reviewer, task, evidence
-
-
-def test_hub_verify_prefers_canonical_contract_remote_over_redacted_evidence(cp):
-    worker, reviewer, task, evidence = _setup_hubverify_task(cp, lambda *args: (0, "ok"))
-    evidence.metadata["verification"]["repo"]["remote_url"] = (
-        "https://x-access-token:<redacted>@github.com/wrong/repo.git"
-    )
-
-    info = cp._hub_verify_repo_info(task, evidence)
-
-    assert info is not None
-    assert info["remote_url"] == "git@github.com:org/repo.git"
-
-
-def test_hub_verify_uses_sanity_scope_and_fails_closed_for_unsafe_paths(cp):
-    worker, reviewer, task, evidence = _setup_hubverify_task(cp, lambda *args: (0, "ok"))
-    info = cp._hub_verify_repo_info(task, evidence)
-    assert info is not None
-
-    command = cp._hub_review_test_command(task, info)
-
-    assert "scripts/run-sanity-tests.sh" in command
-    assert "--changed-file src/example.py" in command
-    assert "else scripts/run-contract-tests.sh" in command
-    unsafe = dict(info, files_changed=["../escape.py"])
-    assert cp._hub_review_test_command(task, unsafe) == "scripts/run-contract-tests.sh"
-
-
-def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    seen = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda remote, branch, head, cmd: seen.append((remote, branch, head)) or (0, "all passed"),
-    )
-    # Hub verify runs as soon as a review is pending: create review -> run the
-    # contract test on the hub -> signed verdict -> publish, within one or two
-    # ticks (no waiting on an agent).
-    statuses = [
-        cp.advance_default_review_workflow(task.id)["status"],
-        cp.advance_default_review_workflow(task.id)["status"],
-    ]
-    assert "published" in statuses
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    # The hub ran the contract test on the pushed branch (not a nudged agent).
-    assert seen and seen[0][0] == "git@github.com:org/repo.git" and seen[0][1] == "task/example"
-    reviews = cp.list_reviews(task.id)
-    assert reviews[0].status == ReviewStatus.APPROVED.value
-    # Verdict evidence is hub-produced, signed by the reviewer, no agent nudge needed.
-    verdict = next(e for e in cp.list_evidence(task.id) if (e.metadata or {}).get("hub_verified"))
-    assert verdict.created_by == services.DEFAULT_HUB_REVIEWER_AGENT_ID
-    names = {ev.name for ev in cp.list_observability(limit=80)}
-    assert "workflow.default_review.hub_verified" in names
-    assert "workflow.default_review.published" in names
-
-
-def test_periodic_review_sweep_defers_blocking_hub_verification(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    runner_calls = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda *args: runner_calls.append(args) or (0, "all passed"),
-    )
-    nudged = []
-    cp._nudge_review_workflow = nudged.append
-
-    result = cp.advance_default_review_workflows(
-        limit=10,
-        allow_blocking_hub_verify=False,
-    )
-
-    task_result = next(item for item in result["results"] if item["task_id"] == task.id)
-    assert task_result["status"] == "waiting_for_hub_verify"
-    assert nudged == [task.id]
-    assert runner_calls == []
-    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
-
-
-def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda remote, branch, head, cmd: (1, "3 failed, 2 passed"),
-    )
-    cp.advance_default_review_workflow(task.id)
-    result = cp.advance_default_review_workflow(task.id)
-
-    # A failing contract test yields a rejected verdict; nothing is published.
-    assert result["status"] not in {"published"}
-    assert cp.get_task(task.id).state != TaskState.COMPLETED.value
-    reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
-    assert not cp.list_publications(task.id)
-
-
-def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, semantic_reviewer_on, monkeypatch):
-    monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
-    called = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda *a: called.append(a) or (0, "ok"),
-    )
-    cp.advance_default_review_workflow(task.id)
-    result = cp.advance_default_review_workflow(task.id)
-    # Hub verify off: no hub run, workflow waits for an agent verdict as before.
-    assert not called
-    assert result["status"] == "waiting_for_reviewer_verdict"
-
-
-def test_hub_verify_inflight_guard_prevents_concurrent_runs(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    calls = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda *a: calls.append(a) or (0, "ok"),
-    )
-    review = cp.request_review(task.id, reviewer.id)
-    # A verify already running for this review: the next call is a no-op and
-    # does NOT launch a second sandbox contract test.
-    cp._hub_verify_inflight = {review.id}
-    result = cp._run_hub_review_verification(task, review, evidence, "test")
-    assert result is None
-    assert calls == []
-
-
-@pytest.mark.parametrize("retract_after_reentry", [False, True])
-def test_hub_review_reentry_during_verify_does_not_accept_stale_verdict(
-    cp, monkeypatch, retract_after_reentry
-):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    calls = []
-
-    def verify(*args):
-        calls.append(args)
-        assert len(calls) == 1, "a scheduler cycle launched a duplicate verifier"
-        review = cp.list_reviews(task.id)[0]
-        assert cp._agent_is_virtual(review.reviewer_agent_id)
-        # Re-enter the review sweep while its external test runner is active.
-        # The pending review and in-flight guard must prevent a second run.
-        cp.advance_default_review_workflow(task.id)
-        assert len(cp.list_reviews(task.id)) == 1
-        assert cp.get_review(review.id).status == ReviewStatus.PENDING.value
-        assert len(calls) == 1
-        if retract_after_reentry:
-            cp._retract_default_review(review, "test", "explicit cancellation during verification")
-        return 0, "all passed"
-
-    worker, reviewer, task, evidence = _setup_hubverify_task(cp, verify)
-    cp.advance_default_review_workflow(task.id)
-
-    assert len(calls) == 1
-    verdicts = [item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")]
-    if retract_after_reentry:
-        assert cp.get_task(task.id).state != TaskState.COMPLETED.value
-        assert verdicts == []
-        assert cp.list_reviews(task.id)[0].status == ReviewStatus.RETRACTED.value
-    else:
-        cp.advance_default_review_workflow(task.id)
-        assert len(calls) == 1
-        assert len(cp.list_reviews(task.id)) == 1
-        assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-        assert len(verdicts) == 1
-
-
-def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    calls = []
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda *a: calls.append(a) or (0, "ok"),
-    )
-    review = cp.request_review(task.id, reviewer.id)
-
-    first = cp._run_hub_review_verification(task, review, evidence, "test")
-    assert first is not None
-    second = cp._run_hub_review_verification(task, review, evidence, "test")
-
-    assert second is not None and second.id == first.id
-    cp.submit_review(
-        review.id,
-        ReviewStatus.APPROVED.value,
-        reviewer.id,
-        evidence_id=first.id,
-    )
-    cp.publish_task(task.id, "test://publish", reviewer.id, evidence_id=evidence.id)
-    after_completion = cp._run_hub_review_verification(task, review, evidence, "test")
-
-    assert after_completion is not None and after_completion.id == first.id
-    assert len(calls) == 1
-    hub_verified = [item for item in cp.list_evidence(task.id) if item.metadata.get("hub_verified")]
-    assert [item.id for item in hub_verified] == [first.id]
-
-
-def test_hub_verify_does_not_rerun_for_invalid_deterministic_verdict(cp, monkeypatch):
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    calls = []
-    worker, reviewer, task, executor_evidence = _setup_hubverify_task(
-        cp, lambda *args: calls.append(args) or (0, "ok")
-    )
-    review = cp.request_review(task.id, reviewer.id)
-    head_sha = executor_evidence.metadata["verification"]["repo"]["head_sha"]
-    invalid_manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "review_verdict",
-        "verdict": "approved",
-        "review_id": review.id,
-        "reviewed_evidence_id": executor_evidence.id,
-        "worktree_digest": "sha256:" + "0" * 64,
-        "verified_by": "hub_review_verifier_v1",
-        "repo": {"head_sha": head_sha},
-        "signed_by": reviewer.id,
-        "signature": "invalid",
-    }
-    invalid = cp.add_evidence(
-        task.id,
-        "review",
-        cp._hub_review_verification_uri(review.id, head_sha),
-        "invalid deterministic hub verdict",
-        reviewer.id,
-        metadata={
-            "returncode": 0,
-            "hub_verified": True,
-            "verification": invalid_manifest,
-        },
-    )
-
-    first = cp._run_hub_review_verification(task, review, executor_evidence, "test")
-    second = cp._run_hub_review_verification(task, review, executor_evidence, "test")
-
-    assert first is None
-    assert second is None
-    assert calls == []
-    retracted = cp.get_review(review.id)
-    assert retracted.status == ReviewStatus.RETRACTED.value
-    assert retracted.reason == "reviewer_protocol_failure:hub_verdict_invalid"
-    hub_verdicts = [
-        item
-        for item in cp.list_evidence(task.id)
-        if item.uri == cp._hub_review_verification_uri(review.id, head_sha)
-    ]
-    assert [item.id for item in hub_verdicts] == [invalid.id]
-    observations = cp.list_observability(subject_type="task", subject_id=task.id, limit=100)
-    assert any(
-        item.name == "workflow.default_review.hub_verify_invalid_existing" for item in observations
-    )
-
-
-def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypatch):
+def test_verifier_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypatch):
     """The tar-uploaded repo can be owned by a different uid than the sandbox
     user, and HOME=/tmp means no safe.directory whitelist exists — without the
     preflight, the contract tests that run git against the checkout itself die
@@ -13930,9 +12223,7 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
-    rc, out = cp._hub_verify_run_contract_test(
-        "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
-    )
+    rc, out = cp._run_contract_gate("git@github.com:org/repo.git", "task/branch", "a" * 40, "")
     assert rc == 0
     create = next(a for a in captured if "create" in a)
     separator = create.index("--")
@@ -13961,7 +12252,7 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)
 
 
-def test_hub_verify_sandbox_provisions_its_own_postgres(cp, monkeypatch):
+def test_verifier_sandbox_provisions_its_own_postgres(cp, monkeypatch):
     """Remote Linux verification must not start or depend on a hub-host DB."""
     import subprocess as _subprocess
 
@@ -13977,270 +12268,16 @@ def test_hub_verify_sandbox_provisions_its_own_postgres(cp, monkeypatch):
 
     monkeypatch.setattr(services_mod.subprocess, "run", fake_run)
 
-    def reject_host_database(repo_root):
-        pytest.fail("verification must provision PostgreSQL inside the sandbox")
-
-    monkeypatch.setattr(services_mod, "hub_verify_test_pg_url", reject_host_database)
     monkeypatch.setenv(
         "MAC_HUB_VERIFY_IMAGE",
         "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64,
     )
-    rc, _out = cp._hub_verify_run_contract_test(
-        "git@github.com:org/repo.git", "task/branch", "a" * 40, ""
-    )
+    rc, _out = cp._run_contract_gate("git@github.com:org/repo.git", "task/branch", "a" * 40, "")
     assert rc == 0
     create = next(a for a in captured if "create" in a)
     env_values = [create[index + 1] for index, value in enumerate(create[:-1]) if value == "--env"]
     assert "MAC_TEST_PG_LOCAL=1" in env_values
     assert not any(value.startswith("MAC_TEST_PG_URL=") for value in env_values)
-
-
-def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypatch):
-    """Blocking guard (Option C): when hub verify is enabled and the verifier
-    cannot produce a verdict in this tick (e.g. runner raises, key absent, or
-    in-flight guard fires), the workflow MUST block with waiting_for_hub_verify
-    rather than falling through to the agent-nudge path.  Merge is gated until
-    the hub verdict is recorded."""
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-
-    def always_raises(*args):
-        raise RuntimeError("sandbox unavailable")
-
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        always_raises,
-    )
-    # First tick: review assigned, hub verify throws, blocking guard fires.
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "waiting_for_hub_verify", (
-        "hub verify blocking guard must return waiting_for_hub_verify, "
-        "not fall through to agent nudge path; got: %s" % result["status"]
-    )
-    assert result["review_id"] == cp.list_reviews(task.id)[0].id
-    # The review must still be pending — no spurious retraction or approval.
-    assert cp.list_reviews(task.id)[0].status == ReviewStatus.PENDING.value
-    # An observation is recorded so operators can see what's happening.
-    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
-    assert "workflow.default_review.waiting_for_hub_verify" in obs_names
-
-
-def test_hub_verify_gate_falls_through_for_non_repo_evidence(cp, monkeypatch):
-    """Evidence that is not a pushed repo change has nothing for hub-verify
-    to gate. With the semantic reviewer removed the hub-reviewer approves
-    from the already-validated executor evidence instead of nudging an LLM.
-    """
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
-
-    def unreachable(*args):
-        raise AssertionError("hub verify runner must not run for non-repo evidence")
-
-    worker = register_agent(cp, "worker", ["ops"])
-    fleet_reviewer = register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task(
-        "Plan project",
-        required_capabilities=["ops"],
-        metadata={"publication_target": "test://publish"},
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    manifest = _sign(
-        cp,
-        worker.id,
-        {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "operator_result",
-            "summary": "Implementation plan produced",
-            "result": "Story graph, dependency order, and verification plan produced.",
-        },
-    )
-    cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://operator-result",
-        "Implementation plan produced",
-        worker.id,
-        metadata={"returncode": 0, "verification": manifest},
-    )
-    cp.submit_for_review(task.id, worker.id)
-    cp._hub_verify_runner = unreachable
-
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] != "waiting_for_hub_verify"
-    assert result["status"] == "published"
-    review = cp.list_reviews(task.id)[0]
-    assert review.status == ReviewStatus.APPROVED.value
-    assert review.reviewer_agent_id == "agent_hub-reviewer"
-    assert review.reviewer_agent_id != fleet_reviewer.id
-    verdict = cp.get_evidence(review.evidence_id)
-    assert verdict.metadata["verification"]["verified_by"] == "semantic_reviewer_removed"
-    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
-    assert "workflow.default_review.waiting_for_hub_verify" not in obs_names
-    assert "workflow.default_review.approved" in obs_names
-
-
-def test_evidence_tests_are_hub_verify_deferred_detects_deferred(cp):
-    """_evidence_tests_are_hub_verify_deferred returns True only when all test
-    items carry status='deferred' and none has already passed."""
-    from mac.services import ControlPlane as _CP
-
-    worker = register_agent(cp, "worker", ["python"])
-    task = cp.create_task("task", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-
-    def _make_evidence(tests):
-        manifest = {
-            "schema": "mac.worker_evidence.v1",
-            "status": "complete",
-            "evidence_type": "repo_change",
-            "repo": {
-                "head_sha": "a" * 40,
-                "pushed": True,
-                "remote_ref": "refs/heads/task/x",
-                "dirty": False,
-                "files_changed": ["src/x.py"],
-            },
-            "tests": tests,
-        }
-        return cp.add_evidence(
-            task.id,
-            "log",
-            "artifact://test",
-            "t",
-            worker.id,
-            metadata={"returncode": 0, "verification": manifest},
-        )
-
-    # All deferred, none passing → True.
-    ev = _make_evidence([{"status": "deferred", "command": "cmd"}])
-    assert _CP._evidence_tests_are_hub_verify_deferred(ev) is True
-
-    # One passing alongside deferred → False (executor already ran tests).
-    ev2 = _make_evidence(
-        [
-            {"status": "deferred", "command": "cmd"},
-            {"status": "pass", "command": "cmd"},
-        ]
-    )
-    assert _CP._evidence_tests_are_hub_verify_deferred(ev2) is False
-
-    # No deferred items → False.
-    ev3 = _make_evidence([{"returncode": 0, "command": "cmd"}])
-    assert _CP._evidence_tests_are_hub_verify_deferred(ev3) is False
-
-    # Empty tests list → False.
-    ev4 = _make_evidence([])
-    assert _CP._evidence_tests_are_hub_verify_deferred(ev4) is False
-
-
-def test_hub_verify_repo_info_accepts_deferred_test_evidence(cp):
-    """_hub_verify_repo_info must return the branch coordinates when the
-    executor evidence carries a deferred test item and repo.pushed=True,
-    so hub verify can run the contract test on behalf of the executor."""
-    worker = register_agent(cp, "worker", ["python"])
-    register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task(
-        "task",
-        required_capabilities=["python"],
-        metadata={
-            "origin": {
-                "repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}
-            }
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "b" * 40,
-            "pushed": True,
-            "remote_ref": "refs/heads/task/deferred-branch",
-            "dirty": False,
-            "files_changed": ["src/y.py"],
-        },
-        "tests": [{"status": "deferred", "command": "scripts/run-contract-tests.sh"}],
-    }
-    manifest = _sign(cp, worker.id, manifest)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://result",
-        "deferred",
-        worker.id,
-        metadata={"returncode": 0, "verification": manifest},
-    )
-    info = cp._hub_verify_repo_info(task, evidence)
-    assert info is not None, (
-        "_hub_verify_repo_info must accept evidence with deferred test items when repo.pushed=True"
-    )
-    assert info["branch"] == "task/deferred-branch"
-    assert info["head_sha"] == "b" * 40
-
-
-def test_assess_evidence_accepts_deferred_test_with_hub_verify_enabled(cp, monkeypatch):
-    """_assess_default_review_evidence must accept executor evidence that
-    carries only deferred test items when hub verify is enabled (Option C).
-    Under Option A (MAC_REVIEW_HUB_VERIFY unset), the same evidence is
-    rejected — the executor must always supply its own passing tests."""
-    worker = register_agent(cp, "worker", ["python"])
-    task = cp.create_task(
-        "task",
-        required_capabilities=["python"],
-        metadata={
-            "origin": {
-                "repository_contract": {
-                    "canonical_remote_url": "git@github.com:org/repo.git",
-                    "evidence": {"required": ["tests"]},
-                }
-            }
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "c" * 40,
-            "pushed": True,
-            "remote_ref": "refs/heads/task/deferred",
-            "dirty": False,
-            "files_changed": ["src/z.py"],
-        },
-        "tests": [{"status": "deferred", "command": "scripts/run-contract-tests.sh"}],
-    }
-    manifest = _sign(cp, worker.id, manifest)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://result",
-        "deferred",
-        worker.id,
-        metadata={"returncode": 0, "verification": manifest},
-    )
-
-    # Option C: hub verify enabled → deferred test evidence is accepted.
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    result_c = cp._assess_default_review_evidence(task, evidence)
-    assert result_c["valid"] is True, (
-        "Option C: deferred test evidence must be accepted when hub verify is enabled; "
-        "got problems: %s" % result_c.get("problems")
-    )
-    assert result_c.get("hub_verify_deferred") is True
-
-    # Option A: hub verify disabled → same evidence is rejected.
-    monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
-    result_a = cp._assess_default_review_evidence(task, evidence)
-    assert result_a["valid"] is False, (
-        "Option A: deferred test evidence must be rejected when hub verify is disabled"
-    )
 
 
 def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):
@@ -14249,13 +12286,25 @@ def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):
     Previously every stage waited up to a full MAC_HUB_TICK_INTERVAL_SECONDS."""
     import time as _time
 
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    worker, reviewer, task, evidence = _setup_hubverify_task(
-        cp,
-        lambda remote, branch, head, cmd: (0, "all passed"),
+    worker = register_agent(cp, "worker", ["python"])
+    task = cp.create_task(
+        "Implement thing",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://publish"},
     )
-    # _setup_hubverify_task already called submit_for_review BEFORE the
-    # advancer existed; enable it and nudge as submit_for_review now does.
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    # submit_for_review ran BEFORE the advancer existed; enable it and nudge
+    # as submit_for_review now does.
     cp.enable_event_driven_review_advance()
     try:
         cp._nudge_review_workflow(task.id)
@@ -14265,7 +12314,7 @@ def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):
             if cp.get_task(task.id).state == TaskState.COMPLETED.value:
                 break
             _time.sleep(0.05)
-        # verdict recording re-nudges, so review AND publication complete
+        # One advance approves from the worker evidence and publishes,
         # without any cp.tick()/advance call from a sweep.
         assert cp.get_task(task.id).state == TaskState.COMPLETED.value
         reviews = cp.list_reviews(task.id)
@@ -14418,182 +12467,6 @@ def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
 # ---------------------------------------------------------------------------
 # Deferred executor evidence → hub verify: approved and rejected paths
 # ---------------------------------------------------------------------------
-
-
-def _deferred_repo_metadata(cp, agent_id):
-    """Build signed executor evidence where the test item is the deferred
-    hub-verify sentinel (status='deferred', execution_environment='hub_verify_pending').
-    This mirrors what the worker emits when MAC_REVIEW_HUB_VERIFY=1 and no
-    mac-sandbox-verification.json is present."""
-    manifest = {
-        "schema": "mac.worker_evidence.v1",
-        "status": "complete",
-        "evidence_type": "repo_change",
-        "repo": {
-            "head_sha": "b" * 40,
-            "pushed": True,
-            "remote_ref": "refs/heads/task/deferred-hub",
-            "dirty": False,
-            "files_changed": ["src/feature.py"],
-        },
-        "tests": [
-            {
-                "name": "repository contract test",
-                "command": "scripts/run-contract-tests.sh",
-                "returncode": None,
-                "status": "deferred",
-                "execution_environment": "hub_verify_pending",
-                "stdout": "",
-                "stderr": "",
-            }
-        ],
-    }
-    manifest = _sign(cp, agent_id, manifest)
-    return {"returncode": 0, "verification": manifest}
-
-
-def _setup_deferred_hubverify_task(cp, runner):
-    """Like _setup_hubverify_task but the executor evidence carries a deferred
-    test item, exercising the path where the hub runs the contract test on behalf
-    of the executor after the branch is already pushed."""
-    worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
-    task = cp.create_task(
-        "Implement with deferred hub verify",
-        required_capabilities=["python"],
-        metadata={
-            "publication_target": "test://publish",
-            "origin": {
-                "repository_contract": {"canonical_remote_url": "git@github.com:org/repo.git"}
-            },
-        },
-    )
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    evidence = cp.add_evidence(
-        task.id,
-        "log",
-        "artifact://worker-result",
-        "tests deferred to hub",
-        worker.id,
-        metadata=_deferred_repo_metadata(cp, worker.id),
-    )
-    cp.submit_for_review(task.id, worker.id)
-    cp._hub_verify_runner = runner
-    return worker, reviewer, task, evidence
-
-
-def test_hub_verify_deferred_executor_evidence_approves_and_publishes(cp, monkeypatch):
-    """Approved path: when the executor evidence carries a deferred test item
-    (status='deferred', hub_verify_pending), hub verify must still run the
-    contract test and, on success, approve and publish the task.
-
-    This exercises the full end-to-end pipeline:
-      executor pushes with deferred evidence → hub verify detects deferred item
-      → hub runs contract test → approved verdict → publication."""
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    seen = []
-    worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
-        cp,
-        lambda remote, branch, head, cmd: seen.append((remote, branch)) or (0, "all passed"),
-    )
-
-    # The deferred evidence must be accepted by the assessment layer.
-    assessment = cp._assess_default_review_evidence(task, evidence)
-    assert assessment["valid"] is True, (
-        "Deferred test evidence must be accepted when MAC_REVIEW_HUB_VERIFY=1; "
-        "problems: %s" % assessment.get("problems")
-    )
-    assert assessment.get("hub_verify_deferred") is True
-
-    # Advance the review workflow: hub verify should run and approve.
-    statuses = [
-        cp.advance_default_review_workflow(task.id)["status"],
-        cp.advance_default_review_workflow(task.id)["status"],
-    ]
-    assert "published" in statuses, (
-        "Hub verify on deferred evidence must eventually publish; got: %s" % statuses
-    )
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    reviews = cp.list_reviews(task.id)
-    assert reviews[0].status == ReviewStatus.APPROVED.value
-
-    # Hub ran the contract test against the pushed branch.
-    assert seen, "hub verify runner must have been called"
-    assert seen[0][0] == "git@github.com:org/repo.git"
-
-    obs_names = {ev.name for ev in cp.list_observability(limit=80)}
-    assert "workflow.default_review.hub_verified" in obs_names
-    assert "workflow.default_review.published" in obs_names
-
-
-def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monkeypatch):
-    """Rejected path: when the executor evidence carries a deferred test item
-    but the hub contract test fails (non-zero returncode), the workflow must
-    reject the review — nothing is published."""
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-    worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
-        cp,
-        lambda remote, branch, head, cmd: (1, "4 failed, 1 passed"),
-    )
-
-    cp.advance_default_review_workflow(task.id)
-    result = cp.advance_default_review_workflow(task.id)
-
-    # A failing contract test on deferred evidence yields a rejected verdict.
-    assert result["status"] not in {"published"}, (
-        "Hub verify must reject when the contract test fails; got status: %s" % result["status"]
-    )
-    assert cp.get_task(task.id).state != TaskState.COMPLETED.value
-    reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
-    assert not cp.list_publications(task.id)
-
-
-def test_hub_verify_deferred_merge_blocked_while_pending_unblocks_on_approved(cp, monkeypatch):
-    """Regression gate: when hub verify is running (no verdict yet in this tick),
-    the workflow MUST return waiting_for_hub_verify — merge is gated.
-    Once the hub produces an approved verdict, a subsequent advance call
-    transitions to published.
-
-    This confirms that the deferred-sentinel path does not bypass the blocking
-    guard that prevents premature publication."""
-    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
-
-    # Phase 1: runner raises to simulate hub verify in-flight (not done yet).
-    def always_raises(*args):
-        raise RuntimeError("hub verify sandbox not ready")
-
-    worker, reviewer, task, evidence = _setup_deferred_hubverify_task(cp, always_raises)
-
-    # First advance: review is assigned, hub verify raises, blocking guard fires.
-    result = cp.advance_default_review_workflow(task.id)
-    assert result["status"] == "waiting_for_hub_verify", (
-        "Merge must be blocked while hub verify is pending; got: %s" % result["status"]
-    )
-    # Review must still be pending — no spurious approval or retraction.
-    pending = cp.list_reviews(task.id)
-    assert pending and pending[0].status == ReviewStatus.PENDING.value
-
-    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
-    assert "workflow.default_review.waiting_for_hub_verify" in obs_names
-
-    # Phase 2: swap in a successful runner (hub verify completes).
-    cp._hub_verify_runner = lambda remote, branch, head, cmd: (0, "all passed")
-
-    # Subsequent advance (once the landing backoff the crash earned has
-    # elapsed) must approve and publish.
-    _expire_landing_backoff(cp, task.id)
-    statuses = [
-        cp.advance_default_review_workflow(task.id)["status"],
-        cp.advance_default_review_workflow(task.id)["status"],
-    ]
-    assert "published" in statuses, (
-        "After hub verify approves, advance must publish; got: %s" % statuses
-    )
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    final_reviews = cp.list_reviews(task.id)
-    assert final_reviews[0].status == ReviewStatus.APPROVED.value
 
 
 # ---------------------------------------------------------------------------

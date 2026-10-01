@@ -3,7 +3,7 @@
 Thread dump taken on the hub while it was unresponsive, 2026-08-14:
 
     Thread A   publish_task -> validate_projected_merge_contract
-               -> _hub_verify_run_contract_test -> subprocess wait
+               -> _run_contract_gate -> subprocess wait
                ...holding _PUBLICATION_BARRIER_THREAD_LOCK
 
     Threads B..H  publish_task -> publication_serialization  (blocked)

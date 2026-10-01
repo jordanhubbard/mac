@@ -38,6 +38,7 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    Union,
 )
 
 import yaml
@@ -916,14 +917,10 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "[%s] %s" % (failure.cause, failure.problem),
             failure.remediation,
         )
-    if (
-        "review_retraction_cap_hit" in blob
-        or "review_verdict_wait_cap_hit" in blob
-        or "reviewer" in blob
-    ):
+    if "reviewer" in blob:
         return note(
-            "Review never completed (reviewer unavailable or timed out).",
-            "Ensure a free, fresh reviewer (don't run every agent executing at once); raise MAC_REVIEW_RETRACTION_CAP / MAC_REVIEW_VERDICT_WAIT_CAP / MAC_DEFAULT_REVIEWER_STALE_AFTER_SECONDS. Heavy reviews need the review heartbeat to stay alive.",
+            "Review never completed (the hub-reviewer could not decide it).",
+            "Read the blocked reason in `mac task show`: an ineligible hub-reviewer (task review policy names another reviewer, or its tenant excludes the review machine) or a verdict the task's review contract rejects. Fix the policy or the evidence, then `mac task reopen`.",
         )
     if "max attempt" in blob:
         return note(
@@ -1089,65 +1086,10 @@ REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yml",
 )
 
-#: Output signatures that mean the verification COULD NOT RUN, as opposed to
-#: ran and found the change wanting.
-#:
-#: These are transport and environment faults of the harness itself. On
-#: 2026-08-19 every review in a 90-minute window was rejected, and the signed
-#: verdict for one of them ended:
-#:
-#:     coverage safety: statements 69300/76238 (90.90%, floor 90.00%);
-#:                      branches   20216/24618 (82.12%, floor 80.00%)
-#:       - Uploading files to /sandbox...
-#:       + Files uploaded
-#:     Error:   x ssh exited with status exit status: 1
-#:
-#: BOTH COVERAGE FLOORS PASSED. The gate the run exists to enforce was
-#: satisfied, and the coding-agent's ssh stream then died. That exit status
-#: became `rejected`, signed, and indistinguishable downstream from a reviewer
-#: judging the work deficient. One task was rejected, redone more thoroughly
-#: (58 tests -> 60, 2 files -> 11, and ruff added), and
-#: rejected identically, because the verdict never depended on the diff.
-#: Output signatures proving the gate RAN AND JUDGED THE CHANGE WANTING.
-#:
-#: Checked BEFORE the unavailable signatures, and they win, because the two
-#: overlap in exactly the case that matters.
-#:
-#: `ssh exited with status` is the generic wrapper exit printed whenever a
-#: remote command returns non-zero -- it accompanies every failure through the
-#: ssh transport, not only a transport fault. Listing it as "unavailable"
-#: (2026-08-19, PR #478) therefore inverted the original bug instead of fixing
-#: it. Before, a transport death was signed as a rejection. After, a genuine
-#: rejection was swallowed as "could not verify", so NO verdict was signed and
-#: the task sat in REVIEWING forever.
-#:
-#: Observed live on 2026-08-20: twelve `hub_verify_unavailable` events in
-#: ninety minutes whose real failures were
-#:     "documentation contract failed: published shell fences outside the
-#:      executable book are forbidden"
-#: and
-#:     "documentation-inventory.md is stale: regenerate with
-#:      scripts/generate-docs-reference.py --write"
-#: -- both real, actionable, and both discarded. Twenty tasks accumulated in
-#: REVIEWING, five of them for over a hundred hours.
-#:
-#: The discriminator is whether the gate reached a judgement. It is not
-#: "did the gate produce output": in the #478 case the coverage gate ran and
-#: PASSED before the stream died, so output alone would have called that a
-#: rejection too. Only an explicit FAILING verdict counts.
-#: Every entry must appear ONLY on failure. That is the whole discipline here,
-#: and it is easy to get wrong in the direction that reintroduces #478:
-#: `coverage safety:` was an obvious-looking candidate and is emitted whether
-#: the floors pass or fail, so it would have marked the original
-#: passed-then-the-stream-died run as a rejection -- exactly the bug #478
-#: existed to fix. Likewise `repository contract` appears in
-#: "running fail-fast repository contract preflight", which is a start
-#: message, not a verdict.
-#:
-#: When in doubt leave a signature OUT. A missing signature means a real
-#: rejection is retried as "unavailable", which wastes a run. A wrong one
-#: means a transport fault is signed as a rejection, which discards correct
-#: work and is what this pair of fixes is for.
+#: Output signatures proving the contract gate RAN AND JUDGED THE CHANGE
+#: WANTING. They anchor the verifier output excerpt on the reason a run failed.
+#: Every entry must appear ONLY on failure: `coverage safety:` and `repository
+#: contract` look like candidates but are printed on passing runs too.
 _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
     "documentation contract failed",
     "is stale:",
@@ -1160,210 +1102,14 @@ _HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
 )
 
 
-_HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
-    "hub verifier resource profile unavailable",
-    "hub verification is unavailable: dedicated vm",
-    # cursor-agent's stream transport, the observed cause
-    "ssh exited with status",
-    "connection reset by peer",
-    "connection refused",
-    "retriableerror",
-    "resource_exhausted",
-    # no route to run anything at all
-    "no acceptable coding agent",
-    "agent_binary_missing",
-    "sandbox_policy_denied",
-    # the harness never got far enough to test the change
-    "failed to create sandbox",
-    "error: could not create sandbox",
-)
+def verifier_sandbox_env_pairs() -> List[str]:
+    """``--env`` values for a verifier OpenShell create.
 
-
-def hub_verification_unavailable_reason(output: str) -> Optional[str]:
-    """The signature saying this run could not verify anything, if present.
-
-    Returning a reason means "we do not know whether the change is good" --
-    which must NOT be recorded as a rejection. A signature over "rejected" is
-    a claim the evidence does not support, and downstream nothing can tell it
-    apart from a real verdict.
-
-    Deliberately narrow. An unrecognised failure stays a rejection, because
-    treating unknown failures as infrastructure would let a genuinely broken
-    change pass through as "could not verify" and retry forever -- failing
-    open on the gate this exists to enforce.
-    """
-    text = (output or "").lower()
-    # A gate that judged the change wanting is a REJECTION, whatever the
-    # transport did afterwards. Checked first because the two sets overlap:
-    # a real contract failure still exits through ssh and still prints
-    # "ssh exited with status".
-    for verdict in _HUB_VERIFY_VERDICT_SIGNATURES:
-        if verdict in text:
-            return None
-    for signature in _HUB_VERIFY_UNAVAILABLE_SIGNATURES:
-        if signature in text:
-            return signature
-    return None
-
-
-# OpenShell injects this hosts entry; ``host.docker.internal`` is Docker
-# Desktop and is not present in a hub-verify sandbox. Keep in lockstep with
-# ``executor_sandbox._OPENSHELL_HOST_ALIAS_DEFAULT``.
-_HUB_VERIFY_SANDBOX_PG_HOST = "host.openshell.internal"
-_HUB_VERIFY_PG_PORT = "55432"
-_HUB_VERIFY_PG_DB = "mac_hubverify"
-_HUB_VERIFY_PG_CONTAINER = "mac-hubverify-postgres"
-_LOOPBACK_PG_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
-
-
-def parse_start_test_postgres_export(stdout: str) -> str:
-    """Read the DSN from ``scripts/start-test-postgres.sh`` stdout."""
-
-    for line in (stdout or "").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("export MAC_TEST_PG_URL="):
-            return stripped.split("=", 1)[1].strip().strip("'\"")
-    return ""
-
-
-def _pg_url_authority(dsn: str) -> Optional[Tuple[str, int]]:
-    parsed = urllib.parse.urlsplit((dsn or "").strip())
-    host = (parsed.hostname or "").strip().lower()
-    if not host:
-        return None
-    return host, int(parsed.port or 5432)
-
-
-def _hub_verify_pg_shares_live_server(candidate: str, live: str) -> bool:
-    """True when *candidate* is the live hub Postgres process, even if the
-    database name or role differs.
-
-    ``start-test-postgres.sh`` will happily emit ``...@127.0.0.1:5432/mac_test``
-    when the hub is already listening on 5432. Exact-string comparison against
-    ``MAC_DATABASE_URL`` (a different database on that same server) would then
-    inject the live cluster into the sandbox.
+    The test database lives inside the sandbox: the gateway may run on a
+    separate Linux host, and libpq cannot use OpenShell's HTTP proxy.
     """
 
-    if not candidate or not live:
-        return False
-    if candidate.strip() == live.strip():
-        return True
-    left = _pg_url_authority(candidate)
-    right = _pg_url_authority(live)
-    if left is None or right is None:
-        return False
-    left_host, left_port = left
-    right_host, right_port = right
-    if left_port != right_port:
-        return False
-    if left_host == right_host:
-        return True
-    return left_host in _LOOPBACK_PG_HOSTS or right_host in _LOOPBACK_PG_HOSTS
-
-
-def _hub_verify_sandbox_pg_host(*, sandbox_host: str = "") -> str:
-    return (
-        sandbox_host
-        or os.environ.get("MAC_HUB_VERIFY_PG_HOST")
-        or os.environ.get("MAC_OPENSHELL_HOST_ALIAS")
-        or ""
-    ).strip() or _HUB_VERIFY_SANDBOX_PG_HOST
-
-
-def hub_verify_sandbox_pg_url(
-    raw: str,
-    *,
-    live_database_url: str = "",
-    sandbox_host: str = "",
-) -> Optional[str]:
-    """Return a test DSN the OpenShell hub-verify sandbox can use.
-
-    Refuses the live hub Postgres (same host+port, not merely the same DSN).
-    Rewrites loopback hosts to ``host.openshell.internal`` (override with
-    ``MAC_HUB_VERIFY_PG_HOST`` or ``MAC_OPENSHELL_HOST_ALIAS``) so a dedicated
-    Postgres started on the hub is reachable from inside the sandbox.
-    """
-
-    candidate = (raw or "").strip()
-    live = (live_database_url or "").strip()
-    if not candidate:
-        return None
-    if _hub_verify_pg_shares_live_server(candidate, live):
-        return None
-    host = _hub_verify_sandbox_pg_host(sandbox_host=sandbox_host)
-    parsed = urllib.parse.urlsplit(candidate)
-    hostname = (parsed.hostname or "").strip().lower()
-    if hostname in _LOOPBACK_PG_HOSTS:
-        username = parsed.username or ""
-        password = parsed.password
-        userinfo = username
-        if password is not None:
-            userinfo = "%s:%s" % (username, password)
-        netloc = host
-        if parsed.port:
-            netloc = "%s:%s" % (host, parsed.port)
-        if userinfo:
-            netloc = "%s@%s" % (userinfo, netloc)
-        candidate = urllib.parse.urlunsplit(
-            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
-        )
-        if _hub_verify_pg_shares_live_server(candidate, live):
-            return None
-    return candidate
-
-
-def _hub_verify_start_test_postgres(repo_root: Path) -> str:
-    helper = repo_root / "scripts" / "start-test-postgres.sh"
-    if not helper.is_file():
-        return ""
-    env = dict(os.environ)
-    env.pop("MAC_TEST_PG_URL", None)
-    env["MAC_TEST_PG_PORT"] = (
-        os.environ.get("MAC_HUB_VERIFY_PG_PORT") or _HUB_VERIFY_PG_PORT
-    ).strip() or _HUB_VERIFY_PG_PORT
-    env["MAC_TEST_PG_DB"] = _HUB_VERIFY_PG_DB
-    env["MAC_TEST_PG_CONTAINER"] = _HUB_VERIFY_PG_CONTAINER
-    env["MAC_TEST_PG_DATADIR"] = os.environ.get("MAC_HUB_VERIFY_PG_DATADIR") or os.path.join(
-        tempfile.gettempdir(), "mac-hubverify-pgdata"
-    )
-    try:
-        proc = subprocess.run(
-            ["bash", str(helper)],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=90,
-            check=False,
-            env=env,
-        )
-    except Exception:  # noqa: BLE001 - missing helper must not abort verify
-        return ""
-    # 0 is success; ``returncode or 1`` would turn a successful helper into a
-    # miss and leave the sandbox without MAC_TEST_PG_URL (observed after #682).
-    if getattr(proc, "returncode", 1) != 0:
-        return ""
-    return parse_start_test_postgres_export(proc.stdout or "")
-
-
-def hub_verify_test_pg_url(repo_root: Path) -> Optional[str]:
-    """Dedicated test DSN for the hub-verify sandbox, never the live hub DB."""
-
-    explicit = (os.environ.get("MAC_HUB_VERIFY_PG_URL") or "").strip()
-    live = (os.environ.get("MAC_DATABASE_URL") or os.environ.get("MAC_DB") or "").strip()
-    raw = explicit or _hub_verify_start_test_postgres(repo_root)
-    return hub_verify_sandbox_pg_url(raw, live_database_url=live)
-
-
-def hub_verify_sandbox_env_pairs(*, test_pg_url: Optional[str] = None) -> List[str]:
-    """``--env`` values for a hub-verify OpenShell create."""
-
-    pairs = ["HOME=/tmp", "PATH=%s" % SANDBOX_BASE_PATH]
-    dsn = (test_pg_url or "").strip()
-    if dsn:
-        pairs.append("MAC_TEST_PG_URL=%s" % dsn)
-    else:
-        pairs.append("MAC_TEST_PG_LOCAL=1")
-    return pairs
+    return ["HOME=/tmp", "PATH=%s" % SANDBOX_BASE_PATH, "MAC_TEST_PG_LOCAL=1"]
 
 
 def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
@@ -1580,7 +1326,7 @@ def _serialize_runtime_source_publication(function: Callable[..., Optional[JsonD
         # Thread dump taken on the hub mid-hang, 2026-08-14:
         #
         #   one thread:  publish_task -> validate_projected_merge_contract
-        #                -> _hub_verify_run_contract_test -> subprocess wait
+        #                -> (the contract gate runner) -> subprocess wait
         #                (holding _PUBLICATION_BARRIER_THREAD_LOCK)
         #   seven more:  publish_task -> publication_serialization (blocked),
         #                one of them the hub TICK thread
@@ -2173,32 +1919,6 @@ def _canonicalize_for_signature(manifest: Dict[str, Any]) -> bytes:
     return json_dumps(filtered).encode("utf-8")
 
 
-def _hub_review_verify_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
-    """Option C: hub runs the review contract test itself (one controlled
-    sandbox) instead of dispatching to a reviewer agent. Off by default; the
-    hub deploy sets MAC_REVIEW_HUB_VERIFY=1."""
-    env = os.environ if environ is None else environ
-    return str(env.get("MAC_REVIEW_HUB_VERIFY") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _semantic_reviewer_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
-    """LLM second-eyes on default review. Off.
-
-    Observed 2026-08-23: release blockers that had already passed tests and
-    been pushed were rejected by fleet semantic reviewers, then burned
-    millions of tokens retrying the same gate. Hub-verify is the only
-    default review. Set MAC_REVIEW_SEMANTIC_REVIEWER=1 only as an emergency
-    opt-in to restore the old nudge path.
-    """
-    env = os.environ if environ is None else environ
-    return str(env.get("MAC_REVIEW_SEMANTIC_REVIEWER") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA = "mac.hub_review_verifier.v1"
 HUB_REVIEWER_KEY_RESOURCE_KEY = "hub_reviewer_attestation_key"
 HUB_REVIEWER_KEY_STATUS_SCHEMA = "mac.hub_reviewer_attestation_key_status.v1"
@@ -2206,14 +1926,6 @@ HUB_REVIEWER_KEY_RECOVERY_LIMIT = 3
 DEFAULT_HUB_REVIEWER_AGENT_NAME = "hub-reviewer"
 DEFAULT_HUB_REVIEWER_AGENT_ID = "agent_hub-reviewer"
 DEFAULT_HUB_REVIEWER_MACHINE_ID = "machine_operator_review"
-REVIEWER_INDEPENDENCE_REASONS = frozenset(
-    {
-        "reviewer_cooperative_family_participant",
-        "reviewer_previously_owned_task",
-        "reviewer_created_executor_evidence",
-        "reviewer_same_persona",
-    }
-)
 
 
 class AgentAttestationKeyState(str, Enum):
@@ -2274,19 +1986,17 @@ def run_repository_contract_test_in_openshell(
     test_command: str,
     bootstrap_command: str = "",
     *,
-    prepared_report: Optional[Mapping[str, Any]] = None,
     verifier_identity: Optional[Dict[str, Any]] = None,
     local_repository: Optional[Path] = None,
     expected_tree_sha: str = "",
     timeout_seconds: Optional[float] = None,
 ) -> Tuple[int, str]:
-    """Clone the pushed branch and run the contract test in an isolated
-    OpenShell sandbox on the configured gateway. Returns (returncode, tail_of_output).
+    """Stage a commit and run the contract test in an isolated verifier.
 
-    Isolation is mandatory: this executes pushed (agent-authored) test code
-    for the control plane, so it must not run on the hub host. Injected
-    via MAC_HUB_VERIFY_RUNNER-style override in tests (see the
-    ``_hub_verify_runner`` hook) so unit tests need no git/OpenShell."""
+    Runs in an OpenShell sandbox on the configured gateway (or the dedicated
+    VM verifier). Returns (returncode, tail_of_output). Isolation is
+    mandatory: this executes agent-authored test code, so it must not run on
+    the host that calls it."""
     deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
 
     def bounded_timeout(cap: float) -> float:
@@ -2321,8 +2031,6 @@ def run_repository_contract_test_in_openshell(
         vm_config = configured_vm_verifier(remote_url)
     except (OSError, ValueError) as exc:
         return 1, f"hub verification is unavailable: dedicated VM configuration: {exc}"
-    if vm_config is not None and prepared_report is not None:
-        return 1, "hub verification is unavailable: dedicated VM report attestation is unsupported"
     openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
     image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "").strip()
     if vm_config is None and not image:
@@ -2346,23 +2054,6 @@ def run_repository_contract_test_in_openshell(
     policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
     if vm_config is None and local_repository is not None and not policy:
         return 1, "pre-push verification unavailable: MAC_OPENSHELL_POLICY is required"
-    if prepared_report is not None:
-        from .trusted_artifact import nofollow_regular_file_identity
-
-        try:
-            _policy_path, policy_digest = nofollow_regular_file_identity(policy)
-        except (OSError, ValueError):
-            return (
-                1,
-                "hub verification is unavailable: report verifier policy is missing or invalid",
-            )
-        if verifier_identity is not None:
-            verifier_identity.update(
-                runtime_image_ref=image,
-                policy_sha256=policy_digest,
-                execution_environment="openshell_sandbox",
-                platform="linux",
-            )
     try:
         # 1200s could not cover even a scoped run once cloning, uploading
         # and dependency bootstrap are counted: the scoped gate alone takes
@@ -2461,37 +2152,6 @@ def run_repository_contract_test_in_openshell(
             check=False,
         )
         observed_head = cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
-        if prepared_report is not None and observed_head != head_sha:
-            # The signed worker inspected this exact canonical-remote
-            # commit. A read-only report has no pushed branch of its own;
-            # trunk may advance while it is being written. Fetch only that
-            # prepared commit, leaving pushed code reviews' HEAD gate intact.
-            for args in (
-                ["fetch", "--depth", "1", "origin", head_sha],
-                ["checkout", "--detach", head_sha],
-            ):
-                selected = subprocess.run(
-                    ["git", "-C", str(tmp / "repo"), *args],
-                    capture_output=True,
-                    text=True,
-                    timeout=bounded_timeout(300),
-                    check=False,
-                    env={**os.environ, **auth_env} if auth_env else None,
-                    stdin=subprocess.DEVNULL,
-                )
-                if selected.returncode != 0:
-                    return (
-                        1,
-                        "hub verification is unavailable: could not fetch prepared report commit",
-                    )
-            selected = subprocess.run(
-                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=bounded_timeout(30),
-                check=False,
-            )
-            observed_head = selected.stdout.strip() if selected.returncode == 0 else ""
         if observed_head != head_sha:
             return 1, (
                 "hub verify clone HEAD mismatch: expected %s, observed %s"
@@ -2567,7 +2227,7 @@ def run_repository_contract_test_in_openshell(
         # control-plane host's PATH. The test database belongs inside the
         # sandbox too: the gateway may run on a separate Linux fleet host,
         # and libpq cannot use OpenShell's HTTP network proxy.
-        for value in [*hub_verify_sandbox_env_pairs(), *profile_env]:
+        for value in [*verifier_sandbox_env_pairs(), *profile_env]:
             argv += ["--env", value]
         # `sandbox create` defaults to opening an interactive shell when no
         # command is supplied. In a non-interactive verifier that leaves the
@@ -2576,16 +2236,6 @@ def run_repository_contract_test_in_openshell(
         # persistent sandbox remains available for upload and exec phases.
         argv += ["--no-tty", "--", "/bin/true"]
         report_preflight = ""
-        if prepared_report is not None:
-            expected_tree = str(prepared_report.get("base_tree") or "")
-            if not _GIT_SHA_RE.fullmatch(head_sha) or not _GIT_SHA_RE.fullmatch(expected_tree):
-                return 1, "hub verification is unavailable: invalid prepared report identity"
-            report_preflight = (
-                'test "$(uname -s)" = Linux && '
-                'test "$(git rev-parse HEAD)" = %s && '
-                'test "$(git rev-parse HEAD^{tree})" = %s || '
-                "{ echo 'hub verification is unavailable: report Linux/source identity mismatch' >&2; exit 96; }; "
-            ) % (head_sha, expected_tree)
         if local_repository is not None:
             report_preflight = (
                 'test "$(uname -s)" = Linux && '
@@ -3135,7 +2785,6 @@ class ControlPlane:
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
             reviewer_eligibility_check=self._reviewer_assignment_problem,
-            reviewer_fallback_check=self._reviewer_independence_fallback_reason,
             completion_proof_check=self._require_canonical_integration_proof,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
@@ -14304,8 +13953,8 @@ class ControlPlane:
             return token if claimed.rowcount == 1 else None
 
     def _agent_is_virtual(self, agent_id: str) -> bool:
-        """True for hub-driven virtual agents (e.g. the hub_verify review
-        verifier) that have no worker process of their own."""
+        """True for hub-driven virtual agents (e.g. the hub-reviewer) that
+        have no worker process of their own."""
         try:
             agent = self.get_agent(agent_id)
         except NotFoundError:
@@ -14313,7 +13962,7 @@ class ControlPlane:
         return bool(ensure_json_object(agent.resources).get("virtual"))
 
     def _record_expired_lease_zombie_signal(self, lease: Lease) -> None:
-        # Virtual, hub-driven agents (the hub_verify review verifier) have no
+        # Virtual, hub-driven agents (the hub-reviewer) have no
         # worker process and by design never emit executor telemetry, so the
         # "consecutive lease expiries without telemetry" zombie signal — which
         # exists to bench dead REAL hosts — is a category error for them. Every
@@ -17453,11 +17102,9 @@ class ControlPlane:
                 if item.get("status")
                 in {
                     "waiting_for_verifiable_evidence",
-                    "waiting_for_reviewer",
-                    "waiting_for_reviewer_verdict",
+                    "waiting_for_hub_reviewer",
                     "waiting_for_publication_evidence",
                     "waiting_for_publication_target",
-                    "ambiguous_pending_reviews",
                 }
             ]
             if result.get("processed") or stuck:
@@ -18462,25 +18109,6 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
-        # The tick is the RIGHT place to run a publication's contract gate, and
-        # for a long time it was the only place that refused to.
-        #
-        # With this False, the tick advanced reviews but would not run the
-        # verify, so the only path that actually published was
-        # _maybe_advance_reviews_on_heartbeat -- an agent HTTP request. That
-        # made a heartbeat take 250-315s (measured; the agent's own client gives
-        # up at 30s and retries, starting ANOTHER overlapping publication), and
-        # three approved canaries sat unpublished for hours because the one
-        # worker whose heartbeat drives it could not finish a request.
-        #
-        # This loop is a background thread (api.py `_loop`), not a request
-        # handler. Blocking here delays the next tick; blocking on a heartbeat
-        # costs a worker. MAC_TICK_BLOCKING_HUB_VERIFY=0 restores the old
-        # behaviour for an operator who would rather the tick never stall.
-        #
-        # This is the narrow version of task_fad95a2b. The full fix is a bounded
-        # publication worker so neither the tick nor a request waits on a
-        # sandboxed test run.
         # The review sweep is NOT run here any more. It clones a repository and
         # runs a contract gate inline, so it used to make this thread's period
         # equal to a git clone plus a test run rather than
@@ -18508,7 +18136,6 @@ class ControlPlane:
                 limit=limit_value,
                 actor="default-review-workflow",
                 tenant_id=None,
-                allow_blocking_hub_verify=_truthy_env("MAC_TICK_BLOCKING_HUB_VERIFY", "1"),
             )
         else:
             review_workflows = {"skipped": "runs_on_publication_worker"}
@@ -21222,8 +20849,8 @@ class ControlPlane:
                 }
                 raise merge_gate_error
 
-            # Scope the projected gate the way the REVIEW verifier scopes its
-            # own, for the same reason and from the same helper.
+            # Scope the projected gate to the change, the way the worker's
+            # pre-push verifier scopes its own.
             #
             # This ran the whole contract suite -- ~45 minutes -- under
             # MAC_HUB_VERIFY_TIMEOUT, which defaults to 1200s. It could not
@@ -21235,7 +20862,7 @@ class ControlPlane:
             # The projected tree differs from the tree review already gated only
             # by however far main moved, so the changed-file selection is the
             # honest question to ask of it. An unresolvable diff falls back to
-            # the full command, exactly as the review helper does.
+            # the full command.
             required_checks: tuple[str, ...] = ()
             if strategy["strategy"] == "pull_request":
                 probed = _gitops.required_status_check_contexts(
@@ -21279,9 +20906,7 @@ class ControlPlane:
                     ]
             except Exception:  # noqa: BLE001 - an unreadable diff means "run everything"
                 projected_changed = []
-            full_test_command = self._hub_review_test_command(
-                task, {"files_changed": projected_changed}
-            )
+            full_test_command = self._contract_gate_test_command(task, projected_changed)
             # Say which question was asked. The scoped and full commands take
             # ~15 and ~45 minutes, and only one of them fits the timeout -- so
             # a silent fallback to full looks exactly like a gate that hung,
@@ -21308,12 +20933,12 @@ class ControlPlane:
                 publication_verifier_identity: Dict[str, Any] = {}
                 publication_test_runner = getattr(self, "_publication_merge_test_runner", None)
                 if publication_test_runner is None:
-                    # The projected-merge gate reuses the hub_verify sandbox
-                    # runner, which also needs bootstrap.command run before
-                    # test.command (see _hub_verify_run_contract_test) -- but
+                    # The projected-merge gate runs in the verifier sandbox,
+                    # which also needs bootstrap.command run before
+                    # test.command (see _run_contract_gate) -- but
                     # ContractTestRunner's signature has no bootstrap slot, so
                     # curry it in here rather than widening that protocol.
-                    run_contract_test = self._hub_verify_run_contract_test
+                    run_contract_test = self._run_contract_gate
                     publication_bootstrap_command = _repository_contract_bootstrap_command_for_task(
                         task
                     )
@@ -22081,7 +21706,6 @@ class ControlPlane:
         limit: int,
         actor: str,
         tenant_id: Optional[str],
-        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         """Advance one database-coordinated cursor page for autonomous callers."""
         claim = self.reconciliation.claim("default-review-sweep")
@@ -22099,7 +21723,6 @@ class ControlPlane:
                 actor=actor,
                 tenant_id=tenant_id,
                 cursor=claim.cursor,
-                allow_blocking_hub_verify=allow_blocking_hub_verify,
             )
         except Exception:
             self.reconciliation.abandon(claim)
@@ -22116,7 +21739,6 @@ class ControlPlane:
         actor: str = "default-review-workflow",
         tenant_id: Optional[str] = None,
         cursor: Optional[str] = None,
-        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         """Sweep one bounded, state-filtered page of reviewable tasks.
 
@@ -22159,18 +21781,7 @@ class ControlPlane:
             # must not abort the tick and starve dispatch. The self-driver never
             # crashes the hub; it records the failure and moves on.
             try:
-                if allow_blocking_hub_verify:
-                    result = self.advance_default_review_workflow(
-                        task.id,
-                        actor=actor,
-                    )
-                else:
-                    result = self.advance_default_review_workflow(
-                        task.id,
-                        actor=actor,
-                        allow_blocking_hub_verify=False,
-                    )
-                results.append(result)
+                results.append(self.advance_default_review_workflow(task.id, actor=actor))
             except Exception as exc:  # noqa: BLE001 - one row must not stop the sweep
                 try:
                     self._record_default_review_observation(
@@ -22229,6 +21840,244 @@ class ControlPlane:
             raise ValidationError("invalid review sweep cursor")
         return priority, created_at, task_id
 
+    def _block_default_review(
+        self,
+        task_id: str,
+        reason: str,
+        detail: JsonDict,
+        actor: str,
+    ) -> JsonDict:
+        """Park a review that cannot progress without an operator, with its reason."""
+        for pending in self.list_reviews(task_id):
+            if pending.status == ReviewStatus.PENDING.value:
+                self._retract_default_review(pending, actor, reason)
+        block_detail = {"reason": reason, "manual_repair_required": True, **detail}
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.blocked",
+            "error",
+            block_detail,
+            actor,
+        )
+        try:
+            self._transition_task_internal(
+                task_id,
+                TaskState.BLOCKED.value,
+                actor,
+                block_detail,
+            )
+        except TransitionError:
+            # Already terminal or otherwise moved: nothing more to do.
+            pass
+        return {"task_id": task_id, "status": "blocked", **block_detail}
+
+    def _review_verdict_targets(self, review: Review, executor_evidence_id: str) -> bool:
+        if not review.evidence_id:
+            return False
+        try:
+            verdict = self.get_evidence(review.evidence_id)
+        except NotFoundError:
+            return False
+        manifest = ensure_json_object(ensure_json_object(verdict.metadata).get("verification"))
+        return str(manifest.get("reviewed_evidence_id") or "").strip() == executor_evidence_id
+
+    def _review_from_worker_evidence(
+        self,
+        task: Task,
+        evidence: Evidence,
+        evidence_assessment: JsonDict,
+        actor: str,
+    ) -> Union[Review, JsonDict]:
+        """Turn validated worker evidence into the task's review verdict.
+
+        The worker's verifier ran the contract gate on a fresh clone of the
+        exact pushed commit, and ``_bound_review_evidence`` has already
+        enforced that only a real verifier pass counts. Nothing is re-run
+        here. The hub-reviewer signs a verdict over that evidence and the
+        review is decided from it.
+
+        Returns the decided review, or a status dict when the task waits or
+        has been blocked.
+        """
+        task_id = task.id
+        reviews = self.list_reviews(task_id)
+        if task.state == TaskState.REVIEWING.value:
+            for existing in reversed(reviews):
+                if existing.status == ReviewStatus.APPROVED.value and self._review_verdict_targets(
+                    existing, evidence.id
+                ):
+                    # A previous tick approved this evidence; publication is
+                    # what remains.
+                    return existing
+        reviewer = self._ensure_hub_reviewer_agent(actor=actor)
+        if reviewer is None:
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.waiting",
+                "warning",
+                {"reason": "hub_reviewer_unavailable"},
+                actor,
+            )
+            exhausted = self._consume_landing_budget(
+                task_id,
+                "waiting_for_hub_reviewer",
+                counts_attempt=False,
+                evidence_id=evidence.id,
+                actor=actor,
+            )
+            if exhausted is not None:
+                return exhausted
+            return {"task_id": task_id, "status": "waiting_for_hub_reviewer"}
+        # Any other pending review (a legacy reviewer assignment, or a
+        # duplicate) is superseded: the worker evidence is the verdict. The
+        # hub-reviewer's own oldest pending review is reused, so a review that
+        # was waiting on the retired hub-side test run is decided here.
+        kept: Optional[Review] = None
+        superseded: List[str] = []
+        for pending in sorted(reviews, key=lambda item: (item.created_at, item.id)):
+            if pending.status != ReviewStatus.PENDING.value:
+                continue
+            if pending.reviewer_agent_id == reviewer.id and kept is None:
+                kept = pending
+                continue
+            self._retract_default_review(pending, actor, "superseded_by_worker_evidence")
+            superseded.append(pending.id)
+        if superseded:
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.superseded",
+                "info",
+                {"retracted_review_ids": superseded, "reason": "superseded_by_worker_evidence"},
+                actor,
+            )
+        try:
+            review = self.request_review(task_id, reviewer.id, actor=actor)
+        except AuthorizationError as exc:
+            return self._block_default_review(
+                task_id,
+                "hub_reviewer_ineligible",
+                {"error": str(exc)[:300], "executor_evidence_id": evidence.id},
+                actor,
+            )
+        verdict_evidence, _problems = self._find_review_verdict_evidence(
+            task_id,
+            review.reviewer_agent_id,
+            executor_evidence_id=evidence.id,
+            not_before=review.created_at,
+        )
+        if verdict_evidence is None:
+            recorded = self._record_worker_evidence_verdict(task, review, evidence, actor)
+            if recorded is None:
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.waiting",
+                    "warning",
+                    {"reason": "hub_reviewer_key_unavailable", "review_id": review.id},
+                    actor,
+                )
+                exhausted = self._consume_landing_budget(
+                    task_id,
+                    "waiting_for_hub_reviewer",
+                    counts_attempt=False,
+                    evidence_id=evidence.id,
+                    actor=actor,
+                )
+                if exhausted is not None:
+                    return exhausted
+                return {
+                    "task_id": task_id,
+                    "status": "waiting_for_hub_reviewer",
+                    "review_id": review.id,
+                }
+            verdict_evidence, problems = self._find_review_verdict_evidence(
+                task_id,
+                review.reviewer_agent_id,
+                executor_evidence_id=evidence.id,
+                verdict_evidence_id=recorded.id,
+                not_before=review.created_at,
+            )
+            if verdict_evidence is None:
+                # The task's review contract asks for more than the worker
+                # evidence carries (e.g. a cooperative integration attestation).
+                return self._block_default_review(
+                    task_id,
+                    "worker_evidence_verdict_invalid",
+                    {
+                        "review_id": review.id,
+                        "executor_evidence_id": evidence.id,
+                        "verdict_evidence_id": recorded.id,
+                        "problems": list(problems)[:10],
+                    },
+                    actor,
+                )
+        if self._verdict_value(verdict_evidence) == "rejected":
+            try:
+                review = self.submit_review(
+                    review.id,
+                    ReviewStatus.REJECTED.value,
+                    review.reviewer_agent_id,
+                    reason="reviewer rejected via signed verdict evidence",
+                    evidence_id=verdict_evidence.id,
+                )
+            except ValidationError:
+                # A concurrent advancer (the event-driven consumer and the
+                # periodic sweep both call this function) may have already
+                # submitted the same verdict between our stale read and this
+                # write. If the review already landed in the state we were
+                # about to write, this is a duplicate, not a failure.
+                review = self.reviews.get_review(review.id)
+                if review.status != ReviewStatus.REJECTED.value:
+                    raise
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.rejected",
+                "warning",
+                {
+                    "review_id": review.id,
+                    "reviewer_agent_id": review.reviewer_agent_id,
+                    "verdict_evidence_id": verdict_evidence.id,
+                },
+                actor,
+            )
+            # Distill the rejection into a durable, project-scoped lesson so
+            # the next execution run on this project recalls it.
+            self._record_project_failure_lesson(
+                task_id,
+                evidence_type="review_verdict",
+                error_signature="review_rejected",
+                signals={"review_rejected": True},
+                evidence_id=verdict_evidence.id,
+            )
+            return review
+        try:
+            review = self.submit_review(
+                review.id,
+                ReviewStatus.APPROVED.value,
+                review.reviewer_agent_id,
+                reason="approved from validated worker evidence",
+                evidence_id=verdict_evidence.id,
+            )
+        except ValidationError:
+            # See the rejected branch above: a concurrent advancer may have
+            # already submitted this same approval.
+            review = self.reviews.get_review(review.id)
+            if review.status != ReviewStatus.APPROVED.value:
+                raise
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.approved",
+            "info",
+            {
+                "review_id": review.id,
+                "reviewer_agent_id": review.reviewer_agent_id,
+                "verdict_evidence_id": verdict_evidence.id,
+                "executor_evidence_id": evidence.id,
+                "evidence_type": evidence_assessment.get("evidence_type"),
+            },
+            actor,
+        )
+        return review
+
     def _terminal_review_noop(self, task_id: str) -> Optional[JsonDict]:
         """Return a terminal-aware successful no-op result when ``task_id`` has
         already been completed and/or published, otherwise ``None``.
@@ -22264,8 +22113,6 @@ class ControlPlane:
         self,
         task_id: str,
         actor: str = "default-review-workflow",
-        *,
-        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         # Terminal-aware entry gate: if a concurrent consumer already
         # completed/published this task, no-op with the existing receipt.
@@ -22316,6 +22163,23 @@ class ControlPlane:
             return {"task_id": task_id, "status": "disabled_by_task_policy"}
 
         evidence, evidence_assessment = self._bound_review_evidence(task)
+        if (
+            evidence is None
+            and task.state == TaskState.REVIEWING.value
+            and evidence_assessment.get("reason") == "bound_evidence_not_verifiable"
+        ):
+            # The bound target is immutable, so this never clears by waiting.
+            # Tasks that were in review when hub-verify existed land here when
+            # their evidence deferred its tests to that second run.
+            return self._block_default_review(
+                task_id,
+                "review_evidence_not_verifiable",
+                {
+                    "executor_evidence_id": evidence_assessment.get("executor_evidence_id"),
+                    "problems": list(evidence_assessment.get("problems") or [])[:10],
+                },
+                actor,
+            )
         if evidence is None:
             self._record_default_review_observation(
                 task_id,
@@ -22330,616 +22194,10 @@ class ControlPlane:
                 **evidence_assessment,
             }
 
-        # If the task has more than one pending review, refuse to act —
-        # the ambiguous state has no clear winner and the autonomous
-        # swarm shouldn't silently pick one (mac-d9c).
-        pending_reviews = [
-            r for r in self.list_reviews(task_id) if r.status == ReviewStatus.PENDING.value
-        ]
-        pending_reviews = self._dedupe_same_reviewer_pending_reviews(
-            pending_reviews,
-            actor,
-        )
-        if len(pending_reviews) > 1:
-            self._record_default_review_observation(
-                task_id,
-                "workflow.default_review.ambiguous",
-                "warning",
-                {
-                    "reason": "multiple_pending_reviews",
-                    "pending_review_ids": [r.id for r in pending_reviews],
-                },
-                actor,
-            )
-            return {
-                "task_id": task_id,
-                "status": "ambiguous_pending_reviews",
-                "pending_review_ids": [r.id for r in pending_reviews],
-            }
-
-        review = self._default_review_for_task(task_id)
-        if (
-            review is not None
-            and review.status == ReviewStatus.APPROVED.value
-            and task.state == TaskState.NEEDS_REVIEW.value
-        ):
-            # A recovered submission needs its own verdict. Preserve the old
-            # approval as history and use normal selection for a fresh review.
-            review = None
-        if review is not None and review.status == ReviewStatus.PENDING.value:
-            reviewer_issue = self._default_reviewer_unavailable_reason_for_id(
-                task,
-                review.reviewer_agent_id,
-                executor_agent_id=evidence.created_by,
-                allow_conditional_independence_fallback=True,
-            )
-            if reviewer_issue is not None:
-                self._retract_default_review(
-                    review,
-                    actor,
-                    "reviewer_unavailable:%s" % reviewer_issue,
-                )
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.retracted",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "reason": reviewer_issue,
-                    },
-                    actor,
-                )
-                review = None
-        if review is None:
-            # mem-12: bound review retraction. Before creating a fresh
-            # review for the same executor evidence, count how many
-            # reviews for this task have already retracted *since the
-            # latest evidence was recorded*. If we've hit the cap, block
-            # the task for repair — looping forever is what bit task_d7c51a0b
-            # with 503 retracted reviews in the original incident.
-            try:
-                retraction_cap = int(os.environ.get("MAC_REVIEW_RETRACTION_CAP", "3"))
-            except ValueError:
-                retraction_cap = 3
-            # mem-12 window fix: scope the retraction count to "retractions
-            # since the work under review was submitted" — i.e. the executor
-            # evidence we are actually reviewing (already resolved above as
-            # ``evidence``). The original query took the latest evidence of
-            # ANY kind, so the reviewer's own ``review``-kind attempt evidence
-            # advanced the window every cycle and the cap never tripped — the
-            # bug behind the 2026-06 review runaway. Genuine rework still
-            # resets the window because new executor evidence becomes the
-            # reviewed ``evidence`` on the next advance.
-            threshold_at = evidence.created_at or ""
-            retracted_count_row = self.store.query_one(
-                """
-                SELECT COUNT(*) AS n FROM reviews
-                WHERE task_id = ? AND status = ?
-                  AND created_at >= ?
-                """,
-                (task_id, ReviewStatus.RETRACTED.value, threshold_at),
-            )
-            retracted_count = int(retracted_count_row["n"]) if retracted_count_row else 0
-            if retracted_count >= retraction_cap:
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.exhausted",
-                    "error",
-                    {
-                        "reason": "review_retraction_cap_hit",
-                        "cap": retraction_cap,
-                        "retracted_count": retracted_count,
-                        "executor_evidence_id": evidence.id,
-                    },
-                    actor,
-                )
-                self._record_history(
-                    task_id,
-                    "task.review_exhausted",
-                    actor,
-                    None,
-                    None,
-                    {
-                        "cap": retraction_cap,
-                        "retracted_count": retracted_count,
-                        "executor_evidence_id": evidence.id,
-                    },
-                )
-                try:
-                    self._transition_task_internal(
-                        task_id,
-                        TaskState.BLOCKED.value,
-                        actor,
-                        {
-                            "reason": "review_retraction_cap_hit",
-                            "manual_repair_required": True,
-                            "cap": retraction_cap,
-                            "retracted_count": retracted_count,
-                            "executor_evidence_id": evidence.id,
-                        },
-                    )
-                except TransitionError:
-                    # Already terminal or otherwise moved: nothing more to do.
-                    pass
-                return {
-                    "task_id": task_id,
-                    "status": "review_retraction_exhausted",
-                    "cap": retraction_cap,
-                    "retracted_count": retracted_count,
-                }
-            protocol_failed_reviewer_ids = {
-                str(row["reviewer_agent_id"])
-                for row in self.store.query_all(
-                    """
-                    SELECT reviewer_agent_id FROM reviews
-                    WHERE task_id = ? AND status = ?
-                      AND created_at >= ?
-                      AND reason LIKE 'reviewer_protocol_failure:%'
-                    """,
-                    (task_id, ReviewStatus.RETRACTED.value, threshold_at),
-                )
-            }
-            if not _semantic_reviewer_enabled():
-                self._ensure_hub_review_verifier_agent(task, actor=actor)
-            reviewer = self._select_default_reviewer(
-                task,
-                executor_agent_id=evidence.created_by,
-                excluded_agent_ids=protocol_failed_reviewer_ids,
-            )
-            if reviewer is None:
-                review_policy = self._default_review_policy(task)
-                target_reviewer_id = str(
-                    review_policy.get("target_agent_id")
-                    or review_policy.get("reviewer_agent_id")
-                    or ""
-                ).strip()
-                if target_reviewer_id in protocol_failed_reviewer_ids:
-                    detail = {
-                        "reason": "target_reviewer_protocol_failed",
-                        "manual_repair_required": True,
-                        "reviewer_agent_id": target_reviewer_id,
-                        "executor_evidence_id": evidence.id,
-                    }
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.target_reviewer_protocol_failed",
-                        "error",
-                        detail,
-                        actor,
-                    )
-                    try:
-                        self._transition_task_internal(
-                            task_id,
-                            TaskState.BLOCKED.value,
-                            actor,
-                            detail,
-                        )
-                    except TransitionError:
-                        pass
-                    return {
-                        "task_id": task_id,
-                        "status": "target_reviewer_protocol_failed",
-                        **detail,
-                    }
-                self._ensure_hub_review_verifier_agent(task, actor=actor)
-                reviewer = self._select_default_reviewer(
-                    task,
-                    executor_agent_id=evidence.created_by,
-                    excluded_agent_ids=protocol_failed_reviewer_ids,
-                )
-            if reviewer is None:
-                reviewer = self._select_default_reviewer(
-                    task,
-                    executor_agent_id=evidence.created_by,
-                    excluded_agent_ids=protocol_failed_reviewer_ids,
-                    allow_independence_fallback=True,
-                )
-            if reviewer is None:
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.waiting",
-                    "warning",
-                    {"reason": "no_eligible_reviewer"},
-                    actor,
-                )
-                # Signal that the swarm needs a reviewer-capable agent it
-                # doesn't have. The default-review workflow will pick the
-                # request up on a future tick once the provisioner has
-                # registered a matching agent.
-                self.provisioning.request_agent(
-                    reason="review.no_eligible_reviewer",
-                    capabilities=["review"],
-                    task_id=task_id,
-                    tenant_id=self._task_tenant_id(task),
-                    detail={
-                        "evidence_type": evidence_assessment.get("evidence_type"),
-                    },
-                )
-                exhausted = self._consume_landing_budget(
-                    task_id,
-                    "waiting_for_reviewer",
-                    counts_attempt=False,
-                    evidence_id=evidence.id,
-                    actor=actor,
-                )
-                if exhausted is not None:
-                    return exhausted
-                return {"task_id": task_id, "status": "waiting_for_reviewer"}
-            fallback_reason = self._reviewer_independence_fallback_reason(
-                task,
-                reviewer,
-                executor_agent_id=evidence.created_by,
-                excluded_agent_ids=protocol_failed_reviewer_ids,
-            )
-            review = self.request_review(task_id, reviewer.id, actor=actor)
-            assignment_detail = {
-                "review_id": review.id,
-                "reviewer_agent_id": reviewer.id,
-                "reviewer_independence": ("fallback" if fallback_reason else "independent"),
-            }
-            if fallback_reason:
-                assignment_detail["reviewer_independence_reason"] = fallback_reason
-            self._record_default_review_observation(
-                task_id,
-                "workflow.default_review.assigned",
-                "info",
-                assignment_detail,
-                actor,
-            )
-        elif (
-            review.status == ReviewStatus.PENDING.value
-            and task.state == TaskState.NEEDS_REVIEW.value
-        ):
-            # A recovered attempt can retain its older pending review. Reuse
-            # the transactional request path so reviewer evidence is authorized
-            # before verification starts, without assigning a second review.
-            review = self.request_review(task_id, review.reviewer_agent_id, actor=actor)
-            task = self.get_task(task_id)
-
-        if review.status == ReviewStatus.PENDING.value:
-            # mac-jqb: the workflow no longer self-approves. It requires
-            # the reviewer agent to have produced a *review verdict*
-            # evidence row — a separate, signed manifest authored by
-            # the reviewer (not the executor) declaring approve/reject.
-            # Until that exists, the review stays pending. This makes
-            # the second-eyes role actually do work; today the workflow
-            # waits for the verdict, and a follow-up review-executor
-            # worker will produce it automatically.
-            verdict_evidence, verdict_problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=evidence.id,
-                not_before=review.created_at,
-            )
-            # Option C — hub-side verification. Instead of dispatching a nudge
-            # and waiting for a reviewer agent to independently clone + run the
-            # contract test (fragile: every reviewer node needs a working dev
-            # environment, in-sandbox and host, and the sandbox->host handoff
-            # to be perfect), the hub runs the contract test ONCE in a
-            # controlled OpenShell sandbox on the pushed branch and records the
-            # signed verdict on the selected reviewer's behalf. Second-eyes
-            # holds (the verdict is signed by a non-author agent); the fragile
-            # N-node verification collapses to one controlled environment.
-            if verdict_evidence is None and _hub_review_verify_enabled():
-                if allow_blocking_hub_verify:
-                    self._run_hub_review_verification(task, review, evidence, actor)
-                else:
-                    # The periodic tick owns lease expiry, dependency
-                    # unblocking, and dispatch. Never make that clock wait for
-                    # Git/OpenShell/tests; the dedicated event consumer retains
-                    # the same fail-closed verifier and per-review in-flight
-                    # guard.
-                    self._nudge_review_workflow(task.id)
-                verdict_evidence, verdict_problems = self._find_review_verdict_evidence(
-                    task_id,
-                    review.reviewer_agent_id,
-                    executor_evidence_id=evidence.id,
-                    not_before=review.created_at,
-                )
-                # Blocking guard (Option C): hub verify is the authoritative
-                # review gate.  If no verdict was produced in this tick (e.g.
-                # the sandbox is still running, the reviewer key is not yet
-                # available, or a concurrent in-flight guard fired), we MUST
-                # NOT fall through to the agent-nudge path — that would allow
-                # an unverified task to advance toward merge.  Return a
-                # waiting status so the sweep retries on the next tick.
-                if verdict_evidence is None:
-                    # Hold the merge gate only for evidence hub-verify can
-                    # actually gate: a pushed repo change with a contract test to
-                    # run. Evidence that is NOT a pushed repo change has nothing
-                    # to hub-verify; with the semantic reviewer removed that
-                    # path approves from the already-validated executor
-                    # evidence instead of nudging an LLM.
-                    hub_verifiable = self._hub_verify_repo_info(
-                        task, evidence
-                    ) is not None or self._read_only_report_needs_hub_verify(task, evidence)
-                    if hub_verifiable:
-                        self._record_default_review_observation(
-                            task_id,
-                            "workflow.default_review.waiting_for_hub_verify",
-                            "warning",
-                            {
-                                "review_id": review.id,
-                                "reviewer_agent_id": review.reviewer_agent_id,
-                                "executor_evidence_id": evidence.id,
-                                "reason": "hub_verify_in_progress_or_pending",
-                            },
-                            actor,
-                        )
-                        exhausted = self._consume_landing_budget(
-                            task_id,
-                            "waiting_for_hub_verify",
-                            counts_attempt=False,
-                            evidence_id=evidence.id,
-                            actor=actor,
-                        )
-                        if exhausted is not None:
-                            return exhausted
-                        return {
-                            "task_id": task_id,
-                            "status": "waiting_for_hub_verify",
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                            "executor_evidence_id": evidence.id,
-                        }
-            if verdict_evidence is None and not _semantic_reviewer_enabled():
-                repo_info = self._hub_verify_repo_info(task, evidence)
-                evidence_type = (
-                    str(
-                        evidence_assessment.get("evidence_type")
-                        or ensure_json_object(
-                            ensure_json_object(evidence.metadata).get("verification")
-                        ).get("evidence_type")
-                        or ""
-                    )
-                    .strip()
-                    .lower()
-                )
-                # Repo changes are never rubber-stamped. Even when the
-                # verifier cannot resolve a clone target yet, stay pending
-                # rather than approving a pushed branch without a test run.
-                hub_verifiable = (
-                    repo_info is not None
-                    or evidence_type == "repo_change"
-                    or self._read_only_report_needs_hub_verify(task, evidence)
-                )
-                if hub_verifiable:
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.waiting_for_hub_verify",
-                        "warning",
-                        {
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                            "executor_evidence_id": evidence.id,
-                            "reason": "hub_verify_in_progress_or_pending",
-                        },
-                        actor,
-                    )
-                    exhausted = self._consume_landing_budget(
-                        task_id,
-                        "waiting_for_hub_verify",
-                        counts_attempt=False,
-                        evidence_id=evidence.id,
-                        actor=actor,
-                    )
-                    if exhausted is not None:
-                        return exhausted
-                    return {
-                        "task_id": task_id,
-                        "status": "waiting_for_hub_verify",
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "executor_evidence_id": evidence.id,
-                    }
-                verdict_evidence = self._record_semantic_reviewer_removed_verdict(
-                    task, review, evidence, actor
-                )
-            if verdict_evidence is None and review.status == ReviewStatus.PENDING.value:
-                failed_attempt, failure_reason = self._review_attempt_protocol_failure(
-                    task_id,
-                    review,
-                    executor_evidence_id=evidence.id,
-                )
-                if failed_attempt is not None:
-                    retraction_reason = "reviewer_protocol_failure:%s" % failure_reason
-                    self._retract_default_review(review, actor, retraction_reason)
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.reviewer_protocol_failed",
-                        "warning",
-                        {
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                            "executor_evidence_id": evidence.id,
-                            "review_attempt_evidence_id": failed_attempt.id,
-                            "reason": failure_reason,
-                            "problems": verdict_problems,
-                        },
-                        actor,
-                    )
-                    return {
-                        "task_id": task_id,
-                        "status": "reviewer_protocol_failed",
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "review_attempt_evidence_id": failed_attempt.id,
-                        "reason": failure_reason,
-                    }
-                # Bound the verdict-wait loop. mem-12 only caps RETRACTION;
-                # a reviewer that keeps producing review-attempt evidence but
-                # never a valid signed verdict would otherwise spin here
-                # forever, re-nudging every tick (task_5de06b: 59 review-kind
-                # evidence rows, 0 verdict — the live half of the 2026-06
-                # runaway). Past a cap, block the task instead of re-nudging.
-                try:
-                    verdict_wait_cap = int(os.environ.get("MAC_REVIEW_VERDICT_WAIT_CAP", "6"))
-                except ValueError:
-                    verdict_wait_cap = 6
-                wait_count_row = self.store.query_one(
-                    """
-                    SELECT COUNT(*) AS n FROM evidence
-                    WHERE task_id = ? AND kind = 'review'
-                      AND created_at >= ?
-                    """,
-                    (task_id, review.created_at),
-                )
-                wait_count = int(wait_count_row["n"]) if wait_count_row else 0
-                if verdict_wait_cap > 0 and wait_count >= verdict_wait_cap:
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.exhausted",
-                        "error",
-                        {
-                            "reason": "review_verdict_wait_cap_hit",
-                            "cap": verdict_wait_cap,
-                            "wait_count": wait_count,
-                            "review_id": review.id,
-                            "reviewer_agent_id": review.reviewer_agent_id,
-                        },
-                        actor,
-                    )
-                    self._record_history(
-                        task_id,
-                        "task.review_exhausted",
-                        actor,
-                        None,
-                        None,
-                        {
-                            "reason": "review_verdict_wait_cap_hit",
-                            "cap": verdict_wait_cap,
-                            "wait_count": wait_count,
-                            "review_id": review.id,
-                        },
-                    )
-                    try:
-                        self._transition_task_internal(
-                            task_id,
-                            TaskState.BLOCKED.value,
-                            actor,
-                            {
-                                "reason": "review_verdict_wait_cap_hit",
-                                "manual_repair_required": True,
-                                "cap": verdict_wait_cap,
-                                "wait_count": wait_count,
-                                "review_id": review.id,
-                            },
-                        )
-                    except TransitionError:
-                        pass
-                    return {
-                        "task_id": task_id,
-                        "status": "review_verdict_wait_exhausted",
-                        "cap": verdict_wait_cap,
-                        "wait_count": wait_count,
-                        "review_id": review.id,
-                    }
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.waiting_for_verdict",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "evidence_id": evidence.id,
-                        "problems": verdict_problems,
-                    },
-                    actor,
-                )
-                nudge = self._ensure_review_verdict_nudge(task_id, review, evidence)
-                return {
-                    "task_id": task_id,
-                    "status": "waiting_for_reviewer_verdict",
-                    "review_id": review.id,
-                    "reviewer_agent_id": review.reviewer_agent_id,
-                    "executor_evidence_id": evidence.id,
-                    "problems": verdict_problems,
-                    "nudge_id": nudge.id if nudge is not None else None,
-                    "nudge_status": "queued" if nudge is not None else "already_queued",
-                }
-            if verdict_evidence is None or review.status != ReviewStatus.PENDING.value:
-                # Auto-approved (semantic reviewer removed, non-repo evidence)
-                # or a prior tick already recorded the verdict. Re-submitting
-                # a completed review raises "review is already completed"
-                # which, unguarded, aborts the entire hub tick every cycle
-                # and wedges the task in review forever. Skip re-submission
-                # and fall through to publication.
-                pass
-            elif self._verdict_value(verdict_evidence) == "rejected":
-                try:
-                    review = self.submit_review(
-                        review.id,
-                        ReviewStatus.REJECTED.value,
-                        review.reviewer_agent_id,
-                        reason="reviewer rejected via signed verdict evidence",
-                        evidence_id=verdict_evidence.id,
-                    )
-                except ValidationError:
-                    # A concurrent advancer (the event-driven consumer and the
-                    # periodic sweep both call this function) may have already
-                    # submitted the same verdict between our stale read and
-                    # this write. If the review already landed in the state we
-                    # were about to write, this is a duplicate, not a failure
-                    # -- fall through with the winner's row instead of
-                    # dropping the advancement on the floor.
-                    review = self.reviews.get_review(review.id)
-                    if review.status != ReviewStatus.REJECTED.value:
-                        raise
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.rejected",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "verdict_evidence_id": verdict_evidence.id,
-                    },
-                    actor,
-                )
-                # Distill the rejection into a durable, project-scoped lesson so
-                # the next execution run on this project recalls it (the review
-                # branch never wrote a deployment_learning record, so rejected
-                # work taught the fleet nothing — a real learn-from-bad gap).
-                self._record_project_failure_lesson(
-                    task_id,
-                    evidence_type="review_verdict",
-                    error_signature="review_rejected",
-                    signals={"review_rejected": True, "problems": list(verdict_problems or [])[:5]},
-                    evidence_id=verdict_evidence.id,
-                )
-            else:
-                try:
-                    review = self.submit_review(
-                        review.id,
-                        ReviewStatus.APPROVED.value,
-                        review.reviewer_agent_id,
-                        reason="reviewer approved via signed verdict evidence",
-                        evidence_id=verdict_evidence.id,
-                    )
-                except ValidationError:
-                    # See the rejected branch above: a concurrent advancer may
-                    # have already submitted this same approval.
-                    review = self.reviews.get_review(review.id)
-                    if review.status != ReviewStatus.APPROVED.value:
-                        raise
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.approved",
-                    "info",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "verdict_evidence_id": verdict_evidence.id,
-                        "executor_evidence_id": evidence.id,
-                        "evidence_type": evidence_assessment.get("evidence_type"),
-                    },
-                    actor,
-                )
-            # The publication evidence below stays as the executor's
-            # signed work — that's the artifact being published. The
-            # reviewer's verdict was just consumed onto the review row
-            # via submit_review(evidence_id=verdict_evidence.id) above.
+        reviewed = self._review_from_worker_evidence(task, evidence, evidence_assessment, actor)
+        if not isinstance(reviewed, Review):
+            return reviewed
+        review = reviewed
 
         if review.status != ReviewStatus.APPROVED.value:
             return {
@@ -27107,45 +26365,21 @@ class ControlPlane:
                         "verification.signature does not verify against signed_by's attestation key"
                     ],
                 }
-        if self._read_only_report_needs_hub_verify(task, evidence):
-            if (
-                not _hub_review_verify_enabled()
-                or self._hub_verify_repo_info(task, evidence) is None
-            ):
-                return {
-                    "valid": False,
-                    "reason": "report_hub_verification_unavailable",
-                    "evidence_type": evidence_type,
-                    "problems": [
-                        "read-only report lacks a valid pending Linux verification contract"
-                    ],
-                }
+        if self._read_only_report_tests_deferred(task, evidence):
+            # A deferred contract test was a request for hub-side
+            # verification, which no longer exists. Nothing else will ever
+            # run that test, so the report cannot be approved.
+            return {
+                "valid": False,
+                "reason": "report_contract_test_deferred",
+                "evidence_type": evidence_type,
+                "problems": [
+                    "read-only report deferred its contract test; reports must carry "
+                    "a verifier-run Linux contract test result"
+                ],
+            }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
-            # Option C — deferred test gate: when hub verify is enabled and the
-            # executor declared its tests as deferred to the hub (at least one
-            # test item carries status="deferred" and no item already passed),
-            # accept the evidence so the hub verify path is triggered.  Hub
-            # verify will run the full contract test and record an authoritative
-            # signed verdict.  The sole expected failure at this point is the
-            # absence of a passing test; any other problem (missing repo anchor
-            # or a dirty worktree) is a real defect that must still be rejected.
-            #
-            # Option A (MAC_REVIEW_HUB_VERIFY unset) is completely unchanged —
-            # the executor must always supply its own passing tests.
-            if (
-                _hub_review_verify_enabled()
-                and self._evidence_tests_are_hub_verify_deferred(evidence)
-                and all("passing test" in p or "passing check" in p for p in type_problems)
-            ):
-                return {
-                    "valid": True,
-                    "reason": "verification_contract_satisfied_pending_hub_verify",
-                    "evidence_type": evidence_type,
-                    "signed_by": signed_by,
-                    "verified_by": "default-review-evidence-v1",
-                    "hub_verify_deferred": True,
-                }
             return {
                 "valid": False,
                 "reason": "verification_contract_failed",
@@ -27403,49 +26637,7 @@ class ControlPlane:
             return None
 
     @staticmethod
-    def _evidence_tests_are_hub_verify_deferred(evidence: "Evidence") -> bool:
-        """Return True when the executor evidence declares its tests as deferred
-        to hub verify — i.e. at least one test item carries status='deferred'
-        and no test item is already passing.  This signals that the executor
-        intentionally skipped the local contract test and expects hub verify
-        (Option C) to supply the authoritative result.
-
-        Only repo_change evidence participates: other evidence types do not
-        have a hub-verify path and must always supply their own passing tests.
-        """
-        meta = ensure_json_object(evidence.metadata)
-        verification = ensure_json_object(meta.get("verification"))
-        evidence_type = str(verification.get("evidence_type") or "").strip().lower()
-        if evidence_type not in {"repo_change", "documentation", "test"}:
-            return False
-        tests = verification.get("tests")
-        if not isinstance(tests, list) or not tests:
-            return False
-        has_deferred = any(
-            isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "deferred"
-            for item in tests
-        )
-        if not has_deferred:
-            return False
-        # If any test already passed, hub verify is not needed — the executor
-        # already completed the test and the deferred item is stale/incidental.
-        has_passing = any(
-            isinstance(item, dict)
-            and str(item.get("status") or "").strip().lower()
-            in {
-                "pass",
-                "passed",
-                "success",
-                "successful",
-                "succeeded",
-                "ok",
-            }
-            for item in tests
-        )
-        return not has_passing
-
-    @staticmethod
-    def _read_only_report_needs_hub_verify(task: Task, evidence: Evidence) -> bool:
+    def _read_only_report_tests_deferred(task: Task, evidence: Evidence) -> bool:
         if not metadata_declares_read_only_report_repository(task.metadata):
             return False
         manifest = ensure_json_object(evidence.metadata.get("verification"))
@@ -27459,125 +26651,44 @@ class ControlPlane:
             for item in tests
         )
 
-    def _hub_verify_repo_info(
-        self, task: Task, executor_evidence: Evidence
-    ) -> Optional[Dict[str, Any]]:
-        """Extract the pushed-branch coordinates the hub verifier needs: the
-        remote (evidence repo.remote_url, else the task's canonical contract
-        remote), the branch, and head_sha. Returns None when the evidence is
-        not a pushed repo change (nothing to independently verify).
+    def _contract_gate_test_command(self, task: Task, files_changed: Sequence[str]) -> str:
+        """Choose the explicit sanity contract when changed paths are trustworthy.
 
-        Deferred test items: evidence that carries a test item with
-        status="deferred" (the executor deferred test execution to hub verify)
-        is accepted here provided repo.pushed is True and the branch/sha are
-        present.  The caller will run the contract test and record the verdict.
+        Repositories without the sanity contract still run their full
+        configured command. Unsafe or absent paths also fail closed to the
+        full command rather than becoming shell input.
         """
-        from . import gitops as _gitops
 
-        meta = ensure_json_object(executor_evidence.metadata)
-        verification = ensure_json_object(meta.get("verification"))
-        repo = ensure_json_object(verification.get("repo"))
-        if self._read_only_report_needs_hub_verify(task, executor_evidence):
-            contract = _nested_json_object(
-                task.metadata, "execution_contract", "repository_contract"
-            )
-            access = ensure_json_object(verification.get("repository_access"))
-            remote = str(contract.get("canonical_remote_url") or "").strip()
-            branch = str(
-                contract.get("default_branch") or contract.get("canonical_branch") or ""
-            ).strip()
-            command = str(ensure_json_object(contract.get("test")).get("command") or "").strip()
+        configured = _repository_contract_test_command_for_task(task)
+        full_command = configured or "scripts/run-contract-tests.sh"
+        if configured and configured not in {
+            "scripts/run-contract-tests.sh",
+            "./scripts/run-contract-tests.sh",
+        }:
+            return configured
+        if not files_changed:
+            return full_command
+        safe_files: list[str] = []
+        for raw in files_changed:
+            value = str(raw or "").strip().replace("\\", "/")
+            parts = value.split("/")
             if (
-                verification.get("evidence_type") != "operator_result"
-                or access.get("schema") != "mac.report_repository_access.v1"
-                or access.get("mode") != "read_only"
-                or not remote
-                or _gitops.strip_git_remote_auth(remote) != remote
-                or not branch
-                or not command
-                or access.get("canonical_remote_url") != remote
-                or access.get("canonical_branch") != branch
-                or not _GIT_SHA_RE.fullmatch(str(access.get("base_sha") or ""))
-                or not _GIT_SHA_RE.fullmatch(str(access.get("base_tree") or ""))
-                or verification.get("tests")
-                != [
-                    {
-                        "name": "repository contract test",
-                        "command": command,
-                        "returncode": None,
-                        "status": "deferred",
-                        "execution_environment": "hub_verify_pending",
-                        "stdout": "",
-                        "stderr": "",
-                    }
-                ]
+                not value
+                or value.startswith("/")
+                or any(part in {"", ".", ".."} for part in parts)
+                or any(ord(char) < 32 for char in value)
             ):
-                return None
-            return {
-                "remote_url": remote,
-                "branch": branch,
-                "head_sha": access["base_sha"],
-                "files_changed": [],
-                "test_command": command,
-                "bootstrap_command": str(
-                    ensure_json_object(contract.get("bootstrap")).get("command") or ""
-                ).strip(),
-                "repository_access": {
-                    key: access[key]
-                    for key in (
-                        "schema",
-                        "mode",
-                        "canonical_remote_url",
-                        "canonical_branch",
-                        "base_sha",
-                        "base_tree",
-                    )
-                },
-            }
-        # The task contract is the canonical, credential-free source of truth.
-        # Executor evidence may contain a display-redacted push URL such as
-        # ``https://x-access-token:<redacted>@github.com/...``; cloning that
-        # literal string fails authentication even for a public repository.
-        remote_url = ""
-        md = ensure_json_object(task.metadata)
-        for path in (
-            ("execution_contract", "repository_contract"),
-            ("origin", "repository_contract"),
-            ("repository_contract",),
-            ("origin",),
-        ):
-            node = _nested_json_object(md, *path)
-            remote_url = str(
-                node.get("canonical_remote_url") or node.get("repository_url") or ""
-            ).strip()
-            if remote_url:
-                break
-        if not remote_url:
-            remote_url = str(repo.get("remote_url") or "").strip()
-        remote_url = _gitops.strip_git_remote_auth(remote_url)
-        head_sha = str(repo.get("head_sha") or "").strip()
-        remote_ref = str(repo.get("remote_ref") or "").strip()
-        branch = (
-            remote_ref[len("refs/heads/") :] if remote_ref.startswith("refs/heads/") else remote_ref
+                return full_command
+            safe_files.append(value)
+        changed_args = " ".join(
+            "--changed-file %s" % shlex.quote(path) for path in sorted(set(safe_files))
         )
-        if not remote_url or not _GIT_SHA_RE.match(head_sha) or not branch:
-            return None
-        if repo.get("pushed") is not True:
-            return None
-        files_changed = repo.get("files_changed")
-        trusted_files = (
-            [str(path) for path in files_changed if isinstance(path, str)]
-            if isinstance(files_changed, list)
-            else []
+        return (
+            "if [ -x scripts/run-sanity-tests.sh ]; then "
+            "scripts/run-sanity-tests.sh %s; else %s; fi" % (changed_args, full_command)
         )
-        return {
-            "remote_url": remote_url,
-            "head_sha": head_sha,
-            "branch": branch,
-            "files_changed": trusted_files,
-        }
 
-    def _hub_verify_run_contract_test(
+    def _run_contract_gate(
         self,
         remote_url: str,
         branch: str,
@@ -27585,13 +26696,15 @@ class ControlPlane:
         test_command: str,
         bootstrap_command: str = "",
         *,
-        prepared_report: Optional[Mapping[str, Any]] = None,
         verifier_identity: Optional[Dict[str, Any]] = None,
         local_repository: Optional[Path] = None,
         expected_tree_sha: str = "",
     ) -> Tuple[int, str]:
-        """Independently verify pushed or projected source in its configured isolation."""
-        runner = getattr(self, "_hub_verify_runner", None)
+        """Run a contract gate in the configured verifier isolation.
+
+        Tests inject ``_contract_test_runner`` so they need no git/OpenShell.
+        """
+        runner = getattr(self, "_contract_test_runner", None)
         if runner is not None:
             return runner(
                 str(local_repository) if local_repository is not None else remote_url,
@@ -27611,657 +26724,9 @@ class ControlPlane:
             head_sha,
             test_command,
             bootstrap_command,
-            prepared_report=prepared_report,
             verifier_identity=verifier_identity,
             **source_options,
         )
-
-    def _run_hub_review_verification(
-        self, task: Task, review: Review, executor_evidence: Evidence, actor: str
-    ) -> Optional[Evidence]:
-        """Produce a signed review_verdict by running the contract test on the
-        hub (Option C), on behalf of the selected reviewer. No-op returning None
-        when the evidence isn't a pushed repo change or the reviewer has no key
-        (the workflow then falls back to the agent-nudge path)."""
-        try:
-            current_task = self.get_task(task.id)
-            current_review = self.get_review(review.id)
-        except NotFoundError:
-            return None
-        if current_review.status != ReviewStatus.PENDING.value:
-            if current_review.evidence_id:
-                try:
-                    return self.get_evidence(current_review.evidence_id)
-                except NotFoundError:
-                    return None
-            return None
-        if current_task.state == TaskState.COMPLETED.value:
-            return None
-        info = self._hub_verify_repo_info(task, executor_evidence)
-        if info is None:
-            return None
-        key = self._reviewer_attestation_key_for_signing(review.reviewer_agent_id, actor=actor)
-        if not key:
-            return None
-        existing = self._existing_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if existing is not None:
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_idempotent",
-                "info",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": existing.id,
-                    "reason": "existing_hub_verdict",
-                },
-                actor,
-            )
-            return existing
-        invalid_existing = self._invalid_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if invalid_existing is not None:
-            # The deterministic verdict identity is already occupied by a
-            # hub-verifier-shaped row, but its signature/manifest did not pass
-            # the normal verdict validator. Do not launch another expensive
-            # sandbox for the same review, and never return the invalid row as
-            # an approving verdict. Retract this attempt so the bounded review
-            # workflow can choose a fresh reviewer instead of leaving the task
-            # permanently stuck in REVIEWING.
-            self._retract_default_review(
-                current_review,
-                actor,
-                "reviewer_protocol_failure:hub_verdict_invalid",
-            )
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_invalid_existing",
-                "warning",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": invalid_existing.id,
-                    "reason": "invalid_existing_hub_verdict",
-                },
-                actor,
-            )
-            return None
-        # In-flight guard: the review sweep re-ticks (~30s) while a verify runs
-        # for minutes; without this, each tick would launch another concurrent
-        # sandbox for the same review. One verify per review at a time.
-        inflight = getattr(self, "_hub_verify_inflight", None)
-        if inflight is None:
-            inflight = self._hub_verify_inflight = set()
-        if review.id in inflight:
-            return None
-        inflight.add(review.id)
-        try:
-            return self._run_hub_review_verification_locked(
-                task, review, executor_evidence, actor, info, key
-            )
-        finally:
-            inflight.discard(review.id)
-
-    def _hub_review_verification_uri(self, review_id: str, head_sha: str) -> str:
-        return "hub-verify://%s/%s" % (review_id, head_sha[:12])
-
-    def _hub_review_test_command(self, task: Task, info: Mapping[str, Any]) -> str:
-        """Choose the explicit sanity contract when changed paths are trustworthy.
-
-        Older branches and repositories without the contract still run their
-        full configured command. Unsafe or absent paths also fail closed to the
-        full command rather than becoming shell input.
-        """
-
-        configured = _repository_contract_test_command_for_task(task)
-        full_command = configured or "scripts/run-contract-tests.sh"
-        if configured and configured not in {
-            "scripts/run-contract-tests.sh",
-            "./scripts/run-contract-tests.sh",
-        }:
-            return configured
-        raw_files = info.get("files_changed")
-        if not isinstance(raw_files, list) or not raw_files:
-            return full_command
-        safe_files: list[str] = []
-        for raw in raw_files:
-            value = str(raw or "").strip().replace("\\", "/")
-            parts = value.split("/")
-            if (
-                not value
-                or value.startswith("/")
-                or any(part in {"", ".", ".."} for part in parts)
-                or any(ord(char) < 32 for char in value)
-            ):
-                return full_command
-            safe_files.append(value)
-        changed_args = " ".join(
-            "--changed-file %s" % shlex.quote(path) for path in sorted(set(safe_files))
-        )
-        return (
-            "if [ -x scripts/run-sanity-tests.sh ]; then "
-            "scripts/run-sanity-tests.sh %s; else %s; fi" % (changed_args, full_command)
-        )
-
-    def _matches_hub_review_verification_evidence(
-        self,
-        evidence: Evidence,
-        *,
-        task_id: str,
-        reviewer_agent_id: str,
-        executor_evidence_id: str,
-        review_id: str,
-        head_sha: str,
-    ) -> bool:
-        if evidence.task_id != task_id or evidence.kind != "review":
-            return False
-        if evidence.created_by != reviewer_agent_id:
-            return False
-        if evidence.uri != self._hub_review_verification_uri(review_id, head_sha):
-            return False
-        metadata = ensure_json_object(evidence.metadata)
-        if metadata.get("hub_verified") is not True:
-            return False
-        manifest = metadata.get("verification")
-        if not isinstance(manifest, dict):
-            return False
-        if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
-            return False
-        if str(manifest.get("reviewed_evidence_id") or "").strip() != executor_evidence_id:
-            return False
-        if str(manifest.get("verified_by") or "").strip() != "hub_review_verifier_v1":
-            return False
-        manifest_review_id = str(manifest.get("review_id") or "").strip()
-        if manifest_review_id and manifest_review_id != review_id:
-            return False
-        repo = manifest.get("repo")
-        if isinstance(repo, dict):
-            return str(repo.get("head_sha") or "").strip() == head_sha
-        access = ensure_json_object(manifest.get("repository_access"))
-        return (
-            access.get("schema") == "mac.report_repository_access.v1"
-            and access.get("mode") == "read_only"
-            and access.get("base_sha") == head_sha
-        )
-
-    def _existing_hub_review_verification_evidence(
-        self,
-        task_id: str,
-        review: Review,
-        executor_evidence_id: str,
-        head_sha: str,
-    ) -> Optional[Evidence]:
-        for candidate in self._hub_review_verification_identity_candidates(
-            task_id,
-            review,
-            executor_evidence_id,
-            head_sha,
-        ):
-            verdict, _problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                verdict_evidence_id=candidate.id,
-                not_before=review.created_at,
-            )
-            if verdict is not None:
-                return verdict
-        return None
-
-    def _invalid_hub_review_verification_evidence(
-        self,
-        task_id: str,
-        review: Review,
-        executor_evidence_id: str,
-        head_sha: str,
-    ) -> Optional[Evidence]:
-        """Return a deterministic hub-verdict identity that fails validation."""
-
-        for candidate in self._hub_review_verification_identity_candidates(
-            task_id,
-            review,
-            executor_evidence_id,
-            head_sha,
-        ):
-            verdict, _problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                verdict_evidence_id=candidate.id,
-                not_before=review.created_at,
-            )
-            if verdict is None:
-                return candidate
-        return None
-
-    def _hub_review_verification_identity_candidates(
-        self,
-        task_id: str,
-        review: Review,
-        executor_evidence_id: str,
-        head_sha: str,
-    ) -> List[Evidence]:
-        """Return rows occupying the deterministic hub-verdict identity."""
-
-        candidates: List[Evidence] = []
-        if review.evidence_id:
-            try:
-                candidates.append(self.get_evidence(review.evidence_id))
-            except NotFoundError:
-                pass
-        candidates.extend(reversed(self.list_evidence(task_id)))
-        seen: set[str] = set()
-        matches: List[Evidence] = []
-        for candidate in candidates:
-            if candidate.id in seen:
-                continue
-            seen.add(candidate.id)
-            if not self._matches_hub_review_verification_evidence(
-                candidate,
-                task_id=task_id,
-                reviewer_agent_id=review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                review_id=review.id,
-                head_sha=head_sha,
-            ):
-                continue
-            matches.append(candidate)
-        return matches
-
-    def _run_hub_review_verification_locked(
-        self,
-        task: Task,
-        review: Review,
-        executor_evidence: Evidence,
-        actor: str,
-        info: Mapping[str, Any],
-        key: str,
-    ) -> Optional[Evidence]:
-        # The repository-owned selector combines changed-path tests with public
-        # and process-E2E canaries, and itself falls back to the full
-        # suite for broad or uncertain changes. This keeps the independent hub
-        # environment without unconditionally duplicating mainline coverage.
-        report_access = info.get("repository_access")
-        test_command = (
-            info["test_command"] if report_access else self._hub_review_test_command(task, info)
-        )
-        bootstrap_command = (
-            info["bootstrap_command"]
-            if report_access
-            else _repository_contract_bootstrap_command_for_task(task)
-        )
-        verifier_identity: Dict[str, Any] = {}
-        report_options = (
-            {"prepared_report": report_access, "verifier_identity": verifier_identity}
-            if report_access
-            else {}
-        )
-        if not report_access and os.environ.get("MAC_HUB_VERIFY_VM_CONFIG"):
-            report_options["verifier_identity"] = verifier_identity
-        try:
-            returncode, output = self._hub_verify_run_contract_test(
-                info["remote_url"],
-                info["branch"],
-                info["head_sha"],
-                test_command,
-                bootstrap_command,
-                **report_options,
-            )
-        except Exception as exc:  # noqa: BLE001 - a verify crash must not wedge the workflow
-            crash = _hub_verify_exception_detail(exc)
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_error",
-                "warning",
-                {"review_id": review.id, **crash},
-                actor,
-            )
-            # A verifier crash is a transient landing attempt. Record only the
-            # redacted detail: str(exc) can carry the subprocess argv.
-            self._consume_landing_budget(
-                task.id,
-                "hub_verify_error",
-                error="%s: %s" % (crash.get("error_type"), crash.get("error")),
-                evidence_id=executor_evidence.id,
-                actor=actor,
-            )
-            return None
-        if returncode != 0:
-            unavailable = hub_verification_unavailable_reason(output)
-            if unavailable is not None:
-                # The harness failed, not the change. Take the same path a
-                # verify CRASH already takes -- record and sign nothing -- so
-                # the review stays pending and is retried, instead of a signed
-                # "rejected" that no evidence supports.
-                #
-                # An exception here already returned None; a transport fault
-                # that happens to surface as an exit status deserves the same
-                # treatment, and only did not because the two arrive through
-                # different channels.
-                self._record_default_review_observation(
-                    task.id,
-                    "workflow.default_review.hub_verify_unavailable",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reason": unavailable,
-                        "returncode": int(returncode),
-                        "excerpt": _hub_review_failure_excerpt(output, head=400, tail=400),
-                    },
-                    actor,
-                )
-                # Each unavailable run charges the landing budget, so a
-                # harness that never comes back blocks the task instead of
-                # leaving it in waiting_for_hub_verify forever.
-                self._consume_landing_budget(
-                    task.id,
-                    "hub_verify_unavailable",
-                    error=str(unavailable),
-                    evidence_id=executor_evidence.id,
-                    actor=actor,
-                )
-                return None
-        verdict = "approved" if returncode == 0 else "rejected"
-        current_review = self.get_review(review.id)
-        existing = self._existing_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if existing is not None:
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_idempotent",
-                "info",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": existing.id,
-                    "reason": "existing_hub_verdict_after_run",
-                },
-                actor,
-            )
-            return existing
-        invalid_existing = self._invalid_hub_review_verification_evidence(
-            task.id,
-            current_review,
-            executor_evidence.id,
-            info["head_sha"],
-        )
-        if invalid_existing is not None:
-            self._retract_default_review(
-                current_review,
-                actor,
-                "reviewer_protocol_failure:hub_verdict_invalid",
-            )
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_invalid_existing",
-                "warning",
-                {
-                    "review_id": review.id,
-                    "verdict_evidence_id": invalid_existing.id,
-                    "reason": "invalid_existing_hub_verdict_after_run",
-                },
-                actor,
-            )
-            return None
-        if (
-            current_review.status != ReviewStatus.PENDING.value
-            or self.get_task(task.id).state == TaskState.COMPLETED.value
-        ):
-            self._record_default_review_observation(
-                task.id,
-                "workflow.default_review.hub_verify_idempotent",
-                "info",
-                {
-                    "review_id": review.id,
-                    "review_status": current_review.status,
-                    "reason": "review_no_longer_pending",
-                },
-                actor,
-            )
-            return None
-        manifest: Dict[str, Any] = {
-            "schema": VERIFICATION_SCHEMA,
-            "status": "complete",
-            "evidence_type": "review_verdict",
-            "verdict": verdict,
-            "review_id": review.id,
-            "reviewed_evidence_id": executor_evidence.id,
-            "worktree_digest": "sha256:%s" % hashlib.sha256(info["head_sha"].encode()).hexdigest(),
-            "verified_by": "hub_review_verifier_v1",
-            # Pushed-branch anchor for the verdict — the exact commit the hub
-            # cloned and tested (mirrors the reviewed executor evidence).
-            "repo": {
-                "head_sha": info["head_sha"],
-                "dirty": False,
-                "pushed": True,
-                "remote_ref": "refs/heads/%s" % info["branch"],
-                # Mirror the reviewed change's file set — the verdict attests to
-                # the same commit's files.
-                "files_changed": _nested_json_object(
-                    ensure_json_object(executor_evidence.metadata), "verification", "repo"
-                ).get("files_changed")
-                or [],
-            },
-            "tests": [
-                {
-                    "name": "hub contract verification",
-                    "command": test_command or "scripts/run-contract-tests.sh",
-                    "returncode": int(returncode),
-                    "status": "pass" if returncode == 0 else "fail",
-                }
-            ],
-            "signed_by": review.reviewer_agent_id,
-        }
-        if report_access:
-            manifest.pop("repo")
-            manifest["repository_access"] = dict(report_access)
-            manifest["verifier_runtime"] = verifier_identity
-            manifest["tests"][0]["execution_environment"] = "openshell_sandbox"
-        elif verifier_identity.get("execution_environment") == "dedicated_kvm":
-            manifest["verifier_runtime"] = dict(verifier_identity)
-            manifest["tests"][0]["execution_environment"] = "dedicated_kvm"
-        if verdict == "rejected":
-            # Lead with the command and its exit status. The excerpt that
-            # follows is thousands of lines of mostly-PASSING output -- a
-            # coverage table, a pytest summary -- and a worker reading it saw
-            # success everywhere and concluded it had not tried hard enough.
-            # One task answered a rejection with MORE tests and a bigger diff,
-            # twice, because the reason was on the last line.
-            manifest["feedback"] = "hub contract verification failed (rc=%d): %s\n\n%s" % (
-                int(returncode),
-                str(test_command or "scripts/run-contract-tests.sh")[:200],
-                # Already bounded and relevance-selected at the capture site
-                # (_hub_verify_output_excerpt). Excerpting an excerpt would
-                # cut the middle back out -- and the middle is the anchored
-                # window holding the reason this was rejected.
-                output.strip() or "nonzero exit",
-            )
-        manifest["signature"] = sign_verification_manifest(key, manifest)
-        evidence = self.add_evidence(
-            task.id,
-            "review",
-            self._hub_review_verification_uri(review.id, info["head_sha"]),
-            "hub review verification: %s (rc=%d)" % (verdict, returncode),
-            review.reviewer_agent_id,
-            metadata={"returncode": 0, "verification": manifest, "hub_verified": True},
-        )
-        self._record_default_review_observation(
-            task.id,
-            "workflow.default_review.hub_verified",
-            "info",
-            {
-                "review_id": review.id,
-                "verdict": verdict,
-                "returncode": returncode,
-                "reviewer_agent_id": review.reviewer_agent_id,
-            },
-            actor,
-        )
-        if verdict == "rejected":
-            self._record_review_outcome_lesson(
-                task.id,
-                outcome="review_rejected",
-                detail=str(manifest.get("feedback") or "hub contract verification failed")[:300],
-            )
-        # The verdict is the event that unlocks the next stage (publish on
-        # approval / feedback on rejection) — advance now, not on the next sweep.
-        self._nudge_review_workflow(task.id)
-        return evidence
-
-    def _default_review_for_task(self, task_id: str) -> Optional[Review]:
-        """Return the unambiguous review row to act on, or None.
-
-        Refuses to pick when the task has more than one pending review
-        (mac-d9c) — that's an ambiguous state and in an autonomous
-        swarm there's no operator to break the tie. The caller logs
-        ``workflow.default_review.ambiguous`` and leaves the task
-        alone for explicit resolution.
-        """
-        reviews = self.list_reviews(task_id)
-        if not reviews:
-            return None
-        pending = [review for review in reviews if review.status == ReviewStatus.PENDING.value]
-        if len(pending) > 1:
-            return None
-        if pending:
-            return pending[0]
-        approved = [review for review in reviews if review.status == ReviewStatus.APPROVED.value]
-        if approved:
-            return approved[-1]
-        return None
-
-    def _review_verdict_nudge_payload(
-        self,
-        task_id: str,
-        review: Review,
-        evidence: Evidence,
-    ) -> JsonDict:
-        return {
-            "task_id": task_id,
-            "review_id": review.id,
-            "executor_evidence_id": evidence.id,
-            "reason": "produce_review_verdict",
-        }
-
-    def _ensure_review_verdict_nudge(
-        self,
-        task_id: str,
-        review: Review,
-        evidence: Evidence,
-    ) -> Optional[AgentMessage]:
-        # mac-ykkc: cap the number of times this review can be
-        # re-nudged. Without the cap a reviewer that keeps failing to
-        # produce a verdict (e.g. because the executor's lease branch
-        # never made it to origin) ends up with hundreds of delivered
-        # nudges as the dispatcher recreates the message on every tick.
-        # Count those durable delivery attempts directly: review claims are
-        # idempotent and therefore cannot serve as an attempt counter. After
-        # the cap, retract the review with
-        # a clear reason so the parent task transitions back to OPEN
-        # or FAILED instead of spinning forever.
-        try:
-            attempt_count = int(os.environ.get("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "10"))
-        except ValueError:
-            attempt_count = 10
-        attempt_row = self.store.query_one(
-            """
-            SELECT COUNT(*) AS n FROM messages
-            WHERE task_id = ?
-              AND recipient_agent_id = ?
-              AND message_type = ?
-              AND status = ?
-              AND json_extract(payload, '$.reason') = 'produce_review_verdict'
-              AND json_extract(payload, '$.review_id') = ?
-            """,
-            (
-                task_id,
-                review.reviewer_agent_id,
-                MessageType.NUDGE.value,
-                MessageStatus.DELIVERED.value,
-                review.id,
-            ),
-        )
-        prior_attempts = int(attempt_row["n"]) if attempt_row else 0
-        if prior_attempts >= attempt_count:
-            self._retract_default_review(
-                review,
-                "dispatcher",
-                "reviewer_unable_to_produce_verdict_after_%d_attempts" % prior_attempts,
-            )
-            self.record_log(
-                "workflow.default_review.nudge_capped",
-                layer="control_plane",
-                source="dispatcher",
-                level="warning",
-                subject_type="task",
-                subject_id=task_id,
-                detail={
-                    "review_id": review.id,
-                    "reviewer_agent_id": review.reviewer_agent_id,
-                    "attempt_count": prior_attempts,
-                    "cap": attempt_count,
-                },
-            )
-            return None
-        payload = self._review_verdict_nudge_payload(task_id, review, evidence)
-        if self.messaging.has_queued_message(
-            recipient_agent_id=review.reviewer_agent_id,
-            task_id=task_id,
-            message_type=MessageType.NUDGE.value,
-            payload_contains=payload,
-        ):
-            return None
-        # Nudge the reviewer so an autonomous review-executor has something to react to.
-        return self.send_message(
-            "dispatcher",
-            review.reviewer_agent_id,
-            MessageType.NUDGE.value,
-            payload,
-            task_id=task_id,
-        )
-
-    def _dedupe_same_reviewer_pending_reviews(
-        self,
-        pending_reviews: List[Review],
-        actor: str,
-    ) -> List[Review]:
-        kept: List[Review] = []
-        seen_reviewers: set[str] = set()
-        retracted: List[Review] = []
-        for review in sorted(pending_reviews, key=lambda item: (item.created_at, item.id)):
-            if review.reviewer_agent_id in seen_reviewers:
-                self._retract_default_review(
-                    review,
-                    actor,
-                    "duplicate_pending_review_same_reviewer",
-                )
-                retracted.append(review)
-                continue
-            seen_reviewers.add(review.reviewer_agent_id)
-            kept.append(review)
-        if retracted:
-            self._record_default_review_observation(
-                kept[0].task_id if kept else retracted[0].task_id,
-                "workflow.default_review.duplicate_pending_retracted",
-                "warning",
-                {
-                    "retracted_review_ids": [review.id for review in retracted],
-                    "kept_review_ids": [review.id for review in kept],
-                    "reason": "duplicate_pending_review_same_reviewer",
-                },
-                actor,
-            )
-        return kept
 
     def _find_review_verdict_evidence(
         self,
@@ -28413,28 +26878,6 @@ class ControlPlane:
                             % evidence.id
                         )
                         continue
-            if self._read_only_report_needs_hub_verify(reviewed_task, executor_evidence):
-                info = self._hub_verify_repo_info(reviewed_task, executor_evidence)
-                tests = manifest.get("tests")
-                if (
-                    info is None
-                    or evidence.metadata.get("hub_verified") is not True
-                    or manifest.get("verified_by") != "hub_review_verifier_v1"
-                    or manifest.get("repository_access") != info["repository_access"]
-                    or not isinstance(tests, list)
-                    or len(tests) != 1
-                    or not isinstance(tests[0], dict)
-                    or tests[0].get("command") != info["test_command"]
-                    or tests[0].get("execution_environment") != "openshell_sandbox"
-                    or (
-                        manifest.get("verdict") == "approved"
-                        and (tests[0].get("returncode") != 0 or tests[0].get("status") != "pass")
-                    )
-                ):
-                    problems.append(
-                        "verdict %s lacks independent report contract verification" % evidence.id
-                    )
-                    continue
             verdict = str(manifest.get("verdict") or "").strip().lower()
             if verdict not in {"approved", "rejected"}:
                 problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
@@ -28553,45 +26996,6 @@ class ControlPlane:
             return evidence, []
         return None, problems
 
-    def _review_attempt_protocol_failure(
-        self,
-        task_id: str,
-        review: Review,
-        *,
-        executor_evidence_id: str,
-    ) -> Tuple[Optional[Evidence], str]:
-        """Return the review-attempt evidence proving harness/protocol failure.
-
-        Review execution evidence carries the review and executor-evidence IDs
-        even when no valid verdict manifest was produced. Keep this separate
-        from semantic rejection so the workflow can retract the failed
-        reviewer assignment and let selection try a different eligible peer.
-        """
-        for evidence in reversed(self.list_evidence(task_id)):
-            if evidence.created_by != review.reviewer_agent_id:
-                continue
-            try:
-                if parse_time(evidence.created_at) < parse_time(review.created_at):
-                    continue
-            except ValueError:
-                continue
-            metadata = ensure_json_object(evidence.metadata)
-            if str(metadata.get("review_id") or "").strip() != review.id:
-                continue
-            if str(metadata.get("executor_evidence_id") or "").strip() != executor_evidence_id:
-                continue
-            if self._evidence_returncode(evidence) != 0:
-                return evidence, "review_executor_nonzero"
-            manifest = ensure_json_object(metadata.get("verification"))
-            if str(manifest.get("evidence_type") or "").strip().lower() != "review_verdict":
-                continue
-            if str(manifest.get("semantic_verdict") or "").strip().lower() not in {
-                "approved",
-                "rejected",
-            }:
-                return evidence, "semantic_verdict_invalid"
-        return None, ""
-
     def _cooperative_review_integration_problems(
         self, task: Task, verdict_manifest: JsonDict
     ) -> List[str]:
@@ -28657,6 +27061,22 @@ class ControlPlane:
                 ReviewStatus.PENDING.value,
             ),
         )
+        # A reviewer that claimed this review is BUSY on the task; nothing
+        # else will release it once the review is withdrawn.
+        if not self._agent_has_active_lease(review.reviewer_agent_id):
+            self.store.execute(
+                """
+                UPDATE agents SET status = ?, current_task_id = NULL, updated_at = ?
+                WHERE id = ? AND status = ? AND current_task_id = ?
+                """,
+                (
+                    AgentStatus.IDLE.value,
+                    now,
+                    review.reviewer_agent_id,
+                    AgentStatus.BUSY.value,
+                    review.task_id,
+                ),
+            )
         self._record_history(
             review.task_id,
             "task.review_retracted",
@@ -28670,111 +27090,23 @@ class ControlPlane:
             },
         )
 
-    def _select_default_reviewer(
-        self,
-        task: Task,
-        *,
-        executor_agent_id: Optional[str] = None,
-        excluded_agent_ids: Optional[Iterable[str]] = None,
-        allow_independence_fallback: bool = False,
-    ) -> Optional[Agent]:
-        """Pick a default reviewer for ``task``.
-
-        Trust boundaries enforced here (autonomous-review context where
-        there is no human in the loop):
-
-        * Tenancy (mac-dyk): the reviewer's persona tenant_id must
-          match the task's tenant. Without a human to catch a misroute,
-          the tenancy boundary IS the safety boundary.
-        * Capability (mac-s1a): ``review`` capability is *required*,
-          not preferred. An agent without it cannot be drafted.
-        * Persona separation / anti-collusion (mac-v2i): the reviewer's
-          persona slug must differ from the executor's persona slug.
-          Two code-reviewer-souled agents cannot approve each other's
-          work — the second-eyes role only matters if it's a different
-          eye.
-        * Never an executor for this task: current and prior lease owners,
-          plus the latest evidence author, are excluded. Small fleets wait
-          for genuinely independent review rather than weakening the gate.
-        """
-        task_tenant = self._task_tenant_id(task)
-        executor_persona_slug = self._task_executor_persona_slug(task)
-        review_policy = self._default_review_policy(task)
-        review_required_capabilities = self._default_review_required_capabilities(
-            task,
-            review_policy,
-        )
-
-        excluded = {str(value) for value in (excluded_agent_ids or []) if str(value)}
-        candidates: List[Agent] = []
-        access_states: Dict[str, str] = {}
-        independence_penalties: Dict[str, int] = {}
-        semantic_reviewer = _semantic_reviewer_enabled()
-        for agent in self.list_agents():
-            if agent.id in excluded:
-                continue
-            if not semantic_reviewer and not self._agent_is_virtual(agent.id):
-                continue
-            reason = self._default_reviewer_unavailable_reason(
-                task,
-                agent,
-                task_tenant=task_tenant,
-                executor_persona_slug=executor_persona_slug,
-                executor_agent_id=executor_agent_id,
-                review_policy=review_policy,
-                review_required_capabilities=review_required_capabilities,
-            )
-            if (
-                reason is not None
-                and allow_independence_fallback
-                and reason in REVIEWER_INDEPENDENCE_REASONS
-                and self._reviewer_independence_fallback_enabled(task)
-            ):
-                reason = self._default_reviewer_unavailable_reason(
-                    task,
-                    agent,
-                    task_tenant=task_tenant,
-                    executor_persona_slug=executor_persona_slug,
-                    executor_agent_id=executor_agent_id,
-                    review_policy=review_policy,
-                    review_required_capabilities=review_required_capabilities,
-                    allow_independence_fallback=True,
-                )
-            if reason is not None:
-                continue
-            candidates.append(agent)
-            access_states[agent.id] = self._reviewer_repository_access_state(
-                task,
-                agent.id,
-            )[0]
-            independence_penalties[agent.id] = self._reviewer_independence_penalty(
-                task, agent, executor_agent_id
-            )
-        if not candidates:
-            return None
-        candidates.sort(
-            key=lambda agent: (
-                independence_penalties.get(agent.id, 0),
-                0 if access_states.get(agent.id) == "success" else 1,
-                0 if agent.status == AgentStatus.IDLE.value else 1,
-                agent.name,
-                agent.id,
-            )
-        )
-        return candidates[0]
-
-    def _record_semantic_reviewer_removed_verdict(
+    def _record_worker_evidence_verdict(
         self,
         task: Task,
         review: Review,
         executor_evidence: Evidence,
         actor: str,
     ) -> Optional[Evidence]:
-        """Sign a hub-reviewer verdict for already-validated non-repo evidence.
+        """Sign the hub-reviewer verdict for already-validated executor evidence.
 
-        Approval still requires a real review_verdict. The semantic reviewer
-        is gone, so the hub-reviewer attests that the executor evidence
-        already satisfied the verification contract.
+        The review verdict is the worker's own evidence: the default workflow
+        only gets here after ``_bound_review_evidence`` accepted it, which for
+        repo changes includes the verifier's pass on the exact pushed commit.
+        The hub re-runs nothing. It evaluates the task acceptance contract
+        against the executor manifest and records that decision under the
+        hub-reviewer key, so publication is authorised by a signed verdict
+        whose signer is not the executor. Returns None when the key is
+        unavailable; the caller waits and retries.
         """
         key = self._reviewer_attestation_key_for_signing(review.reviewer_agent_id, actor=actor)
         if key is None:
@@ -28797,7 +27129,7 @@ class ControlPlane:
             "review_id": review.id,
             "reviewed_evidence_id": executor_evidence.id,
             "worktree_digest": digest,
-            "verified_by": "semantic_reviewer_removed",
+            "verified_by": "worker_evidence_v1",
             "llm_model": "hub-reviewer",
             "llm": {
                 "model": "hub-reviewer",
@@ -28805,7 +27137,7 @@ class ControlPlane:
                 "provider": "hub",
             },
             "summary": (
-                "semantic reviewer removed; structural and task acceptance contracts passed"
+                "worker evidence validated; structural and task acceptance contracts passed"
                 if acceptance_pass
                 else "task semantic acceptance failed: %s"
                 % "; ".join(str(problem) for problem in acceptance.get("problems", []))
@@ -28836,74 +27168,70 @@ class ControlPlane:
             task.id,
             "review",
             "mac://review-verdict/%s" % review.id,
-            "semantic reviewer removed; executor evidence %s" % verdict,
+            "worker evidence review: %s" % verdict,
             review.reviewer_agent_id,
             metadata={"returncode": 0, "verification": manifest},
         )
-        self._record_default_review_observation(
-            task.id,
-            (
-                "workflow.default_review.approved"
-                if acceptance_pass
-                else "workflow.default_review.semantic_acceptance_failed"
-            ),
-            "info" if acceptance_pass else "warning",
-            {
-                "review_id": review.id,
-                "reviewer_agent_id": review.reviewer_agent_id,
-                "executor_evidence_id": executor_evidence.id,
-                "verdict_evidence_id": evidence.id,
-                "reason": (
-                    "semantic_reviewer_removed" if acceptance_pass else "semantic_acceptance_failed"
-                ),
-            },
-            actor,
-        )
+        if not acceptance_pass:
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.semantic_acceptance_failed",
+                "warning",
+                {
+                    "review_id": review.id,
+                    "reviewer_agent_id": review.reviewer_agent_id,
+                    "executor_evidence_id": executor_evidence.id,
+                    "verdict_evidence_id": evidence.id,
+                    "reason": "semantic_acceptance_failed",
+                },
+                actor,
+            )
         return evidence
 
-    def _ensure_hub_review_verifier_agent(self, task: Task, *, actor: str) -> Optional[Agent]:
-        # The virtual hub-reviewer is the only default reviewer. Register it
-        # whenever the semantic reviewer is off, even if hub-verify is off,
-        # so non-repo evidence has an approval identity. When the semantic
-        # reviewer is opted back in, keep the old rule: only auto-register
-        # when hub-verify will actually use this agent.
-        if _semantic_reviewer_enabled() and not _hub_review_verify_enabled():
-            return None
-        if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
-            return None
-        name = (
-            os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()
-            or DEFAULT_HUB_REVIEWER_AGENT_NAME
-        )
-        agent_id = (
-            os.environ.get("MAC_HUB_REVIEWER_AGENT_ID", "").strip() or DEFAULT_HUB_REVIEWER_AGENT_ID
-        )
-        machine_id = (
-            os.environ.get("MAC_HUB_REVIEWER_MACHINE_ID", "").strip()
-            or DEFAULT_HUB_REVIEWER_MACHINE_ID
-        )
+    def _ensure_hub_reviewer_agent(self, *, actor: str) -> Optional[Agent]:
+        """Register (idempotently) the virtual hub-reviewer approval identity.
+
+        The hub-reviewer runs nothing. It signs the review verdict that records
+        the hub accepted the worker's validated evidence, so publication has an
+        approved review whose signer is not the executor.
+        """
+        agent_id = DEFAULT_HUB_REVIEWER_AGENT_ID
+        try:
+            existing = self.get_agent(agent_id)
+        except NotFoundError:
+            existing = None
+        if (
+            existing is not None
+            and self._agent_is_hub_review_verifier(existing)
+            and existing.health_status == HealthStatus.HEALTHY.value
+            and existing.status in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}
+        ):
+            # Registered and usable. Its signing key self-heals at signing
+            # time (_reviewer_attestation_key_for_signing), so a sweep does
+            # not re-register it for every task it touches.
+            return existing
         try:
             machine = self.register_machine(
                 "operator-review",
                 labels={
-                    "source": "mac-hub-review-verifier",
+                    "source": "mac-hub-reviewer",
                     "role": "hub-reviewer",
                     "virtual": True,
                 },
-                resources={"virtual": True, "review": {"mode": "hub_verify"}},
+                resources={"virtual": True, "review": {"mode": "worker_evidence"}},
                 trusted=True,
-                machine_id=machine_id,
+                machine_id=DEFAULT_HUB_REVIEWER_MACHINE_ID,
             )
             reviewer = self.register_agent(
                 machine.id,
-                name,
+                DEFAULT_HUB_REVIEWER_AGENT_NAME,
                 capabilities=["review"],
                 resources={
                     "virtual": True,
                     "hub_review_verifier": {
                         "schema": HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA,
                         "enabled": True,
-                        "mode": "hub_verify",
+                        "mode": "worker_evidence",
                     },
                 },
                 agent_id=agent_id,
@@ -28922,7 +27250,7 @@ class ControlPlane:
                     detail={"actor": actor, "error": str(exc)[:300]},
                 )
             return self.get_agent(reviewer.id)
-        except Exception as exc:  # noqa: BLE001 - verifier setup must not break review sweeps.
+        except Exception as exc:  # noqa: BLE001 - reviewer setup must not break review sweeps.
             self.observability.record_log(
                 "workflow.default_review.hub_reviewer_register_failed",
                 level="warning",
@@ -28941,58 +27269,21 @@ class ControlPlane:
             and marker.get("enabled") is not False
         )
 
-    def _default_reviewer_unavailable_reason_for_id(
-        self,
-        task: Task,
-        reviewer_agent_id: str,
-        *,
-        executor_agent_id: Optional[str] = None,
-        allow_conditional_independence_fallback: bool = False,
-    ) -> Optional[str]:
-        try:
-            agent = self.get_agent(reviewer_agent_id)
-        except NotFoundError:
-            return "reviewer_missing"
-        reason = self._default_reviewer_unavailable_reason(
-            task,
-            agent,
-            executor_agent_id=executor_agent_id,
-            review_policy=self._default_review_policy(task),
-        )
-        if (
-            allow_conditional_independence_fallback
-            and reason in REVIEWER_INDEPENDENCE_REASONS
-            and self._reviewer_independence_fallback_reason(
-                task, agent, executor_agent_id=executor_agent_id
-            )
-        ):
-            return None
-        return reason
-
     def _default_reviewer_unavailable_reason(
         self,
         task: Task,
         agent: Agent,
         *,
-        task_tenant: Optional[str] = None,
-        executor_persona_slug: Optional[str] = None,
         executor_agent_id: Optional[str] = None,
         review_policy: Optional[JsonDict] = None,
-        review_required_capabilities: Optional[Iterable[str]] = None,
-        allow_independence_fallback: bool = False,
     ) -> Optional[str]:
-        if (
-            agent.id in self._coordination_excluded_agent_ids(task)
-            and not allow_independence_fallback
-        ):
+        if agent.id in self._coordination_excluded_agent_ids(task):
             return "reviewer_cooperative_family_participant"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
-        hub_review_verifier = _hub_review_verify_enabled() and self._agent_is_hub_review_verifier(
-            agent
-        )
+        hub_review_verifier = self._agent_is_hub_review_verifier(agent)
         if (
             metadata_declares_read_only_report_repository(task.metadata)
             and not hub_review_verifier
@@ -29003,13 +27294,9 @@ class ControlPlane:
             agent, self._default_reviewer_stale_after_seconds()
         ):
             return "reviewer_stale"
-        if self.reviews.agent_has_owned_task(task.id, agent.id) and not allow_independence_fallback:
+        if self.reviews.agent_has_owned_task(task.id, agent.id):
             return "reviewer_previously_owned_task"
-        if (
-            executor_agent_id is not None
-            and agent.id == executor_agent_id
-            and not allow_independence_fallback
-        ):
+        if executor_agent_id is not None and agent.id == executor_agent_id:
             return "reviewer_created_executor_evidence"
         if "review" not in set(agent.capabilities):
             return "reviewer_missing_capability"
@@ -29024,18 +27311,12 @@ class ControlPlane:
         ).strip()
         if target_agent_name and agent.name != target_agent_name:
             return "reviewer_not_target_agent"
-        required = set(
-            review_required_capabilities
-            if review_required_capabilities is not None
-            else self._default_review_required_capabilities(task, policy)
-        )
+        required = set(self._default_review_required_capabilities(task, policy))
         missing = sorted(required - set(agent.capabilities))
         if missing:
             return "reviewer_missing_capabilities:%s" % ",".join(missing)
-        if task_tenant is None:
-            task_tenant = self._task_tenant_id(task)
-        if executor_persona_slug is None:
-            executor_persona_slug = self._task_executor_persona_slug(task)
+        task_tenant = self._task_tenant_id(task)
+        executor_persona_slug = self._task_executor_persona_slug(task)
         agent_tenant, agent_persona_slug = self._agent_tenant_and_persona(agent)
         if task_tenant is not None:
             if agent_tenant is None:
@@ -29060,7 +27341,6 @@ class ControlPlane:
             executor_persona_slug is not None
             and agent_persona_slug is not None
             and agent_persona_slug == executor_persona_slug
-            and not allow_independence_fallback
         ):
             return "reviewer_same_persona"
         if hub_review_verifier:
@@ -29071,106 +27351,6 @@ class ControlPlane:
             failure_class = str((learning or {}).get("failure_class") or "authentication")
             return "reviewer_repository_access_%s:%s" % (failure_class, host)
         return None
-
-    def _reviewer_independence_fallback_enabled(self, task: Task) -> bool:
-        # Repository reports are conclusions drawn from observed source rather
-        # than mechanically integrated code. Their executor cannot also serve
-        # as the independent check on those conclusions.
-        if metadata_declares_read_only_report_repository(task.metadata):
-            return False
-        policy = self._default_review_policy(task)
-        return not (
-            policy.get("require_independent_reviewer") is True
-            or policy.get("allow_independence_fallback") is False
-            or review_diversity_requirements(task).get("high_risk") is True
-        )
-
-    def _reviewer_independence_penalty(
-        self,
-        task: Task,
-        agent: Agent,
-        executor_agent_id: Optional[str],
-    ) -> int:
-        penalty = 0
-        if agent.id in self._coordination_excluded_agent_ids(task):
-            penalty += 1
-        executor_persona = self._task_executor_persona_slug(task)
-        _tenant, reviewer_persona = self._agent_tenant_and_persona(agent)
-        if (
-            executor_persona is not None
-            and reviewer_persona is not None
-            and executor_persona == reviewer_persona
-        ):
-            penalty += 1
-        if self.reviews.agent_has_owned_task(task.id, agent.id):
-            penalty += 4
-        if executor_agent_id is not None and agent.id == executor_agent_id:
-            penalty += 4
-        return penalty
-
-    def _reviewer_independence_fallback_reason(
-        self,
-        task: Task,
-        reviewer: Agent,
-        *,
-        executor_agent_id: Optional[str] = None,
-        excluded_agent_ids: Optional[Iterable[str]] = None,
-    ) -> Optional[str]:
-        """Authorize independence relaxation only when no strict peer exists."""
-        if not self._reviewer_independence_fallback_enabled(task):
-            return None
-        effective_excluded = {
-            str(agent_id) for agent_id in (excluded_agent_ids or []) if str(agent_id)
-        }
-        evidence, _assessment = self._bound_review_evidence(task)
-        if evidence is not None:
-            effective_excluded.update(
-                str(row["reviewer_agent_id"])
-                for row in self.store.query_all(
-                    "SELECT reviewer_agent_id FROM reviews "
-                    "WHERE task_id = ? AND status = ? AND created_at >= ? "
-                    "AND reason LIKE 'reviewer_protocol_failure:%'",
-                    (
-                        task.id,
-                        ReviewStatus.RETRACTED.value,
-                        evidence.created_at or "",
-                    ),
-                )
-            )
-        if reviewer.id in effective_excluded:
-            return None
-        resolved_executor = (
-            executor_agent_id
-            if executor_agent_id is not None
-            else self.reviews.latest_executor_evidence_author(task.id)
-        )
-        strict_reason = self._default_reviewer_unavailable_reason(
-            task,
-            reviewer,
-            executor_agent_id=resolved_executor,
-            review_policy=self._default_review_policy(task),
-        )
-        if strict_reason not in REVIEWER_INDEPENDENCE_REASONS:
-            return None
-        relaxed_reason = self._default_reviewer_unavailable_reason(
-            task,
-            reviewer,
-            executor_agent_id=resolved_executor,
-            review_policy=self._default_review_policy(task),
-            allow_independence_fallback=True,
-        )
-        if relaxed_reason is not None:
-            return None
-        if (
-            self._select_default_reviewer(
-                task,
-                executor_agent_id=resolved_executor,
-                excluded_agent_ids=effective_excluded,
-            )
-            is not None
-        ):
-            return None
-        return strict_reason
 
     def _reviewer_repository_access_state(
         self,
@@ -29276,10 +27456,6 @@ class ControlPlane:
             executor_agent_id=executor_agent_id,
             review_policy=self._default_review_policy(task),
         )
-        if reason in REVIEWER_INDEPENDENCE_REASONS and self._reviewer_independence_fallback_reason(
-            task, reviewer, executor_agent_id=executor_agent_id
-        ):
-            return None
         if reason is None:
             return None
         readable = {
@@ -29293,31 +27469,6 @@ class ControlPlane:
             ),
         }
         return readable.get(reason, reason.replace("_", " "))
-
-    def _reviewer_independence_problem(self, task: Task, reviewer: Agent) -> Optional[str]:
-        """Compatibility form of the former independence-only policy."""
-        if reviewer.id in self._coordination_excluded_agent_ids(task):
-            return "reviewer executed another task in the same cooperative work family"
-        task_tenant = self._task_tenant_id(task)
-        reviewer_tenant, reviewer_persona = self._agent_tenant_and_persona(reviewer)
-        if task_tenant is not None:
-            if reviewer_tenant is None:
-                try:
-                    machine = self.get_machine(reviewer.machine_id)
-                except NotFoundError:
-                    return "reviewer machine is missing"
-                if not self._machine_allows_tenant(machine, task_tenant):
-                    return "reviewer is outside the task tenant boundary"
-            elif reviewer_tenant != task_tenant:
-                return "reviewer is outside the task tenant boundary"
-        executor_persona = self._task_executor_persona_slug(task)
-        if (
-            executor_persona is not None
-            and reviewer_persona is not None
-            and executor_persona == reviewer_persona
-        ):
-            return "reviewer and executor use the same persona"
-        return None
 
     def _task_executor_persona_slug(self, task: Task) -> Optional[str]:
         """Find the persona slug of whichever agent owned the task last

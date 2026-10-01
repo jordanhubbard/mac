@@ -262,11 +262,9 @@ def test_approval_rejects_signed_verdict_with_absent_semantic_result() -> None:
         cp.submit_review(review.id, "approved", reviewer.id, evidence_id=verdict.id)
 
 
-def test_removed_semantic_reviewer_records_fail_closed_typed_rejection() -> None:
+def test_worker_evidence_verdict_records_fail_closed_typed_rejection() -> None:
     cp, task, reviewer, review, evidence = _reviewing_canary('MAC_CANARY_RESULT={"answer":41}')
-    verdict = cp._record_semantic_reviewer_removed_verdict(
-        cp.get_task(task.id), review, evidence, "test"
-    )
+    verdict = cp._record_worker_evidence_verdict(cp.get_task(task.id), review, evidence, "test")
     assert verdict is not None
     manifest = verdict.metadata["verification"]
     assert manifest["verdict"] == "rejected"
@@ -286,9 +284,7 @@ def _submit_deterministic_rejection(
     review: object,
     evidence: object,
 ) -> tuple[object, object]:
-    verdict = cp._record_semantic_reviewer_removed_verdict(
-        cp.get_task(task.id), review, evidence, "test"
-    )
+    verdict = cp._record_worker_evidence_verdict(cp.get_task(task.id), review, evidence, "test")
     assert verdict is not None
     submitted = cp.submit_review(
         review.id,
@@ -372,7 +368,7 @@ def test_successful_second_attempt_uses_fresh_evidence_and_can_publish() -> None
     )
     cp.submit_for_review(task.id, second_executor.id, lease_id=lease.id)
     second_review = cp.request_review(task.id, reviewer.id)
-    second_verdict = cp._record_semantic_reviewer_removed_verdict(
+    second_verdict = cp._record_worker_evidence_verdict(
         cp.get_task(task.id), second_review, second_evidence, "test"
     )
     assert second_verdict is not None
